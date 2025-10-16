@@ -71,6 +71,16 @@ from whombat.schemas.features import (
     FeatureNameCreate,
     FeatureNameUpdate,
 )
+from whombat.schemas.groups import (
+    Group,
+    GroupCreate,
+    GroupDetail,
+    GroupMembership,
+    GroupMembershipCreate,
+    GroupMembershipUpdate,
+    GroupRole,
+    GroupUpdate,
+)
 from whombat.schemas.model_runs import ModelRun, ModelRunCreate, ModelRunUpdate
 from whombat.schemas.notes import Note, NoteCreate, NoteUpdate
 from whombat.schemas.plugin import PluginInfo
@@ -119,7 +129,13 @@ from whombat.schemas.tags import (
     TagUpdate,
 )
 from whombat.schemas.user_runs import UserRun, UserRunCreate, UserRunUpdate
-from whombat.schemas.users import SimpleUser, User, UserCreate, UserUpdate
+from whombat.schemas.users import (
+    SimpleUser,
+    User,
+    UserAdminUpdate,
+    UserCreate,
+    UserUpdate,
+)
 
 __all__ = [
     "AmplitudeParameters",
@@ -165,6 +181,14 @@ __all__ = [
     "FeatureName",
     "FeatureNameCreate",
     "FeatureNameUpdate",
+    "Group",
+    "GroupCreate",
+    "GroupDetail",
+    "GroupMembership",
+    "GroupMembershipCreate",
+    "GroupMembershipUpdate",
+    "GroupRole",
+    "GroupUpdate",
     "FileState",
     "ModelRun",
     "ModelRunCreate",
@@ -209,6 +233,7 @@ __all__ = [
     "UserRun",
     "UserRunCreate",
     "UserRunUpdate",
+    "UserAdminUpdate",
     "UserUpdate",
     "Window",
 ]

@@ -79,6 +79,7 @@ class User(Base):
     # Back references
 
     if TYPE_CHECKING:
+        from whombat.models.group import Group, GroupMembership
         from whombat.models.note import Note
         from whombat.models.recording import Recording, RecordingOwner
         from whombat.models.sound_event_annotation import (
@@ -120,3 +121,24 @@ class User(Base):
         repr=False,
         init=False,
     )
+    """User runs associated with the user."""
+
+    group_memberships: orm.Mapped[list["GroupMembership"]] = orm.relationship(
+        "GroupMembership",
+        back_populates="user",
+        cascade="all, delete-orphan",
+        default_factory=list,
+        repr=False,
+        init=False,
+    )
+    """Group memberships for the user."""
+
+    groups: orm.Mapped[list["Group"]] = orm.relationship(
+        "Group",
+        secondary="group_membership",
+        viewonly=True,
+        default_factory=list,
+        repr=False,
+        init=False,
+    )
+    """Groups the user belongs to."""

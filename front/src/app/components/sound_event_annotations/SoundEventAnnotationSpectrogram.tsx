@@ -13,9 +13,11 @@ import Error from "@/app/error";
 
 import ClipAnnotationSpectrogramBase from "@/lib/components/clip_annotations/ClipAnnotationSpectrogram";
 import Loading from "@/lib/components/ui/Loading";
+import TimeScaleControl from "@/lib/components/spectrograms/TimeScaleControl";
 
 import useSpectrogramAudio from "@/lib/hooks/spectrogram/useSpectrogramAudio";
 import useSpectrogramState from "@/lib/hooks/spectrogram/useSpectrogramState";
+import useTimeScaleControl from "@/lib/hooks/spectrogram/useTimeScaleControl";
 import useSoundEventViewport from "@/lib/hooks/window/useSoundEventViewport";
 
 import type { Recording, SoundEventAnnotation } from "@/lib/types";
@@ -81,6 +83,7 @@ function Inner({
   const viewport = useSoundEventViewport({
     soundEvent: soundEventAnnotation.sound_event,
     recording,
+    audioSettings: audioSettings.settings,
   });
 
   const audio = useSpectrogramAudio({
@@ -96,11 +99,20 @@ function Inner({
     enabled: withHotKeys,
   });
 
+  const timeScaleControl = useTimeScaleControl({
+    viewport,
+    spectrogramSettings,
+    playbackSpeed: audioSettings.settings.speed,
+  });
+
   return (
     <ClipAnnotationSpectrogramBase
       ViewportToolbar={
         withControls ? (
-          <ViewportToolbar state={spectrogramState} viewport={viewport} />
+          <ViewportToolbar
+            state={spectrogramState}
+            viewport={viewport}
+          />
         ) : undefined
       }
       Player={
@@ -120,6 +132,15 @@ function Inner({
             samplerate={recording.samplerate}
             audioSettings={audioSettings}
             spectrogramSettings={spectrogramSettings}
+          />
+        ) : undefined
+      }
+      TimeScaleControl={
+        withControls ? (
+          <TimeScaleControl
+            value={timeScaleControl.value}
+            onChange={timeScaleControl.onPreviewChange}
+            onChangeEnd={timeScaleControl.onCommit}
           />
         ) : undefined
       }

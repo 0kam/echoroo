@@ -3,8 +3,19 @@ import { z } from "zod";
 export const UserSchema = z.object({
   id: z.string().uuid(),
   username: z.string(),
-  email: z.string().email().optional(),
+  email: z.string().email().nullable().optional(),
   name: z.string().nullable().optional(),
+  is_superuser: z.boolean().optional().default(false),
+  is_active: z.boolean().optional().default(true),
+  is_verified: z.boolean().optional().default(false),
+  created_on: z.coerce.date().optional(),
+});
+
+export const SimpleUserSchema = UserSchema.extend({
+  created_on: z.coerce.date(),
+  is_superuser: z.boolean(),
+  is_active: z.boolean(),
+  is_verified: z.boolean(),
 });
 
 export const UserCreateSchema = z
@@ -26,6 +37,12 @@ export const UserUpdateSchema = z.object({
   email: z.string().optional(),
   name: z.string().optional(),
   password: z.string().optional(),
+});
+
+export const AdminUserUpdateSchema = UserUpdateSchema.extend({
+  is_superuser: z.boolean().optional(),
+  is_active: z.boolean().optional(),
+  is_verified: z.boolean().optional(),
 });
 
 export const LoginSchema = z.object({

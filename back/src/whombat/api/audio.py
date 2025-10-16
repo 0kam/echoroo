@@ -4,6 +4,7 @@ import struct
 from pathlib import Path
 
 import soundfile as sf
+from scipy import signal
 from soundevent import audio, data
 from soundevent.arrays import extend_dim
 from soundevent.audio.io import audio_to_bytes
@@ -121,6 +122,7 @@ def load_clip_bytes(
     start_time: float | None = None,
     end_time: float | None = None,
     bit_depth: int = 16,
+    target_samplerate: int | None = None,
 ) -> tuple[bytes, int, int, int]:
     """Load audio.
 
@@ -143,6 +145,10 @@ def load_clip_bytes(
         The time in seconds at which to stop reading the audio.
     bit_depth
         The bit depth of the resulting audio. By default, it is 16 bits.
+    target_samplerate
+        Optional target sample rate for resampling before applying speed.
+        If provided, audio will be resampled to this rate before the speed
+        adjustment is applied via the WAV header.
 
     Returns
     -------
@@ -193,10 +199,20 @@ def load_clip_bytes(
         sf_file.seek(offset)
         audio_data = sf_file.read(frames, fill_value=0, always_2d=True)
 
+        # Resample if target_samplerate is provided
+        effective_samplerate = samplerate
+        if target_samplerate is not None and target_samplerate != samplerate:
+            # Calculate the number of samples in the resampled audio
+            num_samples = int(len(audio_data) * target_samplerate / samplerate)
+            # Resample each channel
+            resampled_data = signal.resample(audio_data, num_samples, axis=0)
+            audio_data = resampled_data
+            effective_samplerate = target_samplerate
+
         # Convert the audio data to raw bytes
         audio_bytes = audio_to_bytes(
             audio_data,
-            samplerate=samplerate,
+            samplerate=effective_samplerate,
             bit_depth=bit_depth,
         )
 
@@ -204,7 +220,7 @@ def load_clip_bytes(
         # append to the start of the audio data.
         if start == 0:
             header = generate_wav_header(
-                samplerate=int(samplerate * speed),
+                samplerate=int(effective_samplerate * speed),
                 channels=channels,
                 data_size=filesize,
                 bit_depth=bit_depth,

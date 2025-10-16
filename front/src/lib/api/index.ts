@@ -10,6 +10,7 @@ import { registerAnnotationProjectAPI } from "./annotation_projects";
 import { registerAnnotationTasksAPI } from "./annotation_tasks";
 import { registerAudioAPI } from "./audio";
 import { registerAuthAPI } from "./auth";
+import { registerAdminUsersAPI } from "./adminUsers";
 import { registerClipAnnotationsAPI } from "./clip_annotations";
 import { registerClipEvaluationAPI } from "./clip_evaluations";
 import { registerClipPredictionsAPI } from "./clip_predictions";
@@ -17,6 +18,7 @@ import { registerClipAPI } from "./clips";
 import { registerDatasetAPI } from "./datasets";
 import { registerEvaluationSetAPI } from "./evaluation_sets";
 import { registerEvaluationAPI } from "./evaluations";
+import { registerGroupsAPI } from "./groups";
 import { registerModelRunAPI } from "./model_runs";
 import { registerNotesAPI } from "./notes";
 import { registerPluginsAPI } from "./plugins";
@@ -53,8 +55,10 @@ export default function createAPI(config: APIConfig = DEFAULT_CONFIG) {
     clipAnnotations: registerClipAnnotationsAPI(instance),
     audio: registerAudioAPI({ baseUrl: config.baseURL }),
     auth: registerAuthAPI(instance),
+    adminUsers: registerAdminUsersAPI(instance),
     clips: registerClipAPI(instance),
     datasets: registerDatasetAPI({ instance }),
+    groups: registerGroupsAPI(instance),
     evaluationSets: registerEvaluationSetAPI(instance, {
       baseUrl: config.baseURL,
     }),

@@ -26,7 +26,8 @@ async def stream_recording_audio(
     start_time: float | None = None,
     end_time: float | None = None,
     speed: float = 1,
-    range: str = Header(None),
+    target_samplerate: int | None = None,
+    range: str | None = Header(None),
 ) -> Response:
     """Stream the audio of a recording.
 
@@ -50,8 +51,15 @@ async def stream_recording_audio(
         recording_uuid,
     )
 
-    start, _ = range.replace("bytes=", "").split("-")
-    start = int(start)
+    # Parse range header if provided, otherwise start from 0
+    requested_end = None
+    if range is not None:
+        range_parts = range.replace("bytes=", "").split("-")
+        start = int(range_parts[0])
+        if len(range_parts) > 1 and range_parts[1]:
+            requested_end = int(range_parts[1])
+    else:
+        start = 0
 
     if start_time is not None:
         start_time = start_time * recording.time_expansion
@@ -59,26 +67,55 @@ async def stream_recording_audio(
     if end_time is not None:
         end_time = end_time * recording.time_expansion
 
-    data, start, end, filesize = api.load_clip_bytes(
+    # Calculate how many frames to read based on the range request
+    frames_to_read = CHUNK_SIZE
+    if requested_end is not None:
+        # Calculate the number of bytes requested
+        requested_bytes = requested_end - start + 1
+        # Convert to frames (assuming 16-bit stereo or mono)
+        frames_to_read = min(requested_bytes // 2, CHUNK_SIZE)
+
+    data, start_byte, end_byte, filesize = api.load_clip_bytes(
         path=audio_dir / recording.path,
         start=start,
-        frames=CHUNK_SIZE,
+        frames=frames_to_read,
         speed=speed * recording.time_expansion,
         start_time=start_time,
         end_time=end_time,
+        target_samplerate=target_samplerate,
     )
 
-    headers = {
-        "Content-Range": f"bytes {start}-{end-1}/{filesize}",
-        "Content-Length": f"{len(data)}",
-        "Accept-Ranges": "bytes",
-    }
-    return Response(
-        content=data,
-        status_code=206,
-        media_type="audio/wav",
-        headers=headers,
-    )
+    # If a specific end was requested and we got more data than requested,
+    # truncate to the exact range
+    if requested_end is not None and len(data) > (requested_end - start + 1):
+        data = data[: requested_end - start + 1]
+        end_byte = start + len(data)
+
+    # If no range header was provided, return 200 OK with full content
+    # Otherwise return 206 Partial Content with range information
+    if range is None:
+        headers = {
+            "Content-Length": f"{len(data)}",
+            "Accept-Ranges": "bytes",
+        }
+        return Response(
+            content=data,
+            status_code=200,
+            media_type="audio/wav",
+            headers=headers,
+        )
+    else:
+        headers = {
+            "Content-Range": f"bytes {start_byte}-{end_byte-1}/{filesize}",
+            "Content-Length": f"{len(data)}",
+            "Accept-Ranges": "bytes",
+        }
+        return Response(
+            content=data,
+            status_code=206,
+            media_type="audio/wav",
+            headers=headers,
+        )
 
 
 @audio_router.get("/download/")

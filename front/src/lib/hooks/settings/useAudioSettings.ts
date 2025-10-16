@@ -101,12 +101,6 @@ function adjustToRecordingRecipe(draft: AudioSettings, recording: Recording) {
     }
   }
 
-  // Make sure the speed is within the valid range
-  const speedOptions = getSpeedOptions(samplerate);
-
-  if (!speedOptions.some((option) => option.value === draft.speed)) {
-    draft.speed = getDefaultSpeedOption(speedOptions).value;
-  }
 }
 
 function updateChannel(draft: AudioSettings, channel: number) {

@@ -155,6 +155,17 @@ function SecondaryNavigation({
           <HomeIcon className="w-6 h-6" />
         </SideMenuLink>
       </li>
+      {user.is_superuser ? (
+        <li className="px-3">
+          <SideMenuLink
+            isActive={pathname?.startsWith("/admin")}
+            tooltip={"Administration"}
+            href="/admin"
+          >
+            <SettingsIcon className="w-6 h-6" />
+          </SideMenuLink>
+        </li>
+      ) : null}
       <HorizontalDivider />
       <li className="px-3">
         <SideMenuButton tooltip={"Log Out"}>

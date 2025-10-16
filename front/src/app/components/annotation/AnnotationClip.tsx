@@ -13,11 +13,13 @@ import useSpectrogramSettings from "@/app/hooks/settings/useSpectrogramSettings"
 import AnnotationControls from "@/lib/components/annotation/AnnotationControls";
 import ClipAnnotationSpectrogramBase from "@/lib/components/clip_annotations/ClipAnnotationSpectrogram";
 import Empty from "@/lib/components/ui/Empty";
+import TimeScaleControl from "@/lib/components/spectrograms/TimeScaleControl";
 
 import useAnnotationState from "@/lib/hooks/annotation/useAnnotationState";
 import useAnnotationTagPallete from "@/lib/hooks/annotation/useAnnotationTagPalette";
 import useSpectrogramAudio from "@/lib/hooks/spectrogram/useSpectrogramAudio";
 import useSpectrogramState from "@/lib/hooks/spectrogram/useSpectrogramState";
+import useTimeScaleControl from "@/lib/hooks/spectrogram/useTimeScaleControl";
 import useClipViewport from "@/lib/hooks/window/useClipViewport";
 
 import type { ClipAnnotation } from "@/lib/types";
@@ -47,6 +49,7 @@ export default function ClipAnnotationSpectrogram({
   const viewport = useClipViewport({
     clip: data.clip,
     spectrogramSettings: spectrogramSettings.settings,
+    audioSettings: audioSettings.settings,
   });
 
   const audio = useSpectrogramAudio({
@@ -62,10 +65,19 @@ export default function ClipAnnotationSpectrogram({
     spectrogramState,
   });
 
+  const timeScaleControl = useTimeScaleControl({
+    viewport,
+    spectrogramSettings,
+    playbackSpeed: audioSettings.settings.speed,
+  });
+
   return (
     <ClipAnnotationSpectrogramBase
       ViewportToolbar={
-        <ViewportToolbar state={spectrogramState} viewport={viewport} />
+        <ViewportToolbar
+          state={spectrogramState}
+          viewport={viewport}
+        />
       }
       Player={
         <Player
@@ -84,6 +96,13 @@ export default function ClipAnnotationSpectrogram({
         />
       }
       ViewportBar={<ViewportBar viewport={viewport} />}
+      TimeScaleControl={
+        <TimeScaleControl
+          value={timeScaleControl.value}
+          onChange={timeScaleControl.onPreviewChange}
+          onChangeEnd={timeScaleControl.onCommit}
+        />
+      }
       AnnotationControls={
         <AnnotationControls
           mode={annotationState.mode}

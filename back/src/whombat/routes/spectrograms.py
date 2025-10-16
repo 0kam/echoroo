@@ -72,9 +72,16 @@ async def get_spectrogram(
         if data_range > 0:
             data = data / data_range
 
+    # Calculate resize dimensions (default 2x for better quality)
+    height, width = data.shape
+    time_scale = spectrogram_parameters.time_scale
+    freq_scale = spectrogram_parameters.freq_scale
+    resize_dims = (int(width * time_scale), int(height * freq_scale))
+
     image = images.array_to_image(
         data,
         cmap=spectrogram_parameters.cmap,
+        resize=resize_dims,
     )
 
     buffer = images.image_to_buffer(image)

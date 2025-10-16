@@ -11,6 +11,7 @@ from whombat.api.datasets import datasets
 from whombat.api.evaluation_sets import evaluation_sets
 from whombat.api.evaluations import evaluations
 from whombat.api.features import features, find_feature, find_feature_value
+from whombat.api.groups import groups
 from whombat.api.model_runs import model_runs
 from whombat.api.notes import notes
 from whombat.api.recordings import recordings
@@ -41,6 +42,7 @@ __all__ = [
     "find_feature_value",
     "find_tag",
     "find_tag_value",
+    "groups",
     "load_audio",
     "load_clip_bytes",
     "model_runs",

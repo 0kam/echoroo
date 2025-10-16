@@ -6,9 +6,9 @@ We are using pydantic to define our settings.
 import warnings
 from functools import lru_cache
 from pathlib import Path
-from typing import Tuple, Type
+from typing import Literal, Tuple, Type
 
-from pydantic import ValidationError
+from pydantic import Field, ValidationError
 from pydantic_settings import (
     BaseSettings,
     PydanticBaseSettingsSource,
@@ -21,6 +21,12 @@ __all__ = [
     "get_settings",
     "Settings",
 ]
+
+
+DEFAULT_CORS_ORIGINS: Tuple[str, ...] = (
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+)
 
 
 class Settings(BaseSettings):
@@ -108,11 +114,19 @@ class Settings(BaseSettings):
     Should be set to INFO in production.
     """
 
-    cors_origins: list[str] = ["*"]
+    cors_origins: list[str] = Field(
+        default_factory=lambda: list(DEFAULT_CORS_ORIGINS)
+    )
     """Allowed origins for CORS."""
 
     open_on_startup: bool = True
     """Open the application in the browser on startup."""
+
+    auth_cookie_secure: bool = False
+    """Whether the auth cookie requires HTTPS."""
+
+    auth_cookie_samesite: Literal["lax", "strict", "none"] = "lax"
+    """SameSite attribute for the auth cookie."""
 
     @classmethod
     def settings_customise_sources(
@@ -145,7 +159,7 @@ def load_settings_from_file() -> Settings:
         store_default_settings()
 
     try:
-        return Settings.model_validate_json(settings_file.read_text())
+        settings = Settings.model_validate_json(settings_file.read_text())
     except ValidationError:
         # NOTE: This should only happen if the user has manually edited
         # the settings file and made a mistake, or if the settings schema
@@ -157,8 +171,9 @@ def load_settings_from_file() -> Settings:
             stacklevel=2,
         )
         store_default_settings()
+        settings = Settings.model_validate_json(settings_file.read_text())
 
-    return Settings.model_validate_json(settings_file.read_text())
+    return migrate_settings(settings_file, settings)
 
 
 def store_default_settings() -> None:
@@ -176,3 +191,21 @@ def write_settings_to_file(settings: Settings) -> None:
 
     settings_file.write_text(settings.model_dump_json())
     get_settings.cache_clear()
+
+
+def migrate_settings(settings_file: Path, settings: Settings) -> Settings:
+    """Update settings that use legacy defaults incompatible with the current app."""
+
+    if settings.cors_origins == ["*"]:
+        warnings.warn(
+            "Detected legacy '*' CORS origin configuration. "
+            "Updating to a localhost allowlist to enable credentialed requests.",
+            stacklevel=2,
+        )
+        updated_settings = settings.model_copy(
+            update={"cors_origins": list(DEFAULT_CORS_ORIGINS)}
+        )
+        settings_file.write_text(updated_settings.model_dump_json())
+        return updated_settings
+
+    return settings

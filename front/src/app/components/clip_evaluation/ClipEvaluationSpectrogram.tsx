@@ -9,9 +9,11 @@ import useAudioSettings from "@/app/hooks/settings/useAudioSettings";
 import useSpectrogramSettings from "@/app/hooks/settings/useSpectrogramSettings";
 
 import RecordingSpectrogram from "@/lib/components/recordings/RecordingSpectrogram";
+import TimeScaleControl from "@/lib/components/spectrograms/TimeScaleControl";
 
 import useSpectrogramAudio from "@/lib/hooks/spectrogram/useSpectrogramAudio";
 import useSpectrogramState from "@/lib/hooks/spectrogram/useSpectrogramState";
+import useTimeScaleControl from "@/lib/hooks/spectrogram/useTimeScaleControl";
 import useClipViewport from "@/lib/hooks/window/useClipViewport";
 
 import type { ClipEvaluation, SpectrogramProps } from "@/lib/types";
@@ -36,6 +38,7 @@ export default function ClipEvaluationSpectrogram(
   const viewport = useClipViewport({
     clip,
     spectrogramSettings: spectrogramSettings.settings,
+    audioSettings: audioSettings.settings,
   });
 
   const audio = useSpectrogramAudio({
@@ -50,6 +53,12 @@ export default function ClipEvaluationSpectrogram(
     withHotKeys = true,
   } = props;
 
+  const timeScaleControl = useTimeScaleControl({
+    viewport,
+    spectrogramSettings,
+    playbackSpeed: audioSettings.settings.speed,
+  });
+
   useSpectrogramHotkeys({
     spectrogramState: state,
     audio,
@@ -61,7 +70,19 @@ export default function ClipEvaluationSpectrogram(
     <RecordingSpectrogram
       ViewportToolbar={
         withControls ? (
-          <ViewportToolbar state={state} viewport={viewport} />
+          <ViewportToolbar
+            state={state}
+            viewport={viewport}
+          />
+        ) : undefined
+      }
+      TimeScaleControl={
+        withControls ? (
+          <TimeScaleControl
+            value={timeScaleControl.value}
+            onChange={timeScaleControl.onPreviewChange}
+            onChangeEnd={timeScaleControl.onCommit}
+          />
         ) : undefined
       }
       Player={

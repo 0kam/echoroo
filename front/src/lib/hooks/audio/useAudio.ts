@@ -61,9 +61,10 @@ export default function useAudio({
 
   useEffect(() => {
     const { current } = audio;
-    current.preload = "none";
+    current.preload = "metadata";
     current.src = url;
     current.currentTime = 0;
+    current.load(); // Explicitly load the audio
 
     setIsPlaying(false);
     setTime(0);
@@ -131,9 +132,11 @@ export default function useAudio({
   }, [onEnded]);
 
   useEffect(() => {
-    if (onError == null) return;
     const { current } = audio;
-    const handleError = () => onError();
+    const handleError = (e: Event) => {
+      console.error('Audio error event:', e, 'Audio element error:', current.error);
+      onError?.();
+    };
     current.addEventListener("error", handleError);
     return () => current.removeEventListener("error", handleError);
   }, [onError]);
@@ -212,17 +215,20 @@ export default function useAudio({
 
   const handlePlay = useCallback(() => {
     if (lockPlay.current) return;
+    console.log('Play button clicked, audio URL:', audio.current.src);
     const promise = audio.current.play();
 
     if (promise) {
       lockPlay.current = true;
       promise
         .then(() => {
+          console.log('Audio playback started successfully');
           setIsPlaying(true);
           onPlay?.();
           lockPlay.current = false;
         })
-        .catch(() => {
+        .catch((error) => {
+          console.error('Audio playback failed:', error);
           lockPlay.current = false;
         });
     } else {

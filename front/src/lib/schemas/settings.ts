@@ -109,6 +109,8 @@ export const SpectrogramSettingsSchema = z.object({
   normalize: z.boolean().default(false),
   pcen: z.boolean().default(false),
   cmap: z.enum(COLORMAPS).default(DEFAULT_CMAP),
+  time_scale: z.coerce.number().positive().min(1.0).max(10).default(1.0),
+  freq_scale: z.coerce.number().positive().min(0.1).max(10).default(2.0),
 });
 
 export const SpectrogramParametersSchema = z
@@ -139,6 +141,8 @@ export const SpectrogramParametersSchema = z
     channel: z.coerce.number().nonnegative().int().default(0),
     pcen: z.boolean().default(false),
     cmap: z.string().default(DEFAULT_CMAP),
+    time_scale: z.coerce.number().positive().min(1.0).max(10).default(1.0),
+    freq_scale: z.coerce.number().positive().min(0.1).max(10).default(2.0),
   })
   .refine(
     (data) => {

@@ -34,6 +34,7 @@ from whombat.models.evaluation_set import (
     EvaluationSetUserRun,
 )
 from whombat.models.feature import FeatureName
+from whombat.models.group import Group, GroupMembership, GroupRole
 from whombat.models.model_run import (
     ModelRun,
     ModelRunEvaluation,
@@ -90,6 +91,9 @@ __all__ = [
     "DatasetRecording",
     "Evaluation",
     "EvaluationMetric",
+    "Group",
+    "GroupMembership",
+    "GroupRole",
     "EvaluationSet",
     "EvaluationSetAnnotation",
     "EvaluationSetModelRun",

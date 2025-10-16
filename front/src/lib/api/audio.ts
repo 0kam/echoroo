@@ -19,11 +19,13 @@ export function registerAudioAPI({
     speed = 1,
     startTime,
     endTime,
+    targetSamplerate,
   }: {
     recording: types.Recording;
     speed?: number;
     startTime?: number;
     endTime?: number;
+    targetSamplerate?: number;
   }) {
     // Get url
     const params: Record<string, string> = {
@@ -38,6 +40,9 @@ export function registerAudioAPI({
     }
     if (endTime != null) {
       params["end_time"] = endTime.toString();
+    }
+    if (targetSamplerate != null) {
+      params["target_samplerate"] = targetSamplerate.toString();
     }
 
     const urlparams = new URLSearchParams(params);

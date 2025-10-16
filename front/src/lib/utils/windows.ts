@@ -15,7 +15,7 @@ import type {
 import { computeGeometryBBox } from "./geometry";
 
 /** Size of the target initial spectrogram in pixels. */
-const TARGET_INITIAL_SIZE = 512 * 1024;
+const TARGET_INITIAL_SIZE = 512 * 1024 * 5;
 
 /** Minimum window bandwidth in Hz. */
 const MIN_WINDOW_BANDWIDTH = 0.1;
@@ -53,14 +53,17 @@ export function getGeometryViewingWindow({
   recording,
   timeBuffer = 1,
   freqBuffer = null,
+  effectiveSamplerate,
 }: {
   geometry: Geometry;
   recording: Recording;
   timeBuffer?: number;
   freqBuffer?: number | null;
+  effectiveSamplerate?: number;
 }): SpectrogramWindow {
   const [startTime, lowFreq, endTime, highFreq] = computeGeometryBBox(geometry);
-  const maxFreq = recording.samplerate / 2;
+  const samplerate = effectiveSamplerate ?? recording.samplerate;
+  const maxFreq = samplerate / 2;
 
   const freq =
     freqBuffer == null

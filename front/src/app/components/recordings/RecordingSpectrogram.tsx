@@ -9,9 +9,13 @@ import useAudioSettings from "@/app/hooks/settings/useAudioSettings";
 import useSpectrogramSettings from "@/app/hooks/settings/useSpectrogramSettings";
 
 import RecordingSpectrogramBase from "@/lib/components/recordings/RecordingSpectrogram";
+import FreqScaleControl from "@/lib/components/spectrograms/FreqScaleControl";
+import TimeScaleControl from "@/lib/components/spectrograms/TimeScaleControl";
 
+import useFreqScaleControl from "@/lib/hooks/spectrogram/useFreqScaleControl";
 import useSpectrogramAudio from "@/lib/hooks/spectrogram/useSpectrogramAudio";
 import useSpectrogramState from "@/lib/hooks/spectrogram/useSpectrogramState";
+import useTimeScaleControl from "@/lib/hooks/spectrogram/useTimeScaleControl";
 import useRecordingViewport from "@/lib/hooks/window/useRecordingViewport";
 
 import type { Recording, SpectrogramProps } from "@/lib/types";
@@ -31,6 +35,7 @@ export default function RecordingSpectrogram({
   const viewport = useRecordingViewport({
     recording,
     spectrogramSettings: spectrogramSettings.settings,
+    audioSettings: audioSettings.settings,
   });
 
   const audio = useSpectrogramAudio({
@@ -52,11 +57,43 @@ export default function RecordingSpectrogram({
     enabled: withHotKeys,
   });
 
+  const timeScaleControl = useTimeScaleControl({
+    viewport,
+    spectrogramSettings,
+    playbackSpeed: audioSettings.settings.speed,
+  });
+
+  const freqScaleControl = useFreqScaleControl({
+    viewport,
+    spectrogramSettings,
+  });
+
   return (
     <RecordingSpectrogramBase
       ViewportToolbar={
         withControls ? (
-          <ViewportToolbar state={state} viewport={viewport} />
+          <ViewportToolbar
+            state={state}
+            viewport={viewport}
+          />
+        ) : undefined
+      }
+      TimeScaleControl={
+        withControls ? (
+          <TimeScaleControl
+            value={timeScaleControl.value}
+            onChange={timeScaleControl.onPreviewChange}
+            onChangeEnd={timeScaleControl.onCommit}
+          />
+        ) : undefined
+      }
+      FreqScaleControl={
+        withControls ? (
+          <FreqScaleControl
+            value={freqScaleControl.value}
+            onChange={freqScaleControl.onPreviewChange}
+            onChangeEnd={freqScaleControl.onCommit}
+          />
         ) : undefined
       }
       Player={

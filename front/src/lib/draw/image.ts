@@ -129,7 +129,11 @@ export function drawImageOnCanvas(
     bounds: viewport,
   });
 
+  // Enable high-quality image smoothing for better upscaling
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
   ctx.globalAlpha = 1;
+
   ctx.drawImage(
     image,
     source.left,
@@ -204,6 +208,7 @@ export interface DrawImageProps {
   loading?: boolean;
   error?: boolean;
   overlap?: number;
+  timeScale?: number;
 }
 
 export default function drawImage({

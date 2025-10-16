@@ -35,6 +35,7 @@ class UserCreate(schemas.BaseUserCreate):
 
     username: str
     name: str | None = None
+    is_superuser: bool = False
 
 
 class UserUpdate(schemas.BaseUserUpdate):
@@ -42,3 +43,11 @@ class UserUpdate(schemas.BaseUserUpdate):
 
     username: str | None = None
     name: str | None = None
+
+
+class UserAdminUpdate(UserUpdate):
+    """Schema for administrative user updates."""
+
+    is_superuser: bool | None = None
+    is_active: bool | None = None
+    is_verified: bool | None = None

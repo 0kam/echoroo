@@ -13,13 +13,25 @@ __all__ = [
 ]
 
 
-def array_to_image(array: np.ndarray, cmap: str) -> Image:
+def array_to_image(
+    array: np.ndarray,
+    cmap: str,
+    resize: tuple[int, int] | None = None,
+    resample: int = img.Resampling.LANCZOS,
+) -> Image:
     """Convert a numpy array to a PIL image.
 
     Parameters
     ----------
     array : np.ndarray
         The array to convert into an image. It must be a 2D array.
+    cmap : str
+        The colormap to use.
+    resize : tuple[int, int] | None
+        Optional target size (width, height) to resize the image to.
+        If None, uses the original array size.
+    resample : int
+        Resampling filter to use for resizing. Default is LANCZOS for high quality.
 
     Returns
     -------
@@ -39,7 +51,15 @@ def array_to_image(array: np.ndarray, cmap: str) -> Image:
     # Flip the array vertically
     array = np.flipud(array)
 
-    return img.fromarray(np.uint8(colormap(array) * 255))
+    # Convert to image
+    image = img.fromarray(np.uint8(colormap(array) * 255))
+
+    # Resize if requested
+    if resize is not None:
+        width, height = resize
+        image = image.resize((width, height), resample=resample)
+
+    return image
 
 
 def image_to_buffer(image: Image, fmt: str = "png") -> BytesIO:

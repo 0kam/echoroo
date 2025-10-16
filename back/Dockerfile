@@ -6,6 +6,9 @@ WORKDIR /code
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libexpat1 \
     libsndfile1 \
+    gdal-bin \
+    libgdal-dev \
+    build-essential \
     && rm -rf /var/lib/apt/lists/*
 
 RUN --mount=type=cache,target=/root/.cache/uv \

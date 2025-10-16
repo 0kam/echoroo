@@ -39,6 +39,8 @@ export type SpectrogramSettingsAction =
   | { type: "setWindow"; window: (typeof WINDOWS)[number] }
   | { type: "setDBRange"; min?: number; max?: number }
   | { type: "setColormap"; colormap: (typeof COLORMAPS)[number] }
+  | { type: "setTimeScale"; timeScale: number }
+  | { type: "setFreqScale"; freqScale: number }
   | { type: "togglePCEN" }
   | { type: "toggleNormalize" }
   | { type: "reset" };
@@ -111,6 +113,20 @@ function createSpectrogramSettingsReducer({
           );
         }
         draft.cmap = action.colormap;
+        break;
+      }
+      case "setTimeScale": {
+        if (action.timeScale < 1.0 || action.timeScale > 10) {
+          throw new Error("Time scale must be between 1.0 and 10");
+        }
+        draft.time_scale = action.timeScale;
+        break;
+      }
+      case "setFreqScale": {
+        if (action.freqScale <= 0.1 || action.freqScale > 10) {
+          throw new Error("Frequency scale must be between 0.1 and 10");
+        }
+        draft.freq_scale = action.freqScale;
         break;
       }
       case "togglePCEN": {

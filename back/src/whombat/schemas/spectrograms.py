@@ -114,3 +114,9 @@ class SpectrogramParameters(STFTParameters, AmplitudeParameters):
 
     cmap: str = "gray"
     """Colormap to use for spectrogram."""
+
+    time_scale: float = Field(default=2.0, gt=0.1, le=10.0)
+    """Time direction scaling factor for image resize (default 2.0 for better quality)."""
+
+    freq_scale: float = Field(default=2.0, gt=0.1, le=10.0)
+    """Frequency direction scaling factor for image resize (default 2.0 for better quality)."""

@@ -11,6 +11,12 @@ export const SPECTROGRAM_CHUNK_SIZE = 512 * 512;
 export const SPECTROGRAM_CHUNK_BUFFER = 10;
 
 /**
+ * The target duration for each spectrogram chunk in seconds.
+ * This is kept constant to ensure consistent time resolution regardless of window size.
+ */
+export const SPECTROGRAM_CHUNK_DURATION = 5.0;
+
+/**
  * Calculates the time intervals for spectrogram chunks based on recording and
  * settings.
  */
@@ -18,8 +24,8 @@ export function calculateSpectrogramChunkIntervals({
   duration,
   windowSize,
   overlap,
-  samplerate,
-  chunkSize = SPECTROGRAM_CHUNK_SIZE,
+  samplerate: _samplerate,
+  chunkSize: _chunkSize = SPECTROGRAM_CHUNK_SIZE,
   chunkBuffer = SPECTROGRAM_CHUNK_BUFFER,
 }: {
   /** The duration of the recording in seconds. */
@@ -28,18 +34,19 @@ export function calculateSpectrogramChunkIntervals({
   windowSize: number;
   /** The overlap fraction between consecutive windows. */
   overlap: number;
-  /** The audio sample rate in Hz. */
+  /** The audio sample rate in Hz. (kept for API compatibility) */
   samplerate: number;
-  /** The size of each spectrogram chunk in pixels. */
+  /** The size of each spectrogram chunk in pixels. (kept for API compatibility) */
   chunkSize?: number;
   /** The overlap fraction between consecutive chunks. */
   chunkBuffer?: number;
 }): Chunk[] {
-  const approxSpecHeight = (windowSize * samplerate) / 2;
-  const approxSpecWidth = chunkSize / approxSpecHeight;
+  // Use fixed time duration instead of calculating from chunkSize
+  // This ensures consistent time resolution regardless of window size settings
+  const chunkDuration = SPECTROGRAM_CHUNK_DURATION;
   const windowWidth = (1 - overlap) * windowSize;
-  const chunkDuration = approxSpecWidth * (1 - overlap) * windowSize;
   const buffer = (chunkBuffer - 1) * windowWidth + windowSize;
+
   return Array.from({ length: Math.ceil(duration / chunkDuration) }, (_, i) => {
     return {
       interval: {

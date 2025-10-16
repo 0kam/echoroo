@@ -14,6 +14,7 @@ from whombat.routes.datasets import dataset_router
 from whombat.routes.evaluation_sets import evaluation_sets_router
 from whombat.routes.evaluations import evaluations_router
 from whombat.routes.features import features_router
+from whombat.routes.groups import get_groups_router
 from whombat.routes.model_runs import model_runs_router
 from whombat.routes.notes import notes_router
 from whombat.routes.plugins import plugin_router
@@ -31,7 +32,7 @@ from whombat.routes.sound_events import sound_events_router
 from whombat.routes.spectrograms import spectrograms_router
 from whombat.routes.tags import tags_router
 from whombat.routes.user_runs import get_user_runs_router
-from whombat.routes.users import get_users_router
+from whombat.routes.users import get_admin_users_router, get_users_router
 from whombat.system.settings import Settings
 
 __all__ = [
@@ -56,6 +57,18 @@ def get_main_router(settings: Settings):
         users_router,
         prefix="/users",
         tags=["Users"],
+    )
+    admin_users_router = get_admin_users_router(settings)
+    main_router.include_router(
+        admin_users_router,
+        prefix="/admin/users",
+        tags=["Admin Users"],
+    )
+    groups_router = get_groups_router(settings)
+    main_router.include_router(
+        groups_router,
+        prefix="/groups",
+        tags=["Groups"],
     )
     main_router.include_router(
         tags_router,

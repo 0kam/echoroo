@@ -13,10 +13,12 @@ import useSpectrogramSettings from "@/app/hooks/settings/useSpectrogramSettings"
 import AnnotationControls from "@/lib/components/annotation/AnnotationControls";
 import ClipAnnotationSpectrogramBase from "@/lib/components/clip_annotations/ClipAnnotationSpectrogram";
 import Empty from "@/lib/components/ui/Empty";
+import TimeScaleControl from "@/lib/components/spectrograms/TimeScaleControl";
 
 import useAnnotationState from "@/lib/hooks/annotation/useAnnotationState";
 import useSpectrogramAudio from "@/lib/hooks/spectrogram/useSpectrogramAudio";
 import useSpectrogramState from "@/lib/hooks/spectrogram/useSpectrogramState";
+import useTimeScaleControl from "@/lib/hooks/spectrogram/useTimeScaleControl";
 import useClipViewport from "@/lib/hooks/window/useClipViewport";
 
 import type { ClipAnnotation } from "@/lib/types";
@@ -60,6 +62,7 @@ export default function ClipAnnotationSpectrogram({
   const viewport = useClipViewport({
     clip: data.clip,
     spectrogramSettings: spectrogramSettings.settings,
+    audioSettings: audioSettings.settings,
   });
 
   const audio = useSpectrogramAudio({
@@ -74,6 +77,12 @@ export default function ClipAnnotationSpectrogram({
     viewport,
     spectrogramState,
     enabled: withHotKeys,
+  });
+
+  const timeScaleControl = useTimeScaleControl({
+    viewport,
+    spectrogramSettings,
+    playbackSpeed: audioSettings.settings.speed,
   });
 
   return (
@@ -100,6 +109,15 @@ export default function ClipAnnotationSpectrogram({
             samplerate={data.clip.recording.samplerate}
             audioSettings={audioSettings}
             spectrogramSettings={spectrogramSettings}
+          />
+        ) : undefined
+      }
+      TimeScaleControl={
+        withControls ? (
+          <TimeScaleControl
+            value={timeScaleControl.value}
+            onChange={timeScaleControl.onPreviewChange}
+            onChangeEnd={timeScaleControl.onCommit}
           />
         ) : undefined
       }

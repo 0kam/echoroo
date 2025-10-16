@@ -48,7 +48,10 @@ export default function useActiveUser({
   });
 
   return {
-    ...query,
+    data: query.data,
+    isLoading: query.isLoading,
+    isError: query.isError,
+    refetch: query.refetch,
     update,
     logout,
   };

@@ -149,13 +149,18 @@ export default function useSpectrogramImages({
     (ctx: CanvasRenderingContext2D, viewport: SpectrogramWindow) => {
       const { current } = images;
 
+      // Calculate effective samplerate based on resampling settings
+      const effectiveSamplerate = params.resample
+        ? (params.samplerate ?? recording.samplerate)
+        : recording.samplerate;
+      const maxFreq = effectiveSamplerate / 2;
+
       const shouldLoad = chunks.filter(
         ({ interval, isReady, isLoading, isError }) => {
           if (isReady || isLoading || isError) return false;
           // Should start loading if the interval is close to the viewport
           return (
-            intervalIntersection(interval, scaleInterval(viewport.time, 4)) !=
-            null
+            intervalIntersection(interval, scaleInterval(viewport.time, 4)) != null
           );
         },
       );
@@ -179,14 +184,14 @@ export default function useSpectrogramImages({
         drawImage({
           ctx,
           image,
-          viewport: viewport,
+          viewport,
           imageBounds: {
             time: interval,
-            freq: { min: 0, max: recording.samplerate / 2 },
+            freq: { min: 0, max: maxFreq },
           },
           buffer: {
             time: buffer,
-            freq: { min: 0, max: recording.samplerate / 2 },
+            freq: { min: 0, max: maxFreq },
           },
           loading: isLoading,
           error: isError,
@@ -196,7 +201,7 @@ export default function useSpectrogramImages({
       drawTimeAxis(ctx, viewport.time);
       drawFreqAxis(ctx, viewport.freq);
     },
-    [chunks, recording.samplerate, startLoading],
+    [chunks, recording.samplerate, params.resample, params.samplerate, startLoading],
   );
 
   return {

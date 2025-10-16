@@ -37,14 +37,18 @@ export default function useRecordingAudio({
   const { speed } = audioSettings;
 
   const url = useMemo(
-    () =>
-      api.audio.getStreamUrl({
+    () => {
+      const streamUrl = api.audio.getStreamUrl({
         recording,
         startTime,
         endTime,
         speed: audioSettings.speed,
-      }),
-    [recording, startTime, endTime, audioSettings.speed],
+        targetSamplerate: audioSettings.resample ? audioSettings.samplerate : undefined,
+      });
+      console.log('Generated audio stream URL:', streamUrl);
+      return streamUrl;
+    },
+    [recording, startTime, endTime, audioSettings.speed, audioSettings.resample, audioSettings.samplerate],
   );
 
   const handleTimeUpdate = useCallback(

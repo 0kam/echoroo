@@ -7,6 +7,8 @@ const RecordingSpectrogram = memo(function RecordingSpectrogram(props: {
   Player?: JSX.Element;
   SettingsMenu?: JSX.Element;
   ViewportBar?: JSX.Element;
+  TimeScaleControl?: JSX.Element;
+  FreqScaleControl?: JSX.Element;
   Canvas: JSX.Element;
 }) {
   return (
@@ -17,6 +19,8 @@ const RecordingSpectrogram = memo(function RecordingSpectrogram(props: {
         {props.SettingsMenu}
       </div>
       {props.Canvas}
+      {props.TimeScaleControl}
+      {props.FreqScaleControl}
       {props.ViewportBar}
     </Card>
   );

@@ -17,7 +17,7 @@ export default function ViewportToolbar({
   onZoomClick?: () => void;
 }) {
   return (
-    <div className="flex space-x-2">
+    <div className="flex space-x-2 items-center">
       <Tooltip tooltip="Reset view" placement="bottom">
         <Button variant="secondary" onClick={onResetClick}>
           <HomeIcon className="w-5 h-5" />

@@ -26,6 +26,8 @@ export default function useSpectrogramParameters({
     normalize,
     pcen,
     clamp,
+    time_scale,
+    freq_scale,
   } = spectrogramSettings;
 
   return useMemo(
@@ -46,6 +48,8 @@ export default function useSpectrogramParameters({
       normalize,
       pcen,
       clamp,
+      time_scale,
+      freq_scale,
     }),
     [
       channel,
@@ -64,6 +68,8 @@ export default function useSpectrogramParameters({
       normalize,
       pcen,
       clamp,
+      time_scale,
+      freq_scale,
     ],
   );
 }

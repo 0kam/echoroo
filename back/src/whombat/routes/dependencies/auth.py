@@ -55,3 +55,12 @@ def get_current_user_dependency(
     """Get the current user."""
     fastapi_users = get_users_api(settings)
     return fastapi_users.current_user(active=True)
+
+
+def get_current_admin_dependency(
+    settings: WhombatSettings,
+):
+    """Return a dependency that requires the current user to be an admin."""
+
+    fastapi_users = get_users_api(settings)
+    return fastapi_users.current_user(active=True, superuser=True)

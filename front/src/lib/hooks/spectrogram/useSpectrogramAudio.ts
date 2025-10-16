@@ -42,7 +42,27 @@ export default function useSpectrogramAudio({
 
   // Adjust audio settings for compatibility with the recording
   const adjustedAudioSettings = useMemo(() => {
-    return adjustToRecording(audioSettings, recording);
+    const adjusted = adjustToRecording(audioSettings, recording);
+    
+    // For ultrasonic recordings, dynamically resample based on playback speed
+    // to ensure the effective samplerate stays within browser limits
+    const MAX_BROWSER_SAMPLERATE = 96000;
+    const effectiveSamplerate = recording.samplerate * adjusted.speed;
+    
+    if (effectiveSamplerate > MAX_BROWSER_SAMPLERATE) {
+      // Calculate target samplerate that will result in MAX_BROWSER_SAMPLERATE when played at current speed
+      // target * speed = MAX_BROWSER_SAMPLERATE
+      // target = MAX_BROWSER_SAMPLERATE / speed
+      const targetSamplerate = Math.floor(MAX_BROWSER_SAMPLERATE / adjusted.speed);
+      
+      return {
+        ...adjusted,
+        resample: true,
+        samplerate: targetSamplerate,
+      };
+    }
+    
+    return adjusted;
   }, [audioSettings, recording]);
 
   // Callback function to be executed when the audio playback time updates.
