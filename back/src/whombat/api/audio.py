@@ -1,13 +1,21 @@
 """API functions to load audio."""
 
+from __future__ import annotations
+
+import math
 import struct
+from dataclasses import dataclass
 from pathlib import Path
 
+import numpy as np
 import soundfile as sf
-from scipy import signal
-from soundevent import audio, data
-from soundevent.arrays import extend_dim
+import torch
+import torchaudio
+import xarray as xr
+from soundevent.arrays import ArrayAttrs, Dimensions, create_time_range, extend_dim
+from soundevent.audio.attributes import AudioAttrs
 from soundevent.audio.io import audio_to_bytes
+from torchaudio import functional as taF
 
 from whombat import schemas
 
@@ -19,6 +27,83 @@ __all__ = [
 CHUNK_SIZE = 512 * 1024
 HEADER_FORMAT = "<4si4s4sihhiihh4si"
 HEADER_SIZE = struct.calcsize(HEADER_FORMAT)
+
+
+@dataclass
+class _AudioMetadata:
+    sample_rate: int
+    num_frames: int
+    num_channels: int
+
+
+def _probe_audio(path: Path) -> _AudioMetadata:
+    """Extract audio metadata without loading the full file."""
+    with sf.SoundFile(str(path)) as sf_file:
+        return _AudioMetadata(
+            sample_rate=int(sf_file.samplerate),
+            num_frames=int(len(sf_file)),
+            num_channels=int(sf_file.channels),
+        )
+
+
+def _apply_filters(
+    waveform: torch.Tensor,
+    samplerate: int,
+    low_freq: float | None,
+    high_freq: float | None,
+    order: int,
+) -> torch.Tensor:
+    """Apply simple cascaded biquad filters using torchaudio."""
+    if samplerate <= 0 or waveform.numel() == 0:
+        return waveform
+
+    nyquist = samplerate / 2
+
+    if low_freq is not None:
+        if low_freq <= 0:
+            raise ValueError("low_freq must be greater than 0 Hz.")
+        if low_freq >= nyquist:
+            raise ValueError(
+                "low_freq must be less than the Nyquist frequency."
+            )
+
+    if high_freq is not None:
+        if high_freq <= 0:
+            raise ValueError("high_freq must be greater than 0 Hz.")
+        if high_freq >= nyquist:
+            raise ValueError(
+                "high_freq must be less than the Nyquist frequency."
+            )
+
+    if (
+        low_freq is not None
+        and high_freq is not None
+        and low_freq >= high_freq
+    ):
+        raise ValueError("low_freq must be less than high_freq.")
+
+    passes = max(1, int(math.ceil(max(order, 1) / 2)))
+    filtered = waveform
+
+    if low_freq is not None:
+        for _ in range(passes):
+            filtered = taF.highpass_biquad(
+                filtered,
+                samplerate,
+                cutoff_freq=low_freq,
+                Q=0.707,
+            )
+
+    if high_freq is not None:
+        for _ in range(passes):
+            filtered = taF.lowpass_biquad(
+                filtered,
+                samplerate,
+                cutoff_freq=high_freq,
+                Q=0.707,
+            )
+
+    return filtered
 
 
 def load_audio(
@@ -61,45 +146,127 @@ def load_audio(
     if end_time is None:
         end_time = recording.duration
 
-    clip = data.Clip(
-        recording=data.Recording(
-            uuid=recording.uuid,
-            path=audio_dir / recording.path,
-            duration=recording.duration,
-            samplerate=recording.samplerate,
-            channels=recording.channels,
-            time_expansion=recording.time_expansion,
-        ),
-        start_time=start_time,
-        end_time=end_time,
+    audio_path = (audio_dir / recording.path).resolve()
+    metadata = _probe_audio(audio_path)
+
+    file_samplerate = metadata.sample_rate
+    total_frames = metadata.num_frames
+
+    load_start = max(start_time, 0.0)
+    load_end = max(end_time, load_start)
+
+    frame_offset = int(math.floor(load_start * file_samplerate))
+    frame_offset = max(0, min(frame_offset, total_frames))
+
+    expected_frames = int(
+        math.floor((load_end - load_start) * file_samplerate)
+    )
+    expected_frames = max(expected_frames, 0)
+    if frame_offset + expected_frames > total_frames:
+        expected_frames = max(total_frames - frame_offset, 0)
+
+    if expected_frames > 0 and frame_offset < total_frames:
+        segment, detected_samplerate = torchaudio.load(
+            str(audio_path),
+            frame_offset=frame_offset,
+            num_frames=expected_frames,
+        )
+        file_samplerate = detected_samplerate
+    else:
+        segment = torch.zeros(
+            (metadata.num_channels, 0),
+            dtype=torch.float32,
+        )
+
+    segment = segment.to(torch.float32)
+    channels = (
+        segment.shape[0]
+        or metadata.num_channels
+        or recording.channels
+        or 1
     )
 
-    if clip.start_time < 0:
-        clip.start_time = 0
+    waveform = torch.zeros(
+        (channels, expected_frames),
+        dtype=segment.dtype,
+    )
+    if segment.numel() > 0:
+        frames_to_copy = min(segment.shape[1], expected_frames)
+        waveform[
+            : segment.shape[0], :frames_to_copy
+        ] = segment[:, :frames_to_copy]
 
-    # Load audio.
-    wave = audio.load_clip(clip)
-
-    if start_time < 0:
-        wave = extend_dim(wave, "time", start=start_time)
+    current_samplerate = file_samplerate
 
     # Resample audio.
-    if audio_parameters.resample:
-        wave = audio.resample(wave, audio_parameters.samplerate)
+    if (
+        audio_parameters.resample
+        and audio_parameters.samplerate != current_samplerate
+    ):
+        target_samplerate = audio_parameters.samplerate
+        if waveform.shape[1] > 0:
+            waveform = taF.resample(
+                waveform,
+                current_samplerate,
+                target_samplerate,
+            )
+        current_samplerate = target_samplerate
 
     # Filter audio.
     if (
-        audio_parameters.low_freq is not None
-        or audio_parameters.high_freq is not None
+        waveform.shape[1] > 0
+        and (
+            audio_parameters.low_freq is not None
+            or audio_parameters.high_freq is not None
+        )
     ):
-        wave = audio.filter(
-            wave,
-            low_freq=audio_parameters.low_freq,
-            high_freq=audio_parameters.high_freq,
-            order=audio_parameters.filter_order,
+        waveform = _apply_filters(
+            waveform,
+            current_samplerate,
+            audio_parameters.low_freq,
+            audio_parameters.high_freq,
+            audio_parameters.filter_order,
         )
 
-    return wave
+    actual_start_time = (
+        frame_offset / file_samplerate if file_samplerate > 0 else 0.0
+    )
+    duration_seconds = (
+        waveform.shape[1] / current_samplerate
+        if current_samplerate > 0
+        else 0.0
+    )
+    time_coord = create_time_range(
+        start_time=actual_start_time,
+        end_time=actual_start_time + duration_seconds,
+        samplerate=current_samplerate if current_samplerate > 0 else 1,
+    )
+
+    data_array = xr.DataArray(
+        data=waveform.transpose(1, 0).cpu().numpy(),
+        dims=(Dimensions.time.value, Dimensions.channel.value),
+        coords={
+            Dimensions.time.value: time_coord,
+            Dimensions.channel.value: np.arange(waveform.shape[0]),
+        },
+        attrs={
+            AudioAttrs.recording_id.value: str(recording.uuid),
+            AudioAttrs.path.value: str(recording.path),
+            AudioAttrs.samplerate.value: current_samplerate,
+            ArrayAttrs.units.value: "V",
+            ArrayAttrs.standard_name.value: "amplitude",
+            ArrayAttrs.long_name.value: "Amplitude",
+        },
+    )
+
+    if start_time < 0:
+        data_array = extend_dim(
+            data_array,
+            Dimensions.time.value,
+            start=start_time,
+        )
+
+    return data_array
 
 
 BIT_DEPTH_MAP: dict[str, int] = {
@@ -202,12 +369,26 @@ def load_clip_bytes(
         # Resample if target_samplerate is provided
         effective_samplerate = samplerate
         if target_samplerate is not None and target_samplerate != samplerate:
-            # Calculate the number of samples in the resampled audio
-            num_samples = int(len(audio_data) * target_samplerate / samplerate)
-            # Resample each channel
-            resampled_data = signal.resample(audio_data, num_samples, axis=0)
-            audio_data = resampled_data
-            effective_samplerate = target_samplerate
+            try:
+                waveform = torch.from_numpy(audio_data.T).to(torch.float32)
+                if waveform.shape[1] > 0:
+                    waveform = taF.resample(
+                        waveform,
+                        samplerate,
+                        target_samplerate,
+                    )
+                audio_data = waveform.T.cpu().numpy()
+                effective_samplerate = target_samplerate
+            except Exception as e:
+                # Log warning and fallback to original samplerate
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.warning(
+                    f"Resampling failed from {samplerate}Hz to {target_samplerate}Hz: {e}. "
+                    f"Using original samplerate."
+                )
+                # Keep original audio_data and samplerate
+                effective_samplerate = samplerate
 
         # Convert the audio data to raw bytes
         audio_bytes = audio_to_bytes(
