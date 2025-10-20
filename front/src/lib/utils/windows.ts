@@ -23,6 +23,9 @@ const MIN_WINDOW_BANDWIDTH = 0.1;
 /** Minimum window duration in seconds */
 const MIN_WINDOW_DURATION = 0.001;
 
+/** Default initial viewing duration in seconds. */
+const DEFAULT_INITIAL_DURATION = 20;
+
 export function getInitialViewingWindow({
   startTime,
   endTime,
@@ -133,12 +136,7 @@ export function getInitialDuration({
   overlap?: number;
 }) {
   const duration = interval.max - interval.min;
-  const n_fft = Math.floor(windowSize * samplerate);
-  const specHeight = Math.floor(n_fft / 2) + 1;
-  const specWidth = TARGET_INITIAL_SIZE / specHeight;
-  const hopDuration = windowSize * (1 - overlap);
-  const windowWidth = specWidth * hopDuration;
-  return Math.min(duration, windowWidth);
+  return Math.min(duration, DEFAULT_INITIAL_DURATION);
 }
 
 /**

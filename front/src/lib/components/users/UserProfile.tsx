@@ -50,7 +50,7 @@ export default function UserProfile(props: { user: User }) {
           <div className="py-6 px-4 sm:grid sm:grid-cols-3 sm:gap-4 sm:px-0">
             <Description
               name="Email"
-              value={user.email}
+              value={user.email ?? ""}
               onChange={(email) => updateUser({ email })}
               type="text"
               editable

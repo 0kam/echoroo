@@ -14,7 +14,7 @@ const clipEvaluationFilterDef: FilterDef<ClipEvaluationFilter>[] = [
     render: ({ value, clear }) => (
       <FilterBadge
         field="Predicted Tag"
-        value={`${value.tag.key}: ${value.tag.value}`}
+        value={`${value.tag.key}: ${value.tag.canonical_name}`}
         onRemove={clear}
       />
     ),

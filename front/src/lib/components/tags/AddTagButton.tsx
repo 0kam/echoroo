@@ -35,6 +35,7 @@ const AddTagButton = memo(function AddTagButton({
   variant = "secondary",
   placement = "bottom-start",
   onKeyDown,
+  disabled = false,
   TagSearchBar = TagSearchBarBase,
   ...props
 }: {
@@ -46,6 +47,7 @@ const AddTagButton = memo(function AddTagButton({
   variant?: "primary" | "secondary" | "danger";
   /** The tag search bar component to render inside the popover. */
   TagSearchBar?: FC<TagSearchBarProps>;
+  disabled?: boolean;
 } & TagSearchBarProps) {
   return (
     <Popover as="div" className="inline-block text-left">
@@ -61,8 +63,13 @@ const AddTagButton = memo(function AddTagButton({
         leaveTo="scale-95 opacity-0"
         portal={true}
       >
-        <Popover.Button as="div">
-          <Button mode="text" variant={variant} padding="py-1">
+        <Popover.Button as="div" disabled={disabled}>
+          <Button
+            mode="text"
+            variant={variant}
+            padding="py-1"
+            disabled={disabled}
+          >
             <AddIcon className="inline-block w-5 h-5 align-middle" />
             {text}
           </Button>

@@ -20,7 +20,10 @@ class TagCreate(BaseModel):
     """Key of the tag."""
 
     value: str = Field(min_length=1, max_length=255)
-    """Value of the tag."""
+    """Value of the tag (e.g., a GBIF usage key)."""
+
+    canonical_name: str = Field(min_length=1, max_length=255)
+    """Human readable representation of the tag (e.g., scientific name)."""
 
 
 class Tag(BaseSchema):
@@ -33,7 +36,10 @@ class Tag(BaseSchema):
     """Key of the tag."""
 
     value: str
-    """Value of the tag."""
+    """Value of the tag (e.g., usage key)."""
+
+    canonical_name: str
+    """Human readable representation of the tag."""
 
 
 class TagUpdate(BaseModel):
@@ -44,6 +50,13 @@ class TagUpdate(BaseModel):
 
     value: str | None = Field(default=None, min_length=1, max_length=255)
     """Value of the tag."""
+
+    canonical_name: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=255,
+    )
+    """Human readable representation of the tag."""
 
 
 class PredictedTag(BaseSchema):

@@ -43,7 +43,7 @@ export default function useRecordingAudio({
         startTime,
         endTime,
         speed: audioSettings.speed,
-        targetSamplerate: audioSettings.resample ? audioSettings.samplerate : undefined,
+        targetSamplerate: audioSettings.resample && audioSettings.samplerate != null ? audioSettings.samplerate : undefined,
       });
       console.log('Generated audio stream URL:', streamUrl);
       return streamUrl;

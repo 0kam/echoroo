@@ -24,3 +24,4 @@ export * from "./spectrograms";
 export * from "./settings";
 export * from "./filters";
 export * from "./groups";
+export * from "./setup";

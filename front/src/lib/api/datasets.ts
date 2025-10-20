@@ -9,6 +9,8 @@ import { GetMany, Page, downloadContent } from "./common";
 const DEFAULT_ENDPOINTS = {
   getMany: "/api/v1/datasets/",
   create: "/api/v1/datasets/",
+  candidates: "/api/v1/datasets/candidates/",
+  candidateInfo: "/api/v1/datasets/candidates/info/",
   state: "/api/v1/datasets/detail/state/",
   get: "/api/v1/datasets/detail/",
   update: "/api/v1/datasets/detail/",
@@ -37,6 +39,20 @@ export function registerDatasetAPI({
     const body = schemas.DatasetCreateSchema.parse(data);
     const { data: res } = await instance.post(endpoints.create, body);
     return schemas.DatasetSchema.parse(res);
+  }
+
+  async function getCandidates(): Promise<types.DatasetCandidate[]> {
+    const { data } = await instance.get(endpoints.candidates);
+    return z.array(schemas.DatasetCandidateSchema).parse(data);
+  }
+
+  async function inspectCandidate(
+    relativePath: string,
+  ): Promise<types.DatasetCandidateInfo> {
+    const { data } = await instance.get(endpoints.candidateInfo, {
+      params: { relative_path: relativePath },
+    });
+    return schemas.DatasetCandidateInfoSchema.parse(data);
   }
 
   async function get(uuid: string): Promise<types.Dataset> {
@@ -122,5 +138,7 @@ export function registerDatasetAPI({
     delete: deleteDataset,
     download: downloadDataset,
     import: importDataset,
+    getCandidates,
+    inspectCandidate,
   } as const;
 }

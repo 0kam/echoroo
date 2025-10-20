@@ -31,10 +31,10 @@ export default meta;
 type Story = StoryObj<typeof TableTags>;
 
 const tags: Tag[] = [
-  { key: "species", value: "Myotis myotis" },
-  { key: "species", value: "Myotis blythii" },
-  { key: "species", value: "Myotis capaccinii" },
-  { key: "species", value: "Myotis emarginatus" },
+  { key: "species", value: "Myotis myotis", canonical_name: "Myotis myotis" },
+  { key: "species", value: "Myotis blythii", canonical_name: "Myotis blythii" },
+  { key: "species", value: "Myotis capaccinii", canonical_name: "Myotis capaccinii" },
+  { key: "species", value: "Myotis emarginatus", canonical_name: "Myotis emarginatus" },
 ];
 
 const props = {
@@ -59,10 +59,12 @@ export const WithTags: Story = {
       {
         key: "species",
         value: "Myotis myotis",
+        canonical_name: "Myotis myotis",
       },
       {
         key: "event",
         value: "Echolocation",
+        canonical_name: "Echolocation",
       },
     ],
     ...props,
@@ -75,6 +77,7 @@ const randomTags = Array(20)
   .map((_, i) => ({
     key: `tag${i}`,
     value: `value${i}`,
+    canonical_name: `value${i}`,
   }));
 
 export const WithManyTags: Story = {

@@ -10,12 +10,12 @@ import type {
 export const MAX_SAMPLERATE = 500_000;
 export const MIN_SAMPLERATE = 4000;
 export const MIN_DB = -140;
-export const DEFAULT_WINDOW_SIZE = 0.025;
+export const DEFAULT_WINDOW_SIZE = 0.01;
 export const DEFAULT_OVERLAP = 0.5;
 export const DEFAULT_WINDOW = "hann";
 export const DEFAULT_SCALE = "dB";
 export const DEFAULT_FILTER_ORDER = 5;
-export const DEFAULT_CMAP = "gray";
+export const DEFAULT_CMAP = "twilight";
 
 /* Restrictions on the settings for the STFT computation
  * These are to prevent the user from setting parameters that
@@ -28,6 +28,11 @@ export const MIN_HOP_FRACTION = 0.1; // 10% of window size
 
 /** Absolute maximum frequency that can be handled by the app */
 export const MAX_FREQ = 5_000_000;
+
+/* Scale control constants */
+export const SCALE_MIN = 1.0;
+export const SCALE_MAX = 10.0;
+export const SCALE_STEP = 0.1;
 
 export const DEFAULT_AUDIO_SETTINGS: AudioSettings = {
   resample: false,
@@ -44,12 +49,15 @@ export const DEFAULT_SPECTROGRAM_SETTINGS: SpectrogramSettings = {
   overlap: DEFAULT_OVERLAP,
   window: DEFAULT_WINDOW,
   scale: DEFAULT_SCALE,
+  height: 400,
   clamp: false,
   min_dB: MIN_DB,
   max_dB: 0,
   normalize: true,
   pcen: false,
   cmap: DEFAULT_CMAP,
+  time_scale: 1,
+  freq_scale: 1,
 };
 
 export const DEFAULT_SPECTROGRAM_PARAMETERS: SpectrogramParameters = {

@@ -71,6 +71,35 @@ class GroupAPI(
 
         return schemas.GroupDetail.model_validate(group)
 
+    async def add_membership(
+        self,
+        session: AsyncSession,
+        group_id: int,
+        user_id: UUID,
+        role: models.GroupRole,
+    ) -> schemas.GroupMembership:
+        """Add a user to a group."""
+        return await add_membership(session, group_id, user_id, role)
+
+    async def update_membership_role(
+        self,
+        session: AsyncSession,
+        group_id: int,
+        user_id: UUID,
+        role: models.GroupRole,
+    ) -> schemas.GroupMembership:
+        """Update the role of an existing membership."""
+        return await update_membership_role(session, group_id, user_id, role)
+
+    async def remove_membership(
+        self,
+        session: AsyncSession,
+        group_id: int,
+        user_id: UUID,
+    ) -> None:
+        """Remove a user from a group."""
+        return await remove_membership(session, group_id, user_id)
+
 
 async def list_groups_for_user(
     session: AsyncSession,
@@ -122,7 +151,7 @@ async def add_membership(
     )
     session.add(membership)
     await session.flush()
-    await session.refresh(membership)
+    await session.refresh(membership, ["user"])
     return schemas.GroupMembership.model_validate(membership)
 
 
@@ -147,7 +176,7 @@ async def update_membership_role(
 
     membership.role = role
     await session.flush()
-    await session.refresh(membership)
+    await session.refresh(membership, ["user"])
     return schemas.GroupMembership.model_validate(membership)
 
 

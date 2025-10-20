@@ -1,5 +1,6 @@
-import { useCallback } from "react";
+import { useCallback, useMemo, useState } from "react";
 
+import useSpeciesSearch from "@/app/hooks/api/useSpeciesSearch";
 import useTags from "@/app/hooks/api/useTags";
 
 import useStore from "@/app/store";
@@ -11,73 +12,107 @@ import TagSearchBarBase, {
 import type { Tag } from "@/lib/types";
 
 /**
- * TagSearchBar Component
+ * Species tag search powered by the GBIF Backbone taxonomy.
  *
- * This component is a wrapper around the `TagSearchBarBase` component,
- * providing additional functionality such as fetching tags from an API and
- * handling tag creation.
- *
- * The component uses the `useTags` hook to fetch tags and handle tag creation.
- * It also uses the `useStore` hook to get the function for determining tag
- * colors.
- *
- * Example usage:
- *
- * ```tsx
- * <TagSearchBar
- *   onCreateTag={(tag) => console.log('Tag created', tag)}
- *   filter={{ dataset: { eq: "dataset-id"} }}
- * />
- * ```
+ * Users type a scientific name, press the search button, and pick a match.
+ * Once a match is selected the tag is created (or reused) on the backend and
+ * passed to the provided callbacks.
  */
 export default function TagSearchBar({
   onCreateTag,
-  filter: initialFilter,
-  fixed,
-  pageSize,
-  enabled,
+  onSelectTag,
+  limit = 10,
+  enabled = true,
   ...props
-}: TagSearchBarProps & Parameters<typeof useTags>[0]) {
+}: TagSearchBarProps & { limit?: number; enabled?: boolean }) {
   const tagColorFn = useStore((state) => state.getTagColor);
+  const { create } = useTags();
 
-  const { items, create, filter } = useTags({
-    filter: initialFilter,
-    fixed,
-    pageSize,
-    enabled,
+  const [inputQuery, setInputQuery] = useState("");
+  const [searchState, setSearchState] = useState<{
+    term: string;
+    requestId: number;
+  }>({
+    term: "",
+    requestId: 0,
+  });
+  const [validationMessage, setValidationMessage] = useState<string | null>(null);
+
+  const shouldEnableSearch =
+    enabled &&
+    searchState.requestId > 0 &&
+    searchState.term.trim().length >= 2;
+
+  const {
+    data: suggestions = [],
+    isFetching,
+  } = useSpeciesSearch({
+    query: searchState.term,
+    limit,
+    enabled: shouldEnableSearch,
+    requestId: searchState.requestId,
   });
 
-  const handleCreateTag = useCallback(
-    (tag: Tag) => {
-      create.mutate(tag, {
-        onSuccess: (data) => {
-          onCreateTag?.(data);
-        },
-      });
+  const tags = useMemo<Tag[]>(() => {
+    return suggestions.map((candidate) => ({
+      key: "species",
+      value: candidate.usage_key,
+      canonical_name: candidate.canonical_name,
+    }));
+  }, [suggestions]);
+
+  const handleSelect = useCallback(
+    async (tag: Tag) => {
+      try {
+        const created = await create.mutateAsync(tag);
+        onCreateTag?.(created);
+        onSelectTag?.(created);
+      } catch (error) {
+        // エラー処理はミューテーション側に委ねる
+      }
     },
-    [onCreateTag, create],
+    [create, onCreateTag, onSelectTag],
   );
+
+  const handleSearch = useCallback(() => {
+    const trimmed = inputQuery.trim();
+    if (trimmed.length < 2) {
+      setValidationMessage("Please enter at least two characters.");
+      setSearchState((prev) => ({ ...prev, term: trimmed }));
+      return;
+    }
+
+    setValidationMessage(null);
+    setSearchState((prev) => ({
+      term: trimmed,
+      requestId: prev.requestId + 1,
+    }));
+  }, [inputQuery]);
+
+  const emptyMessage =
+    validationMessage ??
+    (searchState.requestId > 0 && !isFetching
+      ? "No matching species were found."
+      : "Enter a scientific name and press Search.");
 
   return (
     <TagSearchBarBase
-      tags={items}
+      tags={tags}
+      canCreate={false}
       tagColorFn={tagColorFn}
-      onCreateTag={handleCreateTag}
-      onChangeQuery={(query) => {
-        if (query.key == null || query.value == null) {
-          filter.update({
-            search: query.q,
-            key: undefined,
-            value: undefined,
-          });
-        } else {
-          filter.update({
-            search: undefined,
-            key: query.key,
-            value: { has: query.value },
-          });
+      onSelectTag={handleSelect}
+      onSearch={handleSearch}
+      searchButtonLabel="Search"
+      isSearching={isFetching}
+      emptyMessage={emptyMessage}
+      onChangeQuery={(nextQuery) => {
+        const nextValue = nextQuery.q ?? "";
+        setInputQuery(nextValue);
+        if (validationMessage && nextValue.trim().length >= 2) {
+          setValidationMessage(null);
         }
       }}
+      placeholder="Search the GBIF Backbone taxonomy…"
       {...props}
     />
   );

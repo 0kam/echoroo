@@ -8,6 +8,10 @@ const AnnotationProjectContext = createContext<AnnotationProject>({
   tags: [],
   created_on: new Date(),
   uuid: "",
+  visibility: "private",
+  created_by_id: "",
+  owner_group_id: null,
+  annotation_instructions: null,
 });
 
 export default AnnotationProjectContext;

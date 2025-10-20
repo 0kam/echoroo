@@ -27,6 +27,8 @@ import { registerSoundEventAnnotationsAPI } from "./sound_event_annotations";
 import { registerSoundEventEvaluationAPI } from "./sound_event_evaluations";
 import { registerSoundEventPredictionsAPI } from "./sound_event_predictions";
 import { registerSoundEventAPI } from "./sound_events";
+import { registerSetupAPI } from "./setup";
+import { registerSpeciesAPI } from "./species";
 import { registerSpectrogramAPI } from "./spectrograms";
 import { registerTagAPI } from "./tags";
 import { registerUserAPI } from "./user";
@@ -55,6 +57,7 @@ export default function createAPI(config: APIConfig = DEFAULT_CONFIG) {
     clipAnnotations: registerClipAnnotationsAPI(instance),
     audio: registerAudioAPI({ baseUrl: config.baseURL }),
     auth: registerAuthAPI(instance),
+    setup: registerSetupAPI({ instance }),
     adminUsers: registerAdminUsersAPI(instance),
     clips: registerClipAPI(instance),
     datasets: registerDatasetAPI({ instance }),
@@ -77,5 +80,6 @@ export default function createAPI(config: APIConfig = DEFAULT_CONFIG) {
     clipEvaluations: registerClipEvaluationAPI(instance),
     soundEventEvaluations: registerSoundEventEvaluationAPI(instance),
     evaluations: registerEvaluationAPI(instance),
+    species: registerSpeciesAPI(instance),
   } as const;
 }

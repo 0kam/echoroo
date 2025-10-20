@@ -35,6 +35,7 @@ class TagAPI(
         session: AsyncSession,
         key: str,
         value: str,
+        canonical_name: str | None = None,
         **kwargs,
     ) -> schemas.Tag:
         """Create a tag.
@@ -53,11 +54,13 @@ class TagAPI(
         schemas.Tag
             The tag.
         """
+        canonical = canonical_name or value
         return await self.create_from_data(
             session,
             schemas.TagCreate(
                 key=key,
                 value=value,
+                canonical_name=canonical,
             ),
             **kwargs,
         )
@@ -67,6 +70,7 @@ class TagAPI(
         session: AsyncSession,
         key: str,
         value: str,
+        canonical_name: str | None = None,
     ) -> schemas.Tag:
         """Get a tag by its key and value, or create it if it does not exist.
 
@@ -87,7 +91,14 @@ class TagAPI(
         try:
             return await self.get(session, (key, value))
         except exceptions.NotFoundError:
-            obj = await self.create(session, key, value)
+            if canonical_name is None:
+                canonical_name = value
+            obj = await self.create(
+                session,
+                key,
+                value,
+                canonical_name=canonical_name,
+            )
             self._update_cache(obj)
             return obj
 

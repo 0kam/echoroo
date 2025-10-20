@@ -2,10 +2,10 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { useEffect } from "react";
 import { useForm } from "react-hook-form";
 
-import AmplitudeSettings from "@/lib/components/settings/settings/AmplitudeSettings";
 import ClampSettings from "@/lib/components/settings/settings/ClampSettings";
 import ColorSettings from "@/lib/components/settings/settings/ColorSettings";
 import DeNoiseSettings from "@/lib/components/settings/settings/DeNoiseSettings";
+import DisplaySettings from "@/lib/components/settings/settings/DisplaySettings";
 import STFTSettings from "@/lib/components/settings/settings/STFTSettings";
 
 import { SpectrogramSettingsSchema } from "@/lib/schemas";
@@ -44,8 +44,8 @@ export default function SpectrogramSettings({
       <STFTSettings samplerate={samplerate} control={control} />
       <DeNoiseSettings control={control} />
       <ColorSettings control={control} />
-      <AmplitudeSettings control={control} />
       <ClampSettings control={control} />
+      <DisplaySettings control={control} />
     </div>
   );
 }

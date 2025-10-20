@@ -11,7 +11,13 @@ from whombat.api import common
 from whombat.api.common import BaseAPI
 from whombat.system.users import UserDatabase, UserManager
 
-__all__ = []
+SYSTEM_USER_ID = UUID("00000000-0000-0000-0000-000000000000")
+
+__all__ = [
+    "users",
+    "ensure_system_user",
+    "generate_random_password_hash",
+]
 
 
 class UserAPI(
@@ -307,6 +313,31 @@ def generate_random_password_hash(session: AsyncSession, length=32):
     user_manager = _get_user_manager(session)
     password = _generate_random_password(length)
     return user_manager.password_helper.hash(password)
+
+
+async def ensure_system_user(session: AsyncSession) -> models.User:
+    """Ensure a system user exists and return it."""
+    user = await session.get(models.User, SYSTEM_USER_ID)
+    if user is not None:
+        return user
+
+    user_manager = _get_user_manager(session)
+    password = _generate_random_password()
+    hashed = user_manager.password_helper.hash(password)
+    created = await user_manager.user_db.create(
+        dict(
+            id=SYSTEM_USER_ID,
+            username="system",
+            email="system@whombat.local",
+            name="System",
+            hashed_password=hashed,
+            is_active=False,
+            is_superuser=False,
+            is_verified=False,
+        )
+    )
+    await session.flush()
+    return created
 
 
 users = UserAPI()

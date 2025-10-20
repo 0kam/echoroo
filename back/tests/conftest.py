@@ -16,7 +16,7 @@ import soundfile as sf
 from sqlalchemy.engine import URL
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from whombat import api, cache, schemas
+from whombat import api, cache, models, schemas
 from whombat.system import get_database_url, init_database
 from whombat.system.settings import Settings
 
@@ -212,12 +212,42 @@ async def user(session: AsyncSession) -> schemas.SimpleUser:
 
 
 @pytest.fixture
+async def other_user(session: AsyncSession) -> schemas.SimpleUser:
+    """Create an additional non-privileged user for tests."""
+    user = await api.users.create(
+        session,
+        username=f"other_{random_string()}",
+        password="password",
+        email=f"other_{random_string().lower()}@whombat.com",
+        is_active=True,
+    )
+    await session.commit()
+    return user
+
+
+@pytest.fixture
+async def superuser(session: AsyncSession) -> schemas.SimpleUser:
+    """Create a superuser for tests."""
+    user = await api.users.create(
+        session,
+        username=f"super_{random_string()}",
+        password="password",
+        email=f"super_{random_string().lower()}@whombat.com",
+        is_active=True,
+        is_superuser=True,
+    )
+    await session.commit()
+    return user
+
+
+@pytest.fixture
 async def tag(session: AsyncSession) -> schemas.Tag:
     """Create a tag for testing."""
     return await api.tags.create(
         session,
-        key="test_key",
-        value="test_value",
+        key="species",
+        value="12345",
+        canonical_name="Test species",
     )
 
 
@@ -226,7 +256,12 @@ async def tag_factory(
     session: AsyncSession,
 ) -> Callable[[str, str], Awaitable[schemas.Tag]]:
     async def create_tag(key: str, value: str) -> schemas.Tag:
-        return await api.tags.create(session, key=key, value=value)
+        return await api.tags.create(
+            session,
+            key=key,
+            value=value,
+            canonical_name=value.title(),
+        )
 
     return create_tag
 
@@ -309,24 +344,70 @@ async def sound_event(
 
 
 @pytest.fixture
-async def dataset_dir(audio_dir: Path) -> Path:
-    dataset_dir = audio_dir / "test_dataset" / "audio"
+async def dataset_dir(
+    audio_dir: Path,
+    random_wav_factory: Callable[..., Path],
+) -> Path:
+    dataset_dir = audio_dir / "test_dataset"
     dataset_dir.mkdir(parents=True, exist_ok=True)
+    random_wav_factory(path=dataset_dir / "initial.wav")
     return dataset_dir
 
 
 @pytest.fixture
 async def dataset(
-    session: AsyncSession, audio_dir: Path, dataset_dir: Path
+    session: AsyncSession,
+    audio_dir: Path,
+    dataset_dir: Path,
+    user: schemas.SimpleUser,
 ) -> schemas.Dataset:
     """Create a dataset for testing."""
+    db_user = await session.get(models.User, user.id)
+    assert db_user is not None
     return await api.datasets.create(
         session,
         name="test_dataset",
         description="test_description",
         dataset_dir=dataset_dir,
         audio_dir=audio_dir,
+        user=db_user,
+        visibility=models.VisibilityLevel.PUBLIC,
     )
+
+
+@pytest.fixture
+async def group(
+    session: AsyncSession,
+    user: schemas.SimpleUser,
+) -> schemas.Group:
+    """Create a group for testing."""
+    group = await api.groups.create_from_data(
+        session,
+        schemas.GroupCreate(
+            name=f"group_{random_string()}",
+            description="Test group",
+        ),
+        created_by_id=user.id,
+    )
+    await session.commit()
+    return group
+
+
+@pytest.fixture
+async def group_manager_membership(
+    session: AsyncSession,
+    group: schemas.Group,
+    user: schemas.SimpleUser,
+) -> schemas.GroupMembership:
+    """Ensure the default user is a manager of the test group."""
+    membership = await api.groups.add_membership(
+        session,
+        group.id,
+        user.id,
+        models.GroupRole.MANAGER,
+    )
+    await session.commit()
+    return membership
 
 
 @pytest.fixture
@@ -380,6 +461,7 @@ async def sound_event_annotation(
 @pytest.fixture
 async def annotation_project(
     session: AsyncSession,
+    user: schemas.SimpleUser,
 ) -> schemas.AnnotationProject:
     """Create an annotation project for testing."""
     return await api.annotation_projects.create(
@@ -387,6 +469,8 @@ async def annotation_project(
         name="test_annotation_project",
         description="test_description",
         annotation_instructions="test_instructions",
+        user=user,
+        visibility=models.VisibilityLevel.PUBLIC,
     )
 
 

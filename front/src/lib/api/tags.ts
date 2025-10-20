@@ -154,8 +154,13 @@ export function registerTagAPI(
     return Page(schemas.TagCountSchema).parse(response.data);
   }
 
-  async function createTag(data: types.Tag): Promise<types.Tag> {
-    const response = await instance.post(endpoints.create, data);
+  async function createTag(data: types.TagCreate): Promise<types.Tag> {
+    const payload = {
+      key: data.key,
+      value: data.value,
+      canonical_name: data.canonical_name,
+    };
+    const response = await instance.post(endpoints.create, payload);
     return schemas.TagSchema.parse(response.data);
   }
 

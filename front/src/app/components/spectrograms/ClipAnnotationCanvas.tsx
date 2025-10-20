@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type FC } from "react";
 import { mergeProps } from "react-aria";
 
 import SoundEventSpectrogramTags from "@/app/components/sound_event_annotations/SoundEventSpectrogramTags";
@@ -7,6 +7,9 @@ import useClipAnnotation from "@/app/hooks/api/useClipAnnotation";
 
 import CanvasBase from "@/lib/components/spectrograms/Canvas";
 import SpectrogramTags from "@/lib/components/spectrograms/SpectrogramTags";
+import TagSearchBarBase, {
+  type TagSearchBarProps,
+} from "@/lib/components/tags/TagSearchBar";
 
 import useAnnotationCreate from "@/lib/hooks/annotation/useAnnotationCreate";
 import useAnnotationDelete from "@/lib/hooks/annotation/useAnnotationDelete";
@@ -16,6 +19,7 @@ import useAnnotationSelect from "@/lib/hooks/annotation/useAnnotationSelect";
 import useSpectrogramImages from "@/lib/hooks/spectrogram/useSpectrogramImages";
 import useSpectrogramInteractions from "@/lib/hooks/spectrogram/useSpectrogramInteractions";
 import useElementSize from "@/lib/hooks/utils/useElementSize";
+import type { ChunkState } from "@/lib/hooks/spectrogram/useSpectrogramChunksState";
 
 import { drawCursor } from "@/lib/draw/cursor";
 import drawOnset from "@/lib/draw/onset";
@@ -49,9 +53,13 @@ export default function ClipAnnotationCanvas({
   spectrogramState,
   annotationState,
   defaultTags = _emptyTags,
-  height = 400,
+  height = spectrogramSettings.height ?? 400,
   withAnnotations = true,
   enabled = true,
+  refreshToken = 0,
+  onSegmentsChange,
+  availableTags = [],
+  tagSearchComponent = TagSearchBarBase,
 }: {
   clipAnnotation: ClipAnnotation;
   audio: AudioController;
@@ -65,6 +73,10 @@ export default function ClipAnnotationCanvas({
   height?: number;
   withAnnotations?: boolean;
   enabled?: boolean;
+  refreshToken?: number;
+  onSegmentsChange?: (segments: ChunkState[], viewport: SpectrogramWindow) => void;
+  availableTags?: Tag[];
+  tagSearchComponent?: FC<TagSearchBarProps>;
 }) {
   const { size: dimensions, ref } = useElementSize<HTMLCanvasElement>();
 
@@ -78,6 +90,8 @@ export default function ClipAnnotationCanvas({
     addSoundEvent,
     removeSoundEvent,
     updateSoundEvent,
+    addSoundEventTag,
+    removeSoundEventTag,
   } = useClipAnnotation({
     uuid: clipAnnotation.uuid,
     clipAnnotation,
@@ -189,16 +203,42 @@ export default function ClipAnnotationCanvas({
       onZoom: spectrogramState.enablePanning,
     });
 
-  const { drawFn: drawSpectrogram } = useSpectrogramImages({
+  const { drawFn: drawSpectrogram, segments } = useSpectrogramImages({
     recording,
     audioSettings,
     spectrogramSettings,
+    refreshToken,
   });
+
+  useEffect(() => {
+    if (viewport.viewport == null) return;
+    onSegmentsChange?.(segments, viewport.viewport);
+  }, [segments, viewport.viewport, onSegmentsChange]);
 
   const soundEvents = useMemo(() => {
     if (!withAnnotations) return [];
     return data.sound_events || [];
   }, [data.sound_events, withAnnotations]);
+
+  const handleAddTagToSoundEvent = useCallback(
+    (soundEvent: SoundEventAnnotation, tag: Tag) => {
+      addSoundEventTag.mutate({
+        soundEventAnnotation: soundEvent,
+        tag,
+      });
+    },
+    [addSoundEventTag],
+  );
+
+  const handleRemoveTagFromSoundEvent = useCallback(
+    (soundEvent: SoundEventAnnotation, tag: Tag) => {
+      removeSoundEventTag.mutate({
+        soundEventAnnotation: soundEvent,
+        tag,
+      });
+    },
+    [removeSoundEventTag],
+  );
 
   const drawAnnotations = useSoundEventDraw({
     viewport: viewport.viewport,
@@ -249,6 +289,15 @@ export default function ClipAnnotationCanvas({
       viewport={viewport.viewport}
       SoundEventTags={SoundEventSpectrogramTags}
       enabled={enabled}
+      availableTags={availableTags}
+      emptyMessage={
+        availableTags.length
+          ? "No matching project tags."
+          : "No project tags available."
+      }
+      onAddTag={handleAddTagToSoundEvent}
+      onRemoveTag={handleRemoveTagFromSoundEvent}
+      TagSearchComponent={tagSearchComponent}
     >
       <CanvasBase
         viewport={viewport.viewport}

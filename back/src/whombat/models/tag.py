@@ -76,9 +76,18 @@ class Tag(Base):
 
     value: orm.Mapped[str] = orm.mapped_column(nullable=False)
     """
-    The value of the tag (e.g., "guitar", "rock", "happy").
+    The value of the tag.
 
-    This represents the specific tag within the category defined by the key.
+    In the context of species labels, this stores the GBIF usage key
+    that uniquely identifies the species within the backbone taxonomy.
+    """
+
+    canonical_name: orm.Mapped[str] = orm.mapped_column(nullable=False)
+    """
+    Human-friendly representation of the tag.
+
+    For species tags this holds the canonical scientific name that should be
+    rendered in the UI when presenting the label to the annotator.
     """
 
     # ========================================================================

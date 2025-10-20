@@ -33,6 +33,10 @@ export const Verified: Story = {
       user: {
         id: "user-1",
         username: "user1",
+        email: "user1@example.com",
+        is_superuser: false,
+        is_active: true,
+        is_verified: true,
       },
     },
   },

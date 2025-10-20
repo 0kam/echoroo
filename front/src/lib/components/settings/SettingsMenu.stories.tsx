@@ -24,6 +24,9 @@ export const Primary: Story = {
       normalize: true,
       pcen: false,
       cmap: "viridis",
+      time_scale: 1,
+      freq_scale: 1,
+      height: 400,
     },
     audioSettings: {
       resample: false,

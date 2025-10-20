@@ -20,6 +20,7 @@ from whombat.api.sound_event_annotations import sound_event_annotations
 from whombat.api.sound_event_evaluations import sound_event_evaluations
 from whombat.api.sound_event_predictions import sound_event_predictions
 from whombat.api.sound_events import sound_events
+from whombat.api.species import search_gbif_species
 from whombat.api.spectrograms import compute_spectrogram
 from whombat.api.tags import find_tag, find_tag_value, tags
 from whombat.api.user_runs import user_runs
@@ -52,6 +53,7 @@ __all__ = [
     "sound_event_evaluations",
     "sound_event_predictions",
     "sound_events",
+    "search_gbif_species",
     "tags",
     "user_runs",
     "users",

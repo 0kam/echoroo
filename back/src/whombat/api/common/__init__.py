@@ -22,6 +22,18 @@ from whombat.api.common.utils import (
     update_feature_on_object,
     update_object,
 )
+from whombat.api.common.permissions import (  # noqa: F401
+    can_delete_annotation_project,
+    can_delete_dataset,
+    can_edit_annotation_project,
+    can_edit_dataset,
+    can_manage_restricted_annotation_project,
+    can_manage_restricted_dataset,
+    can_view_annotation_project,
+    can_view_dataset,
+    filter_annotation_projects_by_access,
+    filter_datasets_by_access,
+)
 
 __all__ = [
     "BaseAPI",
@@ -44,4 +56,14 @@ __all__ = [
     "select_batched",
     "update_feature_on_object",
     "update_object",
+    "can_delete_annotation_project",
+    "can_delete_dataset",
+    "can_edit_annotation_project",
+    "can_edit_dataset",
+    "can_manage_restricted_annotation_project",
+    "can_manage_restricted_dataset",
+    "can_view_annotation_project",
+    "can_view_dataset",
+    "filter_annotation_projects_by_access",
+    "filter_datasets_by_access",
 ]

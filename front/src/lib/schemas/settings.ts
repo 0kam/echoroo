@@ -103,6 +103,7 @@ export const SpectrogramSettingsSchema = z.object({
   overlap: z.coerce.number().positive().gt(0).lte(1).default(DEFAULT_OVERLAP),
   window: z.enum(WINDOWS).default(DEFAULT_WINDOW),
   scale: z.enum(SCALES).default(DEFAULT_SCALE),
+  height: z.coerce.number().positive().default(400),
   clamp: z.boolean().default(true),
   min_dB: z.coerce.number().nonpositive().gte(MIN_DB).default(-80),
   max_dB: z.coerce.number().nonpositive().gte(MIN_DB).default(0),
@@ -110,7 +111,7 @@ export const SpectrogramSettingsSchema = z.object({
   pcen: z.boolean().default(false),
   cmap: z.enum(COLORMAPS).default(DEFAULT_CMAP),
   time_scale: z.coerce.number().positive().min(1.0).max(10).default(1.0),
-  freq_scale: z.coerce.number().positive().min(0.1).max(10).default(2.0),
+  freq_scale: z.coerce.number().positive().min(1.0).max(10).default(1.0),
 });
 
 export const SpectrogramParametersSchema = z
@@ -142,7 +143,7 @@ export const SpectrogramParametersSchema = z
     pcen: z.boolean().default(false),
     cmap: z.string().default(DEFAULT_CMAP),
     time_scale: z.coerce.number().positive().min(1.0).max(10).default(1.0),
-    freq_scale: z.coerce.number().positive().min(0.1).max(10).default(2.0),
+    freq_scale: z.coerce.number().positive().min(1.0).max(10).default(1.0),
   })
   .refine(
     (data) => {

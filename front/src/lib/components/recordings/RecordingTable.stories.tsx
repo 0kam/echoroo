@@ -30,10 +30,10 @@ export default meta;
 type Story = StoryObj<typeof RecordingTable>;
 
 const tags = [
-  { key: "species", value: "Tadarida brasiliensis" },
-  { key: "species", value: "Myotis myotis" },
-  { key: "event", value: "Echolocation" },
-  { key: "tag1", value: "value1" },
+  { key: "species", value: "Tadarida brasiliensis", canonical_name: "Tadarida brasiliensis" },
+  { key: "species", value: "Myotis myotis", canonical_name: "Myotis myotis" },
+  { key: "event", value: "Echolocation", canonical_name: "Echolocation" },
+  { key: "tag1", value: "value1", canonical_name: "value1" },
 ];
 
 const recordings: Recording[] = [
@@ -87,8 +87,8 @@ const recordings: Recording[] = [
     samplerate: 44100,
     time_expansion: 1,
     tags: [
-      { key: "tag", value: "value" },
-      { key: "species", value: "Myotis myotis" },
+      { key: "tag", value: "value", canonical_name: "value" },
+      { key: "species", value: "Myotis myotis", canonical_name: "Myotis myotis" },
     ],
     created_on: new Date(),
   },

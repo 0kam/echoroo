@@ -9,7 +9,7 @@ import Loading from "@/app/loading";
 
 import RecordingTagBarBase from "@/lib/components/recordings/RecordingTagBar";
 
-import type { Recording, Tag, TagFilter } from "@/lib/types";
+import type { Recording, Tag } from "@/lib/types";
 
 /**
  * RecordingTagBar component is responsible for displaying and managing tags
@@ -20,7 +20,6 @@ export default function RecordingTagBar({
   recording,
   onAddRecordingTag,
   onDeleteRecordingTag,
-  tagFilter,
   ...props
 }: {
   /** The recording object. */
@@ -29,8 +28,6 @@ export default function RecordingTagBar({
   onAddRecordingTag?: (recording: Recording, tag: Tag) => void;
   /** Optional callback function to handle deleting a tag from the recording. */
   onDeleteRecordingTag?: (recording: Recording, tag: Tag) => void;
-  /** Optional filter to apply to the TagSearchBar component. */
-  tagFilter?: TagFilter;
 } & Omit<
   ComponentProps<typeof RecordingTagBarBase>,
   "TagSearchBar" | "onSelectTag" | "onDeleteTag" | "tags"
@@ -55,7 +52,7 @@ export default function RecordingTagBar({
       tags={data.tags}
       onSelectTag={addTag.mutate}
       onDeleteTag={removeTag.mutate}
-      TagSearchBar={(props) => <TagSearchBar filter={tagFilter} {...props} />}
+      TagSearchBar={(props) => <TagSearchBar {...props} />}
       {...props}
     />
   );

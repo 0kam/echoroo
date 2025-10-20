@@ -13,8 +13,10 @@ import Error from "@/app/error";
 
 import ClipAnnotationSpectrogramBase from "@/lib/components/clip_annotations/ClipAnnotationSpectrogram";
 import Loading from "@/lib/components/ui/Loading";
+import FreqScaleControl from "@/lib/components/spectrograms/FreqScaleControl";
 import TimeScaleControl from "@/lib/components/spectrograms/TimeScaleControl";
 
+import useFreqScaleControl from "@/lib/hooks/spectrogram/useFreqScaleControl";
 import useSpectrogramAudio from "@/lib/hooks/spectrogram/useSpectrogramAudio";
 import useSpectrogramState from "@/lib/hooks/spectrogram/useSpectrogramState";
 import useTimeScaleControl from "@/lib/hooks/spectrogram/useTimeScaleControl";
@@ -105,6 +107,14 @@ function Inner({
     playbackSpeed: audioSettings.settings.speed,
   });
 
+  const freqScaleControl = useFreqScaleControl({
+    viewport,
+    spectrogramSettings,
+  });
+
+  const canvasHeight =
+    height ?? spectrogramSettings.settings.height ?? 400;
+
   return (
     <ClipAnnotationSpectrogramBase
       ViewportToolbar={
@@ -144,12 +154,21 @@ function Inner({
           />
         ) : undefined
       }
+      FreqScaleControl={
+        withControls ? (
+          <FreqScaleControl
+            value={freqScaleControl.value}
+            onChange={freqScaleControl.onPreviewChange}
+            onChangeEnd={freqScaleControl.onCommit}
+          />
+        ) : undefined
+      }
       ViewportBar={
         withViewportBar ? <ViewportBar viewport={viewport} /> : undefined
       }
       Canvas={
         <SoundEventAnnotationCanvas
-          height={height}
+          height={canvasHeight}
           soundEventAnnotation={soundEventAnnotation}
           audioSettings={audioSettings.settings}
           spectrogramSettings={spectrogramSettings.settings}

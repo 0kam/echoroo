@@ -44,6 +44,7 @@ export default function useSpectrogramImages({
   getImageUrl = api.spectrograms.getUrl,
   chunkSize = SPECTROGRAM_CHUNK_SIZE,
   chunkBuffer = SPECTROGRAM_CHUNK_BUFFER,
+  refreshToken = 0,
 }: {
   /** The recording object to display the spectrogram for. */
   recording: Recording;
@@ -78,6 +79,8 @@ export default function useSpectrogramImages({
   chunkSize?: number;
   /** The overlap fraction between consecutive chunks. */
   chunkBuffer?: number;
+  /** Token to force image reloads (e.g. manual regenerate). */
+  refreshToken?: number;
 }): RecordingSpectrogramInterface {
   const { chunks, setChunks, setReady, setError, startLoading } =
     useSpectrogramChunksState();
@@ -91,15 +94,23 @@ export default function useSpectrogramImages({
     spectrogramSettings,
   });
 
+  const paramsRef = useRef(params);
+
   useEffect(() => {
-    const finalSamplerate = !params.resample
+    paramsRef.current = params;
+  }, [params]);
+
+  useEffect(() => {
+    const currentParams = paramsRef.current;
+
+    const finalSamplerate = !currentParams.resample
       ? samplerate
-      : (params.samplerate ?? samplerate);
+      : (currentParams.samplerate ?? samplerate);
 
     const chunks = calculateSpectrogramChunkIntervals({
       duration: duration,
-      windowSize: params.window_size,
-      overlap: params.overlap,
+      windowSize: currentParams.window_size,
+      overlap: currentParams.overlap,
       samplerate: finalSamplerate,
       chunkSize,
       chunkBuffer,
@@ -113,7 +124,7 @@ export default function useSpectrogramImages({
       image.src = getImageUrl({
         uuid,
         interval: buffer,
-        ...params,
+        ...currentParams,
       });
       image.onload = () => {
         setReady(index);
@@ -134,7 +145,6 @@ export default function useSpectrogramImages({
     uuid,
     duration,
     samplerate,
-    params,
     getImageUrl,
     setChunks,
     setReady,
@@ -143,15 +153,17 @@ export default function useSpectrogramImages({
     onError,
     chunkSize,
     chunkBuffer,
+    refreshToken,
   ]);
 
   const drawFn = useCallback(
     (ctx: CanvasRenderingContext2D, viewport: SpectrogramWindow) => {
       const { current } = images;
+      const currentParams = paramsRef.current;
 
       // Calculate effective samplerate based on resampling settings
-      const effectiveSamplerate = params.resample
-        ? (params.samplerate ?? recording.samplerate)
+      const effectiveSamplerate = currentParams.resample
+        ? (currentParams.samplerate ?? recording.samplerate)
         : recording.samplerate;
       const maxFreq = effectiveSamplerate / 2;
 
@@ -201,7 +213,7 @@ export default function useSpectrogramImages({
       drawTimeAxis(ctx, viewport.time);
       drawFreqAxis(ctx, viewport.freq);
     },
-    [chunks, recording.samplerate, params.resample, params.samplerate, startLoading],
+    [chunks, recording.samplerate, startLoading],
   );
 
   return {

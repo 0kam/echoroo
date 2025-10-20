@@ -61,12 +61,6 @@ async def stream_recording_audio(
     else:
         start = 0
 
-    if start_time is not None:
-        start_time = start_time * recording.time_expansion
-
-    if end_time is not None:
-        end_time = end_time * recording.time_expansion
-
     # Calculate how many frames to read based on the range request
     frames_to_read = CHUNK_SIZE
     if requested_end is not None:
@@ -74,6 +68,12 @@ async def stream_recording_audio(
         requested_bytes = requested_end - start + 1
         # Convert to frames (assuming 16-bit stereo or mono)
         frames_to_read = min(requested_bytes // 2, CHUNK_SIZE)
+
+    if start_time is not None:
+        start_time = start_time * recording.time_expansion
+
+    if end_time is not None:
+        end_time = end_time * recording.time_expansion
 
     data, start_byte, end_byte, filesize = api.load_clip_bytes(
         path=audio_dir / recording.path,

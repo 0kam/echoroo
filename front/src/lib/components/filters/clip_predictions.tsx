@@ -12,7 +12,7 @@ const clipPredictionFilterDef: FilterDef<ClipPredictionFilter>[] = [
     render: ({ value, clear }) => (
       <FilterBadge
         field="Clip Tag"
-        value={`${value.tag.key}: ${value.tag.value}`}
+        value={`${value.tag.key}: ${value.tag.canonical_name}`}
         onRemove={clear}
       />
     ),
@@ -30,7 +30,7 @@ const clipPredictionFilterDef: FilterDef<ClipPredictionFilter>[] = [
     render: ({ value, clear }) => (
       <FilterBadge
         field="Sound Event Tag"
-        value={`${value.tag.key}: ${value.tag.value}`}
+        value={`${value.tag.key}: ${value.tag.canonical_name}`}
         onRemove={clear}
       />
     ),

@@ -22,16 +22,16 @@ function randomPosition() {
 }
 
 const speciesTags: Tag[] = [
-  { key: "species", value: "Blue Whale" },
-  { key: "species", value: "Humpback Whale" },
-  { key: "species", value: "Fin Whale" },
-  { key: "species", value: "Killer Whale" },
+  { key: "species", value: "Blue Whale", canonical_name: "Blue Whale" },
+  { key: "species", value: "Humpback Whale", canonical_name: "Humpback Whale" },
+  { key: "species", value: "Fin Whale", canonical_name: "Fin Whale" },
+  { key: "species", value: "Killer Whale", canonical_name: "Killer Whale" },
 ];
 
 const locationTags: Tag[] = [
-  { key: "location", value: "Pacific Ocean" },
-  { key: "location", value: "Atlantic Ocean" },
-  { key: "location", value: "Indian Ocean" },
+  { key: "location", value: "Pacific Ocean", canonical_name: "Pacific Ocean" },
+  { key: "location", value: "Atlantic Ocean", canonical_name: "Atlantic Ocean" },
+  { key: "location", value: "Indian Ocean", canonical_name: "Indian Ocean" },
 ];
 
 function getRandomTags(): Tag[] {

@@ -6,6 +6,7 @@ import {
   RecordingsIcon,
 } from "@/lib/components/icons";
 import Button from "@/lib/components/ui/Button";
+import VisibilityBadge from "@/lib/components/ui/VisibilityBadge";
 
 import type { Dataset as DatasetType } from "@/lib/types";
 
@@ -28,19 +29,22 @@ export default function Dataset({
   return (
     <div className="w-full">
       <div className="px-4 sm:px-0">
-        <h3 className="text-base font-semibold leading-7 text-stone-900 dark:text-stone-100">
-          <span className="inline-block w-6 h-6 align-middle text-stone-500">
-            <DatasetIcon />
-          </span>{" "}
-          <Button
-            className="inline-flex"
-            padding="p-0"
-            mode="text"
-            onClick={onClickDataset}
-          >
-            {dataset.name}
-          </Button>
-        </h3>
+        <div className="flex flex-wrap items-center gap-2">
+          <h3 className="text-base font-semibold leading-7 text-stone-900 dark:text-stone-100">
+            <span className="inline-block w-6 h-6 align-middle text-stone-500">
+              <DatasetIcon />
+            </span>{" "}
+            <Button
+              className="inline-flex"
+              padding="p-0"
+              mode="text"
+              onClick={onClickDataset}
+            >
+              {dataset.name}
+            </Button>
+          </h3>
+          <VisibilityBadge visibility={dataset.visibility} />
+        </div>
         <p className="mt-1 w-full text-sm leading-5 text-stone-600 dark:text-stone-400">
           {dataset.description}
         </p>

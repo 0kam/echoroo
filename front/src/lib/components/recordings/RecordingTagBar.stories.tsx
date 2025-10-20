@@ -16,13 +16,13 @@ export default meta;
 type Story = StoryObj<typeof RecordingTagBar>;
 
 const tags = [
-  { key: "tag1", value: "value1" },
-  { key: "tag2", value: "value2" },
-  { key: "tag3", value: "value3" },
-  { key: "tag4", value: "value4" },
-  { key: "tag1", value: "value5" },
-  { key: "tag1", value: "value6" },
-  { key: "tag1", value: "value7" },
+  { key: "tag1", value: "value1", canonical_name: "value1" },
+  { key: "tag2", value: "value2", canonical_name: "value2" },
+  { key: "tag3", value: "value3", canonical_name: "value3" },
+  { key: "tag4", value: "value4", canonical_name: "value4" },
+  { key: "tag1", value: "value5", canonical_name: "value5" },
+  { key: "tag1", value: "value6", canonical_name: "value6" },
+  { key: "tag1", value: "value7", canonical_name: "value7" },
 ];
 
 const props = {
@@ -37,7 +37,7 @@ const props = {
 
 export const Primary: Story = {
   args: {
-    tags: [{ key: "tag1", value: "value1" }],
+    tags: [{ key: "tag1", value: "value1", canonical_name: "value1" }],
     ...props,
   },
 };
@@ -52,13 +52,13 @@ export const NoTags: Story = {
 export const ManyTags: Story = {
   args: {
     tags: [
-      { key: "tag1", value: "value1" },
-      { key: "tag2", value: "value2" },
-      { key: "tag3", value: "value3" },
-      { key: "tag4", value: "value4" },
-      { key: "tag1", value: "value5" },
-      { key: "tag1", value: "value6" },
-      { key: "tag1", value: "value7" },
+      { key: "tag1", value: "value1", canonical_name: "value1" },
+      { key: "tag2", value: "value2", canonical_name: "value2" },
+      { key: "tag3", value: "value3", canonical_name: "value3" },
+      { key: "tag4", value: "value4", canonical_name: "value4" },
+      { key: "tag1", value: "value5", canonical_name: "value5" },
+      { key: "tag1", value: "value6", canonical_name: "value6" },
+      { key: "tag1", value: "value7", canonical_name: "value7" },
     ],
     ...props,
   },

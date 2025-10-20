@@ -1,5 +1,7 @@
 import { useEffect, useMemo } from "react";
 
+import useEffectiveSamplerate from "@/lib/hooks/window/useEffectiveSamplerate";
+import useFrequencyRangeReset from "@/lib/hooks/window/useFrequencyRangeReset";
 import useViewport from "@/lib/hooks/window/useViewport";
 
 import type { AudioSettings, Recording, SoundEvent } from "@/lib/types";
@@ -14,11 +16,10 @@ export default function useSoundEventViewport({
   recording: Recording;
   audioSettings?: AudioSettings;
 }) {
-  // Calculate effective samplerate based on resampling settings
-  const effectiveSamplerate = useMemo(() => {
-    if (!audioSettings?.resample) return recording.samplerate;
-    return audioSettings.samplerate ?? recording.samplerate;
-  }, [audioSettings?.resample, audioSettings?.samplerate, recording.samplerate]);
+  const effectiveSamplerate = useEffectiveSamplerate(
+    recording.samplerate,
+    audioSettings,
+  );
 
   const bounds = useMemo(
     () =>
@@ -55,10 +56,7 @@ export default function useSoundEventViewport({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [soundEvent.uuid, setViewport]);
 
-  // Reset frequency range when effective samplerate changes
-  useEffect(() => {
-    viewport.setFrequencyInterval({ min: 0, max: effectiveSamplerate / 2 });
-  }, [effectiveSamplerate, viewport.setFrequencyInterval]);
+  useFrequencyRangeReset(viewport, effectiveSamplerate);
 
   return viewport;
 }

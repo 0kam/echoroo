@@ -1,10 +1,12 @@
+import { useCallback } from "react";
+
 import useSoundEventAnnotation from "@/app/hooks/api/useSoundEventAnnotation";
 
 import useStore from "@/app/store";
 
 import SelectedSoundEventAnnotationBase from "@/lib/components/sound_event_annotations/SelectedSoundEventAnnotation";
 
-import type { SoundEventAnnotation } from "@/lib/types";
+import type { SoundEventAnnotation, Tag } from "@/lib/types";
 
 import ProjectTagSearch from "../tags/ProjectTagsSearch";
 
@@ -21,11 +23,27 @@ export default function SelectedSoundEventAnnotation({
       soundEventAnnotation,
     });
 
+  const handleAddTag = useCallback(
+    (tag: Tag) => {
+      const annotation = data || soundEventAnnotation;
+      addTag.mutate({ soundEventAnnotation: annotation, tag });
+    },
+    [data, soundEventAnnotation, addTag],
+  );
+
+  const handleRemoveTag = useCallback(
+    (tag: Tag) => {
+      const annotation = data || soundEventAnnotation;
+      removeTag.mutate({ soundEventAnnotation: annotation, tag });
+    },
+    [data, soundEventAnnotation, removeTag],
+  );
+
   return (
     <SelectedSoundEventAnnotationBase
       soundEventAnnotation={data || soundEventAnnotation}
-      onAddSoundEventAnnotationTag={addTag.mutate}
-      onDeleteSoundEventAnnotationTag={removeTag.mutate}
+      onAddSoundEventAnnotationTag={handleAddTag}
+      onDeleteSoundEventAnnotationTag={handleRemoveTag}
       TagSearchBar={ProjectTagSearch}
       tagColorFn={tagColorFn}
       onCreateSoundEventAnnotationNote={addNote.mutate}

@@ -18,7 +18,7 @@ import Loading from "@/lib/components/ui/Loading";
 import useListWithSearch from "@/lib/hooks/lists/useListWithSearch";
 
 import type * as types from "@/lib/types";
-import { Color, getTagColor, getTagKey } from "@/lib/utils/tags";
+import { Color, getTagColor, getTagKey, getTagLabel } from "@/lib/utils/tags";
 
 const _emptyList: types.TagCount[] = [];
 
@@ -109,11 +109,14 @@ function TagCounts({
       case "-soundEvent":
         return (a, b) => (a.soundEventCount > b.soundEventCount ? 1 : -1);
       case "tag":
-        return (a, b) => (a.tag.value < b.tag.value ? 1 : -1);
+        return (a, b) =>
+          getTagLabel(a.tag) < getTagLabel(b.tag) ? 1 : -1;
       case "-tag":
-        return (a, b) => (a.tag.value > b.tag.value ? 1 : -1);
+        return (a, b) =>
+          getTagLabel(a.tag) > getTagLabel(b.tag) ? 1 : -1;
       default:
-        return (a, b) => (a.tag.value > b.tag.value ? 1 : -1);
+        return (a, b) =>
+          getTagLabel(a.tag) > getTagLabel(b.tag) ? 1 : -1;
     }
   }, [sortBy]);
 
@@ -124,7 +127,7 @@ function TagCounts({
     soundEventCount: number;
   }>({
     options: sortedCount,
-    fields: ["tag.key", "tag.value"],
+    fields: ["tag.key", "tag.value", "tag.canonical_name"],
     limit: initialShowMax,
     shouldSort: false,
     threshold: 0.3,

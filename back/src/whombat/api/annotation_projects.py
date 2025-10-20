@@ -7,6 +7,7 @@ from uuid import UUID
 
 from soundevent import data
 from sqlalchemy import and_, select
+from sqlalchemy.sql import ColumnExpressionArgument
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from whombat import exceptions, models, schemas
@@ -14,7 +15,15 @@ from whombat.api import common
 from whombat.api.annotation_tasks import annotation_tasks
 from whombat.api.clip_annotations import clip_annotations
 from whombat.api.common import BaseAPI
+from whombat.api.common.permissions import (
+    can_delete_annotation_project,
+    can_edit_annotation_project,
+    can_manage_restricted_annotation_project,
+    can_view_annotation_project,
+    filter_annotation_projects_by_access,
+)
 from whombat.api.tags import tags
+from whombat.api.users import ensure_system_user
 from whombat.filters.annotation_tasks import (
     AnnotationProjectFilter as AnnotationTaskAnnotationProjectFilter,
 )
@@ -39,6 +48,128 @@ class AnnotationProjectAPI(
 ):
     _model = models.AnnotationProject
     _schema = schemas.AnnotationProject
+
+    async def _resolve_user(
+        self,
+        session: AsyncSession,
+        user: models.User | schemas.SimpleUser | None,
+    ) -> models.User | None:
+        if user is None:
+            return None
+        if isinstance(user, models.User):
+            return user
+        db_user = await session.get(models.User, user.id)
+        if db_user is None:
+            raise exceptions.NotFoundError(
+                f"User with id {user.id} not found"
+            )
+        return db_user
+
+    async def get(
+        self,
+        session: AsyncSession,
+        pk: UUID,
+        user: models.User | None = None,
+    ) -> schemas.AnnotationProject:
+        db_user = await self._resolve_user(session, user)
+        project = await super().get(session, pk)
+
+        if not await can_view_annotation_project(session, project, db_user):
+            raise exceptions.NotFoundError(
+                f"Annotation project with uuid {pk} not found"
+            )
+
+        return project
+
+    async def get_many(
+        self,
+        session: AsyncSession,
+        *,
+        limit: int | None = 1000,
+        offset: int | None = 0,
+        filters: Sequence[Filter | ColumnExpressionArgument] | None = None,
+        sort_by: ColumnExpressionArgument | str | None = "-created_on",
+        user: models.User | None = None,
+    ) -> tuple[Sequence[schemas.AnnotationProject], int]:
+        db_user = await self._resolve_user(session, user)
+        access_filters = await filter_annotation_projects_by_access(session, db_user)
+
+        combined_filters: list[Filter | ColumnExpressionArgument] = []
+        if filters:
+            combined_filters.extend(filters)
+        combined_filters.extend(access_filters)
+
+        return await super().get_many(
+            session,
+            limit=limit,
+            offset=offset,
+            filters=combined_filters or None,
+            sort_by=sort_by,
+        )
+
+    async def update(
+        self,
+        session: AsyncSession,
+        obj: schemas.AnnotationProject,
+        data: schemas.AnnotationProjectUpdate,
+        *,
+        user: models.User | schemas.SimpleUser | None = None,
+    ) -> schemas.AnnotationProject:
+        db_user = await self._resolve_user(session, user)
+
+        if not await can_edit_annotation_project(session, obj, db_user):
+            raise exceptions.PermissionDeniedError(
+                "You do not have permission to update this annotation project"
+            )
+
+        target_visibility = obj.visibility
+        if "visibility" in data.model_fields_set:
+            target_visibility = data.visibility or obj.visibility
+
+        target_group_id = obj.owner_group_id
+        if "owner_group_id" in data.model_fields_set:
+            target_group_id = data.owner_group_id
+
+        if (
+            target_visibility == models.VisibilityLevel.RESTRICTED
+            and target_group_id is None
+        ):
+            raise exceptions.InvalidDataError(
+                "Restricted visibility requires owner_group_id to be set"
+            )
+
+        if (
+            db_user is not None
+            and target_visibility == models.VisibilityLevel.RESTRICTED
+            and target_group_id is not None
+        ):
+            allowed = await can_manage_restricted_annotation_project(
+                session,
+                target_group_id,
+                db_user,
+            )
+            if not allowed:
+                raise exceptions.PermissionDeniedError(
+                    "You must be a manager of the selected group"
+                )
+
+        return await super().update(session, obj, data)
+
+    async def delete(
+        self,
+        session: AsyncSession,
+        obj: schemas.AnnotationProject,
+        *,
+        user: models.User | schemas.SimpleUser | None = None,
+    ) -> schemas.AnnotationProject:
+        db_user = await self._resolve_user(session, user)
+
+        if not await can_delete_annotation_project(session, obj, db_user):
+            raise exceptions.PermissionDeniedError(
+                "You do not have permission to delete this annotation project"
+            )
+
+        return await super().delete(session, obj)
 
     async def get_base_dir(
         self,
@@ -83,6 +214,10 @@ class AnnotationProjectAPI(
         name: str,
         description: str,
         annotation_instructions: str | None = None,
+        *,
+        user: models.User | schemas.SimpleUser,
+        visibility: models.VisibilityLevel = models.VisibilityLevel.PRIVATE,
+        owner_group_id: int | None = None,
         **kwargs,
     ) -> schemas.AnnotationProject:
         """Create an annotation project.
@@ -109,13 +244,40 @@ class AnnotationProjectAPI(
         schemas.AnnotationProject
             Created annotation project.
         """
+        db_user = await self._resolve_user(session, user)
+
+        if (
+            visibility == models.VisibilityLevel.RESTRICTED
+            and owner_group_id is None
+        ):
+            raise exceptions.InvalidDataError(
+                "Restricted visibility requires owner_group_id to be set"
+            )
+
+        if (
+            visibility == models.VisibilityLevel.RESTRICTED
+            and owner_group_id is not None
+        ):
+            allowed = await can_manage_restricted_annotation_project(
+                session,
+                owner_group_id,
+                db_user,
+            )
+            if not allowed:
+                raise exceptions.PermissionDeniedError(
+                    "You must be a manager of the selected group to create a restricted annotation project"
+                )
+
         return await self.create_from_data(
             session,
             schemas.AnnotationProjectCreate(
                 name=name,
                 description=description,
                 annotation_instructions=annotation_instructions,
+                visibility=visibility,
+                owner_group_id=owner_group_id,
             ),
+            created_by_id=db_user.id,
             **kwargs,
         )
 
@@ -124,6 +286,8 @@ class AnnotationProjectAPI(
         session: AsyncSession,
         obj: schemas.AnnotationProject,
         tag: schemas.Tag,
+        *,
+        user: models.User | schemas.SimpleUser | None = None,
     ) -> schemas.AnnotationProject:
         """Add a tag to an annotation project.
 
@@ -141,6 +305,13 @@ class AnnotationProjectAPI(
         schemas.AnnotationProject
             Annotation project with the tag added.
         """
+        db_user = await self._resolve_user(session, user)
+
+        if not await can_edit_annotation_project(session, obj, db_user):
+            raise exceptions.PermissionDeniedError(
+                "You do not have permission to modify this annotation project"
+            )
+
         for t in obj.tags:
             if t.id == tag.id:
                 raise exceptions.DuplicateObjectError(
@@ -168,6 +339,8 @@ class AnnotationProjectAPI(
         session: AsyncSession,
         obj: schemas.AnnotationProject,
         tag: schemas.Tag,
+        *,
+        user: models.User | schemas.SimpleUser | None = None,
     ) -> schemas.AnnotationProject:
         """Remove a tag from an annotation project.
 
@@ -185,6 +358,13 @@ class AnnotationProjectAPI(
         schemas.AnnotationProject
             Annotation project with the tag removed.
         """
+        db_user = await self._resolve_user(session, user)
+
+        if not await can_edit_annotation_project(session, obj, db_user):
+            raise exceptions.PermissionDeniedError(
+                "You do not have permission to modify this annotation project"
+            )
+
         for t in obj.tags:
             if t.id == tag.id:
                 break
@@ -215,8 +395,15 @@ class AnnotationProjectAPI(
         session: AsyncSession,
         obj: schemas.AnnotationProject,
         clip: schemas.Clip,
+        *,
+        user: models.User | schemas.SimpleUser | None = None,
     ) -> schemas.AnnotationTask:
         clip_annotation = await clip_annotations.create(session, clip)
+        db_user = await self._resolve_user(session, user)
+        if not await can_edit_annotation_project(session, obj, db_user):
+            raise exceptions.PermissionDeniedError(
+                "You do not have permission to modify this annotation project"
+            )
         return await annotation_tasks.create(
             session,
             obj,
@@ -295,11 +482,23 @@ class AnnotationProjectAPI(
         try:
             annotation_project = await self.get(session, data.uuid)
         except exceptions.NotFoundError:
+            creator = await ensure_system_user(session)
+            raw_visibility = getattr(data, "visibility", None)
+            try:
+                visibility = (
+                    models.VisibilityLevel(raw_visibility)
+                    if raw_visibility is not None
+                    else models.VisibilityLevel.PRIVATE
+                )
+            except ValueError:
+                visibility = models.VisibilityLevel.PRIVATE
             annotation_project = await self.create(
                 session,
                 name=data.name,
                 description=data.description or "",
                 annotation_instructions=data.instructions or "",
+                user=creator,
+                visibility=visibility,
                 uuid=data.uuid,
                 created_on=data.created_on,
             )

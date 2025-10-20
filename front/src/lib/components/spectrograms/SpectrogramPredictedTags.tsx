@@ -10,6 +10,7 @@ import {
   type TagElement,
   type TagGroup,
   getTagClassNames,
+  getTagLabel,
 } from "@/lib/utils/tags";
 
 export default function SpectrogramPredictedTags({
@@ -80,7 +81,7 @@ export function SpectrogramPredictedTag({
         </span>
         <span className={SPAN_CLASS}>{tag.key}</span>
         <span className={classNames(SPAN_CLASS, "group-hover:underline")}>
-          {tag.value}
+          {getTagLabel(tag)}
         </span>
       </button>
     </span>

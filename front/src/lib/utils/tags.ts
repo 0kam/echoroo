@@ -307,6 +307,10 @@ export function getTagKey(tag: Tag): string {
   return `${tag.key}-${tag.value}`;
 }
 
+export function getTagLabel(tag: Tag): string {
+  return tag.canonical_name ?? tag.value;
+}
+
 export function getRandomColor(): Color {
   const name = COLOR_NAMES[Math.floor(Math.random() * COLOR_NAMES.length)];
   const level = LEVELS[Math.floor(Math.random() * LEVELS.length)];

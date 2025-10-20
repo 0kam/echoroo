@@ -133,26 +133,46 @@ export default function useSoundEventAnnotation({
     (annotation: SoundEventAnnotation, tag: Tag) => {
       onAddTag?.(tag);
       updateClipAnnotation(annotation);
+      // Update the sound event annotation cache
+      client.setQueryData(
+        ["sound_event_annotation", uuid],
+        annotation,
+      );
     },
-    [onAddTag, updateClipAnnotation],
+    [onAddTag, updateClipAnnotation, client, uuid],
   );
 
-  const addTag = useMutation({
-    mutationFn: api.soundEventAnnotations.addTag,
-    onSuccess: handleAddTag,
+  const addTag = useReactMutation<
+    SoundEventAnnotation,
+    AxiosError,
+    { soundEventAnnotation: SoundEventAnnotation; tag: Tag }
+  >({
+    mutationFn: ({ soundEventAnnotation, tag }) =>
+      api.soundEventAnnotations.addTag(soundEventAnnotation, tag),
+    onSuccess: (data, variables) => handleAddTag(data, variables.tag),
   });
 
   const handleRemoveTag = useCallback(
     (annotation: SoundEventAnnotation, tag: Tag) => {
       onRemoveTag?.(tag);
       updateClipAnnotation(annotation);
+      // Update the sound event annotation cache
+      client.setQueryData(
+        ["sound_event_annotation", uuid],
+        annotation,
+      );
     },
-    [onRemoveTag, updateClipAnnotation],
+    [onRemoveTag, updateClipAnnotation, client, uuid],
   );
 
-  const removeTag = useMutation({
-    mutationFn: api.soundEventAnnotations.removeTag,
-    onSuccess: handleRemoveTag,
+  const removeTag = useReactMutation<
+    SoundEventAnnotation,
+    AxiosError,
+    { soundEventAnnotation: SoundEventAnnotation; tag: Tag }
+  >({
+    mutationFn: ({ soundEventAnnotation, tag }) =>
+      api.soundEventAnnotations.removeTag(soundEventAnnotation, tag),
+    onSuccess: (data, variables) => handleRemoveTag(data, variables.tag),
   });
 
   const handleAddNote = useCallback(

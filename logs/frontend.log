@@ -1,0 +1,54 @@
+
+> whombat-front@0.8.6 dev
+> next dev
+
+  ▲ Next.js 14.2.30
+  - Local:        http://localhost:3000
+  - Environments: .env
+
+ ✓ Starting...
+ ✓ Ready in 57.4s
+ ○ Compiling / ...
+ ✓ Compiled / in 2.7s (3635 modules)
+ GET / 200 in 2870ms
+ ✓ Compiled /icon.svg in 141ms (1895 modules)
+ GET /icon.svg?32cc4c523f970f00 200 in 182ms
+ GET / 200 in 94ms
+ GET /icon.svg?32cc4c523f970f00 200 in 6ms
+ ○ Compiling /datasets/detail ...
+ ✓ Compiled /datasets/detail in 590ms (3758 modules)
+ ✓ Compiled in 345ms (3772 modules)
+ ✓ Compiled in 314ms (3772 modules)
+ GET /datasets/detail/?dataset_uuid=e857bd33-b0d8-425a-9109-ec585ab38471 200 in 159ms
+ GET /icon.svg?32cc4c523f970f00 200 in 16ms
+ GET /datasets/ 200 in 21ms
+ GET /icon.svg?32cc4c523f970f00 200 in 7ms
+ ○ Compiling /annotation_projects ...
+ ✓ Compiled /annotation_projects in 608ms (3780 modules)
+ GET /datasets/ 200 in 136ms
+ GET /icon.svg?32cc4c523f970f00 200 in 13ms
+ GET /datasets/ 200 in 30ms
+ GET /icon.svg?32cc4c523f970f00 200 in 6ms
+ ○ Compiling /annotation_projects/detail ...
+ ✓ Compiled /annotation_projects/detail in 841ms (3805 modules)
+ ✓ Compiled /icon.svg in 111ms (1991 modules)
+ GET /icon.svg?32cc4c523f970f00 200 in 150ms
+ ✓ Compiled in 465ms (3819 modules)
+ ✓ Compiled in 260ms (3819 modules)
+ ✓ Compiled in 297ms (3819 modules)
+ ✓ Compiled in 253ms (3819 modules)
+ ✓ Compiled in 314ms (3819 modules)
+ ✓ Compiled in 349ms (3819 modules)
+ GET /annotation_projects/detail/?annotation_project_uuid=6db7d351-f409-4a77-be5d-c75bbb320103 200 in 151ms
+ ✓ Compiled /icon.svg in 272ms (1991 modules)
+ GET /icon.svg?32cc4c523f970f00 200 in 320ms
+ GET /annotation_projects/detail/?annotation_project_uuid=6db7d351-f409-4a77-be5d-c75bbb320103 200 in 103ms
+ GET /icon.svg?32cc4c523f970f00 200 in 8ms
+ GET /annotation_projects/detail/?annotation_project_uuid=6db7d351-f409-4a77-be5d-c75bbb320103 200 in 21ms
+ GET /annotation_projects/detail/?annotation_project_uuid=6db7d351-f409-4a77-be5d-c75bbb320103 200 in 26ms
+ GET /icon.svg?32cc4c523f970f00 200 in 9ms
+ GET /annotation_projects/ 200 in 32ms
+ GET /icon.svg?32cc4c523f970f00 200 in 8ms
+ ○ Compiling /annotation_projects/detail/annotation ...
+ ✓ Compiled /annotation_projects/detail/annotation in 1258ms (4172 modules)
+ ✓ Compiled /annotation_projects/detail/tags in 401ms (4150 modules)

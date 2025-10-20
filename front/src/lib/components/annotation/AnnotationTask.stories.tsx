@@ -52,10 +52,10 @@ const baseRecording: Recording = {
 };
 
 const tags: Tag[] = [
-  { key: "animal", value: "bird" },
-  { key: "animal", value: "dog" },
-  { key: "animal", value: "cat" },
-  { key: "animal", value: "bird" },
+  { key: "animal", value: "bird", canonical_name: "bird" },
+  { key: "animal", value: "dog", canonical_name: "dog" },
+  { key: "animal", value: "cat", canonical_name: "cat" },
+  { key: "animal", value: "bird", canonical_name: "bird" },
 ];
 
 const task: AnnotationTask = {
@@ -68,7 +68,7 @@ const meta: Meta<typeof AnnotationTaskComponent> = {
   component: AnnotationTaskComponent,
   args: {
     Progress: <AnnotationProgress instructions={"Annotate"} tasks={[]} />,
-    TagPalette: <AnnotationTagPalette tags={tags} />,
+    TagPalette: <AnnotationTagPalette tags={tags} availableTags={tags} />,
     TaskStatus: <AnnotationTaskStatus task={task} />,
     Context: <AnnotationContext recording={baseRecording} />,
     Spectrogram: (

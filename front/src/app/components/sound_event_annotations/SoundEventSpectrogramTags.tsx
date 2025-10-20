@@ -1,3 +1,5 @@
+import { useCallback } from "react";
+
 import useSoundEventAnnotation from "@/app/hooks/api/useSoundEventAnnotation";
 
 import useStore from "@/app/store";
@@ -7,6 +9,8 @@ import {
   SoundEventSpectrogramTagsProps,
 } from "@/lib/components/spectrograms/SpectrogramTags";
 
+import type { SoundEventAnnotation, Tag } from "@/lib/types";
+
 import ProjectTagSearch from "../tags/ProjectTagsSearch";
 
 export default function SoundEventAnnotationTags({
@@ -15,21 +19,59 @@ export default function SoundEventAnnotationTags({
 }: SoundEventSpectrogramTagsProps) {
   const tagColorFn = useStore((state) => state.getTagColor);
 
+  const handleAddTagCallback = useCallback(
+    (tag: Tag) => {
+      if (props.onAddTag) {
+        props.onAddTag(soundEvent, tag);
+      }
+    },
+    [props, soundEvent],
+  );
+
+  const handleRemoveTagCallback = useCallback(
+    (tag: Tag) => {
+      if (props.onRemoveTag) {
+        props.onRemoveTag(soundEvent, tag);
+      }
+    },
+    [props, soundEvent],
+  );
+
   const { data, addTag, removeTag } = useSoundEventAnnotation({
     uuid: soundEvent.uuid,
     soundEventAnnotation: soundEvent,
-    onAddTag: props.onAddTag,
-    onRemoveTag: props.onRemoveTag,
+    onAddTag: handleAddTagCallback,
+    onRemoveTag: handleRemoveTagCallback,
   });
+
+  const handleAddTag = useCallback(
+    (annotation: SoundEventAnnotation, tag: Tag) => {
+      addTag.mutate({
+        soundEventAnnotation: annotation,
+        tag,
+      });
+    },
+    [addTag],
+  );
+
+  const handleRemoveTag = useCallback(
+    (annotation: SoundEventAnnotation, tag: Tag) => {
+      removeTag.mutate({
+        soundEventAnnotation: annotation,
+        tag,
+      });
+    },
+    [removeTag],
+  );
 
   return (
     <SoundEventSpectrogramTagsBase
       soundEvent={data || soundEvent}
       {...props}
       tagColorFn={tagColorFn}
-      onAddTag={addTag.mutate}
-      onRemoveTag={removeTag.mutate}
-      TagSearchBar={ProjectTagSearch}
+      onAddTag={handleAddTag}
+      onRemoveTag={handleRemoveTag}
+      tagSearchBarComponent={ProjectTagSearch}
     />
   );
 }

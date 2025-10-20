@@ -1,6 +1,7 @@
 import { Float } from "@headlessui-float/react";
 import { Listbox } from "@headlessui/react";
 import { Fragment, type ReactNode } from "react";
+import classNames from "classnames";
 
 import { CheckIcon, ExpandIcon } from "@/lib/components/icons";
 import { Submit } from "@/lib/components/inputs/index";
@@ -66,20 +67,24 @@ export default function Select<T>({
             <Listbox.Option
               key={option.id}
               value={option.value}
-              className={({ active }) =>
-                `relative cursor-default select-none py-2 pl-10 pr-4 ${
-                  active
-                    ? "bg-amber-100 text-amber-900"
-                    : "text-stone-900 dark:text-stone-400"
-                }`
+              disabled={option.disabled}
+              className={({ active, disabled }) =>
+                classNames(
+                  "relative select-none py-2 pl-10 pr-4",
+                  disabled
+                    ? "cursor-not-allowed text-stone-400 dark:text-stone-500 opacity-60"
+                    : "cursor-default text-stone-900 dark:text-stone-400",
+                  active && !disabled && "bg-amber-100 text-amber-900",
+                )
               }
             >
               {({ selected }) => (
                 <>
                   <span
-                    className={`block truncate ${
-                      selected ? "font-medium" : "font-normal"
-                    }`}
+                    className={classNames(
+                      "block truncate",
+                      selected ? "font-medium" : "font-normal",
+                    )}
                   >
                     {option.label}
                   </span>

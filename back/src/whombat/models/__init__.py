@@ -24,7 +24,7 @@ from whombat.models.clip_annotation import (
 )
 from whombat.models.clip_evaluation import ClipEvaluation, ClipEvaluationMetric
 from whombat.models.clip_prediction import ClipPrediction, ClipPredictionTag
-from whombat.models.dataset import Dataset, DatasetRecording
+from whombat.models.dataset import Dataset, DatasetRecording, VisibilityLevel
 from whombat.models.evaluation import Evaluation, EvaluationMetric
 from whombat.models.evaluation_set import (
     EvaluationSet,
@@ -89,6 +89,7 @@ __all__ = [
     "ClipPredictionTag",
     "Dataset",
     "DatasetRecording",
+    "VisibilityLevel",
     "Evaluation",
     "EvaluationMetric",
     "Group",

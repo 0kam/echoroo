@@ -13,8 +13,8 @@ const meta: Meta<typeof EvaluationSetTags> = {
     TagSearchBar: (
       <TagSearchBar
         tags={[
-          { key: "species", value: "Myotis myotis" },
-          { key: "species", value: "Myotis blythii" },
+          { key: "species", value: "Myotis myotis", canonical_name: "Myotis myotis" },
+          { key: "species", value: "Myotis blythii", canonical_name: "Myotis blythii" },
         ]}
       />
     ),
@@ -34,9 +34,9 @@ export const Empty: Story = {
 export const WithTags: Story = {
   args: {
     tags: [
-      { key: "species", value: "Myotis myotis" },
-      { key: "species", value: "Myotis blythii" },
-      { key: "species", value: "Myotis capaccinii" },
+      { key: "species", value: "Myotis myotis", canonical_name: "Myotis myotis" },
+      { key: "species", value: "Myotis blythii", canonical_name: "Myotis blythii" },
+      { key: "species", value: "Myotis capaccinii", canonical_name: "Myotis capaccinii" },
     ],
   },
 };

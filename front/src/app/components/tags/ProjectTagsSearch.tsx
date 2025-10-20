@@ -1,45 +1,36 @@
-import { ComponentProps, useCallback, useContext, useMemo } from "react";
-
-import useAnnotationProject from "@/app/hooks/api/useAnnotationProject";
+import { useContext, useMemo, type ComponentProps } from "react";
 
 import AnnotationProjectContext from "@/app/contexts/annotationProject";
 
+import TagSearchBarBase, {
+  type TagSearchBarProps,
+} from "@/lib/components/tags/TagSearchBar";
+
 import { type Tag } from "@/lib/types";
 
-import TagSearchBar from "./TagSearchBar";
-
 export default function ProjectTagSearch({
-  onCreateTag,
+  tags: overrideTags,
   ...props
-}: Omit<ComponentProps<typeof TagSearchBar>, "filter" | "fixed">) {
+}: ComponentProps<typeof TagSearchBarBase> & { tags?: Tag[] }) {
   const annotationProject = useContext(AnnotationProjectContext);
 
-  const { data, addTag } = useAnnotationProject({
-    uuid: annotationProject.uuid,
-    annotationProject,
-  });
+  const tags = useMemo<Tag[]>(() => {
+    if (overrideTags) return overrideTags;
+    return annotationProject?.tags ?? [];
+  }, [annotationProject?.tags, overrideTags]);
 
-  const filter = useMemo(
-    () => ({
-      annotation_project: data || annotationProject,
-    }),
-    [data, annotationProject],
-  );
-
-  const handleCreateTag = useCallback(
-    (tag: Tag) => {
-      addTag.mutate(tag);
-      onCreateTag?.(tag);
-    },
-    [addTag, onCreateTag],
-  );
+  const suggestions = useMemo(() => tags, [tags]);
 
   return (
-    <TagSearchBar
-      onCreateTag={handleCreateTag}
-      filter={filter}
-      fixed={["annotation_project"]}
-      {...props}
+    <TagSearchBarBase
+      tags={suggestions}
+      canCreate={false}
+      emptyMessage={
+        suggestions.length
+          ? "No matching project tags."
+          : "No project tags registered for this project."
+      }
+      {...(props as TagSearchBarProps)}
     />
   );
 }

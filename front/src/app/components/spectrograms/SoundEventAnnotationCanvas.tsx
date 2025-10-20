@@ -1,10 +1,13 @@
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, type FC } from "react";
 import { mergeProps } from "react-aria";
 
 import SoundEventSpectrogramTags from "@/app/components/sound_event_annotations/SoundEventSpectrogramTags";
 
 import CanvasBase from "@/lib/components/spectrograms/Canvas";
 import SpectrogramTags from "@/lib/components/spectrograms/SpectrogramTags";
+import TagSearchBarBase, {
+  type TagSearchBarProps,
+} from "@/lib/components/tags/TagSearchBar";
 
 import useSoundEventDraw from "@/lib/hooks/annotation/useAnnotationDraw";
 import useSpectrogramImages from "@/lib/hooks/spectrogram/useSpectrogramImages";
@@ -21,6 +24,7 @@ import type {
   SpectrogramState,
   SpectrogramWindow,
   ViewportController,
+  Tag,
 } from "@/lib/types";
 import { scaleTimeToViewport } from "@/lib/utils/geometry";
 
@@ -32,9 +36,13 @@ export default function ClipAnnotationCanvas({
   spectrogramSettings,
   audio,
   spectrogramState,
-  height = 400,
+  height = spectrogramSettings.height ?? 400,
   withAnnotations = true,
   enabled = true,
+  availableTags = [],
+  tagSearchComponent = TagSearchBarBase,
+  onAddTag,
+  onRemoveTag,
 }: {
   soundEventAnnotation: SoundEventAnnotation;
   audio: AudioController;
@@ -46,6 +54,10 @@ export default function ClipAnnotationCanvas({
   height?: number;
   withAnnotations?: boolean;
   enabled?: boolean;
+  availableTags?: Tag[];
+  tagSearchComponent?: FC<TagSearchBarProps>;
+  onAddTag?: (soundEvent: SoundEventAnnotation, tag: Tag) => void;
+  onRemoveTag?: (soundEvent: SoundEventAnnotation, tag: Tag) => void;
 }) {
   const { drawFn: drawInteractions, ...interactionProps } =
     useSpectrogramInteractions({
@@ -94,6 +106,10 @@ export default function ClipAnnotationCanvas({
       viewport={viewport.viewport}
       SoundEventTags={SoundEventSpectrogramTags}
       enabled={enabled}
+      availableTags={availableTags}
+      TagSearchComponent={tagSearchComponent}
+      onAddTag={onAddTag}
+      onRemoveTag={onRemoveTag}
     >
       <CanvasBase
         viewport={viewport.viewport}

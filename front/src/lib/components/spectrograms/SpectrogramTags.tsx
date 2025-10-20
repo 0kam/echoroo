@@ -13,8 +13,18 @@ import type {
   Tag as TagType,
 } from "@/lib/types";
 import { isGeometryInWindow } from "@/lib/utils/geometry";
-import { getLabelPosition, getTagKey } from "@/lib/utils/tags";
-import { type Color, type TagElement, getTagColor } from "@/lib/utils/tags";
+import {
+  getLabelPosition,
+  getTagKey,
+  getTagLabel,
+  getTagColor,
+  type Color,
+  type TagElement,
+} from "@/lib/utils/tags";
+
+import TagSearchBarBase, {
+  type TagSearchBarProps,
+} from "../tags/TagSearchBar";
 
 import AddTagButton from "../tags/AddTagButton";
 
@@ -23,12 +33,18 @@ export default function SpectrogramTags({
   soundEvents,
   viewport,
   SoundEventTags = SoundEventSpectrogramTagsBase,
+  availableTags = [],
+  TagSearchComponent = TagSearchBarBase,
+  emptyMessage,
   ...props
 }: {
   children: ReactNode;
   viewport: SpectrogramWindow;
   soundEvents: SoundEventAnnotation[];
   SoundEventTags?: FC<SoundEventSpectrogramTagsProps>;
+  availableTags?: TagType[];
+  TagSearchComponent?: FC<TagSearchBarProps>;
+  emptyMessage?: string;
 } & Omit<SoundEventSpectrogramTagsProps, "soundEvent" | "dimensions">) {
   const { size: dimensions, ref } = useElementSize<HTMLDivElement>();
 
@@ -47,6 +63,9 @@ export default function SpectrogramTags({
           viewport={viewport}
           soundEvent={soundEvent}
           dimensions={dimensions}
+          availableTags={availableTags}
+          tagSearchBarComponent={TagSearchComponent}
+          emptyMessage={emptyMessage}
           {...props}
         />
       ))}
@@ -59,8 +78,11 @@ export type SoundEventSpectrogramTagsProps = {
   viewport: SpectrogramWindow;
   dimensions: Dimensions;
   enabled?: boolean;
-  onAddTag?: (tag: TagType) => void;
-  onRemoveTag?: (tag: TagType) => void;
+  onAddTag?: (soundEvent: SoundEventAnnotation, tag: TagType) => void;
+  onRemoveTag?: (soundEvent: SoundEventAnnotation, tag: TagType) => void;
+  availableTags?: TagType[];
+  tagSearchBarComponent?: FC<TagSearchBarProps>;
+  emptyMessage?: string;
 };
 
 export function SoundEventSpectrogramTagsBase({
@@ -71,11 +93,24 @@ export function SoundEventSpectrogramTagsBase({
   tagColorFn = getTagColor,
   onRemoveTag,
   onAddTag,
+  availableTags = [],
+  tagSearchBarComponent = TagSearchBarBase,
+  emptyMessage,
   ...props
 }: SoundEventSpectrogramTagsProps & {
   tagColorFn?: (tag: TagType) => Color;
+  availableTags?: TagType[];
+  tagSearchBarComponent?: FC<TagSearchBarProps>;
+  emptyMessage?: string;
 } & Omit<ComponentProps<typeof AddTagButton>, "onSelectTag">) {
   const { x, y } = getLabelPosition(soundEvent, viewport, dimensions);
+  const TagSearchComponent = tagSearchBarComponent;
+  const assignedKeys = new Set(
+    (soundEvent.tags ?? []).map((tag) => getTagKey(tag)),
+  );
+  const suggestions = availableTags.filter(
+    (tag) => !assignedKeys.has(getTagKey(tag)),
+  );
   return (
     <div
       className={classNames(
@@ -92,12 +127,21 @@ export function SoundEventSpectrogramTagsBase({
             key={getTagKey(tag)}
             disabled={!enabled}
             tagColorFn={tagColorFn}
-            onClick={() => onRemoveTag?.(tag)}
+            onClick={() => onRemoveTag?.(soundEvent, tag)}
             tag={tag}
           />
         ))}
       </div>
-      {enabled && <AddTagButton onSelectTag={onAddTag} {...props} />}
+      {enabled && (
+        <AddTagButton
+          onSelectTag={(tag) => onAddTag?.(soundEvent, tag)}
+          TagSearchBar={TagSearchComponent}
+          tags={suggestions}
+          emptyMessage={emptyMessage ?? "No project tags available."}
+          disabled={suggestions.length === 0}
+          {...props}
+        />
+      )}
     </div>
   );
 }
@@ -126,7 +170,7 @@ export function SpectrogramTag({
           {tag.key}
         </span>
         <span className="hidden text-sm font-medium whitespace-nowrap opacity-0 transition-all group-hover:inline-block group-hover:opacity-100">
-          {tag.value}
+          {getTagLabel(tag)}
         </span>
         {!disabled && <CloseIcon className="inline-block w-3 h-3 stroke-2" />}
       </button>

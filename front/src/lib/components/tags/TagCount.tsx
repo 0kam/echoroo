@@ -36,7 +36,7 @@ export default function TagCount({
     count: number;
   }>({
     options: sortedTagCount,
-    fields: ["tag.key", "tag.value"],
+    fields: ["tag.key", "tag.value", "tag.canonical_name"],
     limit: initialShowMax,
     shouldSort: false,
     threshold: 0.3,

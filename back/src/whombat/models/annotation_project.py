@@ -25,14 +25,24 @@ annotations. Therefore, maintaining a high level of quality control is
 essential, including outlier detection.
 """
 
+from __future__ import annotations
+
 from uuid import UUID, uuid4
 
+import sqlalchemy as sa
 import sqlalchemy.orm as orm
-from sqlalchemy import ForeignKey, UniqueConstraint
+from sqlalchemy import CheckConstraint, ForeignKey, UniqueConstraint
 
 from whombat.models.annotation_task import AnnotationTask
 from whombat.models.base import Base
+from whombat.models.dataset import VisibilityLevel
 from whombat.models.tag import Tag
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from whombat.models.group import Group
+    from whombat.models.user import User
 
 __all__ = [
     "AnnotationProject",
@@ -44,6 +54,12 @@ class AnnotationProject(Base):
     """Annotation Project model."""
 
     __tablename__ = "annotation_project"
+    __table_args__ = (
+        CheckConstraint(
+            "visibility != 'restricted' OR owner_group_id IS NOT NULL",
+            name="chk_annotation_project_restricted_has_group",
+        ),
+    )
 
     id: orm.Mapped[int] = orm.mapped_column(primary_key=True, init=False)
     """The database id of the annotation project."""
@@ -61,10 +77,49 @@ class AnnotationProject(Base):
     description: orm.Mapped[str]
     """The description of the annotation project."""
 
+    created_by_id: orm.Mapped[UUID] = orm.mapped_column(
+        sa.ForeignKey("user.id"),
+        nullable=False,
+    )
+    """The user who created the project."""
+
     annotation_instructions: orm.Mapped[str | None] = orm.mapped_column(
         default=None
     )
     """The instructions for annotators."""
+
+    visibility: orm.Mapped[VisibilityLevel] = orm.mapped_column(
+        sa.Enum(VisibilityLevel, name="visibility_level"),
+        nullable=False,
+        default=VisibilityLevel.PRIVATE,
+        server_default=VisibilityLevel.PRIVATE.value,
+    )
+    """Visibility level for the project."""
+
+    owner_group_id: orm.Mapped[int | None] = orm.mapped_column(
+        sa.ForeignKey("group.id", ondelete="SET NULL"),
+        nullable=True,
+        default=None,
+    )
+    """Owning group when visibility is restricted."""
+
+    created_by: orm.Mapped["User"] = orm.relationship(
+        "User",
+        foreign_keys=[created_by_id],
+        viewonly=True,
+        repr=False,
+        init=False,
+    )
+    """Relationship to the creator."""
+
+    owner_group: orm.Mapped["Group | None"] = orm.relationship(
+        "Group",
+        foreign_keys=[owner_group_id],
+        viewonly=True,
+        repr=False,
+        init=False,
+    )
+    """Relationship to the owning group."""
 
     # Relationships
     tags: orm.Mapped[list[Tag]] = orm.relationship(

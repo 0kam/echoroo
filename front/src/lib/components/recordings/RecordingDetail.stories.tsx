@@ -49,8 +49,8 @@ const recording: Recording = {
   time: "12:00:00",
   created_on: new Date(),
   tags: [
-    { key: "species", value: "Myotis myotis" },
-    { key: "environment", value: "closed" },
+    { key: "species", value: "Myotis myotis", canonical_name: "Myotis myotis" },
+    { key: "environment", value: "closed", canonical_name: "closed" },
   ],
   notes: [
     {

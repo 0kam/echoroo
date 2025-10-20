@@ -7,12 +7,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from whombat import api, filters, schemas
 from whombat.api.io.aoef.annotation_projects import import_annotation_project
 from whombat.api.io.aoef.datasets import import_dataset
+from whombat.api.users import ensure_system_user
 
 
 async def test_exports_annotation_tags(
     annotation_project: schemas.AnnotationProject,
     tag_factory: Callable[..., Awaitable[schemas.Tag]],
     session: AsyncSession,
+    user: schemas.SimpleUser,
 ) -> None:
     tags = [
         await tag_factory(key="key1", value="value1"),
@@ -23,11 +25,13 @@ async def test_exports_annotation_tags(
         session,
         annotation_project,
         tags[0],
+        user=user,
     )
     annotation_project = await api.annotation_projects.add_tag(
         session,
         annotation_project,
         tags[1],
+        user=user,
     )
 
     assert len(annotation_project.tags) == 2
@@ -53,6 +57,7 @@ async def test_can_export_clip_notes(
     annotation_project: schemas.AnnotationProject,
     clip_annotation: schemas.ClipAnnotation,
     session: AsyncSession,
+    user: schemas.SimpleUser,
 ):
     note = await api.notes.create(session, "Test note")
     clip_annotation = await api.clip_annotations.add_note(
@@ -100,7 +105,12 @@ async def test_can_import_example_annotation_project(
         base_audio_dir=example_audio_dir,
     )
 
-    project = await api.annotation_projects.get(session, db_project.uuid)
+    system_user = await ensure_system_user(session)
+    project = await api.annotation_projects.get(
+        session,
+        db_project.uuid,
+        user=system_user,
+    )
 
     # Has the correct number of annotation tags
     assert len(project.tags) == 11

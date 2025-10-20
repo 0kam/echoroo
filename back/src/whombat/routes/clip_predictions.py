@@ -38,6 +38,7 @@ async def create_clip_prediction(
             session,
             key=predicted_tag.tag.key,
             value=predicted_tag.tag.value,
+            canonical_name=predicted_tag.tag.canonical_name,
         )
         clip_prediction = await api.clip_predictions.add_tag(
             session,

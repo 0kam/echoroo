@@ -31,7 +31,7 @@ async def get_database_strategy(
 def get_auth_backend(
     settings: WhombatSettings,
 ):
-    """Get the authentication strategy."""
+    """Get the authentication backend."""
     cookie_transport = auth.get_cookie_transport(settings)
     return AuthenticationBackend(
         name="database",
@@ -64,3 +64,12 @@ def get_current_admin_dependency(
 
     fastapi_users = get_users_api(settings)
     return fastapi_users.current_user(active=True, superuser=True)
+
+
+def get_optional_current_user_dependency(
+    settings: WhombatSettings,
+):
+    """Return a dependency that allows unauthenticated access."""
+
+    fastapi_users = get_users_api(settings)
+    return fastapi_users.current_user(active=True, optional=True)

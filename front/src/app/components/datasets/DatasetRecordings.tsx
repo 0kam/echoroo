@@ -193,7 +193,11 @@ export default function DatasetRecordings({
   );
 
   const filter = useMemo(() => ({ dataset }), [dataset]);
-  const recordings = useRecordings({ filter, fixed: ["dataset"] });
+  const recordings = useRecordings({
+    filter,
+    fixed: ["dataset"],
+    sortBy: "path",
+  });
 
   const handleKeyDown = useRecordingTableKeyShortcuts({
     onUpdate: recordings.updateRecording.mutate,

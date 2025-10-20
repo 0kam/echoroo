@@ -4,6 +4,9 @@ __all__ = [
     "NotFoundError",
     "DuplicateObjectError",
     "MissingDatabaseError",
+    "InvalidDataError",
+    "PermissionDeniedError",
+    "DataIntegrityError",
 ]
 
 
@@ -21,6 +24,14 @@ class DuplicateObjectError(RuntimeError):
 
 class MissingDatabaseError(RuntimeError):
     """Raised when the database is not available."""
+
+
+class InvalidDataError(RuntimeError):
+    """Raised when the provided payload violates business rules."""
+
+
+class PermissionDeniedError(RuntimeError):
+    """Raised when the acting user is not allowed to perform an action."""
 
 
 class DataIntegrityError(RuntimeError):

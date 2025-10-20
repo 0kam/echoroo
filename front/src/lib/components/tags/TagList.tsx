@@ -22,7 +22,7 @@ export default function TagList({
 }) {
   const { items, setSearch, setLimit, hasMore } = useListWithSearch({
     options: tags,
-    fields: ["key", "value"],
+    fields: ["key", "value", "canonical_name"],
     limit: showMax,
   });
   return (

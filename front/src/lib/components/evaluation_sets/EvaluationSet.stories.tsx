@@ -25,7 +25,7 @@ export const Primary: Story = {
       description: "This is a description",
       created_on: new Date(),
       task: "Clip Classification",
-      tags: [{ key: "species", value: "Myotis myotis" }],
+      tags: [{ key: "species", value: "Myotis myotis", canonical_name: "Myotis myotis" }],
     },
   },
 };
@@ -38,7 +38,7 @@ export const WithLongDescription: Story = {
       description: loremIpsum({ count: 5, units: "paragraphs" }),
       created_on: new Date(),
       task: "Sound Event Detection",
-      tags: [{ key: "species", value: "Myotis myotis" }],
+      tags: [{ key: "species", value: "Myotis myotis", canonical_name: "Myotis myotis" }],
     },
   },
 };

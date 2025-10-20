@@ -1,4 +1,4 @@
-import { FC } from "react";
+import { FC, type ReactNode } from "react";
 
 import { DeleteIcon, ToolsIcon } from "@/lib/components/icons";
 import TagComponent from "@/lib/components/tags/Tag";
@@ -11,24 +11,38 @@ import { H4 } from "@/lib/components/ui/Headings";
 import Tooltip from "@/lib/components/ui/Tooltip";
 
 import type { Tag } from "@/lib/types";
-import { type Color, getTagColor } from "@/lib/utils/tags";
+import { type Color, getTagColor, getTagKey } from "@/lib/utils/tags";
 
 export default function AnnotationTagPalette({
   tags,
+  availableTags = [],
   onClick,
   onRemoveTag,
   onClearTags,
   tagColorFn = getTagColor,
   TagSearchBar = TagSearchBarBase,
-  ...props
+  projectTagActions,
+  ...tagSearchProps
 }: {
   tags: Tag[];
+  availableTags?: Tag[];
   onClick?: (tag: Tag) => void;
   onRemoveTag?: (tag: Tag) => void;
   onClearTags?: () => void;
   tagColorFn?: (tag: Tag) => Color;
   TagSearchBar?: FC<TagSearchBarProps>;
+  projectTagActions?: ReactNode;
 } & TagSearchBarProps) {
+  const selectedKeys = new Set(tags.map(getTagKey));
+  const suggestions = availableTags.filter(
+    (tag) => !selectedKeys.has(getTagKey(tag)),
+  );
+  const effectiveEmptyMessage =
+    tagSearchProps.emptyMessage ??
+    (availableTags.length === 0
+      ? "No project tags available."
+      : "No matching project tags.");
+
   return (
     <Card>
       <H4 className="text-center">
@@ -45,15 +59,21 @@ export default function AnnotationTagPalette({
           <span className="cursor-help">Tag Palette</span>
         </Tooltip>
       </H4>
-      <div className="flex flex-row gap-1 w-full">
+      <div className="flex flex-row gap-2 w-full items-start">
         <Tooltip tooltip="Clear tags" placement="top">
           <Button onClick={onClearTags} mode="text" variant="danger">
             <DeleteIcon className="w-5 h-5" />
           </Button>
         </Tooltip>
         <div className="grow">
-          <TagSearchBar placement="bottom-end" {...props} />
+          <TagSearchBar
+            tags={suggestions}
+            emptyMessage={effectiveEmptyMessage}
+            disabled={availableTags.length === 0}
+            {...(tagSearchProps as any)}
+          />
         </div>
+        {projectTagActions}
       </div>
       <div className="flex flex-row flex-wrap gap-1">
         {tags.map((tag) => (

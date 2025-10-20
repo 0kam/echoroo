@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter
 
-from whombat.routes.annotation_projects import annotation_projects_router
+from whombat.routes.annotation_projects import get_annotation_projects_router
 from whombat.routes.annotation_tasks import get_annotation_tasks_router
 from whombat.routes.audio import audio_router
 from whombat.routes.auth import get_auth_router
@@ -10,7 +10,7 @@ from whombat.routes.clip_annotations import get_clip_annotations_router
 from whombat.routes.clip_evaluations import clip_evaluations_router
 from whombat.routes.clip_predictions import clip_predictions_router
 from whombat.routes.clips import clips_router
-from whombat.routes.datasets import dataset_router
+from whombat.routes.datasets import get_dataset_router
 from whombat.routes.evaluation_sets import evaluation_sets_router
 from whombat.routes.evaluations import evaluations_router
 from whombat.routes.features import features_router
@@ -30,7 +30,9 @@ from whombat.routes.sound_event_predictions import (
 )
 from whombat.routes.sound_events import sound_events_router
 from whombat.routes.spectrograms import spectrograms_router
+from whombat.routes.setup import get_setup_router
 from whombat.routes.tags import tags_router
+from whombat.routes.species import species_router
 from whombat.routes.user_runs import get_user_runs_router
 from whombat.routes.users import get_admin_users_router, get_users_router
 from whombat.system.settings import Settings
@@ -76,6 +78,11 @@ def get_main_router(settings: Settings):
         tags=["Tags"],
     )
     main_router.include_router(
+        species_router,
+        prefix="/species",
+        tags=["Species"],
+    )
+    main_router.include_router(
         features_router,
         prefix="/features",
         tags=["Features"],
@@ -93,8 +100,9 @@ def get_main_router(settings: Settings):
         prefix="/recordings",
         tags=["Recordings"],
     )
+    datasets_router = get_dataset_router(settings)
     main_router.include_router(
-        dataset_router,
+        datasets_router,
         prefix="/datasets",
         tags=["Datasets"],
     )
@@ -144,6 +152,7 @@ def get_main_router(settings: Settings):
         prefix="/annotation_tasks",
         tags=["Annotation Tasks"],
     )
+    annotation_projects_router = get_annotation_projects_router(settings)
     main_router.include_router(
         annotation_projects_router,
         prefix="/annotation_projects",
@@ -188,6 +197,12 @@ def get_main_router(settings: Settings):
         evaluation_sets_router,
         prefix="/evaluation_sets",
         tags=["Evaluation Sets"],
+    )
+    setup_router = get_setup_router()
+    main_router.include_router(
+        setup_router,
+        prefix="/setup",
+        tags=["Setup"],
     )
     main_router.include_router(
         evaluations_router,

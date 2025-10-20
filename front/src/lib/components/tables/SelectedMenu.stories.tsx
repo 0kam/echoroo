@@ -29,10 +29,10 @@ export default meta;
 type Story = StoryObj<typeof SelectedMenu>;
 
 const tags: Tag[] = [
-  { key: "species", value: "Myotis myotis" },
-  { key: "species", value: "Myotis blythii" },
-  { key: "species", value: "Myotis capaccinii" },
-  { key: "species", value: "Myotis emarginatus" },
+  { key: "species", value: "Myotis myotis", canonical_name: "Myotis myotis" },
+  { key: "species", value: "Myotis blythii", canonical_name: "Myotis blythii" },
+  { key: "species", value: "Myotis capaccinii", canonical_name: "Myotis capaccinii" },
+  { key: "species", value: "Myotis emarginatus", canonical_name: "Myotis emarginatus" },
 ];
 
 export const Primary: Story = {

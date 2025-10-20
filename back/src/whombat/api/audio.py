@@ -10,7 +10,6 @@ from pathlib import Path
 import numpy as np
 import soundfile as sf
 import torch
-import torchaudio
 import xarray as xr
 from soundevent.arrays import ArrayAttrs, Dimensions, create_time_range, extend_dim
 from soundevent.audio.attributes import AudioAttrs
@@ -149,54 +148,60 @@ def load_audio(
     audio_path = (audio_dir / recording.path).resolve()
     metadata = _probe_audio(audio_path)
 
+    time_expansion = recording.time_expansion or 1.0
     file_samplerate = metadata.sample_rate
     total_frames = metadata.num_frames
 
-    load_start = max(start_time, 0.0)
-    load_end = max(end_time, load_start)
+    effective_samplerate = recording.samplerate
+    if effective_samplerate is None or effective_samplerate <= 0:
+        effective_samplerate = int(
+            round(file_samplerate * time_expansion)
+        ) or file_samplerate
 
-    frame_offset = int(math.floor(load_start * file_samplerate))
+    max_original_time = None
+    if file_samplerate > 0 and time_expansion > 0:
+        max_original_time = (total_frames / file_samplerate) / time_expansion
+    if max_original_time is None:
+        max_original_time = getattr(recording, "duration", None)
+    if max_original_time is None:
+        max_original_time = float("inf")
+
+    read_start = max(min(start_time, max_original_time), 0.0)
+    read_end = max(min(end_time, max_original_time), read_start)
+
+    frame_offset = int(math.floor(read_start * effective_samplerate))
     frame_offset = max(0, min(frame_offset, total_frames))
 
     expected_frames = int(
-        math.floor((load_end - load_start) * file_samplerate)
+        math.floor((read_end - read_start) * effective_samplerate)
     )
     expected_frames = max(expected_frames, 0)
-    if frame_offset + expected_frames > total_frames:
-        expected_frames = max(total_frames - frame_offset, 0)
+    available_frames = max(total_frames - frame_offset, 0)
+    if expected_frames > available_frames:
+        expected_frames = available_frames
 
-    if expected_frames > 0 and frame_offset < total_frames:
-        segment, detected_samplerate = torchaudio.load(
-            str(audio_path),
-            frame_offset=frame_offset,
-            num_frames=expected_frames,
-        )
-        file_samplerate = detected_samplerate
-    else:
-        segment = torch.zeros(
-            (metadata.num_channels, 0),
-            dtype=torch.float32,
-        )
-
-    segment = segment.to(torch.float32)
-    channels = (
-        segment.shape[0]
-        or metadata.num_channels
-        or recording.channels
-        or 1
-    )
-
+    channels = metadata.num_channels or recording.channels or 1
     waveform = torch.zeros(
         (channels, expected_frames),
-        dtype=segment.dtype,
+        dtype=torch.float32,
     )
-    if segment.numel() > 0:
-        frames_to_copy = min(segment.shape[1], expected_frames)
-        waveform[
-            : segment.shape[0], :frames_to_copy
-        ] = segment[:, :frames_to_copy]
 
-    current_samplerate = file_samplerate
+    if expected_frames > 0 and frame_offset < total_frames:
+        with sf.SoundFile(audio_path) as sf_file:
+            sf_file.seek(frame_offset)
+            segment = sf_file.read(
+                frames=expected_frames,
+                dtype="float32",
+                always_2d=True,
+            )
+        if segment.size > 0:
+            segment_tensor = torch.from_numpy(segment.T.copy())
+            frames_to_copy = min(segment_tensor.shape[1], expected_frames)
+            waveform[: segment_tensor.shape[0], :frames_to_copy] = (
+                segment_tensor[:, :frames_to_copy]
+            )
+
+    current_samplerate = int(effective_samplerate)
 
     # Resample audio.
     if (
@@ -229,7 +234,7 @@ def load_audio(
         )
 
     actual_start_time = (
-        frame_offset / file_samplerate if file_samplerate > 0 else 0.0
+        frame_offset / effective_samplerate if effective_samplerate > 0 else 0.0
     )
     duration_seconds = (
         waveform.shape[1] / current_samplerate
@@ -329,71 +334,109 @@ def load_clip_bytes(
         Total size of clip in bytes.
     """
     with sf.SoundFile(path) as sf_file:
-        samplerate = int(sf_file.samplerate * time_expansion)
+        file_samplerate = sf_file.samplerate
         channels = sf_file.channels
+        bytes_per_frame = channels * bit_depth // 8
 
-        # Calculate start and end frames based on start and end times
-        # to ensure that the requested piece of audio is loaded.
+        # Determine clip boundaries in file frames.
         if start_time is None:
-            start_time = 0
-        start_frame = int(start_time * samplerate)
+            start_time = 0.0
+        start_frame = int(start_time * file_samplerate)
+        start_frame = max(start_frame, 0)
 
         end_frame = sf_file.frames
         if end_time is not None:
-            end_frame = int(end_time * samplerate)
+            end_frame = int(end_time * file_samplerate)
+        end_frame = max(min(end_frame, sf_file.frames), start_frame)
 
-        # Calculate the total number of frames and the size of the audio
-        # data in bytes.
-        total_frames = end_frame - start_frame
-        bytes_per_frame = channels * bit_depth // 8
-        filesize = total_frames * bytes_per_frame
+        clip_frame_count = end_frame - start_frame
 
-        # Compute the offset, which is the frame at which to start reading
-        # the audio data.
+        # Planned output samplerate before speed factor.
+        output_samplerate = (
+            target_samplerate if target_samplerate is not None else file_samplerate
+        )
+        if output_samplerate <= 0:
+            output_samplerate = file_samplerate
+
+        # Offset within the clip for range requests (convert output frames to file frames).
         offset = start_frame
-        if start != 0:
-            # When the start byte is not 0, calculate the offset in frames
-            # and add it to the start frame. Note that we need to
-            # remove the size of the header from the start byte to correctly
-            # calculate the offset in frames.
-            offset_frames = (start - HEADER_SIZE) // bytes_per_frame
-            offset += offset_frames
+        if start > 0:
+            if start <= HEADER_SIZE:
+                requested_output_frames = 0
+            else:
+                requested_output_frames = (start - HEADER_SIZE) // bytes_per_frame
+            if output_samplerate > 0:
+                offset += int(
+                    round(
+                        requested_output_frames
+                        * file_samplerate
+                        / output_samplerate
+                    )
+                )
 
-        # Make sure that the number of frames to read is not greater than
-        # the number of frames requested.
-        frames = min(frames, end_frame - offset)
+        offset = min(max(offset, start_frame), end_frame)
+
+        # Determine how many frames to read from the source file.
+        if output_samplerate > 0:
+            desired_source_frames = int(
+                math.ceil(frames * file_samplerate / output_samplerate)
+            )
+        else:
+            desired_source_frames = frames
+
+        desired_source_frames = max(desired_source_frames, 0)
+        available_frames = max(end_frame - offset, 0)
+        source_frames_to_read = available_frames
+        if desired_source_frames > 0:
+            source_frames_to_read = min(available_frames, desired_source_frames)
 
         sf_file.seek(offset)
-        audio_data = sf_file.read(frames, fill_value=0, always_2d=True)
+        audio_data = sf_file.read(
+            source_frames_to_read,
+            fill_value=0,
+            always_2d=True,
+        )
 
-        # Resample if target_samplerate is provided
-        effective_samplerate = samplerate
-        if target_samplerate is not None and target_samplerate != samplerate:
+        # Resample to target samplerate if requested.
+        if (
+            target_samplerate is not None
+            and target_samplerate > 0
+            and target_samplerate != file_samplerate
+        ):
             try:
                 waveform = torch.from_numpy(audio_data.T).to(torch.float32)
                 if waveform.shape[1] > 0:
                     waveform = taF.resample(
                         waveform,
-                        samplerate,
+                        file_samplerate,
                         target_samplerate,
                     )
                 audio_data = waveform.T.cpu().numpy()
-                effective_samplerate = target_samplerate
+                output_samplerate = target_samplerate
             except Exception as e:
-                # Log warning and fallback to original samplerate
                 import logging
+
                 logger = logging.getLogger(__name__)
                 logger.warning(
-                    f"Resampling failed from {samplerate}Hz to {target_samplerate}Hz: {e}. "
-                    f"Using original samplerate."
+                    "Resampling failed from %sHz to %sHz: %s. "
+                    "Falling back to original samplerate.",
+                    file_samplerate,
+                    target_samplerate,
+                    e,
                 )
-                # Keep original audio_data and samplerate
-                effective_samplerate = samplerate
+                output_samplerate = file_samplerate
+
+        total_output_frames = 0
+        if file_samplerate > 0 and output_samplerate > 0:
+            total_output_frames = int(
+                round(clip_frame_count * output_samplerate / file_samplerate)
+            )
+        filesize = max(total_output_frames, 0) * bytes_per_frame
 
         # Convert the audio data to raw bytes
         audio_bytes = audio_to_bytes(
             audio_data,
-            samplerate=effective_samplerate,
+            samplerate=output_samplerate,
             bit_depth=bit_depth,
         )
 
@@ -401,7 +444,7 @@ def load_clip_bytes(
         # append to the start of the audio data.
         if start == 0:
             header = generate_wav_header(
-                samplerate=int(effective_samplerate * speed),
+                samplerate=int(output_samplerate * speed),
                 channels=channels,
                 data_size=filesize,
                 bit_depth=bit_depth,

@@ -49,12 +49,15 @@ from whombat.schemas.clips import Clip, ClipCreate, ClipUpdate
 from whombat.schemas.datasets import (
     Dataset,
     DatasetCreate,
+    DatasetCandidate,
+    DatasetCandidateInfo,
     DatasetFile,
     DatasetRecording,
     DatasetRecordingCreate,
     DatasetUpdate,
     FileState,
 )
+from whombat.schemas.settings import AudioDirectory, AudioDirectoryUpdate
 from whombat.schemas.evaluation_sets import (
     EvaluationSet,
     EvaluationSetCreate,
@@ -128,6 +131,7 @@ from whombat.schemas.tags import (
     TagCreate,
     TagUpdate,
 )
+from whombat.schemas.species import SpeciesCandidate
 from whombat.schemas.user_runs import UserRun, UserRunCreate, UserRunUpdate
 from whombat.schemas.users import (
     SimpleUser,
@@ -165,8 +169,12 @@ __all__ = [
     "ClipPredictionTag",
     "ClipPredictionUpdate",
     "ClipUpdate",
+    "AudioDirectory",
+    "AudioDirectoryUpdate",
     "Dataset",
     "DatasetCreate",
+    "DatasetCandidate",
+    "DatasetCandidateInfo",
     "DatasetFile",
     "DatasetRecording",
     "DatasetRecordingCreate",
@@ -208,6 +216,7 @@ __all__ = [
     "STFTParameters",
     "Scale",
     "SimpleUser",
+    "SpeciesCandidate",
     "SoundEvent",
     "SoundEventAnnotation",
     "SoundEventAnnotationCreate",

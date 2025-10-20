@@ -1,8 +1,9 @@
 """REST API routes for tags."""
 
 from typing import Annotated
+import re
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 
 from whombat import api, schemas
 from whombat.filters.clip_annotation_tags import ClipAnnotationTagFilter
@@ -15,6 +16,23 @@ from whombat.routes.dependencies import Session
 from whombat.routes.types import Limit, Offset
 
 tags_router = APIRouter()
+
+_SPECIES_TAG_KEY = "species"
+_USAGE_KEY_PATTERN = re.compile(r"^[1-9]\d*$")
+
+
+def _validate_species_tag_payload(data: schemas.TagCreate) -> None:
+    """Ensure only GBIF species tags can be created."""
+    if data.key != _SPECIES_TAG_KEY:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="tag.key は 'species' のみ許可されています。",
+        )
+    if not _USAGE_KEY_PATTERN.fullmatch(data.value):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="tag.value は 1 以上の整数 (GBIF usageKey) で指定してください。",
+        )
 
 
 @tags_router.get("/", response_model=schemas.Page[schemas.Tag])
@@ -139,7 +157,13 @@ async def create_tag(
     data: schemas.TagCreate,
 ):
     """Create a new tag."""
-    tag = await api.tags.get_or_create(session, key=data.key, value=data.value)
+    _validate_species_tag_payload(data)
+    tag = await api.tags.get_or_create(
+        session,
+        key=data.key,
+        value=data.value,
+        canonical_name=data.canonical_name,
+    )
     await session.commit()
     return tag
 

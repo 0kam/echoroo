@@ -12,6 +12,7 @@ from whombat.api.io.aoef.features import get_feature_names
 from whombat.api.io.aoef.recordings import import_recordings
 from whombat.api.io.aoef.tags import import_tags
 from whombat.api.io.aoef.users import import_users
+from whombat.api.users import ensure_system_user
 
 
 async def import_dataset(
@@ -64,6 +65,25 @@ async def import_dataset(
         base_audio_dir=audio_dir,
     )
 
+    raw_visibility = getattr(dataset_object, "visibility", None)
+    try:
+        visibility = (
+            models.VisibilityLevel(raw_visibility)
+            if raw_visibility is not None
+            else models.VisibilityLevel.PRIVATE
+        )
+    except ValueError:
+        visibility = models.VisibilityLevel.PRIVATE
+
+    created_by_ref = getattr(dataset_object, "created_by", None)
+    created_by_id = None
+    if created_by_ref is not None:
+        created_by_id = users.get(created_by_ref)
+    if created_by_id is None and users:
+        created_by_id = next(iter(users.values()))
+    if created_by_id is None:
+        created_by_id = (await ensure_system_user(session)).id
+
     try:
         dataset = await common.get_object(
             session,
@@ -78,6 +98,8 @@ async def import_dataset(
             description=dataset_object.description,
             audio_dir=dataset_dir.relative_to(audio_dir),
             uuid=dataset_object.uuid,
+            created_by_id=created_by_id,
+            visibility=visibility,
         )
 
     path_mapping = {

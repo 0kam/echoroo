@@ -35,7 +35,7 @@ export default function ClipAnnotationTags({
 
   const TagSearchBar = useCallback(
     (props: TagSearchBarProps) => (
-      <ProjectTagSearch placement="bottom-end" {...props} />
+      <ProjectTagSearch {...props} />
     ),
     [],
   );

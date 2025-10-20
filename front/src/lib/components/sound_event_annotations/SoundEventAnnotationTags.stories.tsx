@@ -36,8 +36,8 @@ export const WithTags: Story = {
     soundEventAnnotation: {
       ...base,
       tags: [
-        { key: "animal", value: "bird" },
-        { key: "call_type", value: "song" },
+        { key: "animal", value: "bird", canonical_name: "bird" },
+        { key: "call_type", value: "song", canonical_name: "song" },
       ],
     },
   },

@@ -19,12 +19,18 @@ async def import_tags(
         {
             "key": tag.key,
             "value": tag.value,
+            "canonical_name": getattr(tag, "canonical_name", None)
+            or tag.value,
             "created_on": datetime.datetime.now(),
         }
         for tag in tags
     ]
 
-    stmt = select(models.Tag.id, models.Tag.key, models.Tag.value).where(
+    stmt = select(
+        models.Tag.id,
+        models.Tag.key,
+        models.Tag.value,
+    ).where(
         tuple_(models.Tag.key, models.Tag.value).in_(
             {(tag.key, tag.value) for tag in tags}
         )
@@ -44,7 +50,11 @@ async def import_tags(
     stmt = insert(models.Tag)
     result = await session.execute(stmt, missing)
 
-    stmt = select(models.Tag.id, models.Tag.key, models.Tag.value).where(
+    stmt = select(
+        models.Tag.id,
+        models.Tag.key,
+        models.Tag.value,
+    ).where(
         tuple_(models.Tag.key, models.Tag.value).in_(
             {(tag["key"], tag["value"]) for tag in missing}
         )

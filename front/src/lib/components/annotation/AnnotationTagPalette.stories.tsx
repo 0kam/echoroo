@@ -14,5 +14,9 @@ type Story = StoryObj<typeof AnnotationTagPalette>;
 export const Empty: Story = {
   args: {
     tags: [],
+    availableTags: [
+      { key: "species", value: "Myotis myotis", canonical_name: "Myotis myotis" },
+      { key: "species", value: "Pipistrellus pipistrellus", canonical_name: "Pipistrellus pipistrellus" },
+    ],
   },
 };

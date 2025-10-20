@@ -5,6 +5,7 @@ import { UserSchema } from "./users";
 export const TagSchema = z.object({
   key: z.string(),
   value: z.string(),
+  canonical_name: z.string().optional(),
 });
 
 export const TagCountSchema = z.object({

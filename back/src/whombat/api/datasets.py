@@ -10,12 +10,21 @@ import pandas as pd
 from soundevent import data
 from soundevent.io.aoef import AOEFObject, to_aeof
 from sqlalchemy import select, tuple_
+from sqlalchemy.sql import ColumnExpressionArgument
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from whombat import exceptions, models, schemas
 from whombat.api import common
 from whombat.api.common import BaseAPI
+from whombat.api.common.permissions import (
+    can_delete_dataset,
+    can_edit_dataset,
+    can_manage_restricted_dataset,
+    can_view_dataset,
+    filter_datasets_by_access,
+)
 from whombat.api.io import aoef
+from whombat.api.users import ensure_system_user
 from whombat.api.recordings import recordings
 from whombat.core import files
 from whombat.filters.base import Filter
@@ -40,12 +49,162 @@ class DatasetAPI(
     _model = models.Dataset
     _schema = schemas.Dataset
 
+    async def _resolve_user(
+        self,
+        session: AsyncSession,
+        user: models.User | schemas.SimpleUser | None,
+    ) -> models.User | None:
+        if user is None:
+            return None
+        if isinstance(user, models.User):
+            return user
+        db_user = await session.get(models.User, user.id)
+        if db_user is None:
+            raise exceptions.NotFoundError(
+                f"User with id {user.id} not found"
+            )
+        return db_user
+
+    async def get(
+        self,
+        session: AsyncSession,
+        pk: uuid.UUID,
+        user: models.User | None = None,
+    ) -> schemas.Dataset:
+        db_user = await self._resolve_user(session, user)
+        data = await super().get(session, pk)
+
+        if not await can_view_dataset(session, data, db_user):
+            raise exceptions.NotFoundError(f"Dataset with uuid {pk} not found")
+
+        return data
+
+    async def get_many(
+        self,
+        session: AsyncSession,
+        *,
+        limit: int | None = 1000,
+        offset: int | None = 0,
+        filters: Sequence[Filter | ColumnExpressionArgument] | None = None,
+        sort_by: ColumnExpressionArgument | str | None = "-created_on",
+        user: models.User | None = None,
+    ) -> tuple[Sequence[schemas.Dataset], int]:
+        db_user = await self._resolve_user(session, user)
+        access_filters = await filter_datasets_by_access(session, db_user)
+
+        combined_filters: list[Filter | ColumnExpressionArgument] = []
+        if filters:
+            combined_filters.extend(filters)
+        combined_filters.extend(access_filters)
+
+        return await super().get_many(
+            session,
+            limit=limit,
+            offset=offset,
+            filters=combined_filters or None,
+            sort_by=sort_by,
+        )
+
+    async def list_candidates(
+        self,
+        session: AsyncSession,
+        *,
+        audio_dir: Path | None = None,
+    ) -> list[schemas.DatasetCandidate]:
+        """List filesystem directories that are not yet registered as datasets."""
+        if audio_dir is None:
+            audio_dir = get_settings().audio_dir
+
+        if not audio_dir.exists():
+            return []
+
+        result = await session.execute(select(models.Dataset.audio_dir))
+        registered_dirs = {
+            Path(value) for value in result.scalars() if value is not None
+        }
+
+        try:
+            directories = [
+                child
+                for child in audio_dir.iterdir()
+                if child.is_dir()
+            ]
+        except FileNotFoundError:
+            return []
+
+        directories.sort(key=lambda path: path.name.lower())
+
+        candidates: list[schemas.DatasetCandidate] = []
+        for directory in directories:
+            try:
+                relative_path = directory.relative_to(audio_dir)
+            except ValueError:
+                continue
+
+            if any(
+                registered == relative_path
+                or registered.is_relative_to(relative_path)
+                for registered in registered_dirs
+            ):
+                continue
+
+            candidates.append(
+                schemas.DatasetCandidate(
+                    name=directory.name,
+                    relative_path=relative_path,
+                    absolute_path=directory,
+                )
+            )
+
+        return candidates
+
+    async def inspect_candidate(
+        self,
+        *,
+        directory: Path,
+        audio_dir: Path | None = None,
+    ) -> schemas.DatasetCandidateInfo:
+        """Inspect a candidate directory for nested folders and audio files."""
+        if audio_dir is None:
+            audio_dir = get_settings().audio_dir
+
+        if directory.is_absolute():
+            target_dir = directory
+        else:
+            target_dir = (audio_dir / directory).resolve()
+
+        if not target_dir.exists() or not target_dir.is_dir():
+            raise exceptions.NotFoundError(
+                f"Directory {target_dir} does not exist."
+            )
+
+        try:
+            relative_path = target_dir.relative_to(audio_dir)
+        except ValueError as error:
+            raise exceptions.InvalidDataError(
+                "Only directories inside the audio root can be registered."
+            ) from error
+
+        has_nested = any(child.is_dir() for child in target_dir.iterdir())
+        audio_files = files.get_audio_files_in_folder(
+            target_dir,
+            relative=False,
+        )
+
+        return schemas.DatasetCandidateInfo(
+            relative_path=relative_path,
+            absolute_path=target_dir,
+            has_nested_directories=has_nested,
+            audio_file_count=len(audio_files),
+        )
+
     async def update(
         self,
         session: AsyncSession,
         obj: schemas.Dataset,
         data: schemas.DatasetUpdate,
         audio_dir: Path | None = None,
+        user: models.User | None = None,
     ) -> schemas.Dataset:
         """Update a dataset.
 
@@ -73,6 +232,44 @@ class DatasetAPI(
         if audio_dir is None:
             audio_dir = get_settings().audio_dir
 
+        db_user = await self._resolve_user(session, user)
+
+        if db_user is None or not await can_edit_dataset(session, obj, db_user):
+            raise exceptions.PermissionDeniedError(
+                "You do not have permission to update this dataset"
+            )
+
+        target_visibility = obj.visibility
+        if "visibility" in data.model_fields_set:
+            target_visibility = data.visibility or obj.visibility
+
+        target_group_id = obj.owner_group_id
+        if "owner_group_id" in data.model_fields_set:
+            target_group_id = data.owner_group_id
+
+        if (
+            target_visibility == models.VisibilityLevel.RESTRICTED
+            and target_group_id is None
+        ):
+            raise exceptions.InvalidDataError(
+                "Restricted visibility requires owner_group_id to be set"
+            )
+
+        if (
+            db_user is not None
+            and target_visibility == models.VisibilityLevel.RESTRICTED
+            and target_group_id is not None
+        ):
+            allowed = await can_manage_restricted_dataset(
+                session,
+                target_group_id,
+                db_user,
+            )
+            if not allowed:
+                raise exceptions.PermissionDeniedError(
+                    "You must be a manager of the selected group"
+                )
+
         if data.audio_dir is not None:
             if not data.audio_dir.is_relative_to(audio_dir):
                 raise ValueError(
@@ -86,6 +283,24 @@ class DatasetAPI(
             data.audio_dir = data.audio_dir.relative_to(audio_dir)
 
         return await super().update(session, obj, data)
+
+    async def delete(
+        self,
+        session: AsyncSession,
+        obj: schemas.Dataset,
+        *,
+        user: models.User | None = None,
+    ) -> schemas.Dataset:
+        db_user = await self._resolve_user(session, user)
+
+        if db_user is None or not await can_delete_dataset(
+            session, obj, db_user
+        ):
+            raise exceptions.PermissionDeniedError(
+                "You do not have permission to delete this dataset"
+            )
+
+        return await super().delete(session, obj)
 
     async def get_by_audio_dir(
         self,
@@ -507,6 +722,8 @@ class DatasetAPI(
         if dataset_audio_dir is None:
             dataset_audio_dir = get_settings().audio_dir
 
+        creator = await ensure_system_user(session)
+
         obj = await self.create_from_data(
             session,
             audio_dir=dataset_audio_dir,
@@ -514,6 +731,9 @@ class DatasetAPI(
             description=data.description,
             uuid=data.uuid,
             created_on=data.created_on,
+            created_by_id=creator.id,
+            visibility=models.VisibilityLevel.PRIVATE,
+            owner_group_id=None,
         )
 
         for rec in data.recordings:
@@ -575,6 +795,10 @@ class DatasetAPI(
         dataset_dir: Path,
         description: str | None = None,
         audio_dir: Path | None = None,
+        *,
+        user: models.User | schemas.SimpleUser,
+        visibility: models.VisibilityLevel = models.VisibilityLevel.PRIVATE,
+        owner_group_id: int | None = None,
         **kwargs,
     ) -> schemas.Dataset:
         """Create a dataset.
@@ -596,6 +820,12 @@ class DatasetAPI(
         audio_dir
             The root audio directory, by default None. If None, the root audio
             directory from the settings will be used.
+        user
+            The currently authenticated user creating the dataset.
+        visibility
+            Desired visibility level for the dataset.
+        owner_group_id
+            Owning group when visibility is "restricted".
         **kwargs
             Additional keyword arguments to pass to the creation function.
 
@@ -613,6 +843,30 @@ class DatasetAPI(
         if audio_dir is None:
             audio_dir = get_settings().audio_dir
 
+        db_user = await self._resolve_user(session, user)
+
+        if (
+            visibility == models.VisibilityLevel.RESTRICTED
+            and owner_group_id is None
+        ):
+            raise exceptions.InvalidDataError(
+                "Restricted visibility requires owner_group_id to be set"
+            )
+
+        if (
+            visibility == models.VisibilityLevel.RESTRICTED
+            and owner_group_id is not None
+        ):
+            allowed = await can_manage_restricted_dataset(
+                session,
+                owner_group_id,
+                db_user,
+            )
+            if not allowed:
+                raise exceptions.PermissionDeniedError(
+                    "You must be a manager of the selected group to create a restricted dataset"
+                )
+
         # Make sure the path is relative to the root audio directory.
         if not dataset_dir.is_relative_to(audio_dir):
             raise ValueError(
@@ -627,6 +881,8 @@ class DatasetAPI(
             name=name,
             description=description,
             audio_dir=dataset_dir,
+            visibility=visibility,
+            owner_group_id=owner_group_id,
         )
 
         obj = await self.create_from_data(
@@ -634,6 +890,7 @@ class DatasetAPI(
             data.model_copy(
                 update=dict(audio_dir=data.audio_dir.relative_to(audio_dir))
             ),
+            created_by_id=db_user.id,
             **kwargs,
         )
 
@@ -641,6 +898,12 @@ class DatasetAPI(
             dataset_dir,
             relative=False,
         )
+
+        if len(file_list) == 0:
+            raise exceptions.InvalidDataError(
+                "No audio files were found in the selected directory. "
+                "Add WAV, MP3, or FLAC files before creating the dataset."
+            )
 
         recording_list = await recordings.create_many(
             session,

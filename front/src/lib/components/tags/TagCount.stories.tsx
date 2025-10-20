@@ -28,15 +28,15 @@ export const Primary: Story = {
   args: {
     tagCount: [
       {
-        tag: { key: "key1", value: "value1" },
+        tag: { key: "key1", value: "value1", canonical_name: "value1" },
         count: 10,
       },
       {
-        tag: { key: "key2", value: "value2" },
+        tag: { key: "key2", value: "value2", canonical_name: "value2" },
         count: 20,
       },
       {
-        tag: { key: "key3", value: "value3" },
+        tag: { key: "key3", value: "value3", canonical_name: "value3" },
         count: 30,
       },
     ],

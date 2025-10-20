@@ -41,7 +41,10 @@ async def get_scatterplot_data(
     # get tags
     query = (
         select(
-            models.Tag.key, models.Tag.value, models.SoundEventAnnotation.id
+            models.Tag.key,
+            models.Tag.value,
+            models.Tag.canonical_name,
+            models.SoundEventAnnotation.id,
         )
         .join(
             models.SoundEventAnnotationTag,
@@ -56,13 +59,22 @@ async def get_scatterplot_data(
     )
     results = await session.execute(query)
     tags = defaultdict(list)
-    for key, value, ann_id in results.all():
-        tags[ann_id].append(schemas.TagCreate(key=key, value=value))
+    for key, value, canonical_name, ann_id in results.all():
+        tags[ann_id].append(
+            schemas.TagCreate(
+                key=key,
+                value=value,
+                canonical_name=canonical_name,
+            )
+        )
 
     # get recording tags
     query = (
         select(
-            models.Tag.key, models.Tag.value, models.SoundEventAnnotation.id
+            models.Tag.key,
+            models.Tag.value,
+            models.Tag.canonical_name,
+            models.SoundEventAnnotation.id,
         )
         .join(
             models.RecordingTag,
@@ -84,8 +96,14 @@ async def get_scatterplot_data(
     )
     results = await session.execute(query)
     recording_tags = defaultdict(list)
-    for key, value, ann_id in results.all():
-        recording_tags[ann_id].append(schemas.TagCreate(key=key, value=value))
+    for key, value, canonical_name, ann_id in results.all():
+        recording_tags[ann_id].append(
+            schemas.TagCreate(
+                key=key,
+                value=value,
+                canonical_name=canonical_name,
+            )
+        )
 
     # get features
     query = (

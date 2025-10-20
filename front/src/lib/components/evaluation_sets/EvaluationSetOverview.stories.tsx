@@ -39,7 +39,7 @@ export const WithTags: Story = {
   args: {
     evaluationSet: {
       ...evaluationSet,
-      tags: [{ key: "species", value: "Myotis myotis" }],
+      tags: [{ key: "species", value: "Myotis myotis", canonical_name: "Myotis myotis" }],
     },
   },
 };
@@ -48,7 +48,7 @@ export const WithExamples: Story = {
   args: {
     evaluationSet: {
       ...evaluationSet,
-      tags: [{ key: "species", value: "Myotis myotis" }],
+      tags: [{ key: "species", value: "Myotis myotis", canonical_name: "Myotis myotis" }],
     },
     numExamples: 10,
   },
@@ -58,7 +58,7 @@ export const WithAll: Story = {
   args: {
     evaluationSet: {
       ...evaluationSet,
-      tags: [{ key: "species", value: "Myotis myotis" }],
+      tags: [{ key: "species", value: "Myotis myotis", canonical_name: "Myotis myotis" }],
     },
     numExamples: 1000,
     numModelRuns: 5,

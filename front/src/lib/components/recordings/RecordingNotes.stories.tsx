@@ -15,6 +15,9 @@ const user = {
   id: "user",
   username: "user",
   email: "user@whombat.com",
+  is_superuser: false,
+  is_active: true,
+  is_verified: true,
 };
 
 export const Primary: Story = {
@@ -99,6 +102,9 @@ export const NotesFromOtherUser = {
           id: "other-user",
           username: "other-user",
           email: "bla@gmail.com",
+          is_superuser: false,
+          is_active: true,
+          is_verified: true,
         },
       },
     ],

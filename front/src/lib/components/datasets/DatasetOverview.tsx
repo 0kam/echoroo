@@ -1,8 +1,8 @@
 import { IssueIcon, RecordingsIcon, WarningIcon } from "@/lib/components/icons";
-import Button from "@/lib/components/ui/Button";
 import Card from "@/lib/components/ui/Card";
 import { H3 } from "@/lib/components/ui/Headings";
 import MetricBadge from "@/lib/components/ui/MetricBadge";
+import VisibilityBadge from "@/lib/components/ui/VisibilityBadge";
 
 import type { Dataset } from "@/lib/types";
 
@@ -25,8 +25,9 @@ export default function DatasetOverview({
 }) {
   return (
     <Card>
-      <div className="flex flex-row justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <H3>Dataset Overview</H3>
+        <VisibilityBadge visibility={dataset.visibility} />
       </div>
       <div className="flex flex-row gap-2 justify-around">
         <MetricBadge

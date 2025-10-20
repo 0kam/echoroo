@@ -3,6 +3,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { SpectrogramSettingsInterface } from "@/lib/hooks/settings/useSpectrogramSettings";
 import type { ViewportController } from "@/lib/types";
 
+const DEFAULT_TIME_WINDOW = 20;
+
+/**
+ * Hook for controlling time axis scale in the spectrogram viewport.
+ * Uses ref-based scaling to maintain a base time range that adapts to playback speed.
+ * The effective scale combines time_scale and playback speed.
+ */
 export default function useTimeScaleControl({
   viewport,
   spectrogramSettings,
@@ -15,74 +22,24 @@ export default function useTimeScaleControl({
   const target = spectrogramSettings.settings.time_scale ?? 1;
   const [preview, setPreview] = useState(target);
 
-  // 基準となるviewportの時間幅を保持（1倍の時の状態）
   const baseTimeRangeRef = useRef<number | null>(null);
-  const isInitializedRef = useRef(false);
   const previousSpeedRef = useRef(playbackSpeed);
+  const lastAppliedRef = useRef<{ scale: number; speed: number } | null>(null);
 
-  // 初期化：baseTimeRangeを設定
-  useEffect(() => {
-    if (!isInitializedRef.current && viewport.viewport) {
-      const range = viewport.viewport.time.max - viewport.viewport.time.min;
-      baseTimeRangeRef.current = range;
-      isInitializedRef.current = true;
-    }
-  }, [viewport.viewport]);
+  const applyScale = useCallback(
+    (scaleValue: number) => {
+      const baseRange = baseTimeRangeRef.current;
+      if (!baseRange || !viewport.viewport) return;
 
-  // 再生速度が変わった時にviewportを調整
-  useEffect(() => {
-    if (!baseTimeRangeRef.current || !viewport.viewport) return;
-    if (previousSpeedRef.current === playbackSpeed) return;
+      const last = lastAppliedRef.current;
+      if (last && last.scale === scaleValue && last.speed === playbackSpeed) {
+        return;
+      }
 
-    previousSpeedRef.current = playbackSpeed;
-
-    // 再生速度に応じてviewportの時間幅を調整
-    // 速度が速い（>1）= 時間軸を伸ばす、速度が遅い（<1）= 時間軸を縮める
-    const effectiveScale = (target > 0 ? target : 1) / playbackSpeed;
-    const newTimeRange = baseTimeRangeRef.current / effectiveScale;
-    const center = (viewport.viewport.time.min + viewport.viewport.time.max) / 2;
-
-    viewport.set({
-      time: {
-        min: center - newTimeRange / 2,
-        max: center + newTimeRange / 2,
-      },
-      freq: viewport.viewport.freq,
-    });
-  }, [playbackSpeed, target, viewport]);
-
-  useEffect(() => {
-    const nextValue = target > 0 ? target : 1;
-    if (preview === nextValue) return;
-
-    setPreview(nextValue);
-
-    if (!baseTimeRangeRef.current || !viewport.viewport) return;
-
-    // 基準となる時間幅をtime_scaleと再生速度で調整
-    const effectiveScale = nextValue / playbackSpeed;
-    const newTimeRange = baseTimeRangeRef.current / effectiveScale;
-    const center = (viewport.viewport.time.min + viewport.viewport.time.max) / 2;
-
-    viewport.set({
-      time: {
-        min: center - newTimeRange / 2,
-        max: center + newTimeRange / 2,
-      },
-      freq: viewport.viewport.freq,
-    });
-  }, [target, viewport, preview, playbackSpeed]);
-
-  const handlePreviewChange = useCallback(
-    (next: number) => {
-      if (next <= 0 || !baseTimeRangeRef.current || !viewport.viewport) return;
-
-      setPreview(next);
-
-      // 基準となる時間幅をtime_scaleと再生速度で調整
-      const effectiveScale = next / playbackSpeed;
-      const newTimeRange = baseTimeRangeRef.current / effectiveScale;
-      const center = (viewport.viewport.time.min + viewport.viewport.time.max) / 2;
+      const effectiveScale = scaleValue / playbackSpeed;
+      const newTimeRange = baseRange / effectiveScale;
+      const center =
+        (viewport.viewport.time.min + viewport.viewport.time.max) / 2;
 
       viewport.set({
         time: {
@@ -91,8 +48,73 @@ export default function useTimeScaleControl({
         },
         freq: viewport.viewport.freq,
       });
+
+      lastAppliedRef.current = { scale: scaleValue, speed: playbackSpeed };
     },
     [viewport, playbackSpeed],
+  );
+
+  // Initialize and update base time range from viewport bounds
+  useEffect(() => {
+    if (!viewport.viewport) return;
+
+    const boundsRange =
+      viewport.bounds.time.max - viewport.bounds.time.min;
+    const candidateRange =
+      boundsRange > 0
+        ? Math.min(DEFAULT_TIME_WINDOW, boundsRange)
+        : DEFAULT_TIME_WINDOW;
+    const nextBaseRange =
+      candidateRange > 0 ? candidateRange : DEFAULT_TIME_WINDOW;
+
+    if (
+      baseTimeRangeRef.current == null ||
+      Math.abs(baseTimeRangeRef.current - nextBaseRange) >
+        Number.EPSILON
+    ) {
+      baseTimeRangeRef.current = nextBaseRange;
+      lastAppliedRef.current = null;
+    }
+
+    const nextValue = target > 0 ? target : 1;
+    setPreview((prev) => (prev === nextValue ? prev : nextValue));
+    applyScale(nextValue);
+  }, [
+    viewport.viewport,
+    viewport.bounds.time.min,
+    viewport.bounds.time.max,
+    target,
+    applyScale,
+  ]);
+
+  // Handle playback speed changes
+  useEffect(() => {
+    if (previousSpeedRef.current === playbackSpeed) return;
+    previousSpeedRef.current = playbackSpeed;
+
+    if (!baseTimeRangeRef.current || !viewport.viewport) return;
+
+    const nextValue = target > 0 ? target : 1;
+    applyScale(nextValue);
+  }, [playbackSpeed, target, viewport.viewport, applyScale]);
+
+  // Handle scale setting changes
+  useEffect(() => {
+    const nextValue = target > 0 ? target : 1;
+    setPreview((prev) => (prev === nextValue ? prev : nextValue));
+
+    if (!baseTimeRangeRef.current || !viewport.viewport) return;
+
+    applyScale(nextValue);
+  }, [target, viewport.viewport, applyScale]);
+
+  const handlePreviewChange = useCallback(
+    (next: number) => {
+      if (next <= 0) return;
+      setPreview(next);
+      applyScale(next);
+    },
+    [applyScale],
   );
 
   const handleCommit = useCallback(

@@ -28,16 +28,21 @@ async def test_created_dataset_is_stored_in_the_database(
 async def test_dataset_is_stored_with_relative_audio_dir(
     session: AsyncSession,
     audio_dir: Path,
+    user: schemas.SimpleUser,
+    random_wav_factory: Callable[..., Path],
 ):
     """Test that a dataset is stored with a relative audio dir."""
     dataset_audio_dir = audio_dir / "dataset_audio_dir"
     dataset_audio_dir.mkdir()
+    random_wav_factory(dataset_audio_dir / "recording.wav")
     dataset = await api.datasets.create(
         session,
         name="test_dataset",
         description="This is a test dataset.",
         dataset_dir=dataset_audio_dir,
         audio_dir=audio_dir,
+        user=user,
+        visibility=models.VisibilityLevel.PUBLIC,
     )
     # Make sure the audio dir is stored as a relative path
     stmt = select(models.Dataset).where(models.Dataset.id == dataset.id)
@@ -47,37 +52,47 @@ async def test_dataset_is_stored_with_relative_audio_dir(
     assert retrieved_dataset.audio_dir == Path("dataset_audio_dir")
 
 
-async def test_create_empty_dataset(session: AsyncSession, audio_dir: Path):
-    """Test the creation of an empty dataset."""
+async def test_create_dataset_requires_audio_files(
+    session: AsyncSession,
+    audio_dir: Path,
+    user: schemas.SimpleUser,
+):
+    """Ensure dataset creation fails when no compatible audio files exist."""
     dataset_audio_dir = audio_dir / "dataset_audio_dir"
     dataset_audio_dir.mkdir()
-    dataset = await api.datasets.create(
-        session,
-        name="test_dataset",
-        description="This is a test dataset.",
-        dataset_dir=dataset_audio_dir,
-        audio_dir=audio_dir,
-    )
-    assert isinstance(dataset, schemas.Dataset)
-    assert dataset.name == "test_dataset"
-    assert dataset.description == "This is a test dataset."
+    with pytest.raises(exceptions.InvalidDataError):
+        await api.datasets.create(
+            session,
+            name="test_dataset",
+            description="This is a test dataset.",
+            dataset_dir=dataset_audio_dir,
+            audio_dir=audio_dir,
+            user=user,
+            visibility=models.VisibilityLevel.PUBLIC,
+        )
 
 
 async def test_create_dataset_fails_if_name_is_not_unique(
     session: AsyncSession,
     audio_dir: Path,
+    user: schemas.SimpleUser,
+    random_wav_factory: Callable[..., Path],
 ):
     """Test that creating a dataset fails if the name is not unique."""
     audio_dir1 = audio_dir / "audio1"
     audio_dir2 = audio_dir / "audio2"
     audio_dir1.mkdir()
     audio_dir2.mkdir()
+    random_wav_factory(audio_dir1 / "recording.wav")
+    random_wav_factory(audio_dir2 / "recording.wav")
     await api.datasets.create(
         session,
         name="test_dataset",
         description="This is a test dataset.",
         dataset_dir=audio_dir1,
         audio_dir=audio_dir,
+        user=user,
+        visibility=models.VisibilityLevel.PUBLIC,
     )
     with pytest.raises(exceptions.DuplicateObjectError):
         await api.datasets.create(
@@ -86,6 +101,8 @@ async def test_create_dataset_fails_if_name_is_not_unique(
             description="This is a test dataset.",
             dataset_dir=audio_dir2,
             audio_dir=audio_dir,
+            user=user,
+            visibility=models.VisibilityLevel.PUBLIC,
         )
 
 
@@ -151,26 +168,37 @@ async def test_get_dataset_by_audio_dir_fails_when_audio_dir_does_not_exist(
         )
 
 
-async def test_get_datasets(session: AsyncSession, audio_dir: Path):
+async def test_get_datasets(
+    session: AsyncSession,
+    audio_dir: Path,
+    user: schemas.SimpleUser,
+    random_wav_factory: Callable[..., Path],
+):
     """Test getting all datasets."""
     # Arrange
     audio_dir_1 = audio_dir / "audio_1"
     audio_dir_1.mkdir()
+    random_wav_factory(audio_dir_1 / "recording.wav")
     dataset1 = await api.datasets.create(
         session,
         name="test_dataset_1",
         description="This is a test dataset.",
         dataset_dir=audio_dir_1,
         audio_dir=audio_dir,
+        user=user,
+        visibility=models.VisibilityLevel.PUBLIC,
     )
     audio_dir_2 = audio_dir / "audio_2"
     audio_dir_2.mkdir()
+    random_wav_factory(audio_dir_2 / "recording.wav")
     dataset2 = await api.datasets.create(
         session,
         name="test_dataset_2",
         description="This is a test dataset.",
         dataset_dir=audio_dir_2,
         audio_dir=audio_dir,
+        user=user,
+        visibility=models.VisibilityLevel.PUBLIC,
     )
 
     # Act
@@ -198,7 +226,9 @@ async def test_get_datasets(session: AsyncSession, audio_dir: Path):
 
 
 async def test_update_dataset_name(
-    session: AsyncSession, dataset: schemas.Dataset
+    session: AsyncSession,
+    dataset: schemas.Dataset,
+    user: schemas.SimpleUser,
 ):
     """Test updating a dataset's name."""
     assert dataset.name != "updated_dataset"
@@ -206,6 +236,7 @@ async def test_update_dataset_name(
         session,
         dataset,
         data=schemas.DatasetUpdate(name="updated_dataset"),
+        user=user,
     )
     assert isinstance(updated_dataset, schemas.Dataset)
     assert updated_dataset.name == "updated_dataset"
@@ -214,6 +245,7 @@ async def test_update_dataset_name(
 async def test_update_dataset_description(
     session: AsyncSession,
     dataset: schemas.Dataset,
+    user: schemas.SimpleUser,
 ):
     """Test updating a dataset's description."""
     updated_dataset = await api.datasets.update(
@@ -222,13 +254,17 @@ async def test_update_dataset_description(
         data=schemas.DatasetUpdate(
             description="This is an updated test dataset."
         ),
+        user=user,
     )
     assert isinstance(updated_dataset, schemas.Dataset)
     assert updated_dataset.description == "This is an updated test dataset."
 
 
 async def test_update_dataset_audio_dir(
-    session: AsyncSession, audio_dir: Path, dataset: schemas.Dataset
+    session: AsyncSession,
+    audio_dir: Path,
+    dataset: schemas.Dataset,
+    user: schemas.SimpleUser,
 ):
     """Test updating a dataset's audio directory."""
     audio_dir_2 = audio_dir / "audio_2"
@@ -238,14 +274,19 @@ async def test_update_dataset_audio_dir(
         dataset,
         data=schemas.DatasetUpdate(audio_dir=audio_dir_2),
         audio_dir=audio_dir,
+        user=user,
     )
     assert isinstance(updated_dataset, schemas.Dataset)
     assert updated_dataset.audio_dir == Path("audio_2")
 
 
-async def test_delete_dataset(session: AsyncSession, dataset: schemas.Dataset):
+async def test_delete_dataset(
+    session: AsyncSession,
+    dataset: schemas.Dataset,
+    user: schemas.SimpleUser,
+):
     """Test deleting a dataset."""
-    await api.datasets.delete(session, dataset)
+    await api.datasets.delete(session, dataset, user=user)
     with pytest.raises(exceptions.NotFoundError):
         await api.datasets.get(session, dataset.uuid)
 
@@ -273,12 +314,12 @@ async def test_get_dataset_files(
 
     # Assert
     assert isinstance(retrieved_files, list)
-    assert len(retrieved_files) == 2
+    assert len(retrieved_files) == 3
 
-    assert {audio_file.path for audio_file in retrieved_files} == {
-        Path("audio_file_1.wav"),
-        Path("audio_file_2.wav"),
-    }
+    path_to_state = {file.path: file.state for file in retrieved_files}
+    assert path_to_state[Path("initial.wav")] == schemas.FileState.REGISTERED
+    assert path_to_state[Path("audio_file_1.wav")] == schemas.FileState.UNREGISTERED
+    assert path_to_state[Path("audio_file_2.wav")] == schemas.FileState.UNREGISTERED
 
 
 async def test_get_dataset_files_with_existing_files(
@@ -308,8 +349,10 @@ async def test_get_dataset_files_with_existing_files(
         audio_dir=audio_dir,
     )
 
-    assert len(retrieved_files) == 1
-    assert retrieved_files[0].state == schemas.FileState.REGISTERED
+    assert len(retrieved_files) == 2
+    states = {file.path: file.state for file in retrieved_files}
+    assert states[Path("initial.wav")] == schemas.FileState.REGISTERED
+    assert states[Path("audio_file.wav")] == schemas.FileState.REGISTERED
 
 
 async def test_get_dataset_files_with_missing_files(
@@ -347,8 +390,10 @@ async def test_get_dataset_files_with_missing_files(
     )
 
     assert isinstance(retrieved_files, list)
-    assert len(retrieved_files) == 1
-    assert retrieved_files[0].state == schemas.FileState.MISSING
+    assert len(retrieved_files) == 2
+    states = {file.path: file.state for file in retrieved_files}
+    assert states[Path("initial.wav")] == schemas.FileState.REGISTERED
+    assert states[Path("audio_file.wav")] == schemas.FileState.MISSING
 
 
 async def test_add_recording_to_dataset(
@@ -425,11 +470,13 @@ async def test_get_dataset_recordings(
 
     # Assert
     assert isinstance(retrieved_recordings, list)
-    assert len(retrieved_recordings) == 2
+    assert len(retrieved_recordings) == 3
     assert isinstance(retrieved_recordings[0], schemas.Recording)
     assert isinstance(retrieved_recordings[1], schemas.Recording)
+    assert isinstance(retrieved_recordings[2], schemas.Recording)
     assert retrieved_recordings[0].path == recording_2.path
     assert retrieved_recordings[1].path == recording_1.path
+    assert retrieved_recordings[2].path == recording_1.path.parent / "initial.wav"
 
 
 async def test_add_file_to_dataset(
@@ -467,8 +514,10 @@ async def test_add_file_to_dataset(
     # Make sure the recording was added to the dataset
     recording_list, _ = await api.datasets.get_recordings(session, dataset)
 
-    assert len(recording_list) == 1
-    assert recording_list[0].path == path.relative_to(audio_dir)
+    assert len(recording_list) == 2
+    assert path.relative_to(audio_dir) in {
+        recording.path for recording in recording_list
+    }
 
 
 async def test_add_file_to_dataset_fails_if_file_not_in_audio_dir(
@@ -528,8 +577,10 @@ async def test_add_file_to_dataset_with_existing_recording(
     # Assert
     recording_list, _ = await api.datasets.get_recordings(session, dataset)
 
-    assert len(recording_list) == 1
-    assert recording_list[0].path == path.relative_to(audio_dir)
+    assert len(recording_list) == 2
+    assert path.relative_to(audio_dir) in {
+        recording.path for recording in recording_list
+    }
 
 
 async def test_add_recordings_to_dataset(
@@ -717,6 +768,7 @@ async def test_create_dataset_registers_all_recordings(
     session: AsyncSession,
     random_wav_factory: Callable[..., Path],
     audio_dir: Path,
+    user: schemas.SimpleUser,
 ):
     """Test creating dataset registers all recordings in the directory."""
     dataset_audio_dir = audio_dir / "audio"
@@ -744,6 +796,8 @@ async def test_create_dataset_registers_all_recordings(
         description="This is a test dataset.",
         dataset_dir=dataset_audio_dir,
         audio_dir=audio_dir,
+        user=user,
+        visibility=models.VisibilityLevel.PUBLIC,
     )
 
     # Assert
@@ -793,10 +847,11 @@ async def test_recording_is_deleted_if_it_does_not_belong_to_a_dataset(
     session: AsyncSession,
     dataset: schemas.Dataset,
     dataset_recording: schemas.Recording,
+    user: schemas.SimpleUser,
 ):
     await api.recordings.get(session, dataset_recording.uuid)
 
-    await api.datasets.delete(session, dataset)
+    await api.datasets.delete(session, dataset, user=user)
 
     with pytest.raises(exceptions.NotFoundError):
         await api.recordings.get(session, dataset_recording.uuid)
@@ -807,6 +862,7 @@ async def test_recordings_belonging_to_multiple_datastes_are_not_deleted(
     dataset_recording: schemas.Recording,
     audio_dir: Path,
     dataset_dir: Path,
+    user: schemas.SimpleUser,
 ):
     await api.recordings.get(session, dataset_recording.uuid)
 
@@ -816,8 +872,73 @@ async def test_recordings_belonging_to_multiple_datastes_are_not_deleted(
         description="other dataset",
         dataset_dir=dataset_dir,
         audio_dir=audio_dir,
+        user=user,
+        visibility=models.VisibilityLevel.PUBLIC,
     )
 
     await api.datasets.add_recording(session, dataset2, dataset_recording)
 
     await api.recordings.get(session, dataset_recording.uuid)
+
+
+async def test_list_candidates_excludes_registered_directories(
+    session: AsyncSession,
+    audio_dir: Path,
+    user: schemas.SimpleUser,
+    random_wav_factory: Callable[..., Path],
+):
+    """Only unregistered top-level directories should be returned."""
+    candidate_a = audio_dir / "candidate_a"
+    candidate_b = audio_dir / "candidate_b"
+    registered = audio_dir / "registered"
+
+    candidate_a.mkdir()
+    candidate_b.mkdir()
+    registered.mkdir()
+
+    random_wav_factory(candidate_a / "a.wav")
+    random_wav_factory(candidate_b / "b.wav")
+    nested_registered = registered / "nested"
+    nested_registered.mkdir()
+    random_wav_factory(nested_registered / "r.wav")
+
+    await api.datasets.create(
+        session,
+        name="registered",
+        description="already registered",
+        dataset_dir=nested_registered,
+        audio_dir=audio_dir,
+        user=user,
+        visibility=models.VisibilityLevel.PUBLIC,
+    )
+
+    candidates = await api.datasets.list_candidates(session, audio_dir=audio_dir)
+    candidate_paths = {candidate.relative_path for candidate in candidates}
+
+    assert candidate_paths == {Path("candidate_a"), Path("candidate_b")}
+    assert all(candidate.absolute_path.is_absolute() for candidate in candidates)
+
+
+async def test_inspect_candidate_reports_nested_directories(
+    audio_dir: Path,
+    random_wav_factory: Callable[..., Path],
+    session: AsyncSession,
+):
+    """Inspecting a candidate should identify nested folders and audio count."""
+    candidate = audio_dir / "inspect_me"
+    candidate.mkdir()
+    nested = candidate / "nested"
+    nested.mkdir()
+
+    random_wav_factory(candidate / "top.wav")
+    random_wav_factory(nested / "inner.wav")
+
+    info = await api.datasets.inspect_candidate(
+        directory=candidate,
+        audio_dir=audio_dir,
+    )
+
+    assert info.relative_path == Path("inspect_me")
+    assert info.absolute_path == candidate
+    assert info.has_nested_directories is True
+    assert info.audio_file_count == 2

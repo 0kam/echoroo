@@ -75,7 +75,6 @@ export default function SelectedMenu({
             <TagSearchBar
               canCreate={canCreateTag}
               onSelectTag={onTagSelected}
-              placement="bottom-end"
               {...props}
             />
           )}

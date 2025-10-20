@@ -13,6 +13,7 @@ export { default as SlideOver } from "./SlideOver";
 export { default as Spinner } from "./Spinner";
 export { default as ProgressBar } from "./ProgressBar";
 export { default as MetricBadge } from "./MetricBadge";
+export { default as VisibilityBadge } from "./VisibilityBadge";
 export { default as Loading } from "./Loading";
 export { default as Tab } from "./Tab";
 export { default as Stepper, Step } from "./Steps";

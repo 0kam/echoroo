@@ -76,9 +76,9 @@ export const Dynamic: Story = {
   render: () => (
     <ListBox
       items={[
-        { key: "One", value: "One" },
-        { key: "Two", value: "Two" },
-        { key: "Three", value: "Three" },
+        { key: "One", value: "One", canonical_name: "One" },
+        { key: "Two", value: "Two", canonical_name: "Two" },
+        { key: "Three", value: "Three", canonical_name: "Three" },
       ]}
       aria-label="WithSection"
     >

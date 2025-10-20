@@ -2,6 +2,7 @@ import datetime
 import json
 from pathlib import Path
 from typing import BinaryIO
+from uuid import UUID
 
 from soundevent.io import aoef
 from soundevent.io.aoef import AnnotationProjectObject
@@ -21,6 +22,7 @@ from whombat.api.io.aoef.sound_event_annotations import (
 from whombat.api.io.aoef.sound_events import get_sound_events
 from whombat.api.io.aoef.tags import import_tags
 from whombat.api.io.aoef.users import import_users
+from whombat.api.users import ensure_system_user
 
 
 async def import_annotation_project(
@@ -43,11 +45,11 @@ async def import_annotation_project(
 
     obj = aoef.AnnotationProjectObject.model_validate(data["data"])
 
-    project = await get_or_create_annotation_project(session, obj)
+    users = await import_users(session, obj.users or [])
+
+    project = await get_or_create_annotation_project(session, obj, users)
 
     tags = await import_tags(session, obj.tags or [])
-
-    users = await import_users(session, obj.users or [])
 
     feature_names = await get_feature_names(session, obj)
 
@@ -117,6 +119,7 @@ async def import_annotation_project(
 async def get_or_create_annotation_project(
     session: AsyncSession,
     obj: AnnotationProjectObject,
+    users: dict[UUID, UUID],
 ) -> models.AnnotationProject:
     stmt = select(models.AnnotationProject).where(
         models.AnnotationProject.uuid == obj.uuid
@@ -126,12 +129,30 @@ async def get_or_create_annotation_project(
     if row is not None:
         return row[0]
 
+    raw_visibility = getattr(obj, "visibility", None)
+    try:
+        visibility = (
+            models.VisibilityLevel(raw_visibility)
+            if raw_visibility is not None
+            else models.VisibilityLevel.PRIVATE
+        )
+    except ValueError:
+        visibility = models.VisibilityLevel.PRIVATE
+
+    created_by_ref = getattr(obj, "created_by", None)
+    created_by_id = users.get(created_by_ref) if created_by_ref else None
+    if created_by_id is None:
+        created_by_id = (await ensure_system_user(session)).id
+
     db_obj = models.AnnotationProject(
         uuid=obj.uuid,
         name=obj.name,
         description=obj.description or "",
         annotation_instructions=obj.instructions,
         created_on=obj.created_on or datetime.datetime.now(),
+        visibility=visibility,
+        created_by_id=created_by_id,
+        owner_group_id=None,
     )
     session.add(db_obj)
     await session.flush()

@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useCallback } from "react";
+import { useCallback, useMemo } from "react";
 
 import api from "@/app/api";
 
@@ -22,20 +22,32 @@ export default function useRecordings({
   fixed = _fixed,
   pageSize = 20,
   enabled = true,
+  sortBy = "-created_on",
 }: {
   filter?: RecordingFilter;
   fixed?: (keyof RecordingFilter)[];
   pageSize?: number;
   enabled?: boolean;
+  sortBy?: string;
 } = {}) {
   const client = useQueryClient();
   const filter = useFilter<RecordingFilter>({ defaults: initialFilter, fixed });
+
+  const queryFilter = useMemo(() => {
+    if (!sortBy) {
+      return filter.filter;
+    }
+    return {
+      ...filter.filter,
+      sort_by: sortBy,
+    };
+  }, [filter.filter, sortBy]);
 
   const { items, total, pagination, query, queryKey } = usePagedQuery({
     name: "dataset_recordings",
     queryFn: api.recordings.getMany,
     pageSize: pageSize,
-    filter: filter.filter,
+    filter: queryFilter,
     enabled,
   });
 

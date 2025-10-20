@@ -149,6 +149,9 @@ export const FixedDataset: Story = {
         recording_count: 0,
         description: "test dataset",
         created_on: new Date(),
+        visibility: "private",
+        created_by_id: "test-user-id",
+        owner_group_id: null,
       },
     },
     tasks: [

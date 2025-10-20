@@ -34,10 +34,13 @@ const annotationProject = {
   name: "Project 1",
   description: "Annotation project 1",
   created_on: new Date(),
+  visibility: "private" as const,
+  created_by_id: "test-user-id",
+  owner_group_id: null,
   tags: [
-    { key: "species", value: "Myotis lucifugus" },
-    { key: "species", value: "Myotis septentrionalis" },
-    { key: "event", value: "Echolocation" },
+    { key: "species", value: "Myotis lucifugus", canonical_name: "Myotis lucifugus" },
+    { key: "species", value: "Myotis septentrionalis", canonical_name: "Myotis septentrionalis" },
+    { key: "event", value: "Echolocation", canonical_name: "Echolocation" },
   ],
 };
 

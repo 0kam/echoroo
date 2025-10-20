@@ -9,18 +9,30 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from whombat import api, exceptions, models, schemas
 
 
+async def create_tag(
+    session: AsyncSession,
+    key: str = "test_key",
+    value: str = "test_value",
+    canonical_name: str | None = None,
+) -> schemas.Tag:
+    """Helper to create tags with canonical names."""
+    return await api.tags.create(
+        session=session,
+        key=key,
+        value=value,
+        canonical_name=canonical_name or value,
+    )
+
+
 async def test_create_tag(
     session: AsyncSession,
 ) -> None:
     """Test creating a tag."""
-    created_tag = await api.tags.create(
-        session=session,
-        key="test_key",
-        value="test_value",
-    )
+    created_tag = await create_tag(session=session)
     assert isinstance(created_tag, schemas.Tag)
     assert created_tag.key == "test_key"
     assert created_tag.value == "test_value"
+    assert created_tag.canonical_name == "test_value"
 
     # Check if it is in the database
     stmt = select(models.Tag).where(
@@ -35,22 +47,37 @@ async def test_create_tag(
     assert tag.id is not None
 
 
+async def test_create_tag_with_custom_canonical_name(
+    session: AsyncSession,
+) -> None:
+    """Tags store canonical names independently from values."""
+    created_tag = await create_tag(
+        session=session,
+        value="12345",
+        canonical_name="Aquila chrysaetos",
+    )
+
+    assert created_tag.value == "12345"
+    assert created_tag.canonical_name == "Aquila chrysaetos"
+
+    stmt = select(models.Tag).where(
+        models.Tag.key == "test_key",
+        models.Tag.value == "12345",
+    )
+    result = await session.execute(stmt)
+    tag = result.scalars().first()
+    assert tag is not None
+    assert tag.canonical_name == "Aquila chrysaetos"
+
+
 async def test_create_tag_duplicate_should_fail(
     session: AsyncSession,
 ) -> None:
     """Test creating a tag with a duplicate key."""
-    await api.tags.create(
-        session=session,
-        key="test_key",
-        value="test_value",
-    )
+    await create_tag(session=session)
 
     with pytest.raises(exceptions.DuplicateObjectError):
-        await api.tags.create(
-            session=session,
-            key="test_key",
-            value="test_value",
-        )
+        await create_tag(session=session)
 
 
 async def test_create_tag_with_long_key_should_fail(
@@ -58,10 +85,9 @@ async def test_create_tag_with_long_key_should_fail(
 ) -> None:
     """Test creating a tag with a long key."""
     with pytest.raises(ValueError):
-        await api.tags.create(
+        await create_tag(
             session=session,
             key="a" * 256,
-            value="test_value",
         )
 
 
@@ -70,9 +96,8 @@ async def test_create_tag_with_long_value_should_fail(
 ) -> None:
     """Test creating a tag with a long value."""
     with pytest.raises(ValueError):
-        await api.tags.create(
+        await create_tag(
             session=session,
-            key="test_key",
             value="a" * 256,
         )
 
@@ -115,7 +140,12 @@ async def test_delete_tag_nonexistent_should_fail(
     session: AsyncSession,
 ) -> None:
     """Test deleting a tag that does not exist."""
-    tag = schemas.Tag(id=3, key="test_key", value="test_value")
+    tag = schemas.Tag(
+        id=3,
+        key="test_key",
+        value="test_value",
+        canonical_name="test_value",
+    )
 
     # Make sure it does not exist
     stmt = select(models.Tag).where(
@@ -197,7 +227,12 @@ async def test_update_tag_nonexistent_should_fail(
     session: AsyncSession,
 ) -> None:
     """Test updating a tag that does not exist."""
-    tag = schemas.Tag(id=3, key="test_key", value="test_value")
+    tag = schemas.Tag(
+        id=3,
+        key="test_key",
+        value="test_value",
+        canonical_name="test_value",
+    )
     with pytest.raises(exceptions.NotFoundError):
         await api.tags.update(
             session,
@@ -338,8 +373,8 @@ async def test_get_or_create_tags_with_nonexisting_tags(session: AsyncSession):
     """Test getting or creating tags."""
     # Arrange
     tags_to_create = [
-        dict(key="test_key1", value="test_value1"),
-        dict(key="test_key2", value="test_value2"),
+        dict(key="test_key1", value="test_value1", canonical_name="test_value1"),
+        dict(key="test_key2", value="test_value2", canonical_name="test_value2"),
     ]
 
     # Act
@@ -363,8 +398,8 @@ async def test_get_or_create_tags_with_existing_tags(session: AsyncSession):
     """Test getting or creating tags."""
     # Arrange
     tags_to_create = [
-        dict(key="test_key1", value="test_value1"),
-        dict(key="test_key2", value="test_value2"),
+        dict(key="test_key1", value="test_value1", canonical_name="test_value1"),
+        dict(key="test_key2", value="test_value2", canonical_name="test_value2"),
     ]
     await api.tags.create(
         session,
@@ -394,8 +429,8 @@ async def test_get_or_create_tags_with_existing_and_nonexisting_tags(
     """Test getting or creating tags, when some exist and others dont."""
     # Arrange
     tags_to_create = [
-        dict(key="test_key1", value="test_value1"),
-        dict(key="test_key2", value="test_value2"),
+        dict(key="test_key1", value="test_value1", canonical_name="test_value1"),
+        dict(key="test_key2", value="test_value2", canonical_name="test_value2"),
     ]
     await api.tags.create(
         session,

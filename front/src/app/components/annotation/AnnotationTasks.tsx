@@ -109,6 +109,7 @@ export default function AnnotateTasks({
       TagPalette={
         <AnnotationTagPalette
           tags={tagPalette.tags}
+          availableTags={annotationProject.tags ?? []}
           clipAnnotation={tasks.annotations.data}
           onAddTag={tagPalette.addTag}
           onRemoveTag={tagPalette.removeTag}
@@ -131,6 +132,7 @@ export default function AnnotateTasks({
             audioSettings={audioSettings}
             spectrogramSettings={spectrogramSettings}
             tagPalette={tagPalette}
+            availableTags={annotationProject.tags ?? []}
           />
         ) : undefined
       }

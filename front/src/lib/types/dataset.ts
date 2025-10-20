@@ -11,3 +11,9 @@ export type DatasetCreate = z.input<typeof schemas.DatasetCreateSchema>;
 export type DatasetUpdate = z.input<typeof schemas.DatasetUpdateSchema>;
 
 export type DatasetImport = z.infer<typeof schemas.DatasetImportSchema>;
+
+export type DatasetCandidate = z.infer<typeof schemas.DatasetCandidateSchema>;
+
+export type DatasetCandidateInfo = z.infer<
+  typeof schemas.DatasetCandidateInfoSchema
+>;

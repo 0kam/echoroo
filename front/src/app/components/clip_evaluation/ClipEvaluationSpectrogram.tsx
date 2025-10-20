@@ -9,8 +9,10 @@ import useAudioSettings from "@/app/hooks/settings/useAudioSettings";
 import useSpectrogramSettings from "@/app/hooks/settings/useSpectrogramSettings";
 
 import RecordingSpectrogram from "@/lib/components/recordings/RecordingSpectrogram";
+import FreqScaleControl from "@/lib/components/spectrograms/FreqScaleControl";
 import TimeScaleControl from "@/lib/components/spectrograms/TimeScaleControl";
 
+import useFreqScaleControl from "@/lib/hooks/spectrogram/useFreqScaleControl";
 import useSpectrogramAudio from "@/lib/hooks/spectrogram/useSpectrogramAudio";
 import useSpectrogramState from "@/lib/hooks/spectrogram/useSpectrogramState";
 import useTimeScaleControl from "@/lib/hooks/spectrogram/useTimeScaleControl";
@@ -59,12 +61,19 @@ export default function ClipEvaluationSpectrogram(
     playbackSpeed: audioSettings.settings.speed,
   });
 
+  const freqScaleControl = useFreqScaleControl({
+    viewport,
+    spectrogramSettings,
+  });
+
   useSpectrogramHotkeys({
     spectrogramState: state,
     audio,
     viewport,
     enabled: withHotKeys,
   });
+
+  const canvasHeight = props.height ?? spectrogramSettings.settings.height ?? 400;
 
   return (
     <RecordingSpectrogram
@@ -82,6 +91,15 @@ export default function ClipEvaluationSpectrogram(
             value={timeScaleControl.value}
             onChange={timeScaleControl.onPreviewChange}
             onChangeEnd={timeScaleControl.onCommit}
+          />
+        ) : undefined
+      }
+      FreqScaleControl={
+        withControls ? (
+          <FreqScaleControl
+            value={freqScaleControl.value}
+            onChange={freqScaleControl.onPreviewChange}
+            onChangeEnd={freqScaleControl.onCommit}
           />
         ) : undefined
       }
@@ -116,7 +134,7 @@ export default function ClipEvaluationSpectrogram(
           recording={recording}
           audio={audio}
           viewport={viewport}
-          height={props.height}
+          height={canvasHeight}
         />
       }
     />

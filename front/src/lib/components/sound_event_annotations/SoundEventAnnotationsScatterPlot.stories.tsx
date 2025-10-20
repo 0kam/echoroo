@@ -17,43 +17,49 @@ export default meta;
 
 type Story = StoryObj<typeof SoundEventAnnotationsScatterPlot>;
 
+const makeTag = (key: string, value: string): Tag => ({
+  key,
+  value,
+  canonical_name: value,
+});
+
 const speciesTags: Tag[] = [
-  { key: "Species", value: "Cat" },
-  { key: "Species", value: "Dog" },
-  { key: "Species", value: "Bird" },
-  { key: "Species", value: "Human" },
-  { key: "Species", value: "Elephant" },
-  { key: "Species", value: "Lion" },
+  makeTag("Species", "Cat"),
+  makeTag("Species", "Dog"),
+  makeTag("Species", "Bird"),
+  makeTag("Species", "Human"),
+  makeTag("Species", "Elephant"),
+  makeTag("Species", "Lion"),
 ];
 
 const behaviourTags: Tag[] = [
-  { key: "Behaviour", value: "Barking" },
-  { key: "Behaviour", value: "Meowing" },
-  { key: "Behaviour", value: "Roaring" },
-  { key: "Behaviour", value: "Singing" },
-  { key: "Behaviour", value: "Trumpeting" },
-  { key: "Behaviour", value: "Howling" },
+  makeTag("Behaviour", "Barking"),
+  makeTag("Behaviour", "Meowing"),
+  makeTag("Behaviour", "Roaring"),
+  makeTag("Behaviour", "Singing"),
+  makeTag("Behaviour", "Trumpeting"),
+  makeTag("Behaviour", "Howling"),
 ];
 
 const qualityTags: Tag[] = [
-  { key: "Quality", value: "Good" },
-  { key: "Quality", value: "Bad" },
-  { key: "Quality", value: "Meh" },
+  makeTag("Quality", "Good"),
+  makeTag("Quality", "Bad"),
+  makeTag("Quality", "Meh"),
 ];
 
 const locationTags: Tag[] = [
-  { key: "Location", value: "Forest" },
-  { key: "Location", value: "City" },
-  { key: "Location", value: "Beach" },
-  { key: "Location", value: "Desert" },
-  { key: "Location", value: "Mountain" },
+  makeTag("Location", "Forest"),
+  makeTag("Location", "City"),
+  makeTag("Location", "Beach"),
+  makeTag("Location", "Desert"),
+  makeTag("Location", "Mountain"),
 ];
 
 const timeOfDateTags: Tag[] = [
-  { key: "Time of Day", value: "Morning" },
-  { key: "Time of Day", value: "Afternoon" },
-  { key: "Time of Day", value: "Evening" },
-  { key: "Time of Day", value: "Night" },
+  makeTag("Time of Day", "Morning"),
+  makeTag("Time of Day", "Afternoon"),
+  makeTag("Time of Day", "Evening"),
+  makeTag("Time of Day", "Night"),
 ];
 
 function randomFeatures() {
