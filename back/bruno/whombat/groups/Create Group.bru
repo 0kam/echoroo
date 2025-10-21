@@ -1,0 +1,28 @@
+meta {
+  name: Create Group
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/groups/
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "name": "Research Team",
+    "description": "Main research group"
+  }
+}
+
+docs {
+  Create a new group and add the creator as a manager (admin only).
+
+  Request Body:
+  - name: Group name (required)
+  - description: Group description (optional)
+
+  The user creating the group is automatically added as a manager.
+}

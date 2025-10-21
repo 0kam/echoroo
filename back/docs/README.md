@@ -29,6 +29,10 @@ Whombat bridges this gap by focusing on the following key requirements:
 
 7. **Model Comparison**: Compare model outputs with human annotations to identify areas where your model is underperforming and pinpoint where additional annotation is needed.
 
+8. **Access Control & Collaboration**: Control who can view and edit your datasets and annotation projects with flexible visibility settings. Organize users into groups for efficient team management.
+
+9. **Species Taxonomy Integration**: Leverage GBIF (Global Biodiversity Information Facility) integration for standardized species naming and taxonomy during annotation.
+
 _Whombat_'s design prioritizes **careful, manual data curation**.
 We believe this emphasis on precision will enable the community to build gold-standard bioacoustic datasets, fueling the development of cutting-edge machine learning models.
 

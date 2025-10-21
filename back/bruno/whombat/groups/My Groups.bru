@@ -1,0 +1,18 @@
+meta {
+  name: My Groups
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/groups/me
+  body: none
+  auth: none
+}
+
+docs {
+  List groups the current user belongs to.
+
+  Returns all groups where the authenticated user has membership,
+  including their role in each group.
+}
