@@ -11,43 +11,94 @@ to suit your preferences and needs.
 
 ## Installation Methods
 
-### Standalone Executable
+### 🐳 Docker (Recommended)
 
-The simplest way to dive into Whombat is by downloading our pre-packaged
-executable file. We've tailored versions for Windows, Mac OS, and Ubuntu. Head
-over to our GitHub repository's
-[releases](https://github.com/mbsantiago/whombat/releases) section to get the
-latest version.
+The easiest and most reliable way to run Whombat is using Docker. This method works on all platforms and ensures a consistent environment.
 
-### Python Package
+**Prerequisites:**
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/) installed on your system
 
-If you're comfortable with Python, installing Whombat as a Python package is
-easy. Just run the following command:
+**Quick Start:**
+
+```bash
+# 1. Clone the repository
+git clone https://github.com/mbsantiago/whombat.git
+cd whombat
+
+# 2. Configure settings
+cp .env.example .env
+# Edit .env to set your audio directory path
+
+# 3. Start Whombat
+./scripts/docker.sh start
+```
+
+Whombat will be available at http://localhost:5000
+
+For detailed Docker instructions, see our [Docker Guide](../../DOCKER.md).
+
+### 📦 Standalone Executable
+
+Download our pre-packaged executable file for Windows, Mac OS, or Ubuntu from our GitHub repository's [releases](https://github.com/mbsantiago/whombat/releases) section.
+
+This is a good option if you prefer not to use Docker and want a simple double-click installation.
+
+### 🐍 Python Package
+
+If you're comfortable with Python and want to integrate Whombat into your Python environment:
 
 ```bash
 pip install whombat
 ```
 
-This should get you up and running in no time. Should you encounter any hiccups,
-check out the FAQ section for troubleshooting tips.
+This method is ideal for developers who want to customize Whombat or integrate it into their workflow.
+
+??? tip "Which installation method should I choose?"
+
+    - **Docker**: Best for most users. Easiest setup, works everywhere, isolated environment.
+    - **Standalone Executable**: Good for users who want a simple desktop application.
+    - **Python Package**: Best for developers and advanced users who need customization.
 
 ## Running Whombat
 
-Once you've downloaded the file, kick off Whombat by double-clicking on the
-executable. This action spawns a new window that should resemble the following:
+How you start Whombat depends on your installation method:
+
+### Docker Installation
+
+```bash
+# Start Whombat
+./scripts/docker.sh start
+
+# View logs
+./scripts/docker.sh logs
+
+# Stop Whombat
+./scripts/docker.sh stop
+```
+
+Then open your browser and navigate to http://localhost:5000
+
+### Standalone Executable
+
+Double-click on the executable file. This action spawns a new window that should resemble the following:
 
 ![boot](../assets/img/boot.png)
 
-After the window displays the "ready" message a browser will be opened on
-Whombat, or open your preferred browser and navigate to:
+After the window displays the "ready" message, a browser will automatically open, or you can manually navigate to:
 
     http://localhost:5000
 
-??? info "Start with Python"
+### Python Package
 
-    To start whombat using the Python installation, run the command
+To start Whombat using the Python installation, run:
 
-        python -m whombat
+```bash
+python -m whombat
+# or simply
+whombat
+```
+
+Then open your browser and navigate to http://localhost:5000
 
 ## First User
 

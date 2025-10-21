@@ -12,28 +12,60 @@
 
 **Whombat** is an open-source, web-based audio annotation tool designed to streamline audio data labeling and annotation, with a particular focus on supporting machine learning model development.
 
-## Installation
+## Quick Start
 
-Visit the [Releases](https://github.com/mbsantiago/whombat/releases) section on GitHub to download the bundled version compatible with your operating system.
+### 🐳 Docker (Recommended)
 
-If you prefer installing Whombat via Python, run the command
+The easiest way to get started with Whombat:
 
 ```bash
-pip install whombat
+# Clone the repository
+git clone https://github.com/mbsantiago/whombat.git
+cd whombat
+
+# Configure settings
+cp .env.example .env
+# Edit .env to set WHOMBAT_AUDIO_DIR to your audio files location
+
+# Start Whombat
+./scripts/docker.sh start
 ```
 
-For detailed installation instructions, refer to the [Installation](https://mbsantiago.github.io/whombat/user_guide/installation/) section of the documentation.
+Then open http://localhost:5000 in your browser.
+
+See [DOCKER.md](DOCKER.md) for detailed Docker instructions.
+
+### 📦 Other Installation Methods
+
+- **Standalone Executable**: Download from [Releases](https://github.com/mbsantiago/whombat/releases)
+- **Python Package**: `pip install whombat`
+
+For detailed installation instructions, refer to the [Installation Guide](https://mbsantiago.github.io/whombat/user_guide/installation/).
 
 ## Usage
 
-To run whombat either click on the bundled executable or run
+### Running Whombat
 
+**With Docker:**
 ```bash
-python -m whombat
+./scripts/docker.sh start    # Start
+./scripts/docker.sh logs     # View logs
+./scripts/docker.sh stop     # Stop
 ```
 
-We have prepared a [User Guide](https://mbsantiago.github.io/whombat/user_guide/) to accompany you in your annotation work.
-There you will be able to see all the features provided by Whombat, as well as clear instructions on how to use them.
+**With Python:**
+```bash
+python -m whombat
+# or simply
+whombat
+```
+
+**With Executable:**
+Double-click the downloaded executable file.
+
+### Documentation
+
+We have prepared a comprehensive [User Guide](https://mbsantiago.github.io/whombat/user_guide/) to accompany you in your annotation work, covering all features and workflows.
 
 ## Contribution
 
