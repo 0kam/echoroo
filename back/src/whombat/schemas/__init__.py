@@ -57,7 +57,6 @@ from whombat.schemas.datasets import (
     DatasetUpdate,
     FileState,
 )
-from whombat.schemas.settings import AudioDirectory, AudioDirectoryUpdate
 from whombat.schemas.evaluation_sets import (
     EvaluationSet,
     EvaluationSetCreate,
@@ -169,8 +168,6 @@ __all__ = [
     "ClipPredictionTag",
     "ClipPredictionUpdate",
     "ClipUpdate",
-    "AudioDirectory",
-    "AudioDirectoryUpdate",
     "Dataset",
     "DatasetCreate",
     "DatasetCandidate",

@@ -30,7 +30,6 @@ from whombat.routes.sound_event_predictions import (
 )
 from whombat.routes.sound_events import sound_events_router
 from whombat.routes.spectrograms import spectrograms_router
-from whombat.routes.setup import get_setup_router
 from whombat.routes.tags import tags_router
 from whombat.routes.species import species_router
 from whombat.routes.user_runs import get_user_runs_router
@@ -197,12 +196,6 @@ def get_main_router(settings: Settings):
         evaluation_sets_router,
         prefix="/evaluation_sets",
         tags=["Evaluation Sets"],
-    )
-    setup_router = get_setup_router()
-    main_router.include_router(
-        setup_router,
-        prefix="/setup",
-        tags=["Setup"],
     )
     main_router.include_router(
         evaluations_router,
