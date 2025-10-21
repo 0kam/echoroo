@@ -9,4 +9,9 @@ front/test-results
 .backups
 build/whombat
 dist
+
+# Environment files
 .env
+front/.env
+
+logs/

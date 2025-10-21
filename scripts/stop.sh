@@ -27,8 +27,8 @@ stop_port() {
 
     echo -e "${YELLOW}Stopping $name (port $port)...${NC}"
 
-    # Find and kill processes
-    PIDS=$(lsof -ti:$port 2>/dev/null)
+    # Find and kill processes using ss instead of lsof
+    PIDS=$(ss -tlnp 2>/dev/null | grep ":${port} " | grep -oP 'pid=\K[0-9]+')
 
     if [ -z "$PIDS" ]; then
         echo -e "${GREEN}✓ No $name process running on port $port${NC}"
@@ -40,7 +40,7 @@ stop_port() {
     sleep 2
 
     # Check if still running
-    PIDS=$(lsof -ti:$port 2>/dev/null)
+    PIDS=$(ss -tlnp 2>/dev/null | grep ":${port} " | grep -oP 'pid=\K[0-9]+')
     if [ ! -z "$PIDS" ]; then
         echo -e "${YELLOW}Process still running, force killing...${NC}"
         echo "$PIDS" | xargs kill -9 2>/dev/null
@@ -48,7 +48,7 @@ stop_port() {
     fi
 
     # Final check
-    PIDS=$(lsof -ti:$port 2>/dev/null)
+    PIDS=$(ss -tlnp 2>/dev/null | grep ":${port} " | grep -oP 'pid=\K[0-9]+')
     if [ -z "$PIDS" ]; then
         echo -e "${GREEN}✓ $name stopped successfully${NC}"
     else

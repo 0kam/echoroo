@@ -3,12 +3,13 @@
 We are using pydantic to define our settings.
 """
 
+import os
 import warnings
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal, Tuple, Type
 
-from pydantic import Field, ValidationError
+from pydantic import Field, ValidationError, model_validator
 from pydantic_settings import (
     BaseSettings,
     PydanticBaseSettingsSource,
@@ -21,6 +22,36 @@ __all__ = [
     "get_settings",
     "Settings",
 ]
+
+
+def get_default_cors_origins() -> list[str]:
+    """Generate default CORS origins based on environment configuration.
+
+    This function creates CORS origins for:
+    - localhost (always included for local development)
+    - The configured domain (if different from localhost)
+    - Common frontend ports (3000, 3001)
+    """
+    # Get configuration from environment
+    domain = os.getenv("WHOMBAT_DOMAIN", "localhost")
+    protocol = os.getenv("WHOMBAT_PROTOCOL", "http")
+    frontend_port = os.getenv("WHOMBAT_FRONTEND_PORT", "3000")
+
+    origins = set()
+
+    # Always include localhost for development
+    origins.add(f"http://localhost:{frontend_port}")
+    origins.add(f"http://127.0.0.1:{frontend_port}")
+
+    # Include the configured domain if it's not localhost
+    if domain not in ("localhost", "127.0.0.1"):
+        origins.add(f"{protocol}://{domain}:{frontend_port}")
+        # Also add common variations
+        origins.add(f"http://{domain}:{frontend_port}")
+        if protocol == "https":
+            origins.add(f"https://{domain}:{frontend_port}")
+
+    return sorted(list(origins))
 
 
 DEFAULT_CORS_ORIGINS: Tuple[str, ...] = (
@@ -114,10 +145,11 @@ class Settings(BaseSettings):
     Should be set to INFO in production.
     """
 
-    cors_origins: list[str] = Field(
-        default_factory=lambda: list(DEFAULT_CORS_ORIGINS)
-    )
-    """Allowed origins for CORS."""
+    cors_origins: list[str] | None = None
+    """Allowed origins for CORS.
+
+    If not specified, will be automatically generated based on domain and frontend port.
+    """
 
     open_on_startup: bool = True
     """Open the application in the browser on startup."""
@@ -127,6 +159,13 @@ class Settings(BaseSettings):
 
     auth_cookie_samesite: Literal["lax", "strict", "none"] = "lax"
     """SameSite attribute for the auth cookie."""
+
+    @model_validator(mode="after")
+    def set_default_cors_origins(self) -> "Settings":
+        """Set default CORS origins if not explicitly configured."""
+        if self.cors_origins is None:
+            self.cors_origins = get_default_cors_origins()
+        return self
 
     @classmethod
     def settings_customise_sources(

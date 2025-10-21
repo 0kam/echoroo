@@ -1,7 +1,9 @@
 import webbrowser
 
 from colorama import Fore, Style, just_fix_windows_console
+from sqlalchemy import select
 
+from whombat import models
 from whombat.system.database import (
     create_async_db_engine,
     get_async_session,
@@ -79,7 +81,10 @@ def is_dev_mode(settings: Settings) -> bool:
 
 
 def open_whombat_on_browser(settings: Settings) -> None:
-    webbrowser.open(f"http://{settings.host}:{settings.port}/")
+    """Open Whombat in the browser using the configured domain."""
+    # Use domain instead of host for browser opening
+    # host might be 0.0.0.0 which is not accessible from browser
+    webbrowser.open(f"http://{settings.domain}:{settings.port}/")
 
 
 async def whombat_init(settings: Settings):
@@ -88,6 +93,17 @@ async def whombat_init(settings: Settings):
         print_dev_message(settings)
 
     await init_database(settings)
+
+    # Warm up database session and access tokens table to prevent auth issues
+    # on first request after restart
+    db_url = get_database_url(settings)
+    engine = create_async_db_engine(db_url)
+    async with get_async_session(engine) as session:
+        # Query access tokens table to ensure it's fully initialized
+        # This prevents authentication issues on the first login attempt
+        await session.execute(select(models.AccessToken).limit(1))
+        await session.commit()
+    await engine.dispose()
 
     if await is_first_run(settings):
         print_first_run_message(settings)

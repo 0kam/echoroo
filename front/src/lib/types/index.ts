@@ -31,4 +31,3 @@ export type * from "./user";
 export type * from "./user_run";
 export type * from "./viewport";
 export type * from "./group";
-export type * from "./setup";

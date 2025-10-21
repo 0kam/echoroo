@@ -1,21 +1,21 @@
 warning: The `tool.uv.dev-dependencies` field (used in `pyproject.toml`) is deprecated and will be removed in a future release; use `dependency-groups.dev` instead
-2025-10-20 17:13:38,678 - uvicorn.error - INFO - Will watch for changes in these directories: ['/Users/okamoto/NIES/Ecoacoustics/whombat/back']
-INFO:     Will watch for changes in these directories: ['/Users/okamoto/NIES/Ecoacoustics/whombat/back']
-2025-10-20 17:13:38,679 - uvicorn.error - INFO - Uvicorn running on http://localhost:5000 (Press CTRL+C to quit)
-INFO:     Uvicorn running on http://localhost:5000 (Press CTRL+C to quit)
-2025-10-20 17:13:38,680 - uvicorn.error - INFO - Started reloader process [25195] using WatchFiles
-INFO:     Started reloader process [25195] using WatchFiles
-/Users/okamoto/NIES/Ecoacoustics/whombat/back/.venv/lib/python3.12/site-packages/pydantic/_internal/_fields.py:132: UserWarning: Field "model_run" in Body_import_model_run_import__post has conflict with protected namespace "model_".
+2025-10-21 20:59:16,641 - uvicorn.error - INFO - Will watch for changes in these directories: ['/home/okamoto/Projects/whombat/back']
+INFO:     Will watch for changes in these directories: ['/home/okamoto/Projects/whombat/back']
+2025-10-21 20:59:16,641 - uvicorn.error - INFO - Uvicorn running on http://0.0.0.0:5000 (Press CTRL+C to quit)
+INFO:     Uvicorn running on http://0.0.0.0:5000 (Press CTRL+C to quit)
+2025-10-21 20:59:16,642 - uvicorn.error - INFO - Started reloader process [378485] using WatchFiles
+INFO:     Started reloader process [378485] using WatchFiles
+/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/pydantic/_internal/_fields.py:132: UserWarning: Field "model_run" in Body_import_model_run_import__post has conflict with protected namespace "model_".
 
 You may be able to resolve this warning by setting `model_config['protected_namespaces'] = ()`.
   warnings.warn(
-/Users/okamoto/NIES/Ecoacoustics/whombat/back/.venv/lib/python3.12/site-packages/pydantic/_internal/_fields.py:132: UserWarning: Field "model_run" in Body_import_model_run_api_v1_model_runs_import__post has conflict with protected namespace "model_".
+/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/pydantic/_internal/_fields.py:132: UserWarning: Field "model_run" in Body_import_model_run_api_v1_model_runs_import__post has conflict with protected namespace "model_".
 
 You may be able to resolve this warning by setting `model_config['protected_namespaces'] = ()`.
   warnings.warn(
-2025-10-20 17:13:41,819 - uvicorn.error - INFO - Started server process [25200]
-INFO:     Started server process [25200]
-2025-10-20 17:13:41,819 - uvicorn.error - INFO - Waiting for application startup.
+2025-10-21 20:59:22,006 - uvicorn.error - INFO - Started server process [378497]
+INFO:     Started server process [378497]
+2025-10-21 20:59:22,006 - uvicorn.error - INFO - Waiting for application startup.
 INFO:     Waiting for application startup.
 INFO:Context impl SQLiteImpl.
 INFO:Will assume non-transactional DDL.
@@ -30,11 +30,11 @@ INFO:Will assume non-transactional DDL.
     "db_dialect": "sqlite",
     "db_host": null,
     "db_port": null,
-    "db_name": "/Users/okamoto/Library/Application Support/whombat/whombat.db",
-    "audio_dir": "/Users/okamoto/Music/whombat_data",
-    "host": "localhost",
+    "db_name": "/home/okamoto/.local/share/whombat/whombat.db",
+    "audio_dir": "/home/okamoto/whombat_data",
+    "host": "0.0.0.0",
     "port": 5000,
-    "domain": "localhost",
+    "domain": "158.210.76.175",
     "log_config": "logging.conf",
     "log_to_file": true,
     "log_to_stdout": false,
@@ -42,7 +42,8 @@ INFO:Will assume non-transactional DDL.
     "log_level": "info",
     "cors_origins": [
         "http://localhost:3000",
-        "http://127.0.0.1:3000"
+        "http://127.0.0.1:3000",
+        "http://158.210.76.175:3000"
     ],
     "open_on_startup": true,
     "auth_cookie_secure": false,
@@ -52,346 +53,36 @@ INFO:Will assume non-transactional DDL.
 
     [32m[2mWhombat is ready to go![0m
 
-    [32m[1m * Listening on http://localhost:5000/[0m
+    [32m[1m * Listening on http://0.0.0.0:5000/[0m
 
     [33mPress Ctrl+C to exit.[0m
     
-2025-10-20 17:13:42,098 - uvicorn.error - INFO - Application startup complete.
+2025-10-21 20:59:24,886 - uvicorn.error - INFO - Application startup complete.
 INFO:     Application startup complete.
-INFO:     127.0.0.1:55476 - "GET / HTTP/1.1" 404 Not Found
-INFO:     127.0.0.1:55477 - "GET /favicon.ico HTTP/1.1" 404 Not Found
-INFO:     127.0.0.1:55476 - "GET /api/v1/datasets/detail/state/?dataset_uuid=788c0542-f679-46da-8849-af499257872b HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55482 - "GET /api/v1/groups/me HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55485 - "GET /api/v1/datasets/detail/state/?dataset_uuid=788c0542-f679-46da-8849-af499257872b HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55485 - "GET /api/v1/datasets/detail/state/?dataset_uuid=788c0542-f679-46da-8849-af499257872b HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55501 - "GET /api/v1/datasets/detail/state/?dataset_uuid=788c0542-f679-46da-8849-af499257872b HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55502 - "GET /api/v1/groups/me HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55509 - "GET /api/v1/users/me HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55518 - "GET /api/v1/users/me HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55518 - "GET /api/v1/datasets/?limit=10&offset=0 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55522 - "GET /api/v1/datasets/?limit=10&offset=0 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55522 - "GET /api/v1/datasets/detail/?dataset_uuid=e857bd33-b0d8-425a-9109-ec585ab38471 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55607 - "GET /api/v1/users/me HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55607 - "GET /api/v1/datasets/detail/?dataset_uuid=e857bd33-b0d8-425a-9109-ec585ab38471 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55609 - "GET /api/v1/notes/?limit=0&offset=0&is_issue__eq=true&dataset__eq=e857bd33-b0d8-425a-9109-ec585ab38471 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55615 - "GET /api/v1/notes/recording_notes/?limit=-1&offset=0&dataset__eq=e857bd33-b0d8-425a-9109-ec585ab38471&issues__eq=true HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55611 - "GET /api/v1/tags/recording_counts/?limit=-1&offset=0&dataset__eq=e857bd33-b0d8-425a-9109-ec585ab38471 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55607 - "GET /api/v1/datasets/detail/state/?dataset_uuid=e857bd33-b0d8-425a-9109-ec585ab38471 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55614 - "GET /api/v1/groups/me HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55619 - "GET /api/v1/datasets/?limit=10&offset=0 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55619 - "GET /api/v1/datasets/detail/?dataset_uuid=788c0542-f679-46da-8849-af499257872b HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55619 - "GET /api/v1/datasets/detail/state/?dataset_uuid=788c0542-f679-46da-8849-af499257872b HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55625 - "GET /api/v1/tags/recording_counts/?limit=-1&offset=0&dataset__eq=788c0542-f679-46da-8849-af499257872b HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55624 - "GET /api/v1/notes/?limit=0&offset=0&is_issue__eq=true&dataset__eq=788c0542-f679-46da-8849-af499257872b HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55626 - "GET /api/v1/notes/recording_notes/?limit=-1&offset=0&dataset__eq=788c0542-f679-46da-8849-af499257872b&issues__eq=true HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55635 - "GET /api/v1/users/me HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55635 - "GET /api/v1/datasets/?limit=10&offset=0 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55635 - "GET /api/v1/datasets/detail/?dataset_uuid=e857bd33-b0d8-425a-9109-ec585ab38471 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55636 - "GET /api/v1/notes/?limit=0&offset=0&is_issue__eq=true&dataset__eq=e857bd33-b0d8-425a-9109-ec585ab38471 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55637 - "GET /api/v1/tags/recording_counts/?limit=-1&offset=0&dataset__eq=e857bd33-b0d8-425a-9109-ec585ab38471 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55638 - "GET /api/v1/notes/recording_notes/?limit=-1&offset=0&dataset__eq=e857bd33-b0d8-425a-9109-ec585ab38471&issues__eq=true HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55635 - "GET /api/v1/datasets/detail/state/?dataset_uuid=e857bd33-b0d8-425a-9109-ec585ab38471 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55639 - "GET /api/v1/groups/me HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55642 - "OPTIONS /api/v1/datasets/detail/?dataset_uuid=e857bd33-b0d8-425a-9109-ec585ab38471 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55643 - "PATCH /api/v1/datasets/detail/?dataset_uuid=e857bd33-b0d8-425a-9109-ec585ab38471 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55643 - "GET /api/v1/tags/recording_counts/?limit=-1&offset=0&dataset__eq=e857bd33-b0d8-425a-9109-ec585ab38471 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55645 - "GET /api/v1/notes/?limit=0&offset=0&is_issue__eq=true&dataset__eq=e857bd33-b0d8-425a-9109-ec585ab38471 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55644 - "GET /api/v1/notes/recording_notes/?limit=-1&offset=0&dataset__eq=e857bd33-b0d8-425a-9109-ec585ab38471&issues__eq=true HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55648 - "GET /api/v1/datasets/detail/state/?dataset_uuid=788c0542-f679-46da-8849-af499257872b HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55648 - "GET /api/v1/datasets/?limit=10&offset=0 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55654 - "GET /api/v1/datasets/detail/state/?dataset_uuid=e857bd33-b0d8-425a-9109-ec585ab38471 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55654 - "PATCH /api/v1/datasets/detail/?dataset_uuid=e857bd33-b0d8-425a-9109-ec585ab38471 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55654 - "GET /api/v1/tags/recording_counts/?limit=-1&offset=0&dataset__eq=e857bd33-b0d8-425a-9109-ec585ab38471 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55655 - "GET /api/v1/notes/recording_notes/?limit=-1&offset=0&dataset__eq=e857bd33-b0d8-425a-9109-ec585ab38471&issues__eq=true HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55656 - "GET /api/v1/notes/?limit=0&offset=0&is_issue__eq=true&dataset__eq=e857bd33-b0d8-425a-9109-ec585ab38471 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55660 - "GET /api/v1/annotation_projects/?limit=10&offset=0 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55660 - "GET /api/v1/datasets/?limit=10&offset=0 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55654 - "GET /api/v1/datasets/detail/state/?dataset_uuid=e857bd33-b0d8-425a-9109-ec585ab38471 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55654 - "PATCH /api/v1/datasets/detail/?dataset_uuid=e857bd33-b0d8-425a-9109-ec585ab38471 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55654 - "GET /api/v1/tags/recording_counts/?limit=-1&offset=0&dataset__eq=e857bd33-b0d8-425a-9109-ec585ab38471 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55662 - "GET /api/v1/notes/?limit=0&offset=0&is_issue__eq=true&dataset__eq=e857bd33-b0d8-425a-9109-ec585ab38471 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55661 - "GET /api/v1/notes/recording_notes/?limit=-1&offset=0&dataset__eq=e857bd33-b0d8-425a-9109-ec585ab38471&issues__eq=true HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55670 - "GET /api/v1/users/me HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55670 - "GET /api/v1/datasets/?limit=10&offset=0 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55654 - "GET /api/v1/datasets/detail/state/?dataset_uuid=e857bd33-b0d8-425a-9109-ec585ab38471 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55654 - "PATCH /api/v1/datasets/detail/?dataset_uuid=e857bd33-b0d8-425a-9109-ec585ab38471 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55654 - "GET /api/v1/tags/recording_counts/?limit=-1&offset=0&dataset__eq=e857bd33-b0d8-425a-9109-ec585ab38471 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55671 - "GET /api/v1/notes/recording_notes/?limit=-1&offset=0&dataset__eq=e857bd33-b0d8-425a-9109-ec585ab38471&issues__eq=true HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55672 - "GET /api/v1/notes/?limit=0&offset=0&is_issue__eq=true&dataset__eq=e857bd33-b0d8-425a-9109-ec585ab38471 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55682 - "GET /api/v1/users/me HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55682 - "GET /api/v1/datasets/?limit=10&offset=0 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55654 - "GET /api/v1/datasets/detail/state/?dataset_uuid=e857bd33-b0d8-425a-9109-ec585ab38471 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55671 - "GET /api/v1/groups/me HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55671 - "PATCH /api/v1/datasets/detail/?dataset_uuid=e857bd33-b0d8-425a-9109-ec585ab38471 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55671 - "GET /api/v1/tags/recording_counts/?limit=-1&offset=0&dataset__eq=e857bd33-b0d8-425a-9109-ec585ab38471 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55683 - "GET /api/v1/notes/?limit=0&offset=0&is_issue__eq=true&dataset__eq=e857bd33-b0d8-425a-9109-ec585ab38471 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55654 - "GET /api/v1/notes/recording_notes/?limit=-1&offset=0&dataset__eq=e857bd33-b0d8-425a-9109-ec585ab38471&issues__eq=true HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55685 - "GET /api/v1/annotation_projects/?limit=10&offset=0 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55708 - "GET /api/v1/annotation_projects/?limit=10&offset=0 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55712 - "GET /api/v1/annotation_projects/detail/?annotation_project_uuid=6db7d351-f409-4a77-be5d-c75bbb320103 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55712 - "GET /api/v1/annotation_tasks/?limit=-1&offset=0&annotation_project__eq=6db7d351-f409-4a77-be5d-c75bbb320103 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55714 - "GET /api/v1/tags/sound_event_annotation_counts/?limit=-1&offset=0&annotation_project__eq=6db7d351-f409-4a77-be5d-c75bbb320103 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55713 - "GET /api/v1/tags/clip_annotation_counts/?limit=-1&offset=0&annotation_project__eq=6db7d351-f409-4a77-be5d-c75bbb320103 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55717 - "GET /api/v1/users/me HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55715 - "GET /api/v1/notes/clip_annotation_notes/?limit=10&offset=0&annotation_project__eq=6db7d351-f409-4a77-be5d-c75bbb320103&issues__eq=true HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55716 - "GET /api/v1/notes/sound_event_annotation_notes/?limit=10&offset=0&annotation_project__eq=6db7d351-f409-4a77-be5d-c75bbb320103&issues__eq=true HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55712 - "GET /api/v1/groups/me HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55718 - "OPTIONS /api/v1/annotation_projects/detail/?annotation_project_uuid=6db7d351-f409-4a77-be5d-c75bbb320103 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55719 - "PATCH /api/v1/annotation_projects/detail/?annotation_project_uuid=6db7d351-f409-4a77-be5d-c75bbb320103 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55722 - "GET /api/v1/notes/sound_event_annotation_notes/?limit=10&offset=0&annotation_project__eq=6db7d351-f409-4a77-be5d-c75bbb320103&issues__eq=true HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55720 - "GET /api/v1/tags/sound_event_annotation_counts/?limit=-1&offset=0&annotation_project__eq=6db7d351-f409-4a77-be5d-c75bbb320103 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55719 - "GET /api/v1/tags/clip_annotation_counts/?limit=-1&offset=0&annotation_project__eq=6db7d351-f409-4a77-be5d-c75bbb320103 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55723 - "GET /api/v1/annotation_tasks/?limit=-1&offset=0&annotation_project__eq=6db7d351-f409-4a77-be5d-c75bbb320103 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55721 - "GET /api/v1/notes/clip_annotation_notes/?limit=10&offset=0&annotation_project__eq=6db7d351-f409-4a77-be5d-c75bbb320103&issues__eq=true HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55726 - "GET /api/v1/datasets/?limit=10&offset=0 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55727 - "PATCH /api/v1/annotation_projects/detail/?annotation_project_uuid=6db7d351-f409-4a77-be5d-c75bbb320103 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55727 - "GET /api/v1/tags/clip_annotation_counts/?limit=-1&offset=0&annotation_project__eq=6db7d351-f409-4a77-be5d-c75bbb320103 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55728 - "GET /api/v1/tags/sound_event_annotation_counts/?limit=-1&offset=0&annotation_project__eq=6db7d351-f409-4a77-be5d-c75bbb320103 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55731 - "GET /api/v1/annotation_tasks/?limit=-1&offset=0&annotation_project__eq=6db7d351-f409-4a77-be5d-c75bbb320103 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55730 - "GET /api/v1/notes/sound_event_annotation_notes/?limit=10&offset=0&annotation_project__eq=6db7d351-f409-4a77-be5d-c75bbb320103&issues__eq=true HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55729 - "GET /api/v1/notes/clip_annotation_notes/?limit=10&offset=0&annotation_project__eq=6db7d351-f409-4a77-be5d-c75bbb320103&issues__eq=true HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55733 - "GET /api/v1/annotation_projects/?limit=10&offset=0 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55733 - "GET /api/v1/users/me HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55734 - "GET /api/v1/groups/me HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55737 - "GET /api/v1/tags/clip_annotation_counts/?limit=-1&offset=0&annotation_project__eq=6db7d351-f409-4a77-be5d-c75bbb320103 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55738 - "GET /api/v1/tags/sound_event_annotation_counts/?limit=-1&offset=0&annotation_project__eq=6db7d351-f409-4a77-be5d-c75bbb320103 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55736 - "GET /api/v1/annotation_tasks/?limit=-1&offset=0&annotation_project__eq=6db7d351-f409-4a77-be5d-c75bbb320103 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55739 - "GET /api/v1/notes/clip_annotation_notes/?limit=10&offset=0&annotation_project__eq=6db7d351-f409-4a77-be5d-c75bbb320103&issues__eq=true HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55740 - "GET /api/v1/notes/sound_event_annotation_notes/?limit=10&offset=0&annotation_project__eq=6db7d351-f409-4a77-be5d-c75bbb320103&issues__eq=true HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55744 - "GET /api/v1/annotation_projects/?limit=10&offset=0 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55745 - "PATCH /api/v1/annotation_projects/detail/?annotation_project_uuid=6db7d351-f409-4a77-be5d-c75bbb320103 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55745 - "GET /api/v1/tags/clip_annotation_counts/?limit=-1&offset=0&annotation_project__eq=6db7d351-f409-4a77-be5d-c75bbb320103 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55746 - "GET /api/v1/tags/sound_event_annotation_counts/?limit=-1&offset=0&annotation_project__eq=6db7d351-f409-4a77-be5d-c75bbb320103 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55749 - "GET /api/v1/annotation_tasks/?limit=-1&offset=0&annotation_project__eq=6db7d351-f409-4a77-be5d-c75bbb320103 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55747 - "GET /api/v1/notes/clip_annotation_notes/?limit=10&offset=0&annotation_project__eq=6db7d351-f409-4a77-be5d-c75bbb320103&issues__eq=true HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55748 - "GET /api/v1/notes/sound_event_annotation_notes/?limit=10&offset=0&annotation_project__eq=6db7d351-f409-4a77-be5d-c75bbb320103&issues__eq=true HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55751 - "GET /api/v1/datasets/?limit=10&offset=0 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55751 - "GET /api/v1/annotation_projects/?limit=10&offset=0 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55751 - "GET /api/v1/annotation_projects/detail/?annotation_project_uuid=6db7d351-f409-4a77-be5d-c75bbb320103 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55761 - "GET /api/v1/notes/sound_event_annotation_notes/?limit=10&offset=0&annotation_project__eq=6db7d351-f409-4a77-be5d-c75bbb320103&issues__eq=true HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55756 - "GET /api/v1/tags/clip_annotation_counts/?limit=-1&offset=0&annotation_project__eq=6db7d351-f409-4a77-be5d-c75bbb320103 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55758 - "GET /api/v1/tags/sound_event_annotation_counts/?limit=-1&offset=0&annotation_project__eq=6db7d351-f409-4a77-be5d-c75bbb320103 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55759 - "GET /api/v1/notes/clip_annotation_notes/?limit=10&offset=0&annotation_project__eq=6db7d351-f409-4a77-be5d-c75bbb320103&issues__eq=true HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55762 - "GET /api/v1/users/me HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55751 - "GET /api/v1/annotation_tasks/?limit=-1&offset=0&annotation_project__eq=6db7d351-f409-4a77-be5d-c75bbb320103 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55761 - "GET /api/v1/groups/me HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55765 - "OPTIONS /api/v1/annotation_projects/detail/?annotation_project_uuid=6db7d351-f409-4a77-be5d-c75bbb320103 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55761 - "PATCH /api/v1/annotation_projects/detail/?annotation_project_uuid=6db7d351-f409-4a77-be5d-c75bbb320103 HTTP/1.1" 500 Internal Server Error
-2025-10-20 17:28:31,243 - uvicorn.error - ERROR - Exception in ASGI application
-Traceback (most recent call last):
-  File "/Users/okamoto/NIES/Ecoacoustics/whombat/back/.venv/lib/python3.12/site-packages/uvicorn/protocols/http/httptools_impl.py", line 401, in run_asgi
-    result = await app(  # type: ignore[func-returns-value]
-             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/Users/okamoto/NIES/Ecoacoustics/whombat/back/.venv/lib/python3.12/site-packages/uvicorn/middleware/proxy_headers.py", line 60, in __call__
-    return await self.app(scope, receive, send)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/Users/okamoto/NIES/Ecoacoustics/whombat/back/.venv/lib/python3.12/site-packages/fastapi/applications.py", line 1054, in __call__
-    await super().__call__(scope, receive, send)
-  File "/Users/okamoto/NIES/Ecoacoustics/whombat/back/.venv/lib/python3.12/site-packages/starlette/applications.py", line 113, in __call__
-    await self.middleware_stack(scope, receive, send)
-  File "/Users/okamoto/NIES/Ecoacoustics/whombat/back/.venv/lib/python3.12/site-packages/starlette/middleware/errors.py", line 187, in __call__
-    raise exc
-  File "/Users/okamoto/NIES/Ecoacoustics/whombat/back/.venv/lib/python3.12/site-packages/starlette/middleware/errors.py", line 165, in __call__
-    await self.app(scope, receive, _send)
-  File "/Users/okamoto/NIES/Ecoacoustics/whombat/back/.venv/lib/python3.12/site-packages/starlette/middleware/cors.py", line 93, in __call__
-    await self.simple_response(scope, receive, send, request_headers=headers)
-  File "/Users/okamoto/NIES/Ecoacoustics/whombat/back/.venv/lib/python3.12/site-packages/starlette/middleware/cors.py", line 144, in simple_response
-    await self.app(scope, receive, send)
-  File "/Users/okamoto/NIES/Ecoacoustics/whombat/back/.venv/lib/python3.12/site-packages/starlette/middleware/exceptions.py", line 62, in __call__
-    await wrap_app_handling_exceptions(self.app, conn)(scope, receive, send)
-  File "/Users/okamoto/NIES/Ecoacoustics/whombat/back/.venv/lib/python3.12/site-packages/starlette/_exception_handler.py", line 62, in wrapped_app
-    raise exc
-  File "/Users/okamoto/NIES/Ecoacoustics/whombat/back/.venv/lib/python3.12/site-packages/starlette/_exception_handler.py", line 51, in wrapped_app
-    await app(scope, receive, sender)
-  File "/Users/okamoto/NIES/Ecoacoustics/whombat/back/.venv/lib/python3.12/site-packages/starlette/routing.py", line 715, in __call__
-    await self.middleware_stack(scope, receive, send)
-  File "/Users/okamoto/NIES/Ecoacoustics/whombat/back/.venv/lib/python3.12/site-packages/starlette/routing.py", line 735, in app
-    await route.handle(scope, receive, send)
-  File "/Users/okamoto/NIES/Ecoacoustics/whombat/back/.venv/lib/python3.12/site-packages/starlette/routing.py", line 288, in handle
-    await self.app(scope, receive, send)
-  File "/Users/okamoto/NIES/Ecoacoustics/whombat/back/.venv/lib/python3.12/site-packages/starlette/routing.py", line 76, in app
-    await wrap_app_handling_exceptions(app, request)(scope, receive, send)
-  File "/Users/okamoto/NIES/Ecoacoustics/whombat/back/.venv/lib/python3.12/site-packages/starlette/_exception_handler.py", line 62, in wrapped_app
-    raise exc
-  File "/Users/okamoto/NIES/Ecoacoustics/whombat/back/.venv/lib/python3.12/site-packages/starlette/_exception_handler.py", line 51, in wrapped_app
-    await app(scope, receive, sender)
-  File "/Users/okamoto/NIES/Ecoacoustics/whombat/back/.venv/lib/python3.12/site-packages/starlette/routing.py", line 73, in app
-    response = await f(request)
-               ^^^^^^^^^^^^^^^^
-  File "/Users/okamoto/NIES/Ecoacoustics/whombat/back/.venv/lib/python3.12/site-packages/fastapi/routing.py", line 301, in app
-    raw_response = await run_endpoint_function(
-                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/Users/okamoto/NIES/Ecoacoustics/whombat/back/.venv/lib/python3.12/site-packages/fastapi/routing.py", line 212, in run_endpoint_function
-    return await dependant.call(**values)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/Users/okamoto/NIES/Ecoacoustics/whombat/back/src/whombat/routes/annotation_projects.py", line 108, in update_annotation_project
-    annotation_project = await api.annotation_projects.update(
-                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/Users/okamoto/NIES/Ecoacoustics/whombat/back/src/whombat/api/annotation_projects.py", line 121, in update
-    raise exceptions.PermissionDeniedError(
-whombat.exceptions.PermissionDeniedError: You do not have permission to update this annotation project
-ERROR:    Exception in ASGI application
-Traceback (most recent call last):
-  File "/Users/okamoto/NIES/Ecoacoustics/whombat/back/.venv/lib/python3.12/site-packages/uvicorn/protocols/http/httptools_impl.py", line 401, in run_asgi
-    result = await app(  # type: ignore[func-returns-value]
-             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/Users/okamoto/NIES/Ecoacoustics/whombat/back/.venv/lib/python3.12/site-packages/uvicorn/middleware/proxy_headers.py", line 60, in __call__
-    return await self.app(scope, receive, send)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/Users/okamoto/NIES/Ecoacoustics/whombat/back/.venv/lib/python3.12/site-packages/fastapi/applications.py", line 1054, in __call__
-    await super().__call__(scope, receive, send)
-  File "/Users/okamoto/NIES/Ecoacoustics/whombat/back/.venv/lib/python3.12/site-packages/starlette/applications.py", line 113, in __call__
-    await self.middleware_stack(scope, receive, send)
-  File "/Users/okamoto/NIES/Ecoacoustics/whombat/back/.venv/lib/python3.12/site-packages/starlette/middleware/errors.py", line 187, in __call__
-    raise exc
-  File "/Users/okamoto/NIES/Ecoacoustics/whombat/back/.venv/lib/python3.12/site-packages/starlette/middleware/errors.py", line 165, in __call__
-    await self.app(scope, receive, _send)
-  File "/Users/okamoto/NIES/Ecoacoustics/whombat/back/.venv/lib/python3.12/site-packages/starlette/middleware/cors.py", line 93, in __call__
-    await self.simple_response(scope, receive, send, request_headers=headers)
-  File "/Users/okamoto/NIES/Ecoacoustics/whombat/back/.venv/lib/python3.12/site-packages/starlette/middleware/cors.py", line 144, in simple_response
-    await self.app(scope, receive, send)
-  File "/Users/okamoto/NIES/Ecoacoustics/whombat/back/.venv/lib/python3.12/site-packages/starlette/middleware/exceptions.py", line 62, in __call__
-    await wrap_app_handling_exceptions(self.app, conn)(scope, receive, send)
-  File "/Users/okamoto/NIES/Ecoacoustics/whombat/back/.venv/lib/python3.12/site-packages/starlette/_exception_handler.py", line 62, in wrapped_app
-    raise exc
-  File "/Users/okamoto/NIES/Ecoacoustics/whombat/back/.venv/lib/python3.12/site-packages/starlette/_exception_handler.py", line 51, in wrapped_app
-    await app(scope, receive, sender)
-  File "/Users/okamoto/NIES/Ecoacoustics/whombat/back/.venv/lib/python3.12/site-packages/starlette/routing.py", line 715, in __call__
-    await self.middleware_stack(scope, receive, send)
-  File "/Users/okamoto/NIES/Ecoacoustics/whombat/back/.venv/lib/python3.12/site-packages/starlette/routing.py", line 735, in app
-    await route.handle(scope, receive, send)
-  File "/Users/okamoto/NIES/Ecoacoustics/whombat/back/.venv/lib/python3.12/site-packages/starlette/routing.py", line 288, in handle
-    await self.app(scope, receive, send)
-  File "/Users/okamoto/NIES/Ecoacoustics/whombat/back/.venv/lib/python3.12/site-packages/starlette/routing.py", line 76, in app
-    await wrap_app_handling_exceptions(app, request)(scope, receive, send)
-  File "/Users/okamoto/NIES/Ecoacoustics/whombat/back/.venv/lib/python3.12/site-packages/starlette/_exception_handler.py", line 62, in wrapped_app
-    raise exc
-  File "/Users/okamoto/NIES/Ecoacoustics/whombat/back/.venv/lib/python3.12/site-packages/starlette/_exception_handler.py", line 51, in wrapped_app
-    await app(scope, receive, sender)
-  File "/Users/okamoto/NIES/Ecoacoustics/whombat/back/.venv/lib/python3.12/site-packages/starlette/routing.py", line 73, in app
-    response = await f(request)
-               ^^^^^^^^^^^^^^^^
-  File "/Users/okamoto/NIES/Ecoacoustics/whombat/back/.venv/lib/python3.12/site-packages/fastapi/routing.py", line 301, in app
-    raw_response = await run_endpoint_function(
-                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/Users/okamoto/NIES/Ecoacoustics/whombat/back/.venv/lib/python3.12/site-packages/fastapi/routing.py", line 212, in run_endpoint_function
-    return await dependant.call(**values)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/Users/okamoto/NIES/Ecoacoustics/whombat/back/src/whombat/routes/annotation_projects.py", line 108, in update_annotation_project
-    annotation_project = await api.annotation_projects.update(
-                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/Users/okamoto/NIES/Ecoacoustics/whombat/back/src/whombat/api/annotation_projects.py", line 121, in update
-    raise exceptions.PermissionDeniedError(
-whombat.exceptions.PermissionDeniedError: You do not have permission to update this annotation project
-INFO:     127.0.0.1:55807 - "GET /api/v1/users/me HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55808 - "GET /api/v1/groups/me HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55812 - "GET /api/v1/users/me HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55813 - "GET /api/v1/groups/me HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55927 - "GET /api/v1/groups/me HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55927 - "GET /api/v1/users/me HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55927 - "GET /api/v1/annotation_projects/detail/?annotation_project_uuid=6db7d351-f409-4a77-be5d-c75bbb320103 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55936 - "GET /api/v1/tags/clip_annotation_counts/?limit=-1&offset=0&annotation_project__eq=6db7d351-f409-4a77-be5d-c75bbb320103 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55938 - "GET /api/v1/tags/sound_event_annotation_counts/?limit=-1&offset=0&annotation_project__eq=6db7d351-f409-4a77-be5d-c75bbb320103 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55927 - "GET /api/v1/annotation_tasks/?limit=-1&offset=0&annotation_project__eq=6db7d351-f409-4a77-be5d-c75bbb320103 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55939 - "GET /api/v1/notes/clip_annotation_notes/?limit=10&offset=0&annotation_project__eq=6db7d351-f409-4a77-be5d-c75bbb320103&issues__eq=true HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55940 - "GET /api/v1/notes/sound_event_annotation_notes/?limit=10&offset=0&annotation_project__eq=6db7d351-f409-4a77-be5d-c75bbb320103&issues__eq=true HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55937 - "GET /api/v1/groups/me HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55941 - "PATCH /api/v1/annotation_projects/detail/?annotation_project_uuid=6db7d351-f409-4a77-be5d-c75bbb320103 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55941 - "GET /api/v1/tags/clip_annotation_counts/?limit=-1&offset=0&annotation_project__eq=6db7d351-f409-4a77-be5d-c75bbb320103 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55942 - "GET /api/v1/tags/sound_event_annotation_counts/?limit=-1&offset=0&annotation_project__eq=6db7d351-f409-4a77-be5d-c75bbb320103 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55944 - "GET /api/v1/notes/sound_event_annotation_notes/?limit=10&offset=0&annotation_project__eq=6db7d351-f409-4a77-be5d-c75bbb320103&issues__eq=true HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55943 - "GET /api/v1/notes/clip_annotation_notes/?limit=10&offset=0&annotation_project__eq=6db7d351-f409-4a77-be5d-c75bbb320103&issues__eq=true HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55945 - "GET /api/v1/annotation_tasks/?limit=-1&offset=0&annotation_project__eq=6db7d351-f409-4a77-be5d-c75bbb320103 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55947 - "GET /api/v1/groups/me HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55947 - "GET /api/v1/users/me HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55947 - "GET /api/v1/annotation_projects/detail/?annotation_project_uuid=6db7d351-f409-4a77-be5d-c75bbb320103 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55958 - "GET /api/v1/tags/clip_annotation_counts/?limit=-1&offset=0&annotation_project__eq=6db7d351-f409-4a77-be5d-c75bbb320103 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55960 - "GET /api/v1/tags/sound_event_annotation_counts/?limit=-1&offset=0&annotation_project__eq=6db7d351-f409-4a77-be5d-c75bbb320103 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55947 - "GET /api/v1/annotation_tasks/?limit=-1&offset=0&annotation_project__eq=6db7d351-f409-4a77-be5d-c75bbb320103 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55964 - "GET /api/v1/notes/sound_event_annotation_notes/?limit=10&offset=0&annotation_project__eq=6db7d351-f409-4a77-be5d-c75bbb320103&issues__eq=true HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55962 - "GET /api/v1/notes/clip_annotation_notes/?limit=10&offset=0&annotation_project__eq=6db7d351-f409-4a77-be5d-c75bbb320103&issues__eq=true HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55965 - "GET /api/v1/groups/me HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55967 - "PATCH /api/v1/annotation_projects/detail/?annotation_project_uuid=6db7d351-f409-4a77-be5d-c75bbb320103 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55967 - "GET /api/v1/tags/clip_annotation_counts/?limit=-1&offset=0&annotation_project__eq=6db7d351-f409-4a77-be5d-c75bbb320103 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55968 - "GET /api/v1/tags/sound_event_annotation_counts/?limit=-1&offset=0&annotation_project__eq=6db7d351-f409-4a77-be5d-c75bbb320103 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55970 - "GET /api/v1/notes/sound_event_annotation_notes/?limit=10&offset=0&annotation_project__eq=6db7d351-f409-4a77-be5d-c75bbb320103&issues__eq=true HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55969 - "GET /api/v1/notes/clip_annotation_notes/?limit=10&offset=0&annotation_project__eq=6db7d351-f409-4a77-be5d-c75bbb320103&issues__eq=true HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55971 - "GET /api/v1/annotation_tasks/?limit=-1&offset=0&annotation_project__eq=6db7d351-f409-4a77-be5d-c75bbb320103 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55971 - "GET /api/v1/users/me HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55971 - "GET /api/v1/annotation_projects/detail/?annotation_project_uuid=6db7d351-f409-4a77-be5d-c75bbb320103 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55967 - "GET /api/v1/tags/clip_annotation_counts/?limit=-1&offset=0&annotation_project__eq=6db7d351-f409-4a77-be5d-c75bbb320103 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55971 - "GET /api/v1/annotation_tasks/?limit=-1&offset=0&annotation_project__eq=6db7d351-f409-4a77-be5d-c75bbb320103 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55968 - "GET /api/v1/tags/sound_event_annotation_counts/?limit=-1&offset=0&annotation_project__eq=6db7d351-f409-4a77-be5d-c75bbb320103 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55969 - "GET /api/v1/notes/sound_event_annotation_notes/?limit=10&offset=0&annotation_project__eq=6db7d351-f409-4a77-be5d-c75bbb320103&issues__eq=true HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55970 - "GET /api/v1/notes/clip_annotation_notes/?limit=10&offset=0&annotation_project__eq=6db7d351-f409-4a77-be5d-c75bbb320103&issues__eq=true HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55979 - "GET /api/v1/groups/me HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55989 - "GET /api/v1/users/me HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55989 - "GET /api/v1/annotation_projects/detail/?annotation_project_uuid=6db7d351-f409-4a77-be5d-c75bbb320103 HTTP/1.1" 404 Not Found
-INFO:     127.0.0.1:55989 - "GET /api/v1/annotation_projects/detail/?annotation_project_uuid=6db7d351-f409-4a77-be5d-c75bbb320103 HTTP/1.1" 404 Not Found
-INFO:     127.0.0.1:55989 - "GET /api/v1/annotation_projects/detail/?annotation_project_uuid=6db7d351-f409-4a77-be5d-c75bbb320103 HTTP/1.1" 404 Not Found
-INFO:     127.0.0.1:55989 - "GET /api/v1/annotation_projects/detail/?annotation_project_uuid=6db7d351-f409-4a77-be5d-c75bbb320103 HTTP/1.1" 404 Not Found
-INFO:     127.0.0.1:55989 - "GET /api/v1/annotation_projects/?limit=10&offset=0 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55994 - "PATCH /api/v1/annotation_projects/detail/?annotation_project_uuid=6db7d351-f409-4a77-be5d-c75bbb320103 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55994 - "GET /api/v1/tags/clip_annotation_counts/?limit=-1&offset=0&annotation_project__eq=6db7d351-f409-4a77-be5d-c75bbb320103 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55995 - "GET /api/v1/tags/sound_event_annotation_counts/?limit=-1&offset=0&annotation_project__eq=6db7d351-f409-4a77-be5d-c75bbb320103 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55998 - "GET /api/v1/annotation_tasks/?limit=-1&offset=0&annotation_project__eq=6db7d351-f409-4a77-be5d-c75bbb320103 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55996 - "GET /api/v1/notes/clip_annotation_notes/?limit=10&offset=0&annotation_project__eq=6db7d351-f409-4a77-be5d-c75bbb320103&issues__eq=true HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55997 - "GET /api/v1/notes/sound_event_annotation_notes/?limit=10&offset=0&annotation_project__eq=6db7d351-f409-4a77-be5d-c75bbb320103&issues__eq=true HTTP/1.1" 200 OK
-INFO:     127.0.0.1:56007 - "GET /api/v1/users/me HTTP/1.1" 200 OK
-INFO:     127.0.0.1:56007 - "GET /api/v1/annotation_projects/?limit=10&offset=0 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:56011 - "GET /api/v1/annotation_tasks/?limit=-1&offset=0&annotation_project__eq=6db7d351-f409-4a77-be5d-c75bbb320103 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:56011 - "GET /api/v1/annotation_tasks/detail/clip_annotation/?annotation_task_uuid=7f165bef-03ab-4b60-91da-f102dda1ad79 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:56012 - "GET /api/v1/spectrograms/?recording_uuid=de694c1e-a60b-449f-ba6f-4819924c8870&start_time=439.94775&end_time=445.05225&resample=false&filter_order=4&window_size=0.0095&overlap=0.5&window=hann&scale=dB&clamp=false&min_dB=-140&max_dB=0&normalize=true&channel=0&pcen=false&cmap=twilight&time_scale=2.4&freq_scale=1 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:56013 - "GET /api/v1/spectrograms/?recording_uuid=de694c1e-a60b-449f-ba6f-4819924c8870&start_time=444.94775&end_time=450.05225&resample=false&filter_order=4&window_size=0.0095&overlap=0.5&window=hann&scale=dB&clamp=false&min_dB=-140&max_dB=0&normalize=true&channel=0&pcen=false&cmap=twilight&time_scale=2.4&freq_scale=1 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:56011 - "GET /api/v1/spectrograms/?recording_uuid=de694c1e-a60b-449f-ba6f-4819924c8870&start_time=434.94775&end_time=440.05225&resample=false&filter_order=4&window_size=0.0095&overlap=0.5&window=hann&scale=dB&clamp=false&min_dB=-140&max_dB=0&normalize=true&channel=0&pcen=false&cmap=twilight&time_scale=2.4&freq_scale=1 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:56014 - "GET /api/v1/spectrograms/?recording_uuid=de694c1e-a60b-449f-ba6f-4819924c8870&start_time=449.94775&end_time=455.05225&resample=false&filter_order=4&window_size=0.0095&overlap=0.5&window=hann&scale=dB&clamp=false&min_dB=-140&max_dB=0&normalize=true&channel=0&pcen=false&cmap=twilight&time_scale=2.4&freq_scale=1 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:56015 - "GET /api/v1/audio/stream/?recording_uuid=de694c1e-a60b-449f-ba6f-4819924c8870&speed=1&start_time=440&end_time=450 HTTP/1.1" 206 Partial Content
-INFO:     127.0.0.1:56016 - "OPTIONS /api/v1/sound_event_annotations/?clip_annotation_uuid=22176c84-057b-4994-bc7d-73ece4b0df90 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:56017 - "POST /api/v1/sound_event_annotations/?clip_annotation_uuid=22176c84-057b-4994-bc7d-73ece4b0df90 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:56016 - "OPTIONS /api/v1/sound_event_annotations/detail/tags/?sound_event_annotation_uuid=b0084d26-27a3-478c-a36b-035b9ff059bb&key=species&value=9705453 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:56017 - "POST /api/v1/sound_event_annotations/detail/tags/?sound_event_annotation_uuid=b0084d26-27a3-478c-a36b-035b9ff059bb&key=species&value=9705453 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:56017 - "POST /api/v1/sound_event_annotations/detail/tags/?sound_event_annotation_uuid=b0084d26-27a3-478c-a36b-035b9ff059bb&key=species&value=9705453 HTTP/1.1" 409 Conflict
-INFO:     127.0.0.1:56018 - "GET /api/v1/spectrograms/?recording_uuid=de694c1e-a60b-449f-ba6f-4819924c8870&start_time=454.94775&end_time=460.05225&resample=false&filter_order=4&window_size=0.0095&overlap=0.5&window=hann&scale=dB&clamp=false&min_dB=-140&max_dB=0&normalize=true&channel=0&pcen=false&cmap=twilight&time_scale=2.4&freq_scale=1 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:56018 - "GET /api/v1/spectrograms/?recording_uuid=de694c1e-a60b-449f-ba6f-4819924c8870&start_time=429.94775&end_time=435.05225&resample=false&filter_order=4&window_size=0.0095&overlap=0.5&window=hann&scale=dB&clamp=false&min_dB=-140&max_dB=0&normalize=true&channel=0&pcen=false&cmap=twilight&time_scale=2.4&freq_scale=1 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:56019 - "OPTIONS /api/v1/annotation_tasks/detail/badges/?annotation_task_uuid=7f165bef-03ab-4b60-91da-f102dda1ad79&state=completed HTTP/1.1" 200 OK
-INFO:     127.0.0.1:56020 - "POST /api/v1/annotation_tasks/detail/badges/?annotation_task_uuid=7f165bef-03ab-4b60-91da-f102dda1ad79&state=completed HTTP/1.1" 200 OK
-INFO:     127.0.0.1:56020 - "GET /api/v1/annotation_tasks/detail/clip_annotation/?annotation_task_uuid=60809d6e-79c4-47a3-8951-fa2b4327c399 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:56020 - "GET /api/v1/spectrograms/?recording_uuid=93b14eb8-1954-4ac1-adc5-bc1af150194b&start_time=1614.94775&end_time=1620.05225&resample=false&filter_order=4&window_size=0.0095&overlap=0.5&window=hann&scale=dB&clamp=false&min_dB=-140&max_dB=0&normalize=true&channel=0&pcen=false&cmap=twilight&time_scale=2.4&freq_scale=1 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:56021 - "GET /api/v1/spectrograms/?recording_uuid=93b14eb8-1954-4ac1-adc5-bc1af150194b&start_time=1619.94775&end_time=1625.05225&resample=false&filter_order=4&window_size=0.0095&overlap=0.5&window=hann&scale=dB&clamp=false&min_dB=-140&max_dB=0&normalize=true&channel=0&pcen=false&cmap=twilight&time_scale=2.4&freq_scale=1 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:56022 - "GET /api/v1/spectrograms/?recording_uuid=93b14eb8-1954-4ac1-adc5-bc1af150194b&start_time=1624.94775&end_time=1630.05225&resample=false&filter_order=4&window_size=0.0095&overlap=0.5&window=hann&scale=dB&clamp=false&min_dB=-140&max_dB=0&normalize=true&channel=0&pcen=false&cmap=twilight&time_scale=2.4&freq_scale=1 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:56023 - "GET /api/v1/spectrograms/?recording_uuid=93b14eb8-1954-4ac1-adc5-bc1af150194b&start_time=1629.94775&end_time=1635.05225&resample=false&filter_order=4&window_size=0.0095&overlap=0.5&window=hann&scale=dB&clamp=false&min_dB=-140&max_dB=0&normalize=true&channel=0&pcen=false&cmap=twilight&time_scale=2.4&freq_scale=1 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:56024 - "GET /api/v1/audio/stream/?recording_uuid=93b14eb8-1954-4ac1-adc5-bc1af150194b&speed=1&start_time=1620&end_time=1630 HTTP/1.1" 206 Partial Content
-INFO:     127.0.0.1:56025 - "OPTIONS /api/v1/sound_event_annotations/?clip_annotation_uuid=16c651f4-66e2-4e2a-815a-275f30cc4ef9 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:56026 - "POST /api/v1/sound_event_annotations/?clip_annotation_uuid=16c651f4-66e2-4e2a-815a-275f30cc4ef9 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:56025 - "OPTIONS /api/v1/sound_event_annotations/detail/tags/?sound_event_annotation_uuid=61752885-46c1-4ac4-94b6-7c777f593899&key=species&value=9705453 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:56026 - "DELETE /api/v1/sound_event_annotations/detail/tags/?sound_event_annotation_uuid=61752885-46c1-4ac4-94b6-7c777f593899&key=species&value=9705453 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:56026 - "DELETE /api/v1/sound_event_annotations/detail/tags/?sound_event_annotation_uuid=61752885-46c1-4ac4-94b6-7c777f593899&key=species&value=9705453 HTTP/1.1" 404 Not Found
-INFO:     127.0.0.1:56025 - "OPTIONS /api/v1/annotation_tasks/detail/badges/?annotation_task_uuid=60809d6e-79c4-47a3-8951-fa2b4327c399&state=completed HTTP/1.1" 200 OK
-INFO:     127.0.0.1:56026 - "POST /api/v1/annotation_tasks/detail/badges/?annotation_task_uuid=60809d6e-79c4-47a3-8951-fa2b4327c399&state=completed HTTP/1.1" 200 OK
-INFO:     127.0.0.1:56026 - "GET /api/v1/annotation_tasks/detail/clip_annotation/?annotation_task_uuid=08f98c0a-08a4-45fe-bb37-cac56e978b55 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:56026 - "GET /api/v1/spectrograms/?recording_uuid=e4aa03e1-c08a-41f9-8c69-999b31fc5818&start_time=1744.94775&end_time=1750.05225&resample=false&filter_order=4&window_size=0.0095&overlap=0.5&window=hann&scale=dB&clamp=false&min_dB=-140&max_dB=0&normalize=true&channel=0&pcen=false&cmap=twilight&time_scale=2.4&freq_scale=1 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:56029 - "GET /api/v1/spectrograms/?recording_uuid=e4aa03e1-c08a-41f9-8c69-999b31fc5818&start_time=1759.94775&end_time=1765.05225&resample=false&filter_order=4&window_size=0.0095&overlap=0.5&window=hann&scale=dB&clamp=false&min_dB=-140&max_dB=0&normalize=true&channel=0&pcen=false&cmap=twilight&time_scale=2.4&freq_scale=1 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:56027 - "GET /api/v1/spectrograms/?recording_uuid=e4aa03e1-c08a-41f9-8c69-999b31fc5818&start_time=1749.94775&end_time=1755.05225&resample=false&filter_order=4&window_size=0.0095&overlap=0.5&window=hann&scale=dB&clamp=false&min_dB=-140&max_dB=0&normalize=true&channel=0&pcen=false&cmap=twilight&time_scale=2.4&freq_scale=1 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:56028 - "GET /api/v1/spectrograms/?recording_uuid=e4aa03e1-c08a-41f9-8c69-999b31fc5818&start_time=1754.94775&end_time=1760.05225&resample=false&filter_order=4&window_size=0.0095&overlap=0.5&window=hann&scale=dB&clamp=false&min_dB=-140&max_dB=0&normalize=true&channel=0&pcen=false&cmap=twilight&time_scale=2.4&freq_scale=1 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:56030 - "GET /api/v1/audio/stream/?recording_uuid=e4aa03e1-c08a-41f9-8c69-999b31fc5818&speed=1&start_time=1750&end_time=1760 HTTP/1.1" 206 Partial Content
-INFO:     127.0.0.1:56027 - "GET /api/v1/tags/sound_event_annotation_counts/?limit=-1&offset=0&annotation_project__eq=6db7d351-f409-4a77-be5d-c75bbb320103 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:56032 - "GET /api/v1/users/me HTTP/1.1" 200 OK
-INFO:     127.0.0.1:56028 - "GET /api/v1/notes/clip_annotation_notes/?limit=10&offset=0&annotation_project__eq=6db7d351-f409-4a77-be5d-c75bbb320103&issues__eq=true HTTP/1.1" 200 OK
-INFO:     127.0.0.1:56026 - "GET /api/v1/notes/sound_event_annotation_notes/?limit=10&offset=0&annotation_project__eq=6db7d351-f409-4a77-be5d-c75bbb320103&issues__eq=true HTTP/1.1" 200 OK
-INFO:     127.0.0.1:56030 - "GET /api/v1/annotation_tasks/?limit=-1&offset=0&annotation_project__eq=6db7d351-f409-4a77-be5d-c75bbb320103 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:56029 - "GET /api/v1/tags/clip_annotation_counts/?limit=-1&offset=0&annotation_project__eq=6db7d351-f409-4a77-be5d-c75bbb320103 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:56027 - "GET /api/v1/groups/me HTTP/1.1" 200 OK
-INFO:     127.0.0.1:56038 - "GET /api/v1/tags/sound_event_annotation_counts/?limit=-1&offset=0&annotation_project__eq=6db7d351-f409-4a77-be5d-c75bbb320103 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:56036 - "GET /api/v1/annotation_tasks/?limit=-1&offset=0&annotation_project__eq=6db7d351-f409-4a77-be5d-c75bbb320103 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:56037 - "GET /api/v1/tags/clip_annotation_counts/?limit=-1&offset=0&annotation_project__eq=6db7d351-f409-4a77-be5d-c75bbb320103 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:56040 - "GET /api/v1/notes/sound_event_annotation_notes/?limit=10&offset=0&annotation_project__eq=6db7d351-f409-4a77-be5d-c75bbb320103&issues__eq=true HTTP/1.1" 200 OK
-INFO:     127.0.0.1:56039 - "GET /api/v1/notes/clip_annotation_notes/?limit=10&offset=0&annotation_project__eq=6db7d351-f409-4a77-be5d-c75bbb320103&issues__eq=true HTTP/1.1" 200 OK
-INFO:     127.0.0.1:56036 - "GET /api/v1/annotation_projects/detail/download/?annotation_project_uuid=6db7d351-f409-4a77-be5d-c75bbb320103 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:56064 - "GET /api/v1/groups/me HTTP/1.1" 200 OK
-INFO:     127.0.0.1:56064 - "GET /api/v1/annotation_tasks/?limit=-1&offset=0&annotation_project__eq=6db7d351-f409-4a77-be5d-c75bbb320103 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:56064 - "GET /api/v1/annotation_tasks/detail/clip_annotation/?annotation_task_uuid=7f165bef-03ab-4b60-91da-f102dda1ad79 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:56064 - "GET /api/v1/audio/stream/?recording_uuid=de694c1e-a60b-449f-ba6f-4819924c8870&speed=1&start_time=440&end_time=450 HTTP/1.1" 206 Partial Content
-INFO:     127.0.0.1:56069 - "GET /api/v1/annotation_tasks/detail/clip_annotation/?annotation_task_uuid=7f165bef-03ab-4b60-91da-f102dda1ad79 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:56070 - "GET /api/v1/annotation_tasks/detail/clip_annotation/?annotation_task_uuid=7f165bef-03ab-4b60-91da-f102dda1ad79 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:56077 - "GET /api/v1/annotation_tasks/detail/clip_annotation/?annotation_task_uuid=7f165bef-03ab-4b60-91da-f102dda1ad79 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:56080 - "GET /api/v1/annotation_tasks/detail/clip_annotation/?annotation_task_uuid=7f165bef-03ab-4b60-91da-f102dda1ad79 HTTP/1.1" 200 OK
+INFO:     158.210.76.175:45644 - "POST /api/v1/auth/login HTTP/1.1" 204 No Content
+INFO:     158.210.76.175:45644 - "GET /api/v1/users/me HTTP/1.1" 200 OK
+INFO:     158.210.76.175:45644 - "GET /api/v1/datasets/?limit=10&offset=0 HTTP/1.1" 200 OK
+INFO:     158.210.76.175:45644 - "GET /api/v1/datasets/candidates/ HTTP/1.1" 200 OK
+INFO:     158.210.76.175:45656 - "GET /api/v1/groups/me HTTP/1.1" 200 OK
+INFO:     158.210.76.175:45644 - "GET /api/v1/datasets/candidates/info/?relative_path=urtra_sonic_test HTTP/1.1" 200 OK
+INFO:     158.210.76.175:43666 - "OPTIONS /api/v1/datasets/ HTTP/1.1" 200 OK
+INFO:     158.210.76.175:43676 - "POST /api/v1/datasets/ HTTP/1.1" 200 OK
+INFO:     158.210.76.175:43676 - "GET /api/v1/datasets/detail/?dataset_uuid=54efbc69-013b-4abf-b62e-faccd562ac5e HTTP/1.1" 200 OK
+INFO:     158.210.76.175:43676 - "GET /api/v1/datasets/detail/state/?dataset_uuid=54efbc69-013b-4abf-b62e-faccd562ac5e HTTP/1.1" 200 OK
+INFO:     158.210.76.175:43676 - "GET /api/v1/notes/?limit=0&offset=0&is_issue__eq=true&dataset__eq=54efbc69-013b-4abf-b62e-faccd562ac5e HTTP/1.1" 200 OK
+INFO:     158.210.76.175:54334 - "GET /api/v1/tags/recording_counts/?limit=-1&offset=0&dataset__eq=54efbc69-013b-4abf-b62e-faccd562ac5e HTTP/1.1" 200 OK
+INFO:     158.210.76.175:54352 - "GET /api/v1/users/me HTTP/1.1" 200 OK
+INFO:     158.210.76.175:54344 - "GET /api/v1/notes/recording_notes/?limit=-1&offset=0&dataset__eq=54efbc69-013b-4abf-b62e-faccd562ac5e&issues__eq=true HTTP/1.1" 200 OK
+INFO:     158.210.76.175:54364 - "GET /api/v1/groups/me HTTP/1.1" 200 OK
+INFO:     127.0.0.1:47062 - "GET /docs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:34480 - "GET /docs HTTP/1.1" 200 OK
+2025-10-21 21:27:23,918 - uvicorn.error - INFO - Shutting down
+INFO:     Shutting down
+2025-10-21 21:27:24,019 - uvicorn.error - INFO - Waiting for application shutdown.
+INFO:     Waiting for application shutdown.
+2025-10-21 21:27:24,020 - uvicorn.error - INFO - Application shutdown complete.
+INFO:     Application shutdown complete.
+2025-10-21 21:27:24,020 - uvicorn.error - INFO - Finished server process [378497]
+INFO:     Finished server process [378497]
+2025-10-21 21:27:43,913 - uvicorn.error - INFO - Stopping reloader process [378485]
+INFO:     Stopping reloader process [378485]

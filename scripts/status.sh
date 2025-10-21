@@ -10,9 +10,22 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-# Default ports
-BACKEND_PORT=${WHOMBAT_BACKEND_PORT:-5000}
+# Get the directory where this script is located
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+PROJECT_ROOT="$( cd "$SCRIPT_DIR/.." && pwd )"
+
+# Load environment variables from .env file
+if [ -f "$PROJECT_ROOT/.env" ]; then
+    set -a
+    source "$PROJECT_ROOT/.env"
+    set +a
+fi
+
+# Configuration
+BACKEND_PORT=${WHOMBAT_PORT:-5000}
 FRONTEND_PORT=${WHOMBAT_FRONTEND_PORT:-3000}
+WHOMBAT_DOMAIN=${WHOMBAT_DOMAIN:-localhost}
+WHOMBAT_PROTOCOL=${WHOMBAT_PROTOCOL:-http}
 
 echo -e "${BLUE}"
 echo "======================================"
@@ -23,17 +36,15 @@ echo -e "${NC}"
 # Function to check if a port is in use
 check_port() {
     local port=$1
-    if lsof -Pi :$port -sTCP:LISTEN -t >/dev/null 2>&1 ; then
-        return 0  # Port is in use
-    else
-        return 1  # Port is free
-    fi
+    # Use ss instead of lsof for better compatibility
+    ss -tlnp 2>/dev/null | grep -q ":${port} "
 }
 
 # Function to get PID on port
 get_pid() {
     local port=$1
-    lsof -ti:$port 2>/dev/null
+    # Extract PID from ss output
+    ss -tlnp 2>/dev/null | grep ":${port} " | grep -oP 'pid=\K[0-9]+' | head -n 1
 }
 
 # Function to check service status
@@ -67,6 +78,10 @@ check_service() {
     fi
 }
 
+# URLs based on configuration
+BACKEND_URL="${WHOMBAT_PROTOCOL}://${WHOMBAT_DOMAIN}:${BACKEND_PORT}"
+FRONTEND_URL="${WHOMBAT_PROTOCOL}://${WHOMBAT_DOMAIN}:${FRONTEND_PORT}"
+
 # Check Backend
 check_service $BACKEND_PORT "Backend (FastAPI)" "http://localhost:$BACKEND_PORT/docs"
 
@@ -88,8 +103,13 @@ if $BACKEND_RUNNING && $FRONTEND_RUNNING; then
     echo -e "${GREEN}✓ All services are running${NC}"
     echo ""
     echo -e "${BLUE}Access the application at:${NC}"
-    echo -e "  Frontend:  http://localhost:$FRONTEND_PORT"
-    echo -e "  API Docs:  http://localhost:$BACKEND_PORT/docs"
+    echo -e "  Frontend:  ${FRONTEND_URL}"
+    echo -e "  Backend:   ${BACKEND_URL}"
+    echo -e "  API Docs:  ${BACKEND_URL}/docs"
+    echo ""
+    echo -e "${YELLOW}Configuration:${NC}"
+    echo -e "  Domain:   ${WHOMBAT_DOMAIN}"
+    echo -e "  Protocol: ${WHOMBAT_PROTOCOL}"
 elif $BACKEND_RUNNING || $FRONTEND_RUNNING; then
     echo -e "${YELLOW}⚠ Some services are not running${NC}"
     $BACKEND_RUNNING || echo -e "  ${RED}✗ Backend is not running${NC}"
