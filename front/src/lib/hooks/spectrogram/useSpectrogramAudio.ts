@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, useState, useEffect, useRef } from "react";
 
 import useRecordingAudio from "@/app/hooks/audio/useRecordingAudio";
 
@@ -82,24 +82,96 @@ export default function useSpectrogramAudio({
     [current.time, centerOn, onTimeUpdate],
   );
 
-  // Callback function to be executed when the user seeks to a specific time.
-  // This function will center the viewport on the specified time.
-  // It will also call the `onSeek` callback function if provided.
-  const handleSeek = useCallback(
+  // Track the target seek position to dynamically adjust audio range
+  const [targetSeekTime, setTargetSeekTime] = useState<number | null>(null);
+
+  // Calculate audio range with dynamic adjustment based on seek position
+  const audioRange = useMemo(() => {
+    const boundsDuration = bounds.time.max - bounds.time.min;
+    const maxAudioDuration = 300; // Maximum 5 minutes of audio at once
+
+    // If bounds is small enough, use it directly
+    if (boundsDuration <= maxAudioDuration) {
+      return { min: bounds.time.min, max: bounds.time.max };
+    }
+
+    // If user has seeked to a specific position, center the audio range around it
+    if (targetSeekTime !== null) {
+      const halfWindow = maxAudioDuration / 2;
+      let audioStart = Math.max(bounds.time.min, targetSeekTime - halfWindow);
+      let audioEnd = Math.min(bounds.time.max, targetSeekTime + halfWindow);
+
+      // Adjust if we're near boundaries
+      if (audioEnd - audioStart < maxAudioDuration) {
+        if (audioStart === bounds.time.min) {
+          audioEnd = Math.min(bounds.time.max, audioStart + maxAudioDuration);
+        } else if (audioEnd === bounds.time.max) {
+          audioStart = Math.max(bounds.time.min, audioEnd - maxAudioDuration);
+        }
+      }
+
+      return { min: audioStart, max: audioEnd };
+    }
+
+    // Default: use the beginning of bounds
+    return {
+      min: bounds.time.min,
+      max: Math.min(bounds.time.max, bounds.time.min + maxAudioDuration),
+    };
+  }, [bounds.time.min, bounds.time.max, targetSeekTime]);
+
+  const audioController = useRecordingAudio({
+    recording,
+    startTime: audioRange.min,
+    endTime: audioRange.max,
+    audioSettings: adjustedAudioSettings,
+    onTimeUpdate: handleTimeUpdate,
+    onSeek,
+    ...handlers,
+  });
+
+  // Store audioController in ref to avoid dependency issues
+  const audioControllerRef = useRef(audioController);
+  audioControllerRef.current = audioController;
+
+  // Override the seek function to handle range changes
+  const customSeek = useCallback(
     (time: number) => {
+      // Check if the seek position is outside the current audio range
+      const isOutsideRange = time < audioRange.min || time > audioRange.max;
+
+      if (isOutsideRange) {
+        // Store the target seek time and trigger audio reload
+        setTargetSeekTime(time);
+      } else {
+        // Within range, seek directly
+        audioControllerRef.current.seek(time);
+      }
+
+      // Always center the viewport and call onSeek
       centerOn({ time });
       onSeek?.(time);
     },
-    [centerOn, onSeek],
+    [audioRange.min, audioRange.max, centerOn, onSeek],
   );
 
-  return useRecordingAudio({
-    recording,
-    startTime: bounds.time.min,
-    endTime: bounds.time.max,
-    audioSettings: adjustedAudioSettings,
-    onTimeUpdate: handleTimeUpdate,
-    onSeek: handleSeek,
-    ...handlers,
-  });
+  // When audio range changes due to seeking outside range,
+  // automatically seek to the target position after audio reloads
+  useEffect(() => {
+    if (targetSeekTime !== null && audioRange.min <= targetSeekTime && targetSeekTime <= audioRange.max) {
+      // Audio has been reloaded with the new range that includes targetSeekTime
+      // Now seek to the target position
+      const timer = setTimeout(() => {
+        audioControllerRef.current.seek(targetSeekTime);
+        setTargetSeekTime(null); // Clear target after seeking
+      }, 200); // Delay to ensure audio is loaded
+
+      return () => clearTimeout(timer);
+    }
+  }, [targetSeekTime, audioRange.min, audioRange.max]);
+
+  return {
+    ...audioController,
+    seek: customSeek,
+  };
 }

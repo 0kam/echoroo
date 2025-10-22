@@ -58,6 +58,9 @@ async def stream_recording_audio(
         start = int(range_parts[0])
         if len(range_parts) > 1 and range_parts[1]:
             requested_end = int(range_parts[1])
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.debug(f"Range request: {range}, parsed as start={start}, end={requested_end}")
     else:
         start = 0
 
@@ -69,17 +72,16 @@ async def stream_recording_audio(
         # Convert to frames (assuming 16-bit stereo or mono)
         frames_to_read = min(requested_bytes // 2, CHUNK_SIZE)
 
-    if start_time is not None:
-        start_time = start_time * recording.time_expansion
-
-    if end_time is not None:
-        end_time = end_time * recording.time_expansion
+    # start_time and end_time are already in the time-expanded domain,
+    # so we don't need to multiply by time_expansion here.
+    # The time_expansion parameter is passed separately to load_clip_bytes.
 
     data, start_byte, end_byte, filesize = api.load_clip_bytes(
         path=audio_dir / recording.path,
         start=start,
         frames=frames_to_read,
-        speed=speed * recording.time_expansion,
+        speed=speed,
+        time_expansion=recording.time_expansion,
         start_time=start_time,
         end_time=end_time,
         target_samplerate=target_samplerate,

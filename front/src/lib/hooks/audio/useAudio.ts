@@ -8,6 +8,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
  */
 export default function useAudio({
   url,
+  playbackRate = 1,
   onPlay,
   onPause,
   onEnded,
@@ -23,6 +24,8 @@ export default function useAudio({
 }: {
   /** The URL of the audio file to play. */
   url: string;
+  /** Playback rate (speed) of the audio. Default is 1.0. */
+  playbackRate?: number;
   /** A callback that is called when the audio starts playing. */
   onPlay?: () => void;
   /** A callback that is called when the audio is paused. */
@@ -64,6 +67,7 @@ export default function useAudio({
     current.preload = "metadata";
     current.src = url;
     current.currentTime = 0;
+    current.playbackRate = playbackRate; // Set playback rate (speed)
     current.load(); // Explicitly load the audio
 
     setIsPlaying(false);
@@ -121,7 +125,7 @@ export default function useAudio({
       current.removeEventListener("ended", handleEnded);
       current.removeEventListener("abort", handleAbort);
     };
-  }, [url]);
+  }, [url, playbackRate]);
 
   useEffect(() => {
     if (onEnded == null) return;
@@ -165,6 +169,16 @@ export default function useAudio({
     current.addEventListener("seeking", handleSeeking);
     return () => current.removeEventListener("seeking", handleSeeking);
   }, [onSeeking]);
+
+  // Add listener for 'seeked' event to sync time state after seeking completes
+  useEffect(() => {
+    const { current } = audio;
+    const handleSeeked = () => {
+      setTime(current.currentTime);
+    };
+    current.addEventListener("seeked", handleSeeked);
+    return () => current.removeEventListener("seeked", handleSeeked);
+  }, []);
 
   useEffect(() => {
     if (onWaiting == null) return;
@@ -257,9 +271,12 @@ export default function useAudio({
 
   const handleSeek = useCallback(
     (time: number) => {
-      setTime(time);
       onSeeking?.();
       audio.current.currentTime = time;
+      // Don't call setTime here - let the 'seeked' event handler update it
+      // with the actual currentTime after seeking completes.
+      // This prevents the state from being overwritten by requestAnimationFrame's updateTime
+      // reading a stale currentTime value before the seek completes.
     },
     [onSeeking],
   );

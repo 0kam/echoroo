@@ -296,114 +296,128 @@ def load_clip_bytes(
     bit_depth: int = 16,
     target_samplerate: int | None = None,
 ) -> tuple[bytes, int, int, int]:
-    """Load audio.
+    """Load audio bytes for streaming playback.
+
+    This function loads a chunk of audio data from a file and prepares it for
+    streaming. It handles:
+    - Time-based slicing (start_time, end_time)
+    - Byte-based seeking (start parameter for range requests)
+    - Optional resampling to a target sample rate
+    - Speed adjustment via WAV header manipulation
 
     Parameters
     ----------
     path
         The path to the audio file.
     start
-        Start byte.
+        Start byte position for range requests. Use 0 for the beginning.
     speed
-        The factor by which to speed up or slow down the audio.
-        By default, it is 1.
+        Playback speed multiplier (applied via WAV header). Default is 1.
     frames
-        The number of audio frames to read at a time.
+        Target number of audio frames to read in the output sample rate.
     time_expansion
-        Time expansion factor of the audio. By default, it is 1.
+        Time expansion factor of the original recording. Default is 1.
     start_time
-        The time in seconds at which to start reading the audio.
+        Start time in seconds (in the time-expanded domain).
     end_time
-        The time in seconds at which to stop reading the audio.
+        End time in seconds (in the time-expanded domain).
     bit_depth
-        The bit depth of the resulting audio. By default, it is 16 bits.
+        Bit depth of the output audio. Default is 16 bits.
     target_samplerate
-        Optional target sample rate for resampling before applying speed.
-        If provided, audio will be resampled to this rate before the speed
-        adjustment is applied via the WAV header.
+        Target sample rate for resampling. If None, uses file_samplerate.
 
     Returns
     -------
-    bytes
-        Loaded audio data in bytes
-    start
-        Start byte
-    end
-        End byte
-    filesize
-        Total size of clip in bytes.
+    tuple[bytes, int, int, int]
+        - Audio data bytes (including WAV header if start==0)
+        - Start byte position
+        - End byte position
+        - Total file size in bytes (including header)
     """
+    import logging
+    logger = logging.getLogger(__name__)
+
     with sf.SoundFile(path) as sf_file:
         file_samplerate = sf_file.samplerate
         channels = sf_file.channels
+
+        # Determine output sample rate
+        # If no target is specified, use the file's sample rate
+        output_samplerate = target_samplerate if target_samplerate is not None else file_samplerate
+
+        # Calculate time boundaries in file frames
+        # start_time and end_time are in the ORIGINAL recording's time domain (after time_expansion)
+        # We need to convert to file time: file_time = original_time * time_expansion
+        if start_time is None:
+            start_time = 0
+        if end_time is None:
+            # Calculate end time in the original recording's time domain
+            end_time = (sf_file.frames / file_samplerate) / time_expansion
+
+        # Convert original recording time to file time
+        file_start_time = start_time * time_expansion
+        file_end_time = end_time * time_expansion
+
+        start_frame = int(file_start_time * file_samplerate)
+        end_frame = int(file_end_time * file_samplerate)
+        end_frame = min(end_frame, sf_file.frames)
+
+        # Total duration in file frames
+        total_frames_in_file = end_frame - start_frame
+
+        # Bytes per frame in the output format
         bytes_per_frame = channels * bit_depth // 8
 
-        # Determine clip boundaries in file frames.
-        if start_time is None:
-            start_time = 0.0
-        start_frame = int(start_time * file_samplerate)
-        start_frame = max(start_frame, 0)
+        # Calculate total size in output sample rate
+        total_frames_in_output = int(total_frames_in_file * output_samplerate / file_samplerate)
+        filesize = total_frames_in_output * bytes_per_frame
 
-        end_frame = sf_file.frames
-        if end_time is not None:
-            end_frame = int(end_time * file_samplerate)
-        end_frame = max(min(end_frame, sf_file.frames), start_frame)
-
-        clip_frame_count = end_frame - start_frame
-
-        # Planned output samplerate before speed factor.
-        output_samplerate = (
-            target_samplerate if target_samplerate is not None else file_samplerate
-        )
-        if output_samplerate <= 0:
-            output_samplerate = file_samplerate
-
-        # Offset within the clip for range requests (convert output frames to file frames).
+        # Determine where to start reading in the file
         offset = start_frame
-        if start > 0:
-            if start <= HEADER_SIZE:
-                requested_output_frames = 0
-            else:
-                requested_output_frames = (start - HEADER_SIZE) // bytes_per_frame
-            if output_samplerate > 0:
-                offset += int(
-                    round(
-                        requested_output_frames
-                        * file_samplerate
-                        / output_samplerate
-                    )
-                )
+        if start > HEADER_SIZE:
+            # Convert byte offset to frame offset in the output sample rate
+            # The byte stream contains data at output_samplerate (after resampling)
+            byte_offset = start - HEADER_SIZE
+            frame_offset_in_output = byte_offset // bytes_per_frame
+            # Convert output frame offset to file frame offset
+            # Since we resample from file_samplerate to output_samplerate,
+            # the relationship is: file_frames = output_frames * (file_sr / output_sr)
+            frame_offset_in_file = int(frame_offset_in_output * file_samplerate / output_samplerate)
+            offset = start_frame + frame_offset_in_file
 
-        offset = min(max(offset, start_frame), end_frame)
+        # Calculate how many frames to read from the file
+        # We want 'frames' frames in the output sample rate
+        frames_to_read_in_file = int(math.ceil(frames * file_samplerate / output_samplerate))
+        frames_to_read_in_file = min(frames_to_read_in_file, end_frame - offset)
+        frames_to_read_in_file = max(0, frames_to_read_in_file)
 
-        # Determine how many frames to read from the source file.
-        if output_samplerate > 0:
-            desired_source_frames = int(
-                math.ceil(frames * file_samplerate / output_samplerate)
-            )
-        else:
-            desired_source_frames = frames
-
-        desired_source_frames = max(desired_source_frames, 0)
-        available_frames = max(end_frame - offset, 0)
-        source_frames_to_read = available_frames
-        if desired_source_frames > 0:
-            source_frames_to_read = min(available_frames, desired_source_frames)
-
-        sf_file.seek(offset)
-        audio_data = sf_file.read(
-            source_frames_to_read,
-            fill_value=0,
-            always_2d=True,
+        logger.debug(
+            f"load_clip_bytes: start={start}, time_expansion={time_expansion:.2f}, "
+            f"original_time=[{start_time:.3f}, {end_time:.3f}], "
+            f"file_time=[{file_start_time:.3f}, {file_end_time:.3f}], "
+            f"file_sr={file_samplerate}, output_sr={output_samplerate}, "
+            f"file_frames=[{start_frame}, {end_frame}], offset={offset}, "
+            f"frames_to_read={frames_to_read_in_file}, total_output_frames={total_frames_in_output}"
         )
 
-        # Resample to target samplerate if requested.
+        # Read audio data from file
+        sf_file.seek(offset)
+        audio_data = sf_file.read(frames_to_read_in_file, fill_value=0, always_2d=True)
+
+        logger.debug(
+            f"Read audio_data: shape={audio_data.shape}, "
+            f"min={audio_data.min():.6f}, max={audio_data.max():.6f}, "
+            f"mean={audio_data.mean():.6f}, std={audio_data.std():.6f}"
+        )
+
+        # Resample if target sample rate differs from file sample rate
         if (
             target_samplerate is not None
             and target_samplerate > 0
             and target_samplerate != file_samplerate
         ):
             try:
+                # Convert to torch tensor for resampling
                 waveform = torch.from_numpy(audio_data.T).to(torch.float32)
                 if waveform.shape[1] > 0:
                     waveform = taF.resample(
@@ -412,49 +426,59 @@ def load_clip_bytes(
                         target_samplerate,
                     )
                 audio_data = waveform.T.cpu().numpy()
-                output_samplerate = target_samplerate
-            except Exception as e:
-                import logging
-
-                logger = logging.getLogger(__name__)
-                logger.warning(
-                    "Resampling failed from %sHz to %sHz: %s. "
-                    "Falling back to original samplerate.",
-                    file_samplerate,
-                    target_samplerate,
-                    e,
+                logger.debug(
+                    f"Resampled from {file_samplerate}Hz to {target_samplerate}Hz, "
+                    f"output shape: {audio_data.shape}"
                 )
+            except Exception as e:
+                logger.error(
+                    f"Resampling failed from {file_samplerate}Hz to {target_samplerate}Hz: {e}. "
+                    "Returning original sample rate data."
+                )
+                # Keep original data without resampling
+                # Recalculate output parameters
                 output_samplerate = file_samplerate
+                total_frames_in_output = total_frames_in_file
+                filesize = total_frames_in_output * bytes_per_frame
 
-        total_output_frames = 0
-        if file_samplerate > 0 and output_samplerate > 0:
-            total_output_frames = int(
-                round(clip_frame_count * output_samplerate / file_samplerate)
-            )
-        filesize = max(total_output_frames, 0) * bytes_per_frame
-
-        # Convert the audio data to raw bytes
+        # Convert audio data to bytes
         audio_bytes = audio_to_bytes(
             audio_data,
             samplerate=output_samplerate,
             bit_depth=bit_depth,
         )
 
-        # Generate the WAV header if the start byte is 0 and
-        # append to the start of the audio data.
+        logger.debug(
+            f"Converted to bytes: len={len(audio_bytes)}, "
+            f"expected={(audio_data.shape[0] * audio_data.shape[1] * bit_depth // 8)}"
+        )
+
+        # Generate WAV header only at the start of the stream
         if start == 0:
+            # Apply speed and time_expansion adjustments to the sample rate in the header
+            # This makes the browser play the audio at the correct speed without resampling
+            header_samplerate = int(output_samplerate * speed * time_expansion)
+            logger.debug(
+                f"Generating WAV header: samplerate={header_samplerate}, "
+                f"channels={channels}, data_size={filesize}, bit_depth={bit_depth}"
+            )
             header = generate_wav_header(
-                samplerate=int(output_samplerate * speed),
+                samplerate=header_samplerate,
                 channels=channels,
                 data_size=filesize,
                 bit_depth=bit_depth,
             )
             audio_bytes = header + audio_bytes
+            logger.debug(f"WAV header added: header_len={len(header)}, total_len={len(audio_bytes)}")
+
+        # Calculate actual byte range
+        actual_start = start
+        actual_end = start + len(audio_bytes)
 
         return (
             audio_bytes,
-            start,
-            start + len(audio_bytes),
+            actual_start,
+            actual_end,
             filesize + HEADER_SIZE,
         )
 

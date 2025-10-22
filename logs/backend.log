@@ -1,10 +1,10 @@
 warning: The `tool.uv.dev-dependencies` field (used in `pyproject.toml`) is deprecated and will be removed in a future release; use `dependency-groups.dev` instead
-2025-10-21 20:59:16,641 - uvicorn.error - INFO - Will watch for changes in these directories: ['/home/okamoto/Projects/whombat/back']
+2025-10-22 22:18:30,789 - uvicorn.error - INFO - Will watch for changes in these directories: ['/home/okamoto/Projects/whombat/back']
 INFO:     Will watch for changes in these directories: ['/home/okamoto/Projects/whombat/back']
-2025-10-21 20:59:16,641 - uvicorn.error - INFO - Uvicorn running on http://0.0.0.0:5000 (Press CTRL+C to quit)
+2025-10-22 22:18:30,789 - uvicorn.error - INFO - Uvicorn running on http://0.0.0.0:5000 (Press CTRL+C to quit)
 INFO:     Uvicorn running on http://0.0.0.0:5000 (Press CTRL+C to quit)
-2025-10-21 20:59:16,642 - uvicorn.error - INFO - Started reloader process [378485] using WatchFiles
-INFO:     Started reloader process [378485] using WatchFiles
+2025-10-22 22:18:30,789 - uvicorn.error - INFO - Started reloader process [725663] using WatchFiles
+INFO:     Started reloader process [725663] using WatchFiles
 /home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/pydantic/_internal/_fields.py:132: UserWarning: Field "model_run" in Body_import_model_run_import__post has conflict with protected namespace "model_".
 
 You may be able to resolve this warning by setting `model_config['protected_namespaces'] = ()`.
@@ -13,9 +13,9 @@ You may be able to resolve this warning by setting `model_config['protected_name
 
 You may be able to resolve this warning by setting `model_config['protected_namespaces'] = ()`.
   warnings.warn(
-2025-10-21 20:59:22,006 - uvicorn.error - INFO - Started server process [378497]
-INFO:     Started server process [378497]
-2025-10-21 20:59:22,006 - uvicorn.error - INFO - Waiting for application startup.
+2025-10-22 22:18:36,211 - uvicorn.error - INFO - Started server process [725690]
+INFO:     Started server process [725690]
+2025-10-22 22:18:36,211 - uvicorn.error - INFO - Waiting for application startup.
 INFO:     Waiting for application startup.
 INFO:Context impl SQLiteImpl.
 INFO:Will assume non-transactional DDL.
@@ -57,32 +57,73 @@ INFO:Will assume non-transactional DDL.
 
     [33mPress Ctrl+C to exit.[0m
     
-2025-10-21 20:59:24,886 - uvicorn.error - INFO - Application startup complete.
+2025-10-22 22:18:45,631 - uvicorn.error - INFO - Application startup complete.
 INFO:     Application startup complete.
-INFO:     158.210.76.175:45644 - "POST /api/v1/auth/login HTTP/1.1" 204 No Content
-INFO:     158.210.76.175:45644 - "GET /api/v1/users/me HTTP/1.1" 200 OK
-INFO:     158.210.76.175:45644 - "GET /api/v1/datasets/?limit=10&offset=0 HTTP/1.1" 200 OK
-INFO:     158.210.76.175:45644 - "GET /api/v1/datasets/candidates/ HTTP/1.1" 200 OK
-INFO:     158.210.76.175:45656 - "GET /api/v1/groups/me HTTP/1.1" 200 OK
-INFO:     158.210.76.175:45644 - "GET /api/v1/datasets/candidates/info/?relative_path=urtra_sonic_test HTTP/1.1" 200 OK
-INFO:     158.210.76.175:43666 - "OPTIONS /api/v1/datasets/ HTTP/1.1" 200 OK
-INFO:     158.210.76.175:43676 - "POST /api/v1/datasets/ HTTP/1.1" 200 OK
-INFO:     158.210.76.175:43676 - "GET /api/v1/datasets/detail/?dataset_uuid=54efbc69-013b-4abf-b62e-faccd562ac5e HTTP/1.1" 200 OK
-INFO:     158.210.76.175:43676 - "GET /api/v1/datasets/detail/state/?dataset_uuid=54efbc69-013b-4abf-b62e-faccd562ac5e HTTP/1.1" 200 OK
-INFO:     158.210.76.175:43676 - "GET /api/v1/notes/?limit=0&offset=0&is_issue__eq=true&dataset__eq=54efbc69-013b-4abf-b62e-faccd562ac5e HTTP/1.1" 200 OK
-INFO:     158.210.76.175:54334 - "GET /api/v1/tags/recording_counts/?limit=-1&offset=0&dataset__eq=54efbc69-013b-4abf-b62e-faccd562ac5e HTTP/1.1" 200 OK
-INFO:     158.210.76.175:54352 - "GET /api/v1/users/me HTTP/1.1" 200 OK
-INFO:     158.210.76.175:54344 - "GET /api/v1/notes/recording_notes/?limit=-1&offset=0&dataset__eq=54efbc69-013b-4abf-b62e-faccd562ac5e&issues__eq=true HTTP/1.1" 200 OK
-INFO:     158.210.76.175:54364 - "GET /api/v1/groups/me HTTP/1.1" 200 OK
-INFO:     127.0.0.1:47062 - "GET /docs HTTP/1.1" 200 OK
-INFO:     127.0.0.1:34480 - "GET /docs HTTP/1.1" 200 OK
-2025-10-21 21:27:23,918 - uvicorn.error - INFO - Shutting down
-INFO:     Shutting down
-2025-10-21 21:27:24,019 - uvicorn.error - INFO - Waiting for application shutdown.
-INFO:     Waiting for application shutdown.
-2025-10-21 21:27:24,020 - uvicorn.error - INFO - Application shutdown complete.
-INFO:     Application shutdown complete.
-2025-10-21 21:27:24,020 - uvicorn.error - INFO - Finished server process [378497]
-INFO:     Finished server process [378497]
-2025-10-21 21:27:43,913 - uvicorn.error - INFO - Stopping reloader process [378485]
-INFO:     Stopping reloader process [378485]
+INFO:     158.210.76.175:35568 - "GET /api/v1/users/me HTTP/1.1" 200 OK
+INFO:     158.210.76.175:35568 - "GET /api/v1/datasets/detail/?dataset_uuid=17e299e5-8ebc-4e8d-93b1-dfafe33acba4 HTTP/1.1" 200 OK
+INFO:     158.210.76.175:35568 - "GET /api/v1/recordings/detail/?recording_uuid=c14fd51d-27dc-42ca-8e5d-1d63f25fe071 HTTP/1.1" 200 OK
+INFO:     158.210.76.175:35568 - "GET /api/v1/spectrograms/?recording_uuid=c14fd51d-27dc-42ca-8e5d-1d63f25fe071&start_time=-0.055&end_time=5.055&resample=false&filter_order=4&window_size=0.01&overlap=0.5&window=hann&scale=dB&clamp=false&min_dB=-140&max_dB=0&normalize=true&channel=0&pcen=false&cmap=twilight&time_scale=1&freq_scale=1 HTTP/1.1" 200 OK
+INFO:     158.210.76.175:35584 - "GET /api/v1/spectrograms/?recording_uuid=c14fd51d-27dc-42ca-8e5d-1d63f25fe071&start_time=14.945&end_time=20.055&resample=false&filter_order=4&window_size=0.01&overlap=0.5&window=hann&scale=dB&clamp=false&min_dB=-140&max_dB=0&normalize=true&channel=0&pcen=false&cmap=twilight&time_scale=1&freq_scale=1 HTTP/1.1" 200 OK
+INFO:     158.210.76.175:35604 - "GET /api/v1/spectrograms/?recording_uuid=c14fd51d-27dc-42ca-8e5d-1d63f25fe071&start_time=24.945&end_time=30.055&resample=false&filter_order=4&window_size=0.01&overlap=0.5&window=hann&scale=dB&clamp=false&min_dB=-140&max_dB=0&normalize=true&channel=0&pcen=false&cmap=twilight&time_scale=1&freq_scale=1 HTTP/1.1" 200 OK
+INFO:     158.210.76.175:35576 - "GET /api/v1/spectrograms/?recording_uuid=c14fd51d-27dc-42ca-8e5d-1d63f25fe071&start_time=4.945&end_time=10.055&resample=false&filter_order=4&window_size=0.01&overlap=0.5&window=hann&scale=dB&clamp=false&min_dB=-140&max_dB=0&normalize=true&channel=0&pcen=false&cmap=twilight&time_scale=1&freq_scale=1 HTTP/1.1" 200 OK
+INFO:     158.210.76.175:35594 - "GET /api/v1/spectrograms/?recording_uuid=c14fd51d-27dc-42ca-8e5d-1d63f25fe071&start_time=19.945&end_time=25.055&resample=false&filter_order=4&window_size=0.01&overlap=0.5&window=hann&scale=dB&clamp=false&min_dB=-140&max_dB=0&normalize=true&channel=0&pcen=false&cmap=twilight&time_scale=1&freq_scale=1 HTTP/1.1" 200 OK
+INFO:     158.210.76.175:35580 - "GET /api/v1/spectrograms/?recording_uuid=c14fd51d-27dc-42ca-8e5d-1d63f25fe071&start_time=9.945&end_time=15.055&resample=false&filter_order=4&window_size=0.01&overlap=0.5&window=hann&scale=dB&clamp=false&min_dB=-140&max_dB=0&normalize=true&channel=0&pcen=false&cmap=twilight&time_scale=1&freq_scale=1 HTTP/1.1" 200 OK
+INFO:     158.210.76.175:35568 - "GET /api/v1/spectrograms/?recording_uuid=c14fd51d-27dc-42ca-8e5d-1d63f25fe071&start_time=29.945&end_time=35.055&resample=false&filter_order=4&window_size=0.01&overlap=0.5&window=hann&scale=dB&clamp=false&min_dB=-140&max_dB=0&normalize=true&channel=0&pcen=false&cmap=twilight&time_scale=1&freq_scale=1 HTTP/1.1" 200 OK
+INFO:     158.210.76.175:35584 - "GET /api/v1/spectrograms/?recording_uuid=c14fd51d-27dc-42ca-8e5d-1d63f25fe071&start_time=34.945&end_time=40.055&resample=false&filter_order=4&window_size=0.01&overlap=0.5&window=hann&scale=dB&clamp=false&min_dB=-140&max_dB=0&normalize=true&channel=0&pcen=false&cmap=twilight&time_scale=1&freq_scale=1 HTTP/1.1" 200 OK
+INFO:     158.210.76.175:35604 - "GET /api/v1/spectrograms/?recording_uuid=c14fd51d-27dc-42ca-8e5d-1d63f25fe071&start_time=39.945&end_time=45.055&resample=false&filter_order=4&window_size=0.01&overlap=0.5&window=hann&scale=dB&clamp=false&min_dB=-140&max_dB=0&normalize=true&channel=0&pcen=false&cmap=twilight&time_scale=1&freq_scale=1 HTTP/1.1" 200 OK
+INFO:     158.210.76.175:35594 - "GET /api/v1/spectrograms/?recording_uuid=c14fd51d-27dc-42ca-8e5d-1d63f25fe071&start_time=49.945&end_time=55.055&resample=false&filter_order=4&window_size=0.01&overlap=0.5&window=hann&scale=dB&clamp=false&min_dB=-140&max_dB=0&normalize=true&channel=0&pcen=false&cmap=twilight&time_scale=1&freq_scale=1 HTTP/1.1" 200 OK
+INFO:     158.210.76.175:35576 - "GET /api/v1/spectrograms/?recording_uuid=c14fd51d-27dc-42ca-8e5d-1d63f25fe071&start_time=44.945&end_time=50.055&resample=false&filter_order=4&window_size=0.01&overlap=0.5&window=hann&scale=dB&clamp=false&min_dB=-140&max_dB=0&normalize=true&channel=0&pcen=false&cmap=twilight&time_scale=1&freq_scale=1 HTTP/1.1" 200 OK
+INFO:     158.210.76.175:35580 - "GET /api/v1/spectrograms/?recording_uuid=c14fd51d-27dc-42ca-8e5d-1d63f25fe071&start_time=54.945&end_time=60.055&resample=false&filter_order=4&window_size=0.01&overlap=0.5&window=hann&scale=dB&clamp=false&min_dB=-140&max_dB=0&normalize=true&channel=0&pcen=false&cmap=twilight&time_scale=1&freq_scale=1 HTTP/1.1" 200 OK
+INFO:     158.210.76.175:35568 - "GET /api/v1/spectrograms/?recording_uuid=c14fd51d-27dc-42ca-8e5d-1d63f25fe071&start_time=59.945&end_time=65.055&resample=false&filter_order=4&window_size=0.01&overlap=0.5&window=hann&scale=dB&clamp=false&min_dB=-140&max_dB=0&normalize=true&channel=0&pcen=false&cmap=twilight&time_scale=1&freq_scale=1 HTTP/1.1" 200 OK
+INFO:     158.210.76.175:35584 - "GET /api/v1/spectrograms/?recording_uuid=c14fd51d-27dc-42ca-8e5d-1d63f25fe071&start_time=64.945&end_time=70.055&resample=false&filter_order=4&window_size=0.01&overlap=0.5&window=hann&scale=dB&clamp=false&min_dB=-140&max_dB=0&normalize=true&channel=0&pcen=false&cmap=twilight&time_scale=1&freq_scale=1 HTTP/1.1" 200 OK
+INFO:     158.210.76.175:35604 - "GET /api/v1/spectrograms/?recording_uuid=c14fd51d-27dc-42ca-8e5d-1d63f25fe071&start_time=69.945&end_time=75.055&resample=false&filter_order=4&window_size=0.01&overlap=0.5&window=hann&scale=dB&clamp=false&min_dB=-140&max_dB=0&normalize=true&channel=0&pcen=false&cmap=twilight&time_scale=1&freq_scale=1 HTTP/1.1" 200 OK
+INFO:     158.210.76.175:35568 - "GET /api/v1/audio/download/?recording_uuid=c14fd51d-27dc-42ca-8e5d-1d63f25fe071&start_time=0&end_time=300&resample=false&samplerate=24000&channel=0&filter_order=4&speed=1 HTTP/1.1" 200 OK
+INFO:     158.210.76.175:41016 - "GET /api/v1/users/me HTTP/1.1" 200 OK
+INFO:     158.210.76.175:41016 - "GET /api/v1/audio/download/?recording_uuid=c14fd51d-27dc-42ca-8e5d-1d63f25fe071&start_time=0&end_time=300&resample=false&samplerate=24000&channel=0&filter_order=4&speed=1 HTTP/1.1" 200 OK
+INFO:     158.210.76.175:35378 - "GET /api/v1/audio/download/?recording_uuid=c14fd51d-27dc-42ca-8e5d-1d63f25fe071&start_time=0&end_time=300&resample=false&samplerate=24000&channel=0&filter_order=4&speed=1 HTTP/1.1" 200 OK
+INFO:     158.210.76.175:52714 - "GET /api/v1/users/me HTTP/1.1" 200 OK
+INFO:     158.210.76.175:52714 - "GET /api/v1/audio/download/?recording_uuid=c14fd51d-27dc-42ca-8e5d-1d63f25fe071&start_time=0&end_time=300&resample=false&samplerate=24000&channel=0&filter_order=4&speed=1 HTTP/1.1" 200 OK
+INFO:     158.210.76.175:48254 - "POST /api/v1/auth/login HTTP/1.1" 204 No Content
+INFO:     158.210.76.175:48254 - "POST /api/v1/auth/login HTTP/1.1" 204 No Content
+INFO:     158.210.76.175:48254 - "GET /api/v1/users/me HTTP/1.1" 200 OK
+INFO:     158.210.76.175:48254 - "GET /api/v1/datasets/detail/?dataset_uuid=17e299e5-8ebc-4e8d-93b1-dfafe33acba4 HTTP/1.1" 200 OK
+INFO:     158.210.76.175:48254 - "GET /api/v1/recordings/detail/?recording_uuid=c14fd51d-27dc-42ca-8e5d-1d63f25fe071 HTTP/1.1" 200 OK
+INFO:     158.210.76.175:48254 - "GET /api/v1/spectrograms/?recording_uuid=c14fd51d-27dc-42ca-8e5d-1d63f25fe071&start_time=-0.055&end_time=5.055&resample=false&filter_order=4&window_size=0.01&overlap=0.5&window=hann&scale=dB&clamp=false&min_dB=-140&max_dB=0&normalize=true&channel=0&pcen=false&cmap=twilight&time_scale=1&freq_scale=1 HTTP/1.1" 200 OK
+INFO:     158.210.76.175:41350 - "GET /api/v1/spectrograms/?recording_uuid=c14fd51d-27dc-42ca-8e5d-1d63f25fe071&start_time=4.945&end_time=10.055&resample=false&filter_order=4&window_size=0.01&overlap=0.5&window=hann&scale=dB&clamp=false&min_dB=-140&max_dB=0&normalize=true&channel=0&pcen=false&cmap=twilight&time_scale=1&freq_scale=1 HTTP/1.1" 200 OK
+INFO:     158.210.76.175:41358 - "GET /api/v1/spectrograms/?recording_uuid=c14fd51d-27dc-42ca-8e5d-1d63f25fe071&start_time=9.945&end_time=15.055&resample=false&filter_order=4&window_size=0.01&overlap=0.5&window=hann&scale=dB&clamp=false&min_dB=-140&max_dB=0&normalize=true&channel=0&pcen=false&cmap=twilight&time_scale=1&freq_scale=1 HTTP/1.1" 200 OK
+INFO:     158.210.76.175:48254 - "GET /api/v1/audio/download/?recording_uuid=c14fd51d-27dc-42ca-8e5d-1d63f25fe071&start_time=0&end_time=300&resample=false&samplerate=24000&channel=0&filter_order=4&speed=1 HTTP/1.1" 200 OK
+INFO:     158.210.76.175:41376 - "GET /api/v1/spectrograms/?recording_uuid=c14fd51d-27dc-42ca-8e5d-1d63f25fe071&start_time=19.945&end_time=25.055&resample=false&filter_order=4&window_size=0.01&overlap=0.5&window=hann&scale=dB&clamp=false&min_dB=-140&max_dB=0&normalize=true&channel=0&pcen=false&cmap=twilight&time_scale=1&freq_scale=1 HTTP/1.1" 200 OK
+INFO:     158.210.76.175:41382 - "GET /api/v1/spectrograms/?recording_uuid=c14fd51d-27dc-42ca-8e5d-1d63f25fe071&start_time=24.945&end_time=30.055&resample=false&filter_order=4&window_size=0.01&overlap=0.5&window=hann&scale=dB&clamp=false&min_dB=-140&max_dB=0&normalize=true&channel=0&pcen=false&cmap=twilight&time_scale=1&freq_scale=1 HTTP/1.1" 200 OK
+INFO:     158.210.76.175:41372 - "GET /api/v1/spectrograms/?recording_uuid=c14fd51d-27dc-42ca-8e5d-1d63f25fe071&start_time=14.945&end_time=20.055&resample=false&filter_order=4&window_size=0.01&overlap=0.5&window=hann&scale=dB&clamp=false&min_dB=-140&max_dB=0&normalize=true&channel=0&pcen=false&cmap=twilight&time_scale=1&freq_scale=1 HTTP/1.1" 200 OK
+INFO:     158.210.76.175:41350 - "GET /api/v1/spectrograms/?recording_uuid=c14fd51d-27dc-42ca-8e5d-1d63f25fe071&start_time=29.945&end_time=35.055&resample=false&filter_order=4&window_size=0.01&overlap=0.5&window=hann&scale=dB&clamp=false&min_dB=-140&max_dB=0&normalize=true&channel=0&pcen=false&cmap=twilight&time_scale=1&freq_scale=1 HTTP/1.1" 200 OK
+INFO:     158.210.76.175:41358 - "GET /api/v1/spectrograms/?recording_uuid=c14fd51d-27dc-42ca-8e5d-1d63f25fe071&start_time=34.945&end_time=40.055&resample=false&filter_order=4&window_size=0.01&overlap=0.5&window=hann&scale=dB&clamp=false&min_dB=-140&max_dB=0&normalize=true&channel=0&pcen=false&cmap=twilight&time_scale=1&freq_scale=1 HTTP/1.1" 200 OK
+INFO:     158.210.76.175:41376 - "GET /api/v1/spectrograms/?recording_uuid=c14fd51d-27dc-42ca-8e5d-1d63f25fe071&start_time=39.945&end_time=45.055&resample=false&filter_order=4&window_size=0.01&overlap=0.5&window=hann&scale=dB&clamp=false&min_dB=-140&max_dB=0&normalize=true&channel=0&pcen=false&cmap=twilight&time_scale=1&freq_scale=1 HTTP/1.1" 200 OK
+INFO:     158.210.76.175:41382 - "GET /api/v1/spectrograms/?recording_uuid=c14fd51d-27dc-42ca-8e5d-1d63f25fe071&start_time=44.945&end_time=50.055&resample=false&filter_order=4&window_size=0.01&overlap=0.5&window=hann&scale=dB&clamp=false&min_dB=-140&max_dB=0&normalize=true&channel=0&pcen=false&cmap=twilight&time_scale=1&freq_scale=1 HTTP/1.1" 200 OK
+INFO:     158.210.76.175:41372 - "GET /api/v1/spectrograms/?recording_uuid=c14fd51d-27dc-42ca-8e5d-1d63f25fe071&start_time=49.945&end_time=55.055&resample=false&filter_order=4&window_size=0.01&overlap=0.5&window=hann&scale=dB&clamp=false&min_dB=-140&max_dB=0&normalize=true&channel=0&pcen=false&cmap=twilight&time_scale=1&freq_scale=1 HTTP/1.1" 200 OK
+INFO:     158.210.76.175:50258 - "GET /api/v1/spectrograms/?recording_uuid=c14fd51d-27dc-42ca-8e5d-1d63f25fe071&start_time=54.945&end_time=60.055&resample=false&filter_order=4&window_size=0.01&overlap=0.5&window=hann&scale=dB&clamp=false&min_dB=-140&max_dB=0&normalize=true&channel=0&pcen=false&cmap=twilight&time_scale=1&freq_scale=1 HTTP/1.1" 200 OK
+INFO:     158.210.76.175:33836 - "GET /api/v1/users/me HTTP/1.1" 200 OK
+INFO:     158.210.76.175:33836 - "GET /api/v1/datasets/detail/?dataset_uuid=17e299e5-8ebc-4e8d-93b1-dfafe33acba4 HTTP/1.1" 200 OK
+INFO:     158.210.76.175:33836 - "GET /api/v1/recordings/detail/?recording_uuid=c14fd51d-27dc-42ca-8e5d-1d63f25fe071 HTTP/1.1" 200 OK
+INFO:     158.210.76.175:33836 - "GET /api/v1/spectrograms/?recording_uuid=c14fd51d-27dc-42ca-8e5d-1d63f25fe071&start_time=-0.055&end_time=5.055&resample=false&filter_order=4&window_size=0.01&overlap=0.5&window=hann&scale=dB&clamp=false&min_dB=-140&max_dB=0&normalize=true&channel=0&pcen=false&cmap=twilight&time_scale=1&freq_scale=1 HTTP/1.1" 200 OK
+INFO:     158.210.76.175:33888 - "GET /api/v1/spectrograms/?recording_uuid=c14fd51d-27dc-42ca-8e5d-1d63f25fe071&start_time=24.945&end_time=30.055&resample=false&filter_order=4&window_size=0.01&overlap=0.5&window=hann&scale=dB&clamp=false&min_dB=-140&max_dB=0&normalize=true&channel=0&pcen=false&cmap=twilight&time_scale=1&freq_scale=1 HTTP/1.1" 200 OK
+INFO:     158.210.76.175:33844 - "GET /api/v1/spectrograms/?recording_uuid=c14fd51d-27dc-42ca-8e5d-1d63f25fe071&start_time=4.945&end_time=10.055&resample=false&filter_order=4&window_size=0.01&overlap=0.5&window=hann&scale=dB&clamp=false&min_dB=-140&max_dB=0&normalize=true&channel=0&pcen=false&cmap=twilight&time_scale=1&freq_scale=1 HTTP/1.1" 200 OK
+INFO:     158.210.76.175:33878 - "GET /api/v1/spectrograms/?recording_uuid=c14fd51d-27dc-42ca-8e5d-1d63f25fe071&start_time=19.945&end_time=25.055&resample=false&filter_order=4&window_size=0.01&overlap=0.5&window=hann&scale=dB&clamp=false&min_dB=-140&max_dB=0&normalize=true&channel=0&pcen=false&cmap=twilight&time_scale=1&freq_scale=1 HTTP/1.1" 200 OK
+INFO:     158.210.76.175:33836 - "GET /api/v1/spectrograms/?recording_uuid=c14fd51d-27dc-42ca-8e5d-1d63f25fe071&start_time=29.945&end_time=35.055&resample=false&filter_order=4&window_size=0.01&overlap=0.5&window=hann&scale=dB&clamp=false&min_dB=-140&max_dB=0&normalize=true&channel=0&pcen=false&cmap=twilight&time_scale=1&freq_scale=1 HTTP/1.1" 200 OK
+INFO:     158.210.76.175:33866 - "GET /api/v1/spectrograms/?recording_uuid=c14fd51d-27dc-42ca-8e5d-1d63f25fe071&start_time=14.945&end_time=20.055&resample=false&filter_order=4&window_size=0.01&overlap=0.5&window=hann&scale=dB&clamp=false&min_dB=-140&max_dB=0&normalize=true&channel=0&pcen=false&cmap=twilight&time_scale=1&freq_scale=1 HTTP/1.1" 200 OK
+INFO:     158.210.76.175:33854 - "GET /api/v1/spectrograms/?recording_uuid=c14fd51d-27dc-42ca-8e5d-1d63f25fe071&start_time=9.945&end_time=15.055&resample=false&filter_order=4&window_size=0.01&overlap=0.5&window=hann&scale=dB&clamp=false&min_dB=-140&max_dB=0&normalize=true&channel=0&pcen=false&cmap=twilight&time_scale=1&freq_scale=1 HTTP/1.1" 200 OK
+INFO:     158.210.76.175:33888 - "GET /api/v1/spectrograms/?recording_uuid=c14fd51d-27dc-42ca-8e5d-1d63f25fe071&start_time=34.945&end_time=40.055&resample=false&filter_order=4&window_size=0.01&overlap=0.5&window=hann&scale=dB&clamp=false&min_dB=-140&max_dB=0&normalize=true&channel=0&pcen=false&cmap=twilight&time_scale=1&freq_scale=1 HTTP/1.1" 200 OK
+INFO:     158.210.76.175:33844 - "GET /api/v1/spectrograms/?recording_uuid=c14fd51d-27dc-42ca-8e5d-1d63f25fe071&start_time=39.945&end_time=45.055&resample=false&filter_order=4&window_size=0.01&overlap=0.5&window=hann&scale=dB&clamp=false&min_dB=-140&max_dB=0&normalize=true&channel=0&pcen=false&cmap=twilight&time_scale=1&freq_scale=1 HTTP/1.1" 200 OK
+INFO:     158.210.76.175:33878 - "GET /api/v1/spectrograms/?recording_uuid=c14fd51d-27dc-42ca-8e5d-1d63f25fe071&start_time=44.945&end_time=50.055&resample=false&filter_order=4&window_size=0.01&overlap=0.5&window=hann&scale=dB&clamp=false&min_dB=-140&max_dB=0&normalize=true&channel=0&pcen=false&cmap=twilight&time_scale=1&freq_scale=1 HTTP/1.1" 200 OK
+INFO:     158.210.76.175:33836 - "GET /api/v1/spectrograms/?recording_uuid=c14fd51d-27dc-42ca-8e5d-1d63f25fe071&start_time=49.945&end_time=55.055&resample=false&filter_order=4&window_size=0.01&overlap=0.5&window=hann&scale=dB&clamp=false&min_dB=-140&max_dB=0&normalize=true&channel=0&pcen=false&cmap=twilight&time_scale=1&freq_scale=1 HTTP/1.1" 200 OK
+INFO:     158.210.76.175:33866 - "GET /api/v1/spectrograms/?recording_uuid=c14fd51d-27dc-42ca-8e5d-1d63f25fe071&start_time=54.945&end_time=60.055&resample=false&filter_order=4&window_size=0.01&overlap=0.5&window=hann&scale=dB&clamp=false&min_dB=-140&max_dB=0&normalize=true&channel=0&pcen=false&cmap=twilight&time_scale=1&freq_scale=1 HTTP/1.1" 200 OK
+INFO:     158.210.76.175:33836 - "GET /api/v1/audio/download/?recording_uuid=c14fd51d-27dc-42ca-8e5d-1d63f25fe071&start_time=0&end_time=300&resample=false&samplerate=24000&channel=0&filter_order=4&speed=1 HTTP/1.1" 200 OK
+INFO:     158.210.76.175:52796 - "GET /api/v1/spectrograms/?recording_uuid=c14fd51d-27dc-42ca-8e5d-1d63f25fe071&start_time=59.945&end_time=65.055&resample=false&filter_order=4&window_size=0.01&overlap=0.5&window=hann&scale=dB&clamp=false&min_dB=-140&max_dB=0&normalize=true&channel=0&pcen=false&cmap=twilight&time_scale=1&freq_scale=1 HTTP/1.1" 200 OK
+INFO:     158.210.76.175:52804 - "GET /api/v1/spectrograms/?recording_uuid=c14fd51d-27dc-42ca-8e5d-1d63f25fe071&start_time=64.945&end_time=70.055&resample=false&filter_order=4&window_size=0.01&overlap=0.5&window=hann&scale=dB&clamp=false&min_dB=-140&max_dB=0&normalize=true&channel=0&pcen=false&cmap=twilight&time_scale=1&freq_scale=1 HTTP/1.1" 200 OK
+INFO:     158.210.76.175:52796 - "GET /api/v1/spectrograms/?recording_uuid=c14fd51d-27dc-42ca-8e5d-1d63f25fe071&start_time=69.945&end_time=75.055&resample=false&filter_order=4&window_size=0.01&overlap=0.5&window=hann&scale=dB&clamp=false&min_dB=-140&max_dB=0&normalize=true&channel=0&pcen=false&cmap=twilight&time_scale=1&freq_scale=1 HTTP/1.1" 200 OK
+INFO:     158.210.76.175:52828 - "GET /api/v1/spectrograms/?recording_uuid=c14fd51d-27dc-42ca-8e5d-1d63f25fe071&start_time=74.945&end_time=80.055&resample=false&filter_order=4&window_size=0.01&overlap=0.5&window=hann&scale=dB&clamp=false&min_dB=-140&max_dB=0&normalize=true&channel=0&pcen=false&cmap=twilight&time_scale=1&freq_scale=1 HTTP/1.1" 200 OK
+INFO:     158.210.76.175:52832 - "GET /api/v1/spectrograms/?recording_uuid=c14fd51d-27dc-42ca-8e5d-1d63f25fe071&start_time=79.945&end_time=85.055&resample=false&filter_order=4&window_size=0.01&overlap=0.5&window=hann&scale=dB&clamp=false&min_dB=-140&max_dB=0&normalize=true&channel=0&pcen=false&cmap=twilight&time_scale=1&freq_scale=1 HTTP/1.1" 200 OK
+INFO:     158.210.76.175:52828 - "GET /api/v1/spectrograms/?recording_uuid=c14fd51d-27dc-42ca-8e5d-1d63f25fe071&start_time=84.945&end_time=90.055&resample=false&filter_order=4&window_size=0.01&overlap=0.5&window=hann&scale=dB&clamp=false&min_dB=-140&max_dB=0&normalize=true&channel=0&pcen=false&cmap=twilight&time_scale=1&freq_scale=1 HTTP/1.1" 200 OK
+INFO:     158.210.76.175:52834 - "GET /api/v1/spectrograms/?recording_uuid=c14fd51d-27dc-42ca-8e5d-1d63f25fe071&start_time=89.945&end_time=95.055&resample=false&filter_order=4&window_size=0.01&overlap=0.5&window=hann&scale=dB&clamp=false&min_dB=-140&max_dB=0&normalize=true&channel=0&pcen=false&cmap=twilight&time_scale=1&freq_scale=1 HTTP/1.1" 200 OK
+INFO:     158.210.76.175:52832 - "GET /api/v1/spectrograms/?recording_uuid=c14fd51d-27dc-42ca-8e5d-1d63f25fe071&start_time=94.945&end_time=100.055&resample=false&filter_order=4&window_size=0.01&overlap=0.5&window=hann&scale=dB&clamp=false&min_dB=-140&max_dB=0&normalize=true&channel=0&pcen=false&cmap=twilight&time_scale=1&freq_scale=1 HTTP/1.1" 200 OK
+INFO:     158.210.76.175:52828 - "GET /api/v1/spectrograms/?recording_uuid=c14fd51d-27dc-42ca-8e5d-1d63f25fe071&start_time=99.945&end_time=105.055&resample=false&filter_order=4&window_size=0.01&overlap=0.5&window=hann&scale=dB&clamp=false&min_dB=-140&max_dB=0&normalize=true&channel=0&pcen=false&cmap=twilight&time_scale=1&freq_scale=1 HTTP/1.1" 200 OK
+INFO:     158.210.76.175:52828 - "GET /api/v1/spectrograms/?recording_uuid=c14fd51d-27dc-42ca-8e5d-1d63f25fe071&start_time=104.945&end_time=110.055&resample=false&filter_order=4&window_size=0.01&overlap=0.5&window=hann&scale=dB&clamp=false&min_dB=-140&max_dB=0&normalize=true&channel=0&pcen=false&cmap=twilight&time_scale=1&freq_scale=1 HTTP/1.1" 200 OK
