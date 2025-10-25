@@ -47,6 +47,18 @@ export default function AnnotationProjectUpdateComponent({
     return activeUser?.id === annotationProject.created_by_id;
   }, [activeUser, annotationProject.created_by_id]);
 
+  const managesOwnerGroup = useMemo(() => {
+    if (annotationProject.owner_group_id == null) return false;
+    return managerGroups.some((group) => group.id === annotationProject.owner_group_id);
+  }, [managerGroups, annotationProject.owner_group_id]);
+
+  const canEditMetadata = useMemo(() => {
+    if (!activeUser) return false;
+    if (activeUser.is_superuser) return true;
+    if (isOwner) return true;
+    return managesOwnerGroup;
+  }, [activeUser, isOwner, managesOwnerGroup]);
+
   const visibilityOptions: Option<VisibilityLevel>[] = useMemo(() => {
     const options: Option<VisibilityLevel>[] = [
       { id: "public", label: "🌍 Public", value: "public" },
@@ -131,8 +143,14 @@ export default function AnnotationProjectUpdateComponent({
 
   return (
     <Card>
-      <div className="px-4 sm:px-0">
+      <div className="px-4 sm:px-0 space-y-1">
         <H3>Project Details</H3>
+        {!canEditMetadata ? (
+          <p className="text-sm text-stone-500 dark:text-stone-400">
+            Only the project owner or group managers can edit the name, description,
+            and instructions.
+          </p>
+        ) : null}
       </div>
       <div className="mt-6 border-t border-stone-300 dark:border-stone-700">
         {isLoading ? (
@@ -145,7 +163,7 @@ export default function AnnotationProjectUpdateComponent({
                 value={annotationProject.name}
                 onChange={(name) => onChangeAnnotationProject?.({ name })}
                 type="text"
-                editable
+                editable={canEditMetadata}
               />
             </div>
             <div className="py-6 px-4 sm:px-0">
@@ -156,7 +174,7 @@ export default function AnnotationProjectUpdateComponent({
                   onChangeAnnotationProject?.({ description })
                 }
                 type="textarea"
-                editable
+                editable={canEditMetadata}
               />
             </div>
             <div className="py-6 px-4 sm:px-0">
@@ -167,7 +185,7 @@ export default function AnnotationProjectUpdateComponent({
                   onChangeAnnotationProject?.({ annotation_instructions })
                 }
                 type="textarea"
-                editable
+                editable={canEditMetadata}
               />
             </div>
             <div className="py-6 px-4 sm:px-0">

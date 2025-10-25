@@ -1,10 +1,9 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 
 import CanvasBase from "@/lib/components/spectrograms/Canvas";
 
 import useSpectrogramImages from "@/lib/hooks/spectrogram/useSpectrogramImages";
 import useSpectrogramInteractions from "@/lib/hooks/spectrogram/useSpectrogramInteractions";
-import type { ChunkState } from "@/lib/hooks/spectrogram/useSpectrogramChunksState";
 
 import { drawCursor } from "@/lib/draw/cursor";
 import drawOnset from "@/lib/draw/onset";
@@ -28,8 +27,6 @@ export default function RecordingCanvas({
   audio,
   state,
   height = 600,
-  refreshToken = 0,
-  onSegmentsChange,
 }: {
   audio: AudioController;
   recording: Recording;
@@ -38,25 +35,17 @@ export default function RecordingCanvas({
   audioSettings: AudioSettings;
   spectrogramSettings: SpectrogramSettings;
   height?: number;
-  refreshToken?: number;
-  onSegmentsChange?: (segments: ChunkState[], viewport: SpectrogramWindow) => void;
 }) {
   const [cursorPosition, setCursorPosition] = useState<Position>({
     time: 0,
     freq: 0,
   });
 
-  const { drawFn: drawSpectrogram, segments } = useSpectrogramImages({
+  const { drawFn: drawSpectrogram } = useSpectrogramImages({
     recording,
     audioSettings,
     spectrogramSettings,
-    refreshToken,
   });
-
-  useEffect(() => {
-    if (viewport.viewport == null) return;
-    onSegmentsChange?.(segments, viewport.viewport);
-  }, [segments, onSegmentsChange, viewport.viewport]);
 
   const { drawFn: drawInteractions, ...props } = useSpectrogramInteractions({
     viewport,

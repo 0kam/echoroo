@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy import select
 
 from whombat import api, models, schemas
-from whombat.routes.dependencies import Session
+from whombat.routes.dependencies import Session, get_current_user_dependency
 from whombat.routes.dependencies.auth import get_users_api
 from whombat.routes.dependencies.groups import require_admin
 from whombat.routes.dependencies.settings import WhombatSettings
@@ -25,6 +25,7 @@ def get_users_router(settings: WhombatSettings) -> APIRouter:
 
     fastapi_users = get_users_api(settings)
     admin_required = require_admin(settings)
+    current_user_required = get_current_user_dependency(settings)
 
     users_router.include_router(fastapi_users.get_users_router(User, UserUpdate))
 
@@ -64,6 +65,19 @@ def get_users_router(settings: WhombatSettings) -> APIRouter:
         # Ensure the user exists before listing memberships.
         await api.users.get(session, user_id)
         return await api.groups.list_groups_for_user(session, user_id)
+
+    @users_router.get(
+        "/lookup/",
+        response_model=schemas.SimpleUser,
+    )
+    async def lookup_user_by_username(
+        session: Session,
+        username: str,
+        _: Annotated[schemas.SimpleUser, Depends(current_user_required)],
+    ):
+        """Resolve a user by username for authenticated callers."""
+
+        return await api.users.get_by_username(session, username)
 
     return users_router
 

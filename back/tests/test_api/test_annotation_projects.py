@@ -209,6 +209,72 @@ async def test_update_modifies_database_values(
     )
 
 
+async def test_update_annotation_project_metadata_requires_authorized_user(
+    session: AsyncSession,
+    annotation_project: schemas.AnnotationProject,
+    other_user: schemas.SimpleUser,
+):
+    """Ensure unauthorized users cannot change core annotation project metadata."""
+    with pytest.raises(exceptions.PermissionDeniedError):
+        await api.annotation_projects.update(
+            session,
+            annotation_project,
+            schemas.AnnotationProjectUpdate(name="forbidden"),
+            user=other_user,
+        )
+    with pytest.raises(exceptions.PermissionDeniedError):
+        await api.annotation_projects.update(
+            session,
+            annotation_project,
+            schemas.AnnotationProjectUpdate(description="forbidden"),
+            user=other_user,
+        )
+    with pytest.raises(exceptions.PermissionDeniedError):
+        await api.annotation_projects.update(
+            session,
+            annotation_project,
+            schemas.AnnotationProjectUpdate(
+                annotation_instructions="forbidden"
+            ),
+            user=other_user,
+        )
+
+
+async def test_group_manager_can_update_project_metadata(
+    session: AsyncSession,
+    user: schemas.SimpleUser,
+    other_user: schemas.SimpleUser,
+    group: schemas.Group,
+    group_manager_membership: schemas.GroupMembership,
+):
+    """Ensure group managers can update project metadata."""
+    project = await api.annotation_projects.create(
+        session,
+        name="managed_project",
+        description="desc",
+        annotation_instructions=None,
+        user=user,
+        visibility=models.VisibilityLevel.RESTRICTED,
+        owner_group_id=group.id,
+    )
+
+    await api.groups.add_membership(
+        session,
+        group.id,
+        other_user.id,
+        models.GroupRole.MANAGER,
+    )
+    await session.commit()
+
+    updated = await api.annotation_projects.update(
+        session,
+        project,
+        schemas.AnnotationProjectUpdate(name="managed_update"),
+        user=other_user,
+    )
+    assert updated.name == "managed_update"
+
+
 async def test_delete_removes_project_from_database(
     session: AsyncSession,
     annotation_project: schemas.AnnotationProject,
@@ -226,6 +292,54 @@ async def test_delete_removes_project_from_database(
     result = await session.execute(stmt)
     db_annotation_project = result.scalars().first()
     assert db_annotation_project is None
+
+
+async def test_delete_annotation_project_requires_owner(
+    session: AsyncSession,
+    annotation_project: schemas.AnnotationProject,
+    other_user: schemas.SimpleUser,
+):
+    """Ensure non-owners cannot delete annotation projects."""
+    with pytest.raises(exceptions.PermissionDeniedError):
+        await api.annotation_projects.delete(
+            session,
+            annotation_project,
+            user=other_user,
+        )
+
+
+async def test_group_manager_cannot_delete_project(
+    session: AsyncSession,
+    user: schemas.SimpleUser,
+    other_user: schemas.SimpleUser,
+    group: schemas.Group,
+    group_manager_membership: schemas.GroupMembership,
+):
+    """Ensure group managers cannot delete projects they manage."""
+    project = await api.annotation_projects.create(
+        session,
+        name="managed_delete",
+        description="desc",
+        annotation_instructions=None,
+        user=user,
+        visibility=models.VisibilityLevel.RESTRICTED,
+        owner_group_id=group.id,
+    )
+
+    await api.groups.add_membership(
+        session,
+        group.id,
+        other_user.id,
+        models.GroupRole.MANAGER,
+    )
+    await session.commit()
+
+    with pytest.raises(exceptions.PermissionDeniedError):
+        await api.annotation_projects.delete(
+            session,
+            project,
+            user=other_user,
+        )
 
 
 async def test_add_tag_to_project(
@@ -346,11 +460,15 @@ async def test_remove_tag_from_project_fails_if_tag_not_present(
     session: AsyncSession,
     annotation_project: schemas.AnnotationProject,
     tag: schemas.Tag,
+    user: schemas.SimpleUser,
 ):
-    """Test that a tag can be removed from an annotation project."""
+    """Test that a tag removal fails gracefully when tag is absent."""
     with pytest.raises(exceptions.NotFoundError):
         await api.annotation_projects.remove_tag(
-            session, annotation_project, tag
+            session,
+            annotation_project,
+            tag,
+            user=user,
         )
 
 
@@ -420,7 +538,8 @@ async def test_can_get_base_dir_from_project_with_multiple_datasets(
         dataset_name = f"dataset{i}"
         dataset_dir = common_dir / dataset_name
         dataset_dir.mkdir(parents=True, exist_ok=True)
-        random_wav_factory(dataset_dir / f"recording{i}.wav")
+        initial_file = dataset_dir / f"recording{i}.wav"
+        random_wav_factory(initial_file)
         dataset = await api.datasets.create(
             session,
             name=dataset_name,
@@ -430,10 +549,12 @@ async def test_can_get_base_dir_from_project_with_multiple_datasets(
             user=user,
             visibility=models.VisibilityLevel.PUBLIC,
         )
+        extra_file = dataset_dir / f"recording{i}_extra.wav"
+        random_wav_factory(extra_file)
         dataset_recording = await api.datasets.add_file(
             session,
             dataset,
-            path=dataset_dir / f"recording{i}.wav",
+            path=extra_file,
             audio_dir=audio_dir,
         )
         clip = await api.clips.create(

@@ -8,7 +8,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
  */
 export default function useAudio({
   url,
-  playbackRate = 1,
   onPlay,
   onPause,
   onEnded,
@@ -24,8 +23,6 @@ export default function useAudio({
 }: {
   /** The URL of the audio file to play. */
   url: string;
-  /** Playback rate (speed) of the audio. Default is 1.0. */
-  playbackRate?: number;
   /** A callback that is called when the audio starts playing. */
   onPlay?: () => void;
   /** A callback that is called when the audio is paused. */
@@ -64,11 +61,9 @@ export default function useAudio({
 
   useEffect(() => {
     const { current } = audio;
-    current.preload = "metadata";
+    current.preload = "none";
     current.src = url;
     current.currentTime = 0;
-    current.playbackRate = playbackRate; // Set playback rate (speed)
-    current.load(); // Explicitly load the audio
 
     setIsPlaying(false);
     setTime(0);
@@ -125,7 +120,7 @@ export default function useAudio({
       current.removeEventListener("ended", handleEnded);
       current.removeEventListener("abort", handleAbort);
     };
-  }, [url, playbackRate]);
+  }, [url]);
 
   useEffect(() => {
     if (onEnded == null) return;
@@ -136,11 +131,9 @@ export default function useAudio({
   }, [onEnded]);
 
   useEffect(() => {
+    if (onError == null) return;
     const { current } = audio;
-    const handleError = (e: Event) => {
-      console.error('Audio error event:', e, 'Audio element error:', current.error);
-      onError?.();
-    };
+    const handleError = () => onError();
     current.addEventListener("error", handleError);
     return () => current.removeEventListener("error", handleError);
   }, [onError]);
@@ -169,16 +162,6 @@ export default function useAudio({
     current.addEventListener("seeking", handleSeeking);
     return () => current.removeEventListener("seeking", handleSeeking);
   }, [onSeeking]);
-
-  // Add listener for 'seeked' event to sync time state after seeking completes
-  useEffect(() => {
-    const { current } = audio;
-    const handleSeeked = () => {
-      setTime(current.currentTime);
-    };
-    current.addEventListener("seeked", handleSeeked);
-    return () => current.removeEventListener("seeked", handleSeeked);
-  }, []);
 
   useEffect(() => {
     if (onWaiting == null) return;
@@ -229,20 +212,17 @@ export default function useAudio({
 
   const handlePlay = useCallback(() => {
     if (lockPlay.current) return;
-    console.log('Play button clicked, audio URL:', audio.current.src);
     const promise = audio.current.play();
 
     if (promise) {
       lockPlay.current = true;
       promise
         .then(() => {
-          console.log('Audio playback started successfully');
           setIsPlaying(true);
           onPlay?.();
           lockPlay.current = false;
         })
-        .catch((error) => {
-          console.error('Audio playback failed:', error);
+        .catch(() => {
           lockPlay.current = false;
         });
     } else {
@@ -271,12 +251,9 @@ export default function useAudio({
 
   const handleSeek = useCallback(
     (time: number) => {
+      setTime(time);
       onSeeking?.();
       audio.current.currentTime = time;
-      // Don't call setTime here - let the 'seeked' event handler update it
-      // with the actual currentTime after seeking completes.
-      // This prevents the state from being overwritten by requestAnimationFrame's updateTime
-      // reading a stale currentTime value before the seek completes.
     },
     [onSeeking],
   );

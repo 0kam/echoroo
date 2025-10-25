@@ -40,6 +40,18 @@ export default function DatasetUpdateComponent({
     return activeUser?.id === dataset.created_by_id;
   }, [activeUser, dataset.created_by_id]);
 
+  const managesOwnerGroup = useMemo(() => {
+    if (dataset.owner_group_id == null) return false;
+    return managerGroups.some((group) => group.id === dataset.owner_group_id);
+  }, [managerGroups, dataset.owner_group_id]);
+
+  const canEditMetadata = useMemo(() => {
+    if (!activeUser) return false;
+    if (activeUser.is_superuser) return true;
+    if (isOwner) return true;
+    return managesOwnerGroup;
+  }, [activeUser, isOwner, managesOwnerGroup]);
+
   const visibilityOptions: Option<VisibilityLevel>[] = useMemo(() => {
     const options: Option<VisibilityLevel>[] = [
       { id: "public", label: "🌍 Public", value: "public" },
@@ -121,10 +133,15 @@ export default function DatasetUpdateComponent({
 
   return (
     <Card>
-      <div className="px-4 sm:px-0">
+      <div className="px-4 sm:px-0 space-y-1">
         <h3 className="text-base font-semibold leading-7 text-stone-900 dark:text-stone-200">
           Dataset Information
         </h3>
+        {!canEditMetadata ? (
+          <p className="text-sm text-stone-500 dark:text-stone-400">
+            Only the dataset owner or group managers can edit the name and description.
+          </p>
+        ) : null}
       </div>
       <div className="mt-6 border-t border-stone-300 dark:border-stone-700">
         <dl className="divide-y divide-stone-500">
@@ -134,7 +151,7 @@ export default function DatasetUpdateComponent({
               value={dataset.name}
               onChange={(name) => onChangeDataset?.({ name })}
               type="text"
-              editable
+              editable={canEditMetadata}
             />
           </div>
           <div className="py-6 px-4 sm:px-0">
@@ -143,7 +160,7 @@ export default function DatasetUpdateComponent({
               value={dataset.description}
               onChange={(description) => onChangeDataset?.({ description })}
               type="textarea"
-              editable
+              editable={canEditMetadata}
             />
           </div>
           <div className="py-6 px-4 sm:px-0">

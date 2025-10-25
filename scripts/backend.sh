@@ -113,24 +113,62 @@ stop_backend() {
 
     echo -e "${YELLOW}Stopping backend...${NC}"
 
-    PID=$(get_pid)
+    # Find all related PIDs (including parent uv process)
+    # Method 1: Get PID from port
+    PORT_PID=$(get_pid)
 
-    # Try graceful shutdown
-    kill $PID 2>/dev/null || true
+    # Method 2: Find all python -m whombat processes
+    PYTHON_PIDS=$(pgrep -f "python.*-m whombat" 2>/dev/null || true)
+
+    # Method 3: Find uv run processes
+    UV_PIDS=$(pgrep -f "uv run python -m whombat" 2>/dev/null || true)
+
+    # Combine all PIDs
+    ALL_PIDS="$PORT_PID $PYTHON_PIDS $UV_PIDS"
+    # Remove duplicates and empty values
+    ALL_PIDS=$(echo "$ALL_PIDS" | tr ' ' '\n' | sort -u | grep -v '^$' || true)
+
+    if [ -z "$ALL_PIDS" ]; then
+        echo -e "${YELLOW}No backend processes found${NC}"
+        return 0
+    fi
+
+    # Try graceful shutdown for all PIDs
+    for pid in $ALL_PIDS; do
+        if kill -0 "$pid" 2>/dev/null; then
+            kill "$pid" 2>/dev/null || true
+        fi
+    done
+
+    # Wait for processes to terminate
     sleep 2
 
     # Force kill if still running
     if is_running; then
         echo -e "${YELLOW}Force killing backend...${NC}"
-        kill -9 $PID 2>/dev/null || true
+        for pid in $ALL_PIDS; do
+            if kill -0 "$pid" 2>/dev/null; then
+                kill -9 "$pid" 2>/dev/null || true
+            fi
+        done
         sleep 1
     fi
 
+    # Final check
     if ! is_running; then
         echo -e "${GREEN}✓ Backend stopped${NC}"
     else
         echo -e "${RED}✗ Failed to stop backend${NC}"
-        exit 1
+        echo -e "${YELLOW}Attempting pkill as last resort...${NC}"
+        pkill -9 -f "python.*-m whombat" 2>/dev/null || true
+        pkill -9 -f "uv run python -m whombat" 2>/dev/null || true
+        sleep 1
+        if ! is_running; then
+            echo -e "${GREEN}✓ Backend stopped (forced)${NC}"
+        else
+            echo -e "${RED}✗ Failed to stop backend even with pkill${NC}"
+            exit 1
+        fi
     fi
 }
 

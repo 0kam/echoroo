@@ -7,6 +7,7 @@ const DEFAULT_ENDPOINTS = {
   me: "/api/v1/users/me",
   update: "/api/v1/users/me",
   first: "/api/v1/users/first/",
+  lookup: "/api/v1/users/lookup/",
 };
 
 export function registerUserAPI(
@@ -30,9 +31,17 @@ export function registerUserAPI(
     return schemas.UserSchema.parse(response.data);
   }
 
+  async function lookupUser(username: string): Promise<types.SimpleUser> {
+    let response = await instance.get(endpoints.lookup, {
+      params: { username },
+    });
+    return schemas.SimpleUserSchema.parse(response.data);
+  }
+
   return {
     me: getActiveUser,
     update: updateActiveUser,
     first: createFirstUser,
+    lookup: lookupUser,
   } as const;
 }

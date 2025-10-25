@@ -37,27 +37,14 @@ export default function useRecordingAudio({
   const { speed } = audioSettings;
 
   const url = useMemo(
-    () => {
-      // Use download endpoint instead of streaming for better compatibility
-      // This loads the entire audio segment at once, avoiding chunked streaming issues
-      // Note: speed is handled via playbackRate in the audio element, not in the download
-      const downloadUrl = api.audio.getDownloadUrl({
+    () =>
+      api.audio.getStreamUrl({
         recording,
-        segment: { min: startTime, max: endTime },
-        parameters: {
-          resample: audioSettings.resample,
-          samplerate: audioSettings.samplerate,
-          low_freq: audioSettings.low_freq,
-          high_freq: audioSettings.high_freq,
-          filter_order: audioSettings.filter_order,
-          channel: audioSettings.channel,
-          speed: 1, // Speed is handled by playbackRate in the audio element
-        },
-      });
-      console.log('Generated audio download URL:', downloadUrl);
-      return downloadUrl;
-    },
-    [recording, startTime, endTime, audioSettings.resample, audioSettings.samplerate, audioSettings.low_freq, audioSettings.high_freq, audioSettings.filter_order, audioSettings.channel],
+        startTime,
+        endTime,
+        speed: audioSettings.speed,
+      }),
+    [recording, startTime, endTime, audioSettings.speed],
   );
 
   const handleTimeUpdate = useCallback(
@@ -69,7 +56,6 @@ export default function useRecordingAudio({
 
   const audio = useAudio({
     url,
-    playbackRate: speed,
     onTimeUpdate: handleTimeUpdate,
     ...handlers,
   });

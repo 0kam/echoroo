@@ -13,10 +13,12 @@ export default function DatasetActions({
   dataset,
   onDownloadDataset,
   onDeleteDataset,
+  canDelete = true,
 }: {
   dataset: Dataset;
   onDownloadDataset?: () => void;
   onDeleteDataset?: () => void;
+  canDelete?: boolean;
 }) {
   return (
     <div className="flex flex-row gap-2 justify-center">
@@ -25,7 +27,9 @@ export default function DatasetActions({
           <DownloadIcon className="inline-block mr-2 w-5 h-5" /> Download
         </Button>
       ) : null}
-      <DeleteDataset dataset={dataset} onDeleteDataset={onDeleteDataset} />
+      {canDelete && onDeleteDataset ? (
+        <DeleteDataset dataset={dataset} onDeleteDataset={onDeleteDataset} />
+      ) : null}
     </div>
   );
 }

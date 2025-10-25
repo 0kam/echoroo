@@ -1,11 +1,13 @@
 import { act, renderHook } from "@testing-library/react";
 
+import { DEFAULT_SPECTROGRAM_SETTINGS } from "@/lib/constants";
 import type { SpectrogramSettings } from "@/lib/types";
 
 import useSpectrogramSettings from "./useSpectrogramSettings";
 
 describe("useSpectrogramSettings Hook", () => {
   const initialSettings: SpectrogramSettings = {
+    ...DEFAULT_SPECTROGRAM_SETTINGS,
     window_size: 512,
     overlap: 0.5,
     scale: "dB",
@@ -42,6 +44,7 @@ describe("useSpectrogramSettings Hook", () => {
     });
 
     expect(result.current.settings).toEqual({
+      ...initialSettings,
       window_size: 1024,
       overlap: 0.25,
       scale: "power",

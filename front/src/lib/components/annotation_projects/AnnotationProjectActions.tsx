@@ -13,10 +13,12 @@ export default function ProjectActions({
   annotationProject,
   onDeleteAnnotationProject,
   onDownloadAnnotationProject,
+  canDelete = true,
 }: {
   annotationProject: AnnotationProject;
   onDeleteAnnotationProject?: () => void;
   onDownloadAnnotationProject?: () => void;
+  canDelete?: boolean;
 }) {
   return (
     <div className="flex flex-row gap-2 justify-center">
@@ -27,10 +29,12 @@ export default function ProjectActions({
       >
         <DownloadIcon className="inline-block mr-2 w-5 h-5" /> Download
       </Button>
-      <DeleteProject
-        annotationProject={annotationProject}
-        onDelete={onDeleteAnnotationProject}
-      />
+      {canDelete && onDeleteAnnotationProject ? (
+        <DeleteProject
+          annotationProject={annotationProject}
+          onDelete={onDeleteAnnotationProject}
+        />
+      ) : null}
     </div>
   );
 }

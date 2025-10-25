@@ -260,6 +260,70 @@ async def test_update_dataset_description(
     assert updated_dataset.description == "This is an updated test dataset."
 
 
+async def test_update_dataset_metadata_requires_owner(
+    session: AsyncSession,
+    dataset: schemas.Dataset,
+    other_user: schemas.SimpleUser,
+):
+    """Ensure non-owners cannot change dataset metadata."""
+    with pytest.raises(exceptions.PermissionDeniedError):
+        await api.datasets.update(
+            session,
+            dataset,
+            data=schemas.DatasetUpdate(name="forbidden"),
+            user=other_user,
+        )
+    with pytest.raises(exceptions.PermissionDeniedError):
+        await api.datasets.update(
+            session,
+            dataset,
+            data=schemas.DatasetUpdate(description="forbidden"),
+            user=other_user,
+        )
+
+
+async def test_dataset_manager_can_update_metadata(
+    session: AsyncSession,
+    audio_dir: Path,
+    random_wav_factory: Callable[..., Path],
+    user: schemas.SimpleUser,
+    other_user: schemas.SimpleUser,
+    group: schemas.Group,
+    group_manager_membership: schemas.GroupMembership,
+):
+    """Ensure group managers can update restricted dataset metadata."""
+    dataset_dir = audio_dir / "manager_dataset"
+    dataset_dir.mkdir()
+    random_wav_factory(dataset_dir / "sample.wav")
+
+    restricted_dataset = await api.datasets.create(
+        session,
+        name="managed_dataset",
+        description="managed dataset",
+        dataset_dir=dataset_dir,
+        audio_dir=audio_dir,
+        user=user,
+        visibility=models.VisibilityLevel.RESTRICTED,
+        owner_group_id=group.id,
+    )
+
+    await api.groups.add_membership(
+        session,
+        group.id,
+        other_user.id,
+        models.GroupRole.MANAGER,
+    )
+    await session.commit()
+
+    updated = await api.datasets.update(
+        session,
+        restricted_dataset,
+        data=schemas.DatasetUpdate(name="updated_by_manager"),
+        user=other_user,
+    )
+    assert updated.name == "updated_by_manager"
+
+
 async def test_update_dataset_audio_dir(
     session: AsyncSession,
     audio_dir: Path,
@@ -289,6 +353,16 @@ async def test_delete_dataset(
     await api.datasets.delete(session, dataset, user=user)
     with pytest.raises(exceptions.NotFoundError):
         await api.datasets.get(session, dataset.uuid)
+
+
+async def test_delete_dataset_requires_owner(
+    session: AsyncSession,
+    dataset: schemas.Dataset,
+    other_user: schemas.SimpleUser,
+):
+    """Ensure non-owners cannot delete datasets."""
+    with pytest.raises(exceptions.PermissionDeniedError):
+        await api.datasets.delete(session, dataset, user=other_user)
 
 
 async def test_get_dataset_files(

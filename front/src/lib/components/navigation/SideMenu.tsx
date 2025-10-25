@@ -1,8 +1,10 @@
 import classnames from "classnames";
 import { usePathname } from "next/navigation";
+import { useMemo } from "react";
 import type { ComponentProps } from "react";
 
 import useActiveUser from "@/app/hooks/api/useActiveUser";
+import useMyGroups from "@/app/hooks/api/useMyGroups";
 
 import {
   AnnotationProjectIcon,
@@ -14,6 +16,7 @@ import {
   PluginIcon,
   SettingsIcon,
   WhombatIcon,
+  UsersIcon,
 } from "@/lib/components/icons";
 import { HorizontalDivider } from "@/lib/components/layouts/Divider";
 import Button from "@/lib/components/ui/Button";
@@ -147,6 +150,20 @@ function SecondaryNavigation({
     logout: { mutate: logout },
   } = useActiveUser({ user, onLogout });
 
+  const myGroupsQuery = useMyGroups({ enabled: !user.is_superuser });
+
+  const managesGroups = useMemo(() => {
+    if (!myGroupsQuery.data || myGroupsQuery.data.length === 0) {
+      return false;
+    }
+    return myGroupsQuery.data.some((group) =>
+      group.memberships.some(
+        (membership) =>
+          membership.user_id === user.id && membership.role === "manager",
+      ),
+    );
+  }, [myGroupsQuery.data, user.id]);
+
   return (
     <ul className="flex flex-col space-y-3 py-4 text-stone-400">
       <HorizontalDivider />
@@ -155,6 +172,17 @@ function SecondaryNavigation({
           <HomeIcon className="w-6 h-6" />
         </SideMenuLink>
       </li>
+      {managesGroups ? (
+        <li className="px-3">
+          <SideMenuLink
+            isActive={pathname?.startsWith("/groups/manage")}
+            tooltip={"Manage Groups"}
+            href="/groups/manage"
+          >
+            <UsersIcon className="w-6 h-6" />
+          </SideMenuLink>
+        </li>
+      ) : null}
       {user.is_superuser ? (
         <li className="px-3">
           <SideMenuLink
