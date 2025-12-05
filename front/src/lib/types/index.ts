@@ -30,4 +30,5 @@ export type * from "./tag";
 export type * from "./user";
 export type * from "./user_run";
 export type * from "./viewport";
-export type * from "./group";
+export type * from "./metadata";
+export type * from "./inference";

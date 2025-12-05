@@ -3,7 +3,7 @@ from pathlib import Path
 from soundevent import data, io
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from whombat.api.io.aoef.datasets import import_dataset
+from echoroo.api.io.aoef.datasets import import_dataset
 
 
 async def test_can_import_a_dataset_with_user_without_email(

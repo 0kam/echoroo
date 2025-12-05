@@ -1,83 +1,73 @@
-# Whombat
+# Echoroo
 
-![GitHub License](https://img.shields.io/github/license/mbsantiago/whombat)
-![Python Version from PEP 621 TOML](https://img.shields.io/python/required-version-toml?tomlFilePath=https%3A%2F%2Fraw.githubusercontent.com%2Fmbsantiago%2Fwhombat%2Fdev%2Fback%2Fpyproject.toml)
-![Static Badge](https://img.shields.io/badge/formatting-black-black)
-[![codecov](https://codecov.io/gh/mbsantiago/whombat/graph/badge.svg?token=WMzUfSXIyL)](https://codecov.io/gh/mbsantiago/whombat)
-![build](https://github.com/mbsantiago/whombat/actions/workflows/bundle.yml/badge.svg)
-![lint](https://github.com/mbsantiago/whombat/actions/workflows/lint.yml/badge.svg)
-![docs](https://github.com/mbsantiago/whombat/actions/workflows/docs.yml/badge.svg)
-![tests](https://github.com/mbsantiago/whombat/actions/workflows/test.yml/badge.svg)
-[![DOI](https://zenodo.org/badge/682458553.svg)](https://zenodo.org/doi/10.5281/zenodo.10604169)
-
-**Whombat** is an open-source, web-based audio annotation tool designed to streamline audio data labeling and annotation, with a particular focus on supporting machine learning model development.
+Echoroo is an open-source, web-based ecoacoustic platform. Integrated with state-of-the-art AI, Echoroo enables fast and efficient analysis, search, and development of new models for acoustic data.
 
 ## Quick Start
 
-### 🐳 Docker (Recommended)
+### Docker (Recommended)
 
-The easiest way to get started with Whombat:
+The easiest way to get started with Echoroo:
 
 ```bash
 # Clone the repository
-git clone https://github.com/mbsantiago/whombat.git
-cd whombat
+git clone https://github.com/0kam/echoroo.git
+cd echoroo
 
 # Configure settings
 cp .env.example .env
-# Edit .env to set WHOMBAT_AUDIO_DIR to your audio files location
+# Edit .env to set:
+#   - POSTGRES_PASSWORD (required)
+#   - ECHOROO_AUDIO_DIR (required - path to your audio files)
 
-# Start Whombat
-./scripts/docker.sh start
+# Start Echoroo (development mode)
+./scripts/docker.sh dev
 ```
 
-Then open http://localhost:5000 in your browser.
+Then open http://localhost:3000 in your browser.
 
 See [DOCKER.md](DOCKER.md) for detailed Docker instructions.
 
-### 📦 Other Installation Methods
+### Other Installation Methods
 
-- **Standalone Executable**: Download from [Releases](https://github.com/mbsantiago/whombat/releases)
-- **Python Package**: `pip install whombat`
+- **Python Package**: Install from the source code
 
-For detailed installation instructions, refer to the [Installation Guide](https://mbsantiago.github.io/whombat/user_guide/installation/).
+For detailed installation instructions, refer to the [Configuration Guide](CONFIGURATION.md).
 
 ## Usage
 
-### Running Whombat
+### Running Echoroo with Docker
 
-**With Docker:**
+**Development:**
 ```bash
-./scripts/docker.sh start    # Start
-./scripts/docker.sh logs     # View logs
-./scripts/docker.sh stop     # Stop
+./scripts/docker.sh dev              # Start
+./scripts/docker.sh dev logs         # View logs
+./scripts/docker.sh dev stop         # Stop
+./scripts/docker.sh dev db           # Connect to database
 ```
 
-**With Python:**
+**Production:**
 ```bash
-python -m whombat
-# or simply
-whombat
+./scripts/docker.sh prod             # Start
+./scripts/docker.sh prod logs        # View logs
+./scripts/docker.sh prod stop        # Stop
 ```
-
-**With Executable:**
-Double-click the downloaded executable file.
 
 ### Documentation
 
-We have prepared a comprehensive [User Guide](https://mbsantiago.github.io/whombat/user_guide/) to accompany you in your annotation work, covering all features and workflows.
+For detailed information about using Echoroo, refer to:
+- [Docker Guide](DOCKER.md) - Docker deployment instructions
+- [Configuration Guide](CONFIGURATION.md) - Environment configuration
 
 ## Contribution
 
-As a open source project we are incredibly excited for having contributions from the community.
-Head over to the [Contributions](https://mbsantiago.github.io/whombat/CONTRIBUTING/) section of the documentation to see how you can contribute.
+We welcome contributions from the community. Please refer to the contribution guidelines for information on how you can contribute.
 
 ## Citation
 
-If you want to use Whombat for your research, please cite as:
+If you use this tool in your research, please cite the original Whombat paper:
 
 > Balvanera, S. M., Mac Aodha, O., Weldy, M. J., Pringle, H., Browning, E., & Jones, K. E. (2023). Whombat: An open-source annotation tool for machine learning development in bioacoustics. arXiv preprint [arXiv:2308.12688](https://arxiv.org/abs/2308.12688).
 
 ## Acknowledgements
 
-Whombat has been developed with the generous support of the Mexican Council of the Humanities, Science and Technology (**CONAHCyT**; Award Number 2020-000017-02EXTF-00334) and University College London (**UCL**).
+This project is built upon the Whombat project, originally developed with the generous support of the Mexican Council of the Humanities, Science and Technology (**CONAHCyT**; Award Number 2020-000017-02EXTF-00334) and University College London (**UCL**).

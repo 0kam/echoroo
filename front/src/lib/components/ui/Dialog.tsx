@@ -54,16 +54,18 @@ export function DialogOverlay({
   isOpen = true,
 }: {
   title?: ReactNode;
-  children: ({ close }: { close: () => void }) => ReactNode;
+  children: ReactNode | (({ close }: { close: () => void }) => ReactNode);
   isOpen?: boolean;
   onClose?: () => void;
 }) {
+  const closeHandler = () => onClose?.();
+
   return (
     <Transition appear show={isOpen} as={Fragment}>
       <HeadlessDialog
         as="div"
         className="relative z-50"
-        onClose={() => onClose?.()}
+        onClose={closeHandler}
       >
         <Transition.Child
           as={Fragment}
@@ -98,7 +100,7 @@ export function DialogOverlay({
                     </h3>
                   )}
                   <Button
-                    onClick={() => onClose?.()}
+                    onClick={closeHandler}
                     variant="secondary"
                     mode="text"
                   >
@@ -106,7 +108,10 @@ export function DialogOverlay({
                   </Button>
                 </HeadlessDialog.Title>
                 <div className="mt-2">
-                  {children({ close: () => onClose?.() })}
+                  {typeof children === 'function'
+                    ? children({ close: closeHandler })
+                    : children
+                  }
                 </div>
               </HeadlessDialog.Panel>
             </Transition.Child>

@@ -1,5 +1,7 @@
 import {
+  BitDepthIcon,
   ChannelsIcon,
+  RightsIcon,
   SampleRateIcon,
   TimeExpansionIcon,
   TimeIcon,
@@ -40,11 +42,28 @@ export default function RecordingMediaInfo({
         {recording.samplerate.toLocaleString()}
         <Units units="Hz" />
       </div>
+      {recording.bit_depth != null && (
+        <div className="inline-flex items-center">
+          <BitDepthIcon className="inline-block mr-1 w-5 h-5 text-stone-500" />
+          <Label label="Bit depth" />
+          {recording.bit_depth}
+          <Units units="bit" />
+        </div>
+      )}
       <div className="inline-flex items-center">
         <TimeExpansionIcon className="inline-block mr-1 w-5 h-5 text-stone-500" />
         <Label label="Time expansion" />
         {recording.time_expansion}
       </div>
+      {recording.rights && (
+        <div className="inline-flex items-center">
+          <RightsIcon className="inline-block mr-1 w-5 h-5 text-stone-500" />
+          <Label label="Rights" />
+          <span className="text-sm truncate max-w-[200px]" title={recording.rights}>
+            {recording.rights}
+          </span>
+        </div>
+      )}
     </Card>
   );
 }

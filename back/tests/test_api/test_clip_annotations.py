@@ -6,7 +6,7 @@ import pytest
 from sqlalchemy import select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from whombat import api, exceptions, models, schemas
+from echoroo import api, exceptions, models, schemas
 
 
 async def test_created_clip_annotation_is_stored_in_the_database(

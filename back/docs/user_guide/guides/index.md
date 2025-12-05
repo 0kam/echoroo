@@ -16,5 +16,5 @@ Here's what's currently available:
 
 We plan to add many more guides covering advanced topics and integrations.
 
-**Have an idea for a guide?** We'd love to hear it! Please [**suggest a guide by opening an issue on GitHub**](https://github.com/mbsantiago/whombat/issues).
+**Have an idea for a guide?** We'd love to hear it! Please [**suggest a guide by opening an issue on GitHub**](https://github.com/okamoto-group/echoroo/issues).
 Your input helps us build better resources for everyone.

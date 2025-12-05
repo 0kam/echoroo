@@ -4,6 +4,7 @@ import { fn } from "@storybook/test";
 import TagSearchBar from "@/lib/components/tags/TagSearchBar";
 
 import AnnotationProjectTags from "./AnnotationProjectTags";
+import { makeAnnotationProject } from "./storyHelpers";
 
 const meta: Meta<typeof AnnotationProjectTags> = {
   title: "AnnotationProject/Tags",
@@ -32,34 +33,18 @@ type Story = StoryObj<typeof AnnotationProjectTags>;
 
 export const Empty: Story = {
   args: {
-    annotationProject: {
-      uuid: "1",
-      name: "Project 1",
-      description: "Annotation project 1",
-      created_on: new Date(),
-      visibility: "private" as const,
-      created_by_id: "test-user-id",
-      owner_group_id: null,
-      tags: [],
-    },
+    annotationProject: makeAnnotationProject({ tags: [] }),
   },
 };
 
 export const WithTags: Story = {
   args: {
-    annotationProject: {
-      uuid: "1",
-      name: "Project 1",
-      description: "Annotation project 1",
-      created_on: new Date(),
-      visibility: "private" as const,
-      created_by_id: "test-user-id",
-      owner_group_id: null,
+    annotationProject: makeAnnotationProject({
       tags: [
         { key: "species", value: "Myotis lucifugus", canonical_name: "Myotis lucifugus" },
         { key: "species", value: "Myotis septentrionalis", canonical_name: "Myotis septentrionalis" },
         { key: "event", value: "Echolocation", canonical_name: "Echolocation" },
       ],
-    },
+    }),
   },
 };

@@ -11,8 +11,9 @@ import "./globals.css";
 const mulish = Mulish({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "Whombat",
-  description: "Audio annotation tool for machine learning",
+  title: "Echoroo",
+  description:
+    "Echoroo is an audio annotation tool built for fast, reliable machine learning workflows.",
 };
 
 export default function RootLayout({

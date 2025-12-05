@@ -1,6 +1,6 @@
-"""Whombat entry point.
+"""Echoroo entry point.
 
-This script starts the Whombat application. It is used in conjunction with the
+This script starts the Echoroo application. It is used in conjunction with the
 pyinstaller package to create a standalone executable.
 """
 
@@ -8,7 +8,7 @@ import multiprocessing
 
 import uvicorn
 
-from whombat.system import create_app, get_logging_config, get_settings
+from echoroo.system import create_app, get_logging_config, get_settings
 
 settings = get_settings()
 config = get_logging_config(settings)
@@ -26,7 +26,7 @@ if __name__ == "__main__":
 
     An ML-focused audio annotation tool.
 
-    Please wait while Whombat starts up...
+    Please wait while Echoroo starts up...
     """
     )
 

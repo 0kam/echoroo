@@ -7,10 +7,10 @@ on:
 
 jobs:
   build-user-guide:
-    uses: mbsantiago/whombat/.github/workflows/build_user_guide.yml@main
+    uses: okamoto-group/echoroo/.github/workflows/build_user_guide.yml@main
 
   build-frontend:
-    uses: mbsantiago/whombat/.github/workflows/build_frontend.yml@main
+    uses: okamoto-group/echoroo/.github/workflows/build_frontend.yml@main
 
   build-app:
     name: "Bundle App"

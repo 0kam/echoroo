@@ -12,9 +12,11 @@ import type { Dataset, DatasetCreate } from "@/lib/types";
 export default function DatasetCreate({
   onCreateDataset,
   onError,
+  defaultProjectId,
 }: {
   onCreateDataset?: (project: Dataset) => void;
   onError?: (error: AxiosError) => void;
+  defaultProjectId?: string;
 }) {
   const { mutateAsync } = useMutation({
     mutationFn: api.datasets.create,
@@ -34,5 +36,10 @@ export default function DatasetCreate({
     [mutateAsync],
   );
 
-  return <DatasetCreateBase onCreateDataset={handleCreateProject} />;
+  return (
+    <DatasetCreateBase
+      onCreateDataset={handleCreateProject}
+      defaultProjectId={defaultProjectId}
+    />
+  );
 }

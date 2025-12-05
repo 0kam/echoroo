@@ -2,9 +2,13 @@ import { AxiosInstance } from "axios";
 import { z } from "zod";
 
 import * as schemas from "@/lib/schemas";
+import {
+  DatasetDatetimePatternSchema,
+  DatasetDatetimePatternUpdateSchema,
+} from "@/lib/schemas/datasets";
 import type * as types from "@/lib/types";
 
-import { GetMany, Page, downloadContent } from "./common";
+import { GetMany, Page } from "./common";
 
 const DEFAULT_ENDPOINTS = {
   getMany: "/api/v1/datasets/",
@@ -15,17 +19,23 @@ const DEFAULT_ENDPOINTS = {
   get: "/api/v1/datasets/detail/",
   update: "/api/v1/datasets/detail/",
   delete: "/api/v1/datasets/detail/",
-  downloadJson: "/api/v1/datasets/detail/download/json/",
-  downloadCsv: "/api/v1/datasets/detail/download/csv/",
   import: "/api/v1/datasets/import/",
+  datetimePattern: "/api/v1/datasets/detail/datetime_pattern/",
+  parseDatetime: "/api/v1/datasets/detail/parse_datetime/",
+  datetimeParseStatus: "/api/v1/datasets/detail/datetime_parse_status/",
+  filenameSamples: "/api/v1/datasets/detail/filename_samples/",
+  stats: "/api/v1/datasets/detail/stats/",
+  exportBioacoustics: "/api/v1/datasets/detail/export/bioacoustics/",
 };
 
 export function registerDatasetAPI({
   instance,
   endpoints = DEFAULT_ENDPOINTS,
+  baseUrl = "",
 }: {
   instance: AxiosInstance;
   endpoints?: typeof DEFAULT_ENDPOINTS;
+  baseUrl?: string;
 }) {
   async function getMany(
     query: types.GetMany & types.DatasetFilter,
@@ -89,35 +99,6 @@ export function registerDatasetAPI({
     return schemas.DatasetSchema.parse(data);
   }
 
-  async function downloadDatasetJSON(uuid: string) {
-    const { data } = await instance.get(endpoints.downloadJson, {
-      params: { dataset_uuid: uuid },
-    });
-    downloadContent(
-      JSON.stringify(data),
-      `dataset-${uuid}.json`,
-      "application/json",
-    );
-  }
-
-  async function downloadDatasetCSV(uuid: string) {
-    const { data } = await instance.get(endpoints.downloadCsv, {
-      params: { dataset_uuid: uuid },
-    });
-    downloadContent(data, `dataset-${uuid}.csv`, "text/csv");
-  }
-
-  async function downloadDataset(uuid: string, format: "json" | "csv") {
-    switch (format) {
-      case "json":
-        return downloadDatasetJSON(uuid);
-      case "csv":
-        return downloadDatasetCSV(uuid);
-      default:
-        throw new Error(`Invalid format ${format}`);
-    }
-  }
-
   async function importDataset(
     data: types.DatasetImport,
   ): Promise<types.Dataset> {
@@ -129,6 +110,106 @@ export function registerDatasetAPI({
     return schemas.DatasetSchema.parse(res);
   }
 
+  async function setDatetimePattern(
+    uuid: string,
+    pattern: types.DatasetDatetimePatternUpdate,
+  ): Promise<types.DatasetDatetimePattern> {
+    const body = DatasetDatetimePatternUpdateSchema.parse(pattern);
+    const { data } = await instance.post(endpoints.datetimePattern, body, {
+      params: { dataset_uuid: uuid },
+    });
+    return DatasetDatetimePatternSchema.parse(data);
+  }
+
+  async function parseDatetime(
+    uuid: string,
+  ): Promise<{ total: number; success: number; failure: number }> {
+    const { data } = await instance.post(
+      endpoints.parseDatetime,
+      {},
+      {
+        params: { dataset_uuid: uuid },
+      },
+    );
+    return data;
+  }
+
+  async function getDatetimeParseStatus(
+    uuid: string,
+  ): Promise<{ pending: number; success: number; failed: number }> {
+    const { data } = await instance.get(endpoints.datetimeParseStatus, {
+      params: { dataset_uuid: uuid },
+    });
+    return data;
+  }
+
+  async function getFilenameSamples(
+    uuid: string,
+    limit: number = 20,
+  ): Promise<string[]> {
+    const { data } = await instance.get(endpoints.filenameSamples, {
+      params: { dataset_uuid: uuid, limit },
+    });
+    return z.array(z.string()).parse(data);
+  }
+
+  async function getStats(uuid: string): Promise<types.DatasetOverviewStats> {
+    const { data } = await instance.get(endpoints.stats, {
+      params: { dataset_uuid: uuid },
+    });
+    return schemas.DatasetOverviewStatsSchema.parse(data);
+  }
+
+  async function exportBioacoustics(
+    uuid: string,
+    options: { includeAudio?: boolean } = {},
+  ): Promise<void> {
+    // Use fetch API to wait for server to prepare the ZIP file.
+    // The response headers arrive only after ZIP creation is complete on the server,
+    // then we trigger native browser download for efficient streaming to disk.
+    const includeAudio = options.includeAudio ?? false;
+    const params = new URLSearchParams({
+      dataset_uuid: uuid,
+      include_audio: String(includeAudio),
+    });
+    const downloadUrl = `${baseUrl}${endpoints.exportBioacoustics}?${params.toString()}`;
+
+    // Use fetch to wait for the server to prepare the file (ZIP creation).
+    // The response headers are sent only after the ZIP file is ready.
+    const response = await fetch(downloadUrl, {
+      method: "GET",
+      credentials: "include",
+    });
+
+    if (!response.ok) {
+      throw new Error(`Download failed: ${response.statusText}`);
+    }
+
+    // Extract filename from Content-Disposition header
+    const contentDisposition = response.headers.get("Content-Disposition");
+    let filename = "dataset_export.zip";
+    if (contentDisposition) {
+      const match = contentDisposition.match(/filename="?([^";\n]+)"?/);
+      if (match) {
+        filename = match[1];
+      }
+    }
+
+    // Cancel the fetch body (we don't want to download via JS)
+    // and trigger native browser download instead
+    await response.body?.cancel();
+
+    // Now trigger native browser download - the server will stream the file
+    // This opens a new request but the file should be cached/ready on server
+    const link = document.createElement("a");
+    link.href = downloadUrl;
+    link.download = filename;
+    link.style.display = "none";
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  }
+
   return {
     getMany,
     create,
@@ -136,9 +217,14 @@ export function registerDatasetAPI({
     getState: getDatasetState,
     update: updateDataset,
     delete: deleteDataset,
-    download: downloadDataset,
     import: importDataset,
     getCandidates,
     inspectCandidate,
+    setDatetimePattern,
+    parseDatetime,
+    getDatetimeParseStatus,
+    getFilenameSamples,
+    getStats,
+    exportBioacoustics,
   } as const;
 }

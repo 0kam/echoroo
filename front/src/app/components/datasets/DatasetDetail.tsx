@@ -3,10 +3,11 @@ import DatasetDetailBase from "@/lib/components/datasets/DatasetDetail";
 import type { Dataset } from "@/lib/types";
 
 import DatasetActions from "./DatasetActions";
+import DatasetAnnotationProjectsSummary from "./DatasetAnnotationProjectsSummary";
 import DatasetNotesSummary from "./DatasetNotesSummary";
 import DatasetOverview from "./DatasetOverview";
-import DatasetTagsSummary from "./DatasetTagsSummary";
 import DatasetUpdate from "./DatasetUpdate";
+import DatasetMetadataSummary from "./DatasetMetadataSummary";
 
 export default function DatasetDetail({
   dataset,
@@ -21,9 +22,12 @@ export default function DatasetDetail({
         <DatasetActions dataset={dataset} onDeleteDataset={onDeleteDataset} />
       }
       DatasetNotesSummary={<DatasetNotesSummary dataset={dataset} />}
-      DatasetTagsSummary={<DatasetTagsSummary dataset={dataset} />}
       DatasetUpdate={<DatasetUpdate dataset={dataset} />}
       DatasetOverview={<DatasetOverview dataset={dataset} />}
+      DatasetMetadataSummary={<DatasetMetadataSummary dataset={dataset} />}
+      DatasetAnnotationProjectsSummary={
+        <DatasetAnnotationProjectsSummary dataset={dataset} canCreate={true} />
+      }
     />
   );
 }

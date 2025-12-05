@@ -14,9 +14,7 @@ export default function AnnotationProjects() {
 
   const handleClickAnnotationProject = useCallback(
     (project: AnnotationProject) => {
-      router.push(
-        `/annotation_projects/detail/?annotation_project_uuid=${project.uuid}`,
-      );
+      router.push(`/annotation_projects/${project.uuid}/`);
     },
     [router],
   );

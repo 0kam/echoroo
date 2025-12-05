@@ -45,6 +45,7 @@ const recordings: Recording[] = [
     channels: 1,
     samplerate: 44100,
     time_expansion: 1,
+    datetime_parse_status: "success",
     latitude: 51.5072,
     longitude: -0.1276,
     date: new Date(),
@@ -60,6 +61,7 @@ const recordings: Recording[] = [
     channels: 1,
     samplerate: 44100,
     time_expansion: 1,
+    datetime_parse_status: "success",
     latitude: 51.5072,
     longitude: -0.1276,
     date: new Date(),
@@ -75,6 +77,7 @@ const recordings: Recording[] = [
     channels: 1,
     samplerate: 44100,
     time_expansion: 1,
+    datetime_parse_status: "pending",
     tags: [],
     created_on: new Date(),
   },
@@ -86,6 +89,7 @@ const recordings: Recording[] = [
     channels: 1,
     samplerate: 44100,
     time_expansion: 1,
+    datetime_parse_status: "pending",
     tags: [
       { key: "tag", value: "value", canonical_name: "value" },
       { key: "species", value: "Myotis myotis", canonical_name: "Myotis myotis" },
@@ -100,6 +104,7 @@ const recordings: Recording[] = [
     channels: 1,
     samplerate: 44100,
     time_expansion: 1,
+    datetime_parse_status: "pending",
     tags: [],
     notes: [
       {

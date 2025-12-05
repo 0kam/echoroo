@@ -48,6 +48,7 @@ const baseRecording: Recording = {
   channels: 1,
   samplerate: 44100,
   time_expansion: 1,
+  datetime_parse_status: "pending",
   created_on: new Date(),
 };
 

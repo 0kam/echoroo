@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from whombat.system.settings import Settings
+from echoroo.system.settings import Settings
 
 
 @pytest.fixture

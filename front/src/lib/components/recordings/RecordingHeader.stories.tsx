@@ -19,6 +19,7 @@ const recording = {
   samplerate: 44100,
   channels: 1,
   time_expansion: 1,
+  datetime_parse_status: "pending" as const,
   created_on: new Date(),
 };
 
@@ -28,30 +29,41 @@ export const Primary: Story = {
   },
 };
 
-export const WithDate: Story = {
+export const WithDatetime: Story = {
   args: {
     recording: {
       ...recording,
-      date: new Date(),
+      datetime: new Date(),
+      datetime_parse_status: "success" as const,
     },
   },
 };
 
-export const WithTime: Story = {
+export const WithDatetimeFailed: Story = {
   args: {
     recording: {
-      time: "19:00:00",
       ...recording,
+      datetime_parse_status: "failed" as const,
+      datetime_parse_error: "Could not parse datetime from filename",
     },
   },
 };
 
-export const WithLocation: Story = {
+export const WithH3Index: Story = {
   args: {
     recording: {
-      latitude: 0,
-      longitude: 0,
       ...recording,
+      h3_index: "8c2a100d2c5cdff", // Example H3 index
+    },
+  },
+};
+
+export const WithLegacyLocation: Story = {
+  args: {
+    recording: {
+      ...recording,
+      latitude: 35.6812,
+      longitude: 139.7671,
     },
   },
 };

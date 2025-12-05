@@ -9,7 +9,7 @@ import useActiveUser from "@/app/hooks/api/useActiveUser";
 
 import Loading from "@/app/loading";
 
-import { WhombatIcon } from "@/lib/components/icons";
+import { EchorooIcon } from "@/lib/components/icons";
 import { Footer } from "@/lib/components/navigation/Footer";
 import { NavBar } from "@/lib/components/navigation/NavBar";
 import { SideMenu } from "@/lib/components/navigation/SideMenu";
@@ -39,7 +39,7 @@ function WithLogIn({ children }: { children: React.ReactNode }) {
       <div className="flex justify-center items-center w-screen h-screen">
         <div className="flex flex-col items-center">
           <div>
-            <WhombatIcon width={128} height={128} className="w-32 h-32" />
+            <EchorooIcon width={128} height={128} className="w-32 h-32" />
           </div>
           <div>
             <Loading />

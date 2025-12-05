@@ -1,6 +1,5 @@
 import classNames from "classnames";
 import { DivIcon } from "leaflet";
-import "leaflet/dist/leaflet.css";
 import { useMemo } from "react";
 import { MapContainer } from "react-leaflet/MapContainer";
 import { Marker } from "react-leaflet/Marker";

@@ -9,15 +9,12 @@ import type { Recording } from "@/lib/types";
 
 export default function RecordingHeader({
   recording,
-  onUpdateRecording,
 }: {
   recording: Recording;
-  onUpdateRecording?: (data: Recording) => void;
 }) {
-  const { data, isLoading, error, update } = useRecording({
+  const { data, isLoading, error } = useRecording({
     uuid: recording.uuid,
     recording,
-    onUpdateRecording,
   });
 
   if (isLoading) {
@@ -28,7 +25,5 @@ export default function RecordingHeader({
     return <Error error={error || undefined} />;
   }
 
-  return (
-    <RecordingHeaderBase recording={data} onRecordingUpdate={update.mutate} />
-  );
+  return <RecordingHeaderBase recording={data} />;
 }

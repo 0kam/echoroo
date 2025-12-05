@@ -1,10 +1,10 @@
 warning: The `tool.uv.dev-dependencies` field (used in `pyproject.toml`) is deprecated and will be removed in a future release; use `dependency-groups.dev` instead
-2025-10-25 18:28:01,509 - uvicorn.error - INFO - Will watch for changes in these directories: ['/home/okamoto/Projects/whombat/back']
+2025-12-04 17:34:26,042 - uvicorn.error - INFO - Will watch for changes in these directories: ['/home/okamoto/Projects/whombat/back']
 INFO:     Will watch for changes in these directories: ['/home/okamoto/Projects/whombat/back']
-2025-10-25 18:28:01,509 - uvicorn.error - INFO - Uvicorn running on http://0.0.0.0:5000 (Press CTRL+C to quit)
+2025-12-04 17:34:26,042 - uvicorn.error - INFO - Uvicorn running on http://0.0.0.0:5000 (Press CTRL+C to quit)
 INFO:     Uvicorn running on http://0.0.0.0:5000 (Press CTRL+C to quit)
-2025-10-25 18:28:01,509 - uvicorn.error - INFO - Started reloader process [1256531] using WatchFiles
-INFO:     Started reloader process [1256531] using WatchFiles
+2025-12-04 17:34:26,042 - uvicorn.error - INFO - Started reloader process [495983] using WatchFiles
+INFO:     Started reloader process [495983] using WatchFiles
 /home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/pydantic/_internal/_fields.py:132: UserWarning: Field "model_run" in Body_import_model_run_import__post has conflict with protected namespace "model_".
 
 You may be able to resolve this warning by setting `model_config['protected_namespaces'] = ()`.
@@ -13,16 +13,16 @@ You may be able to resolve this warning by setting `model_config['protected_name
 
 You may be able to resolve this warning by setting `model_config['protected_namespaces'] = ()`.
   warnings.warn(
-2025-10-25 18:28:07,270 - uvicorn.error - INFO - Started server process [1256549]
-INFO:     Started server process [1256549]
-2025-10-25 18:28:07,270 - uvicorn.error - INFO - Waiting for application startup.
+2025-12-04 17:34:32,187 - uvicorn.error - INFO - Started server process [495991]
+INFO:     Started server process [495991]
+2025-12-04 17:34:32,187 - uvicorn.error - INFO - Waiting for application startup.
 INFO:     Waiting for application startup.
 INFO:Context impl SQLiteImpl.
 INFO:Will assume non-transactional DDL.
 
 [31m[1mWhombat is running in development mode![0m
 
-[32m[1mDatabase URL:[0m sqlite+aiosqlite:///whombat.db
+[32m[1mDatabase URL:[0m sqlite+aiosqlite:////home/okamoto/.local/share/whombat/whombat.db
 
 [32m[1mSettings:[0m {
     "dev": true,
@@ -47,7 +47,8 @@ INFO:Will assume non-transactional DDL.
     ],
     "open_on_startup": true,
     "auth_cookie_secure": false,
-    "auth_cookie_samesite": "lax"
+    "auth_cookie_samesite": "lax",
+    "metadata_dir": "/home/okamoto/.local/share/whombat/metadata"
 }
     
 
@@ -57,367 +58,845 @@ INFO:Will assume non-transactional DDL.
 
     [33mPress Ctrl+C to exit.[0m
     
-2025-10-25 18:28:09,980 - uvicorn.error - INFO - Application startup complete.
+2025-12-04 17:34:32,453 - uvicorn.error - INFO - Application startup complete.
 INFO:     Application startup complete.
-INFO:     158.210.76.175:36174 - "GET /api/v1/users/me HTTP/1.1" 200 OK
-INFO:     158.210.76.175:36174 - "GET /api/v1/groups/me HTTP/1.1" 200 OK
-INFO:     158.210.76.175:36176 - "GET /api/v1/annotation_projects/detail/?annotation_project_uuid=26fc5ef7-1bc8-41cb-9627-a7932f0f7353 HTTP/1.1" 200 OK
-INFO:     158.210.76.175:36186 - "GET /api/v1/users/me HTTP/1.1" 200 OK
-INFO:     158.210.76.175:36186 - "GET /api/v1/groups/me HTTP/1.1" 200 OK
-INFO:     158.210.76.175:36198 - "GET /api/v1/annotation_projects/detail/?annotation_project_uuid=26fc5ef7-1bc8-41cb-9627-a7932f0f7353 HTTP/1.1" 200 OK
-INFO:     158.210.76.175:36212 - "GET /api/v1/users/me HTTP/1.1" 200 OK
-INFO:     158.210.76.175:36212 - "GET /api/v1/groups/me HTTP/1.1" 200 OK
-INFO:     158.210.76.175:36222 - "GET /api/v1/annotation_projects/detail/?annotation_project_uuid=26fc5ef7-1bc8-41cb-9627-a7932f0f7353 HTTP/1.1" 200 OK
-INFO:     158.210.76.175:56738 - "GET /api/v1/groups/me HTTP/1.1" 200 OK
-INFO:     158.210.76.175:56738 - "GET /api/v1/groups/1 HTTP/1.1" 200 OK
-INFO:     158.210.76.175:56752 - "OPTIONS /api/v1/groups/1/members/39531e40-3a5b-451c-bcb6-11441dbfe773 HTTP/1.1" 200 OK
-INFO:     158.210.76.175:56738 - "DELETE /api/v1/groups/1/members/39531e40-3a5b-451c-bcb6-11441dbfe773 HTTP/1.1" 204 No Content
-INFO:     158.210.76.175:56738 - "GET /api/v1/groups/1 HTTP/1.1" 200 OK
-INFO:     158.210.76.175:56762 - "GET /api/v1/groups/me HTTP/1.1" 200 OK
-INFO:     158.210.76.175:60352 - "GET /api/v1/users/lookup/?username=okamoto HTTP/1.1" 200 OK
-INFO:     158.210.76.175:60368 - "OPTIONS /api/v1/groups/1/members HTTP/1.1" 200 OK
-INFO:     158.210.76.175:60352 - "POST /api/v1/groups/1/members HTTP/1.1" 201 Created
-INFO:     158.210.76.175:60352 - "GET /api/v1/groups/1 HTTP/1.1" 200 OK
-INFO:     158.210.76.175:60352 - "GET /api/v1/groups/me HTTP/1.1" 200 OK
-INFO:     158.210.76.175:52600 - "GET /api/v1/users/lookup/?username=yoshioka HTTP/1.1" 200 OK
-INFO:     158.210.76.175:52600 - "POST /api/v1/groups/1/members HTTP/1.1" 201 Created
-INFO:     158.210.76.175:52600 - "GET /api/v1/groups/1 HTTP/1.1" 200 OK
-INFO:     158.210.76.175:52602 - "GET /api/v1/groups/me HTTP/1.1" 200 OK
-INFO:     158.210.76.175:38066 - "OPTIONS /api/v1/groups/1/members/7fa6ef22-84a5-42df-b882-3ec6bcaed1cc HTTP/1.1" 200 OK
-INFO:     158.210.76.175:52602 - "DELETE /api/v1/groups/1/members/7fa6ef22-84a5-42df-b882-3ec6bcaed1cc HTTP/1.1" 204 No Content
-INFO:     158.210.76.175:52602 - "GET /api/v1/groups/1 HTTP/1.1" 200 OK
-INFO:     158.210.76.175:52600 - "GET /api/v1/groups/me HTTP/1.1" 200 OK
-INFO:     158.210.76.175:56508 - "POST /api/v1/auth/logout HTTP/1.1" 204 No Content
-INFO:     158.210.76.175:56508 - "POST /api/v1/auth/logout HTTP/1.1" 401 Unauthorized
-INFO:     158.210.76.175:56508 - "POST /api/v1/auth/logout HTTP/1.1" 401 Unauthorized
-INFO:     158.210.76.175:56508 - "POST /api/v1/auth/logout HTTP/1.1" 401 Unauthorized
-INFO:     158.210.76.175:56508 - "POST /api/v1/auth/login HTTP/1.1" 204 No Content
-INFO:     158.210.76.175:56508 - "GET /api/v1/groups/me HTTP/1.1" 200 OK
-INFO:     158.210.76.175:35056 - "GET /api/v1/annotation_projects/?limit=10&offset=0 HTTP/1.1" 200 OK
-INFO:     158.210.76.175:35096 - "GET /api/v1/tags/sound_event_annotation_counts/?limit=-1&offset=0&annotation_project__eq=26fc5ef7-1bc8-41cb-9627-a7932f0f7353 HTTP/1.1" 200 OK
-INFO:     158.210.76.175:35112 - "GET /api/v1/notes/sound_event_annotation_notes/?limit=10&offset=0&annotation_project__eq=26fc5ef7-1bc8-41cb-9627-a7932f0f7353&issues__eq=true HTTP/1.1" 200 OK
-INFO:     158.210.76.175:35068 - "GET /api/v1/tags/clip_annotation_counts/?limit=-1&offset=0&annotation_project__eq=26fc5ef7-1bc8-41cb-9627-a7932f0f7353 HTTP/1.1" 200 OK
-INFO:     158.210.76.175:35082 - "GET /api/v1/notes/clip_annotation_notes/?limit=10&offset=0&annotation_project__eq=26fc5ef7-1bc8-41cb-9627-a7932f0f7353&issues__eq=true HTTP/1.1" 200 OK
-INFO:     158.210.76.175:35056 - "GET /api/v1/annotation_tasks/?limit=-1&offset=0&annotation_project__eq=26fc5ef7-1bc8-41cb-9627-a7932f0f7353 HTTP/1.1" 200 OK
-INFO:     158.210.76.175:48926 - "POST /api/v1/auth/logout HTTP/1.1" 204 No Content
-INFO:     158.210.76.175:35632 - "POST /api/v1/auth/login HTTP/1.1" 204 No Content
-INFO:     158.210.76.175:35632 - "GET /api/v1/users/me HTTP/1.1" 200 OK
-INFO:     158.210.76.175:35634 - "GET /api/v1/datasets/?limit=10&offset=0 HTTP/1.1" 200 OK
-INFO:     158.210.76.175:35634 - "POST /api/v1/auth/logout HTTP/1.1" 204 No Content
-INFO:     158.210.76.175:53338 - "POST /api/v1/auth/login HTTP/1.1" 400 Bad Request
-INFO:     158.210.76.175:53338 - "POST /api/v1/auth/login HTTP/1.1" 204 No Content
-INFO:     158.210.76.175:53338 - "GET /api/v1/datasets/?limit=10&offset=0 HTTP/1.1" 200 OK
-INFO:     158.210.76.175:53338 - "GET /api/v1/datasets/detail/?dataset_uuid=54efbc69-013b-4abf-b62e-faccd562ac5e HTTP/1.1" 200 OK
-INFO:     158.210.76.175:53338 - "GET /api/v1/datasets/detail/state/?dataset_uuid=54efbc69-013b-4abf-b62e-faccd562ac5e HTTP/1.1" 200 OK
-INFO:     158.210.76.175:53332 - "GET /api/v1/tags/recording_counts/?limit=-1&offset=0&dataset__eq=54efbc69-013b-4abf-b62e-faccd562ac5e HTTP/1.1" 200 OK
-INFO:     158.210.76.175:53316 - "GET /api/v1/notes/?limit=0&offset=0&is_issue__eq=true&dataset__eq=54efbc69-013b-4abf-b62e-faccd562ac5e HTTP/1.1" 200 OK
-INFO:     158.210.76.175:53340 - "GET /api/v1/groups/me HTTP/1.1" 200 OK
-INFO:     158.210.76.175:53334 - "GET /api/v1/notes/recording_notes/?limit=-1&offset=0&dataset__eq=54efbc69-013b-4abf-b62e-faccd562ac5e&issues__eq=true HTTP/1.1" 200 OK
-INFO:     158.210.76.175:53348 - "OPTIONS /api/v1/datasets/detail/?dataset_uuid=54efbc69-013b-4abf-b62e-faccd562ac5e HTTP/1.1" 200 OK
-INFO:     158.210.76.175:53340 - "DELETE /api/v1/datasets/detail/?dataset_uuid=54efbc69-013b-4abf-b62e-faccd562ac5e HTTP/1.1" 500 Internal Server Error
-2025-10-25 18:30:46,102 - uvicorn.error - ERROR - Exception in ASGI application
-Traceback (most recent call last):
-  File "/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/uvicorn/protocols/http/httptools_impl.py", line 401, in run_asgi
-    result = await app(  # type: ignore[func-returns-value]
-             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/uvicorn/middleware/proxy_headers.py", line 60, in __call__
-    return await self.app(scope, receive, send)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/fastapi/applications.py", line 1054, in __call__
-    await super().__call__(scope, receive, send)
-  File "/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/starlette/applications.py", line 113, in __call__
-    await self.middleware_stack(scope, receive, send)
-  File "/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/starlette/middleware/errors.py", line 187, in __call__
-    raise exc
-  File "/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/starlette/middleware/errors.py", line 165, in __call__
-    await self.app(scope, receive, _send)
-  File "/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/starlette/middleware/cors.py", line 93, in __call__
-    await self.simple_response(scope, receive, send, request_headers=headers)
-  File "/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/starlette/middleware/cors.py", line 144, in simple_response
-    await self.app(scope, receive, send)
-  File "/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/starlette/middleware/exceptions.py", line 62, in __call__
-    await wrap_app_handling_exceptions(self.app, conn)(scope, receive, send)
-  File "/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/starlette/_exception_handler.py", line 62, in wrapped_app
-    raise exc
-  File "/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/starlette/_exception_handler.py", line 51, in wrapped_app
-    await app(scope, receive, sender)
-  File "/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/starlette/routing.py", line 715, in __call__
-    await self.middleware_stack(scope, receive, send)
-  File "/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/starlette/routing.py", line 735, in app
-    await route.handle(scope, receive, send)
-  File "/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/starlette/routing.py", line 288, in handle
-    await self.app(scope, receive, send)
-  File "/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/starlette/routing.py", line 76, in app
-    await wrap_app_handling_exceptions(app, request)(scope, receive, send)
-  File "/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/starlette/_exception_handler.py", line 62, in wrapped_app
-    raise exc
-  File "/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/starlette/_exception_handler.py", line 51, in wrapped_app
-    await app(scope, receive, sender)
-  File "/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/starlette/routing.py", line 73, in app
-    response = await f(request)
-               ^^^^^^^^^^^^^^^^
-  File "/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/fastapi/routing.py", line 301, in app
-    raw_response = await run_endpoint_function(
-                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/fastapi/routing.py", line 212, in run_endpoint_function
-    return await dependant.call(**values)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/home/okamoto/Projects/whombat/back/src/whombat/routes/datasets.py", line 180, in delete_dataset
-    deleted = await api.datasets.delete(session, dataset_obj, user=user)
-              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/home/okamoto/Projects/whombat/back/src/whombat/api/datasets.py", line 299, in delete
-    raise exceptions.PermissionDeniedError(
-whombat.exceptions.PermissionDeniedError: You do not have permission to delete this dataset
-ERROR:    Exception in ASGI application
-Traceback (most recent call last):
-  File "/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/uvicorn/protocols/http/httptools_impl.py", line 401, in run_asgi
-    result = await app(  # type: ignore[func-returns-value]
-             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/uvicorn/middleware/proxy_headers.py", line 60, in __call__
-    return await self.app(scope, receive, send)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/fastapi/applications.py", line 1054, in __call__
-    await super().__call__(scope, receive, send)
-  File "/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/starlette/applications.py", line 113, in __call__
-    await self.middleware_stack(scope, receive, send)
-  File "/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/starlette/middleware/errors.py", line 187, in __call__
-    raise exc
-  File "/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/starlette/middleware/errors.py", line 165, in __call__
-    await self.app(scope, receive, _send)
-  File "/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/starlette/middleware/cors.py", line 93, in __call__
-    await self.simple_response(scope, receive, send, request_headers=headers)
-  File "/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/starlette/middleware/cors.py", line 144, in simple_response
-    await self.app(scope, receive, send)
-  File "/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/starlette/middleware/exceptions.py", line 62, in __call__
-    await wrap_app_handling_exceptions(self.app, conn)(scope, receive, send)
-  File "/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/starlette/_exception_handler.py", line 62, in wrapped_app
-    raise exc
-  File "/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/starlette/_exception_handler.py", line 51, in wrapped_app
-    await app(scope, receive, sender)
-  File "/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/starlette/routing.py", line 715, in __call__
-    await self.middleware_stack(scope, receive, send)
-  File "/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/starlette/routing.py", line 735, in app
-    await route.handle(scope, receive, send)
-  File "/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/starlette/routing.py", line 288, in handle
-    await self.app(scope, receive, send)
-  File "/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/starlette/routing.py", line 76, in app
-    await wrap_app_handling_exceptions(app, request)(scope, receive, send)
-  File "/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/starlette/_exception_handler.py", line 62, in wrapped_app
-    raise exc
-  File "/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/starlette/_exception_handler.py", line 51, in wrapped_app
-    await app(scope, receive, sender)
-  File "/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/starlette/routing.py", line 73, in app
-    response = await f(request)
-               ^^^^^^^^^^^^^^^^
-  File "/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/fastapi/routing.py", line 301, in app
-    raw_response = await run_endpoint_function(
-                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/fastapi/routing.py", line 212, in run_endpoint_function
-    return await dependant.call(**values)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/home/okamoto/Projects/whombat/back/src/whombat/routes/datasets.py", line 180, in delete_dataset
-    deleted = await api.datasets.delete(session, dataset_obj, user=user)
-              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/home/okamoto/Projects/whombat/back/src/whombat/api/datasets.py", line 299, in delete
-    raise exceptions.PermissionDeniedError(
-whombat.exceptions.PermissionDeniedError: You do not have permission to delete this dataset
-INFO:     158.210.76.175:52826 - "GET /api/v1/datasets/?limit=10&offset=0 HTTP/1.1" 200 OK
-INFO:     158.210.76.175:35002 - "POST /api/v1/auth/logout HTTP/1.1" 204 No Content
-INFO:     158.210.76.175:55232 - "POST /api/v1/auth/login HTTP/1.1" 400 Bad Request
-INFO:     158.210.76.175:55234 - "POST /api/v1/auth/login HTTP/1.1" 204 No Content
-INFO:     158.210.76.175:55234 - "GET /api/v1/users/me HTTP/1.1" 200 OK
-INFO:     158.210.76.175:55234 - "GET /api/v1/groups/me HTTP/1.1" 200 OK
-INFO:     158.210.76.175:55234 - "GET /api/v1/datasets/?limit=10&offset=0 HTTP/1.1" 200 OK
-INFO:     158.210.76.175:55234 - "GET /api/v1/datasets/detail/?dataset_uuid=54efbc69-013b-4abf-b62e-faccd562ac5e HTTP/1.1" 200 OK
-INFO:     158.210.76.175:55234 - "GET /api/v1/datasets/detail/state/?dataset_uuid=54efbc69-013b-4abf-b62e-faccd562ac5e HTTP/1.1" 200 OK
-INFO:     158.210.76.175:51570 - "GET /api/v1/notes/?limit=0&offset=0&is_issue__eq=true&dataset__eq=54efbc69-013b-4abf-b62e-faccd562ac5e HTTP/1.1" 200 OK
-INFO:     158.210.76.175:51588 - "GET /api/v1/notes/recording_notes/?limit=-1&offset=0&dataset__eq=54efbc69-013b-4abf-b62e-faccd562ac5e&issues__eq=true HTTP/1.1" 200 OK
-INFO:     158.210.76.175:51574 - "GET /api/v1/tags/recording_counts/?limit=-1&offset=0&dataset__eq=54efbc69-013b-4abf-b62e-faccd562ac5e HTTP/1.1" 200 OK
-INFO:     158.210.76.175:55234 - "GET /api/v1/datasets/?limit=10&offset=0 HTTP/1.1" 200 OK
-INFO:     158.210.76.175:51570 - "GET /api/v1/notes/recording_notes/?limit=-1&offset=0&dataset__eq=54efbc69-013b-4abf-b62e-faccd562ac5e&issues__eq=true HTTP/1.1" 200 OK
-INFO:     158.210.76.175:51588 - "GET /api/v1/tags/recording_counts/?limit=-1&offset=0&dataset__eq=54efbc69-013b-4abf-b62e-faccd562ac5e HTTP/1.1" 200 OK
-INFO:     158.210.76.175:51574 - "GET /api/v1/notes/?limit=0&offset=0&is_issue__eq=true&dataset__eq=54efbc69-013b-4abf-b62e-faccd562ac5e HTTP/1.1" 200 OK
-INFO:     158.210.76.175:55234 - "GET /api/v1/datasets/detail/state/?dataset_uuid=54efbc69-013b-4abf-b62e-faccd562ac5e HTTP/1.1" 200 OK
-INFO:     158.210.76.175:55234 - "GET /api/v1/datasets/?limit=10&offset=0 HTTP/1.1" 200 OK
-INFO:     158.210.76.175:55234 - "GET /api/v1/annotation_projects/?limit=10&offset=0 HTTP/1.1" 200 OK
-INFO:     158.210.76.175:55234 - "GET /api/v1/datasets/?limit=10&offset=0 HTTP/1.1" 200 OK
-INFO:     158.210.76.175:55234 - "GET /api/v1/datasets/detail/state/?dataset_uuid=54efbc69-013b-4abf-b62e-faccd562ac5e HTTP/1.1" 200 OK
-INFO:     158.210.76.175:55234 - "GET /api/v1/notes/?limit=0&offset=0&is_issue__eq=true&dataset__eq=54efbc69-013b-4abf-b62e-faccd562ac5e HTTP/1.1" 200 OK
-INFO:     158.210.76.175:57984 - "GET /api/v1/notes/recording_notes/?limit=-1&offset=0&dataset__eq=54efbc69-013b-4abf-b62e-faccd562ac5e&issues__eq=true HTTP/1.1" 200 OK
-INFO:     158.210.76.175:57990 - "GET /api/v1/tags/recording_counts/?limit=-1&offset=0&dataset__eq=54efbc69-013b-4abf-b62e-faccd562ac5e HTTP/1.1" 200 OK
-INFO:     158.210.76.175:33530 - "POST /api/v1/auth/logout HTTP/1.1" 204 No Content
-INFO:     158.210.76.175:38124 - "POST /api/v1/auth/login HTTP/1.1" 204 No Content
-INFO:     158.210.76.175:38124 - "GET /api/v1/users/me HTTP/1.1" 200 OK
-INFO:     158.210.76.175:38124 - "GET /api/v1/groups/me HTTP/1.1" 200 OK
-INFO:     158.210.76.175:38124 - "GET /api/v1/datasets/?limit=10&offset=0 HTTP/1.1" 200 OK
-INFO:     158.210.76.175:38124 - "GET /api/v1/datasets/detail/?dataset_uuid=54efbc69-013b-4abf-b62e-faccd562ac5e HTTP/1.1" 200 OK
-INFO:     158.210.76.175:38124 - "GET /api/v1/datasets/detail/state/?dataset_uuid=54efbc69-013b-4abf-b62e-faccd562ac5e HTTP/1.1" 200 OK
-INFO:     158.210.76.175:38134 - "GET /api/v1/tags/recording_counts/?limit=-1&offset=0&dataset__eq=54efbc69-013b-4abf-b62e-faccd562ac5e HTTP/1.1" 200 OK
-INFO:     158.210.76.175:38130 - "GET /api/v1/notes/?limit=0&offset=0&is_issue__eq=true&dataset__eq=54efbc69-013b-4abf-b62e-faccd562ac5e HTTP/1.1" 200 OK
-INFO:     158.210.76.175:38140 - "GET /api/v1/notes/recording_notes/?limit=-1&offset=0&dataset__eq=54efbc69-013b-4abf-b62e-faccd562ac5e&issues__eq=true HTTP/1.1" 200 OK
-INFO:     158.210.76.175:38124 - "GET /api/v1/datasets/?limit=10&offset=0 HTTP/1.1" 200 OK
-INFO:     158.210.76.175:38124 - "GET /api/v1/annotation_projects/?limit=10&offset=0 HTTP/1.1" 200 OK
-INFO:     158.210.76.175:38124 - "GET /api/v1/datasets/?limit=10&offset=0 HTTP/1.1" 200 OK
-INFO:     158.210.76.175:38124 - "GET /api/v1/datasets/detail/?dataset_uuid=17e299e5-8ebc-4e8d-93b1-dfafe33acba4 HTTP/1.1" 200 OK
-INFO:     158.210.76.175:38124 - "GET /api/v1/datasets/detail/state/?dataset_uuid=17e299e5-8ebc-4e8d-93b1-dfafe33acba4 HTTP/1.1" 200 OK
-INFO:     158.210.76.175:57368 - "GET /api/v1/notes/?limit=0&offset=0&is_issue__eq=true&dataset__eq=17e299e5-8ebc-4e8d-93b1-dfafe33acba4 HTTP/1.1" 200 OK
-INFO:     158.210.76.175:57374 - "GET /api/v1/tags/recording_counts/?limit=-1&offset=0&dataset__eq=17e299e5-8ebc-4e8d-93b1-dfafe33acba4 HTTP/1.1" 200 OK
-INFO:     158.210.76.175:57390 - "GET /api/v1/notes/recording_notes/?limit=-1&offset=0&dataset__eq=17e299e5-8ebc-4e8d-93b1-dfafe33acba4&issues__eq=true HTTP/1.1" 200 OK
-INFO:     158.210.76.175:57404 - "OPTIONS /api/v1/datasets/detail/?dataset_uuid=17e299e5-8ebc-4e8d-93b1-dfafe33acba4 HTTP/1.1" 200 OK
-INFO:     158.210.76.175:38124 - "PATCH /api/v1/datasets/detail/?dataset_uuid=17e299e5-8ebc-4e8d-93b1-dfafe33acba4 HTTP/1.1" 200 OK
-INFO:     158.210.76.175:38124 - "GET /api/v1/tags/recording_counts/?limit=-1&offset=0&dataset__eq=17e299e5-8ebc-4e8d-93b1-dfafe33acba4 HTTP/1.1" 200 OK
-INFO:     158.210.76.175:57390 - "GET /api/v1/notes/?limit=0&offset=0&is_issue__eq=true&dataset__eq=17e299e5-8ebc-4e8d-93b1-dfafe33acba4 HTTP/1.1" 200 OK
-INFO:     158.210.76.175:57374 - "GET /api/v1/notes/recording_notes/?limit=-1&offset=0&dataset__eq=17e299e5-8ebc-4e8d-93b1-dfafe33acba4&issues__eq=true HTTP/1.1" 200 OK
-INFO:     158.210.76.175:38124 - "PATCH /api/v1/datasets/detail/?dataset_uuid=17e299e5-8ebc-4e8d-93b1-dfafe33acba4 HTTP/1.1" 200 OK
-INFO:     158.210.76.175:57374 - "GET /api/v1/notes/recording_notes/?limit=-1&offset=0&dataset__eq=17e299e5-8ebc-4e8d-93b1-dfafe33acba4&issues__eq=true HTTP/1.1" 200 OK
-INFO:     158.210.76.175:38124 - "GET /api/v1/tags/recording_counts/?limit=-1&offset=0&dataset__eq=17e299e5-8ebc-4e8d-93b1-dfafe33acba4 HTTP/1.1" 200 OK
-INFO:     158.210.76.175:57390 - "GET /api/v1/notes/?limit=0&offset=0&is_issue__eq=true&dataset__eq=17e299e5-8ebc-4e8d-93b1-dfafe33acba4 HTTP/1.1" 200 OK
-INFO:     158.210.76.175:38124 - "PATCH /api/v1/datasets/detail/?dataset_uuid=17e299e5-8ebc-4e8d-93b1-dfafe33acba4 HTTP/1.1" 200 OK
-INFO:     158.210.76.175:38124 - "GET /api/v1/tags/recording_counts/?limit=-1&offset=0&dataset__eq=17e299e5-8ebc-4e8d-93b1-dfafe33acba4 HTTP/1.1" 200 OK
-INFO:     158.210.76.175:57390 - "GET /api/v1/notes/?limit=0&offset=0&is_issue__eq=true&dataset__eq=17e299e5-8ebc-4e8d-93b1-dfafe33acba4 HTTP/1.1" 200 OK
-INFO:     158.210.76.175:57374 - "GET /api/v1/notes/recording_notes/?limit=-1&offset=0&dataset__eq=17e299e5-8ebc-4e8d-93b1-dfafe33acba4&issues__eq=true HTTP/1.1" 200 OK
-INFO:     158.210.76.175:50384 - "DELETE /api/v1/datasets/detail/?dataset_uuid=17e299e5-8ebc-4e8d-93b1-dfafe33acba4 HTTP/1.1" 500 Internal Server Error
-2025-10-25 18:32:24,095 - uvicorn.error - ERROR - Exception in ASGI application
-Traceback (most recent call last):
-  File "/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/uvicorn/protocols/http/httptools_impl.py", line 401, in run_asgi
-    result = await app(  # type: ignore[func-returns-value]
-             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/uvicorn/middleware/proxy_headers.py", line 60, in __call__
-    return await self.app(scope, receive, send)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/fastapi/applications.py", line 1054, in __call__
-    await super().__call__(scope, receive, send)
-  File "/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/starlette/applications.py", line 113, in __call__
-    await self.middleware_stack(scope, receive, send)
-  File "/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/starlette/middleware/errors.py", line 187, in __call__
-    raise exc
-  File "/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/starlette/middleware/errors.py", line 165, in __call__
-    await self.app(scope, receive, _send)
-  File "/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/starlette/middleware/cors.py", line 93, in __call__
-    await self.simple_response(scope, receive, send, request_headers=headers)
-  File "/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/starlette/middleware/cors.py", line 144, in simple_response
-    await self.app(scope, receive, send)
-  File "/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/starlette/middleware/exceptions.py", line 62, in __call__
-    await wrap_app_handling_exceptions(self.app, conn)(scope, receive, send)
-  File "/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/starlette/_exception_handler.py", line 62, in wrapped_app
-    raise exc
-  File "/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/starlette/_exception_handler.py", line 51, in wrapped_app
-    await app(scope, receive, sender)
-  File "/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/starlette/routing.py", line 715, in __call__
-    await self.middleware_stack(scope, receive, send)
-  File "/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/starlette/routing.py", line 735, in app
-    await route.handle(scope, receive, send)
-  File "/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/starlette/routing.py", line 288, in handle
-    await self.app(scope, receive, send)
-  File "/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/starlette/routing.py", line 76, in app
-    await wrap_app_handling_exceptions(app, request)(scope, receive, send)
-  File "/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/starlette/_exception_handler.py", line 62, in wrapped_app
-    raise exc
-  File "/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/starlette/_exception_handler.py", line 51, in wrapped_app
-    await app(scope, receive, sender)
-  File "/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/starlette/routing.py", line 73, in app
-    response = await f(request)
-               ^^^^^^^^^^^^^^^^
-  File "/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/fastapi/routing.py", line 301, in app
-    raw_response = await run_endpoint_function(
-                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/fastapi/routing.py", line 212, in run_endpoint_function
-    return await dependant.call(**values)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/home/okamoto/Projects/whombat/back/src/whombat/routes/datasets.py", line 180, in delete_dataset
-    deleted = await api.datasets.delete(session, dataset_obj, user=user)
-              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/home/okamoto/Projects/whombat/back/src/whombat/api/datasets.py", line 299, in delete
-    raise exceptions.PermissionDeniedError(
-whombat.exceptions.PermissionDeniedError: You do not have permission to delete this dataset
-ERROR:    Exception in ASGI application
-Traceback (most recent call last):
-  File "/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/uvicorn/protocols/http/httptools_impl.py", line 401, in run_asgi
-    result = await app(  # type: ignore[func-returns-value]
-             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/uvicorn/middleware/proxy_headers.py", line 60, in __call__
-    return await self.app(scope, receive, send)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/fastapi/applications.py", line 1054, in __call__
-    await super().__call__(scope, receive, send)
-  File "/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/starlette/applications.py", line 113, in __call__
-    await self.middleware_stack(scope, receive, send)
-  File "/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/starlette/middleware/errors.py", line 187, in __call__
-    raise exc
-  File "/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/starlette/middleware/errors.py", line 165, in __call__
-    await self.app(scope, receive, _send)
-  File "/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/starlette/middleware/cors.py", line 93, in __call__
-    await self.simple_response(scope, receive, send, request_headers=headers)
-  File "/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/starlette/middleware/cors.py", line 144, in simple_response
-    await self.app(scope, receive, send)
-  File "/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/starlette/middleware/exceptions.py", line 62, in __call__
-    await wrap_app_handling_exceptions(self.app, conn)(scope, receive, send)
-  File "/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/starlette/_exception_handler.py", line 62, in wrapped_app
-    raise exc
-  File "/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/starlette/_exception_handler.py", line 51, in wrapped_app
-    await app(scope, receive, sender)
-  File "/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/starlette/routing.py", line 715, in __call__
-    await self.middleware_stack(scope, receive, send)
-  File "/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/starlette/routing.py", line 735, in app
-    await route.handle(scope, receive, send)
-  File "/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/starlette/routing.py", line 288, in handle
-    await self.app(scope, receive, send)
-  File "/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/starlette/routing.py", line 76, in app
-    await wrap_app_handling_exceptions(app, request)(scope, receive, send)
-  File "/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/starlette/_exception_handler.py", line 62, in wrapped_app
-    raise exc
-  File "/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/starlette/_exception_handler.py", line 51, in wrapped_app
-    await app(scope, receive, sender)
-  File "/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/starlette/routing.py", line 73, in app
-    response = await f(request)
-               ^^^^^^^^^^^^^^^^
-  File "/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/fastapi/routing.py", line 301, in app
-    raw_response = await run_endpoint_function(
-                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/fastapi/routing.py", line 212, in run_endpoint_function
-    return await dependant.call(**values)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/home/okamoto/Projects/whombat/back/src/whombat/routes/datasets.py", line 180, in delete_dataset
-    deleted = await api.datasets.delete(session, dataset_obj, user=user)
-              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/home/okamoto/Projects/whombat/back/src/whombat/api/datasets.py", line 299, in delete
-    raise exceptions.PermissionDeniedError(
-whombat.exceptions.PermissionDeniedError: You do not have permission to delete this dataset
-INFO:     158.210.76.175:32786 - "GET /api/v1/users/me HTTP/1.1" 200 OK
-INFO:     158.210.76.175:52752 - "GET /api/v1/users/me HTTP/1.1" 200 OK
-INFO:     158.210.76.175:52752 - "GET /api/v1/datasets/detail/?dataset_uuid=17e299e5-8ebc-4e8d-93b1-dfafe33acba4 HTTP/1.1" 200 OK
-INFO:     158.210.76.175:52766 - "GET /api/v1/groups/me HTTP/1.1" 200 OK
-INFO:     158.210.76.175:52752 - "GET /api/v1/datasets/detail/state/?dataset_uuid=17e299e5-8ebc-4e8d-93b1-dfafe33acba4 HTTP/1.1" 200 OK
-INFO:     158.210.76.175:52766 - "GET /api/v1/notes/?limit=0&offset=0&is_issue__eq=true&dataset__eq=17e299e5-8ebc-4e8d-93b1-dfafe33acba4 HTTP/1.1" 200 OK
-INFO:     158.210.76.175:52752 - "GET /api/v1/tags/recording_counts/?limit=-1&offset=0&dataset__eq=17e299e5-8ebc-4e8d-93b1-dfafe33acba4 HTTP/1.1" 200 OK
-INFO:     158.210.76.175:52774 - "GET /api/v1/notes/recording_notes/?limit=-1&offset=0&dataset__eq=17e299e5-8ebc-4e8d-93b1-dfafe33acba4&issues__eq=true HTTP/1.1" 200 OK
-INFO:     158.210.76.175:52752 - "POST /api/v1/auth/logout HTTP/1.1" 204 No Content
-INFO:     158.210.76.175:52752 - "POST /api/v1/auth/login HTTP/1.1" 204 No Content
-INFO:     158.210.76.175:52752 - "GET /api/v1/datasets/?limit=10&offset=0 HTTP/1.1" 200 OK
-INFO:     158.210.76.175:52752 - "GET /api/v1/datasets/detail/state/?dataset_uuid=17e299e5-8ebc-4e8d-93b1-dfafe33acba4 HTTP/1.1" 200 OK
-INFO:     158.210.76.175:52752 - "GET /api/v1/notes/?limit=0&offset=0&is_issue__eq=true&dataset__eq=17e299e5-8ebc-4e8d-93b1-dfafe33acba4 HTTP/1.1" 200 OK
-INFO:     158.210.76.175:52960 - "GET /api/v1/tags/recording_counts/?limit=-1&offset=0&dataset__eq=17e299e5-8ebc-4e8d-93b1-dfafe33acba4 HTTP/1.1" 200 OK
-INFO:     158.210.76.175:52950 - "GET /api/v1/notes/recording_notes/?limit=-1&offset=0&dataset__eq=17e299e5-8ebc-4e8d-93b1-dfafe33acba4&issues__eq=true HTTP/1.1" 200 OK
-INFO:     158.210.76.175:52752 - "GET /api/v1/datasets/?limit=10&offset=0 HTTP/1.1" 200 OK
-INFO:     158.210.76.175:52752 - "GET /api/v1/datasets/detail/?dataset_uuid=54efbc69-013b-4abf-b62e-faccd562ac5e HTTP/1.1" 200 OK
-INFO:     158.210.76.175:52950 - "GET /api/v1/tags/recording_counts/?limit=-1&offset=0&dataset__eq=54efbc69-013b-4abf-b62e-faccd562ac5e HTTP/1.1" 200 OK
-INFO:     158.210.76.175:52960 - "GET /api/v1/notes/?limit=0&offset=0&is_issue__eq=true&dataset__eq=54efbc69-013b-4abf-b62e-faccd562ac5e HTTP/1.1" 200 OK
-INFO:     158.210.76.175:52962 - "GET /api/v1/notes/recording_notes/?limit=-1&offset=0&dataset__eq=54efbc69-013b-4abf-b62e-faccd562ac5e&issues__eq=true HTTP/1.1" 200 OK
-INFO:     158.210.76.175:52752 - "GET /api/v1/datasets/detail/state/?dataset_uuid=54efbc69-013b-4abf-b62e-faccd562ac5e HTTP/1.1" 200 OK
-INFO:     158.210.76.175:52752 - "POST /api/v1/auth/logout HTTP/1.1" 204 No Content
-INFO:     158.210.76.175:39442 - "POST /api/v1/auth/login HTTP/1.1" 204 No Content
-INFO:     158.210.76.175:39442 - "GET /api/v1/users/me HTTP/1.1" 200 OK
-INFO:     158.210.76.175:39442 - "GET /api/v1/datasets/?limit=10&offset=0 HTTP/1.1" 200 OK
-INFO:     158.210.76.175:39442 - "GET /api/v1/datasets/detail/?dataset_uuid=17e299e5-8ebc-4e8d-93b1-dfafe33acba4 HTTP/1.1" 200 OK
-INFO:     158.210.76.175:39442 - "GET /api/v1/datasets/detail/state/?dataset_uuid=17e299e5-8ebc-4e8d-93b1-dfafe33acba4 HTTP/1.1" 200 OK
-INFO:     158.210.76.175:59656 - "GET /api/v1/notes/recording_notes/?limit=-1&offset=0&dataset__eq=17e299e5-8ebc-4e8d-93b1-dfafe33acba4&issues__eq=true HTTP/1.1" 200 OK
-INFO:     158.210.76.175:59644 - "GET /api/v1/tags/recording_counts/?limit=-1&offset=0&dataset__eq=17e299e5-8ebc-4e8d-93b1-dfafe33acba4 HTTP/1.1" 200 OK
-INFO:     158.210.76.175:59630 - "GET /api/v1/notes/?limit=0&offset=0&is_issue__eq=true&dataset__eq=17e299e5-8ebc-4e8d-93b1-dfafe33acba4 HTTP/1.1" 200 OK
-INFO:     158.210.76.175:59672 - "GET /api/v1/groups/me HTTP/1.1" 200 OK
-INFO:     158.210.76.175:59672 - "GET /api/v1/annotation_projects/?limit=10&offset=0 HTTP/1.1" 200 OK
-INFO:     158.210.76.175:59672 - "GET /api/v1/annotation_projects/detail/?annotation_project_uuid=26fc5ef7-1bc8-41cb-9627-a7932f0f7353 HTTP/1.1" 200 OK
-INFO:     158.210.76.175:59644 - "GET /api/v1/tags/sound_event_annotation_counts/?limit=-1&offset=0&annotation_project__eq=26fc5ef7-1bc8-41cb-9627-a7932f0f7353 HTTP/1.1" 200 OK
-INFO:     158.210.76.175:39442 - "GET /api/v1/tags/clip_annotation_counts/?limit=-1&offset=0&annotation_project__eq=26fc5ef7-1bc8-41cb-9627-a7932f0f7353 HTTP/1.1" 200 OK
-INFO:     158.210.76.175:59656 - "GET /api/v1/notes/clip_annotation_notes/?limit=10&offset=0&annotation_project__eq=26fc5ef7-1bc8-41cb-9627-a7932f0f7353&issues__eq=true HTTP/1.1" 200 OK
-INFO:     158.210.76.175:59630 - "GET /api/v1/notes/sound_event_annotation_notes/?limit=10&offset=0&annotation_project__eq=26fc5ef7-1bc8-41cb-9627-a7932f0f7353&issues__eq=true HTTP/1.1" 200 OK
-INFO:     158.210.76.175:59672 - "GET /api/v1/annotation_tasks/?limit=-1&offset=0&annotation_project__eq=26fc5ef7-1bc8-41cb-9627-a7932f0f7353 HTTP/1.1" 200 OK
+INFO:     158.210.76.175:53836 - "GET / HTTP/1.1" 404 Not Found
+2025-12-04 17:34:32,628 - uvicorn.error - WARNING - Invalid HTTP request received.
+WARNING:  Invalid HTTP request received.
+2025-12-04 17:34:32,673 - uvicorn.error - WARNING - Invalid HTTP request received.
+WARNING:  Invalid HTTP request received.
+INFO:     158.210.76.175:32916 - "GET /api/v1/metadata/sites?project_id=prj-bobasm0b HTTP/1.1" 200 OK
+INFO:     158.210.76.175:32910 - "GET /api/v1/metadata/projects/prj-bobasm0b HTTP/1.1" 200 OK
+INFO:     158.210.76.175:42514 - "GET /api/v1/users/me HTTP/1.1" 200 OK
+INFO:     158.210.76.175:42514 - "GET /api/v1/metadata/projects/prj-bobasm0b HTTP/1.1" 200 OK
+INFO:     158.210.76.175:42514 - "GET /api/v1/metadata/sites?project_id=prj-bobasm0b HTTP/1.1" 200 OK
+INFO:     158.210.76.175:42452 - "GET /api/v1/datasets/?limit=100&offset=0 HTTP/1.1" 200 OK
+INFO:     158.210.76.175:42456 - "GET /api/v1/datasets/?limit=100&offset=0&primary_site_id__eq=test2 HTTP/1.1" 200 OK
+INFO:     158.210.76.175:54098 - "GET /api/v1/users/me HTTP/1.1" 200 OK
+INFO:     158.210.76.175:54098 - "GET /api/v1/metadata/projects/prj-bobasm0b HTTP/1.1" 200 OK
+INFO:     158.210.76.175:54098 - "GET /api/v1/datasets/?limit=1000&offset=0&project_id__eq=prj-bobasm0b HTTP/1.1" 200 OK
+INFO:     158.210.76.175:54098 - "GET /api/v1/metadata/sites?project_id=prj-bobasm0b HTTP/1.1" 200 OK
+INFO:     158.210.76.175:45448 - "GET /api/v1/users/me HTTP/1.1" 200 OK
+INFO:     158.210.76.175:45448 - "GET /api/v1/metadata/projects/prj-bobasm0b HTTP/1.1" 200 OK
+INFO:     158.210.76.175:45448 - "GET /api/v1/metadata/sites?project_id=prj-bobasm0b HTTP/1.1" 200 OK
+INFO:     158.210.76.175:33802 - "GET /api/v1/metadata/sites?project_id=prj-bobasm0b HTTP/1.1" 200 OK
+INFO:     158.210.76.175:33798 - "GET /api/v1/metadata/projects/prj-bobasm0b HTTP/1.1" 200 OK
+2025-12-04 17:42:09,323 - uvicorn.error - WARNING - WatchFiles detected changes in 'src/whombat/system/database.py'. Reloading...
+WARNING:  WatchFiles detected changes in 'src/whombat/system/database.py'. Reloading...
+2025-12-04 17:42:09,375 - uvicorn.error - INFO - Shutting down
+INFO:     Shutting down
+2025-12-04 17:42:09,476 - uvicorn.error - INFO - Waiting for application shutdown.
+INFO:     Waiting for application shutdown.
+2025-12-04 17:42:09,476 - uvicorn.error - INFO - Application shutdown complete.
+INFO:     Application shutdown complete.
+2025-12-04 17:42:09,477 - uvicorn.error - INFO - Finished server process [495991]
+INFO:     Finished server process [495991]
+2025-12-04 17:42:14,000 - uvicorn.error - WARNING - WatchFiles detected changes in 'src/whombat/system/database.py'. Reloading...
+WARNING:  WatchFiles detected changes in 'src/whombat/system/database.py'. Reloading...
+/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/pydantic/_internal/_fields.py:132: UserWarning: Field "model_run" in Body_import_model_run_import__post has conflict with protected namespace "model_".
+
+You may be able to resolve this warning by setting `model_config['protected_namespaces'] = ()`.
+  warnings.warn(
+/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/pydantic/_internal/_fields.py:132: UserWarning: Field "model_run" in Body_import_model_run_api_v1_model_runs_import__post has conflict with protected namespace "model_".
+
+You may be able to resolve this warning by setting `model_config['protected_namespaces'] = ()`.
+  warnings.warn(
+2025-12-04 17:42:15,951 - uvicorn.error - INFO - Started server process [500211]
+INFO:     Started server process [500211]
+2025-12-04 17:42:15,951 - uvicorn.error - INFO - Waiting for application startup.
+INFO:     Waiting for application startup.
+INFO:Context impl SQLiteImpl.
+INFO:Will assume non-transactional DDL.
+
+[31m[1mWhombat is running in development mode![0m
+
+[32m[1mDatabase URL:[0m sqlite+aiosqlite:////home/okamoto/.local/share/whombat/whombat.db
+
+[32m[1mSettings:[0m {
+    "dev": true,
+    "debug": false,
+    "db_dialect": "sqlite",
+    "db_host": null,
+    "db_port": null,
+    "db_name": "/home/okamoto/.local/share/whombat/whombat.db",
+    "audio_dir": "/home/okamoto/NAS_A/whombat_data",
+    "host": "0.0.0.0",
+    "port": 5000,
+    "domain": "158.210.76.175",
+    "log_config": "logging.conf",
+    "log_to_file": true,
+    "log_to_stdout": false,
+    "log_dir": "logs",
+    "log_level": "info",
+    "cors_origins": [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://158.210.76.175:3000"
+    ],
+    "open_on_startup": true,
+    "auth_cookie_secure": false,
+    "auth_cookie_samesite": "lax",
+    "metadata_dir": "/home/okamoto/.local/share/whombat/metadata"
+}
+    
+
+    [32m[2mWhombat is ready to go![0m
+
+    [32m[1m * Listening on http://0.0.0.0:5000/[0m
+
+    [33mPress Ctrl+C to exit.[0m
+    
+2025-12-04 17:42:16,243 - uvicorn.error - INFO - Application startup complete.
+INFO:     Application startup complete.
+2025-12-04 17:42:18,365 - uvicorn.error - WARNING - WatchFiles detected changes in 'src/whombat/system/database.py'. Reloading...
+WARNING:  WatchFiles detected changes in 'src/whombat/system/database.py'. Reloading...
+/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/pydantic/_internal/_fields.py:132: UserWarning: Field "model_run" in Body_import_model_run_import__post has conflict with protected namespace "model_".
+
+You may be able to resolve this warning by setting `model_config['protected_namespaces'] = ()`.
+  warnings.warn(
+/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/pydantic/_internal/_fields.py:132: UserWarning: Field "model_run" in Body_import_model_run_api_v1_model_runs_import__post has conflict with protected namespace "model_".
+
+You may be able to resolve this warning by setting `model_config['protected_namespaces'] = ()`.
+  warnings.warn(
+2025-12-04 17:42:22,691 - uvicorn.error - INFO - Started server process [500384]
+INFO:     Started server process [500384]
+2025-12-04 17:42:22,691 - uvicorn.error - INFO - Waiting for application startup.
+INFO:     Waiting for application startup.
+INFO:Context impl SQLiteImpl.
+INFO:Will assume non-transactional DDL.
+
+[31m[1mWhombat is running in development mode![0m
+
+[32m[1mDatabase URL:[0m sqlite+aiosqlite:////home/okamoto/.local/share/whombat/whombat.db
+
+[32m[1mSettings:[0m {
+    "dev": true,
+    "debug": false,
+    "db_dialect": "sqlite",
+    "db_host": null,
+    "db_port": null,
+    "db_name": "/home/okamoto/.local/share/whombat/whombat.db",
+    "audio_dir": "/home/okamoto/NAS_A/whombat_data",
+    "host": "0.0.0.0",
+    "port": 5000,
+    "domain": "158.210.76.175",
+    "log_config": "logging.conf",
+    "log_to_file": true,
+    "log_to_stdout": false,
+    "log_dir": "logs",
+    "log_level": "info",
+    "cors_origins": [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://158.210.76.175:3000"
+    ],
+    "open_on_startup": true,
+    "auth_cookie_secure": false,
+    "auth_cookie_samesite": "lax",
+    "metadata_dir": "/home/okamoto/.local/share/whombat/metadata"
+}
+    
+
+    [32m[2mWhombat is ready to go![0m
+
+    [32m[1m * Listening on http://0.0.0.0:5000/[0m
+
+    [33mPress Ctrl+C to exit.[0m
+    
+2025-12-04 17:42:22,975 - uvicorn.error - INFO - Application startup complete.
+INFO:     Application startup complete.
+2025-12-04 17:42:24,544 - uvicorn.error - WARNING - WatchFiles detected changes in 'src/whombat/system/database.py'. Reloading...
+WARNING:  WatchFiles detected changes in 'src/whombat/system/database.py'. Reloading...
+/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/pydantic/_internal/_fields.py:132: UserWarning: Field "model_run" in Body_import_model_run_import__post has conflict with protected namespace "model_".
+
+You may be able to resolve this warning by setting `model_config['protected_namespaces'] = ()`.
+  warnings.warn(
+/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/pydantic/_internal/_fields.py:132: UserWarning: Field "model_run" in Body_import_model_run_api_v1_model_runs_import__post has conflict with protected namespace "model_".
+
+You may be able to resolve this warning by setting `model_config['protected_namespaces'] = ()`.
+  warnings.warn(
+2025-12-04 17:42:29,733 - uvicorn.error - INFO - Started server process [500545]
+INFO:     Started server process [500545]
+2025-12-04 17:42:29,733 - uvicorn.error - INFO - Waiting for application startup.
+INFO:     Waiting for application startup.
+INFO:Context impl SQLiteImpl.
+INFO:Will assume non-transactional DDL.
+
+[31m[1mWhombat is running in development mode![0m
+
+[32m[1mDatabase URL:[0m sqlite+aiosqlite:////home/okamoto/.local/share/whombat/whombat.db
+
+[32m[1mSettings:[0m {
+    "dev": true,
+    "debug": false,
+    "db_dialect": "sqlite",
+    "db_host": null,
+    "db_port": null,
+    "db_name": "/home/okamoto/.local/share/whombat/whombat.db",
+    "audio_dir": "/home/okamoto/NAS_A/whombat_data",
+    "host": "0.0.0.0",
+    "port": 5000,
+    "domain": "158.210.76.175",
+    "log_config": "logging.conf",
+    "log_to_file": true,
+    "log_to_stdout": false,
+    "log_dir": "logs",
+    "log_level": "info",
+    "cors_origins": [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://158.210.76.175:3000"
+    ],
+    "open_on_startup": true,
+    "auth_cookie_secure": false,
+    "auth_cookie_samesite": "lax",
+    "metadata_dir": "/home/okamoto/.local/share/whombat/metadata"
+}
+    
+
+    [32m[2mWhombat is ready to go![0m
+
+    [32m[1m * Listening on http://0.0.0.0:5000/[0m
+
+    [33mPress Ctrl+C to exit.[0m
+    
+2025-12-04 17:42:30,018 - uvicorn.error - INFO - Application startup complete.
+INFO:     Application startup complete.
+/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/pydantic/_internal/_fields.py:132: UserWarning: Field "model_run" in Body_import_model_run_import__post has conflict with protected namespace "model_".
+
+You may be able to resolve this warning by setting `model_config['protected_namespaces'] = ()`.
+  warnings.warn(
+/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/pydantic/_internal/_fields.py:132: UserWarning: Field "model_run" in Body_import_model_run_api_v1_model_runs_import__post has conflict with protected namespace "model_".
+
+You may be able to resolve this warning by setting `model_config['protected_namespaces'] = ()`.
+  warnings.warn(
+2025-12-04 17:42:36,751 - uvicorn.error - INFO - Started server process [500803]
+INFO:     Started server process [500803]
+2025-12-04 17:42:36,751 - uvicorn.error - INFO - Waiting for application startup.
+INFO:     Waiting for application startup.
+INFO:Context impl SQLiteImpl.
+INFO:Will assume non-transactional DDL.
+
+[31m[1mWhombat is running in development mode![0m
+
+[32m[1mDatabase URL:[0m sqlite+aiosqlite:////home/okamoto/.local/share/whombat/whombat.db
+
+[32m[1mSettings:[0m {
+    "dev": true,
+    "debug": false,
+    "db_dialect": "sqlite",
+    "db_host": null,
+    "db_port": null,
+    "db_name": "/home/okamoto/.local/share/whombat/whombat.db",
+    "audio_dir": "/home/okamoto/NAS_A/whombat_data",
+    "host": "0.0.0.0",
+    "port": 5000,
+    "domain": "158.210.76.175",
+    "log_config": "logging.conf",
+    "log_to_file": true,
+    "log_to_stdout": false,
+    "log_dir": "logs",
+    "log_level": "info",
+    "cors_origins": [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://158.210.76.175:3000"
+    ],
+    "open_on_startup": true,
+    "auth_cookie_secure": false,
+    "auth_cookie_samesite": "lax",
+    "metadata_dir": "/home/okamoto/.local/share/whombat/metadata"
+}
+    
+
+    [32m[2mWhombat is ready to go![0m
+
+    [32m[1m * Listening on http://0.0.0.0:5000/[0m
+
+    [33mPress Ctrl+C to exit.[0m
+    
+2025-12-04 17:42:37,058 - uvicorn.error - INFO - Application startup complete.
+INFO:     Application startup complete.
+INFO:     158.210.76.175:56118 - "GET / HTTP/1.1" 404 Not Found
+INFO:     158.210.76.175:47424 - "GET / HTTP/1.1" 404 Not Found
+INFO:     158.210.76.175:56132 - "GET / HTTP/1.1" 404 Not Found
+INFO:     158.210.76.175:47432 - "GET /api/v1/users/me HTTP/1.1" 200 OK
+2025-12-04 17:42:37,143 - uvicorn.error - WARNING - Invalid HTTP request received.
+WARNING:  Invalid HTTP request received.
+2025-12-04 17:42:37,153 - uvicorn.error - WARNING - Invalid HTTP request received.
+WARNING:  Invalid HTTP request received.
+INFO:     158.210.76.175:47432 - "GET /api/v1/metadata/projects/prj-bobasm0b HTTP/1.1" 200 OK
+2025-12-04 17:42:37,187 - uvicorn.error - WARNING - Invalid HTTP request received.
+WARNING:  Invalid HTTP request received.
+2025-12-04 17:42:37,197 - uvicorn.error - WARNING - Invalid HTTP request received.
+WARNING:  Invalid HTTP request received.
+2025-12-04 17:42:37,200 - uvicorn.error - WARNING - Invalid HTTP request received.
+WARNING:  Invalid HTTP request received.
+INFO:     158.210.76.175:47432 - "GET /api/v1/metadata/sites?project_id=prj-bobasm0b HTTP/1.1" 200 OK
+2025-12-04 17:42:45,723 - uvicorn.error - WARNING - WatchFiles detected changes in 'src/whombat/migrations/env.py'. Reloading...
+WARNING:  WatchFiles detected changes in 'src/whombat/migrations/env.py'. Reloading...
+2025-12-04 17:42:45,791 - uvicorn.error - INFO - Shutting down
+INFO:     Shutting down
+2025-12-04 17:42:45,892 - uvicorn.error - INFO - Waiting for application shutdown.
+INFO:     Waiting for application shutdown.
+2025-12-04 17:42:45,892 - uvicorn.error - INFO - Application shutdown complete.
+INFO:     Application shutdown complete.
+2025-12-04 17:42:45,892 - uvicorn.error - INFO - Finished server process [500803]
+INFO:     Finished server process [500803]
+/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/pydantic/_internal/_fields.py:132: UserWarning: Field "model_run" in Body_import_model_run_import__post has conflict with protected namespace "model_".
+
+You may be able to resolve this warning by setting `model_config['protected_namespaces'] = ()`.
+  warnings.warn(
+/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/pydantic/_internal/_fields.py:132: UserWarning: Field "model_run" in Body_import_model_run_api_v1_model_runs_import__post has conflict with protected namespace "model_".
+
+You may be able to resolve this warning by setting `model_config['protected_namespaces'] = ()`.
+  warnings.warn(
+2025-12-04 17:42:52,663 - uvicorn.error - INFO - Started server process [501187]
+INFO:     Started server process [501187]
+2025-12-04 17:42:52,663 - uvicorn.error - INFO - Waiting for application startup.
+INFO:     Waiting for application startup.
+INFO:Context impl SQLiteImpl.
+INFO:Will assume non-transactional DDL.
+
+[31m[1mWhombat is running in development mode![0m
+
+[32m[1mDatabase URL:[0m sqlite+aiosqlite:////home/okamoto/.local/share/whombat/whombat.db
+
+[32m[1mSettings:[0m {
+    "dev": true,
+    "debug": false,
+    "db_dialect": "sqlite",
+    "db_host": null,
+    "db_port": null,
+    "db_name": "/home/okamoto/.local/share/whombat/whombat.db",
+    "audio_dir": "/home/okamoto/NAS_A/whombat_data",
+    "host": "0.0.0.0",
+    "port": 5000,
+    "domain": "158.210.76.175",
+    "log_config": "logging.conf",
+    "log_to_file": true,
+    "log_to_stdout": false,
+    "log_dir": "logs",
+    "log_level": "info",
+    "cors_origins": [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://158.210.76.175:3000"
+    ],
+    "open_on_startup": true,
+    "auth_cookie_secure": false,
+    "auth_cookie_samesite": "lax",
+    "metadata_dir": "/home/okamoto/.local/share/whombat/metadata"
+}
+    
+
+    [32m[2mWhombat is ready to go![0m
+
+    [32m[1m * Listening on http://0.0.0.0:5000/[0m
+
+    [33mPress Ctrl+C to exit.[0m
+    
+2025-12-04 17:42:52,956 - uvicorn.error - INFO - Application startup complete.
+INFO:     Application startup complete.
+INFO:     158.210.76.175:33020 - "GET / HTTP/1.1" 404 Not Found
+2025-12-04 17:42:53,071 - uvicorn.error - WARNING - WatchFiles detected changes in 'src/whombat/migrations/env.py'. Reloading...
+WARNING:  WatchFiles detected changes in 'src/whombat/migrations/env.py'. Reloading...
+2025-12-04 17:42:53,108 - uvicorn.error - WARNING - Invalid HTTP request received.
+WARNING:  Invalid HTTP request received.
+2025-12-04 17:42:53,156 - uvicorn.error - INFO - Shutting down
+INFO:     Shutting down
+2025-12-04 17:42:53,257 - uvicorn.error - INFO - Waiting for application shutdown.
+INFO:     Waiting for application shutdown.
+2025-12-04 17:42:53,257 - uvicorn.error - INFO - Application shutdown complete.
+INFO:     Application shutdown complete.
+2025-12-04 17:42:53,257 - uvicorn.error - INFO - Finished server process [501187]
+INFO:     Finished server process [501187]
+/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/pydantic/_internal/_fields.py:132: UserWarning: Field "model_run" in Body_import_model_run_import__post has conflict with protected namespace "model_".
+
+You may be able to resolve this warning by setting `model_config['protected_namespaces'] = ()`.
+  warnings.warn(
+2025-12-04 17:42:58,932 - uvicorn.error - WARNING - WatchFiles detected changes in 'src/whombat/migrations/env.py'. Reloading...
+WARNING:  WatchFiles detected changes in 'src/whombat/migrations/env.py'. Reloading...
+/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/pydantic/_internal/_fields.py:132: UserWarning: Field "model_run" in Body_import_model_run_api_v1_model_runs_import__post has conflict with protected namespace "model_".
+
+You may be able to resolve this warning by setting `model_config['protected_namespaces'] = ()`.
+  warnings.warn(
+2025-12-04 17:43:00,267 - uvicorn.error - INFO - Started server process [501482]
+INFO:     Started server process [501482]
+2025-12-04 17:43:00,267 - uvicorn.error - INFO - Waiting for application startup.
+INFO:     Waiting for application startup.
+INFO:Context impl SQLiteImpl.
+INFO:Will assume non-transactional DDL.
+
+[31m[1mWhombat is running in development mode![0m
+
+[32m[1mDatabase URL:[0m sqlite+aiosqlite:////home/okamoto/.local/share/whombat/whombat.db
+
+[32m[1mSettings:[0m {
+    "dev": true,
+    "debug": false,
+    "db_dialect": "sqlite",
+    "db_host": null,
+    "db_port": null,
+    "db_name": "/home/okamoto/.local/share/whombat/whombat.db",
+    "audio_dir": "/home/okamoto/NAS_A/whombat_data",
+    "host": "0.0.0.0",
+    "port": 5000,
+    "domain": "158.210.76.175",
+    "log_config": "logging.conf",
+    "log_to_file": true,
+    "log_to_stdout": false,
+    "log_dir": "logs",
+    "log_level": "info",
+    "cors_origins": [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://158.210.76.175:3000"
+    ],
+    "open_on_startup": true,
+    "auth_cookie_secure": false,
+    "auth_cookie_samesite": "lax",
+    "metadata_dir": "/home/okamoto/.local/share/whombat/metadata"
+}
+    
+
+    [32m[2mWhombat is ready to go![0m
+
+    [32m[1m * Listening on http://0.0.0.0:5000/[0m
+
+    [33mPress Ctrl+C to exit.[0m
+    
+2025-12-04 17:43:00,544 - uvicorn.error - INFO - Application startup complete.
+INFO:     Application startup complete.
+/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/pydantic/_internal/_fields.py:132: UserWarning: Field "model_run" in Body_import_model_run_import__post has conflict with protected namespace "model_".
+
+You may be able to resolve this warning by setting `model_config['protected_namespaces'] = ()`.
+  warnings.warn(
+/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/pydantic/_internal/_fields.py:132: UserWarning: Field "model_run" in Body_import_model_run_api_v1_model_runs_import__post has conflict with protected namespace "model_".
+
+You may be able to resolve this warning by setting `model_config['protected_namespaces'] = ()`.
+  warnings.warn(
+2025-12-04 17:43:07,242 - uvicorn.error - INFO - Started server process [501670]
+INFO:     Started server process [501670]
+2025-12-04 17:43:07,242 - uvicorn.error - INFO - Waiting for application startup.
+INFO:     Waiting for application startup.
+INFO:Context impl SQLiteImpl.
+INFO:Will assume non-transactional DDL.
+
+[31m[1mWhombat is running in development mode![0m
+
+[32m[1mDatabase URL:[0m sqlite+aiosqlite:////home/okamoto/.local/share/whombat/whombat.db
+
+[32m[1mSettings:[0m {
+    "dev": true,
+    "debug": false,
+    "db_dialect": "sqlite",
+    "db_host": null,
+    "db_port": null,
+    "db_name": "/home/okamoto/.local/share/whombat/whombat.db",
+    "audio_dir": "/home/okamoto/NAS_A/whombat_data",
+    "host": "0.0.0.0",
+    "port": 5000,
+    "domain": "158.210.76.175",
+    "log_config": "logging.conf",
+    "log_to_file": true,
+    "log_to_stdout": false,
+    "log_dir": "logs",
+    "log_level": "info",
+    "cors_origins": [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://158.210.76.175:3000"
+    ],
+    "open_on_startup": true,
+    "auth_cookie_secure": false,
+    "auth_cookie_samesite": "lax",
+    "metadata_dir": "/home/okamoto/.local/share/whombat/metadata"
+}
+    
+
+    [32m[2mWhombat is ready to go![0m
+
+    [32m[1m * Listening on http://0.0.0.0:5000/[0m
+
+    [33mPress Ctrl+C to exit.[0m
+    
+2025-12-04 17:43:07,542 - uvicorn.error - INFO - Application startup complete.
+INFO:     Application startup complete.
+INFO:     158.210.76.175:52878 - "GET /api/v1/users/me HTTP/1.1" 200 OK
+INFO:     158.210.76.175:52878 - "GET / HTTP/1.1" 404 Not Found
+INFO:     158.210.76.175:52878 - "GET /api/v1/metadata/projects/prj-bobasm0b HTTP/1.1" 200 OK
+2025-12-04 17:43:07,661 - uvicorn.error - WARNING - Invalid HTTP request received.
+WARNING:  Invalid HTTP request received.
+2025-12-04 17:43:07,705 - uvicorn.error - WARNING - Invalid HTTP request received.
+WARNING:  Invalid HTTP request received.
+INFO:     158.210.76.175:52878 - "GET /api/v1/metadata/sites?project_id=prj-bobasm0b HTTP/1.1" 200 OK
+2025-12-04 17:46:04,447 - uvicorn.error - WARNING - WatchFiles detected changes in 'src/whombat/system/database.py'. Reloading...
+WARNING:  WatchFiles detected changes in 'src/whombat/system/database.py'. Reloading...
+2025-12-04 17:46:04,529 - uvicorn.error - INFO - Shutting down
+INFO:     Shutting down
+2025-12-04 17:46:04,630 - uvicorn.error - INFO - Waiting for application shutdown.
+INFO:     Waiting for application shutdown.
+2025-12-04 17:46:04,631 - uvicorn.error - INFO - Application shutdown complete.
+INFO:     Application shutdown complete.
+2025-12-04 17:46:04,631 - uvicorn.error - INFO - Finished server process [501670]
+INFO:     Finished server process [501670]
+/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/pydantic/_internal/_fields.py:132: UserWarning: Field "model_run" in Body_import_model_run_import__post has conflict with protected namespace "model_".
+
+You may be able to resolve this warning by setting `model_config['protected_namespaces'] = ()`.
+  warnings.warn(
+/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/pydantic/_internal/_fields.py:132: UserWarning: Field "model_run" in Body_import_model_run_api_v1_model_runs_import__post has conflict with protected namespace "model_".
+
+You may be able to resolve this warning by setting `model_config['protected_namespaces'] = ()`.
+  warnings.warn(
+2025-12-04 17:46:11,010 - uvicorn.error - INFO - Started server process [502983]
+INFO:     Started server process [502983]
+2025-12-04 17:46:11,010 - uvicorn.error - INFO - Waiting for application startup.
+INFO:     Waiting for application startup.
+INFO:Context impl SQLiteImpl.
+INFO:Will assume non-transactional DDL.
+
+[31m[1mWhombat is running in development mode![0m
+
+[32m[1mDatabase URL:[0m sqlite+aiosqlite:////home/okamoto/.local/share/whombat/whombat.db
+
+[32m[1mSettings:[0m {
+    "dev": true,
+    "debug": false,
+    "db_dialect": "sqlite",
+    "db_host": null,
+    "db_port": null,
+    "db_name": "/home/okamoto/.local/share/whombat/whombat.db",
+    "audio_dir": "/home/okamoto/NAS_A/whombat_data",
+    "host": "0.0.0.0",
+    "port": 5000,
+    "domain": "158.210.76.175",
+    "log_config": "logging.conf",
+    "log_to_file": true,
+    "log_to_stdout": false,
+    "log_dir": "logs",
+    "log_level": "info",
+    "cors_origins": [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://158.210.76.175:3000"
+    ],
+    "open_on_startup": true,
+    "auth_cookie_secure": false,
+    "auth_cookie_samesite": "lax",
+    "metadata_dir": "/home/okamoto/.local/share/whombat/metadata"
+}
+    
+
+    [32m[2mWhombat is ready to go![0m
+
+    [32m[1m * Listening on http://0.0.0.0:5000/[0m
+
+    [33mPress Ctrl+C to exit.[0m
+    
+2025-12-04 17:46:11,299 - uvicorn.error - INFO - Application startup complete.
+INFO:     Application startup complete.
+INFO:     158.210.76.175:50344 - "GET / HTTP/1.1" 404 Not Found
+2025-12-04 17:46:11,398 - uvicorn.error - WARNING - Invalid HTTP request received.
+WARNING:  Invalid HTTP request received.
+2025-12-04 17:46:11,444 - uvicorn.error - WARNING - Invalid HTTP request received.
+WARNING:  Invalid HTTP request received.
+2025-12-04 17:46:22,942 - uvicorn.error - WARNING - WatchFiles detected changes in 'src/whombat/system/database.py'. Reloading...
+WARNING:  WatchFiles detected changes in 'src/whombat/system/database.py'. Reloading...
+2025-12-04 17:46:23,036 - uvicorn.error - INFO - Shutting down
+INFO:     Shutting down
+2025-12-04 17:46:23,137 - uvicorn.error - INFO - Waiting for application shutdown.
+INFO:     Waiting for application shutdown.
+2025-12-04 17:46:23,137 - uvicorn.error - INFO - Application shutdown complete.
+INFO:     Application shutdown complete.
+2025-12-04 17:46:23,138 - uvicorn.error - INFO - Finished server process [502983]
+INFO:     Finished server process [502983]
+/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/pydantic/_internal/_fields.py:132: UserWarning: Field "model_run" in Body_import_model_run_import__post has conflict with protected namespace "model_".
+
+You may be able to resolve this warning by setting `model_config['protected_namespaces'] = ()`.
+  warnings.warn(
+/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/pydantic/_internal/_fields.py:132: UserWarning: Field "model_run" in Body_import_model_run_api_v1_model_runs_import__post has conflict with protected namespace "model_".
+
+You may be able to resolve this warning by setting `model_config['protected_namespaces'] = ()`.
+  warnings.warn(
+2025-12-04 17:46:29,497 - uvicorn.error - INFO - Started server process [503231]
+INFO:     Started server process [503231]
+2025-12-04 17:46:29,497 - uvicorn.error - INFO - Waiting for application startup.
+INFO:     Waiting for application startup.
+INFO:Context impl SQLiteImpl.
+INFO:Will assume non-transactional DDL.
+
+[31m[1mWhombat is running in development mode![0m
+
+[32m[1mDatabase URL:[0m sqlite+aiosqlite:////home/okamoto/.local/share/whombat/whombat.db
+
+[32m[1mSettings:[0m {
+    "dev": true,
+    "debug": false,
+    "db_dialect": "sqlite",
+    "db_host": null,
+    "db_port": null,
+    "db_name": "/home/okamoto/.local/share/whombat/whombat.db",
+    "audio_dir": "/home/okamoto/NAS_A/whombat_data",
+    "host": "0.0.0.0",
+    "port": 5000,
+    "domain": "158.210.76.175",
+    "log_config": "logging.conf",
+    "log_to_file": true,
+    "log_to_stdout": false,
+    "log_dir": "logs",
+    "log_level": "info",
+    "cors_origins": [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://158.210.76.175:3000"
+    ],
+    "open_on_startup": true,
+    "auth_cookie_secure": false,
+    "auth_cookie_samesite": "lax",
+    "metadata_dir": "/home/okamoto/.local/share/whombat/metadata"
+}
+    
+
+    [32m[2mWhombat is ready to go![0m
+
+    [32m[1m * Listening on http://0.0.0.0:5000/[0m
+
+    [33mPress Ctrl+C to exit.[0m
+    
+2025-12-04 17:46:29,775 - uvicorn.error - INFO - Application startup complete.
+INFO:     Application startup complete.
+INFO:     158.210.76.175:39068 - "GET / HTTP/1.1" 404 Not Found
+2025-12-04 17:46:29,930 - uvicorn.error - WARNING - Invalid HTTP request received.
+WARNING:  Invalid HTTP request received.
+2025-12-04 17:46:29,963 - uvicorn.error - WARNING - Invalid HTTP request received.
+WARNING:  Invalid HTTP request received.
+2025-12-04 17:46:32,273 - uvicorn.error - WARNING - WatchFiles detected changes in 'src/whombat/system/database.py'. Reloading...
+WARNING:  WatchFiles detected changes in 'src/whombat/system/database.py'. Reloading...
+2025-12-04 17:46:32,284 - uvicorn.error - INFO - Shutting down
+INFO:     Shutting down
+2025-12-04 17:46:32,385 - uvicorn.error - INFO - Waiting for application shutdown.
+INFO:     Waiting for application shutdown.
+2025-12-04 17:46:32,386 - uvicorn.error - INFO - Application shutdown complete.
+INFO:     Application shutdown complete.
+2025-12-04 17:46:32,386 - uvicorn.error - INFO - Finished server process [503231]
+INFO:     Finished server process [503231]
+/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/pydantic/_internal/_fields.py:132: UserWarning: Field "model_run" in Body_import_model_run_import__post has conflict with protected namespace "model_".
+
+You may be able to resolve this warning by setting `model_config['protected_namespaces'] = ()`.
+  warnings.warn(
+/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/pydantic/_internal/_fields.py:132: UserWarning: Field "model_run" in Body_import_model_run_api_v1_model_runs_import__post has conflict with protected namespace "model_".
+
+You may be able to resolve this warning by setting `model_config['protected_namespaces'] = ()`.
+  warnings.warn(
+2025-12-04 17:46:38,716 - uvicorn.error - WARNING - WatchFiles detected changes in 'src/whombat/system/database.py'. Reloading...
+WARNING:  WatchFiles detected changes in 'src/whombat/system/database.py'. Reloading...
+2025-12-04 17:46:38,747 - uvicorn.error - INFO - Started server process [503397]
+INFO:     Started server process [503397]
+2025-12-04 17:46:38,747 - uvicorn.error - INFO - Waiting for application startup.
+INFO:     Waiting for application startup.
+INFO:Context impl SQLiteImpl.
+INFO:Will assume non-transactional DDL.
+
+[31m[1mWhombat is running in development mode![0m
+
+[32m[1mDatabase URL:[0m sqlite+aiosqlite:////home/okamoto/.local/share/whombat/whombat.db
+
+[32m[1mSettings:[0m {
+    "dev": true,
+    "debug": false,
+    "db_dialect": "sqlite",
+    "db_host": null,
+    "db_port": null,
+    "db_name": "/home/okamoto/.local/share/whombat/whombat.db",
+    "audio_dir": "/home/okamoto/NAS_A/whombat_data",
+    "host": "0.0.0.0",
+    "port": 5000,
+    "domain": "158.210.76.175",
+    "log_config": "logging.conf",
+    "log_to_file": true,
+    "log_to_stdout": false,
+    "log_dir": "logs",
+    "log_level": "info",
+    "cors_origins": [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://158.210.76.175:3000"
+    ],
+    "open_on_startup": true,
+    "auth_cookie_secure": false,
+    "auth_cookie_samesite": "lax",
+    "metadata_dir": "/home/okamoto/.local/share/whombat/metadata"
+}
+    
+
+    [32m[2mWhombat is ready to go![0m
+
+    [32m[1m * Listening on http://0.0.0.0:5000/[0m
+
+    [33mPress Ctrl+C to exit.[0m
+    
+2025-12-04 17:46:39,048 - uvicorn.error - INFO - Application startup complete.
+INFO:     Application startup complete.
+/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/pydantic/_internal/_fields.py:132: UserWarning: Field "model_run" in Body_import_model_run_import__post has conflict with protected namespace "model_".
+
+You may be able to resolve this warning by setting `model_config['protected_namespaces'] = ()`.
+  warnings.warn(
+/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/pydantic/_internal/_fields.py:132: UserWarning: Field "model_run" in Body_import_model_run_api_v1_model_runs_import__post has conflict with protected namespace "model_".
+
+You may be able to resolve this warning by setting `model_config['protected_namespaces'] = ()`.
+  warnings.warn(
+2025-12-04 17:46:45,455 - uvicorn.error - INFO - Started server process [503529]
+INFO:     Started server process [503529]
+2025-12-04 17:46:45,455 - uvicorn.error - INFO - Waiting for application startup.
+INFO:     Waiting for application startup.
+INFO:Context impl SQLiteImpl.
+INFO:Will assume non-transactional DDL.
+
+[31m[1mWhombat is running in development mode![0m
+
+[32m[1mDatabase URL:[0m sqlite+aiosqlite:////home/okamoto/.local/share/whombat/whombat.db
+
+[32m[1mSettings:[0m {
+    "dev": true,
+    "debug": false,
+    "db_dialect": "sqlite",
+    "db_host": null,
+    "db_port": null,
+    "db_name": "/home/okamoto/.local/share/whombat/whombat.db",
+    "audio_dir": "/home/okamoto/NAS_A/whombat_data",
+    "host": "0.0.0.0",
+    "port": 5000,
+    "domain": "158.210.76.175",
+    "log_config": "logging.conf",
+    "log_to_file": true,
+    "log_to_stdout": false,
+    "log_dir": "logs",
+    "log_level": "info",
+    "cors_origins": [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://158.210.76.175:3000"
+    ],
+    "open_on_startup": true,
+    "auth_cookie_secure": false,
+    "auth_cookie_samesite": "lax",
+    "metadata_dir": "/home/okamoto/.local/share/whombat/metadata"
+}
+    
+
+    [32m[2mWhombat is ready to go![0m
+
+    [32m[1m * Listening on http://0.0.0.0:5000/[0m
+
+    [33mPress Ctrl+C to exit.[0m
+    
+2025-12-04 17:46:45,761 - uvicorn.error - INFO - Application startup complete.
+INFO:     Application startup complete.
+INFO:     158.210.76.175:39096 - "GET / HTTP/1.1" 404 Not Found
+INFO:     158.210.76.175:39096 - "GET / HTTP/1.1" 404 Not Found
+2025-12-04 17:46:45,845 - uvicorn.error - WARNING - Invalid HTTP request received.
+WARNING:  Invalid HTTP request received.
+2025-12-04 17:46:45,879 - uvicorn.error - WARNING - Invalid HTTP request received.
+WARNING:  Invalid HTTP request received.
+2025-12-04 17:46:45,890 - uvicorn.error - WARNING - Invalid HTTP request received.
+WARNING:  Invalid HTTP request received.
+2025-12-04 17:46:45,933 - uvicorn.error - WARNING - Invalid HTTP request received.
+WARNING:  Invalid HTTP request received.
+INFO:     158.210.76.175:45740 - "GET /api/v1/metadata/sites?project_id=prj-bobasm0b HTTP/1.1" 200 OK
+INFO:     158.210.76.175:45736 - "GET /api/v1/metadata/projects/prj-bobasm0b HTTP/1.1" 200 OK
+INFO:     158.210.76.175:45736 - "GET /api/v1/users/me HTTP/1.1" 200 OK
+INFO:     158.210.76.175:45736 - "GET /api/v1/metadata/projects/prj-bobasm0b HTTP/1.1" 200 OK
+INFO:     158.210.76.175:45736 - "GET /api/v1/metadata/sites?project_id=prj-bobasm0b HTTP/1.1" 200 OK
+2025-12-04 17:48:07,704 - uvicorn.error - WARNING - WatchFiles detected changes in '.venv/lib64/python3.12/site-packages/pgvector/sparsevec.py', '.venv/lib64/python3.12/site-packages/pgvector/vector.py', '.venv/lib64/python3.12/site-packages/asyncpg/transaction.py', '.venv/lib64/python3.12/site-packages/asyncpg/types.py', '.venv/lib64/python3.12/site-packages/asyncpg/cluster.py', '.venv/lib64/python3.12/site-packages/psycopg2/sql.py', '.venv/lib64/python3.12/site-packages/pgvector/halfvec.py', '.venv/lib64/python3.12/site-packages/asyncpg/introspection.py', '.venv/lib64/python3.12/site-packages/asyncpg/connect_utils.py', '.venv/lib64/python3.12/site-packages/psycopg2/pool.py', '.venv/lib64/python3.12/site-packages/asyncpg/_asyncio_compat.py', '.venv/lib64/python3.12/site-packages/asyncpg/compat.py', '.venv/lib64/python3.12/site-packages/psycopg2/_json.py', '.venv/lib64/python3.12/site-packages/asyncpg/utils.py', '.venv/lib64/python3.12/site-packages/psycopg2/tz.py', '.venv/lib64/python3.12/site-packages/asyncpg/pool.py', '.venv/lib64/python3.12/site-packages/asyncpg/connresource.py', '.venv/lib64/python3.12/site-packages/psycopg2/_range.py', '.venv/lib64/python3.12/site-packages/asyncpg/_testbase/fuzzer.py', '.venv/lib64/python3.12/site-packages/asyncpg/__init__.py', '.venv/lib64/python3.12/site-packages/pgvector/bit.py', '.venv/lib64/python3.12/site-packages/asyncpg/prepared_stmt.py', '.venv/lib64/python3.12/site-packages/asyncpg/cursor.py', '.venv/lib64/python3.12/site-packages/asyncpg/serverversion.py', '.venv/lib64/python3.12/site-packages/asyncpg/connection.py', '.venv/lib64/python3.12/site-packages/asyncpg/_version.py'. Reloading...
+WARNING:  WatchFiles detected changes in '.venv/lib64/python3.12/site-packages/pgvector/sparsevec.py', '.venv/lib64/python3.12/site-packages/pgvector/vector.py', '.venv/lib64/python3.12/site-packages/asyncpg/transaction.py', '.venv/lib64/python3.12/site-packages/asyncpg/types.py', '.venv/lib64/python3.12/site-packages/asyncpg/cluster.py', '.venv/lib64/python3.12/site-packages/psycopg2/sql.py', '.venv/lib64/python3.12/site-packages/pgvector/halfvec.py', '.venv/lib64/python3.12/site-packages/asyncpg/introspection.py', '.venv/lib64/python3.12/site-packages/asyncpg/connect_utils.py', '.venv/lib64/python3.12/site-packages/psycopg2/pool.py', '.venv/lib64/python3.12/site-packages/asyncpg/_asyncio_compat.py', '.venv/lib64/python3.12/site-packages/asyncpg/compat.py', '.venv/lib64/python3.12/site-packages/psycopg2/_json.py', '.venv/lib64/python3.12/site-packages/asyncpg/utils.py', '.venv/lib64/python3.12/site-packages/psycopg2/tz.py', '.venv/lib64/python3.12/site-packages/asyncpg/pool.py', '.venv/lib64/python3.12/site-packages/asyncpg/connresource.py', '.venv/lib64/python3.12/site-packages/psycopg2/_range.py', '.venv/lib64/python3.12/site-packages/asyncpg/_testbase/fuzzer.py', '.venv/lib64/python3.12/site-packages/asyncpg/__init__.py', '.venv/lib64/python3.12/site-packages/pgvector/bit.py', '.venv/lib64/python3.12/site-packages/asyncpg/prepared_stmt.py', '.venv/lib64/python3.12/site-packages/asyncpg/cursor.py', '.venv/lib64/python3.12/site-packages/asyncpg/serverversion.py', '.venv/lib64/python3.12/site-packages/asyncpg/connection.py', '.venv/lib64/python3.12/site-packages/asyncpg/_version.py'. Reloading...
+2025-12-04 17:48:07,728 - uvicorn.error - INFO - Shutting down
+INFO:     Shutting down
+2025-12-04 17:48:07,828 - uvicorn.error - INFO - Waiting for application shutdown.
+INFO:     Waiting for application shutdown.
+2025-12-04 17:48:07,829 - uvicorn.error - INFO - Application shutdown complete.
+INFO:     Application shutdown complete.
+2025-12-04 17:48:07,829 - uvicorn.error - INFO - Finished server process [503529]
+INFO:     Finished server process [503529]
+/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/pydantic/_internal/_fields.py:132: UserWarning: Field "model_run" in Body_import_model_run_import__post has conflict with protected namespace "model_".
+
+You may be able to resolve this warning by setting `model_config['protected_namespaces'] = ()`.
+  warnings.warn(
+/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/pydantic/_internal/_fields.py:132: UserWarning: Field "model_run" in Body_import_model_run_api_v1_model_runs_import__post has conflict with protected namespace "model_".
+
+You may be able to resolve this warning by setting `model_config['protected_namespaces'] = ()`.
+  warnings.warn(
+2025-12-04 17:48:14,405 - uvicorn.error - INFO - Started server process [504425]
+INFO:     Started server process [504425]
+2025-12-04 17:48:14,406 - uvicorn.error - INFO - Waiting for application startup.
+INFO:     Waiting for application startup.
+INFO:Context impl SQLiteImpl.
+INFO:Will assume non-transactional DDL.
+
+[31m[1mWhombat is running in development mode![0m
+
+[32m[1mDatabase URL:[0m sqlite+aiosqlite:////home/okamoto/.local/share/whombat/whombat.db
+
+[32m[1mSettings:[0m {
+    "dev": true,
+    "debug": false,
+    "db_dialect": "sqlite",
+    "db_host": null,
+    "db_port": null,
+    "db_name": "/home/okamoto/.local/share/whombat/whombat.db",
+    "audio_dir": "/home/okamoto/NAS_A/whombat_data",
+    "host": "0.0.0.0",
+    "port": 5000,
+    "domain": "158.210.76.175",
+    "log_config": "logging.conf",
+    "log_to_file": true,
+    "log_to_stdout": false,
+    "log_dir": "logs",
+    "log_level": "info",
+    "cors_origins": [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://158.210.76.175:3000"
+    ],
+    "open_on_startup": true,
+    "auth_cookie_secure": false,
+    "auth_cookie_samesite": "lax",
+    "metadata_dir": "/home/okamoto/.local/share/whombat/metadata"
+}
+    
+
+    [32m[2mWhombat is ready to go![0m
+
+    [32m[1m * Listening on http://0.0.0.0:5000/[0m
+
+    [33mPress Ctrl+C to exit.[0m
+    
+2025-12-04 17:48:14,689 - uvicorn.error - INFO - Application startup complete.
+INFO:     Application startup complete.
+INFO:     158.210.76.175:49992 - "GET / HTTP/1.1" 404 Not Found
+2025-12-04 17:48:14,793 - uvicorn.error - WARNING - Invalid HTTP request received.
+WARNING:  Invalid HTTP request received.
+2025-12-04 17:48:14,828 - uvicorn.error - WARNING - Invalid HTTP request received.
+WARNING:  Invalid HTTP request received.
+INFO:     158.210.76.175:32832 - "GET /api/v1/metadata/sites?project_id=prj-bobasm0b HTTP/1.1" 200 OK
+INFO:     158.210.76.175:32830 - "GET /api/v1/metadata/projects/prj-bobasm0b HTTP/1.1" 200 OK
+INFO:     158.210.76.175:35898 - "GET /api/v1/users/me HTTP/1.1" 200 OK
+INFO:     158.210.76.175:35898 - "GET /api/v1/metadata/projects/prj-bobasm0b HTTP/1.1" 200 OK
+INFO:     158.210.76.175:55706 - "GET /api/v1/metadata/sites?project_id=prj-bobasm0b HTTP/1.1" 200 OK
+INFO:     158.210.76.175:55716 - "GET /api/v1/users/me HTTP/1.1" 200 OK
+INFO:     158.210.76.175:55716 - "GET /api/v1/metadata/projects/prj-bobasm0b HTTP/1.1" 200 OK
+INFO:     158.210.76.175:55716 - "GET /api/v1/metadata/sites?project_id=prj-bobasm0b HTTP/1.1" 200 OK
+INFO:     158.210.76.175:60792 - "GET /api/v1/users/me HTTP/1.1" 200 OK
+INFO:     158.210.76.175:60792 - "GET /api/v1/metadata/projects/prj-bobasm0b HTTP/1.1" 200 OK
+INFO:     158.210.76.175:60792 - "GET /api/v1/metadata/sites?project_id=prj-bobasm0b HTTP/1.1" 200 OK
+INFO:     158.210.76.175:49708 - "GET /api/v1/users/me HTTP/1.1" 200 OK
+INFO:     158.210.76.175:49708 - "GET /api/v1/metadata/projects/prj-bobasm0b HTTP/1.1" 200 OK
+INFO:     158.210.76.175:49708 - "GET /api/v1/datasets/?limit=1000&offset=0&project_id__eq=prj-bobasm0b HTTP/1.1" 200 OK
+INFO:     158.210.76.175:49708 - "GET /api/v1/metadata/sites?project_id=prj-bobasm0b HTTP/1.1" 200 OK
+INFO:     158.210.76.175:49708 - "GET /api/v1/datasets/?limit=100&offset=0 HTTP/1.1" 200 OK
+INFO:     158.210.76.175:49708 - "GET /api/v1/datasets/?limit=100&offset=0&primary_site_id__eq=test2 HTTP/1.1" 200 OK
+INFO:     158.210.76.175:49708 - "GET /api/v1/datasets/?limit=100&offset=0 HTTP/1.1" 200 OK
+INFO:     158.210.76.175:49710 - "GET /api/v1/datasets/?limit=100&offset=0&primary_site_id__eq=test2 HTTP/1.1" 200 OK
+INFO:     158.210.76.175:49708 - "GET /api/v1/users/me HTTP/1.1" 200 OK
+INFO:     158.210.76.175:49708 - "GET /api/v1/metadata/projects/prj-bobasm0b HTTP/1.1" 200 OK
+INFO:     158.210.76.175:49708 - "GET /api/v1/metadata/sites?project_id=prj-bobasm0b HTTP/1.1" 200 OK

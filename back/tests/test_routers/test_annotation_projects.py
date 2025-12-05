@@ -5,7 +5,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 from soundevent.io import aoef
 
-from whombat import schemas
+from echoroo import schemas
 
 
 def test_exported_annotation_projects_paths_are_relative(

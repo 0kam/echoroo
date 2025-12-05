@@ -1,11 +1,12 @@
 [project]
-name = "Whombat"
+name = "echoroo"
 version = "0.8.6"
-description = "Audio Annotation Tool"
+description = "Audio Annotation Tool for Bioacoustics"
 authors = [{ name = "Santiago Martinez", email = "santiago.mbal@gmail.com" }]
 dependencies = [
   "uvicorn[standard]>=0.30.6",
   "aiosqlite>=0.20.0",
+  "aiohttp>=3.9.0",
   "passlib>=1.7.4",
   "soundevent[all]>=2.1.1",
   "torch>=2.3.0",
@@ -21,9 +22,11 @@ dependencies = [
   "colorama>=0.4.6",
   "setuptools>=75.1.0",
   "pygbif>=0.6.5",
+  "h3>=4.0.0",
   "torchcodec>=0.8.0",
   "pip>=25.2",
   "pytest>=8.3.3",
+  "zipstream-new>=1.1.8",
 ]
 requires-python = ">=3.11"
 readme = "README.md"
@@ -37,10 +40,16 @@ Documentation = "https://mbsantiago.github.io/whombat/"
 Releases = "https://github.com/mbsantiago/whombat/releases"
 
 [project.scripts]
-whombat = "whombat.__main__:main"
+echoroo = "echoroo.__main__:main"
 
 [project.optional-dependencies]
-postgre = ["asyncpg>=0.29.0", "psycopg2-binary>=2.9.9"]
+postgresql = ["asyncpg>=0.29.0", "psycopg2-binary>=2.9.9", "pgvector>=0.3.0"]
+ml = [
+    "birdnet>=0.2.0",
+    "soundfile>=0.12.0",
+]
+# ML models use BirdNET for audio analysis and embeddings
+# BirdNET supports GPU acceleration and works with numpy<2.0 (soundevent compatible)
 
 [build-system]
 requires = ["hatchling"]
@@ -49,17 +58,18 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.sdist]
 ignore-vcs = true
 include = [
-  "src/whombat/*.py",
-  "src/whombat/migrations/",
-  "src/whombat/statics/",
-  "src/whombat/user_guide/",
+  "src/echoroo/*.py",
+  "src/echoroo/migrations/",
+  "src/echoroo/statics/",
+  "src/echoroo/user_guide/",
 ]
 
 [tool.hatch.build.targets.wheel]
+packages = ["src/echoroo"]
 artifacts = [
-  "src/whombat/migrations/",
-  "src/whombat/statics/",
-  "src/whombat/user_guide/",
+  "src/echoroo/migrations/",
+  "src/echoroo/statics/",
+  "src/echoroo/user_guide/",
 ]
 
 [tool.uv]
@@ -107,7 +117,7 @@ ignore = ["D1"]
 convention = "numpy"
 
 [tool.ruff.lint.isort]
-known-local-folder = ["src", "whombat"]
+known-local-folder = ["src", "echoroo"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

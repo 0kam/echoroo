@@ -1,8 +1,8 @@
 /**
- * Whombat Javascript API
+ * Echoroo Javascript API
  *
- * This file is the entry point for the Whombat Javascript API.
- * Use the API to interact with the Whombat backend.
+ * This file is the entry point for the Echoroo Javascript API.
+ * Use the API to interact with the Echoroo backend.
  */
 import axios from "axios";
 
@@ -18,11 +18,11 @@ import { registerClipAPI } from "./clips";
 import { registerDatasetAPI } from "./datasets";
 import { registerEvaluationSetAPI } from "./evaluation_sets";
 import { registerEvaluationAPI } from "./evaluations";
-import { registerGroupsAPI } from "./groups";
 import { registerModelRunAPI } from "./model_runs";
 import { registerNotesAPI } from "./notes";
 import { registerPluginsAPI } from "./plugins";
 import { registerRecordingAPI } from "./recordings";
+import { registerMetadataAPI } from "./metadata";
 import { registerSoundEventAnnotationsAPI } from "./sound_event_annotations";
 import { registerSoundEventEvaluationAPI } from "./sound_event_evaluations";
 import { registerSoundEventPredictionsAPI } from "./sound_event_predictions";
@@ -32,6 +32,7 @@ import { registerSpectrogramAPI } from "./spectrograms";
 import { registerTagAPI } from "./tags";
 import { registerUserAPI } from "./user";
 import { registerUserRunAPI } from "./user_runs";
+import { registerInferenceAPI } from "./inference";
 
 type APIConfig = {
   baseURL: string;
@@ -44,7 +45,7 @@ const DEFAULT_CONFIG: APIConfig = {
 };
 
 /**
- * Create an instance of the Whombat API.
+ * Create an instance of the Echoroo API.
  */
 export default function createAPI(config: APIConfig = DEFAULT_CONFIG) {
   let instance = axios.create(config);
@@ -58,8 +59,8 @@ export default function createAPI(config: APIConfig = DEFAULT_CONFIG) {
     auth: registerAuthAPI(instance),
     adminUsers: registerAdminUsersAPI(instance),
     clips: registerClipAPI(instance),
-    datasets: registerDatasetAPI({ instance }),
-    groups: registerGroupsAPI(instance),
+    datasets: registerDatasetAPI({ instance, baseUrl: config.baseURL }),
+    metadata: registerMetadataAPI(instance),
     evaluationSets: registerEvaluationSetAPI(instance, {
       baseUrl: config.baseURL,
     }),
@@ -79,5 +80,6 @@ export default function createAPI(config: APIConfig = DEFAULT_CONFIG) {
     soundEventEvaluations: registerSoundEventEvaluationAPI(instance),
     evaluations: registerEvaluationAPI(instance),
     species: registerSpeciesAPI(instance),
+    inference: registerInferenceAPI(instance),
   } as const;
 }

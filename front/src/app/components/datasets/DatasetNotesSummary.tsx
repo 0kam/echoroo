@@ -1,4 +1,4 @@
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { useCallback, useMemo } from "react";
 
 import api from "@/app/api";
@@ -15,7 +15,6 @@ export default function DatasetNotesSummary({
   dataset: types.Dataset;
 }) {
   const router = useRouter();
-  const params = useSearchParams();
 
   const filter: types.RecordingNoteFilter = useMemo(
     () => ({ dataset, issues: { eq: true } }),
@@ -25,10 +24,10 @@ export default function DatasetNotesSummary({
   const handleClickNote = useCallback(
     (recordingNote: types.RecordingNote) => {
       router.push(
-        `/datasets/detail/recordings/detail/?recording_uuid=${recordingNote.recording_uuid}&${params.toString()}`,
+        `/datasets/${dataset.uuid}/recordings/detail?recording_uuid=${recordingNote.recording_uuid}`,
       );
     },
-    [router, params],
+    [router, dataset.uuid],
   );
 
   const {

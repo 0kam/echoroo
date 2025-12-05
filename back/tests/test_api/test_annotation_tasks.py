@@ -4,7 +4,7 @@ import pytest
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from whombat import api, schemas
+from echoroo import api, schemas
 
 
 async def test_cant_delete_annotation_task_clip(

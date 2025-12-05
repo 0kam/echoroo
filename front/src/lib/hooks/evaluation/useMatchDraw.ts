@@ -1,7 +1,7 @@
 import { useCallback } from "react";
 
 import drawGeometry from "@/lib/draw/geometry";
-import { GREEN, ORANGE, RED } from "@/lib/draw/styles";
+import { ACCENT, ORANGE, RED } from "@/lib/draw/styles";
 import type {
   Interval,
   SoundEventEvaluation,
@@ -69,8 +69,8 @@ export default function useMatchDraw(props: {
 
         if (annotationGeometry != null) {
           drawGeometry(ctx, annotationGeometry, {
-            borderColor: predictionGeometry != null ? GREEN : ORANGE,
-            fillColor: predictionGeometry != null ? GREEN : ORANGE,
+            borderColor: predictionGeometry != null ? ACCENT : ORANGE,
+            fillColor: predictionGeometry != null ? ACCENT : ORANGE,
             borderWidth: 2,
             fillAlpha: 0.1,
           });
@@ -78,8 +78,8 @@ export default function useMatchDraw(props: {
 
         if (predictionGeometry != null) {
           drawGeometry(ctx, predictionGeometry, {
-            borderColor: annotationGeometry != null ? GREEN : RED,
-            fillColor: annotationGeometry != null ? GREEN : RED,
+            borderColor: annotationGeometry != null ? ACCENT : RED,
+            fillColor: annotationGeometry != null ? ACCENT : RED,
             borderWidth: 2,
             fillAlpha: 0.1,
             borderDash: [5, 5],

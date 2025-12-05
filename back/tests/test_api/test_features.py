@@ -6,8 +6,8 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from whombat import exceptions, models, schemas
-from whombat.api import features
+from echoroo import exceptions, models, schemas
+from echoroo.api import features
 
 
 async def test_create_feature_name(

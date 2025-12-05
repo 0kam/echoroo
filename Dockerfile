@@ -30,7 +30,7 @@ RUN npm install
 
 RUN npm run build
 
-# === STEP 3 === Build whombat
+# === STEP 3 === Build echoroo
 
 # Run the web server
 # Use a Python image with uv pre-installed
@@ -90,16 +90,16 @@ RUN mkdir /data
 VOLUME ["/data"]
 
 # Set the environment variables for the audio directory and the database URL
-ENV WHOMBAT_AUDIO_DIR /audio
-ENV WHOMBAT_DB_URL "sqlite+aiosqlite:////data/whombat.db"
-ENV WHOMBAT_DEV "false"
-ENV WHOMBAT_HOST "0.0.0.0"
-ENV WHOMBAT_PORT "5000"
-ENV WHOMBAT_LOG_LEVEL "info"
-ENV WHOMBAT_LOG_TO_STDOUT "true"
-ENV WHOMBAT_LOG_TO_FILE "false"
-ENV WHOMBAT_OPEN_ON_STARTUP "false"
-ENV WHOMBAT_DOMAIN "localhost"
+ENV ECHOROO_AUDIO_DIR /audio
+ENV ECHOROO_DB_URL "sqlite+aiosqlite:////data/echoroo.db"
+ENV ECHOROO_DEV "false"
+ENV ECHOROO_HOST "0.0.0.0"
+ENV ECHOROO_PORT "5000"
+ENV ECHOROO_LOG_LEVEL "info"
+ENV ECHOROO_LOG_TO_STDOUT "true"
+ENV ECHOROO_LOG_TO_FILE "false"
+ENV ECHOROO_OPEN_ON_STARTUP "false"
+ENV ECHOROO_DOMAIN "localhost"
 
 # Expose the port for the web server
 EXPOSE 5000
@@ -108,4 +108,4 @@ EXPOSE 5000
 ENTRYPOINT []
 
 # Run the command to start the web server
-CMD ["whombat"]
+CMD ["echoroo"]

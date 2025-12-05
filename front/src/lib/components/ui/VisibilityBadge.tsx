@@ -1,10 +1,6 @@
 import classNames from "classnames";
 
-import {
-  LatitudeIcon,
-  VerifiedIcon,
-  UsersIcon,
-} from "@/lib/components/icons";
+import { LatitudeIcon, UsersIcon } from "@/lib/components/icons";
 import type { VisibilityLevel } from "@/lib/schemas";
 
 type VisibilityIcon = typeof LatitudeIcon;
@@ -26,11 +22,6 @@ const CONFIG: Record<
     label: "Restricted",
     className: "bg-amber-100 border-amber-200 text-amber-700",
     Icon: UsersIcon,
-  },
-  private: {
-    label: "Private",
-    className: "bg-stone-200 border-stone-300 text-stone-700",
-    Icon: VerifiedIcon,
   },
 };
 

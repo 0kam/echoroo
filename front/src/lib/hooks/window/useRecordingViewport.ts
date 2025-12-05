@@ -89,10 +89,7 @@ export default function useRecordingViewport({
       );
     },
     [
-      bounds.time.min,
-      bounds.time.max,
-      bounds.freq.min,
-      bounds.freq.max,
+      bounds,
       effectiveSamplerate,
       spectrogramSettings.window_size,
       spectrogramSettings.overlap,

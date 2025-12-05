@@ -1,99 +1,133 @@
+# Echoroo Production Docker Compose
+# PostgreSQL + pgvector with Traefik reverse proxy
+#
+# Usage:
+#   ./scripts/docker.sh prod        # Start production environment
+#   ./scripts/docker.sh prod logs   # View logs
+#   ./scripts/docker.sh prod stop   # Stop
+#
+# Features:
+# - PostgreSQL with pgvector extension (internal network only)
+# - Traefik reverse proxy with load balancing
+# - Multiple backend replicas support
+# - Automatic database migrations
+
 services:
+  # Traefik Reverse Proxy
   reverse-proxy:
     image: traefik:v3.1
+    container_name: echoroo-proxy
+    restart: always
     command:
       - "--api.insecure=true"
       - "--providers.docker"
       - "--providers.docker.exposedbydefault=false"
       - "--entrypoints.web.address=:80"
     ports:
-      - "${PORT}:80"
-      - "8080:8080"
+      - "${PORT:-80}:80"
+      - "8080:8080"  # Traefik dashboard
     volumes:
       - letsencrypt:/letsencrypt
       - /var/run/docker.sock:/var/run/docker.sock
-  whombat:
-    build:
-      context: .
-    volumes:
-      - ${AUDIO_DIR}:/audio
-    env_file:
-      - .env
-    environment:
-      - WHOMBAT_DB_DIALECT=postgresql
-      - WHOMBAT_DB_USERNAME=${POSTGRES_USER?Variable not set}
-      - WHOMBAT_DB_PASSWORD=${POSTGRES_PASSWORD?Variable not set}
-      - WHOMBAT_DB_NAME=${POSTGRES_DB?Variable not set}
-      - WHOMBAT_DB_URL=
-      - WHOMBAT_DB_HOST=db
-      - WHOMBAT_DB_PORT=5432
-      - WHOMBAT_HOST=0.0.0.0
-      - WHOMBAT_PORT=5000
-      - WHOMBAT_AUDIO_DIR=/audio
-    deploy:
-      mode: replicated
-      replicas: 3
-    restart: always
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.whombat.rule=Host(`${DOMAIN?Variable not set}`)"
-      - "traefik.http.routers.whombat.entrypoints=web"
-      - "traefik.http.services.whombat.loadbalancer.server.port=5000"
-      - "traefik.http.middlewares.testheader.headers.accesscontrolallowheaders=*"
-    depends_on:
-      db:
-        condition: service_healthy
-      prestart:
-        condition: service_completed_successfully
     networks:
-      - public
-      - private
-  prestart:
-    build:
-      context: .
-    networks:
-      - private
-    depends_on:
-      db:
-        condition: service_healthy
-    command: alembic upgrade head
-    env_file:
-      - .env
-    environment:
-      - WHOMBAT_DB_DIALECT=postgresql
-      - WHOMBAT_DB_USERNAME=${POSTGRES_USER?Variable not set}
-      - WHOMBAT_DB_PASSWORD=${POSTGRES_PASSWORD?Variable not set}
-      - WHOMBAT_DB_NAME=${POSTGRES_DB?Variable not set}
-      - WHOMBAT_DB_URL=
-      - WHOMBAT_DB_HOST=db
-      - WHOMBAT_DB_PORT=5432
-      - WHOMBAT_HOST=0.0.0.0
-      - WHOMBAT_PORT=5000
-      - WHOMBAT_AUDIO_DIR=/audio
+      - echoroo-public
+
+  # PostgreSQL Database with pgvector
   db:
-    image: postgres
+    image: pgvector/pgvector:pg16
+    container_name: echoroo-db
     restart: always
     user: postgres
     volumes:
       - db-data:/var/lib/postgresql/data
-    env_file:
-      - .env
+      - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql:ro
     environment:
-      - POSTGRES_DB=${POSTGRES_DB?Variable not set}
-      - POSTGRES_USER=${POSTGRES_USER?Variable not set}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD?Variable not set}
-    expose:
-      - 5432
+      - POSTGRES_DB=${POSTGRES_DB:?POSTGRES_DB must be set}
+      - POSTGRES_USER=${POSTGRES_USER:?POSTGRES_USER must be set}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
     healthcheck:
       test: ["CMD", "pg_isready"]
       interval: 10s
       timeout: 5s
       retries: 5
     networks:
-      - private
+      - echoroo-private
+    # Note: Port not exposed externally for security
+
+  # Database Migration (runs once on startup)
+  prestart:
+    build:
+      context: .
+    container_name: echoroo-prestart
+    depends_on:
+      db:
+        condition: service_healthy
+    command: ["uv", "run", "alembic", "upgrade", "head"]
+    environment:
+      - ECHOROO_DB_DIALECT=postgresql
+      - ECHOROO_DB_HOST=db
+      - ECHOROO_DB_PORT=5432
+      - ECHOROO_DB_NAME=${POSTGRES_DB}
+      - ECHOROO_DB_USERNAME=${POSTGRES_USER}
+      - ECHOROO_DB_PASSWORD=${POSTGRES_PASSWORD}
+    networks:
+      - echoroo-private
+
+  # Backend API Server (scalable)
+  backend:
+    build:
+      context: .
+    restart: always
+    depends_on:
+      db:
+        condition: service_healthy
+      prestart:
+        condition: service_completed_successfully
+    volumes:
+      - ${ECHOROO_AUDIO_DIR:?ECHOROO_AUDIO_DIR must be set}:/audio:ro
+    environment:
+      - ECHOROO_HOST=0.0.0.0
+      - ECHOROO_PORT=5000
+      - ECHOROO_DOMAIN=${DOMAIN:?DOMAIN must be set}
+      - ECHOROO_AUDIO_DIR=/audio
+      - ECHOROO_DB_DIALECT=postgresql
+      - ECHOROO_DB_HOST=db
+      - ECHOROO_DB_PORT=5432
+      - ECHOROO_DB_NAME=${POSTGRES_DB}
+      - ECHOROO_DB_USERNAME=${POSTGRES_USER}
+      - ECHOROO_DB_PASSWORD=${POSTGRES_PASSWORD}
+      - ECHOROO_DEV=false
+      - ECHOROO_LOG_TO_STDOUT=true
+      - ECHOROO_LOG_TO_FILE=false
+      - ECHOROO_OPEN_ON_STARTUP=false
+    deploy:
+      mode: replicated
+      replicas: ${BACKEND_REPLICAS:-1}
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.echoroo.rule=Host(`${DOMAIN}`)"
+      - "traefik.http.routers.echoroo.entrypoints=web"
+      - "traefik.http.services.echoroo.loadbalancer.server.port=5000"
+      - "traefik.http.middlewares.echoroo-headers.headers.accesscontrolallowheaders=*"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/api/v1/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - echoroo-public
+      - echoroo-private
+
+networks:
+  echoroo-public:
+    name: echoroo-prod-public
+  echoroo-private:
+    name: echoroo-prod-private
+    internal: true
+
 volumes:
   db-data:
+    name: echoroo-prod-db
   letsencrypt:
-networks:
-  public:
-  private:
+    name: echoroo-letsencrypt

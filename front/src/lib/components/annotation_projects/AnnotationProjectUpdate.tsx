@@ -1,10 +1,9 @@
 import { useMemo } from "react";
+import { useQuery } from "@tanstack/react-query";
 
+import api from "@/app/api";
 import useActiveUser from "@/app/hooks/api/useActiveUser";
-import useMyGroups from "@/app/hooks/api/useMyGroups";
 
-import { Select } from "@/lib/components/inputs";
-import type { Option } from "@/lib/components/inputs/Select";
 import Card from "@/lib/components/ui/Card";
 import Description, {
   DescriptionData,
@@ -17,8 +16,8 @@ import VisibilityBadge from "@/lib/components/ui/VisibilityBadge";
 import type {
   AnnotationProject,
   AnnotationProjectUpdate,
+  Project,
 } from "@/lib/types";
-import type { VisibilityLevel } from "@/lib/schemas";
 
 export default function AnnotationProjectUpdateComponent({
   annotationProject,
@@ -30,116 +29,41 @@ export default function AnnotationProjectUpdateComponent({
   onChangeAnnotationProject?: (data: AnnotationProjectUpdate) => void;
 }) {
   const { data: activeUser } = useActiveUser();
-  const { data: myGroups } = useMyGroups();
 
-  const managerGroups = useMemo(() => {
-    if (!myGroups?.length || !activeUser) return [];
-    return myGroups.filter((group) =>
-      group.memberships.some(
-        (membership) =>
-          membership.user_id === activeUser.id &&
-          membership.role === "manager",
+  const {
+    data: projects = [],
+  } = useQuery<Project[]>({
+    queryKey: ["metadata", "projects", "all"],
+    queryFn: () => api.metadata.projects.list(),
+    staleTime: 60_000,
+  });
+
+  const project = useMemo(
+    () =>
+      projects.find(
+        (item) => item.project_id === annotationProject.project_id,
       ),
-    );
-  }, [myGroups, activeUser]);
-
-  const isOwner = useMemo(() => {
-    return activeUser?.id === annotationProject.created_by_id;
-  }, [activeUser, annotationProject.created_by_id]);
-
-  const managesOwnerGroup = useMemo(() => {
-    if (annotationProject.owner_group_id == null) return false;
-    return managerGroups.some((group) => group.id === annotationProject.owner_group_id);
-  }, [managerGroups, annotationProject.owner_group_id]);
-
-  const canEditMetadata = useMemo(() => {
-    if (!activeUser) return false;
-    if (activeUser.is_superuser) return true;
-    if (isOwner) return true;
-    return managesOwnerGroup;
-  }, [activeUser, isOwner, managesOwnerGroup]);
-
-  const visibilityOptions: Option<VisibilityLevel>[] = useMemo(() => {
-    const options: Option<VisibilityLevel>[] = [
-      { id: "public", label: "🌍 Public", value: "public" },
-      { id: "private", label: "🔒 Private", value: "private" },
-    ];
-
-    // Only show restricted option if user has manager groups
-    if (managerGroups.length > 0) {
-      options.splice(1, 0, {
-        id: "restricted",
-        label: "👥 Restricted",
-        value: "restricted",
-      });
-    }
-
-    return options;
-  }, [managerGroups]);
-
-  const baseGroupOptions: Option<number>[] = useMemo(() => {
-    const options = managerGroups.map((group) => ({
-      id: group.id,
-      label: group.name,
-      value: group.id,
-    }));
-
-    if (
-      annotationProject.owner_group_id != null &&
-      !options.some((option) => option.value === annotationProject.owner_group_id)
-    ) {
-      options.push({
-        id: annotationProject.owner_group_id,
-        label: `Group #${annotationProject.owner_group_id}`,
-        value: annotationProject.owner_group_id,
-      });
-    }
-
-    return options;
-  }, [managerGroups, annotationProject.owner_group_id]);
-
-  const groupOptions: Option<number | null>[] = useMemo(
-    () => [
-      { id: "none", label: "No group", value: null },
-      ...baseGroupOptions,
-    ],
-    [baseGroupOptions],
+    [projects, annotationProject.project_id],
   );
 
-  const selectedVisibility = useMemo<Option<VisibilityLevel> | undefined>(() => {
-    return visibilityOptions.find(
-      (option) => option.value === annotationProject.visibility,
+  const isProjectManager = useMemo(() => {
+    if (!project || !activeUser) return false;
+    if (activeUser.is_superuser) return true;
+    return project.memberships.some(
+      (membership) =>
+        membership.user_id === activeUser.id &&
+        membership.role === "manager",
     );
-  }, [visibilityOptions, annotationProject.visibility]);
+  }, [project, activeUser]);
 
-  const currentVisibility = selectedVisibility?.value ?? annotationProject.visibility;
+  const isOwner = useMemo(
+    () => activeUser?.id === annotationProject.created_by_id,
+    [activeUser, annotationProject.created_by_id],
+  );
 
-  const selectedGroup = useMemo<Option<number | null>>(() => {
-    return (
-      groupOptions.find(
-        (option) => option.value === annotationProject.owner_group_id,
-      ) ?? groupOptions[0]
-    );
-  }, [groupOptions, annotationProject.owner_group_id]);
-
-  const handleVisibilityChange = (value: VisibilityLevel) => {
-    const update: AnnotationProjectUpdate = { visibility: value };
-    if (value === "restricted") {
-      // If switching to restricted, use the current group or the first available group
-      if (annotationProject.owner_group_id != null) {
-        update.owner_group_id = annotationProject.owner_group_id;
-      } else if (baseGroupOptions.length > 0) {
-        update.owner_group_id = baseGroupOptions[0].value;
-      }
-    } else {
-      update.owner_group_id = null;
-    }
-    onChangeAnnotationProject?.(update);
-  };
-
-  const handleGroupChange = (value: number | null) => {
-    onChangeAnnotationProject?.({ owner_group_id: value });
-  };
+  const canEditMetadata = Boolean(
+    activeUser && (activeUser.is_superuser || isOwner || isProjectManager),
+  );
 
   return (
     <Card>
@@ -147,8 +71,8 @@ export default function AnnotationProjectUpdateComponent({
         <H3>Project Details</H3>
         {!canEditMetadata ? (
           <p className="text-sm text-stone-500 dark:text-stone-400">
-            Only the project owner or group managers can edit the name, description,
-            and instructions.
+            Only the project owner, project managers, or superusers can edit the
+            name, description, and instructions.
           </p>
         ) : null}
       </div>
@@ -196,44 +120,32 @@ export default function AnnotationProjectUpdateComponent({
               />
             </div>
             <div className="py-6 px-4 sm:px-0">
+              <DescriptionTerm>Project</DescriptionTerm>
+              <DescriptionData>
+                <span className="text-sm text-stone-700 dark:text-stone-300">
+                  {project?.project_name ?? annotationProject.project_id}
+                </span>
+              </DescriptionData>
+            </div>
+            <div className="py-6 px-4 sm:px-0">
+              <DescriptionTerm>Dataset</DescriptionTerm>
+              <DescriptionData>
+                <span className="text-sm text-stone-700 dark:text-stone-300">
+                  Dataset ID #{annotationProject.dataset_id}
+                </span>
+              </DescriptionData>
+            </div>
+            <div className="py-6 px-4 sm:px-0">
               <DescriptionTerm>Visibility</DescriptionTerm>
               <DescriptionData>
                 <div className="flex flex-col gap-2">
-                  <VisibilityBadge visibility={currentVisibility} />
-                  {isOwner ? (
-                    selectedVisibility ? (
-                      <Select
-                        label="Visibility"
-                        options={visibilityOptions}
-                        selected={selectedVisibility}
-                        onChange={handleVisibilityChange}
-                      />
-                    ) : (
-                      <p className="text-sm text-stone-500 dark:text-stone-400">
-                        Cannot change visibility: no valid options available
-                      </p>
-                    )
-                  ) : (
-                    <p className="text-sm text-stone-500 dark:text-stone-400">
-                      Only the project owner can change visibility
-                    </p>
-                  )}
+                  <VisibilityBadge visibility={annotationProject.visibility} />
+                  <p className="text-sm text-stone-500 dark:text-stone-400">
+                    Annotation project visibility follows the dataset.
+                  </p>
                 </div>
               </DescriptionData>
             </div>
-            {currentVisibility === "restricted" && isOwner ? (
-              <div className="py-6 px-4 sm:px-0">
-                <DescriptionTerm>Group</DescriptionTerm>
-                <DescriptionData>
-                  <Select
-                    label="Group"
-                    options={groupOptions}
-                    selected={selectedGroup}
-                    onChange={handleGroupChange}
-                  />
-                </DescriptionData>
-              </div>
-            ) : null}
           </dl>
         )}
       </div>

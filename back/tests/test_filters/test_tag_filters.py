@@ -3,8 +3,8 @@
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from whombat import api
-from whombat.filters import tags as tag_filters
+from echoroo import api
+from echoroo.filters import tags as tag_filters
 
 
 @pytest.fixture(autouse=True)

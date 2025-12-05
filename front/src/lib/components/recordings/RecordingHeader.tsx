@@ -4,9 +4,8 @@ import Tooltip from "@/lib/components/ui/Tooltip";
 
 import type { Recording } from "@/lib/types";
 
-import RecordingDate from "./RecordingDate";
-import RecordingLocation from "./RecordingLocation";
-import RecordingTime from "./RecordingTime";
+import RecordingDatetime from "./RecordingDatetime";
+import RecordingSite from "./RecordingSite";
 
 /** Get the basename of a path
  * Taken from https://stackoverflow.com/a/25221100
@@ -25,13 +24,9 @@ export function getExtension(path: string) {
 
 export default function RecordingHeader({
   recording,
-  disabled = false,
-  onRecordingUpdate,
   onRecordingClick,
 }: {
   recording: Recording;
-  disabled?: boolean;
-  onRecordingUpdate?: (data: Partial<Recording>) => void;
   onRecordingClick?: () => void;
 }) {
   const { path } = recording;
@@ -65,22 +60,8 @@ export default function RecordingHeader({
           </Tooltip>
         </H3>
       </div>
-      <RecordingLocation
-        latitude={recording.latitude}
-        longitude={recording.longitude}
-        disabled={disabled}
-        onChange={onRecordingUpdate}
-      />
-      <RecordingTime
-        disabled={disabled}
-        time={recording.time}
-        onChange={onRecordingUpdate}
-      />
-      <RecordingDate
-        disabled={disabled}
-        date={recording.date}
-        onChange={onRecordingUpdate}
-      />
+      <RecordingSite recording={recording} />
+      <RecordingDatetime recording={recording} />
     </div>
   );
 }

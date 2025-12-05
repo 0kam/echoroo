@@ -3,6 +3,7 @@ import { fn } from "@storybook/test";
 import { loremIpsum } from "lorem-ipsum";
 
 import AnnotationProject from "./AnnotationProject";
+import { makeAnnotationProject } from "./storyHelpers";
 
 const meta: Meta<typeof AnnotationProject> = {
   title: "AnnotationProject/Item",
@@ -15,16 +16,11 @@ type Story = StoryObj<typeof AnnotationProject>;
 
 export const Primary: Story = {
   args: {
-    annotationProject: {
+    annotationProject: makeAnnotationProject({
       uuid: "123",
       name: "Test Project",
       description: loremIpsum({ count: 2 }),
-      created_on: new Date(),
-      visibility: "private" as const,
-      created_by_id: "test-user-id",
-      owner_group_id: null,
-      tags: [],
-    },
+    }),
     onClickAnnotationProject: fn(),
   },
 };

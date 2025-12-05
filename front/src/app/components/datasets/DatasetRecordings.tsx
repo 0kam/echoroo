@@ -10,22 +10,15 @@ import Loading from "@/app/loading";
 import useStore from "@/app/store";
 
 import RecordingTable from "@/lib/components/recordings/RecordingTable";
-import { parsePosition } from "@/lib/components/tables/TableMap";
 
 import type * as types from "@/lib/types";
 
-const EDITABLE_COLUMNS = ["date", "time", "location", "tags"];
+const EDITABLE_COLUMNS = ["tags"];
 
 function useRecordingTableKeyShortcuts({
-  onUpdate,
   onAddTag,
   onRemoveTag,
 }: {
-  onUpdate: (data: {
-    recording: types.Recording;
-    data: types.RecordingUpdate;
-    index: number;
-  }) => void;
   onAddTag: (data: {
     recording: types.Recording;
     tag: types.Tag;
@@ -59,19 +52,6 @@ function useRecordingTableKeyShortcuts({
       value: any;
       row: number;
     }) => {
-      // Handle special cases
-      if (column === "location") {
-        const { position, isComplete } = parsePosition(value);
-        if (!isComplete) return;
-
-        const data = {
-          latitude: position.lat,
-          longitude: position.lng,
-        };
-        onUpdate({ recording, data, index: row });
-        return;
-      }
-
       if (column === "tags") {
         try {
           (value as types.Tag[]).forEach((tag: types.Tag) => {
@@ -81,10 +61,6 @@ function useRecordingTableKeyShortcuts({
           return;
         }
       }
-
-      // Handle default case
-      const data = { [column]: value };
-      onUpdate({ recording, data, index: row });
     };
 
     // Handle for deleting a value from a table cell
@@ -97,29 +73,12 @@ function useRecordingTableKeyShortcuts({
       column: string;
       row: number;
     }) => {
-      // Handle special cases
-      if (column === "location") {
-        let data = { latitude: null, longitude: null };
-        onUpdate({ recording, data, index: row });
-        return;
-      }
-
-      if (column === "time_expansion") {
-        let data = { time_expansion: 1 };
-        onUpdate({ recording, data, index: row });
-        return;
-      }
-
       if (column === "tags") {
         let currentTags = recording.tags || [];
         currentTags.forEach((tag: types.Tag) => {
           onRemoveTag({ recording, tag, index: row });
         });
       }
-
-      // Handle default case
-      let data = { [column]: null };
-      onUpdate({ recording, data, index: row });
     };
 
     return ({
@@ -158,7 +117,7 @@ function useRecordingTableKeyShortcuts({
         handleDelete({ recording: data as types.Recording, column, row });
       }
     };
-  }, [clipboard, onUpdate, onAddTag, onRemoveTag, copy]);
+  }, [clipboard, onAddTag, onRemoveTag, copy]);
 
   return handleKeyDown;
 }
@@ -200,7 +159,6 @@ export default function DatasetRecordings({
   });
 
   const handleKeyDown = useRecordingTableKeyShortcuts({
-    onUpdate: recordings.updateRecording.mutate,
     onAddTag: recordings.addTag.mutate,
     onRemoveTag: recordings.removeTag.mutate,
   });

@@ -1,3 +1,4 @@
+import Image from "next/image";
 import React from "react";
 
 import Link from "@/lib/components/ui/Link";
@@ -19,13 +20,20 @@ export default function PluginInfo({
 }) {
   return (
     <div className="flex flex-col items-center bg-white rounded-lg border shadow md:flex-row md:max-w-xl border-stone-200 dark:bg-stone-800 dark:border-stone-700">
-      {thumbnail && (
-        <img
-          className="object-cover w-96 h-full md:w-48 md:h-auto md:rounded-none pl-4"
-          src={thumbnail}
-          alt="Plugin thumbnail"
-        />
-      )}
+      {thumbnail ? (
+        <div className="relative w-full pl-4 md:w-48 md:pl-0 md:pr-4 md:self-stretch">
+          <div className="relative h-48 w-full md:h-full">
+            <Image
+              src={thumbnail}
+              alt="Plugin thumbnail"
+              fill
+              sizes="(min-width: 768px) 12rem, 24rem"
+              className="object-cover rounded-md md:rounded-none"
+              priority={false}
+            />
+          </div>
+        </div>
+      ) : null}
       <div className="flex flex-col justify-between p-4 leading-normal">
         <h5 className="mb-1 text-xl font-bold tracking-tight dark:text-white text-stone-900">
           {name}

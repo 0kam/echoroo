@@ -7,7 +7,7 @@ import { ClipEvaluationSchema } from "./clip_evaluations";
 import { ClipPredictionSchema } from "./clip_predictions";
 import { ClipSchema } from "./clips";
 import { TimeStringSchema } from "./common";
-import { DatasetSchema } from "./datasets";
+import { DatasetSchema, VisibilityLevelSchema } from "./datasets";
 import { EvaluationSetSchema } from "./evaluation_sets";
 import { EvaluationSchema } from "./evaluations";
 import { ModelRunSchema } from "./model_runs";
@@ -155,10 +155,28 @@ export const EvaluationSetFilterSchema = z.object({
 
 export const AnnotationProjectFilterSchema = z.object({
   search: z.string().optional(),
+  dataset_id__eq: z.number().int().optional(),
+  dataset__eq: z.string().uuid().optional(),
 });
 
 export const DatasetFilterSchema = z.object({
   search: z.string().optional(),
+  project_id__eq: z.string().optional(),
+  project_id__isin: z.array(z.string()).optional(),
+  primary_site_id__eq: z.string().optional(),
+  primary_site_id__isin: z.array(z.string()).optional(),
+  primary_site_id__is_null: z.boolean().optional(),
+  primary_recorder_id__eq: z.string().optional(),
+  primary_recorder_id__isin: z.array(z.string()).optional(),
+  primary_recorder_id__is_null: z.boolean().optional(),
+  license_id__eq: z.string().optional(),
+  license_id__isin: z.array(z.string()).optional(),
+  license_id__is_null: z.boolean().optional(),
+  visibility__eq: VisibilityLevelSchema.optional(),
+  visibility__isin: z.array(VisibilityLevelSchema).optional(),
+  created_on__before: z.string().optional(),
+  created_on__after: z.string().optional(),
+  created_on__on: z.string().optional(),
 });
 
 export const RecordingFilterSchema = z.object({

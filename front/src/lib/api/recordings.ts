@@ -17,6 +17,7 @@ const DEFAULT_ENDPOINTS = {
   addFeature: "/api/v1/recordings/detail/features/",
   removeFeature: "/api/v1/recordings/detail/features/",
   updateFeature: "/api/v1/recordings/detail/features/",
+  search: "/api/v1/recordings/search/",
 };
 
 export function registerRecordingAPI(
@@ -198,6 +199,28 @@ export function registerRecordingAPI(
     downloadContent(data, `${uuid}.wav`, "audio/wav");
   }
 
+  async function crossDatasetSearch(
+    params: {
+      h3_cells?: string[];
+      h3_center?: string;
+      h3_radius?: number;
+      bbox?: number[];
+      time_start?: number;
+      time_end?: number;
+      date_start?: string;
+      date_end?: string;
+      project_ids?: string[];
+      site_ids?: string[];
+      recorder_ids?: string[];
+      target_taxa?: string[];
+      limit?: number;
+      offset?: number;
+    },
+  ): Promise<types.Page<types.Recording>> {
+    const { data } = await instance.get(endpoints.search, { params });
+    return Page(schemas.RecordingSchema).parse(data);
+  }
+
   return {
     getMany,
     get,
@@ -211,5 +234,6 @@ export function registerRecordingAPI(
     addFeature,
     removeFeature,
     updateFeature,
+    crossDatasetSearch,
   } as const;
 }

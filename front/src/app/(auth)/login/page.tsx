@@ -7,7 +7,7 @@ import { z } from "zod";
 
 import api from "@/app/api";
 
-import { WhombatIcon } from "@/lib/components/icons";
+import { EchorooIcon } from "@/lib/components/icons";
 import { Group, Input } from "@/lib/components/inputs/index";
 import Info from "@/lib/components/ui/Info";
 import Link from "@/lib/components/ui/Link";
@@ -56,9 +56,9 @@ export default function LoginForm() {
   return (
     <div className="flex flex-col gap-4 items-center justify-center min-h-screen">
       <div className="mb-4 flex flex-col items-center gap-4 text-center text-7xl">
-        <WhombatIcon width={128} height={128} />
+        <EchorooIcon width={128} height={128} />
         <span className="font-sans font-bold text-emerald-500 underline decoration-8">
-          Whombat
+          Echoroo
         </span>
       </div>
       <p className="max-w-prose text-stone-500">
@@ -95,7 +95,7 @@ export default function LoginForm() {
       </Info>
       <Info className="w-80">
         <p>
-          First time booting up Whombat? Click instead to create an account:
+          First time booting up Echoroo? Click instead to create an account:
         </p>
         <div className="w-full flex flex-row justify-center">
           <Link mode="text" href="/first/" variant="info">

@@ -5,6 +5,7 @@ import { Item } from "react-stately";
 import Search from "@/lib/components/search/Search";
 
 import AnnotationProjectTasks from "./AnnotationProjectTasks";
+import { makeDataset } from "../datasets/storyHelpers";
 
 const meta: Meta<typeof AnnotationProjectTasks> = {
   title: "AnnotationProject/Tasks",
@@ -30,17 +31,7 @@ export const NoDatasetSeletected: Story = {
   args: {},
 };
 
-const dataset = {
-  uuid: "dataset-1",
-  name: "Test Dataset",
-  description: "A test dataset",
-  audio_dir: "test",
-  recording_count: 0,
-  created_on: new Date(),
-  visibility: "private" as const,
-  created_by_id: "test-user-id",
-  owner_group_id: null,
-};
+const dataset = makeDataset({ uuid: "dataset-1", name: "Test Dataset" });
 
 const datasetSearch = (
   <Search

@@ -6,7 +6,7 @@ import sqlalchemy
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
-from whombat import models
+from echoroo import models
 
 
 def check_all_tables_exist(session: Session):

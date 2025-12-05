@@ -2,6 +2,9 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Import Leaflet CSS globally to avoid issues with dynamic imports */
+@import 'leaflet/dist/leaflet.css';
+
 .remove-arrow::-webkit-inner-spin-button,
 .remove-arrow::-webkit-outer-spin-button {
   -webkit-appearance: none;

@@ -1,9 +1,8 @@
-"""Common fixtures for Whombat tests."""
+"""Common fixtures for Echoroo tests."""
 
 import logging
 import os
 import random
-import shutil
 import string
 from collections.abc import Awaitable, Callable
 from pathlib import Path
@@ -16,14 +15,34 @@ import soundfile as sf
 from sqlalchemy.engine import URL
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from whombat import api, cache, models, schemas
-from whombat.system import get_database_url, init_database
-from whombat.system.settings import Settings
+from echoroo import api, cache, models, schemas
+from echoroo.system import get_database_url, init_database
+from echoroo.system.settings import Settings
 
 # Avoid noisy logging during tests.
 logging.getLogger("aiosqlite").setLevel(logging.WARNING)
 logging.getLogger("asyncio").setLevel(logging.WARNING)
 logging.getLogger("passlib").setLevel(logging.WARNING)
+
+
+@pytest.fixture(scope="session", autouse=True)
+def clear_env_variables():
+    """Clear environment variables that might interfere with tests."""
+    # Save original values
+    original_dev = os.environ.get("ECHOROO_DEV")
+    original_db_url = os.environ.get("ECHOROO_DB_URL")
+
+    # Clear the variables
+    os.environ.pop("ECHOROO_DEV", None)
+    os.environ.pop("ECHOROO_DB_URL", None)
+
+    yield
+
+    # Restore original values
+    if original_dev is not None:
+        os.environ["ECHOROO_DEV"] = original_dev
+    if original_db_url is not None:
+        os.environ["ECHOROO_DB_URL"] = original_db_url
 
 
 @pytest.fixture
@@ -75,38 +94,21 @@ def audio_dir(tmp_path: Path):
     return path
 
 
-@pytest.fixture(scope="session")
-async def database_template(tmp_path_factory: pytest.TempPathFactory) -> Path:
-    """Create a database template for testing."""
-    tmp_path = tmp_path_factory.mktemp("template")
-    db_path = tmp_path / "template.db"
-    settings = Settings(
-        db_dialect="sqlite",
-        db_name=str(db_path),
-        audio_dir=tmp_path / "audio",
-    )
-    await init_database(settings)
-    return db_path
-
-
 @pytest.fixture
-def database_path(tmp_path: Path, database_template: Path) -> Path:
-    """Create a database for testing.
-
-    Copies the database template to a temporary location.
-    """
-    path = tmp_path / "test.db"
-    shutil.copy(database_template, path)
-    return path
+def database_path(tmp_path: Path) -> Path:
+    """Return the path where the test database should be created."""
+    return tmp_path / "test.db"
 
 
 @pytest.fixture(autouse=True)
-def settings(
+async def settings(
     audio_dir: Path,
     database_path: Path,
 ) -> Settings:
-    """Fixture to return the settings."""
-    return Settings(
+    """Fixture to return the settings and initialize the database."""
+    settings_obj = Settings(
+        dev=False,  # Disable dev mode to prevent using default echoroo.db
+        db_url=None,  # Explicitly disable db_url to use db_name instead
         db_dialect="sqlite",
         db_name=str(database_path),
         audio_dir=audio_dir,
@@ -114,6 +116,9 @@ def settings(
         log_to_file=False,
         log_to_stdout=True,
     )
+    # Initialize the database with the settings
+    await init_database(settings_obj)
+    return settings_obj
 
 
 @pytest.fixture
@@ -192,7 +197,7 @@ def random_wav_factory(audio_dir: Path):
 async def session(
     database_url: URL,
 ) -> AsyncGenerator[AsyncSession, None]:
-    """Create a session that uses an in-memory database."""
+    """Create a session for database operations."""
     async with api.create_session(db_url=database_url) as sess:
         yield sess
 
@@ -204,7 +209,7 @@ async def user(session: AsyncSession) -> schemas.SimpleUser:
         session,
         username="test",
         password="password",
-        email="test@whombat.com",
+        email="test@echoroo.com",
         is_active=True,
     )
     await session.commit()
@@ -218,7 +223,7 @@ async def other_user(session: AsyncSession) -> schemas.SimpleUser:
         session,
         username=f"other_{random_string()}",
         password="password",
-        email=f"other_{random_string().lower()}@whombat.com",
+        email=f"other_{random_string().lower()}@echoroo.com",
         is_active=True,
     )
     await session.commit()
@@ -232,7 +237,7 @@ async def superuser(session: AsyncSession) -> schemas.SimpleUser:
         session,
         username=f"super_{random_string()}",
         password="password",
-        email=f"super_{random_string().lower()}@whombat.com",
+        email=f"super_{random_string().lower()}@echoroo.com",
         is_active=True,
         is_superuser=True,
     )
@@ -344,11 +349,44 @@ async def sound_event(
 
 
 @pytest.fixture
+async def project_factory(
+    session: AsyncSession,
+) -> Callable[[schemas.SimpleUser], Awaitable[schemas.Project]]:
+    async def create(manager: schemas.SimpleUser) -> schemas.Project:
+        project = await api.projects.create_from_data(
+            session,
+            schemas.ProjectCreate(
+                project_name=f"Project {random_string()}",
+                initial_members=[
+                    schemas.ProjectMemberCreate(
+                        user_id=manager.id,
+                        role=models.ProjectMemberRole.MANAGER,
+                    )
+                ],
+            ),
+        )
+        await session.flush()
+        return project
+
+    return create
+
+
+@pytest.fixture
+async def project(
+    project_factory: Callable[[schemas.SimpleUser], Awaitable[schemas.Project]],
+    user: schemas.SimpleUser,
+) -> schemas.Project:
+    """Provision a project managed by the default user."""
+    return await project_factory(user)
+
+
+@pytest.fixture
 async def dataset_dir(
     audio_dir: Path,
     random_wav_factory: Callable[..., Path],
 ) -> Path:
-    dataset_dir = audio_dir / "test_dataset"
+    # Use random name to avoid duplicate errors across tests
+    dataset_dir = audio_dir / f"test_dataset_{random_string()}"
     dataset_dir.mkdir(parents=True, exist_ok=True)
     random_wav_factory(path=dataset_dir / "initial.wav")
     return dataset_dir
@@ -360,54 +398,23 @@ async def dataset(
     audio_dir: Path,
     dataset_dir: Path,
     user: schemas.SimpleUser,
+    project: schemas.Project,
 ) -> schemas.Dataset:
     """Create a dataset for testing."""
     db_user = await session.get(models.User, user.id)
     assert db_user is not None
+    # Use random name to avoid duplicate errors across tests
+    name = f"test_dataset_{random_string()}"
     return await api.datasets.create(
         session,
-        name="test_dataset",
+        name=name,
         description="test_description",
         dataset_dir=dataset_dir,
         audio_dir=audio_dir,
         user=db_user,
         visibility=models.VisibilityLevel.PUBLIC,
+        project_id=project.project_id,
     )
-
-
-@pytest.fixture
-async def group(
-    session: AsyncSession,
-    user: schemas.SimpleUser,
-) -> schemas.Group:
-    """Create a group for testing."""
-    group = await api.groups.create_from_data(
-        session,
-        schemas.GroupCreate(
-            name=f"group_{random_string()}",
-            description="Test group",
-        ),
-        created_by_id=user.id,
-    )
-    await session.commit()
-    return group
-
-
-@pytest.fixture
-async def group_manager_membership(
-    session: AsyncSession,
-    group: schemas.Group,
-    user: schemas.SimpleUser,
-) -> schemas.GroupMembership:
-    """Ensure the default user is a manager of the test group."""
-    membership = await api.groups.add_membership(
-        session,
-        group.id,
-        user.id,
-        models.GroupRole.MANAGER,
-    )
-    await session.commit()
-    return membership
 
 
 @pytest.fixture
@@ -461,16 +468,19 @@ async def sound_event_annotation(
 @pytest.fixture
 async def annotation_project(
     session: AsyncSession,
+    dataset: schemas.Dataset,
     user: schemas.SimpleUser,
 ) -> schemas.AnnotationProject:
     """Create an annotation project for testing."""
+    # Use random name to avoid duplicate errors across tests
+    name = f"test_annotation_project_{random_string()}"
     return await api.annotation_projects.create(
         session,
-        name="test_annotation_project",
+        name=name,
         description="test_description",
         annotation_instructions="test_instructions",
         user=user,
-        visibility=models.VisibilityLevel.PUBLIC,
+        dataset_id=dataset.id,
     )
 
 

@@ -1,14 +1,14 @@
 """Test suite for the datasets API module."""
 
 import uuid
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 
 import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from whombat import api, exceptions, models, schemas
+from echoroo import api, exceptions, models, schemas
 
 
 async def test_created_dataset_is_stored_in_the_database(
@@ -29,12 +29,14 @@ async def test_dataset_is_stored_with_relative_audio_dir(
     session: AsyncSession,
     audio_dir: Path,
     user: schemas.SimpleUser,
+    project_factory: Callable[[schemas.SimpleUser], Awaitable[schemas.Project]],
     random_wav_factory: Callable[..., Path],
 ):
     """Test that a dataset is stored with a relative audio dir."""
     dataset_audio_dir = audio_dir / "dataset_audio_dir"
     dataset_audio_dir.mkdir()
     random_wav_factory(dataset_audio_dir / "recording.wav")
+    project = await project_factory(user)
     dataset = await api.datasets.create(
         session,
         name="test_dataset",
@@ -43,6 +45,7 @@ async def test_dataset_is_stored_with_relative_audio_dir(
         audio_dir=audio_dir,
         user=user,
         visibility=models.VisibilityLevel.PUBLIC,
+        project_id=project.project_id,
     )
     # Make sure the audio dir is stored as a relative path
     stmt = select(models.Dataset).where(models.Dataset.id == dataset.id)
@@ -56,10 +59,12 @@ async def test_create_dataset_requires_audio_files(
     session: AsyncSession,
     audio_dir: Path,
     user: schemas.SimpleUser,
+    project_factory: Callable[[schemas.SimpleUser], Awaitable[schemas.Project]],
 ):
     """Ensure dataset creation fails when no compatible audio files exist."""
     dataset_audio_dir = audio_dir / "dataset_audio_dir"
     dataset_audio_dir.mkdir()
+    project = await project_factory(user)
     with pytest.raises(exceptions.InvalidDataError):
         await api.datasets.create(
             session,
@@ -69,6 +74,7 @@ async def test_create_dataset_requires_audio_files(
             audio_dir=audio_dir,
             user=user,
             visibility=models.VisibilityLevel.PUBLIC,
+            project_id=project.project_id,
         )
 
 
@@ -76,6 +82,7 @@ async def test_create_dataset_fails_if_name_is_not_unique(
     session: AsyncSession,
     audio_dir: Path,
     user: schemas.SimpleUser,
+    project_factory: Callable[[schemas.SimpleUser], Awaitable[schemas.Project]],
     random_wav_factory: Callable[..., Path],
 ):
     """Test that creating a dataset fails if the name is not unique."""
@@ -85,6 +92,7 @@ async def test_create_dataset_fails_if_name_is_not_unique(
     audio_dir2.mkdir()
     random_wav_factory(audio_dir1 / "recording.wav")
     random_wav_factory(audio_dir2 / "recording.wav")
+    project = await project_factory(user)
     await api.datasets.create(
         session,
         name="test_dataset",
@@ -93,6 +101,7 @@ async def test_create_dataset_fails_if_name_is_not_unique(
         audio_dir=audio_dir,
         user=user,
         visibility=models.VisibilityLevel.PUBLIC,
+        project_id=project.project_id,
     )
     with pytest.raises(exceptions.DuplicateObjectError):
         await api.datasets.create(
@@ -103,6 +112,7 @@ async def test_create_dataset_fails_if_name_is_not_unique(
             audio_dir=audio_dir,
             user=user,
             visibility=models.VisibilityLevel.PUBLIC,
+            project_id=project.project_id,
         )
 
 
@@ -172,6 +182,7 @@ async def test_get_datasets(
     session: AsyncSession,
     audio_dir: Path,
     user: schemas.SimpleUser,
+    project_factory: Callable[[schemas.SimpleUser], Awaitable[schemas.Project]],
     random_wav_factory: Callable[..., Path],
 ):
     """Test getting all datasets."""
@@ -179,6 +190,7 @@ async def test_get_datasets(
     audio_dir_1 = audio_dir / "audio_1"
     audio_dir_1.mkdir()
     random_wav_factory(audio_dir_1 / "recording.wav")
+    project = await project_factory(user)
     dataset1 = await api.datasets.create(
         session,
         name="test_dataset_1",
@@ -187,6 +199,7 @@ async def test_get_datasets(
         audio_dir=audio_dir,
         user=user,
         visibility=models.VisibilityLevel.PUBLIC,
+        project_id=project.project_id,
     )
     audio_dir_2 = audio_dir / "audio_2"
     audio_dir_2.mkdir()
@@ -199,6 +212,7 @@ async def test_get_datasets(
         audio_dir=audio_dir,
         user=user,
         visibility=models.VisibilityLevel.PUBLIC,
+        project_id=project.project_id,
     )
 
     # Act
@@ -288,14 +302,14 @@ async def test_dataset_manager_can_update_metadata(
     random_wav_factory: Callable[..., Path],
     user: schemas.SimpleUser,
     other_user: schemas.SimpleUser,
-    group: schemas.Group,
-    group_manager_membership: schemas.GroupMembership,
+    project_factory: Callable[[schemas.SimpleUser], Awaitable[schemas.Project]],
 ):
-    """Ensure group managers can update restricted dataset metadata."""
+    """Ensure project managers can update restricted dataset metadata."""
     dataset_dir = audio_dir / "manager_dataset"
     dataset_dir.mkdir()
     random_wav_factory(dataset_dir / "sample.wav")
 
+    project = await project_factory(user)
     restricted_dataset = await api.datasets.create(
         session,
         name="managed_dataset",
@@ -304,16 +318,17 @@ async def test_dataset_manager_can_update_metadata(
         audio_dir=audio_dir,
         user=user,
         visibility=models.VisibilityLevel.RESTRICTED,
-        owner_group_id=group.id,
+        project_id=project.project_id,
     )
 
-    await api.groups.add_membership(
-        session,
-        group.id,
-        other_user.id,
-        models.GroupRole.MANAGER,
+    session.add(
+        models.ProjectMember(
+            project_id=project.project_id,
+            user_id=other_user.id,
+            role=models.ProjectMemberRole.MANAGER,
+        )
     )
-    await session.commit()
+    await session.flush()
 
     updated = await api.datasets.update(
         session,
@@ -843,6 +858,7 @@ async def test_create_dataset_registers_all_recordings(
     random_wav_factory: Callable[..., Path],
     audio_dir: Path,
     user: schemas.SimpleUser,
+    project_factory: Callable[[schemas.SimpleUser], Awaitable[schemas.Project]],
 ):
     """Test creating dataset registers all recordings in the directory."""
     dataset_audio_dir = audio_dir / "audio"
@@ -864,6 +880,7 @@ async def test_create_dataset_registers_all_recordings(
     text_file.touch()
 
     # Act
+    project = await project_factory(user)
     dataset = await api.datasets.create(
         session,
         name="test_dataset",
@@ -872,6 +889,7 @@ async def test_create_dataset_registers_all_recordings(
         audio_dir=audio_dir,
         user=user,
         visibility=models.VisibilityLevel.PUBLIC,
+        project_id=project.project_id,
     )
 
     # Assert
@@ -901,13 +919,13 @@ async def test_exported_datasets_paths_are_not_absolute(
     audio_dir = example_data_dir / "audio"
     assert audio_dir.is_dir()
 
-    whombat_dataset = await api.datasets.import_dataset(
+    echoroo_dataset = await api.datasets.import_dataset(
         session,
         example_dataset,
         dataset_audio_dir=audio_dir,
         audio_dir=example_data_dir,
     )
-    exported = await api.datasets.export_dataset(session, whombat_dataset)
+    exported = await api.datasets.export_dataset(session, echoroo_dataset)
 
     for recording in exported.data.recordings or []:
         # Check that paths are not absolute (full paths)
@@ -937,9 +955,11 @@ async def test_recordings_belonging_to_multiple_datastes_are_not_deleted(
     audio_dir: Path,
     dataset_dir: Path,
     user: schemas.SimpleUser,
+    project_factory: Callable[[schemas.SimpleUser], Awaitable[schemas.Project]],
 ):
     await api.recordings.get(session, dataset_recording.uuid)
 
+    project = await project_factory(user)
     dataset2 = await api.datasets.create(
         session,
         name="other_dataset",
@@ -948,6 +968,7 @@ async def test_recordings_belonging_to_multiple_datastes_are_not_deleted(
         audio_dir=audio_dir,
         user=user,
         visibility=models.VisibilityLevel.PUBLIC,
+        project_id=project.project_id,
     )
 
     await api.datasets.add_recording(session, dataset2, dataset_recording)
@@ -960,6 +981,7 @@ async def test_list_candidates_excludes_registered_directories(
     audio_dir: Path,
     user: schemas.SimpleUser,
     random_wav_factory: Callable[..., Path],
+    project_factory: Callable[[schemas.SimpleUser], Awaitable[schemas.Project]],
 ):
     """Only unregistered top-level directories should be returned."""
     candidate_a = audio_dir / "candidate_a"
@@ -976,6 +998,7 @@ async def test_list_candidates_excludes_registered_directories(
     nested_registered.mkdir()
     random_wav_factory(nested_registered / "r.wav")
 
+    project = await project_factory(user)
     await api.datasets.create(
         session,
         name="registered",
@@ -984,6 +1007,7 @@ async def test_list_candidates_excludes_registered_directories(
         audio_dir=audio_dir,
         user=user,
         visibility=models.VisibilityLevel.PUBLIC,
+        project_id=project.project_id,
     )
 
     candidates = await api.datasets.list_candidates(session, audio_dir=audio_dir)

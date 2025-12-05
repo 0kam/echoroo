@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from whombat.system.app import ROOT_DIR
+from echoroo.system.app import ROOT_DIR
 
 
 @pytest.fixture

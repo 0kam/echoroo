@@ -1,6 +1,6 @@
-# Whombat Scripts
+# Echoroo Scripts
 
-このディレクトリには、Whombatアプリケーションを管理するためのスクリプトが含まれています。
+このディレクトリには、Echorooアプリケーションを管理するためのスクリプトが含まれています。
 
 ## 📋 スクリプト一覧
 
@@ -106,7 +106,7 @@ vim .env
 
 ### stop.sh - アプリケーション停止
 
-実行中のすべてのWhombatサーバーを停止します。
+実行中のすべてのEchorooサーバーを停止します。
 
 ```bash
 ./scripts/stop.sh
@@ -154,7 +154,7 @@ vim .env
 **出力例:**
 ```
 ======================================
-   Whombat Application Status
+   Echoroo Application Status
 ======================================
 
 Backend (FastAPI):
@@ -459,12 +459,12 @@ cat .env
 nohup ./scripts/start.sh > /dev/null 2>&1 &
 
 # tmux/screenを使用（推奨）
-tmux new -s whombat
-./scripts/start.sh
+tmux new -s echoroo
+./scripts/docker.sh start
 # Ctrl+B, D でデタッチ
 
 # 再接続
-tmux attach -t whombat
+tmux attach -t echoroo
 ```
 
 ### ログ管理
@@ -486,11 +486,11 @@ tail -f logs/backend.log logs/frontend.log
 
 ```bash
 # エイリアスを設定 (.bashrc または .zshrc)
-alias whombat-start='cd /path/to/whombat && ./scripts/start.sh'
-alias whombat-stop='cd /path/to/whombat && ./scripts/stop.sh'
-alias whombat-status='cd /path/to/whombat && ./scripts/status.sh'
-alias whombat-backend='cd /path/to/whombat && ./scripts/backend.sh'
-alias whombat-frontend='cd /path/to/whombat && ./scripts/frontend.sh'
+alias echoroo-start='cd /path/to/echoroo && ./scripts/docker.sh start'
+alias echoroo-stop='cd /path/to/echoroo && ./scripts/docker.sh stop'
+alias echoroo-status='cd /path/to/echoroo && ./scripts/docker.sh status'
+alias echoroo-logs='cd /path/to/echoroo && ./scripts/docker.sh logs'
+alias echoroo-restart='cd /path/to/echoroo && ./scripts/docker.sh restart'
 ```
 
 ---
@@ -509,7 +509,7 @@ alias whombat-frontend='cd /path/to/whombat && ./scripts/frontend.sh'
 1. ログファイルを確認: `logs/backend.log`, `logs/frontend.log`
 2. ステータスを確認: `./scripts/status.sh`
 3. 設定を確認: `.env`, `CONFIGURATION.md`
-4. GitHubのIssueを確認: https://github.com/mbsantiago/whombat/issues
+4. GitHubのIssueを確認: https://github.com/okamoto-group/echoroo/issues
 
 ---
 

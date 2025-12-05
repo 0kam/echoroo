@@ -3,7 +3,7 @@
 from fastapi.testclient import TestClient
 from soundevent import data
 
-from whombat import schemas
+from echoroo import schemas
 
 
 async def test_can_create_a_sound_event_annotation(

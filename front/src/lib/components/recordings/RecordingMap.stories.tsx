@@ -21,6 +21,7 @@ const recording: Recording = {
   samplerate: 44100,
   channels: 1,
   time_expansion: 1,
+  datetime_parse_status: "pending",
   created_on: new Date(),
 };
 

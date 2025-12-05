@@ -5,8 +5,8 @@ import datetime
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from whombat import api, schemas
-from whombat.filters import notes as note_filters
+from echoroo import api, schemas
+from echoroo.filters import notes as note_filters
 
 
 @pytest.fixture
@@ -16,7 +16,7 @@ async def user1(session: AsyncSession):
         session,
         username="user1",
         password="password",
-        email="user1@whombat.com",
+        email="user1@echoroo.com",
     )
 
 
@@ -27,7 +27,7 @@ async def user2(session: AsyncSession):
         session,
         username="user2",
         password="password",
-        email="user2@whombat.com",
+        email="user2@echoroo.com",
     )
 
 
@@ -38,7 +38,7 @@ async def user3(session: AsyncSession):
         session,
         username="user3",
         password="password",
-        email="user3@whombat.com",
+        email="user3@echoroo.com",
     )
 
 

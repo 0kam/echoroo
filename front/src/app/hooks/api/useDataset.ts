@@ -1,7 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
 import type { AxiosError } from "axios";
-import { useCallback } from "react";
-
 import api from "@/app/api";
 
 import useObject from "@/lib/hooks/utils/useObject";
@@ -65,18 +63,10 @@ export default function useDataset({
     enabled: withState,
   });
 
-  const download = useCallback(
-    async (format: "csv" | "json") => {
-      return await api.datasets.download(uuid, format);
-    },
-    [uuid],
-  );
-
   return {
     ...query,
     update,
     delete: delete_,
     state,
-    download,
   };
 }

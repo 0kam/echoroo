@@ -271,7 +271,7 @@ npm run storybook
 1. **ステータス確認**: `./scripts/status.sh`
 2. **ログ確認**: `logs/backend.log`, `logs/frontend.log`
 3. **再起動**: `./scripts/restart.sh`
-4. **Issue報告**: https://github.com/mbsantiago/whombat/issues
+4. **Issue報告**: https://github.com/okamoto-group/echoroo/issues
 
 ---
 

@@ -1,79 +1,145 @@
+# Echoroo Development Docker Compose
+# PostgreSQL + pgvector for ML embedding support
+#
+# Usage:
+#   ./scripts/docker.sh dev        # Start development environment
+#   ./scripts/docker.sh dev logs   # View logs
+#   ./scripts/docker.sh dev stop   # Stop
+#
+# Features:
+# - PostgreSQL with pgvector extension (port 5432 exposed for local tools)
+# - Backend with hot reload via docker compose watch
+# - Frontend with hot reload
+# - Optional: Storybook and Docs servers
+
 services:
+  # PostgreSQL Database with pgvector
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: echoroo-db
+    restart: unless-stopped
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - db-data:/var/lib/postgresql/data
+      - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql:ro
+    environment:
+      - POSTGRES_DB=${POSTGRES_DB:-echoroo}
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - echoroo-net
+
+  # Backend API Server
   backend:
     build:
       context: back
-    container_name: whombat-backend
-    command: ["uv", "run", "whombat"]
-    environment:
-      - WHOMBAT_DEV=true
-      - WHOMBAT_DATA_DIR=/data/
-      - WHOMBAT_DB_URL=sqlite+aiosqlite:////data/whombat_new.db
-      # - WHOMBAT_DB_URL=sqlite+aiosqlite:////data/whombat.db
-    networks:
-      - public
-    volumes:
-      - type: volume
-        source: db-data
-        target: /data
-      - type: bind
-        source: example_data/
-        target: /audio
+    container_name: echoroo-backend
+    restart: unless-stopped
+    command: ["uv", "run", "python", "-m", "echoroo"]
+    depends_on:
+      db:
+        condition: service_healthy
     ports:
-      - 5000:5000
+      - "${ECHOROO_PORT:-5000}:5000"
+    volumes:
+      - ${ECHOROO_AUDIO_DIR:?ECHOROO_AUDIO_DIR must be set}:/audio:ro
+      - backend-data:/data
+    environment:
+      - ECHOROO_HOST=0.0.0.0
+      - ECHOROO_PORT=5000
+      - ECHOROO_DOMAIN=${ECHOROO_DOMAIN:-localhost}
+      - ECHOROO_AUDIO_DIR=/audio
+      - ECHOROO_DB_DIALECT=postgresql
+      - ECHOROO_DB_HOST=db
+      - ECHOROO_DB_PORT=5432
+      - ECHOROO_DB_NAME=${POSTGRES_DB:-echoroo}
+      - ECHOROO_DB_USERNAME=${POSTGRES_USER:-postgres}
+      - ECHOROO_DB_PASSWORD=${POSTGRES_PASSWORD}
+      - ECHOROO_DEV=true
+      - ECHOROO_LOG_TO_STDOUT=true
+      - ECHOROO_LOG_TO_FILE=false
+      - ECHOROO_OPEN_ON_STARTUP=false
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/api/v1/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    networks:
+      - echoroo-net
     develop:
       watch:
         - action: sync
           path: back/src
           target: /code/src
+
+  # Frontend Next.js Server
   frontend:
     build:
       context: front
       args:
         - NODE_ENV=development
-    container_name: whombat-frontend
+    container_name: echoroo-frontend
+    restart: unless-stopped
     command: ["npm", "run", "dev"]
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
+    ports:
+      - "${ECHOROO_FRONTEND_PORT:-3000}:3000"
+    environment:
+      - NEXT_PUBLIC_BACKEND_HOST=http://${ECHOROO_DOMAIN:-localhost}:${ECHOROO_PORT:-5000}
+      - PORT=3000
     networks:
-      - public
-    ports:
-      - 3000:3000
+      - echoroo-net
     develop:
       watch:
         - action: sync
-          path: front
-          target: /code
-  storybook:
-    build:
-      context: front
-      args:
-        - NODE_ENV=development
-    container_name: whombat-storybook
-    command: ["npm", "run", "storybook"]
-    ports:
-      - 6006:6006
-    develop:
-      watch:
-        - action: sync
-          path: front
-          target: /code
-  docs:
-    build:
-      context: back
-    container_name: whombat-docs
-    ports:
-      - 8000:8000
-    command: ["uv", "run", "mkdocs", "serve", "-a", "0.0.0.0:8000"]
-    develop:
-      watch:
-        - action: sync
-          path: back/docs
-          target: /code/docs
-        - action: sync
-          path: back/mkdocs.yml
-          target: /code/mkdocs.yml
+          path: front/src
+          target: /code/src
+
+  # Optional: Storybook (uncomment to enable)
+  # storybook:
+  #   build:
+  #     context: front
+  #     args:
+  #       - NODE_ENV=development
+  #   container_name: echoroo-storybook
+  #   command: ["npm", "run", "storybook"]
+  #   ports:
+  #     - "6006:6006"
+  #   develop:
+  #     watch:
+  #       - action: sync
+  #         path: front/src
+  #         target: /code/src
+
+  # Optional: Documentation server (uncomment to enable)
+  # docs:
+  #   build:
+  #     context: back
+  #   container_name: echoroo-docs
+  #   command: ["uv", "run", "mkdocs", "serve", "-a", "0.0.0.0:8000"]
+  #   ports:
+  #     - "8000:8000"
+  #   develop:
+  #     watch:
+  #       - action: sync
+  #         path: back/docs
+  #         target: /code/docs
 
 networks:
-  public:
+  echoroo-net:
+    name: echoroo-dev
+
 volumes:
   db-data:
+    name: echoroo-dev-db
+  backend-data:
+    name: echoroo-dev-data

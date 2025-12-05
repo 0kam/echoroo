@@ -4,10 +4,10 @@ from pathlib import Path
 from soundevent.io.aoef import to_aeof
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from whombat import api, filters, schemas
-from whombat.api.io.aoef.annotation_projects import import_annotation_project
-from whombat.api.io.aoef.datasets import import_dataset
-from whombat.api.users import ensure_system_user
+from echoroo import api, filters, schemas
+from echoroo.api.io.aoef.annotation_projects import import_annotation_project
+from echoroo.api.io.aoef.datasets import import_dataset
+from echoroo.api.users import ensure_system_user
 
 
 async def test_exports_annotation_tags(

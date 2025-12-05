@@ -23,7 +23,7 @@ export default function Page() {
 
   const goToDatasetDetail = useCallback(
     (dataset: Dataset) => {
-      router.push(`/datasets/detail/?dataset_uuid=${dataset.uuid}`);
+      router.push(`/datasets/${dataset.uuid}/`);
     },
     [router],
   );

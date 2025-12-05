@@ -13,7 +13,7 @@ function Brand() {
   return (
     <a href="/" className="flex items-center">
       <span className="self-center text-2xl font-bold text-emerald-500 underline whitespace-nowrap decoration-4">
-        Whombat
+        Echoroo
       </span>
     </a>
   );
