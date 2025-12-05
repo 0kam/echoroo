@@ -24,7 +24,7 @@ By importing this example data, you can familiarize yourself with Whombat's inte
 
 ## Downloading the Example Data
 
-1. **Visit the Whombat Repository**: Navigate to the Whombat repository on GitHub: https://github.com/mbsantiago/whombat
+1. **Visit the Whombat Repository**: Navigate to the Whombat repository on GitHub: https://github.com/okamoto-group/echoroo
 2. **Download the Repository**: Click the green "Code" button and select "Download ZIP" from the dropdown menu.
       This will download the entire repository as a ZIP file to your computer.
 3. **Extract the ZIP File**: Once the download is complete, extract the contents of the ZIP file.

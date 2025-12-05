@@ -14,4 +14,10 @@ dist
 .env
 front/.env
 
+# log files
 logs/
+
+# Coding assistant files
+CLAUDE.md
+
+.vscode/

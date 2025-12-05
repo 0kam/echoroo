@@ -1,6 +1,5 @@
 import {
   useRouter,
-  useSearchParams,
   useSelectedLayoutSegment,
 } from "next/navigation";
 
@@ -22,7 +21,6 @@ export default function AnnotationProjectHeader({
   annotationProject: AnnotationProject;
 }) {
   const router = useRouter();
-  const params = useSearchParams();
   const selectedLayoutSegment = useSelectedLayoutSegment();
 
   return (
@@ -33,7 +31,7 @@ export default function AnnotationProjectHeader({
           key="overview"
           active={selectedLayoutSegment === null}
           onClick={() => {
-            router.push(`/annotation_projects/detail/?${params.toString()}`);
+            router.push(`/annotation_projects/${annotationProject.uuid}/`);
           }}
         >
           <DatasetIcon className="w-5 h-5 align-middle" />
@@ -44,7 +42,7 @@ export default function AnnotationProjectHeader({
           active={selectedLayoutSegment === "annotation"}
           onClick={() => {
             router.push(
-              `/annotation_projects/detail/annotation/?${params.toString()}`,
+              `/annotation_projects/${annotationProject.uuid}/annotation/`,
             );
           }}
         >
@@ -56,7 +54,7 @@ export default function AnnotationProjectHeader({
           active={selectedLayoutSegment === "tasks"}
           onClick={() => {
             router.push(
-              `/annotation_projects/detail/tasks/?${params.toString()}`,
+              `/annotation_projects/${annotationProject.uuid}/tasks/`,
             );
           }}
         >
@@ -68,7 +66,7 @@ export default function AnnotationProjectHeader({
           active={selectedLayoutSegment === "tags"}
           onClick={() => {
             router.push(
-              `/annotation_projects/detail/tags/?${params.toString()}`,
+              `/annotation_projects/${annotationProject.uuid}/tags/`,
             );
           }}
         >

@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { useCallback } from "react";
 import toast from "react-hot-toast";
 
-import { WhombatIcon } from "@/lib/components/icons";
+import { EchorooIcon } from "@/lib/components/icons";
 import Info from "@/lib/components/ui/Info";
 import UserCreateForm from "@/lib/components/users/UserCreateForm";
 
@@ -39,9 +39,9 @@ export default function Page() {
     <div className="flex flex-col items-center justify-center min-h-screen">
       <div className="flex flex-col w-full max-w-4xl gap-8 px-4 py-10">
         <div className="flex flex-col items-center gap-4 text-center text-7xl">
-          <WhombatIcon width={128} height={128} />
+          <EchorooIcon width={128} height={128} />
           <span className="font-sans font-bold text-emerald-500 underline decoration-8">
-            Whombat
+            Echoroo
           </span>
         </div>
         <section className="flex flex-col gap-4">
@@ -53,7 +53,7 @@ export default function Page() {
             <p className="text-sm text-stone-600 dark:text-stone-300">
               <strong>Note:</strong> Audio directory configuration is now done through
               environment variables. Please ensure <code>WHOMBAT_AUDIO_DIR</code> is set
-              in your <code>.env</code> file before starting Whombat.
+              in your <code>.env</code> file before starting Echoroo.
             </p>
           </Info>
         </section>
@@ -74,7 +74,7 @@ export default function Page() {
           </div>
           <Info className="mt-4">
             <p className="text-sm text-stone-600 dark:text-stone-300">
-              Your data stays on this machine. Whombat does not send recordings
+              Your data stays on this machine. Echoroo does not send recordings
               or metadata to external servers.
             </p>
           </Info>

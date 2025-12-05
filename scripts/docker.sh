@@ -1,163 +1,140 @@
 #!/bin/bash
-# Whombat Docker Management Script
-#
-# This script helps you manage Whombat using Docker Compose
+# Echoroo Docker Management Script
 #
 # Usage:
-#   ./scripts/docker.sh [command] [options]
+#   ./scripts/docker.sh dev [command]   - Development environment
+#   ./scripts/docker.sh prod [command]  - Production environment
 #
 # Commands:
-#   start [simple|postgres|dev|prod]  - Start Whombat
-#   stop                              - Stop Whombat
-#   restart                           - Restart Whombat
-#   logs                              - Show logs
-#   status                            - Show container status
-#   clean                             - Stop and remove containers, networks
-#   clean-all                         - Stop and remove everything including volumes
-#   build                             - Rebuild Docker images
+#   start (default) - Start containers
+#   stop            - Stop containers
+#   restart         - Restart containers
+#   logs [service]  - Show logs
+#   status          - Show container status
+#   shell [service] - Open shell in container
+#   db              - Connect to PostgreSQL
+#   clean           - Stop and remove containers
+#   clean-all       - Remove everything including volumes (DATA LOSS!)
+#   build           - Rebuild images
+#   watch           - Start with hot reload (dev only)
 
 set -e
 
-# Colors for output
+# Colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
-NC='\033[0m' # No Color
+NC='\033[0m'
 
-# Get script directory
+# Script directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
-
-# Change to project directory
 cd "$PROJECT_DIR"
 
 # Helper functions
-print_info() {
-    echo -e "${BLUE}ℹ${NC} $1"
-}
+info() { echo -e "${BLUE}ℹ${NC} $1"; }
+success() { echo -e "${GREEN}✓${NC} $1"; }
+warn() { echo -e "${YELLOW}⚠${NC} $1"; }
+error() { echo -e "${RED}✗${NC} $1"; }
 
-print_success() {
-    echo -e "${GREEN}✓${NC} $1"
-}
-
-print_warning() {
-    echo -e "${YELLOW}⚠${NC} $1"
-}
-
-print_error() {
-    echo -e "${RED}✗${NC} $1"
-}
-
-print_header() {
-    echo -e "\n${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+header() {
+    echo -e "\n${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo -e "${BLUE}  $1${NC}"
-    echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}\n"
+    echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}\n"
 }
 
-# Check if .env file exists
-check_env_file() {
+# Check .env file
+check_env() {
     if [ ! -f .env ]; then
-        print_warning ".env file not found"
-        print_info "Creating .env from .env.example..."
+        warn ".env file not found"
+        info "Creating .env from .env.example..."
         cp .env.example .env
-        print_success ".env file created"
-        print_warning "Please edit .env file to configure your settings"
-        print_info "At minimum, set WHOMBAT_AUDIO_DIR to point to your audio files"
+        success ".env file created"
+        warn "Please edit .env to set required values:"
+        echo "  - POSTGRES_PASSWORD (required)"
+        echo "  - ECHOROO_AUDIO_DIR (required)"
         echo ""
-        read -p "Press Enter to continue or Ctrl+C to exit and edit .env..."
+        read -p "Press Enter to continue or Ctrl+C to edit .env first..."
+    fi
+
+    # Source .env to check required variables
+    set -a
+    source .env
+    set +a
+
+    local missing=()
+    [ -z "$POSTGRES_PASSWORD" ] && missing+=("POSTGRES_PASSWORD")
+    [ -z "$ECHOROO_AUDIO_DIR" ] && missing+=("ECHOROO_AUDIO_DIR")
+
+    if [ ${#missing[@]} -gt 0 ]; then
+        error "Missing required environment variables:"
+        for var in "${missing[@]}"; do
+            echo "  - $var"
+        done
+        echo ""
+        info "Please edit .env and set the required values"
+        exit 1
     fi
 }
 
-# Get compose file based on mode
+# Get compose file
 get_compose_file() {
-    local mode=$1
-    case $mode in
-        simple)
-            echo "compose.simple.yaml"
-            ;;
-        postgres)
-            echo "compose.postgres.yaml"
-            ;;
-        dev)
-            echo "compose.dev.yaml"
-            ;;
-        prod)
-            echo "compose.prod.yaml"
-            ;;
-        *)
-            echo "compose.simple.yaml"
-            ;;
+    case $1 in
+        dev)  echo "compose.dev.yaml" ;;
+        prod) echo "compose.prod.yaml" ;;
+        *)    echo "" ;;
     esac
 }
 
-# Start command
+# Commands
 cmd_start() {
-    local mode=${1:-simple}
-    local compose_file=$(get_compose_file "$mode")
+    local env=$1
+    local compose_file=$(get_compose_file "$env")
 
-    print_header "Starting Whombat ($mode mode)"
+    header "Starting Echoroo ($env)"
+    check_env
 
-    check_env_file
-
-    if [ ! -f "$compose_file" ]; then
-        print_error "Compose file not found: $compose_file"
-        exit 1
-    fi
-
-    print_info "Using compose file: $compose_file"
-    print_info "Starting containers..."
-
+    info "Using: $compose_file"
     docker compose -f "$compose_file" up -d
 
-    print_success "Whombat started successfully!"
+    success "Echoroo started!"
     echo ""
-    print_info "Access Whombat at: http://localhost:5000"
-    print_info "View logs with: $0 logs"
-    print_info "Stop with: $0 stop"
-}
-
-# Stop command
-cmd_stop() {
-    print_header "Stopping Whombat"
-
-    # Try to stop all possible compose files
-    for compose_file in compose.simple.yaml compose.postgres.yaml compose.dev.yaml compose.prod.yaml; do
-        if docker compose -f "$compose_file" ps -q 2>/dev/null | grep -q .; then
-            print_info "Stopping containers from $compose_file..."
-            docker compose -f "$compose_file" down
-        fi
-    done
-
-    print_success "Whombat stopped"
-}
-
-# Restart command
-cmd_restart() {
-    local mode=${1:-simple}
-    print_header "Restarting Whombat"
-    cmd_stop
-    sleep 2
-    cmd_start "$mode"
-}
-
-# Logs command
-cmd_logs() {
-    local service=${1:-}
-
-    # Find which compose file is running
-    local compose_file=""
-    for cf in compose.simple.yaml compose.postgres.yaml compose.dev.yaml compose.prod.yaml; do
-        if docker compose -f "$cf" ps -q 2>/dev/null | grep -q .; then
-            compose_file="$cf"
-            break
-        fi
-    done
-
-    if [ -z "$compose_file" ]; then
-        print_error "No running Whombat containers found"
-        exit 1
+    if [ "$env" = "dev" ]; then
+        info "Frontend: http://localhost:${ECHOROO_FRONTEND_PORT:-3000}"
+        info "Backend:  http://localhost:${ECHOROO_PORT:-5000}"
+        info "API Docs: http://localhost:${ECHOROO_PORT:-5000}/docs"
+        info "Database: localhost:${POSTGRES_PORT:-5432}"
+    else
+        info "Access: http://${DOMAIN:-localhost}"
+        info "Traefik: http://localhost:8080"
     fi
+    echo ""
+    info "View logs: $0 $env logs"
+    info "Stop:      $0 $env stop"
+}
+
+cmd_stop() {
+    local env=$1
+    local compose_file=$(get_compose_file "$env")
+
+    header "Stopping Echoroo ($env)"
+    docker compose -f "$compose_file" down
+    success "Echoroo stopped"
+}
+
+cmd_restart() {
+    local env=$1
+    header "Restarting Echoroo ($env)"
+    cmd_stop "$env"
+    sleep 2
+    cmd_start "$env"
+}
+
+cmd_logs() {
+    local env=$1
+    local service=$2
+    local compose_file=$(get_compose_file "$env")
 
     if [ -n "$service" ]; then
         docker compose -f "$compose_file" logs -f "$service"
@@ -166,147 +143,177 @@ cmd_logs() {
     fi
 }
 
-# Status command
 cmd_status() {
-    print_header "Whombat Container Status"
+    local env=$1
+    local compose_file=$(get_compose_file "$env")
 
-    local found=false
-    for compose_file in compose.simple.yaml compose.postgres.yaml compose.dev.yaml compose.prod.yaml; do
-        if docker compose -f "$compose_file" ps -q 2>/dev/null | grep -q .; then
-            print_info "Containers from $compose_file:"
-            docker compose -f "$compose_file" ps
-            found=true
-            echo ""
-        fi
-    done
-
-    if [ "$found" = false ]; then
-        print_warning "No running Whombat containers found"
-    fi
+    header "Echoroo Status ($env)"
+    docker compose -f "$compose_file" ps
 }
 
-# Clean command
-cmd_clean() {
-    print_header "Cleaning Whombat Containers"
+cmd_shell() {
+    local env=$1
+    local service=${2:-backend}
+    local compose_file=$(get_compose_file "$env")
 
-    print_warning "This will stop and remove all Whombat containers and networks"
+    info "Opening shell in $service..."
+    docker compose -f "$compose_file" exec "$service" /bin/bash
+}
+
+cmd_db() {
+    local env=$1
+    local compose_file=$(get_compose_file "$env")
+
+    info "Connecting to PostgreSQL..."
+    docker compose -f "$compose_file" exec db psql -U "${POSTGRES_USER:-postgres}" -d "${POSTGRES_DB:-echoroo}"
+}
+
+cmd_clean() {
+    local env=$1
+    local compose_file=$(get_compose_file "$env")
+
+    header "Cleaning Echoroo ($env)"
+    warn "This will stop and remove containers and networks"
     read -p "Continue? (y/N) " -n 1 -r
     echo
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-        print_info "Cancelled"
-        exit 0
-    fi
+    [[ ! $REPLY =~ ^[Yy]$ ]] && { info "Cancelled"; exit 0; }
 
-    for compose_file in compose.simple.yaml compose.postgres.yaml compose.dev.yaml compose.prod.yaml; do
-        if [ -f "$compose_file" ]; then
-            docker compose -f "$compose_file" down 2>/dev/null || true
-        fi
-    done
-
-    print_success "Cleanup complete"
+    docker compose -f "$compose_file" down
+    success "Cleanup complete"
 }
 
-# Clean all command
 cmd_clean_all() {
-    print_header "Cleaning ALL Whombat Data"
+    local env=$1
+    local compose_file=$(get_compose_file "$env")
 
-    print_error "WARNING: This will delete ALL data including databases!"
-    print_warning "This action cannot be undone!"
-    read -p "Are you absolutely sure? (yes/N) " -r
+    header "Cleaning ALL Data ($env)"
+    error "WARNING: This will delete ALL data including database!"
+    warn "This action cannot be undone!"
+    read -p "Type 'yes' to confirm: " -r
     echo
-    if [[ ! $REPLY == "yes" ]]; then
-        print_info "Cancelled"
-        exit 0
+    [[ ! $REPLY == "yes" ]] && { info "Cancelled"; exit 0; }
+
+    docker compose -f "$compose_file" down -v
+    success "All data removed"
+}
+
+cmd_build() {
+    local env=$1
+    local compose_file=$(get_compose_file "$env")
+
+    header "Building Echoroo ($env)"
+    docker compose -f "$compose_file" build --no-cache
+    success "Build complete"
+}
+
+cmd_watch() {
+    local env=$1
+    local compose_file=$(get_compose_file "$env")
+
+    if [ "$env" != "dev" ]; then
+        error "Watch mode is only available for dev environment"
+        exit 1
     fi
 
-    for compose_file in compose.simple.yaml compose.postgres.yaml compose.dev.yaml compose.prod.yaml; do
-        if [ -f "$compose_file" ]; then
-            docker compose -f "$compose_file" down -v 2>/dev/null || true
-        fi
-    done
+    header "Starting Echoroo with Watch Mode"
+    check_env
 
-    print_success "All data removed"
+    info "Starting with hot reload..."
+    docker compose -f "$compose_file" watch
 }
 
-# Build command
-cmd_build() {
-    local mode=${1:-simple}
-    local compose_file=$(get_compose_file "$mode")
-
-    print_header "Building Whombat Docker Images"
-
-    docker compose -f "$compose_file" build --no-cache
-
-    print_success "Build complete"
-}
-
-# Help command
 cmd_help() {
-    cat << EOF
-Whombat Docker Management Script
+    cat << 'EOF'
+Echoroo Docker Management Script
 
-Usage: $0 [command] [options]
+Usage: ./scripts/docker.sh <env> [command] [options]
+
+Environments:
+  dev     Development (PostgreSQL exposed, hot reload)
+  prod    Production (Traefik proxy, scalable)
 
 Commands:
-  start [mode]     Start Whombat containers
-                   Modes: simple (default), postgres, dev, prod
-  stop             Stop all Whombat containers
-  restart [mode]   Restart Whombat containers
-  logs [service]   Show container logs (optionally for specific service)
-  status           Show status of running containers
-  build [mode]     Rebuild Docker images
-  clean            Stop and remove containers and networks
-  clean-all        Stop and remove everything including volumes (DATA LOSS!)
-  help             Show this help message
+  start (default)  Start containers
+  stop             Stop containers
+  restart          Restart containers
+  logs [service]   Show logs (optionally for specific service)
+  status           Show container status
+  shell [service]  Open shell in container (default: backend)
+  db               Connect to PostgreSQL CLI
+  build            Rebuild Docker images
+  watch            Start with hot reload (dev only)
+  clean            Stop and remove containers
+  clean-all        Remove everything including volumes (DATA LOSS!)
+  help             Show this help
 
 Examples:
-  $0 start              # Start with SQLite (simple mode)
-  $0 start postgres     # Start with PostgreSQL
-  $0 start dev          # Start in development mode
-  $0 logs               # Show all logs
-  $0 logs whombat       # Show only Whombat logs
-  $0 stop               # Stop all containers
-  $0 clean              # Clean up containers
+  ./scripts/docker.sh dev              # Start development environment
+  ./scripts/docker.sh dev logs         # View all logs
+  ./scripts/docker.sh dev logs backend # View backend logs only
+  ./scripts/docker.sh dev db           # Connect to database
+  ./scripts/docker.sh dev watch        # Start with hot reload
+  ./scripts/docker.sh prod             # Start production environment
+  ./scripts/docker.sh prod stop        # Stop production
+  ./scripts/docker.sh dev clean-all    # Remove all dev data
 
-For more information, see the documentation in docs/
+Required Environment Variables (.env):
+  POSTGRES_PASSWORD   Database password
+  ECHOROO_AUDIO_DIR   Path to audio files directory
+
+Optional Environment Variables:
+  POSTGRES_DB         Database name (default: echoroo)
+  POSTGRES_USER       Database user (default: postgres)
+  POSTGRES_PORT       Database port (default: 5432, dev only)
+  ECHOROO_PORT        Backend port (default: 5000)
+  ECHOROO_FRONTEND_PORT  Frontend port (default: 3000, dev only)
+  DOMAIN              Domain name (required for prod)
+  BACKEND_REPLICAS    Number of backend replicas (prod only)
 EOF
 }
 
-# Main command dispatcher
+# Main
 main() {
-    local command=${1:-help}
-    shift || true
+    local env=${1:-help}
+    local command=${2:-start}
+    shift 2 2>/dev/null || true
 
+    # Handle help
+    if [ "$env" = "help" ] || [ "$env" = "--help" ] || [ "$env" = "-h" ]; then
+        cmd_help
+        exit 0
+    fi
+
+    # Validate environment
+    local compose_file=$(get_compose_file "$env")
+    if [ -z "$compose_file" ]; then
+        error "Invalid environment: $env"
+        echo "Use 'dev' or 'prod'"
+        echo ""
+        cmd_help
+        exit 1
+    fi
+
+    if [ ! -f "$compose_file" ]; then
+        error "Compose file not found: $compose_file"
+        exit 1
+    fi
+
+    # Execute command
     case $command in
-        start)
-            cmd_start "$@"
-            ;;
-        stop)
-            cmd_stop
-            ;;
-        restart)
-            cmd_restart "$@"
-            ;;
-        logs)
-            cmd_logs "$@"
-            ;;
-        status)
-            cmd_status
-            ;;
-        build)
-            cmd_build "$@"
-            ;;
-        clean)
-            cmd_clean
-            ;;
-        clean-all)
-            cmd_clean_all
-            ;;
-        help|--help|-h)
-            cmd_help
-            ;;
+        start)     cmd_start "$env" ;;
+        stop)      cmd_stop "$env" ;;
+        restart)   cmd_restart "$env" ;;
+        logs)      cmd_logs "$env" "$@" ;;
+        status)    cmd_status "$env" ;;
+        shell)     cmd_shell "$env" "$@" ;;
+        db)        cmd_db "$env" ;;
+        build)     cmd_build "$env" ;;
+        watch)     cmd_watch "$env" ;;
+        clean)     cmd_clean "$env" ;;
+        clean-all) cmd_clean_all "$env" ;;
+        help)      cmd_help ;;
         *)
-            print_error "Unknown command: $command"
+            error "Unknown command: $command"
             echo ""
             cmd_help
             exit 1

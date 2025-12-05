@@ -1,6 +1,6 @@
-site_name: Whombat
-site_url: https://mbsantiago.github.io/whombat/
-repo_url: https://github.com/mbsantiago/whombat
+site_name: Echoroo
+site_url: https://okamoto-group.github.io/echoroo/
+repo_url: https://github.com/okamoto-group/echoroo
 nav:
   - Home: README.md
   - User Guide:
@@ -12,7 +12,7 @@ nav:
       - Exploring Your Data: user_guide/exploration.md
       - Practical Guides & Advanced Use Cases:
           - user_guide/guides/index.md
-          - Importing Data into Whombat: user_guide/guides/import.md
+          - Importing Data into Echoroo: user_guide/guides/import.md
           - Visualizing Audio with the Spectrogram: user_guide/guides/spectrogram_display.md
           - Export Annotations for ML Development: user_guide/guides/export.md
       - FAQ: user_guide/faq.md
@@ -144,4 +144,4 @@ extra_css:
 extra:
   social:
     - icon: fontawesome/brands/github
-      link: https://github.com/mbsantiago/whombat
+      link: https://github.com/okamoto-group/echoroo

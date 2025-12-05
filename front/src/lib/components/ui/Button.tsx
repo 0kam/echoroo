@@ -60,9 +60,12 @@ export function getButtonClassName({
   padding?: string;
   align?: "text-center" | "text-left" | "text-right";
 }) {
+  // Ensure mode is valid, fallback to "filled" if not
+  const validMode: Mode = CLASS_NAMES[mode] ? mode : "filled";
+
   return classNames(
-    CLASS_NAMES[mode][variant],
-    CLASS_NAMES[mode]["common"],
+    CLASS_NAMES[validMode][variant],
+    CLASS_NAMES[validMode]["common"],
     FOCUS_STYLE,
     padding,
     align,

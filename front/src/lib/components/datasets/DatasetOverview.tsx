@@ -1,3 +1,5 @@
+import { type ReactNode } from "react";
+
 import { IssueIcon, RecordingsIcon, WarningIcon } from "@/lib/components/icons";
 import Card from "@/lib/components/ui/Card";
 import { H3 } from "@/lib/components/ui/Headings";
@@ -11,6 +13,8 @@ export default function DatasetOverview({
   numIssues = 0,
   numMissing = 0,
   isLoading = false,
+  actionSlot,
+  children,
   onClickDatasetRecordings,
   onClickDatasetIssues,
   onClickDatasetMissing,
@@ -19,6 +23,8 @@ export default function DatasetOverview({
   numIssues?: number;
   numMissing?: number;
   isLoading?: boolean;
+  actionSlot?: ReactNode;
+  children?: ReactNode;
   onClickDatasetRecordings?: () => void;
   onClickDatasetIssues?: () => void;
   onClickDatasetMissing?: () => void;
@@ -26,8 +32,13 @@ export default function DatasetOverview({
   return (
     <Card>
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <H3>Dataset Overview</H3>
-        <VisibilityBadge visibility={dataset.visibility} />
+        <div className="flex flex-wrap items-center gap-2 min-w-0">
+          <H3 className="whitespace-nowrap">Dataset Overview</H3>
+          <VisibilityBadge visibility={dataset.visibility} className="flex-shrink-0" />
+        </div>
+        {actionSlot ? (
+          <div className="flex items-center gap-2 flex-shrink-0">{actionSlot}</div>
+        ) : null}
       </div>
       <div className="flex flex-row gap-2 justify-around">
         <MetricBadge
@@ -53,6 +64,7 @@ export default function DatasetOverview({
           isLoading={isLoading}
         />
       </div>
+      {children ? <div className="mt-4">{children}</div> : null}
     </Card>
   );
 }

@@ -1,13 +1,13 @@
 import drawHandle from "@/lib/draw/handle";
 import { drawLineString } from "@/lib/draw/linestring";
 import { drawPolygon } from "@/lib/draw/polygon";
-import { GREEN, type Style } from "@/lib/draw/styles";
+import { ACCENT, type Style } from "@/lib/draw/styles";
 import type { Coordinates, Geometry, Pixel } from "@/lib/types";
 
 const HANDLE_SIZE = 5;
 const HANDLE_SIZE_HOVER = 10;
-const HANDLE_COLOR = GREEN;
-const HANDLE_COLOR_HOVER = GREEN;
+const HANDLE_COLOR = ACCENT;
+const HANDLE_COLOR_HOVER = ACCENT;
 const HANDLE_BORDER_SIZE = 1;
 const HANDLE_BORDER_SIZE_HOVER = 3;
 const EDGE_WIDTH_HOVER = 3;
@@ -66,7 +66,7 @@ export function drawEdge<T>(
       coordinates: [start, end],
     },
     {
-      borderColor: isHovering ? GREEN : borderColor,
+      borderColor: isHovering ? ACCENT : borderColor,
       borderWidth: isHovering ? EDGE_WIDTH_HOVER : borderWidth,
       borderAlpha,
       borderDash,
@@ -90,7 +90,7 @@ export function drawArea<T>(
     { type: "Polygon", coordinates: area.coords },
     {
       fillAlpha: isHovering ? AREA_FILL_HOVER : fillAlpha,
-      fillColor: isHovering ? GREEN : (fillColor ?? borderColor),
+      fillColor: isHovering ? ACCENT : (fillColor ?? borderColor),
       borderWidth: 0,
       borderAlpha: 0,
     },

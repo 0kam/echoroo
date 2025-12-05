@@ -2,6 +2,7 @@ import type { Meta, StoryObj } from "@storybook/react";
 import { fn } from "@storybook/test";
 
 import AnnotationProjectUpdate from "./AnnotationProjectUpdate";
+import { makeAnnotationProject } from "./storyHelpers";
 
 const meta: Meta<typeof AnnotationProjectUpdate> = {
   title: "AnnotationProject/Update",
@@ -14,16 +15,7 @@ type Story = StoryObj<typeof AnnotationProjectUpdate>;
 
 export const Primary: Story = {
   args: {
-    annotationProject: {
-      uuid: "1",
-      name: "Project 1",
-      description: "Annotation project 1",
-      created_on: new Date(),
-      visibility: "private" as const,
-      created_by_id: "test-user-id",
-      owner_group_id: null,
-      tags: [],
-    },
+    annotationProject: makeAnnotationProject(),
     onChangeAnnotationProject: fn(),
   },
 };

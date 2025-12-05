@@ -43,6 +43,7 @@ const recording: Recording = {
   samplerate: 44100,
   channels: 1,
   time_expansion: 1,
+  datetime_parse_status: "success",
   latitude: 51.5074,
   longitude: 0.1278,
   date: new Date(),

@@ -1,1 +1,1 @@
-"""Unit test package for whombat."""
+"""Unit test package for echoroo."""

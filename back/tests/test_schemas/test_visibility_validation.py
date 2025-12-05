@@ -1,85 +1,47 @@
-"""Validation tests for visibility/owner_group combinations."""
+"""Schema validation tests for project-centric metadata."""
 
 from __future__ import annotations
 
 import pytest
 from pydantic import ValidationError
 
-from whombat import schemas
-from whombat.models import VisibilityLevel
+from echoroo import schemas
+from echoroo.models import VisibilityLevel
 
 
-def test_dataset_create_restricted_requires_group(tmp_path):
+def test_dataset_create_requires_project(tmp_path):
     with pytest.raises(ValidationError) as exc:
         schemas.DatasetCreate(
             name="sample",
             audio_dir=str(tmp_path),
-            visibility=VisibilityLevel.RESTRICTED,
         )
-    assert "Restricted visibility requires owner_group_id" in str(exc.value)
+    assert "project_id" in str(exc.value.errors())
 
 
-def test_dataset_create_disallows_group_for_non_restricted(tmp_path):
-    with pytest.raises(ValidationError) as exc:
-        schemas.DatasetCreate(
-            name="sample",
-            audio_dir=str(tmp_path),
-            visibility=VisibilityLevel.PRIVATE,
-            owner_group_id=1,
-        )
-    assert "only be set when visibility is 'restricted'" in str(exc.value)
+def test_dataset_create_accepts_project(tmp_path):
+    payload = schemas.DatasetCreate(
+        name="sample",
+        audio_dir=str(tmp_path),
+        project_id="proj-123",
+        visibility=VisibilityLevel.PUBLIC,
+    )
+    assert payload.project_id == "proj-123"
+    assert payload.visibility == VisibilityLevel.PUBLIC
 
 
-def test_dataset_update_restricted_requires_group():
-    with pytest.raises(ValidationError) as exc:
-        schemas.DatasetUpdate(
-            visibility=VisibilityLevel.RESTRICTED,
-        )
-    assert "requires owner_group_id" in str(exc.value)
-
-
-def test_dataset_update_disallows_group_for_non_restricted():
-    with pytest.raises(ValidationError) as exc:
-        schemas.DatasetUpdate(
-            visibility=VisibilityLevel.PUBLIC,
-            owner_group_id=1,
-        )
-    assert "only be set when visibility is 'restricted'" in str(exc.value)
-
-
-def test_annotation_project_create_restricted_requires_group():
+def test_annotation_project_create_requires_dataset():
     with pytest.raises(ValidationError) as exc:
         schemas.AnnotationProjectCreate(
             name="proj",
             description="desc",
-            visibility=VisibilityLevel.RESTRICTED,
         )
-    assert "Restricted visibility requires owner_group_id" in str(exc.value)
+    assert "dataset_id" in str(exc.value.errors())
 
 
-def test_annotation_project_create_disallows_group_for_non_restricted():
-    with pytest.raises(ValidationError) as exc:
-        schemas.AnnotationProjectCreate(
-            name="proj",
-            description="desc",
-            visibility=VisibilityLevel.PUBLIC,
-            owner_group_id=1,
-        )
-    assert "only be set when visibility is 'restricted'" in str(exc.value)
-
-
-def test_annotation_project_update_restricted_requires_group():
-    with pytest.raises(ValidationError) as exc:
-        schemas.AnnotationProjectUpdate(
-            visibility=VisibilityLevel.RESTRICTED,
-        )
-    assert "requires owner_group_id" in str(exc.value)
-
-
-def test_annotation_project_update_disallows_group_for_non_restricted():
-    with pytest.raises(ValidationError) as exc:
-        schemas.AnnotationProjectUpdate(
-            visibility=VisibilityLevel.PRIVATE,
-            owner_group_id=42,
-        )
-    assert "only be set when visibility is 'restricted'" in str(exc.value)
+def test_annotation_project_create_defaults_visibility_to_restricted():
+    payload = schemas.AnnotationProjectCreate(
+        name="proj",
+        description="desc",
+        dataset_id=1,
+    )
+    assert payload.visibility == VisibilityLevel.RESTRICTED

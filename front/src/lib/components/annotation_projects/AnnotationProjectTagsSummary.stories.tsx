@@ -2,6 +2,7 @@ import type { Meta, StoryObj } from "@storybook/react";
 import { fn } from "@storybook/test";
 
 import AnnotationProjectTagsSummary from "./AnnotationProjectTagsSummary";
+import { makeAnnotationProject } from "./storyHelpers";
 
 const meta: Meta<typeof AnnotationProjectTagsSummary> = {
   title: "AnnotationProject/TagsSummary",
@@ -17,70 +18,38 @@ type Story = StoryObj<typeof AnnotationProjectTagsSummary>;
 
 export const NoTags: Story = {
   args: {
-    annotationProject: {
-      uuid: "1",
-      name: "Project 1",
-      description: "Annotation project 1",
-      created_on: new Date(),
-      visibility: "private" as const,
-      created_by_id: "test-user-id",
-      owner_group_id: null,
-      tags: [],
-    },
+    annotationProject: makeAnnotationProject({ tags: [] }),
   },
 };
 
 export const Loading: Story = {
   args: {
     isLoading: true,
-    annotationProject: {
-      uuid: "1",
-      name: "Project 1",
-      description: "Annotation project 1",
-      created_on: new Date(),
-      visibility: "private" as const,
-      created_by_id: "test-user-id",
-      owner_group_id: null,
-      tags: [],
-    },
+    annotationProject: makeAnnotationProject({ tags: [] }),
   },
 };
 
 export const WithProjectTags: Story = {
   args: {
-    annotationProject: {
-      uuid: "1",
-      name: "Project 1",
-      description: "Annotation project 1",
-      created_on: new Date(),
-      visibility: "private" as const,
-      created_by_id: "test-user-id",
-      owner_group_id: null,
+    annotationProject: makeAnnotationProject({
       tags: [
         { key: "species", value: "Myotis lucifugus", canonical_name: "Myotis lucifugus" },
         { key: "species", value: "Myotis septentrionalis", canonical_name: "Myotis septentrionalis" },
         { key: "event", value: "Echolocation", canonical_name: "Echolocation" },
       ],
-    },
+    }),
   },
 };
 
 export const WithAnnotations: Story = {
   args: {
-    annotationProject: {
-      uuid: "1",
-      name: "Project 1",
-      description: "Annotation project 1",
-      created_on: new Date(),
-      visibility: "private" as const,
-      created_by_id: "test-user-id",
-      owner_group_id: null,
+    annotationProject: makeAnnotationProject({
       tags: [
         { key: "species", value: "Myotis lucifugus", canonical_name: "Myotis lucifugus" },
         { key: "species", value: "Myotis septentrionalis", canonical_name: "Myotis septentrionalis" },
         { key: "event", value: "Echolocation", canonical_name: "Echolocation" },
       ],
-    },
+    }),
     clipTags: [
       {
         tag: { key: "species", value: "Myotis lucifugus", canonical_name: "Myotis lucifugus" },

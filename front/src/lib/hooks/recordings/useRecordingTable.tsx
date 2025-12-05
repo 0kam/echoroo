@@ -3,49 +3,31 @@ import {
   getCoreRowModel,
   useReactTable,
 } from "@tanstack/react-table";
-import { type FC, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 
 import {
   DateIcon,
   LocationIcon,
   NotesIcon,
-  SunIcon,
-  TagIcon,
-  TimeIcon,
 } from "@/lib/components/icons";
 import Checkbox from "@/lib/components/inputs/Checkbox";
 import TableCell from "@/lib/components/tables/TableCell";
 import TableHeader from "@/lib/components/tables/TableHeader";
 import TableInput from "@/lib/components/tables/TableInput";
-import TableMap from "@/lib/components/tables/TableMap";
-import TableTags from "@/lib/components/tables/TableTags";
-import TagSearchBarBase, {
-  type TagSearchBarProps,
-} from "@/lib/components/tags/TagSearchBar";
 import Button from "@/lib/components/ui/Button";
 
-import type { Note, Recording, RecordingUpdate, Tag } from "@/lib/types";
-import { type Color } from "@/lib/utils/tags";
+import type { Note, Recording, RecordingUpdate } from "@/lib/types";
 
 const defaultPathFormatter = (path: string) => path;
 
 export default function useRecordingTable({
   data,
-  canCreateTag = true,
   pathFormatter = defaultPathFormatter,
-  TagSearchBar = TagSearchBarBase,
   onClickRecording,
-  onCreateTag,
   onUpdateRecording,
-  onAddRecordingTag,
-  onDeleteRecordingTag,
-  onClickTag,
-  tagColorFn,
 }: {
   data: Recording[];
   pathFormatter?: (path: string) => string;
-  canCreateTag?: boolean;
-  TagSearchBar?: FC<TagSearchBarProps>;
   onUpdateRecording?: ({
     recording,
     data,
@@ -56,78 +38,8 @@ export default function useRecordingTable({
     index: number;
   }) => void;
   onClickRecording?: (recording: Recording) => void;
-  onAddRecordingTag?: ({
-    recording,
-    tag,
-    index,
-  }: {
-    recording: Recording;
-    tag: Tag;
-    index: number;
-  }) => void;
-  onDeleteRecordingTag?: ({
-    recording,
-    tag,
-    index,
-  }: {
-    recording: Recording;
-    tag: Tag;
-    index: number;
-  }) => void;
-  onClickTag?: (tag: Tag) => void;
-  tagColorFn?: (tag: Tag) => Color;
-} & Omit<TagSearchBarProps, "onSelectTag" | "canCreate">) {
+}) {
   const [rowSelection, setRowSelection] = useState({});
-
-  const tagRow: ColumnDef<Recording> = useMemo(
-    () => ({
-      id: "tags",
-      enableResizing: true,
-      header: () => (
-        <TableHeader>
-          <TagIcon className="inline-block mr-2 w-5 h-5 align-middle text-stone-500" />
-          Tags
-        </TableHeader>
-      ),
-      accessorFn: (row) => row.tags,
-      cell: ({ row }) => {
-        const tags = row.getValue("tags") as Tag[];
-        return (
-          <TableTags
-            tags={tags}
-            canCreate={canCreateTag}
-            tagColorFn={tagColorFn}
-            TagSearchBar={TagSearchBar}
-            onClickTag={onClickTag}
-            onCreateTag={onCreateTag}
-            onSelectTag={(tag) =>
-              onAddRecordingTag?.({
-                recording: row.original,
-                tag,
-                index: row.index,
-              })
-            }
-            onDeleteTag={(tag) =>
-              onDeleteRecordingTag?.({
-                recording: row.original,
-                tag,
-                index: row.index,
-              })
-            }
-          />
-        );
-      },
-    }),
-    [
-      tagColorFn,
-      TagSearchBar,
-      canCreateTag,
-      onAddRecordingTag,
-      onClickTag,
-      onCreateTag,
-      onDeleteRecordingTag,
-    ],
-  );
 
   const selectRow: ColumnDef<Recording> = useMemo(
     () => ({
@@ -216,6 +128,26 @@ export default function useRecordingTable({
     [],
   );
 
+  const bitDepthRow: ColumnDef<Recording> = useMemo(
+    () => ({
+      id: "bit_depth",
+      accessorKey: "bit_depth",
+      header: () => <TableHeader>Bit Depth</TableHeader>,
+      enableResizing: true,
+      size: 100,
+      footer: (props) => props.column.id,
+      cell: ({ row }) => {
+        const bitDepth = row.getValue("bit_depth") as number | null;
+        return (
+          <TableCell>
+            {bitDepth != null ? `${bitDepth}-bit` : "—"}
+          </TableCell>
+        );
+      },
+    }),
+    [],
+  );
+
   const timeExpansionRow: ColumnDef<Recording> = useMemo(
     () => ({
       id: "time_expansion",
@@ -245,81 +177,94 @@ export default function useRecordingTable({
     [onUpdateRecording],
   );
 
-  const dateRow: ColumnDef<Recording> = useMemo(
+  const datetimeRow: ColumnDef<Recording> = useMemo(
     () => ({
-      id: "date",
+      id: "datetime",
       enableResizing: true,
-      size: 140,
+      size: 200,
       header: () => {
         return (
           <TableHeader>
             <DateIcon className="inline-block mr-2 w-5 h-5 align-middle text-stone-500" />
-            Date
+            Datetime
           </TableHeader>
         );
       },
       cell: ({ row }) => {
-        const date = row.getValue("date") as string;
-        return (
-          <TableInput
-            onChange={(value) => {
-              if (value === null) return;
-              onUpdateRecording?.({
-                recording: row.original,
-                data: { date: new Date(value) },
-                index: row.index,
-              });
-            }}
-            type="date"
-            value={date}
-          />
-        );
-      },
-      accessorFn: (row) => row.date?.toLocaleDateString("en-CA"),
-    }),
-    [onUpdateRecording],
-  );
+        const recording = row.original;
 
-  const timeRow: ColumnDef<Recording> = useMemo(
-    () => ({
-      id: "time",
-      enableResizing: true,
-      size: 120,
-      header: () => {
+        // Prioritize parsed datetime over legacy date+time
+        let displayValue = "";
+        let statusIcon = null;
+
+        if (recording.datetime) {
+          displayValue = new Date(recording.datetime).toLocaleString("ja-JP", {
+            year: "numeric",
+            month: "2-digit",
+            day: "2-digit",
+            hour: "2-digit",
+            minute: "2-digit",
+            second: "2-digit",
+          });
+
+          // Status indicator for parsed datetime
+          if (recording.datetime_parse_status === "success") {
+            statusIcon = (
+              <span className="text-emerald-500 mr-1" title="パース成功">
+                ✓
+              </span>
+            );
+          } else if (recording.datetime_parse_status === "failed") {
+            statusIcon = (
+              <span className="text-red-500 mr-1" title={recording.datetime_parse_error || "パース失敗"}>
+                ⚠
+              </span>
+            );
+          } else if (recording.datetime_parse_status === "pending") {
+            statusIcon = (
+              <span className="text-stone-400 mr-1" title="パース待ち">
+                ⏳
+              </span>
+            );
+          }
+        } else if (recording.date) {
+          // Fallback to legacy date+time
+          const dateStr = recording.date.toLocaleDateString("ja-JP", {
+            year: "numeric",
+            month: "2-digit",
+            day: "2-digit",
+          });
+          const timeStr = recording.time || "";
+          displayValue = timeStr ? `${dateStr} ${timeStr}` : dateStr;
+        }
+
         return (
-          <TableHeader>
-            <TimeIcon className="inline-block mr-2 w-5 h-5 align-middle text-stone-500" />
-            Time
-          </TableHeader>
+          <TableCell>
+            <div className="flex items-center">
+              {statusIcon}
+              <span className="text-sm">{displayValue || "—"}</span>
+            </div>
+          </TableCell>
         );
       },
-      cell: ({ row }) => {
-        const time = row.getValue("time") as string;
-        return (
-          <TableInput
-            onChange={(value) => {
-              if (value === null) return;
-              onUpdateRecording?.({
-                recording: row.original,
-                data: { time: value },
-                index: row.index,
-              });
-            }}
-            type="time"
-            value={time}
-            step="1"
-          />
-        );
+      accessorFn: (row) => {
+        if (row.datetime) {
+          return new Date(row.datetime).toISOString();
+        }
+        if (row.date) {
+          return row.date.toISOString();
+        }
+        return "";
       },
-      accessorFn: (row) => row.time,
     }),
-    [onUpdateRecording],
+    [],
   );
 
   const locationRow: ColumnDef<Recording> = useMemo(
     () => ({
       id: "location",
       enableResizing: true,
+      size: 180,
       header: () => {
         return (
           <TableHeader>
@@ -328,28 +273,49 @@ export default function useRecordingTable({
           </TableHeader>
         );
       },
-      accessorFn: (row) => ({
-        latitude: row.latitude,
-        longitude: row.longitude,
-      }),
+      accessorFn: (row) => {
+        if (row.h3_index) {
+          return row.h3_index;
+        }
+        if (row.latitude && row.longitude) {
+          return `${row.latitude}, ${row.longitude}`;
+        }
+        return "";
+      },
       cell: ({ row }) => {
-        const location = row.getValue("location") as {
-          latitude: number | null;
-          longitude: number | null;
-        };
-        return (
-          <TableMap
-            onChange={(value) => {
-              if (value === null) return;
-              onUpdateRecording?.({
-                recording: row.original,
-                data: value,
-                index: row.index,
-              });
-            }}
-            value={location}
-          />
-        );
+        const recording = row.original;
+
+        // Prioritize H3 index (from dataset site)
+        if (recording.h3_index) {
+          const siteName = recording.dataset?.primary_site?.site_name;
+          return (
+            <TableCell>
+              <div className="flex flex-col">
+                {siteName && (
+                  <span className="text-xs text-stone-500 dark:text-stone-400">
+                    {siteName}
+                  </span>
+                )}
+                <span className="text-xs font-mono text-stone-700 dark:text-stone-300">
+                  {recording.h3_index}
+                </span>
+              </div>
+            </TableCell>
+          );
+        }
+
+        // Fallback to legacy lat/lon (read-only)
+        if (recording.latitude && recording.longitude) {
+          return (
+            <TableCell>
+              <span className="text-xs font-mono text-stone-700 dark:text-stone-300">
+                {recording.latitude.toFixed(4)}, {recording.longitude.toFixed(4)}
+              </span>
+            </TableCell>
+          );
+        }
+
+        return <TableCell>—</TableCell>;
       },
     }),
     [onUpdateRecording],
@@ -373,14 +339,20 @@ export default function useRecordingTable({
         if ((notes || []).length == 0) return null;
 
         return (
-          <span className="ms-2">
-            <SunIcon className="inline-block mr-2 w-5 h-5 text-blue-500 align-middle" />
-            {notes.length} notes
-          </span>
+          <TableCell>
+            <Button
+              mode="text"
+              align="text-left"
+              onClick={() => onClickRecording?.(row.original)}
+            >
+              <NotesIcon className="inline-block mr-1 w-4 h-4 text-blue-500 align-middle" />
+              {notes.length} notes
+            </Button>
+          </TableCell>
         );
       },
     }),
-    [],
+    [onClickRecording],
   );
 
   // Column definitions
@@ -390,11 +362,10 @@ export default function useRecordingTable({
       pathRow,
       durationRow,
       samplerateRow,
+      bitDepthRow,
       timeExpansionRow,
-      dateRow,
-      timeRow,
+      datetimeRow,
       locationRow,
-      tagRow,
       notesRow,
     ],
     [
@@ -402,11 +373,10 @@ export default function useRecordingTable({
       pathRow,
       durationRow,
       samplerateRow,
+      bitDepthRow,
       timeExpansionRow,
-      dateRow,
-      timeRow,
+      datetimeRow,
       locationRow,
-      tagRow,
       notesRow,
     ],
   );

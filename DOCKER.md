@@ -1,322 +1,348 @@
-# Whombat Docker ガイド
+# Echoroo Docker Guide
 
-Dockerを使用してWhombatを起動する方法を説明します。
+This guide covers running Echoroo with Docker in both development and production environments.
 
-## 📋 目次
+## Prerequisites
 
-- [クイックスタート](#クイックスタート)
-- [起動モード](#起動モード)
-- [設定](#設定)
-- [よくある使い方](#よくある使い方)
-- [トラブルシューティング](#トラブルシューティング)
+- [Docker](https://docs.docker.com/get-docker/) (version 24.0+)
+- [Docker Compose](https://docs.docker.com/compose/install/) (version 2.0+)
 
----
-
-## 🚀 クイックスタート
-
-### 1. 環境設定
+## Quick Start
 
 ```bash
-# .envファイルを作成
+# Clone the repository
+git clone https://github.com/0kam/echoroo.git
+cd echoroo
+
+# Configure environment
 cp .env.example .env
+# Edit .env and set:
+#   - POSTGRES_PASSWORD (required)
+#   - ECHOROO_AUDIO_DIR (required)
 
-# .envファイルを編集して、少なくともオーディオディレクトリを設定
-# WHOMBAT_AUDIO_DIR=/path/to/your/audio/files
-nano .env
+# Start development environment
+./scripts/docker.sh dev
 ```
 
-### 2. 起動
+Access the application at http://localhost:3000.
+
+## Management Script
+
+All Docker operations are managed through `./scripts/docker.sh`:
 
 ```bash
-# シンプルモード（SQLite）で起動
-./scripts/docker.sh start
-
-# または、PostgreSQLで起動
-./scripts/docker.sh start postgres
+./scripts/docker.sh <environment> <command>
 ```
 
-### 3. アクセス
+### Environments
 
-ブラウザで http://localhost:5000 にアクセス
+| Environment | Description |
+|-------------|-------------|
+| `dev` | Development with hot reload, exposed ports |
+| `prod` | Production with Traefik proxy, scalable |
 
-初回ログイン:
-- ユーザー名: `admin`
-- パスワード: `admin`
+### Commands
 
----
+| Command | Description |
+|---------|-------------|
+| `start` (default) | Start containers |
+| `stop` | Stop containers |
+| `restart` | Restart containers |
+| `logs [service]` | Show logs (optionally for specific service) |
+| `status` | Show container status |
+| `shell [service]` | Open shell in container (default: backend) |
+| `db` | Connect to PostgreSQL CLI |
+| `build` | Rebuild Docker images |
+| `watch` | Start with hot reload (dev only) |
+| `clean` | Stop and remove containers |
+| `clean-all` | Remove everything including volumes (DATA LOSS!) |
+| `help` | Show help |
 
-## 🎯 起動モード
+## Development Environment
 
-Whombatは4つのDockerモードで起動できます:
-
-### 1. **Simple モード (推奨)** 📦
+### Starting
 
 ```bash
-./scripts/docker.sh start simple
-# または
-./scripts/docker.sh start
+# Start all services
+./scripts/docker.sh dev
+
+# Start with hot reload (watches for file changes)
+./scripts/docker.sh dev watch
 ```
 
-**特徴:**
-- SQLiteデータベース使用
-- 1つのコンテナで完結
-- セットアップが最も簡単
-- 個人利用や小規模プロジェクトに最適
+### Services
 
-**compose file:** `compose.simple.yaml`
+| Service | Port | Description |
+|---------|------|-------------|
+| Frontend | 3000 | Next.js development server |
+| Backend | 5000 | FastAPI server with hot reload |
+| Database | 5432 | PostgreSQL with pgvector |
 
-### 2. **PostgreSQL モード** 🐘
+### Accessing Services
 
 ```bash
-./scripts/docker.sh start postgres
+# View all logs
+./scripts/docker.sh dev logs
+
+# View specific service logs
+./scripts/docker.sh dev logs backend
+./scripts/docker.sh dev logs frontend
+./scripts/docker.sh dev logs db
+
+# Open shell in backend container
+./scripts/docker.sh dev shell backend
+
+# Connect to database
+./scripts/docker.sh dev db
 ```
 
-**特徴:**
-- PostgreSQLデータベース使用
-- より高いパフォーマンス
-- 複数ユーザーでの同時利用に適している
-- 本番環境やチーム利用に推奨
+### Development Workflow
 
-**compose file:** `compose.postgres.yaml`
+The development environment supports hot reload:
 
-### 3. **Development モード** 🔧
+1. **Backend changes**: Edit files in `back/src/` - changes are synced automatically
+2. **Frontend changes**: Edit files in `front/src/` - changes are synced automatically
+
+To use hot reload with watch mode:
 
 ```bash
-./scripts/docker.sh start dev
+./scripts/docker.sh dev watch
 ```
 
-**特徴:**
-- フロントエンドとバックエンドが別コンテナ
-- ホットリロード有効
-- Storybook、ドキュメントサーバーも起動
-- 開発者向け
+### Rebuilding
 
-**compose file:** `compose.dev.yaml`
-
-**アクセスポート:**
-- Frontend: http://localhost:3000
-- Backend: http://localhost:5000
-- Storybook: http://localhost:6006
-- Docs: http://localhost:8000
-
-### 4. **Production モード** 🚢
+When you change dependencies (pyproject.toml, package.json):
 
 ```bash
-./scripts/docker.sh start prod
+# Rebuild images
+./scripts/docker.sh dev build
+
+# Restart with new images
+./scripts/docker.sh dev restart
 ```
 
-**特徴:**
-- PostgreSQL + Traefik (リバースプロキシ)
-- 複数レプリカでのスケーリング
-- ロードバランシング
-- 大規模展開向け
+## Production Environment
 
-**compose file:** `compose.prod.yaml`
+### Prerequisites
 
----
+1. A domain name pointing to your server
+2. Ports 80 and 8080 available
 
-## ⚙️ 設定
+### Configuration
 
-### 環境変数 (.env)
-
-主要な設定項目:
+Edit `.env` for production:
 
 ```bash
-# ネットワーク設定
-WHOMBAT_DOMAIN=localhost          # アクセスするドメイン/IPアドレス
-WHOMBAT_HOST=0.0.0.0             # バインドするインターフェース
-WHOMBAT_PORT=5000                # バックエンドポート
-WHOMBAT_FRONTEND_PORT=3000       # フロントエンドポート
-
-# オーディオディレクトリ（必須）
-WHOMBAT_AUDIO_DIR=/path/to/audio # 音声ファイルのパス
-
-# データベース（PostgreSQLモード時）
-POSTGRES_DB=whombat
-POSTGRES_USER=postgres
-POSTGRES_PASSWORD=whombat
-
-# 開発モード
-WHOMBAT_DEV=false                # true: 開発モード、false: 本番モード
+POSTGRES_PASSWORD=very_secure_password_here
+ECHOROO_AUDIO_DIR=/data/audio
+DOMAIN=echoroo.example.com
+BACKEND_REPLICAS=3
 ```
 
-詳細は `.env.example` を参照してください。
-
-### リモートアクセス設定
-
-リモートサーバーで起動する場合:
+### Starting
 
 ```bash
-# .env
-WHOMBAT_DOMAIN=192.168.1.100     # サーバーのIPアドレス
-WHOMBAT_HOST=0.0.0.0             # すべてのインターフェースでリッスン
+./scripts/docker.sh prod
 ```
 
----
+### Architecture
 
-## 💡 よくある使い方
+Production mode uses Traefik as a reverse proxy:
 
-### コンテナの管理
+```
+Internet
+    │
+    ▼
+Port 80 ──► Traefik ──► Backend (x N replicas)
+                              │
+                              ▼
+                        PostgreSQL
+                   (internal network)
+```
+
+Features:
+- Load balancing across backend replicas
+- Automatic health checks
+- Database isolated in internal network
+- Frontend bundled into backend static files
+
+### Scaling
+
+Adjust the number of backend replicas:
 
 ```bash
-# 起動
-./scripts/docker.sh start [simple|postgres|dev|prod]
+# In .env
+BACKEND_REPLICAS=5
 
-# 停止
-./scripts/docker.sh stop
-
-# 再起動
-./scripts/docker.sh restart
-
-# ステータス確認
-./scripts/docker.sh status
-
-# ログ表示
-./scripts/docker.sh logs
-
-# 特定のサービスのログ
-./scripts/docker.sh logs whombat
+# Restart
+./scripts/docker.sh prod restart
 ```
 
-### データの管理
+### Monitoring
 
 ```bash
-# イメージの再ビルド
-./scripts/docker.sh build
+# Check status
+./scripts/docker.sh prod status
 
-# コンテナとネットワークの削除（データは保持）
-./scripts/docker.sh clean
+# View logs
+./scripts/docker.sh prod logs
 
-# すべて削除（データベース含む）⚠️
-./scripts/docker.sh clean-all
+# Traefik dashboard
+# Available at http://localhost:8080
 ```
 
-### データのバックアップ
+## Services Reference
+
+### Database (PostgreSQL + pgvector)
+
+- **Image**: `pgvector/pgvector:pg16`
+- **Volume**: `echoroo-dev-db` (dev) or `echoroo-prod-db` (prod)
+- **Features**: pgvector extension for ML embeddings
+
+Connect to database:
 
 ```bash
-# SQLiteの場合（simpleモード）
-docker compose -f compose.simple.yaml cp whombat:/data/whombat.db ./backup-$(date +%Y%m%d).db
-
-# PostgreSQLの場合
-docker exec whombat-db pg_dump -U postgres whombat > backup-$(date +%Y%m%d).sql
+./scripts/docker.sh dev db
 ```
 
-### データのリストア
+Or from host (dev only):
 
 ```bash
-# SQLiteの場合
-docker compose -f compose.simple.yaml cp ./backup.db whombat:/data/whombat.db
-docker compose -f compose.simple.yaml restart
-
-# PostgreSQLの場合
-cat backup.sql | docker exec -i whombat-db psql -U postgres whombat
+psql -h localhost -U postgres -d echoroo
 ```
 
----
+### Backend (FastAPI)
 
-## 🔧 トラブルシューティング
+- **Port**: 5000
+- **API Docs**: http://localhost:5000/docs
+- **Health Check**: http://localhost:5000/api/v1/
 
-### よくある問題
+### Frontend (Next.js)
 
-#### 1. ポートが既に使用されている
+- **Port**: 3000 (dev only)
+- **Note**: In production, frontend is bundled into backend
 
-**エラー:** `Bind for 0.0.0.0:5000 failed: port is already allocated`
+## Data Management
 
-**解決策:**
-```bash
-# ポートを使用しているプロセスを確認
-sudo lsof -i :5000
+### Volumes
 
-# .envでポートを変更
-WHOMBAT_PORT=5001
-```
+| Volume | Purpose |
+|--------|---------|
+| `echoroo-dev-db` / `echoroo-prod-db` | PostgreSQL data |
+| `echoroo-dev-data` | Backend data (dev only) |
 
-#### 2. オーディオファイルが見つからない
+### Audio Files
 
-**症状:** アプリでオーディオファイルが表示されない
-
-**解決策:**
-```bash
-# 1. .envでWHOMBAT_AUDIO_DIRが正しく設定されているか確認
-# 2. ディレクトリの権限を確認
-ls -la /path/to/audio
-
-# 3. コンテナ内でマウントを確認
-docker exec whombat ls -la /audio
-```
-
-#### 3. データベース接続エラー（PostgreSQLモード）
-
-**解決策:**
-```bash
-# データベースコンテナの状態を確認
-docker compose -f compose.postgres.yaml ps
-
-# データベースログを確認
-docker compose -f compose.postgres.yaml logs db
-
-# データベースコンテナを再起動
-docker compose -f compose.postgres.yaml restart db
-```
-
-#### 4. コンテナが起動しない
-
-**解決策:**
-```bash
-# ログを確認
-./scripts/docker.sh logs
-
-# イメージを再ビルド
-./scripts/docker.sh build
-
-# すべてクリーンアップして再起動
-./scripts/docker.sh clean
-./scripts/docker.sh start
-```
-
-### デバッグ方法
+Audio files are mounted read-only from the host:
 
 ```bash
-# コンテナ内に入る
-docker exec -it whombat bash
-
-# 環境変数を確認
-docker exec whombat env | grep WHOMBAT
-
-# ネットワークを確認
-docker network ls
-docker network inspect whombat-private
-
-# ボリュームを確認
-docker volume ls
-docker volume inspect whombat-data
+# In .env
+ECHOROO_AUDIO_DIR=/path/to/audio/files
 ```
 
----
+The directory is mounted at `/audio` inside containers.
 
-## 📚 関連ドキュメント
+### Backup
 
-- [メインREADME](README.md)
-- [設定ガイド](CONFIGURATION.md)
-- [クイックスタート](QUICK_START.md)
-- [開発者ガイド](back/docs/developer_guide/index.md)
+Backup the database:
 
----
+```bash
+docker exec echoroo-db pg_dump -U postgres echoroo > backup.sql
+```
 
-## 🆘 サポート
+Restore from backup:
 
-問題が解決しない場合:
+```bash
+cat backup.sql | docker exec -i echoroo-db psql -U postgres echoroo
+```
 
-1. [GitHub Issues](https://github.com/mbsantiago/whombat/issues) で既存の問題を検索
-2. 新しいissueを作成（ログとエラーメッセージを含める）
-3. [ディスカッション](https://github.com/mbsantiago/whombat/discussions) でコミュニティに質問
+### Reset
 
----
+To completely reset (WARNING: deletes all data!):
 
-## 🔄 次のステップ
+```bash
+./scripts/docker.sh dev clean-all
+```
 
-Docker環境が動作したら:
+## Troubleshooting
 
-1. **初回セットアップ**: http://localhost:5000/first でユーザーとオーディオディレクトリを設定
-2. **データインポート**: [インポートガイド](back/docs/user_guide/guides/import.md) を参照
-3. **アノテーション開始**: [ユーザーガイド](back/docs/user_guide/index.md) を参照
+### Containers not starting
+
+```bash
+# Check status
+./scripts/docker.sh dev status
+
+# Check logs for errors
+./scripts/docker.sh dev logs
+```
+
+### Database connection failed
+
+```bash
+# Check if db container is healthy
+docker ps | grep echoroo-db
+
+# Check db logs
+./scripts/docker.sh dev logs db
+```
+
+### Port already in use
+
+```bash
+# Find what's using the port
+sudo lsof -i :3000
+
+# Use different ports in .env
+ECHOROO_PORT=5001
+ECHOROO_FRONTEND_PORT=3001
+POSTGRES_PORT=5433
+```
+
+### Build failures
+
+```bash
+# Clean rebuild
+./scripts/docker.sh dev build
+
+# If still failing, remove all and start fresh
+docker system prune -a
+./scripts/docker.sh dev
+```
+
+### Audio files not visible
+
+1. Check the path in `.env`:
+   ```bash
+   echo $ECHOROO_AUDIO_DIR
+   ls -la $ECHOROO_AUDIO_DIR
+   ```
+
+2. Ensure it's an absolute path:
+   ```bash
+   # Correct
+   ECHOROO_AUDIO_DIR=/home/user/audio
+
+   # Wrong
+   ECHOROO_AUDIO_DIR=./audio
+   ```
+
+### Hot reload not working
+
+Use watch mode:
+
+```bash
+./scripts/docker.sh dev watch
+```
+
+If still not working, check file permissions and Docker's file sharing settings.
+
+## Docker Compose Files
+
+| File | Purpose |
+|------|---------|
+| `compose.dev.yaml` | Development environment |
+| `compose.prod.yaml` | Production environment |
+
+## Environment Variables
+
+See [CONFIGURATION.md](CONFIGURATION.md) for complete environment variable reference.

@@ -7,9 +7,9 @@ import { getButtonClassName } from "@/lib/components/ui/Button";
 
 export default function Link({
   children,
-  variant = "primary",
-  mode = "filled",
-  padding = "p-2.5",
+  variant,
+  mode,
+  padding,
   className,
   ...props
 }: {
@@ -19,7 +19,13 @@ export default function Link({
   padding?: string;
   className?: string;
 } & Omit<ComponentProps<typeof NextLink>, "className">) {
-  const baseClass = getButtonClassName({ variant, mode, padding });
+  // Only apply button styling if mode is explicitly provided
+  const shouldUseButtonStyle = mode !== undefined;
+
+  const baseClass = shouldUseButtonStyle
+    ? getButtonClassName({ variant: variant ?? "primary", mode, padding: padding ?? "p-2.5" })
+    : undefined;
+
   return (
     <NextLink {...props} className={classnames(baseClass, className)}>
       {children}

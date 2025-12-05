@@ -13,7 +13,7 @@ import TagSearchBarBase, {
 
 import useRecordingTable from "@/lib/hooks/recordings/useRecordingTable";
 
-import type { Recording, RecordingFilter, Tag } from "@/lib/types";
+import type { Recording, RecordingFilter, RecordingUpdate, Tag } from "@/lib/types";
 import { type Color } from "@/lib/utils/tags";
 
 export default function RecordingTable({
@@ -63,17 +63,35 @@ export default function RecordingTable({
   /** Callback function to handle clicking on a recording. */
   onClickRecording?: (recording: Recording) => void;
   /** Callback function to handle deleting a tag from a recording. */
-  onDeleteRecordingTag?: Parameters<
-    typeof useRecordingTable
-  >[0]["onDeleteRecordingTag"];
+  onDeleteRecordingTag?: ({
+    recording,
+    tag,
+    index,
+  }: {
+    recording: Recording;
+    tag: Tag;
+    index: number;
+  }) => void;
   /** Callback function to handle adding a tag to a recording. */
-  onAddRecordingTag?: Parameters<
-    typeof useRecordingTable
-  >[0]["onAddRecordingTag"];
+  onAddRecordingTag?: ({
+    recording,
+    tag,
+    index,
+  }: {
+    recording: Recording;
+    tag: Tag;
+    index: number;
+  }) => void;
   /** Callback function to handle updating a recording. */
-  onUpdateRecording?: Parameters<
-    typeof useRecordingTable
-  >[0]["onUpdateRecording"];
+  onUpdateRecording?: ({
+    recording,
+    data,
+    index,
+  }: {
+    recording: Recording;
+    data: RecordingUpdate;
+    index: number;
+  }) => void;
   /** Callback function to handle deleting a recording. */
   onDeleteRecording?: (data: { recording: Recording; index: number }) => void;
   /** Function to determine the color of a tag. */
@@ -87,14 +105,8 @@ export default function RecordingTable({
   const table = useRecordingTable({
     data: recordings,
     pathFormatter,
-    onCreateTag: props.onCreateTag,
     onClickRecording,
     onUpdateRecording,
-    onAddRecordingTag,
-    onDeleteRecordingTag,
-    onClickTag,
-    tagColorFn,
-    TagSearchBar,
   });
 
   const rowSelection = table.getState().rowSelection;

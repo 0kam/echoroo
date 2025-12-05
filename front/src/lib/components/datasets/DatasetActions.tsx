@@ -1,7 +1,6 @@
 import {
   CloseIcon,
   DeleteIcon,
-  DownloadIcon,
   WarningIcon,
 } from "@/lib/components/icons";
 import Alert from "@/lib/components/ui/Alert";
@@ -11,22 +10,18 @@ import type { Dataset } from "@/lib/types";
 
 export default function DatasetActions({
   dataset,
-  onDownloadDataset,
   onDeleteDataset,
   canDelete = true,
+  DatetimeParser,
 }: {
   dataset: Dataset;
-  onDownloadDataset?: () => void;
   onDeleteDataset?: () => void;
   canDelete?: boolean;
+  DatetimeParser?: JSX.Element;
 }) {
   return (
-    <div className="flex flex-row gap-2 justify-center">
-      {onDownloadDataset != null ? (
-        <Button mode="text" variant="primary" onClick={onDownloadDataset}>
-          <DownloadIcon className="inline-block mr-2 w-5 h-5" /> Download
-        </Button>
-      ) : null}
+    <div className="flex flex-row gap-2 justify-center flex-wrap">
+      {DatetimeParser}
       {canDelete && onDeleteDataset ? (
         <DeleteDataset dataset={dataset} onDeleteDataset={onDeleteDataset} />
       ) : null}

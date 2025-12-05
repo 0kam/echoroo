@@ -22,7 +22,7 @@ The easiest and most reliable way to run Whombat is using Docker. This method wo
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/mbsantiago/whombat.git
+git clone https://github.com/okamoto-group/echoroo.git
 cd whombat
 
 # 2. Configure settings
@@ -39,7 +39,7 @@ For detailed Docker instructions, see our [Docker Guide](../../DOCKER.md).
 
 ### 📦 Standalone Executable
 
-Download our pre-packaged executable file for Windows, Mac OS, or Ubuntu from our GitHub repository's [releases](https://github.com/mbsantiago/whombat/releases) section.
+Download our pre-packaged executable file for Windows, Mac OS, or Ubuntu from our GitHub repository's [releases](https://github.com/okamoto-group/echoroo/releases) section.
 
 This is a good option if you prefer not to use Docker and want a simple double-click installation.
 

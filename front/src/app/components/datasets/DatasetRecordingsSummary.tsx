@@ -9,14 +9,13 @@ export default function DatasetRecordingsSummary({
 }: {
   dataset: Dataset;
 }) {
-  const { data, download } = useDataset({
+  const { data } = useDataset({
     uuid: dataset.uuid,
     dataset,
   });
   return (
     <DatasetRecordingsSummaryBase
       dataset={data || dataset}
-      onDownloadDataset={download}
     />
   );
 }

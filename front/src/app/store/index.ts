@@ -73,7 +73,7 @@ const useStore = create<Store>()(
       ...createAudioSlice(...a),
     }),
     {
-      name: "whombat-storage",
+      name: "echoroo-storage",
       storage: createJSONStorage(() => localStorage),
       version: STORE_VERSION,
       migrate,

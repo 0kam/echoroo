@@ -7,8 +7,8 @@ from soundevent.data import geometries
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from whombat import api, models, schemas
-from whombat.filters.sound_events import RecordingFilter
+from echoroo import api, models, schemas
+from echoroo.filters.sound_events import RecordingFilter
 
 
 async def test_create_a_timestamp_sound_event(

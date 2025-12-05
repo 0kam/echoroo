@@ -1,6 +1,6 @@
 import type { Color, JSONObject } from "@/lib/draw/common";
 
-export const GREEN = "rgb(16 185 129)"; // emerald-500
+export const ACCENT = "rgb(249 115 22)"; // orange-500
 export const BLUE = "rgb(59,130,246)"; // blue-500
 export const RED = "rgb(239 68 68)"; // red-500
 export const ORANGE = "rgb(245 158 11)"; // amber-500

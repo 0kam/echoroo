@@ -3,8 +3,8 @@ import asyncio
 import pytest
 import uvicorn
 
-from whombat.system import create_app
-from whombat.system.settings import Settings
+from echoroo.system import create_app
+from echoroo.system.settings import Settings
 
 
 async def test_can_instantiate_app(test_settings: Settings):

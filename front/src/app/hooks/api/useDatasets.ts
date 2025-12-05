@@ -44,6 +44,7 @@ export default function useDatasets({
   });
 
   return {
+    query,
     ...query,
     filter,
     pagination,

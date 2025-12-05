@@ -7,8 +7,8 @@ from typing import Callable
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from whombat import api, schemas
-from whombat.filters import recordings as recording_filters
+from echoroo import api, schemas
+from echoroo.filters import recordings as recording_filters
 
 
 @pytest.fixture

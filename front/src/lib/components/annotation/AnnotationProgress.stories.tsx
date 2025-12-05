@@ -2,6 +2,8 @@ import type { Meta, StoryObj } from "@storybook/react";
 
 import type { AnnotationTask } from "@/lib/types";
 
+import { makeDataset } from "../datasets/storyHelpers";
+
 import AnnotationProgress from "./AnnotationProgress";
 
 const meta: Meta<typeof AnnotationProgress> = {
@@ -142,17 +144,11 @@ export const IssuesOnly: Story = {
 export const FixedDataset: Story = {
   args: {
     filter: {
-      dataset: {
-        uuid: "1",
-        audio_dir: "",
-        name: "dataset",
-        recording_count: 0,
-        description: "test dataset",
-        created_on: new Date(),
-        visibility: "private",
-        created_by_id: "test-user-id",
-        owner_group_id: null,
-      },
+        dataset: makeDataset({
+          uuid: "1",
+          name: "dataset",
+          description: "test dataset",
+        }),
     },
     tasks: [
       {

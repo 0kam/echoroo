@@ -9,12 +9,29 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from whombat import api, exceptions, models, schemas
+from echoroo import api, exceptions, models, schemas
+
+
+async def _add_project_member(
+    session: AsyncSession,
+    project_id: str,
+    user_id,
+    role: models.ProjectMemberRole,
+) -> None:
+    session.add(
+        models.ProjectMember(
+            project_id=project_id,
+            user_id=user_id,
+            role=role,
+        )
+    )
+    await session.flush()
 
 
 async def test_created_annotation_is_stored_in_the_database(
     session: AsyncSession,
     user: schemas.SimpleUser,
+    dataset: schemas.Dataset,
 ):
     """Test that an annotation project is stored in the database."""
     annotation_project = await api.annotation_projects.create(
@@ -22,7 +39,7 @@ async def test_created_annotation_is_stored_in_the_database(
         name="Test Annotation Project",
         description="A test annotation project.",
         user=user,
-        visibility=models.VisibilityLevel.PUBLIC,
+        dataset_id=dataset.id,
     )
     assert annotation_project.id is not None
 
@@ -40,6 +57,7 @@ async def test_created_annotation_is_stored_in_the_database(
 async def test_created_annotations_return_type_is_correct(
     session: AsyncSession,
     user: schemas.SimpleUser,
+    dataset: schemas.Dataset,
 ):
     """Test that the return type of create_annotation_project is correct."""
     annotation_project = await api.annotation_projects.create(
@@ -47,7 +65,7 @@ async def test_created_annotations_return_type_is_correct(
         name="Test Annotation Project",
         description="A test annotation project.",
         user=user,
-        visibility=models.VisibilityLevel.PUBLIC,
+        dataset_id=dataset.id,
     )
     assert isinstance(annotation_project, schemas.AnnotationProject)
 
@@ -56,6 +74,7 @@ async def test_cannot_create_an_annotation_project_with_a_duplicate_name(
     session: AsyncSession,
     annotation_project: schemas.AnnotationProject,
     user: schemas.SimpleUser,
+    dataset: schemas.Dataset,
 ):
     """Test that an annotation project fails with a duplicate name."""
     with pytest.raises(exceptions.DuplicateObjectError):
@@ -64,7 +83,7 @@ async def test_cannot_create_an_annotation_project_with_a_duplicate_name(
             name=annotation_project.name,
             description="foo",
             user=user,
-            visibility=models.VisibilityLevel.PUBLIC,
+            dataset_id=dataset.id,
         )
 
 
@@ -72,6 +91,7 @@ async def test_cannot_create_an_annotation_project_with_duplicate_uuid(
     session: AsyncSession,
     annotation_project: schemas.AnnotationProject,
     user: schemas.SimpleUser,
+    dataset: schemas.Dataset,
 ):
     """Test that an annotation project fails with a duplicate uuid."""
     with pytest.raises(exceptions.DuplicateObjectError):
@@ -81,13 +101,14 @@ async def test_cannot_create_an_annotation_project_with_duplicate_uuid(
             description="bar",
             uuid=annotation_project.uuid,
             user=user,
-            visibility=models.VisibilityLevel.PUBLIC,
+            dataset_id=dataset.id,
         )
 
 
 async def test_can_create_a_project_with_a_given_uuid(
     session: AsyncSession,
     user: schemas.SimpleUser,
+    dataset: schemas.Dataset,
 ):
     """Test that an annotation project can be created with a given uuid."""
     uuid = uuid4()
@@ -97,7 +118,7 @@ async def test_can_create_a_project_with_a_given_uuid(
         description="A test annotation project.",
         uuid=uuid,
         user=user,
-        visibility=models.VisibilityLevel.PUBLIC,
+        dataset_id=dataset.id,
     )
     annotation_project = await api.annotation_projects.get(
         session,
@@ -240,35 +261,22 @@ async def test_update_annotation_project_metadata_requires_authorized_user(
         )
 
 
-async def test_group_manager_can_update_project_metadata(
+async def test_project_manager_can_update_project_metadata(
     session: AsyncSession,
-    user: schemas.SimpleUser,
+    annotation_project: schemas.AnnotationProject,
     other_user: schemas.SimpleUser,
-    group: schemas.Group,
-    group_manager_membership: schemas.GroupMembership,
 ):
-    """Ensure group managers can update project metadata."""
-    project = await api.annotation_projects.create(
+    """Ensure project managers can update annotation project metadata."""
+    await _add_project_member(
         session,
-        name="managed_project",
-        description="desc",
-        annotation_instructions=None,
-        user=user,
-        visibility=models.VisibilityLevel.RESTRICTED,
-        owner_group_id=group.id,
-    )
-
-    await api.groups.add_membership(
-        session,
-        group.id,
+        annotation_project.project_id,
         other_user.id,
-        models.GroupRole.MANAGER,
+        models.ProjectMemberRole.MANAGER,
     )
-    await session.commit()
 
     updated = await api.annotation_projects.update(
         session,
-        project,
+        annotation_project,
         schemas.AnnotationProjectUpdate(name="managed_update"),
         user=other_user,
     )
@@ -308,36 +316,23 @@ async def test_delete_annotation_project_requires_owner(
         )
 
 
-async def test_group_manager_cannot_delete_project(
+async def test_project_manager_cannot_delete_project(
     session: AsyncSession,
-    user: schemas.SimpleUser,
+    annotation_project: schemas.AnnotationProject,
     other_user: schemas.SimpleUser,
-    group: schemas.Group,
-    group_manager_membership: schemas.GroupMembership,
 ):
-    """Ensure group managers cannot delete projects they manage."""
-    project = await api.annotation_projects.create(
+    """Ensure project managers cannot delete annotation projects they manage."""
+    await _add_project_member(
         session,
-        name="managed_delete",
-        description="desc",
-        annotation_instructions=None,
-        user=user,
-        visibility=models.VisibilityLevel.RESTRICTED,
-        owner_group_id=group.id,
-    )
-
-    await api.groups.add_membership(
-        session,
-        group.id,
+        annotation_project.project_id,
         other_user.id,
-        models.GroupRole.MANAGER,
+        models.ProjectMemberRole.MANAGER,
     )
-    await session.commit()
 
     with pytest.raises(exceptions.PermissionDeniedError):
         await api.annotation_projects.delete(
             session,
-            project,
+            annotation_project,
             user=other_user,
         )
 
@@ -548,6 +543,7 @@ async def test_can_get_base_dir_from_project_with_multiple_datasets(
             audio_dir=audio_dir,
             user=user,
             visibility=models.VisibilityLevel.PUBLIC,
+            project_id=annotation_project.project_id,
         )
         extra_file = dataset_dir / f"recording{i}_extra.wav"
         random_wav_factory(extra_file)

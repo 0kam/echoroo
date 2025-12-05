@@ -22,7 +22,7 @@ export default function ErrorToast({
 
   const userInstructions = hasDetailedError
     ? "Please copy the error below and report the issue to the developers (see guide on reporting errors)."
-    : "Oops, an unexpected error occurred. Please try running whombat on debug mode (consult guide) and try again to see the full error message.";
+    : "Oops, an unexpected error occurred. Please try running Echoroo in debug mode (consult guide) and try again to see the full error message.";
 
   const fullErrorMessage = `
 User Message: ${message}

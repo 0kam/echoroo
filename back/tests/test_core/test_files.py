@@ -1,11 +1,11 @@
-"""Test suite of Whombat core function to manage files."""
+"""Test suite of Echoroo core function to manage files."""
 
 from collections.abc import Callable
 from pathlib import Path
 
 import pytest
 
-from whombat.core import files
+from echoroo.core import files
 
 
 @pytest.mark.parametrize(

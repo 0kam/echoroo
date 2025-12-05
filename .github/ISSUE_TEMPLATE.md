@@ -1,4 +1,4 @@
-* Whombat version:
+* Echoroo version:
 * Python version:
 * Operating System:
 

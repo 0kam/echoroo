@@ -7,6 +7,7 @@ import Search from "@/lib/components/inputs/Search";
 import Pagination from "@/lib/components/lists/Pagination";
 
 import DatasetList from "./DatasetList";
+import { makeDataset } from "./storyHelpers";
 
 const meta: Meta<typeof DatasetList> = {
   title: "Dataset/List",
@@ -37,54 +38,32 @@ export const Empty: Story = {
 export const WithDatasets: Story = {
   args: {
     datasets: [
-      {
-        uuid: "123",
+      makeDataset({
+        uuid: "dataset-1",
         name: "Test Dataset",
-        description: "This is a test dataset.",
-        audio_dir: "/path/to/audio",
         recording_count: 1201,
-        created_on: new Date(),
-        visibility: "private" as const,
-        created_by_id: "test-user-id",
-        owner_group_id: null,
-      },
-      {
-        uuid: "456",
+      }),
+      makeDataset({
+        uuid: "dataset-2",
         name: "Another Dataset",
-        description: "This is another test dataset.",
-        audio_dir: "/path/to/another/audio",
         recording_count: 0,
-        created_on: new Date(),
-        visibility: "private" as const,
-        created_by_id: "test-user-id",
-        owner_group_id: null,
-      },
-      {
-        uuid: "789",
+        visibility: "restricted",
+      }),
+      makeDataset({
+        uuid: "dataset-3",
         name: "Dataset with a very Long Name describing the Year of Collection and Location as well as mentioning the Institutions involved.",
-        description: "This is a test dataset.",
-        audio_dir: "/path/to/audio",
-        recording_count: 1201,
-        created_on: new Date(),
-        visibility: "private" as const,
-        created_by_id: "test-user-id",
-        owner_group_id: null,
-      },
-      {
-        uuid: "123",
+        recording_count: 640,
+      }),
+      makeDataset({
+        uuid: "dataset-4",
         name: "Dataset",
         description: loremIpsum({
           count: 4,
           units: "paragraphs",
           suffix: "\n\n",
         }),
-        audio_dir: "/path/to/audio",
-        recording_count: 1201,
-        created_on: new Date(),
-        visibility: "private" as const,
-        created_by_id: "test-user-id",
-        owner_group_id: null,
-      },
+        recording_count: 540,
+      }),
     ],
   },
 };

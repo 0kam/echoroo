@@ -1,12 +1,11 @@
 import { RecordingIcon } from "@/lib/components/icons";
-import RecordingDate from "@/lib/components/recordings/RecordingDate";
+import RecordingDatetime from "@/lib/components/recordings/RecordingDatetime";
 import {
   getBaseName,
   removeExtension,
 } from "@/lib/components/recordings/RecordingHeader";
-import RecordingLocation from "@/lib/components/recordings/RecordingLocation";
+import RecordingSite from "@/lib/components/recordings/RecordingSite";
 import RecordingTagBar from "@/lib/components/recordings/RecordingTagBar";
-import RecordingTime from "@/lib/components/recordings/RecordingTime";
 import Button from "@/lib/components/ui/Button";
 
 import type { Recording, Tag } from "@/lib/types";
@@ -16,7 +15,7 @@ import type { Color } from "@/lib/utils/tags";
  * AnnotationContext component displays contextual info for annotators.
  *
  * The main context info is any info about the recording being annotated.
- * This includes the recording name, location, time, date, sample rate,
+ * This includes the recording name, location, datetime, sample rate,
  * and any tags associated with the recording.
  */
 export default function AnnotationContext({
@@ -25,8 +24,8 @@ export default function AnnotationContext({
   onClickRecording,
   tagColorFn,
 }: {
-  /** The recording object containing details such as path, uuid, latitude,
-   * longitude, time, date, samplerate, channels, time_expansion, and tags.
+  /** The recording object containing details such as path, uuid, h3_index,
+   * datetime, samplerate, channels, time_expansion, and tags.
    */
   recording: Recording;
   /** Optional callback function to handle tag click events. */
@@ -54,13 +53,8 @@ export default function AnnotationContext({
             <span className="text-sm text-stone-600">.WAV</span>
           </Button>
         </div>
-        <RecordingLocation
-          latitude={recording.latitude}
-          longitude={recording.longitude}
-          disabled
-        />
-        <RecordingTime time={recording.time} disabled />
-        <RecordingDate date={recording.date} disabled />
+        <RecordingSite recording={recording} />
+        <RecordingDatetime recording={recording} />
         <div className="text-sm text-stone-500">
           <span className="font-semibold">SR</span>{" "}
           {recording.samplerate.toLocaleString()} Hz

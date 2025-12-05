@@ -14,7 +14,7 @@ export default function Page() {
 
   const handleCreateOrClick = useCallback(
     (data: EvaluationSet) => {
-      router.push(`/evaluation/detail/?evaluation_set_uuid=${data.uuid}`);
+      router.push(`/evaluation/${data.uuid}/`);
     },
     [router],
   );

@@ -2,8 +2,8 @@
 
 import pytest
 
-from whombat.api import species as species_api
-from whombat import schemas
+from echoroo.api import species as species_api
+from echoroo import schemas
 
 
 @pytest.mark.asyncio

@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 import soundfile as sf
 
-from whombat.api.audio import HEADER_SIZE, load_clip_bytes
+from echoroo.api.audio import HEADER_SIZE, load_clip_bytes
 
 
 def test_load_clip_bytes(random_wav_factory):

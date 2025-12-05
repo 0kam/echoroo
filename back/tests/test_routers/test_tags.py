@@ -2,7 +2,7 @@
 
 from fastapi.testclient import TestClient
 
-from whombat import schemas
+from echoroo import schemas
 
 
 async def test_create_tag_returns_existing_tag_if_duplicate(

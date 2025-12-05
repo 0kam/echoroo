@@ -13,77 +13,61 @@ export default function Page() {
           <span className="text-6xl font-thin">Welcome to</span>
           <br />
           <Image
-            src="/whombat.svg"
-            alt="logo"
+            src="/echoroo.png"
+            alt="Echoroo logo"
             width={100}
             height={100}
             className="m-2 inline"
           />
           <span className="font-sans font-bold text-emerald-500 underline decoration-8">
-            Whombat
+            Echoroo
           </span>
         </h1>
         <h2 className="text-center text-3xl text-stone-500 dark:text-stone-500">
-          Audio annotation tool with ML in mind!
+          Rapid acoustic annotation built for machine learning teams.
         </h2>
       </div>
       <div className="pt-16">
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8 max-w-5xl mx-auto">
           <Card className="p-6 justify-between">
             <h2 className="text-2xl font-bold mb-4">
-              Create and Manage Datasets
+              Projects
             </h2>
             <p className="text-sm mb-4">
-              Register new datasets of audio recordings and manage their
-              metadata.
+              Browse and manage research projects. Each project contains datasets, annotation tasks, and team members working together.
             </p>
             <Link
               mode="text"
-              href="/datasets/"
+              href="/projects/"
               className="text-sm underline font-bold"
             >
-              Get Started
+              View Projects
             </Link>
           </Card>
           <Card className="p-6 justify-between">
-            <h2 className="text-2xl font-bold mb-4">Annotate Audio</h2>
+            <h2 className="text-2xl font-bold mb-4">Explore</h2>
             <p className="text-sm mb-4">
-              Handle annotation projects, monitor progress, and export data.
+              Search and explore audio recordings across all datasets. Filter by location, time, species, and more.
             </p>
             <Link
               mode="text"
-              href="/annotation_projects/"
-              className="text-sm underline font-bold"
-            >
-              Start Annotating
-            </Link>
-          </Card>
-          <Card className="p-6 justify-between">
-            <h2 className="text-2xl font-bold mb-4">Evaluate your Models</h2>
-            <p className="text-sm mb-4">
-              Create evaluation sets, import model predictions, and test your
-              aural skills on the evaluation sets.
-            </p>
-            <Link
-              mode="text"
-              href="/evaluation/"
-              className="text-sm underline font-bold"
-            >
-              Explore Evaluations
-            </Link>
-          </Card>
-          <Card className="p-6 justify-between">
-            <h2 className="text-2xl font-bold mb-4">Explore the Data</h2>
-            <p className="text-sm mb-4">
-              Use our tools to explore annotated audio content across the entire
-              database.
-            </p>
-            <Link
-              mode="text"
-              href="/exploration/"
+              href="/explore/"
               className="text-sm underline font-bold"
             >
               Start Exploring
+            </Link>
+          </Card>
+          <Card className="p-6 justify-between">
+            <h2 className="text-2xl font-bold mb-4">System Admin</h2>
+            <p className="text-sm mb-4">
+              Manage users, metadata, and system-wide settings. Access requires administrator privileges.
+            </p>
+            <Link
+              mode="text"
+              href="/admin/"
+              className="text-sm underline font-bold"
+            >
+              Admin Panel
             </Link>
           </Card>
         </div>

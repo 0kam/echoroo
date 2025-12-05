@@ -26,11 +26,11 @@ VOLUME ["/data"]
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev
 
-ENV WHOMBAT_AUDIO_DIR /audio
-ENV WHOMBAT_HOST="0.0.0.0"
-ENV WHOMBAT_DOMAIN="localhost"
-ENV WHOMBAT_DB_URL="sqlite+aiosqlite:////data/whombat.db"
+ENV ECHOROO_AUDIO_DIR /audio
+ENV ECHOROO_HOST="0.0.0.0"
+ENV ECHOROO_DOMAIN="localhost"
+ENV ECHOROO_DB_URL="sqlite+aiosqlite:////data/echoroo.db"
 ENV PATH="/code/.venv/bin:$PATH"
 
 # Run the command to start the web server
-CMD ["whombat"]
+CMD ["echoroo"]

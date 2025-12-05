@@ -21,7 +21,7 @@ export default function Page() {
 
   return (
     <>
-      <Hero text="Whombat Plugins" />
+      <Hero text="Echoroo Plugins" />
       <div className="container p-4 mx-auto">
         <div>
           <p className="text-lg text-stone-700 dark:text-stone-300">

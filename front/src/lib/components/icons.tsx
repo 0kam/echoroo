@@ -32,6 +32,7 @@ import {
   ClockIcon,
   Cog8ToothIcon,
   CpuChipIcon,
+  CubeTransparentIcon,
   CursorArrowRaysIcon,
   DocumentDuplicateIcon,
   DocumentIcon,
@@ -66,6 +67,7 @@ import {
   PuzzlePieceIcon,
   QuestionMarkCircleIcon,
   RectangleStackIcon,
+  ScaleIcon,
   ShieldCheckIcon,
   SignalIcon,
   SpeakerWaveIcon,
@@ -86,8 +88,8 @@ import {
 import Image from "next/image";
 import { type ComponentProps, type HTMLProps } from "react";
 
-function WhombatIcon(props: Omit<ComponentProps<typeof Image>, "src" | "alt">) {
-  return <Image alt="Whombat Logo" src="/whombat.svg" {...props} />;
+function EchorooIcon(props: Omit<ComponentProps<typeof Image>, "src" | "alt">) {
+  return <Image alt="Echoroo Logo" src="/echoroo_square.png" {...props} />;
 }
 
 function BoundingBoxIcon(props: HTMLProps<SVGSVGElement>) {
@@ -307,7 +309,7 @@ export {
   TimeStampIcon,
   TrashIcon as DeleteIcon,
   UserIcon,
-  WhombatIcon,
+  EchorooIcon,
   WrenchIcon as MissingIcon,
   XMarkIcon as CloseIcon,
   CpuChipIcon as ModelIcon,
@@ -325,4 +327,6 @@ export {
   BarsArrowDownIcon as DescendingIcon,
   BarsArrowUpIcon as AscendingIcon,
   InformationCircleIcon as InfoIcon,
+  CubeTransparentIcon as BitDepthIcon,
+  ScaleIcon as RightsIcon,
 };

@@ -39,7 +39,7 @@ After confirming that you have all the prerequisites ready, follow these steps t
 1. Clone the repository:
 
 ```bash
-git clone https://github.com/mbsantiago/whombat.git
+git clone https://github.com/okamoto-group/echoroo.git
 ```
 
 2. Navigate to the backend directory and install dependencies:
@@ -103,7 +103,7 @@ Once you have Docker Compose installed, follow these steps:
 1. Clone the Repository
 
 ```bash
-git clone https://github.com/mbsantiago/whombat.git
+git clone https://github.com/okamoto-group/echoroo.git
 ```
 
 2. Navigate to the Project Directory

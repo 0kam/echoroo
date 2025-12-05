@@ -2,7 +2,7 @@
 
 from fastapi.testclient import TestClient
 
-from whombat import schemas
+from echoroo import schemas
 
 
 async def test_species_search_returns_candidates(
@@ -24,7 +24,7 @@ async def test_species_search_returns_candidates(
         ]
 
     monkeypatch.setattr(
-        "whombat.routes.species.api.search_gbif_species",
+        "echoroo.routes.species.api.search_gbif_species",
         fake_search,
     )
 

@@ -1,6 +1,6 @@
-# Whombat Configuration Guide
+# Echoroo Configuration Guide
 
-This guide explains how to configure Whombat for different deployment scenarios.
+This guide explains how to configure Echoroo for different deployment scenarios.
 
 ## Quick Start
 
@@ -9,41 +9,61 @@ This guide explains how to configure Whombat for different deployment scenarios.
    cp .env.example .env
    ```
 
-2. **Edit `.env` and set your domain:**
+2. **Edit `.env` and set required values:**
    ```bash
-   # For remote server access
-   WHOMBAT_DOMAIN=your-server-ip-or-domain
+   # Required: Database password
+   POSTGRES_PASSWORD=your_secure_password
 
-   # For local development only
-   WHOMBAT_DOMAIN=localhost
+   # Required: Path to your audio files on the host
+   ECHOROO_AUDIO_DIR=/path/to/your/audio/files
    ```
 
-3. **Start Whombat:**
+3. **Start Echoroo:**
    ```bash
-   ./scripts/start.sh
+   ./scripts/docker.sh dev
    ```
 
-That's it! All other configurations (CORS, frontend URL, etc.) are automatically generated.
+That's it! Access the application at http://localhost:3000.
 
-## Configuration Files
+## Environment Variables
 
-### Root `.env` (Single Source of Truth)
+### Required Variables
 
-This is the **only** file you need to edit. All configurations are derived from this file.
+| Variable | Description |
+|----------|-------------|
+| `POSTGRES_PASSWORD` | Database password (choose a secure password) |
+| `ECHOROO_AUDIO_DIR` | Path on HOST where audio files are stored |
 
-- **Location:** `/path/to/whombat/.env`
-- **Auto-generated:** `front/.env` (generated automatically by `start.sh`)
+### Database Configuration
 
-### Key Environment Variables
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `POSTGRES_DB` | Database name | `echoroo` |
+| `POSTGRES_USER` | Database user | `postgres` |
+| `POSTGRES_PASSWORD` | Database password | *Required* |
+| `POSTGRES_PORT` | Database port (dev only, exposed to host) | `5432` |
 
-| Variable | Description | Default | Required |
-|----------|-------------|---------|----------|
-| `WHOMBAT_DOMAIN` | Domain or IP where Whombat is accessed | `localhost` | ✅ Yes |
-| `WHOMBAT_HOST` | Network interface to bind (use `0.0.0.0` for remote) | `0.0.0.0` | No |
-| `WHOMBAT_PORT` | Backend server port | `5000` | No |
-| `WHOMBAT_FRONTEND_PORT` | Frontend server port | `3000` | No |
-| `WHOMBAT_PROTOCOL` | Protocol (`http` or `https`) | `http` | No |
-| `WHOMBAT_DEV` | Development mode (`true` or `false`) | `false` | No |
+### Network Configuration
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `ECHOROO_DOMAIN` | Domain or IP for accessing Echoroo | `localhost` |
+| `ECHOROO_PORT` | Backend API port | `5000` |
+| `ECHOROO_FRONTEND_PORT` | Frontend port (dev only) | `3000` |
+
+### Production Settings
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `DOMAIN` | Domain name (required for production) | - |
+| `PORT` | External port | `80` |
+| `BACKEND_REPLICAS` | Number of backend replicas | `1` |
+
+### Development Settings
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `ECHOROO_DEV` | Enable development mode | `true` |
 
 ## Deployment Scenarios
 
@@ -53,14 +73,17 @@ Perfect for development on your laptop/desktop.
 
 ```bash
 # .env
-WHOMBAT_DOMAIN=localhost
-WHOMBAT_HOST=localhost
-WHOMBAT_DEV=true
+POSTGRES_PASSWORD=dev_password
+ECHOROO_AUDIO_DIR=/home/user/audio
+ECHOROO_DOMAIN=localhost
+ECHOROO_DEV=true
 ```
 
 **Access:**
-- Frontend: `http://localhost:3000`
-- Backend: `http://localhost:5000`
+- Frontend: http://localhost:3000
+- Backend API: http://localhost:5000
+- API Docs: http://localhost:5000/docs
+- Database: localhost:5432
 
 ### 2. Remote Server (IP Address)
 
@@ -68,81 +91,81 @@ For deployment on a remote server accessed by IP address.
 
 ```bash
 # .env
-WHOMBAT_DOMAIN=192.168.1.100
-WHOMBAT_HOST=0.0.0.0
-WHOMBAT_PORT=5000
-WHOMBAT_FRONTEND_PORT=3000
-WHOMBAT_PROTOCOL=http
+POSTGRES_PASSWORD=secure_password
+ECHOROO_AUDIO_DIR=/data/audio
+ECHOROO_DOMAIN=192.168.1.100
 ```
 
 **Access:**
-- Frontend: `http://192.168.1.100:3000`
-- Backend: `http://192.168.1.100:5000`
+- Frontend: http://192.168.1.100:3000
+- Backend: http://192.168.1.100:5000
 
 **Important:** Make sure firewall allows ports 3000 and 5000.
 
-### 3. Remote Server (Domain Name)
+### 3. Production with Domain
 
-For deployment with a custom domain.
+For production deployment with Traefik reverse proxy.
 
 ```bash
 # .env
-WHOMBAT_DOMAIN=whombat.example.com
-WHOMBAT_HOST=0.0.0.0
-WHOMBAT_PROTOCOL=http
+POSTGRES_PASSWORD=very_secure_password
+ECHOROO_AUDIO_DIR=/data/audio
+DOMAIN=echoroo.example.com
+BACKEND_REPLICAS=3
 ```
 
 **Access:**
-- Frontend: `http://whombat.example.com:3000`
-- Backend: `http://whombat.example.com:5000`
+- Application: http://echoroo.example.com
+- Traefik Dashboard: http://localhost:8080
 
-### 4. Production with HTTPS
+## Architecture
 
-For secure production deployment with SSL certificates.
+### Development Mode (`./scripts/docker.sh dev`)
 
-```bash
-# .env
-WHOMBAT_DOMAIN=whombat.example.com
-WHOMBAT_HOST=0.0.0.0
-WHOMBAT_PROTOCOL=https
-WHOMBAT_DEV=false
-WHOMBAT_AUTH_COOKIE_SECURE=true
+```
+┌─────────────────────────────────────────────────────┐
+│                    Host Machine                      │
+├─────────────────────────────────────────────────────┤
+│  Port 3000 ─────► Frontend (Next.js)                │
+│  Port 5000 ─────► Backend (FastAPI)                 │
+│  Port 5432 ─────► PostgreSQL + pgvector             │
+└─────────────────────────────────────────────────────┘
 ```
 
-**Note:** You need to set up a reverse proxy (nginx, caddy) with SSL certificates.
+- All services have ports exposed to host
+- Hot reload enabled for both frontend and backend
+- Database accessible from host for development tools
 
-## Automatic Configurations
+### Production Mode (`./scripts/docker.sh prod`)
 
-The following are **automatically configured** based on your `.env` settings:
-
-### 1. Frontend Environment (`front/.env`)
-
-Generated automatically when you run `./scripts/start.sh`. Do not edit manually.
-
-### 2. CORS Origins
-
-Automatically generated from `WHOMBAT_DOMAIN` and `WHOMBAT_FRONTEND_PORT`:
-- Always includes `http://localhost:3000` and `http://127.0.0.1:3000` for development
-- Automatically adds your domain (e.g., `http://192.168.1.100:3000`)
-
-**Manual override (advanced):**
-```bash
-# .env
-WHOMBAT_CORS_ORIGINS='["http://localhost:3000","http://custom-domain.com:3000"]'
+```
+┌─────────────────────────────────────────────────────┐
+│                    Host Machine                      │
+├─────────────────────────────────────────────────────┤
+│  Port 80 ─────► Traefik Reverse Proxy               │
+│                      │                               │
+│                      ▼                               │
+│               Backend (FastAPI) x N replicas        │
+│                      │                               │
+│                      ▼                               │
+│               PostgreSQL + pgvector                 │
+│               (internal network only)               │
+└─────────────────────────────────────────────────────┘
 ```
 
-### 3. Authentication Cookies
-
-Cookies automatically use `WHOMBAT_DOMAIN` for the domain setting.
+- Only port 80 exposed
+- Database not accessible from outside
+- Load balancing across multiple backend replicas
+- Frontend bundled into backend
 
 ## Troubleshooting
 
 ### Cannot access from remote machine
 
-1. **Check `WHOMBAT_HOST`:**
+1. **Check `ECHOROO_DOMAIN`:**
    ```bash
-   # Should be 0.0.0.0, not localhost
-   WHOMBAT_HOST=0.0.0.0
+   # Should be your server's IP or domain, not localhost
+   ECHOROO_DOMAIN=192.168.1.100
    ```
 
 2. **Check firewall:**
@@ -151,117 +174,64 @@ Cookies automatically use `WHOMBAT_DOMAIN` for the domain setting.
    sudo ufw allow 5000
    ```
 
-3. **Check `WHOMBAT_DOMAIN`:**
+### Database connection issues
+
+1. **Check PostgreSQL is running:**
    ```bash
-   # Should be your server's IP or domain, not localhost
-   WHOMBAT_DOMAIN=192.168.1.100
+   ./scripts/docker.sh dev status
    ```
 
-### CORS errors in browser console
-
-Usually auto-configured correctly. If you see CORS errors:
-
-1. **Check frontend is using correct backend URL:**
+2. **Check database logs:**
    ```bash
-   cat front/.env
-   # Should show: NEXT_PUBLIC_BACKEND_HOST=http://your-domain:5000
+   ./scripts/docker.sh dev logs db
    ```
 
-2. **Restart both servers:**
+3. **Connect to database directly:**
    ```bash
-   ./scripts/stop.sh
-   ./scripts/start.sh
+   ./scripts/docker.sh dev db
    ```
 
-3. **Check CORS origins in backend logs:**
-   Look for "CORS origins" in `logs/backend.log`
+### Audio files not accessible
 
-### Authentication/login issues
-
-1. **Check cookie domain matches your access domain:**
-   - If accessing via `http://192.168.1.100:3000`, domain should be `192.168.1.100`
-   - If accessing via `http://localhost:3000`, domain should be `localhost`
-
-2. **For HTTPS, ensure secure cookies:**
+1. **Verify `ECHOROO_AUDIO_DIR` path exists:**
    ```bash
-   WHOMBAT_AUTH_COOKIE_SECURE=true
+   ls -la $ECHOROO_AUDIO_DIR
    ```
 
-## Migration from Previous Versions
-
-If you previously had hardcoded configurations:
-
-1. **Backup your current `.env` files:**
+2. **Check the path is absolute, not relative:**
    ```bash
-   cp .env .env.backup
-   cp front/.env front/.env.backup
+   # Correct
+   ECHOROO_AUDIO_DIR=/home/user/audio
+
+   # Wrong
+   ECHOROO_AUDIO_DIR=./audio
    ```
 
-2. **Copy the new template:**
+### Container build fails
+
+1. **Clean and rebuild:**
    ```bash
-   cp .env.example .env
+   ./scripts/docker.sh dev build
    ```
 
-3. **Set your domain in `.env`:**
+2. **Remove all containers and volumes (DATA LOSS!):**
    ```bash
-   # Edit .env and set:
-   WHOMBAT_DOMAIN=your-server-ip
+   ./scripts/docker.sh dev clean-all
    ```
-
-4. **Remove old hardcoded values:**
-   - Delete `front/.env` (will be auto-generated)
-   - Remove any hardcoded IPs from scripts
-
-5. **Restart:**
-   ```bash
-   ./scripts/start.sh
-   ```
-
-## Advanced Configuration
-
-### Custom Ports
-
-```bash
-# .env
-WHOMBAT_PORT=8000
-WHOMBAT_FRONTEND_PORT=8080
-```
-
-### Audio Directory
-
-```bash
-# .env
-WHOMBAT_AUDIO_DIR=/path/to/audio/files
-```
-
-**Note:** You can also set this via the web UI on first run.
-
-### Database Configuration
-
-For PostgreSQL (instead of SQLite):
-
-```bash
-# .env
-POSTGRES_DB=whombat
-POSTGRES_USER=your_user
-POSTGRES_PASSWORD=your_password
-```
 
 ## Summary
 
 **What you need to configure:**
-- ✅ `WHOMBAT_DOMAIN` (your server IP or domain)
-- ✅ `WHOMBAT_HOST` (`0.0.0.0` for remote access)
+- `POSTGRES_PASSWORD` (database password)
+- `ECHOROO_AUDIO_DIR` (path to audio files)
 
 **What's automatically configured:**
-- ✅ Frontend `.env` file
-- ✅ CORS origins
-- ✅ Backend URL for frontend
-- ✅ Cookie domain
-- ✅ All other network settings
+- Database setup with pgvector extension
+- Network configuration
+- CORS settings
+- Health checks
 
 **Result:**
 - One simple configuration file (`.env`)
-- No hardcoded values
-- Easy to deploy anywhere
 - Works out of the box
+- Easy to deploy anywhere

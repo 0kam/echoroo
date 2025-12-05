@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
-from whombat import schemas
+from echoroo import schemas
 
 
 def test_lookup_user_requires_auth(client: TestClient) -> None:

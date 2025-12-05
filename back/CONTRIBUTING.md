@@ -9,7 +9,7 @@ You can contribute in many ways:
 
 ### Report Bugs
 
-Report bugs at <https://github.com/mbsantiago/whombat/issues>.
+Report bugs at <https://github.com/okamoto-group/echoroo/issues>.
 
 If you are reporting a bug, please include:
 
@@ -36,7 +36,7 @@ such.
 ### Submit Feedback
 
 The best way to send feedback is to file an issue at
-<https://github.com/mbsantiago/whombat/issues>.
+<https://github.com/okamoto-group/echoroo/issues>.
 
 If you are proposing a feature:
 

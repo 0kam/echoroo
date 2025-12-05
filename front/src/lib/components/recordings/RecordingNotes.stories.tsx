@@ -14,7 +14,7 @@ type Story = StoryObj<typeof RecordingNotes>;
 const user = {
   id: "user",
   username: "user",
-  email: "user@whombat.com",
+  email: "user@echoroo.com",
   is_superuser: false,
   is_active: true,
   is_verified: true,
