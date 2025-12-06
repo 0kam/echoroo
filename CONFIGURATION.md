@@ -67,9 +67,9 @@ That's it! Access the application at http://localhost:3000.
 
 ## Deployment Scenarios
 
-### 1. Local Development
+### 1. Local Development with Docker
 
-Perfect for development on your laptop/desktop.
+Perfect for development on your laptop/desktop using Docker.
 
 ```bash
 # .env
@@ -79,13 +79,96 @@ ECHOROO_DOMAIN=localhost
 ECHOROO_DEV=true
 ```
 
+```bash
+./scripts/docker.sh dev
+```
+
 **Access:**
 - Frontend: http://localhost:3000
 - Backend API: http://localhost:5000
 - API Docs: http://localhost:5000/docs
 - Database: localhost:5432
 
-### 2. Remote Server (IP Address)
+### 2. Local Development Without Docker
+
+For development without Docker containers.
+
+**Requirements:**
+- Python 3.11+
+- [uv](https://docs.astral.sh/uv/getting-started/installation/)
+- Node.js 18+
+- npm
+- PostgreSQL with pgvector (optional, can use SQLite)
+
+**Setup:**
+
+```bash
+# Install dependencies
+./scripts/setup.sh
+
+# Configure environment
+vim .env
+```
+
+**Database Setup:**
+
+If you want to use PostgreSQL (recommended for production-like development), you need to start PostgreSQL manually:
+
+**Option 1: Using Docker for PostgreSQL only**
+```bash
+docker run -d \
+  --name echoroo-postgres \
+  -e POSTGRES_PASSWORD=your_password \
+  -e POSTGRES_DB=echoroo \
+  -p 5432:5432 \
+  pgvector/pgvector:pg17
+```
+
+**Option 2: System PostgreSQL**
+```bash
+# Ubuntu/Debian
+sudo apt-get install postgresql postgresql-contrib
+sudo systemctl start postgresql
+
+# Install pgvector extension (required for vector similarity search)
+# Follow instructions at: https://github.com/pgvector/pgvector
+```
+
+**Option 3: Using SQLite (for simple development)**
+```bash
+# Set ECHOROO_DB_DIALECT=sqlite in .env
+# No database setup needed - SQLite database will be created automatically
+```
+
+Then configure your database connection in `.env`:
+```bash
+# For PostgreSQL
+ECHOROO_DB_DIALECT=postgresql
+ECHOROO_DB_HOST=localhost
+ECHOROO_DB_PORT=5432
+ECHOROO_DB_NAME=echoroo
+ECHOROO_DB_USERNAME=postgres
+ECHOROO_DB_PASSWORD=your_password
+
+# Or for SQLite
+ECHOROO_DB_DIALECT=sqlite
+```
+
+**Start servers:**
+
+```bash
+# Terminal 1: Backend
+cd back && uv run python -m echoroo
+
+# Terminal 2: Frontend
+cd front && npm run dev
+```
+
+**Access:**
+- Frontend: http://localhost:3000
+- Backend API: http://localhost:5000
+
+### 3. Remote Server (IP Address)
 
 For deployment on a remote server accessed by IP address.
 
@@ -102,7 +185,7 @@ ECHOROO_DOMAIN=192.168.1.100
 
 **Important:** Make sure firewall allows ports 3000 and 5000.
 
-### 3. Production with Domain
+### 4. Production with Domain
 
 For production deployment with Traefik reverse proxy.
 

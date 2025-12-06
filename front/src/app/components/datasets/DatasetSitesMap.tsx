@@ -41,18 +41,21 @@ export default function DatasetSitesMap({
     return null;
   }
 
+  const mapCenter = useMemo(
+    () => ({ lat: initialCenter[0], lng: initialCenter[1] }),
+    [initialCenter],
+  );
+  const mapZoom = activeSites.length > 1 ? 6 : 8;
+
   return (
     <div className="rounded-lg overflow-hidden border border-stone-200 dark:border-stone-700">
       <MapContainer
-        center={{ lat: initialCenter[0], lng: initialCenter[1] }}
+        center={mapCenter}
         zoom={DEFAULT_MAP_ZOOM}
         scrollWheelZoom={false}
         style={{ height: 256 }}
       >
-        <MapViewport
-          center={{ lat: initialCenter[0], lng: initialCenter[1] }}
-          zoom={activeSites.length > 1 ? 6 : 8}
-        />
+        <MapViewport center={mapCenter} zoom={mapZoom} />
         <TileLayer
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"

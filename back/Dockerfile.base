@@ -1,0 +1,53 @@
+# ============================================
+# Echoroo Base Image
+# Contains heavy ML dependencies (PyTorch, etc.)
+# Rebuild only when dependencies change
+# ============================================
+# Build: docker build -f Dockerfile.base -t echoroo-base:latest .
+# ============================================
+FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim AS builder
+
+WORKDIR /code
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    libgdal-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy only dependency files
+COPY pyproject.toml uv.lock ./
+
+# Install ALL dependencies (cached in this base image)
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-install-project --all-extras
+
+# ============================================
+# Runtime stage
+# ============================================
+FROM python:3.12-slim-bookworm
+
+WORKDIR /code
+
+# Install runtime dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libexpat1 \
+    libsndfile1 \
+    gdal-bin \
+    libgdal32 \
+    curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /audio /data
+
+# Copy the virtual environment from builder
+COPY --from=builder /code/.venv /code/.venv
+
+# Copy dependency files (for uv to recognize the project)
+COPY --from=builder /code/pyproject.toml /code/
+COPY --from=builder /code/uv.lock /code/
+
+ENV PATH="/code/.venv/bin:$PATH" \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+# Base image is ready - source code will be added in dev image or mounted

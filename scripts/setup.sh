@@ -1,7 +1,7 @@
 #!/bin/bash
 
-# Whombat Setup Script
-# This script sets up the development environment for Whombat
+# Echoroo Setup Script
+# This script sets up the development environment for Echoroo (without Docker)
 
 set -e
 
@@ -18,7 +18,7 @@ PROJECT_ROOT="$( cd "$SCRIPT_DIR/.." && pwd )"
 
 echo -e "${BLUE}"
 echo "======================================"
-echo "   Whombat Setup"
+echo "   Echoroo Setup"
 echo "======================================"
 echo -e "${NC}"
 
@@ -97,7 +97,7 @@ else
     if [ -f ".env.example" ]; then
         cp .env.example .env
         echo -e "${GREEN}✓ Created .env from .env.example${NC}"
-        echo -e "${YELLOW}Please edit .env to configure your domain:${NC}"
+        echo -e "${YELLOW}Please edit .env to configure:${NC}"
         echo -e "  ${BLUE}vim .env${NC}"
     else
         echo -e "${RED}Warning: .env.example not found${NC}"
@@ -120,15 +120,19 @@ echo -e "${BLUE}Next steps:${NC}"
 echo ""
 echo -e "1. ${YELLOW}Configure your environment:${NC}"
 echo -e "   ${BLUE}vim .env${NC}"
-echo -e "   Set WHOMBAT_DOMAIN to your server IP or domain"
+echo -e "   Set ECHOROO_AUDIO_DIR to your audio files directory"
 echo ""
-echo -e "2. ${YELLOW}Start Whombat:${NC}"
-echo -e "   ${BLUE}./scripts/start.sh${NC}"
+echo -e "2. ${YELLOW}Start with Docker (recommended):${NC}"
+echo -e "   ${BLUE}./scripts/docker.sh dev${NC}"
 echo ""
-echo -e "3. ${YELLOW}Check status:${NC}"
-echo -e "   ${BLUE}./scripts/status.sh${NC}"
+echo -e "   ${YELLOW}Or start manually:${NC}"
+echo -e "   ${BLUE}# Terminal 1: Backend${NC}"
+echo -e "   ${BLUE}cd back && uv run python -m echoroo${NC}"
+echo ""
+echo -e "   ${BLUE}# Terminal 2: Frontend${NC}"
+echo -e "   ${BLUE}cd front && npm run dev${NC}"
 echo ""
 echo -e "${YELLOW}For more information, see:${NC}"
-echo -e "  ${BLUE}scripts/README.md${NC}"
-echo -e "  ${BLUE}CONFIGURATION.md${NC}"
+echo -e "  ${BLUE}DOCKER.md${NC}          - Docker deployment"
+echo -e "  ${BLUE}CONFIGURATION.md${NC}   - Configuration guide"
 echo ""

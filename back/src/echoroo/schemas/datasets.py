@@ -259,6 +259,15 @@ class DatasetCandidateInfo(BaseModel):
     relative_path: Path
     """Path relative to the configured audio directory."""
 
+    absolute_path: Path
+    """Absolute path to the directory on disk."""
+
+    has_nested_directories: bool = False
+    """True when the directory contains at least one subdirectory."""
+
+    audio_file_count: int = 0
+    """Number of audio files detected (wav/mp3/flac and similar)."""
+
 
 class DatasetRecordingSite(BaseModel):
     """Aggregate information about recording sites for overview maps."""

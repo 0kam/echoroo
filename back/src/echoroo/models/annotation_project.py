@@ -95,7 +95,11 @@ class AnnotationProject(Base):
     """The instructions for annotators."""
 
     visibility: orm.Mapped[VisibilityLevel] = orm.mapped_column(
-        sa.Enum(VisibilityLevel, name="visibility_level"),
+        sa.Enum(
+            VisibilityLevel,
+            name="visibility_level",
+            values_callable=lambda x: [e.value for e in x],
+        ),
         nullable=False,
         default=VisibilityLevel.RESTRICTED,
         server_default=VisibilityLevel.RESTRICTED.value,

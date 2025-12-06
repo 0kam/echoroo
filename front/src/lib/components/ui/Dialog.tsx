@@ -76,9 +76,9 @@ export function DialogOverlay({
           leaveFrom="opacity-100"
           leaveTo="opacity-0"
         >
-          <div className="fixed inset-0 bg-black bg-opacity-25" />
+          <div className="fixed inset-0 z-[1000] bg-black bg-opacity-25" />
         </Transition.Child>
-        <div className="overflow-y-auto fixed inset-0">
+        <div className="overflow-y-auto fixed inset-0 z-[1000]">
           <div className="flex justify-center items-center p-4 min-h-full text-center">
             <Transition.Child
               as={Fragment}
@@ -89,7 +89,7 @@ export function DialogOverlay({
               leaveFrom="opacity-100 scale-100"
               leaveTo="opacity-0 scale-95"
             >
-              <HeadlessDialog.Panel className="overflow-hidden p-6 w-full text-left align-middle rounded-2xl shadow-xl transition-all transform max-w-fit bg-stone-50 text-stone-700 z-[99999] dark:bg-stone-700 dark:text-stone-300">
+              <HeadlessDialog.Panel className="overflow-hidden p-6 w-full text-left align-middle rounded-2xl shadow-xl transition-all transform max-w-fit bg-stone-50 text-stone-700 dark:bg-stone-700 dark:text-stone-300">
                 <HeadlessDialog.Title
                   as="div"
                   className="flex flex-row gap-4 justify-between items-center mb-4"

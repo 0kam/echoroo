@@ -1,0 +1,28 @@
+# ============================================
+# Echoroo Development Image
+# Uses pre-built base image with ML dependencies
+# Fast rebuild - only copies source code
+# ============================================
+# Requires: docker build -f Dockerfile.base -t echoroo-base:latest .
+# Build:    docker build -f Dockerfile.dev -t echoroo-dev:latest .
+# ============================================
+FROM echoroo-base:latest
+
+WORKDIR /code
+
+# Copy source code and README (for package metadata)
+COPY README.md ./
+COPY src/ ./src/
+
+# Install the project itself (fast - dependencies already installed)
+RUN pip install -e . --no-deps
+
+VOLUME ["/data"]
+
+ENV ECHOROO_AUDIO_DIR=/audio \
+    ECHOROO_HOST="0.0.0.0" \
+    ECHOROO_DOMAIN="localhost" \
+    ECHOROO_DB_URL="sqlite+aiosqlite:////data/echoroo.db"
+
+# Default command for development
+CMD ["python", "-m", "echoroo"]

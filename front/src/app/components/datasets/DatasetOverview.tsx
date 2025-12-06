@@ -1,22 +1,28 @@
 "use client";
 
 import { Menu, Transition } from "@headlessui/react";
+import dynamic from "next/dynamic";
 import { Fragment, useCallback, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import toast from "react-hot-toast";
 
+import api from "@/app/api";
 import useDataset from "@/app/hooks/api/useDataset";
 import useNotes from "@/app/hooks/api/useNotes";
 import useDatasetStats from "@/app/hooks/api/useDatasetStats";
-import DatasetSitesMap from "@/app/components/datasets/DatasetSitesMap";
 import DatasetRecordingCalendar from "@/app/components/datasets/DatasetRecordingCalendar";
-import api from "@/app/api";
 
 import DatasetOverviewBase from "@/lib/components/datasets/DatasetOverview";
 import { CalendarIcon, DownloadIcon, MapIcon } from "@/lib/components/icons";
+
 import Button from "@/lib/components/ui/Button";
 
 import type { Dataset } from "@/lib/types";
+
+const DatasetSitesMap = dynamic(
+  () => import("@/app/components/datasets/DatasetSitesMap"),
+  { ssr: false },
+);
 
 const downloadOptions = [
   {

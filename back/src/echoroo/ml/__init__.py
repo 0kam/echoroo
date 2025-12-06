@@ -36,7 +36,15 @@ from echoroo.ml.filters import (
 )
 from echoroo.ml.registry import ModelInfo, ModelNotFoundError, ModelRegistry
 from echoroo.ml.search import SearchFilter, SimilarityResult, VectorSearch, vector_search
-from echoroo.ml.worker import InferenceWorker
+
+# Import worker lazily to avoid circular import
+# (worker imports from echoroo.api, which imports from echoroo.schemas,
+#  which imports from echoroo.ml)
+def __getattr__(name: str):
+    if name == "InferenceWorker":
+        from echoroo.ml.worker import InferenceWorker
+        return InferenceWorker
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 # Import model modules to trigger registration
 # These imports ensure models are registered when echoroo.ml is imported

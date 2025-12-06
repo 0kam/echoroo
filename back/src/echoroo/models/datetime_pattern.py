@@ -51,7 +51,11 @@ class DatasetDatetimePattern(Base):
     """Pattern text, semantics depend on `pattern_type`."""
 
     pattern_type: orm.Mapped[DatetimePatternType] = orm.mapped_column(
-        sa.Enum(DatetimePatternType, name="datetime_pattern_type"),
+        sa.Enum(
+            DatetimePatternType,
+            name="datetime_pattern_type",
+            values_callable=lambda x: [e.value for e in x],
+        ),
         nullable=False,
         default=DatetimePatternType.STRPTIME,
         server_default=DatetimePatternType.STRPTIME.value,

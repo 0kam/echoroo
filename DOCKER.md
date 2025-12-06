@@ -20,6 +20,10 @@ cp .env.example .env
 #   - POSTGRES_PASSWORD (required)
 #   - ECHOROO_AUDIO_DIR (required)
 
+# Build base image (one-time, contains PyTorch and ML dependencies)
+cd back && docker build -f Dockerfile.base -t echoroo-base:latest .
+cd ..
+
 # Start development environment
 ./scripts/docker.sh dev
 ```
@@ -60,10 +64,46 @@ All Docker operations are managed through `./scripts/docker.sh`:
 
 ## Development Environment
 
+### Base Image Architecture
+
+The development environment uses a **two-layer image architecture** to optimize build times:
+
+```
+┌─────────────────────────────────────────────────┐
+│  echoroo-base:latest                            │
+│  - Python 3.12 runtime                          │
+│  - PyTorch, torchaudio, torchcodec (~2GB)       │
+│  - All pip dependencies                         │
+│  - Build once, reuse always                     │
+└─────────────────────────────────────────────────┘
+                    ▲
+                    │ (volume mount)
+┌─────────────────────────────────────────────────┐
+│  Your source code (./back/src)                  │
+│  - Mounted at runtime                           │
+│  - No rebuild needed for code changes           │
+└─────────────────────────────────────────────────┘
+```
+
+**Benefits:**
+- Initial base image build: ~10 minutes (one-time)
+- Code changes: instant (no rebuild needed)
+- Dependency changes: rebuild base image only
+
+### Building the Base Image
+
+Build the base image once, or when dependencies change:
+
+```bash
+cd back && docker build -f Dockerfile.base -t echoroo-base:latest .
+```
+
+This image contains all heavy ML dependencies (PyTorch, etc.) and only needs to be rebuilt when `pyproject.toml` or `uv.lock` changes.
+
 ### Starting
 
 ```bash
-# Start all services
+# Start all services (source code is volume-mounted)
 ./scripts/docker.sh dev
 
 # Start with hot reload (watches for file changes)
@@ -98,10 +138,12 @@ All Docker operations are managed through `./scripts/docker.sh`:
 
 ### Development Workflow
 
-The development environment supports hot reload:
+The development environment supports hot reload via volume mounts:
 
-1. **Backend changes**: Edit files in `back/src/` - changes are synced automatically
+1. **Backend changes**: Edit files in `back/src/` - changes are available immediately (restart container if needed)
 2. **Frontend changes**: Edit files in `front/src/` - changes are synced automatically
+
+**No Docker rebuild is needed for code changes!**
 
 To use hot reload with watch mode:
 
@@ -111,13 +153,29 @@ To use hot reload with watch mode:
 
 ### Rebuilding
 
-When you change dependencies (pyproject.toml, package.json):
+**For code changes:** No rebuild needed - just restart the container:
 
 ```bash
-# Rebuild images
+./scripts/docker.sh dev restart
+```
+
+**When you change dependencies** (pyproject.toml, uv.lock):
+
+```bash
+# Rebuild the base image
+cd back && docker build -f Dockerfile.base -t echoroo-base:latest .
+
+# Restart containers
+./scripts/docker.sh dev restart
+```
+
+**For frontend dependency changes** (package.json):
+
+```bash
+# Rebuild frontend image
 ./scripts/docker.sh dev build
 
-# Restart with new images
+# Restart
 ./scripts/docker.sh dev restart
 ```
 
@@ -336,12 +394,16 @@ Use watch mode:
 
 If still not working, check file permissions and Docker's file sharing settings.
 
-## Docker Compose Files
+## Docker Files
 
 | File | Purpose |
 |------|---------|
 | `compose.dev.yaml` | Development environment |
 | `compose.prod.yaml` | Production environment |
+| `back/Dockerfile` | Production backend image (full build) |
+| `back/Dockerfile.base` | Base image with ML dependencies (PyTorch, etc.) |
+| `back/Dockerfile.dev` | Development image (extends base, optional) |
+| `front/Dockerfile` | Frontend image |
 
 ## Environment Variables
 

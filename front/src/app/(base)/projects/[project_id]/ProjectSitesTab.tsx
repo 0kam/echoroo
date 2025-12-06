@@ -431,13 +431,19 @@ function SiteDetailPanel({
   isUpdating: boolean;
   isDeleting: boolean;
 }) {
+  // Memoize filter to prevent infinite re-renders
+  const datasetFilter = useMemo(
+    () => (site ? { primary_site_id__eq: site.site_id } : {}),
+    [site?.site_id]
+  );
+
   // Fetch datasets associated with this site
   const {
     items: siteDatasets,
     isLoading: isDatasetsLoading,
     isError: isDatasetsError,
   } = useDatasets({
-    filter: site ? { primary_site_id__eq: site.site_id } : {},
+    filter: datasetFilter,
     pageSize: 100,
     enabled: Boolean(site),
   });
