@@ -1,517 +1,237 @@
 # Echoroo Scripts
 
-このディレクトリには、Echorooアプリケーションを管理するためのスクリプトが含まれています。
+This directory contains scripts for managing the Echoroo application.
 
-## 📋 スクリプト一覧
+## Scripts
 
 ```
 scripts/
-├── start.sh          # 🚀 アプリケーション起動 (両方)
-├── stop.sh           # 🛑 アプリケーション停止 (両方)
-├── restart.sh        # 🔄 アプリケーション再起動 (両方)
-├── status.sh         # 📊 ステータス確認
-├── backend.sh        # ⚙️  バックエンド個別制御
-├── frontend.sh       # 🎨 フロントエンド個別制御
-├── setup.sh          # 📦 初回セットアップ
-└── README.md         # 📚 このファイル
+├── docker.sh     # Docker container management
+├── setup.sh      # Local development environment setup
+├── init-db.sql   # PostgreSQL database initialization
+└── README.md     # This file
 ```
 
 ---
 
-## 🚀 クイックスタート
+## Quick Start
 
-### 1. 初回セットアップ
+### Option 1: Docker (Recommended)
 
 ```bash
-# 依存関係のインストールと環境設定
+# Configure environment
+cp .env.example .env
+vim .env  # Set POSTGRES_PASSWORD and ECHOROO_AUDIO_DIR
+
+# Start development environment
+./scripts/docker.sh dev
+```
+
+### Option 2: Local Development (Without Docker)
+
+```bash
+# Run setup script
 ./scripts/setup.sh
 
-# .envファイルを編集してドメインを設定
-vim .env
-# WHOMBAT_DOMAIN=your-server-ip-or-domain
-```
+# Configure environment
+vim .env  # Set ECHOROO_AUDIO_DIR
 
-### 2. アプリケーション起動
+# Start backend (Terminal 1)
+cd back && uv run python -m echoroo
 
-```bash
-# 両方のサーバーを起動
-./scripts/start.sh
-```
-
-### 3. ステータス確認
-
-```bash
-./scripts/status.sh
-```
-
-### 4. アプリケーション停止
-
-```bash
-./scripts/stop.sh
+# Start frontend (Terminal 2)
+cd front && npm run dev
 ```
 
 ---
 
-## 📖 詳細な使い方
+## docker.sh - Docker Management
 
-### setup.sh - 初回セットアップ
+Manages Echoroo Docker containers for both development and production.
 
-開発環境を初めてセットアップする際に使用します。
+### Usage
+
+```bash
+./scripts/docker.sh <environment> <command>
+```
+
+### Environments
+
+| Environment | Description |
+|-------------|-------------|
+| `dev` | Development environment with hot reload |
+| `prod` | Production environment with Traefik proxy |
+
+### Commands
+
+| Command | Description |
+|---------|-------------|
+| `start` | Start containers (default) |
+| `stop` | Stop containers |
+| `restart` | Restart containers |
+| `logs [service]` | Show logs |
+| `status` | Show container status |
+| `shell [service]` | Open shell in container |
+| `db` | Connect to PostgreSQL CLI |
+| `build` | Rebuild Docker images |
+| `watch` | Start with hot reload (dev only) |
+| `clean` | Stop and remove containers |
+| `clean-all` | Remove everything including volumes |
+| `help` | Show help |
+
+### Examples
+
+```bash
+# Development
+./scripts/docker.sh dev              # Start
+./scripts/docker.sh dev logs         # View all logs
+./scripts/docker.sh dev logs backend # View backend logs
+./scripts/docker.sh dev db           # Connect to database
+./scripts/docker.sh dev watch        # Start with hot reload
+./scripts/docker.sh dev stop         # Stop
+
+# Production
+./scripts/docker.sh prod             # Start
+./scripts/docker.sh prod logs        # View logs
+./scripts/docker.sh prod stop        # Stop
+```
+
+---
+
+## setup.sh - Local Development Setup
+
+Sets up the local development environment without Docker.
+
+### Usage
 
 ```bash
 ./scripts/setup.sh
 ```
 
-**実行内容:**
-- システム要件のチェック (Python, uv, Node.js, npm)
-- バックエンドの依存関係インストール (`uv sync`)
-- フロントエンドの依存関係インストール (`npm install`)
-- `.env`ファイルの作成 (`.env.example`から)
-- ログディレクトリの作成
+### What it does
 
-**必要な環境:**
+1. Checks system requirements (Python 3, uv, Node.js, npm)
+2. Creates backend virtual environment and installs dependencies
+3. Installs frontend npm packages
+4. Creates `.env` file from `.env.example`
+5. Creates `logs/` directory
+
+### Requirements
+
 - Python 3.11+
-- uv ([インストールガイド](https://docs.astral.sh/uv/getting-started/installation/))
+- [uv](https://docs.astral.sh/uv/getting-started/installation/)
 - Node.js 18+
 - npm
 
----
+### After setup
 
-### start.sh - アプリケーション起動
-
-バックエンドとフロントエンドを同時に起動します。
+Start the servers manually:
 
 ```bash
-./scripts/start.sh
-```
+# Terminal 1: Backend
+cd back && uv run python -m echoroo
 
-**機能:**
-- 環境変数の読み込み (`.env`)
-- フロントエンド設定の自動生成 (`front/.env`)
-- ポート使用状況の確認
-- 既存プロセスの自動停止
-- バックエンドサーバー起動 (デフォルト: ポート5000)
-- フロントエンドサーバー起動 (デフォルト: ポート3000)
-- リアルタイムログ表示
-
-**ログファイル:**
-- バックエンド: `logs/backend.log`
-- フロントエンド: `logs/frontend.log`
-
-**停止方法:**
-- `Ctrl+C` で両方のサーバーを安全に停止
-- または別ターミナルで `./scripts/stop.sh`
-
----
-
-### stop.sh - アプリケーション停止
-
-実行中のすべてのEchorooサーバーを停止します。
-
-```bash
-./scripts/stop.sh
-```
-
-**機能:**
-- グレースフルシャットダウン (失敗時は強制終了)
-- バックエンドサーバー停止
-- フロントエンドサーバー停止
-- 残存プロセスのクリーンアップ
-
----
-
-### restart.sh - アプリケーション再起動
-
-アプリケーションを停止してから再起動します。
-
-```bash
-./scripts/restart.sh
-```
-
-**使用例:**
-- コード変更後の再起動
-- 設定変更の反映 (`.env`変更後など)
-- トラブル時のリセット
-
----
-
-### status.sh - ステータス確認
-
-現在のアプリケーション状態を確認します。
-
-```bash
-./scripts/status.sh
-```
-
-**表示内容:**
-- バックエンドの起動状態
-- フロントエンドの起動状態
-- プロセスID (PID)
-- ヘルスチェック結果
-- アクセスURL
-- 設定情報 (ドメイン、プロトコル)
-
-**出力例:**
-```
-======================================
-   Echoroo Application Status
-======================================
-
-Backend (FastAPI):
-  Port: 5000
-  URL:  http://localhost:5000/docs
-  Status: Running (PID: 12345)
-  Process: python3
-  Health: Responding
-
-Frontend (Next.js):
-  Port: 3000
-  URL:  http://localhost:3000
-  Status: Running (PID: 12346)
-  Process: node
-  Health: Responding
-
-======================================
-
-✓ All services are running
-
-Access the application at:
-  Frontend:  http://192.168.1.100:3000
-  Backend:   http://192.168.1.100:5000
-  API Docs:  http://192.168.1.100:5000/docs
-
-Configuration:
-  Domain:   192.168.1.100
-  Protocol: http
+# Terminal 2: Frontend
+cd front && npm run dev
 ```
 
 ---
 
-### backend.sh - バックエンド個別制御
+## init-db.sql - Database Initialization
 
-バックエンドサーバーのみを制御します。**開発時に便利です。**
+SQL script for initializing PostgreSQL database with required extensions.
 
-```bash
-# 起動
-./scripts/backend.sh start
+This script is automatically executed when the PostgreSQL container starts for the first time.
 
-# 停止
-./scripts/backend.sh stop
-
-# 再起動
-./scripts/backend.sh restart
-
-# ログ表示
-./scripts/backend.sh logs
-
-# ステータス確認
-./scripts/backend.sh status
-```
-
-**使用例:**
-- API開発中、バックエンドのみ再起動したい
-- バックエンドのログだけを監視したい
-- フロントエンドは別の開発者が起動している
+**Contents:**
+- Creates `vector` extension (pgvector for ML embeddings)
 
 ---
 
-### frontend.sh - フロントエンド個別制御
+## Environment Variables
 
-フロントエンドサーバーのみを制御します。**開発時に便利です。**
+All scripts read configuration from the root `.env` file.
 
-```bash
-# 起動
-./scripts/frontend.sh start
+### Required Variables
 
-# 停止
-./scripts/frontend.sh stop
+| Variable | Description |
+|----------|-------------|
+| `POSTGRES_PASSWORD` | Database password |
+| `ECHOROO_AUDIO_DIR` | Path to audio files directory |
 
-# 再起動
-./scripts/frontend.sh restart
+### Optional Variables
 
-# ログ表示
-./scripts/frontend.sh logs
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `POSTGRES_DB` | `echoroo` | Database name |
+| `POSTGRES_USER` | `postgres` | Database user |
+| `POSTGRES_PORT` | `5432` | Database port (dev only) |
+| `ECHOROO_DOMAIN` | `localhost` | Domain for accessing Echoroo |
+| `ECHOROO_PORT` | `5000` | Backend port |
+| `ECHOROO_FRONTEND_PORT` | `3000` | Frontend port (dev only) |
+| `DOMAIN` | - | Domain name (prod only) |
+| `BACKEND_REPLICAS` | `1` | Number of backend replicas (prod only) |
 
-# ステータス確認
-./scripts/frontend.sh status
-```
-
-**使用例:**
-- UI開発中、フロントエンドのみ再起動したい
-- フロントエンドのログだけを監視したい
-- バックエンドは別の開発者が起動している
-
----
-
-## 🎯 よくある使用パターン
-
-### パターン1: 本番環境での起動
-
-```bash
-# 初回セットアップ
-./scripts/setup.sh
-vim .env  # ドメイン設定
-
-# 起動
-./scripts/start.sh
-
-# 動作確認
-./scripts/status.sh
-```
-
-### パターン2: 開発環境での使用
-
-```bash
-# 起動（Ctrl+Cで終了可能）
-./scripts/start.sh
-
-# 別ターミナルでログ監視
-./scripts/backend.sh logs
-# または
-./scripts/frontend.sh logs
-
-# コード変更後に再起動
-./scripts/restart.sh
-```
-
-### パターン3: バックエンド開発時
-
-```bash
-# フロントエンドとバックエンドを起動
-./scripts/start.sh
-
-# 別ターミナルでバックエンドAPI開発
-# API変更後、バックエンドのみ再起動
-./scripts/backend.sh restart
-
-# バックエンドログを監視
-./scripts/backend.sh logs
-```
-
-### パターン4: フロントエンド開発時
-
-```bash
-# 両方起動
-./scripts/start.sh
-
-# 別ターミナルでフロントエンドUI開発
-# UI変更後、フロントエンドのみ再起動
-./scripts/frontend.sh restart
-
-# フロントエンドログを監視
-./scripts/frontend.sh logs
-```
-
-### パターン5: デバッグ時
-
-```bash
-# ステータス確認
-./scripts/status.sh
-
-# 問題がある場合、個別に起動してログ確認
-./scripts/stop.sh
-./scripts/backend.sh start
-# ログを確認...
-
-./scripts/frontend.sh start
-# ログを確認...
-```
+See [CONFIGURATION.md](../CONFIGURATION.md) for full details.
 
 ---
 
-## 🔧 環境変数
+## Troubleshooting
 
-すべてのスクリプトは `.env` ファイルから設定を読み込みます。
-
-### 主要な環境変数
-
-| 変数名 | デフォルト値 | 説明 |
-|--------|------------|------|
-| `WHOMBAT_DOMAIN` | `localhost` | アクセスするドメインまたはIPアドレス |
-| `WHOMBAT_HOST` | `0.0.0.0` | バインドするネットワークインターフェース |
-| `WHOMBAT_PORT` | `5000` | バックエンドのポート番号 |
-| `WHOMBAT_FRONTEND_PORT` | `3000` | フロントエンドのポート番号 |
-| `WHOMBAT_PROTOCOL` | `http` | プロトコル (`http` または `https`) |
-| `WHOMBAT_DEV` | `true` | 開発モード |
-
-### 設定例
-
-**ローカル開発:**
-```bash
-# .env
-WHOMBAT_DOMAIN=localhost
-WHOMBAT_HOST=localhost
-WHOMBAT_DEV=true
-```
-
-**リモートサーバー:**
-```bash
-# .env
-WHOMBAT_DOMAIN=192.168.1.100
-WHOMBAT_HOST=0.0.0.0
-WHOMBAT_DEV=false
-```
-
-詳細は [CONFIGURATION.md](../CONFIGURATION.md) を参照してください。
-
----
-
-## 🔍 トラブルシューティング
-
-### ポートが既に使用されている
-
-スクリプトは自動的に既存プロセスを停止しますが、手動で停止する場合:
+### Permission denied
 
 ```bash
-# バックエンドポート（5000）を解放
-lsof -ti:5000 | xargs kill -9
-
-# フロントエンドポート（3000）を解放
-lsof -ti:3000 | xargs kill -9
-```
-
-### スクリプトが実行できない
-
-実行権限を確認:
-
-```bash
-ls -l scripts/*.sh
-
-# 権限がない場合は付与
 chmod +x scripts/*.sh
 ```
 
-### バックエンドが起動しない
+### Port already in use
 
-1. ログを確認:
 ```bash
-./scripts/backend.sh logs
-# または
-cat logs/backend.log
+# Check what's using the port
+sudo lsof -i :3000
+sudo lsof -i :5000
+
+# Kill process
+kill -9 <PID>
 ```
 
-2. 仮想環境を確認:
+### Docker containers not starting
+
 ```bash
-cd back
-ls -la .venv
+# Check status
+./scripts/docker.sh dev status
+
+# Check logs
+./scripts/docker.sh dev logs
+
+# Rebuild
+./scripts/docker.sh dev build
 ```
 
-3. 再セットアップ:
+### Backend won't start (local development)
+
 ```bash
-./scripts/setup.sh
+# Check virtual environment
+ls back/.venv
+
+# Reinstall dependencies
+cd back && uv sync
 ```
 
-### フロントエンドが起動しない
-
-1. ログを確認:
-```bash
-./scripts/frontend.sh logs
-# または
-cat logs/frontend.log
-```
-
-2. node_modulesを確認:
-```bash
-cd front
-ls -la node_modules
-```
-
-3. 再セットアップ:
-```bash
-./scripts/setup.sh
-```
-
-### 環境変数が反映されない
+### Frontend won't start (local development)
 
 ```bash
-# .envファイルを確認
-cat .env
+# Check node_modules
+ls front/node_modules
 
-# 再起動
-./scripts/restart.sh
+# Reinstall dependencies
+cd front && npm install
 ```
 
 ---
 
-## 🌐 アクセスURL
+## Related Documentation
 
-起動後、以下のURLでアクセスできます（デフォルト設定の場合）:
-
-| サービス | URL | 説明 |
-|---------|-----|------|
-| **フロントエンド** | http://localhost:3000 | メインアプリケーション |
-| **API ドキュメント** | http://localhost:5000/docs | Swagger UI |
-| **API ReDoc** | http://localhost:5000/redoc | ReDoc形式のAPIドキュメント |
-| **バックエンド** | http://localhost:5000 | REST API エンドポイント |
-
-**注意:** ドメイン設定により URLは変わります。`./scripts/status.sh` で実際のURLを確認してください。
-
----
-
-## 💡 Tips
-
-### バックグラウンド実行
-
-長時間実行する場合:
-
-```bash
-# nohupで起動（ログアウト後も実行継続）
-nohup ./scripts/start.sh > /dev/null 2>&1 &
-
-# tmux/screenを使用（推奨）
-tmux new -s echoroo
-./scripts/docker.sh start
-# Ctrl+B, D でデタッチ
-
-# 再接続
-tmux attach -t echoroo
-```
-
-### ログ管理
-
-```bash
-# リアルタイムでログを監視
-./scripts/backend.sh logs   # バックエンド
-./scripts/frontend.sh logs  # フロントエンド
-
-# 両方のログを同時に監視
-tail -f logs/backend.log logs/frontend.log
-
-# ログをクリア
-> logs/backend.log
-> logs/frontend.log
-```
-
-### 開発効率化
-
-```bash
-# エイリアスを設定 (.bashrc または .zshrc)
-alias echoroo-start='cd /path/to/echoroo && ./scripts/docker.sh start'
-alias echoroo-stop='cd /path/to/echoroo && ./scripts/docker.sh stop'
-alias echoroo-status='cd /path/to/echoroo && ./scripts/docker.sh status'
-alias echoroo-logs='cd /path/to/echoroo && ./scripts/docker.sh logs'
-alias echoroo-restart='cd /path/to/echoroo && ./scripts/docker.sh restart'
-```
-
----
-
-## 📚 関連ドキュメント
-
-- [CONFIGURATION.md](../CONFIGURATION.md) - 詳細な設定ガイド
-- [.env.example](../.env.example) - 環境変数の例
-
----
-
-## 📞 サポート
-
-問題が発生した場合:
-
-1. ログファイルを確認: `logs/backend.log`, `logs/frontend.log`
-2. ステータスを確認: `./scripts/status.sh`
-3. 設定を確認: `.env`, `CONFIGURATION.md`
-4. GitHubのIssueを確認: https://github.com/okamoto-group/echoroo/issues
-
----
-
-**更新日**: 2025-10-21
-**対応環境**: Linux
+- [DOCKER.md](../DOCKER.md) - Detailed Docker guide
+- [CONFIGURATION.md](../CONFIGURATION.md) - Environment configuration
+- [.env.example](../.env.example) - Environment variables template

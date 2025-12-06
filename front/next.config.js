@@ -1,6 +1,8 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  // output: "export", // Disabled for dynamic routes support
+  // Use standalone output for optimized Docker builds
+  // This creates a minimal production bundle with all dependencies
+  output: "standalone",
   trailingSlash: true,
   images: {
     unoptimized: true,

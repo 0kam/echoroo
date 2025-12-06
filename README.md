@@ -19,6 +19,10 @@ cp .env.example .env
 #   - POSTGRES_PASSWORD (required)
 #   - ECHOROO_AUDIO_DIR (required - path to your audio files)
 
+# Build base image (one-time, contains ML dependencies)
+cd back && docker build -f Dockerfile.base -t echoroo-base:latest .
+cd ..
+
 # Start Echoroo (development mode)
 ./scripts/docker.sh dev
 ```
@@ -27,11 +31,27 @@ Then open http://localhost:3000 in your browser.
 
 See [DOCKER.md](DOCKER.md) for detailed Docker instructions.
 
-### Other Installation Methods
+### Local Development (Without Docker)
 
-- **Python Package**: Install from the source code
+For development without Docker:
 
-For detailed installation instructions, refer to the [Configuration Guide](CONFIGURATION.md).
+```bash
+# Run setup script
+./scripts/setup.sh
+
+# Start PostgreSQL (required)
+# See QUICK_START.md for database setup options
+
+# Start backend (Terminal 1)
+cd back && uv run python -m echoroo
+
+# Start frontend (Terminal 2)
+cd front && npm run dev
+```
+
+**Requirements:** Python 3.11+, [uv](https://docs.astral.sh/uv/), Node.js 18+, PostgreSQL (or SQLite)
+
+For detailed instructions, refer to the [Quick Start Guide](QUICK_START.md) or [Configuration Guide](CONFIGURATION.md).
 
 ## Usage
 
@@ -58,16 +78,6 @@ For detailed information about using Echoroo, refer to:
 - [Docker Guide](DOCKER.md) - Docker deployment instructions
 - [Configuration Guide](CONFIGURATION.md) - Environment configuration
 
-## Contribution
-
-We welcome contributions from the community. Please refer to the contribution guidelines for information on how you can contribute.
-
-## Citation
-
-If you use this tool in your research, please cite the original Whombat paper:
-
-> Balvanera, S. M., Mac Aodha, O., Weldy, M. J., Pringle, H., Browning, E., & Jones, K. E. (2023). Whombat: An open-source annotation tool for machine learning development in bioacoustics. arXiv preprint [arXiv:2308.12688](https://arxiv.org/abs/2308.12688).
-
 ## Acknowledgements
 
-This project is built upon the Whombat project, originally developed with the generous support of the Mexican Council of the Humanities, Science and Technology (**CONAHCyT**; Award Number 2020-000017-02EXTF-00334) and University College London (**UCL**).
+This project is built upon the [Whombat](https://github.com/mbsantiago/whombat) project, originally developed with the generous support of the Mexican Council of the Humanities, Science and Technology (**CONAHCyT**; Award Number 2020-000017-02EXTF-00334) and University College London (**UCL**).

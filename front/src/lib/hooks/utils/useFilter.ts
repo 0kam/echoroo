@@ -1,10 +1,24 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { useDebounce } from "react-use";
 
 import type { Filter } from "@/lib/types";
 
 const _fixed: any[] = [];
 const _emptyObject: any = {};
+
+/**
+ * Shallow compare two objects for equality.
+ */
+function shallowEqual<T extends Object>(a: T, b: T): boolean {
+  if (a === b) return true;
+  const keysA = Object.keys(a) as (keyof T)[];
+  const keysB = Object.keys(b) as (keyof T)[];
+  if (keysA.length !== keysB.length) return false;
+  for (const key of keysA) {
+    if (a[key] !== b[key]) return false;
+  }
+  return true;
+}
 
 /**
  * A React hook for managing a debounced filter state object.
@@ -28,12 +42,14 @@ export default function useFilter<T extends Object>({
 } = {}): Filter<T> {
   const [state, setState] = useState<T>(defaults);
   const [debouncedState, setDebouncedState] = useState<T>(state);
+  const prevDefaultsRef = useRef<T>(defaults);
 
-  // Reset the state when the fixed filter changes
-  useEffect(() => {
+  // Reset the state when defaults actually change (shallow comparison)
+  if (!shallowEqual(prevDefaultsRef.current, defaults)) {
+    prevDefaultsRef.current = defaults;
     setState(defaults);
     setDebouncedState(defaults);
-  }, [defaults]);
+  }
 
   const isFixed = useCallback((key: keyof T) => fixed.includes(key), [fixed]);
 
@@ -69,7 +85,7 @@ export default function useFilter<T extends Object>({
     [isFixed],
   );
 
-  const reset = useCallback(() => setState(defaults), [defaults]);
+  const reset = useCallback(() => setState(prevDefaultsRef.current), []);
 
   const update = useCallback((value: Partial<T>) => {
     setState((prev) => ({ ...prev, ...value }));

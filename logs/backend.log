@@ -1,36 +1,165 @@
 warning: The `tool.uv.dev-dependencies` field (used in `pyproject.toml`) is deprecated and will be removed in a future release; use `dependency-groups.dev` instead
-2025-12-04 17:34:26,042 - uvicorn.error - INFO - Will watch for changes in these directories: ['/home/okamoto/Projects/whombat/back']
-INFO:     Will watch for changes in these directories: ['/home/okamoto/Projects/whombat/back']
-2025-12-04 17:34:26,042 - uvicorn.error - INFO - Uvicorn running on http://0.0.0.0:5000 (Press CTRL+C to quit)
+2025-12-05 16:19:44,007 - uvicorn.error - INFO - Will watch for changes in these directories: ['/home/okamoto/Projects/echoroo/back']
+INFO:     Will watch for changes in these directories: ['/home/okamoto/Projects/echoroo/back']
+2025-12-05 16:19:44,007 - uvicorn.error - INFO - Uvicorn running on http://0.0.0.0:5000 (Press CTRL+C to quit)
 INFO:     Uvicorn running on http://0.0.0.0:5000 (Press CTRL+C to quit)
-2025-12-04 17:34:26,042 - uvicorn.error - INFO - Started reloader process [495983] using WatchFiles
-INFO:     Started reloader process [495983] using WatchFiles
-/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/pydantic/_internal/_fields.py:132: UserWarning: Field "model_run" in Body_import_model_run_import__post has conflict with protected namespace "model_".
+2025-12-05 16:19:44,007 - uvicorn.error - INFO - Started reloader process [701118] using WatchFiles
+INFO:     Started reloader process [701118] using WatchFiles
+2025-12-05 16:19:46,074 - echoroo.ml.registry - DEBUG - Registering model 'birdnet'
+--- Logging error ---
+Traceback (most recent call last):
+  File "/usr/lib/python3.12/logging/__init__.py", line 1160, in emit
+    msg = self.format(record)
+          ^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/logging/__init__.py", line 999, in format
+    return fmt.format(record)
+           ^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/logging/__init__.py", line 706, in format
+    s = self.formatMessage(record)
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/okamoto/Projects/echoroo/back/.venv/lib/python3.12/site-packages/uvicorn/logging.py", line 99, in formatMessage
+    (
+ValueError: not enough values to unpack (expected 5, got 1)
+Call stack:
+  File "<string>", line 1, in <module>
+  File "/usr/lib/python3.12/multiprocessing/spawn.py", line 122, in spawn_main
+    exitcode = _main(fd, parent_sentinel)
+  File "/usr/lib/python3.12/multiprocessing/spawn.py", line 135, in _main
+    return self._bootstrap(parent_sentinel)
+  File "/usr/lib/python3.12/multiprocessing/process.py", line 314, in _bootstrap
+    self.run()
+  File "/usr/lib/python3.12/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+  File "/home/okamoto/Projects/echoroo/back/.venv/lib/python3.12/site-packages/uvicorn/_subprocess.py", line 80, in subprocess_started
+    target(sockets=sockets)
+  File "/home/okamoto/Projects/echoroo/back/.venv/lib/python3.12/site-packages/uvicorn/server.py", line 65, in run
+    return asyncio.run(self.serve(sockets=sockets))
+  File "/usr/lib/python3.12/asyncio/runners.py", line 194, in run
+    return runner.run(main)
+  File "/usr/lib/python3.12/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+  File "/home/okamoto/Projects/echoroo/back/.venv/lib/python3.12/site-packages/uvicorn/server.py", line 69, in serve
+    await self._serve(sockets)
+  File "/home/okamoto/Projects/echoroo/back/.venv/lib/python3.12/site-packages/uvicorn/server.py", line 76, in _serve
+    config.load()
+  File "/home/okamoto/Projects/echoroo/back/.venv/lib/python3.12/site-packages/uvicorn/config.py", line 434, in load
+    self.loaded_app = import_from_string(self.app)
+  File "/home/okamoto/Projects/echoroo/back/.venv/lib/python3.12/site-packages/uvicorn/importer.py", line 19, in import_from_string
+    module = importlib.import_module(module_str)
+  File "/usr/lib/python3.12/importlib/__init__.py", line 90, in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+  File "<frozen importlib._bootstrap>", line 1387, in _gcd_import
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 995, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "/home/okamoto/Projects/echoroo/back/src/echoroo/app.py", line 9, in <module>
+    app = create_app(settings)
+  File "/home/okamoto/Projects/echoroo/back/src/echoroo/system/app/__init__.py", line 16, in create_app
+    add_routes(app, settings)
+  File "/home/okamoto/Projects/echoroo/back/src/echoroo/system/app/routes.py", line 17, in add_routes
+    from echoroo.routes import get_main_router
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 995, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "/home/okamoto/Projects/echoroo/back/src/echoroo/routes/__init__.py", line 5, in <module>
+    from echoroo.routes.annotation_projects import get_annotation_projects_router
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 995, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "/home/okamoto/Projects/echoroo/back/src/echoroo/routes/annotation_projects.py", line 10, in <module>
+    from echoroo import api, models, schemas
+  File "<frozen importlib._bootstrap>", line 1415, in _handle_fromlist
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 995, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "/home/okamoto/Projects/echoroo/back/src/echoroo/api/__init__.py", line 3, in <module>
+    from echoroo.api.annotation_projects import annotation_projects
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 995, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "/home/okamoto/Projects/echoroo/back/src/echoroo/api/annotation_projects.py", line 13, in <module>
+    from echoroo import exceptions, models, schemas
+  File "<frozen importlib._bootstrap>", line 1415, in _handle_fromlist
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 995, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "/home/okamoto/Projects/echoroo/back/src/echoroo/schemas/__init__.py", line 169, in <module>
+    from echoroo.schemas.setup import (
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 995, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "/home/okamoto/Projects/echoroo/back/src/echoroo/schemas/setup.py", line 7, in <module>
+    from echoroo.ml.installer.base import InstallStatus
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1310, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1310, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 995, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "/home/okamoto/Projects/echoroo/back/src/echoroo/ml/__init__.py", line 51, in <module>
+    from echoroo.ml import birdnet as birdnet  # noqa: F401
+  File "<frozen importlib._bootstrap>", line 1415, in _handle_fromlist
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 995, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "/home/okamoto/Projects/echoroo/back/src/echoroo/ml/birdnet/__init__.py", line 49, in <module>
+    ModelRegistry.register(
+  File "/home/okamoto/Projects/echoroo/back/src/echoroo/ml/registry.py", line 179, in register
+    logger.debug("Registering model '%s'", name)
+Message: "Registering model '%s'"
+Arguments: ('birdnet',)
+/home/okamoto/Projects/echoroo/back/.venv/lib/python3.12/site-packages/pydantic/_internal/_fields.py:132: UserWarning: Field "model_run" in Body_import_model_run_import__post has conflict with protected namespace "model_".
 
 You may be able to resolve this warning by setting `model_config['protected_namespaces'] = ()`.
   warnings.warn(
-/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/pydantic/_internal/_fields.py:132: UserWarning: Field "model_run" in Body_import_model_run_api_v1_model_runs_import__post has conflict with protected namespace "model_".
+/home/okamoto/Projects/echoroo/back/.venv/lib/python3.12/site-packages/pydantic/_internal/_fields.py:132: UserWarning: Field "model_run" in Body_import_model_run_api_v1_model_runs_import__post has conflict with protected namespace "model_".
 
 You may be able to resolve this warning by setting `model_config['protected_namespaces'] = ()`.
   warnings.warn(
-2025-12-04 17:34:32,187 - uvicorn.error - INFO - Started server process [495991]
-INFO:     Started server process [495991]
-2025-12-04 17:34:32,187 - uvicorn.error - INFO - Waiting for application startup.
+2025-12-05 16:19:50,660 - uvicorn.error - INFO - Started server process [701184]
+INFO:     Started server process [701184]
+2025-12-05 16:19:50,660 - uvicorn.error - INFO - Waiting for application startup.
 INFO:     Waiting for application startup.
 INFO:Context impl SQLiteImpl.
 INFO:Will assume non-transactional DDL.
+INFO:Context impl SQLiteImpl.
+INFO:Will assume non-transactional DDL.
 
-[31m[1mWhombat is running in development mode![0m
+[31m[1mEchoroo is running in development mode![0m
 
-[32m[1mDatabase URL:[0m sqlite+aiosqlite:////home/okamoto/.local/share/whombat/whombat.db
+[32m[1mDatabase URL:[0m sqlite+aiosqlite:///echoroo.db
 
 [32m[1mSettings:[0m {
     "dev": true,
     "debug": false,
-    "db_dialect": "sqlite",
-    "db_host": null,
-    "db_port": null,
-    "db_name": "/home/okamoto/.local/share/whombat/whombat.db",
+    "db_dialect": "postgresql",
+    "db_host": "localhost",
+    "db_port": 5432,
+    "db_name": "echoroo",
     "audio_dir": "/home/okamoto/NAS_A/whombat_data",
     "host": "0.0.0.0",
     "port": 5000,
@@ -41,862 +170,178 @@ INFO:Will assume non-transactional DDL.
     "log_dir": "logs",
     "log_level": "info",
     "cors_origins": [
-        "http://localhost:3000",
         "http://127.0.0.1:3000",
-        "http://158.210.76.175:3000"
+        "http://localhost:3000"
     ],
     "open_on_startup": true,
     "auth_cookie_secure": false,
     "auth_cookie_samesite": "lax",
-    "metadata_dir": "/home/okamoto/.local/share/whombat/metadata"
+    "metadata_dir": "/home/okamoto/.local/share/echoroo/metadata"
 }
     
-
-    [32m[2mWhombat is ready to go![0m
-
-    [32m[1m * Listening on http://0.0.0.0:5000/[0m
-
-    [33mPress Ctrl+C to exit.[0m
-    
-2025-12-04 17:34:32,453 - uvicorn.error - INFO - Application startup complete.
-INFO:     Application startup complete.
-INFO:     158.210.76.175:53836 - "GET / HTTP/1.1" 404 Not Found
-2025-12-04 17:34:32,628 - uvicorn.error - WARNING - Invalid HTTP request received.
-WARNING:  Invalid HTTP request received.
-2025-12-04 17:34:32,673 - uvicorn.error - WARNING - Invalid HTTP request received.
-WARNING:  Invalid HTTP request received.
-INFO:     158.210.76.175:32916 - "GET /api/v1/metadata/sites?project_id=prj-bobasm0b HTTP/1.1" 200 OK
-INFO:     158.210.76.175:32910 - "GET /api/v1/metadata/projects/prj-bobasm0b HTTP/1.1" 200 OK
-INFO:     158.210.76.175:42514 - "GET /api/v1/users/me HTTP/1.1" 200 OK
-INFO:     158.210.76.175:42514 - "GET /api/v1/metadata/projects/prj-bobasm0b HTTP/1.1" 200 OK
-INFO:     158.210.76.175:42514 - "GET /api/v1/metadata/sites?project_id=prj-bobasm0b HTTP/1.1" 200 OK
-INFO:     158.210.76.175:42452 - "GET /api/v1/datasets/?limit=100&offset=0 HTTP/1.1" 200 OK
-INFO:     158.210.76.175:42456 - "GET /api/v1/datasets/?limit=100&offset=0&primary_site_id__eq=test2 HTTP/1.1" 200 OK
-INFO:     158.210.76.175:54098 - "GET /api/v1/users/me HTTP/1.1" 200 OK
-INFO:     158.210.76.175:54098 - "GET /api/v1/metadata/projects/prj-bobasm0b HTTP/1.1" 200 OK
-INFO:     158.210.76.175:54098 - "GET /api/v1/datasets/?limit=1000&offset=0&project_id__eq=prj-bobasm0b HTTP/1.1" 200 OK
-INFO:     158.210.76.175:54098 - "GET /api/v1/metadata/sites?project_id=prj-bobasm0b HTTP/1.1" 200 OK
-INFO:     158.210.76.175:45448 - "GET /api/v1/users/me HTTP/1.1" 200 OK
-INFO:     158.210.76.175:45448 - "GET /api/v1/metadata/projects/prj-bobasm0b HTTP/1.1" 200 OK
-INFO:     158.210.76.175:45448 - "GET /api/v1/metadata/sites?project_id=prj-bobasm0b HTTP/1.1" 200 OK
-INFO:     158.210.76.175:33802 - "GET /api/v1/metadata/sites?project_id=prj-bobasm0b HTTP/1.1" 200 OK
-INFO:     158.210.76.175:33798 - "GET /api/v1/metadata/projects/prj-bobasm0b HTTP/1.1" 200 OK
-2025-12-04 17:42:09,323 - uvicorn.error - WARNING - WatchFiles detected changes in 'src/whombat/system/database.py'. Reloading...
-WARNING:  WatchFiles detected changes in 'src/whombat/system/database.py'. Reloading...
-2025-12-04 17:42:09,375 - uvicorn.error - INFO - Shutting down
-INFO:     Shutting down
-2025-12-04 17:42:09,476 - uvicorn.error - INFO - Waiting for application shutdown.
-INFO:     Waiting for application shutdown.
-2025-12-04 17:42:09,476 - uvicorn.error - INFO - Application shutdown complete.
-INFO:     Application shutdown complete.
-2025-12-04 17:42:09,477 - uvicorn.error - INFO - Finished server process [495991]
-INFO:     Finished server process [495991]
-2025-12-04 17:42:14,000 - uvicorn.error - WARNING - WatchFiles detected changes in 'src/whombat/system/database.py'. Reloading...
-WARNING:  WatchFiles detected changes in 'src/whombat/system/database.py'. Reloading...
-/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/pydantic/_internal/_fields.py:132: UserWarning: Field "model_run" in Body_import_model_run_import__post has conflict with protected namespace "model_".
-
-You may be able to resolve this warning by setting `model_config['protected_namespaces'] = ()`.
-  warnings.warn(
-/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/pydantic/_internal/_fields.py:132: UserWarning: Field "model_run" in Body_import_model_run_api_v1_model_runs_import__post has conflict with protected namespace "model_".
-
-You may be able to resolve this warning by setting `model_config['protected_namespaces'] = ()`.
-  warnings.warn(
-2025-12-04 17:42:15,951 - uvicorn.error - INFO - Started server process [500211]
-INFO:     Started server process [500211]
-2025-12-04 17:42:15,951 - uvicorn.error - INFO - Waiting for application startup.
-INFO:     Waiting for application startup.
-INFO:Context impl SQLiteImpl.
-INFO:Will assume non-transactional DDL.
-
-[31m[1mWhombat is running in development mode![0m
-
-[32m[1mDatabase URL:[0m sqlite+aiosqlite:////home/okamoto/.local/share/whombat/whombat.db
-
-[32m[1mSettings:[0m {
-    "dev": true,
-    "debug": false,
-    "db_dialect": "sqlite",
-    "db_host": null,
-    "db_port": null,
-    "db_name": "/home/okamoto/.local/share/whombat/whombat.db",
-    "audio_dir": "/home/okamoto/NAS_A/whombat_data",
-    "host": "0.0.0.0",
-    "port": 5000,
-    "domain": "158.210.76.175",
-    "log_config": "logging.conf",
-    "log_to_file": true,
-    "log_to_stdout": false,
-    "log_dir": "logs",
-    "log_level": "info",
-    "cors_origins": [
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-        "http://158.210.76.175:3000"
-    ],
-    "open_on_startup": true,
-    "auth_cookie_secure": false,
-    "auth_cookie_samesite": "lax",
-    "metadata_dir": "/home/okamoto/.local/share/whombat/metadata"
-}
-    
-
-    [32m[2mWhombat is ready to go![0m
-
-    [32m[1m * Listening on http://0.0.0.0:5000/[0m
-
-    [33mPress Ctrl+C to exit.[0m
-    
-2025-12-04 17:42:16,243 - uvicorn.error - INFO - Application startup complete.
-INFO:     Application startup complete.
-2025-12-04 17:42:18,365 - uvicorn.error - WARNING - WatchFiles detected changes in 'src/whombat/system/database.py'. Reloading...
-WARNING:  WatchFiles detected changes in 'src/whombat/system/database.py'. Reloading...
-/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/pydantic/_internal/_fields.py:132: UserWarning: Field "model_run" in Body_import_model_run_import__post has conflict with protected namespace "model_".
-
-You may be able to resolve this warning by setting `model_config['protected_namespaces'] = ()`.
-  warnings.warn(
-/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/pydantic/_internal/_fields.py:132: UserWarning: Field "model_run" in Body_import_model_run_api_v1_model_runs_import__post has conflict with protected namespace "model_".
-
-You may be able to resolve this warning by setting `model_config['protected_namespaces'] = ()`.
-  warnings.warn(
-2025-12-04 17:42:22,691 - uvicorn.error - INFO - Started server process [500384]
-INFO:     Started server process [500384]
-2025-12-04 17:42:22,691 - uvicorn.error - INFO - Waiting for application startup.
-INFO:     Waiting for application startup.
-INFO:Context impl SQLiteImpl.
-INFO:Will assume non-transactional DDL.
-
-[31m[1mWhombat is running in development mode![0m
-
-[32m[1mDatabase URL:[0m sqlite+aiosqlite:////home/okamoto/.local/share/whombat/whombat.db
-
-[32m[1mSettings:[0m {
-    "dev": true,
-    "debug": false,
-    "db_dialect": "sqlite",
-    "db_host": null,
-    "db_port": null,
-    "db_name": "/home/okamoto/.local/share/whombat/whombat.db",
-    "audio_dir": "/home/okamoto/NAS_A/whombat_data",
-    "host": "0.0.0.0",
-    "port": 5000,
-    "domain": "158.210.76.175",
-    "log_config": "logging.conf",
-    "log_to_file": true,
-    "log_to_stdout": false,
-    "log_dir": "logs",
-    "log_level": "info",
-    "cors_origins": [
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-        "http://158.210.76.175:3000"
-    ],
-    "open_on_startup": true,
-    "auth_cookie_secure": false,
-    "auth_cookie_samesite": "lax",
-    "metadata_dir": "/home/okamoto/.local/share/whombat/metadata"
-}
-    
-
-    [32m[2mWhombat is ready to go![0m
-
-    [32m[1m * Listening on http://0.0.0.0:5000/[0m
-
-    [33mPress Ctrl+C to exit.[0m
-    
-2025-12-04 17:42:22,975 - uvicorn.error - INFO - Application startup complete.
-INFO:     Application startup complete.
-2025-12-04 17:42:24,544 - uvicorn.error - WARNING - WatchFiles detected changes in 'src/whombat/system/database.py'. Reloading...
-WARNING:  WatchFiles detected changes in 'src/whombat/system/database.py'. Reloading...
-/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/pydantic/_internal/_fields.py:132: UserWarning: Field "model_run" in Body_import_model_run_import__post has conflict with protected namespace "model_".
-
-You may be able to resolve this warning by setting `model_config['protected_namespaces'] = ()`.
-  warnings.warn(
-/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/pydantic/_internal/_fields.py:132: UserWarning: Field "model_run" in Body_import_model_run_api_v1_model_runs_import__post has conflict with protected namespace "model_".
-
-You may be able to resolve this warning by setting `model_config['protected_namespaces'] = ()`.
-  warnings.warn(
-2025-12-04 17:42:29,733 - uvicorn.error - INFO - Started server process [500545]
-INFO:     Started server process [500545]
-2025-12-04 17:42:29,733 - uvicorn.error - INFO - Waiting for application startup.
-INFO:     Waiting for application startup.
-INFO:Context impl SQLiteImpl.
-INFO:Will assume non-transactional DDL.
-
-[31m[1mWhombat is running in development mode![0m
-
-[32m[1mDatabase URL:[0m sqlite+aiosqlite:////home/okamoto/.local/share/whombat/whombat.db
-
-[32m[1mSettings:[0m {
-    "dev": true,
-    "debug": false,
-    "db_dialect": "sqlite",
-    "db_host": null,
-    "db_port": null,
-    "db_name": "/home/okamoto/.local/share/whombat/whombat.db",
-    "audio_dir": "/home/okamoto/NAS_A/whombat_data",
-    "host": "0.0.0.0",
-    "port": 5000,
-    "domain": "158.210.76.175",
-    "log_config": "logging.conf",
-    "log_to_file": true,
-    "log_to_stdout": false,
-    "log_dir": "logs",
-    "log_level": "info",
-    "cors_origins": [
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-        "http://158.210.76.175:3000"
-    ],
-    "open_on_startup": true,
-    "auth_cookie_secure": false,
-    "auth_cookie_samesite": "lax",
-    "metadata_dir": "/home/okamoto/.local/share/whombat/metadata"
-}
-    
-
-    [32m[2mWhombat is ready to go![0m
-
-    [32m[1m * Listening on http://0.0.0.0:5000/[0m
-
-    [33mPress Ctrl+C to exit.[0m
-    
-2025-12-04 17:42:30,018 - uvicorn.error - INFO - Application startup complete.
-INFO:     Application startup complete.
-/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/pydantic/_internal/_fields.py:132: UserWarning: Field "model_run" in Body_import_model_run_import__post has conflict with protected namespace "model_".
-
-You may be able to resolve this warning by setting `model_config['protected_namespaces'] = ()`.
-  warnings.warn(
-/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/pydantic/_internal/_fields.py:132: UserWarning: Field "model_run" in Body_import_model_run_api_v1_model_runs_import__post has conflict with protected namespace "model_".
-
-You may be able to resolve this warning by setting `model_config['protected_namespaces'] = ()`.
-  warnings.warn(
-2025-12-04 17:42:36,751 - uvicorn.error - INFO - Started server process [500803]
-INFO:     Started server process [500803]
-2025-12-04 17:42:36,751 - uvicorn.error - INFO - Waiting for application startup.
-INFO:     Waiting for application startup.
-INFO:Context impl SQLiteImpl.
-INFO:Will assume non-transactional DDL.
-
-[31m[1mWhombat is running in development mode![0m
-
-[32m[1mDatabase URL:[0m sqlite+aiosqlite:////home/okamoto/.local/share/whombat/whombat.db
-
-[32m[1mSettings:[0m {
-    "dev": true,
-    "debug": false,
-    "db_dialect": "sqlite",
-    "db_host": null,
-    "db_port": null,
-    "db_name": "/home/okamoto/.local/share/whombat/whombat.db",
-    "audio_dir": "/home/okamoto/NAS_A/whombat_data",
-    "host": "0.0.0.0",
-    "port": 5000,
-    "domain": "158.210.76.175",
-    "log_config": "logging.conf",
-    "log_to_file": true,
-    "log_to_stdout": false,
-    "log_dir": "logs",
-    "log_level": "info",
-    "cors_origins": [
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-        "http://158.210.76.175:3000"
-    ],
-    "open_on_startup": true,
-    "auth_cookie_secure": false,
-    "auth_cookie_samesite": "lax",
-    "metadata_dir": "/home/okamoto/.local/share/whombat/metadata"
-}
-    
-
-    [32m[2mWhombat is ready to go![0m
-
-    [32m[1m * Listening on http://0.0.0.0:5000/[0m
-
-    [33mPress Ctrl+C to exit.[0m
-    
-2025-12-04 17:42:37,058 - uvicorn.error - INFO - Application startup complete.
-INFO:     Application startup complete.
-INFO:     158.210.76.175:56118 - "GET / HTTP/1.1" 404 Not Found
-INFO:     158.210.76.175:47424 - "GET / HTTP/1.1" 404 Not Found
-INFO:     158.210.76.175:56132 - "GET / HTTP/1.1" 404 Not Found
-INFO:     158.210.76.175:47432 - "GET /api/v1/users/me HTTP/1.1" 200 OK
-2025-12-04 17:42:37,143 - uvicorn.error - WARNING - Invalid HTTP request received.
-WARNING:  Invalid HTTP request received.
-2025-12-04 17:42:37,153 - uvicorn.error - WARNING - Invalid HTTP request received.
-WARNING:  Invalid HTTP request received.
-INFO:     158.210.76.175:47432 - "GET /api/v1/metadata/projects/prj-bobasm0b HTTP/1.1" 200 OK
-2025-12-04 17:42:37,187 - uvicorn.error - WARNING - Invalid HTTP request received.
-WARNING:  Invalid HTTP request received.
-2025-12-04 17:42:37,197 - uvicorn.error - WARNING - Invalid HTTP request received.
-WARNING:  Invalid HTTP request received.
-2025-12-04 17:42:37,200 - uvicorn.error - WARNING - Invalid HTTP request received.
-WARNING:  Invalid HTTP request received.
-INFO:     158.210.76.175:47432 - "GET /api/v1/metadata/sites?project_id=prj-bobasm0b HTTP/1.1" 200 OK
-2025-12-04 17:42:45,723 - uvicorn.error - WARNING - WatchFiles detected changes in 'src/whombat/migrations/env.py'. Reloading...
-WARNING:  WatchFiles detected changes in 'src/whombat/migrations/env.py'. Reloading...
-2025-12-04 17:42:45,791 - uvicorn.error - INFO - Shutting down
-INFO:     Shutting down
-2025-12-04 17:42:45,892 - uvicorn.error - INFO - Waiting for application shutdown.
-INFO:     Waiting for application shutdown.
-2025-12-04 17:42:45,892 - uvicorn.error - INFO - Application shutdown complete.
-INFO:     Application shutdown complete.
-2025-12-04 17:42:45,892 - uvicorn.error - INFO - Finished server process [500803]
-INFO:     Finished server process [500803]
-/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/pydantic/_internal/_fields.py:132: UserWarning: Field "model_run" in Body_import_model_run_import__post has conflict with protected namespace "model_".
-
-You may be able to resolve this warning by setting `model_config['protected_namespaces'] = ()`.
-  warnings.warn(
-/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/pydantic/_internal/_fields.py:132: UserWarning: Field "model_run" in Body_import_model_run_api_v1_model_runs_import__post has conflict with protected namespace "model_".
-
-You may be able to resolve this warning by setting `model_config['protected_namespaces'] = ()`.
-  warnings.warn(
-2025-12-04 17:42:52,663 - uvicorn.error - INFO - Started server process [501187]
-INFO:     Started server process [501187]
-2025-12-04 17:42:52,663 - uvicorn.error - INFO - Waiting for application startup.
-INFO:     Waiting for application startup.
-INFO:Context impl SQLiteImpl.
-INFO:Will assume non-transactional DDL.
-
-[31m[1mWhombat is running in development mode![0m
-
-[32m[1mDatabase URL:[0m sqlite+aiosqlite:////home/okamoto/.local/share/whombat/whombat.db
-
-[32m[1mSettings:[0m {
-    "dev": true,
-    "debug": false,
-    "db_dialect": "sqlite",
-    "db_host": null,
-    "db_port": null,
-    "db_name": "/home/okamoto/.local/share/whombat/whombat.db",
-    "audio_dir": "/home/okamoto/NAS_A/whombat_data",
-    "host": "0.0.0.0",
-    "port": 5000,
-    "domain": "158.210.76.175",
-    "log_config": "logging.conf",
-    "log_to_file": true,
-    "log_to_stdout": false,
-    "log_dir": "logs",
-    "log_level": "info",
-    "cors_origins": [
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-        "http://158.210.76.175:3000"
-    ],
-    "open_on_startup": true,
-    "auth_cookie_secure": false,
-    "auth_cookie_samesite": "lax",
-    "metadata_dir": "/home/okamoto/.local/share/whombat/metadata"
-}
-    
-
-    [32m[2mWhombat is ready to go![0m
-
-    [32m[1m * Listening on http://0.0.0.0:5000/[0m
-
-    [33mPress Ctrl+C to exit.[0m
-    
-2025-12-04 17:42:52,956 - uvicorn.error - INFO - Application startup complete.
-INFO:     Application startup complete.
-INFO:     158.210.76.175:33020 - "GET / HTTP/1.1" 404 Not Found
-2025-12-04 17:42:53,071 - uvicorn.error - WARNING - WatchFiles detected changes in 'src/whombat/migrations/env.py'. Reloading...
-WARNING:  WatchFiles detected changes in 'src/whombat/migrations/env.py'. Reloading...
-2025-12-04 17:42:53,108 - uvicorn.error - WARNING - Invalid HTTP request received.
-WARNING:  Invalid HTTP request received.
-2025-12-04 17:42:53,156 - uvicorn.error - INFO - Shutting down
-INFO:     Shutting down
-2025-12-04 17:42:53,257 - uvicorn.error - INFO - Waiting for application shutdown.
-INFO:     Waiting for application shutdown.
-2025-12-04 17:42:53,257 - uvicorn.error - INFO - Application shutdown complete.
-INFO:     Application shutdown complete.
-2025-12-04 17:42:53,257 - uvicorn.error - INFO - Finished server process [501187]
-INFO:     Finished server process [501187]
-/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/pydantic/_internal/_fields.py:132: UserWarning: Field "model_run" in Body_import_model_run_import__post has conflict with protected namespace "model_".
-
-You may be able to resolve this warning by setting `model_config['protected_namespaces'] = ()`.
-  warnings.warn(
-2025-12-04 17:42:58,932 - uvicorn.error - WARNING - WatchFiles detected changes in 'src/whombat/migrations/env.py'. Reloading...
-WARNING:  WatchFiles detected changes in 'src/whombat/migrations/env.py'. Reloading...
-/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/pydantic/_internal/_fields.py:132: UserWarning: Field "model_run" in Body_import_model_run_api_v1_model_runs_import__post has conflict with protected namespace "model_".
-
-You may be able to resolve this warning by setting `model_config['protected_namespaces'] = ()`.
-  warnings.warn(
-2025-12-04 17:43:00,267 - uvicorn.error - INFO - Started server process [501482]
-INFO:     Started server process [501482]
-2025-12-04 17:43:00,267 - uvicorn.error - INFO - Waiting for application startup.
-INFO:     Waiting for application startup.
-INFO:Context impl SQLiteImpl.
-INFO:Will assume non-transactional DDL.
-
-[31m[1mWhombat is running in development mode![0m
-
-[32m[1mDatabase URL:[0m sqlite+aiosqlite:////home/okamoto/.local/share/whombat/whombat.db
-
-[32m[1mSettings:[0m {
-    "dev": true,
-    "debug": false,
-    "db_dialect": "sqlite",
-    "db_host": null,
-    "db_port": null,
-    "db_name": "/home/okamoto/.local/share/whombat/whombat.db",
-    "audio_dir": "/home/okamoto/NAS_A/whombat_data",
-    "host": "0.0.0.0",
-    "port": 5000,
-    "domain": "158.210.76.175",
-    "log_config": "logging.conf",
-    "log_to_file": true,
-    "log_to_stdout": false,
-    "log_dir": "logs",
-    "log_level": "info",
-    "cors_origins": [
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-        "http://158.210.76.175:3000"
-    ],
-    "open_on_startup": true,
-    "auth_cookie_secure": false,
-    "auth_cookie_samesite": "lax",
-    "metadata_dir": "/home/okamoto/.local/share/whombat/metadata"
-}
-    
-
-    [32m[2mWhombat is ready to go![0m
-
-    [32m[1m * Listening on http://0.0.0.0:5000/[0m
-
-    [33mPress Ctrl+C to exit.[0m
-    
-2025-12-04 17:43:00,544 - uvicorn.error - INFO - Application startup complete.
-INFO:     Application startup complete.
-/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/pydantic/_internal/_fields.py:132: UserWarning: Field "model_run" in Body_import_model_run_import__post has conflict with protected namespace "model_".
-
-You may be able to resolve this warning by setting `model_config['protected_namespaces'] = ()`.
-  warnings.warn(
-/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/pydantic/_internal/_fields.py:132: UserWarning: Field "model_run" in Body_import_model_run_api_v1_model_runs_import__post has conflict with protected namespace "model_".
-
-You may be able to resolve this warning by setting `model_config['protected_namespaces'] = ()`.
-  warnings.warn(
-2025-12-04 17:43:07,242 - uvicorn.error - INFO - Started server process [501670]
-INFO:     Started server process [501670]
-2025-12-04 17:43:07,242 - uvicorn.error - INFO - Waiting for application startup.
-INFO:     Waiting for application startup.
-INFO:Context impl SQLiteImpl.
-INFO:Will assume non-transactional DDL.
-
-[31m[1mWhombat is running in development mode![0m
-
-[32m[1mDatabase URL:[0m sqlite+aiosqlite:////home/okamoto/.local/share/whombat/whombat.db
-
-[32m[1mSettings:[0m {
-    "dev": true,
-    "debug": false,
-    "db_dialect": "sqlite",
-    "db_host": null,
-    "db_port": null,
-    "db_name": "/home/okamoto/.local/share/whombat/whombat.db",
-    "audio_dir": "/home/okamoto/NAS_A/whombat_data",
-    "host": "0.0.0.0",
-    "port": 5000,
-    "domain": "158.210.76.175",
-    "log_config": "logging.conf",
-    "log_to_file": true,
-    "log_to_stdout": false,
-    "log_dir": "logs",
-    "log_level": "info",
-    "cors_origins": [
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-        "http://158.210.76.175:3000"
-    ],
-    "open_on_startup": true,
-    "auth_cookie_secure": false,
-    "auth_cookie_samesite": "lax",
-    "metadata_dir": "/home/okamoto/.local/share/whombat/metadata"
-}
-    
-
-    [32m[2mWhombat is ready to go![0m
-
-    [32m[1m * Listening on http://0.0.0.0:5000/[0m
-
-    [33mPress Ctrl+C to exit.[0m
-    
-2025-12-04 17:43:07,542 - uvicorn.error - INFO - Application startup complete.
-INFO:     Application startup complete.
-INFO:     158.210.76.175:52878 - "GET /api/v1/users/me HTTP/1.1" 200 OK
-INFO:     158.210.76.175:52878 - "GET / HTTP/1.1" 404 Not Found
-INFO:     158.210.76.175:52878 - "GET /api/v1/metadata/projects/prj-bobasm0b HTTP/1.1" 200 OK
-2025-12-04 17:43:07,661 - uvicorn.error - WARNING - Invalid HTTP request received.
-WARNING:  Invalid HTTP request received.
-2025-12-04 17:43:07,705 - uvicorn.error - WARNING - Invalid HTTP request received.
-WARNING:  Invalid HTTP request received.
-INFO:     158.210.76.175:52878 - "GET /api/v1/metadata/sites?project_id=prj-bobasm0b HTTP/1.1" 200 OK
-2025-12-04 17:46:04,447 - uvicorn.error - WARNING - WatchFiles detected changes in 'src/whombat/system/database.py'. Reloading...
-WARNING:  WatchFiles detected changes in 'src/whombat/system/database.py'. Reloading...
-2025-12-04 17:46:04,529 - uvicorn.error - INFO - Shutting down
-INFO:     Shutting down
-2025-12-04 17:46:04,630 - uvicorn.error - INFO - Waiting for application shutdown.
-INFO:     Waiting for application shutdown.
-2025-12-04 17:46:04,631 - uvicorn.error - INFO - Application shutdown complete.
-INFO:     Application shutdown complete.
-2025-12-04 17:46:04,631 - uvicorn.error - INFO - Finished server process [501670]
-INFO:     Finished server process [501670]
-/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/pydantic/_internal/_fields.py:132: UserWarning: Field "model_run" in Body_import_model_run_import__post has conflict with protected namespace "model_".
-
-You may be able to resolve this warning by setting `model_config['protected_namespaces'] = ()`.
-  warnings.warn(
-/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/pydantic/_internal/_fields.py:132: UserWarning: Field "model_run" in Body_import_model_run_api_v1_model_runs_import__post has conflict with protected namespace "model_".
-
-You may be able to resolve this warning by setting `model_config['protected_namespaces'] = ()`.
-  warnings.warn(
-2025-12-04 17:46:11,010 - uvicorn.error - INFO - Started server process [502983]
-INFO:     Started server process [502983]
-2025-12-04 17:46:11,010 - uvicorn.error - INFO - Waiting for application startup.
-INFO:     Waiting for application startup.
-INFO:Context impl SQLiteImpl.
-INFO:Will assume non-transactional DDL.
-
-[31m[1mWhombat is running in development mode![0m
-
-[32m[1mDatabase URL:[0m sqlite+aiosqlite:////home/okamoto/.local/share/whombat/whombat.db
-
-[32m[1mSettings:[0m {
-    "dev": true,
-    "debug": false,
-    "db_dialect": "sqlite",
-    "db_host": null,
-    "db_port": null,
-    "db_name": "/home/okamoto/.local/share/whombat/whombat.db",
-    "audio_dir": "/home/okamoto/NAS_A/whombat_data",
-    "host": "0.0.0.0",
-    "port": 5000,
-    "domain": "158.210.76.175",
-    "log_config": "logging.conf",
-    "log_to_file": true,
-    "log_to_stdout": false,
-    "log_dir": "logs",
-    "log_level": "info",
-    "cors_origins": [
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-        "http://158.210.76.175:3000"
-    ],
-    "open_on_startup": true,
-    "auth_cookie_secure": false,
-    "auth_cookie_samesite": "lax",
-    "metadata_dir": "/home/okamoto/.local/share/whombat/metadata"
-}
-    
-
-    [32m[2mWhombat is ready to go![0m
-
-    [32m[1m * Listening on http://0.0.0.0:5000/[0m
-
-    [33mPress Ctrl+C to exit.[0m
-    
-2025-12-04 17:46:11,299 - uvicorn.error - INFO - Application startup complete.
-INFO:     Application startup complete.
-INFO:     158.210.76.175:50344 - "GET / HTTP/1.1" 404 Not Found
-2025-12-04 17:46:11,398 - uvicorn.error - WARNING - Invalid HTTP request received.
-WARNING:  Invalid HTTP request received.
-2025-12-04 17:46:11,444 - uvicorn.error - WARNING - Invalid HTTP request received.
-WARNING:  Invalid HTTP request received.
-2025-12-04 17:46:22,942 - uvicorn.error - WARNING - WatchFiles detected changes in 'src/whombat/system/database.py'. Reloading...
-WARNING:  WatchFiles detected changes in 'src/whombat/system/database.py'. Reloading...
-2025-12-04 17:46:23,036 - uvicorn.error - INFO - Shutting down
-INFO:     Shutting down
-2025-12-04 17:46:23,137 - uvicorn.error - INFO - Waiting for application shutdown.
-INFO:     Waiting for application shutdown.
-2025-12-04 17:46:23,137 - uvicorn.error - INFO - Application shutdown complete.
-INFO:     Application shutdown complete.
-2025-12-04 17:46:23,138 - uvicorn.error - INFO - Finished server process [502983]
-INFO:     Finished server process [502983]
-/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/pydantic/_internal/_fields.py:132: UserWarning: Field "model_run" in Body_import_model_run_import__post has conflict with protected namespace "model_".
-
-You may be able to resolve this warning by setting `model_config['protected_namespaces'] = ()`.
-  warnings.warn(
-/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/pydantic/_internal/_fields.py:132: UserWarning: Field "model_run" in Body_import_model_run_api_v1_model_runs_import__post has conflict with protected namespace "model_".
-
-You may be able to resolve this warning by setting `model_config['protected_namespaces'] = ()`.
-  warnings.warn(
-2025-12-04 17:46:29,497 - uvicorn.error - INFO - Started server process [503231]
-INFO:     Started server process [503231]
-2025-12-04 17:46:29,497 - uvicorn.error - INFO - Waiting for application startup.
-INFO:     Waiting for application startup.
-INFO:Context impl SQLiteImpl.
-INFO:Will assume non-transactional DDL.
-
-[31m[1mWhombat is running in development mode![0m
-
-[32m[1mDatabase URL:[0m sqlite+aiosqlite:////home/okamoto/.local/share/whombat/whombat.db
-
-[32m[1mSettings:[0m {
-    "dev": true,
-    "debug": false,
-    "db_dialect": "sqlite",
-    "db_host": null,
-    "db_port": null,
-    "db_name": "/home/okamoto/.local/share/whombat/whombat.db",
-    "audio_dir": "/home/okamoto/NAS_A/whombat_data",
-    "host": "0.0.0.0",
-    "port": 5000,
-    "domain": "158.210.76.175",
-    "log_config": "logging.conf",
-    "log_to_file": true,
-    "log_to_stdout": false,
-    "log_dir": "logs",
-    "log_level": "info",
-    "cors_origins": [
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-        "http://158.210.76.175:3000"
-    ],
-    "open_on_startup": true,
-    "auth_cookie_secure": false,
-    "auth_cookie_samesite": "lax",
-    "metadata_dir": "/home/okamoto/.local/share/whombat/metadata"
-}
-    
-
-    [32m[2mWhombat is ready to go![0m
-
-    [32m[1m * Listening on http://0.0.0.0:5000/[0m
-
-    [33mPress Ctrl+C to exit.[0m
-    
-2025-12-04 17:46:29,775 - uvicorn.error - INFO - Application startup complete.
-INFO:     Application startup complete.
-INFO:     158.210.76.175:39068 - "GET / HTTP/1.1" 404 Not Found
-2025-12-04 17:46:29,930 - uvicorn.error - WARNING - Invalid HTTP request received.
-WARNING:  Invalid HTTP request received.
-2025-12-04 17:46:29,963 - uvicorn.error - WARNING - Invalid HTTP request received.
-WARNING:  Invalid HTTP request received.
-2025-12-04 17:46:32,273 - uvicorn.error - WARNING - WatchFiles detected changes in 'src/whombat/system/database.py'. Reloading...
-WARNING:  WatchFiles detected changes in 'src/whombat/system/database.py'. Reloading...
-2025-12-04 17:46:32,284 - uvicorn.error - INFO - Shutting down
-INFO:     Shutting down
-2025-12-04 17:46:32,385 - uvicorn.error - INFO - Waiting for application shutdown.
-INFO:     Waiting for application shutdown.
-2025-12-04 17:46:32,386 - uvicorn.error - INFO - Application shutdown complete.
-INFO:     Application shutdown complete.
-2025-12-04 17:46:32,386 - uvicorn.error - INFO - Finished server process [503231]
-INFO:     Finished server process [503231]
-/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/pydantic/_internal/_fields.py:132: UserWarning: Field "model_run" in Body_import_model_run_import__post has conflict with protected namespace "model_".
-
-You may be able to resolve this warning by setting `model_config['protected_namespaces'] = ()`.
-  warnings.warn(
-/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/pydantic/_internal/_fields.py:132: UserWarning: Field "model_run" in Body_import_model_run_api_v1_model_runs_import__post has conflict with protected namespace "model_".
-
-You may be able to resolve this warning by setting `model_config['protected_namespaces'] = ()`.
-  warnings.warn(
-2025-12-04 17:46:38,716 - uvicorn.error - WARNING - WatchFiles detected changes in 'src/whombat/system/database.py'. Reloading...
-WARNING:  WatchFiles detected changes in 'src/whombat/system/database.py'. Reloading...
-2025-12-04 17:46:38,747 - uvicorn.error - INFO - Started server process [503397]
-INFO:     Started server process [503397]
-2025-12-04 17:46:38,747 - uvicorn.error - INFO - Waiting for application startup.
-INFO:     Waiting for application startup.
-INFO:Context impl SQLiteImpl.
-INFO:Will assume non-transactional DDL.
-
-[31m[1mWhombat is running in development mode![0m
-
-[32m[1mDatabase URL:[0m sqlite+aiosqlite:////home/okamoto/.local/share/whombat/whombat.db
-
-[32m[1mSettings:[0m {
-    "dev": true,
-    "debug": false,
-    "db_dialect": "sqlite",
-    "db_host": null,
-    "db_port": null,
-    "db_name": "/home/okamoto/.local/share/whombat/whombat.db",
-    "audio_dir": "/home/okamoto/NAS_A/whombat_data",
-    "host": "0.0.0.0",
-    "port": 5000,
-    "domain": "158.210.76.175",
-    "log_config": "logging.conf",
-    "log_to_file": true,
-    "log_to_stdout": false,
-    "log_dir": "logs",
-    "log_level": "info",
-    "cors_origins": [
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-        "http://158.210.76.175:3000"
-    ],
-    "open_on_startup": true,
-    "auth_cookie_secure": false,
-    "auth_cookie_samesite": "lax",
-    "metadata_dir": "/home/okamoto/.local/share/whombat/metadata"
-}
-    
-
-    [32m[2mWhombat is ready to go![0m
-
-    [32m[1m * Listening on http://0.0.0.0:5000/[0m
-
-    [33mPress Ctrl+C to exit.[0m
-    
-2025-12-04 17:46:39,048 - uvicorn.error - INFO - Application startup complete.
-INFO:     Application startup complete.
-/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/pydantic/_internal/_fields.py:132: UserWarning: Field "model_run" in Body_import_model_run_import__post has conflict with protected namespace "model_".
-
-You may be able to resolve this warning by setting `model_config['protected_namespaces'] = ()`.
-  warnings.warn(
-/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/pydantic/_internal/_fields.py:132: UserWarning: Field "model_run" in Body_import_model_run_api_v1_model_runs_import__post has conflict with protected namespace "model_".
-
-You may be able to resolve this warning by setting `model_config['protected_namespaces'] = ()`.
-  warnings.warn(
-2025-12-04 17:46:45,455 - uvicorn.error - INFO - Started server process [503529]
-INFO:     Started server process [503529]
-2025-12-04 17:46:45,455 - uvicorn.error - INFO - Waiting for application startup.
-INFO:     Waiting for application startup.
-INFO:Context impl SQLiteImpl.
-INFO:Will assume non-transactional DDL.
-
-[31m[1mWhombat is running in development mode![0m
-
-[32m[1mDatabase URL:[0m sqlite+aiosqlite:////home/okamoto/.local/share/whombat/whombat.db
-
-[32m[1mSettings:[0m {
-    "dev": true,
-    "debug": false,
-    "db_dialect": "sqlite",
-    "db_host": null,
-    "db_port": null,
-    "db_name": "/home/okamoto/.local/share/whombat/whombat.db",
-    "audio_dir": "/home/okamoto/NAS_A/whombat_data",
-    "host": "0.0.0.0",
-    "port": 5000,
-    "domain": "158.210.76.175",
-    "log_config": "logging.conf",
-    "log_to_file": true,
-    "log_to_stdout": false,
-    "log_dir": "logs",
-    "log_level": "info",
-    "cors_origins": [
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-        "http://158.210.76.175:3000"
-    ],
-    "open_on_startup": true,
-    "auth_cookie_secure": false,
-    "auth_cookie_samesite": "lax",
-    "metadata_dir": "/home/okamoto/.local/share/whombat/metadata"
-}
-    
-
-    [32m[2mWhombat is ready to go![0m
-
-    [32m[1m * Listening on http://0.0.0.0:5000/[0m
-
-    [33mPress Ctrl+C to exit.[0m
-    
-2025-12-04 17:46:45,761 - uvicorn.error - INFO - Application startup complete.
-INFO:     Application startup complete.
-INFO:     158.210.76.175:39096 - "GET / HTTP/1.1" 404 Not Found
-INFO:     158.210.76.175:39096 - "GET / HTTP/1.1" 404 Not Found
-2025-12-04 17:46:45,845 - uvicorn.error - WARNING - Invalid HTTP request received.
-WARNING:  Invalid HTTP request received.
-2025-12-04 17:46:45,879 - uvicorn.error - WARNING - Invalid HTTP request received.
-WARNING:  Invalid HTTP request received.
-2025-12-04 17:46:45,890 - uvicorn.error - WARNING - Invalid HTTP request received.
-WARNING:  Invalid HTTP request received.
-2025-12-04 17:46:45,933 - uvicorn.error - WARNING - Invalid HTTP request received.
-WARNING:  Invalid HTTP request received.
-INFO:     158.210.76.175:45740 - "GET /api/v1/metadata/sites?project_id=prj-bobasm0b HTTP/1.1" 200 OK
-INFO:     158.210.76.175:45736 - "GET /api/v1/metadata/projects/prj-bobasm0b HTTP/1.1" 200 OK
-INFO:     158.210.76.175:45736 - "GET /api/v1/users/me HTTP/1.1" 200 OK
-INFO:     158.210.76.175:45736 - "GET /api/v1/metadata/projects/prj-bobasm0b HTTP/1.1" 200 OK
-INFO:     158.210.76.175:45736 - "GET /api/v1/metadata/sites?project_id=prj-bobasm0b HTTP/1.1" 200 OK
-2025-12-04 17:48:07,704 - uvicorn.error - WARNING - WatchFiles detected changes in '.venv/lib64/python3.12/site-packages/pgvector/sparsevec.py', '.venv/lib64/python3.12/site-packages/pgvector/vector.py', '.venv/lib64/python3.12/site-packages/asyncpg/transaction.py', '.venv/lib64/python3.12/site-packages/asyncpg/types.py', '.venv/lib64/python3.12/site-packages/asyncpg/cluster.py', '.venv/lib64/python3.12/site-packages/psycopg2/sql.py', '.venv/lib64/python3.12/site-packages/pgvector/halfvec.py', '.venv/lib64/python3.12/site-packages/asyncpg/introspection.py', '.venv/lib64/python3.12/site-packages/asyncpg/connect_utils.py', '.venv/lib64/python3.12/site-packages/psycopg2/pool.py', '.venv/lib64/python3.12/site-packages/asyncpg/_asyncio_compat.py', '.venv/lib64/python3.12/site-packages/asyncpg/compat.py', '.venv/lib64/python3.12/site-packages/psycopg2/_json.py', '.venv/lib64/python3.12/site-packages/asyncpg/utils.py', '.venv/lib64/python3.12/site-packages/psycopg2/tz.py', '.venv/lib64/python3.12/site-packages/asyncpg/pool.py', '.venv/lib64/python3.12/site-packages/asyncpg/connresource.py', '.venv/lib64/python3.12/site-packages/psycopg2/_range.py', '.venv/lib64/python3.12/site-packages/asyncpg/_testbase/fuzzer.py', '.venv/lib64/python3.12/site-packages/asyncpg/__init__.py', '.venv/lib64/python3.12/site-packages/pgvector/bit.py', '.venv/lib64/python3.12/site-packages/asyncpg/prepared_stmt.py', '.venv/lib64/python3.12/site-packages/asyncpg/cursor.py', '.venv/lib64/python3.12/site-packages/asyncpg/serverversion.py', '.venv/lib64/python3.12/site-packages/asyncpg/connection.py', '.venv/lib64/python3.12/site-packages/asyncpg/_version.py'. Reloading...
-WARNING:  WatchFiles detected changes in '.venv/lib64/python3.12/site-packages/pgvector/sparsevec.py', '.venv/lib64/python3.12/site-packages/pgvector/vector.py', '.venv/lib64/python3.12/site-packages/asyncpg/transaction.py', '.venv/lib64/python3.12/site-packages/asyncpg/types.py', '.venv/lib64/python3.12/site-packages/asyncpg/cluster.py', '.venv/lib64/python3.12/site-packages/psycopg2/sql.py', '.venv/lib64/python3.12/site-packages/pgvector/halfvec.py', '.venv/lib64/python3.12/site-packages/asyncpg/introspection.py', '.venv/lib64/python3.12/site-packages/asyncpg/connect_utils.py', '.venv/lib64/python3.12/site-packages/psycopg2/pool.py', '.venv/lib64/python3.12/site-packages/asyncpg/_asyncio_compat.py', '.venv/lib64/python3.12/site-packages/asyncpg/compat.py', '.venv/lib64/python3.12/site-packages/psycopg2/_json.py', '.venv/lib64/python3.12/site-packages/asyncpg/utils.py', '.venv/lib64/python3.12/site-packages/psycopg2/tz.py', '.venv/lib64/python3.12/site-packages/asyncpg/pool.py', '.venv/lib64/python3.12/site-packages/asyncpg/connresource.py', '.venv/lib64/python3.12/site-packages/psycopg2/_range.py', '.venv/lib64/python3.12/site-packages/asyncpg/_testbase/fuzzer.py', '.venv/lib64/python3.12/site-packages/asyncpg/__init__.py', '.venv/lib64/python3.12/site-packages/pgvector/bit.py', '.venv/lib64/python3.12/site-packages/asyncpg/prepared_stmt.py', '.venv/lib64/python3.12/site-packages/asyncpg/cursor.py', '.venv/lib64/python3.12/site-packages/asyncpg/serverversion.py', '.venv/lib64/python3.12/site-packages/asyncpg/connection.py', '.venv/lib64/python3.12/site-packages/asyncpg/_version.py'. Reloading...
-2025-12-04 17:48:07,728 - uvicorn.error - INFO - Shutting down
-INFO:     Shutting down
-2025-12-04 17:48:07,828 - uvicorn.error - INFO - Waiting for application shutdown.
-INFO:     Waiting for application shutdown.
-2025-12-04 17:48:07,829 - uvicorn.error - INFO - Application shutdown complete.
-INFO:     Application shutdown complete.
-2025-12-04 17:48:07,829 - uvicorn.error - INFO - Finished server process [503529]
-INFO:     Finished server process [503529]
-/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/pydantic/_internal/_fields.py:132: UserWarning: Field "model_run" in Body_import_model_run_import__post has conflict with protected namespace "model_".
-
-You may be able to resolve this warning by setting `model_config['protected_namespaces'] = ()`.
-  warnings.warn(
-/home/okamoto/Projects/whombat/back/.venv/lib/python3.12/site-packages/pydantic/_internal/_fields.py:132: UserWarning: Field "model_run" in Body_import_model_run_api_v1_model_runs_import__post has conflict with protected namespace "model_".
-
-You may be able to resolve this warning by setting `model_config['protected_namespaces'] = ()`.
-  warnings.warn(
-2025-12-04 17:48:14,405 - uvicorn.error - INFO - Started server process [504425]
-INFO:     Started server process [504425]
-2025-12-04 17:48:14,406 - uvicorn.error - INFO - Waiting for application startup.
-INFO:     Waiting for application startup.
-INFO:Context impl SQLiteImpl.
-INFO:Will assume non-transactional DDL.
-
-[31m[1mWhombat is running in development mode![0m
-
-[32m[1mDatabase URL:[0m sqlite+aiosqlite:////home/okamoto/.local/share/whombat/whombat.db
-
-[32m[1mSettings:[0m {
-    "dev": true,
-    "debug": false,
-    "db_dialect": "sqlite",
-    "db_host": null,
-    "db_port": null,
-    "db_name": "/home/okamoto/.local/share/whombat/whombat.db",
-    "audio_dir": "/home/okamoto/NAS_A/whombat_data",
-    "host": "0.0.0.0",
-    "port": 5000,
-    "domain": "158.210.76.175",
-    "log_config": "logging.conf",
-    "log_to_file": true,
-    "log_to_stdout": false,
-    "log_dir": "logs",
-    "log_level": "info",
-    "cors_origins": [
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-        "http://158.210.76.175:3000"
-    ],
-    "open_on_startup": true,
-    "auth_cookie_secure": false,
-    "auth_cookie_samesite": "lax",
-    "metadata_dir": "/home/okamoto/.local/share/whombat/metadata"
-}
-    
-
-    [32m[2mWhombat is ready to go![0m
-
-    [32m[1m * Listening on http://0.0.0.0:5000/[0m
-
-    [33mPress Ctrl+C to exit.[0m
-    
-2025-12-04 17:48:14,689 - uvicorn.error - INFO - Application startup complete.
-INFO:     Application startup complete.
-INFO:     158.210.76.175:49992 - "GET / HTTP/1.1" 404 Not Found
-2025-12-04 17:48:14,793 - uvicorn.error - WARNING - Invalid HTTP request received.
-WARNING:  Invalid HTTP request received.
-2025-12-04 17:48:14,828 - uvicorn.error - WARNING - Invalid HTTP request received.
-WARNING:  Invalid HTTP request received.
-INFO:     158.210.76.175:32832 - "GET /api/v1/metadata/sites?project_id=prj-bobasm0b HTTP/1.1" 200 OK
-INFO:     158.210.76.175:32830 - "GET /api/v1/metadata/projects/prj-bobasm0b HTTP/1.1" 200 OK
-INFO:     158.210.76.175:35898 - "GET /api/v1/users/me HTTP/1.1" 200 OK
-INFO:     158.210.76.175:35898 - "GET /api/v1/metadata/projects/prj-bobasm0b HTTP/1.1" 200 OK
-INFO:     158.210.76.175:55706 - "GET /api/v1/metadata/sites?project_id=prj-bobasm0b HTTP/1.1" 200 OK
-INFO:     158.210.76.175:55716 - "GET /api/v1/users/me HTTP/1.1" 200 OK
-INFO:     158.210.76.175:55716 - "GET /api/v1/metadata/projects/prj-bobasm0b HTTP/1.1" 200 OK
-INFO:     158.210.76.175:55716 - "GET /api/v1/metadata/sites?project_id=prj-bobasm0b HTTP/1.1" 200 OK
-INFO:     158.210.76.175:60792 - "GET /api/v1/users/me HTTP/1.1" 200 OK
-INFO:     158.210.76.175:60792 - "GET /api/v1/metadata/projects/prj-bobasm0b HTTP/1.1" 200 OK
-INFO:     158.210.76.175:60792 - "GET /api/v1/metadata/sites?project_id=prj-bobasm0b HTTP/1.1" 200 OK
-INFO:     158.210.76.175:49708 - "GET /api/v1/users/me HTTP/1.1" 200 OK
-INFO:     158.210.76.175:49708 - "GET /api/v1/metadata/projects/prj-bobasm0b HTTP/1.1" 200 OK
-INFO:     158.210.76.175:49708 - "GET /api/v1/datasets/?limit=1000&offset=0&project_id__eq=prj-bobasm0b HTTP/1.1" 200 OK
-INFO:     158.210.76.175:49708 - "GET /api/v1/metadata/sites?project_id=prj-bobasm0b HTTP/1.1" 200 OK
-INFO:     158.210.76.175:49708 - "GET /api/v1/datasets/?limit=100&offset=0 HTTP/1.1" 200 OK
-INFO:     158.210.76.175:49708 - "GET /api/v1/datasets/?limit=100&offset=0&primary_site_id__eq=test2 HTTP/1.1" 200 OK
-INFO:     158.210.76.175:49708 - "GET /api/v1/datasets/?limit=100&offset=0 HTTP/1.1" 200 OK
-INFO:     158.210.76.175:49710 - "GET /api/v1/datasets/?limit=100&offset=0&primary_site_id__eq=test2 HTTP/1.1" 200 OK
-INFO:     158.210.76.175:49708 - "GET /api/v1/users/me HTTP/1.1" 200 OK
-INFO:     158.210.76.175:49708 - "GET /api/v1/metadata/projects/prj-bobasm0b HTTP/1.1" 200 OK
-INFO:     158.210.76.175:49708 - "GET /api/v1/metadata/sites?project_id=prj-bobasm0b HTTP/1.1" 200 OK
+2025-12-05 16:19:50,992 - uvicorn.error - ERROR - Traceback (most recent call last):
+  File "/home/okamoto/Projects/echoroo/back/.venv/lib/python3.12/site-packages/alembic/script/base.py", line 254, in _catch_revision_errors
+    yield
+  File "/home/okamoto/Projects/echoroo/back/.venv/lib/python3.12/site-packages/alembic/script/base.py", line 501, in _stamp_revs
+    self.revision_map.filter_for_lineage(
+  File "/home/okamoto/Projects/echoroo/back/.venv/lib/python3.12/site-packages/alembic/script/revision.py", line 692, in filter_for_lineage
+    id_, branch_label = self._resolve_revision_number(check_against)
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/okamoto/Projects/echoroo/back/.venv/lib/python3.12/site-packages/alembic/script/revision.py", line 778, in _resolve_revision_number
+    current_head = self.get_current_head(branch_label)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/okamoto/Projects/echoroo/back/.venv/lib/python3.12/site-packages/alembic/script/revision.py", line 508, in get_current_head
+    raise MultipleHeads(
+alembic.script.revision.MultipleHeads: Multiple heads are present for given argument 'head'; a1b2c3d4e5f6, c7a3f2e8d901
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/okamoto/Projects/echoroo/back/.venv/lib/python3.12/site-packages/starlette/routing.py", line 693, in lifespan
+    async with self.lifespan_context(app) as maybe_state:
+  File "/usr/lib/python3.12/contextlib.py", line 210, in __aenter__
+    return await anext(self.gen)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/okamoto/Projects/echoroo/back/.venv/lib/python3.12/site-packages/fastapi/routing.py", line 133, in merged_lifespan
+    async with original_context(app) as maybe_original_state:
+  File "/usr/lib/python3.12/contextlib.py", line 210, in __aenter__
+    return await anext(self.gen)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/okamoto/Projects/echoroo/back/src/echoroo/system/app/lifespan.py", line 14, in lifespan
+    await echoroo_init(settings)
+  File "/home/okamoto/Projects/echoroo/back/src/echoroo/system/boot.py", line 95, in echoroo_init
+    await init_database(settings)
+  File "/home/okamoto/Projects/echoroo/back/src/echoroo/system/database.py", line 341, in init_database
+    await conn.run_sync(create_or_update_db, cfg)
+  File "/home/okamoto/Projects/echoroo/back/.venv/lib/python3.12/site-packages/sqlalchemy/ext/asyncio/engine.py", line 886, in run_sync
+    return await greenlet_spawn(
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/okamoto/Projects/echoroo/back/.venv/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 203, in greenlet_spawn
+    result = context.switch(value)
+             ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/okamoto/Projects/echoroo/back/src/echoroo/system/database.py", line 272, in create_or_update_db
+    create_db(conn, cfg)
+  File "/home/okamoto/Projects/echoroo/back/src/echoroo/system/database.py", line 258, in create_db
+    stamp(cfg, "head")
+  File "/home/okamoto/Projects/echoroo/back/.venv/lib/python3.12/site-packages/alembic/command.py", line 699, in stamp
+    script.run_env()
+  File "/home/okamoto/Projects/echoroo/back/.venv/lib/python3.12/site-packages/alembic/script/base.py", line 586, in run_env
+    util.load_python_file(self.dir, "env.py")
+  File "/home/okamoto/Projects/echoroo/back/.venv/lib/python3.12/site-packages/alembic/util/pyfiles.py", line 95, in load_python_file
+    module = load_module_py(module_id, path)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/okamoto/Projects/echoroo/back/.venv/lib/python3.12/site-packages/alembic/util/pyfiles.py", line 113, in load_module_py
+    spec.loader.exec_module(module)  # type: ignore
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<frozen importlib._bootstrap_external>", line 995, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "/home/okamoto/Projects/echoroo/back/src/echoroo/migrations/env.py", line 139, in <module>
+    run_migrations_online()
+  File "/home/okamoto/Projects/echoroo/back/src/echoroo/migrations/env.py", line 133, in run_migrations_online
+    run_migrations()
+  File "/home/okamoto/Projects/echoroo/back/src/echoroo/migrations/env.py", line 106, in run_migrations
+    do_run_migrations(connection)
+  File "/home/okamoto/Projects/echoroo/back/src/echoroo/migrations/env.py", line 93, in do_run_migrations
+    context.run_migrations()
+  File "<string>", line 8, in run_migrations
+  File "/home/okamoto/Projects/echoroo/back/.venv/lib/python3.12/site-packages/alembic/runtime/environment.py", line 946, in run_migrations
+    self.get_context().run_migrations(**kw)
+  File "/home/okamoto/Projects/echoroo/back/.venv/lib/python3.12/site-packages/alembic/runtime/migration.py", line 616, in run_migrations
+    for step in self._migrations_fn(heads, self):
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/okamoto/Projects/echoroo/back/.venv/lib/python3.12/site-packages/alembic/command.py", line 687, in do_stamp
+    return script._stamp_revs(util.to_tuple(destination_revs), rev)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/okamoto/Projects/echoroo/back/.venv/lib/python3.12/site-packages/alembic/script/base.py", line 486, in _stamp_revs
+    with self._catch_revision_errors(
+  File "/usr/lib/python3.12/contextlib.py", line 158, in __exit__
+    self.gen.throw(value)
+  File "/home/okamoto/Projects/echoroo/back/.venv/lib/python3.12/site-packages/alembic/script/base.py", line 280, in _catch_revision_errors
+    raise util.CommandError(multiple_heads) from mh
+alembic.util.exc.CommandError: Multiple heads are present; please specify a single target revision
+
+ERROR:    Traceback (most recent call last):
+  File "/home/okamoto/Projects/echoroo/back/.venv/lib/python3.12/site-packages/alembic/script/base.py", line 254, in _catch_revision_errors
+    yield
+  File "/home/okamoto/Projects/echoroo/back/.venv/lib/python3.12/site-packages/alembic/script/base.py", line 501, in _stamp_revs
+    self.revision_map.filter_for_lineage(
+  File "/home/okamoto/Projects/echoroo/back/.venv/lib/python3.12/site-packages/alembic/script/revision.py", line 692, in filter_for_lineage
+    id_, branch_label = self._resolve_revision_number(check_against)
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/okamoto/Projects/echoroo/back/.venv/lib/python3.12/site-packages/alembic/script/revision.py", line 778, in _resolve_revision_number
+    current_head = self.get_current_head(branch_label)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/okamoto/Projects/echoroo/back/.venv/lib/python3.12/site-packages/alembic/script/revision.py", line 508, in get_current_head
+    raise MultipleHeads(
+alembic.script.revision.MultipleHeads: Multiple heads are present for given argument 'head'; a1b2c3d4e5f6, c7a3f2e8d901
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/okamoto/Projects/echoroo/back/.venv/lib/python3.12/site-packages/starlette/routing.py", line 693, in lifespan
+    async with self.lifespan_context(app) as maybe_state:
+  File "/usr/lib/python3.12/contextlib.py", line 210, in __aenter__
+    return await anext(self.gen)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/okamoto/Projects/echoroo/back/.venv/lib/python3.12/site-packages/fastapi/routing.py", line 133, in merged_lifespan
+    async with original_context(app) as maybe_original_state:
+  File "/usr/lib/python3.12/contextlib.py", line 210, in __aenter__
+    return await anext(self.gen)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/okamoto/Projects/echoroo/back/src/echoroo/system/app/lifespan.py", line 14, in lifespan
+    await echoroo_init(settings)
+  File "/home/okamoto/Projects/echoroo/back/src/echoroo/system/boot.py", line 95, in echoroo_init
+    await init_database(settings)
+  File "/home/okamoto/Projects/echoroo/back/src/echoroo/system/database.py", line 341, in init_database
+    await conn.run_sync(create_or_update_db, cfg)
+  File "/home/okamoto/Projects/echoroo/back/.venv/lib/python3.12/site-packages/sqlalchemy/ext/asyncio/engine.py", line 886, in run_sync
+    return await greenlet_spawn(
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/okamoto/Projects/echoroo/back/.venv/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 203, in greenlet_spawn
+    result = context.switch(value)
+             ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/okamoto/Projects/echoroo/back/src/echoroo/system/database.py", line 272, in create_or_update_db
+    create_db(conn, cfg)
+  File "/home/okamoto/Projects/echoroo/back/src/echoroo/system/database.py", line 258, in create_db
+    stamp(cfg, "head")
+  File "/home/okamoto/Projects/echoroo/back/.venv/lib/python3.12/site-packages/alembic/command.py", line 699, in stamp
+    script.run_env()
+  File "/home/okamoto/Projects/echoroo/back/.venv/lib/python3.12/site-packages/alembic/script/base.py", line 586, in run_env
+    util.load_python_file(self.dir, "env.py")
+  File "/home/okamoto/Projects/echoroo/back/.venv/lib/python3.12/site-packages/alembic/util/pyfiles.py", line 95, in load_python_file
+    module = load_module_py(module_id, path)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/okamoto/Projects/echoroo/back/.venv/lib/python3.12/site-packages/alembic/util/pyfiles.py", line 113, in load_module_py
+    spec.loader.exec_module(module)  # type: ignore
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<frozen importlib._bootstrap_external>", line 995, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "/home/okamoto/Projects/echoroo/back/src/echoroo/migrations/env.py", line 139, in <module>
+    run_migrations_online()
+  File "/home/okamoto/Projects/echoroo/back/src/echoroo/migrations/env.py", line 133, in run_migrations_online
+    run_migrations()
+  File "/home/okamoto/Projects/echoroo/back/src/echoroo/migrations/env.py", line 106, in run_migrations
+    do_run_migrations(connection)
+  File "/home/okamoto/Projects/echoroo/back/src/echoroo/migrations/env.py", line 93, in do_run_migrations
+    context.run_migrations()
+  File "<string>", line 8, in run_migrations
+  File "/home/okamoto/Projects/echoroo/back/.venv/lib/python3.12/site-packages/alembic/runtime/environment.py", line 946, in run_migrations
+    self.get_context().run_migrations(**kw)
+  File "/home/okamoto/Projects/echoroo/back/.venv/lib/python3.12/site-packages/alembic/runtime/migration.py", line 616, in run_migrations
+    for step in self._migrations_fn(heads, self):
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/okamoto/Projects/echoroo/back/.venv/lib/python3.12/site-packages/alembic/command.py", line 687, in do_stamp
+    return script._stamp_revs(util.to_tuple(destination_revs), rev)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/okamoto/Projects/echoroo/back/.venv/lib/python3.12/site-packages/alembic/script/base.py", line 486, in _stamp_revs
+    with self._catch_revision_errors(
+  File "/usr/lib/python3.12/contextlib.py", line 158, in __exit__
+    self.gen.throw(value)
+  File "/home/okamoto/Projects/echoroo/back/.venv/lib/python3.12/site-packages/alembic/script/base.py", line 280, in _catch_revision_errors
+    raise util.CommandError(multiple_heads) from mh
+alembic.util.exc.CommandError: Multiple heads are present; please specify a single target revision
+
+2025-12-05 16:19:50,992 - uvicorn.error - ERROR - Application startup failed. Exiting.
+ERROR:    Application startup failed. Exiting.
+2025-12-05 16:24:30,364 - uvicorn.error - INFO - Stopping reloader process [701118]
+INFO:     Stopping reloader process [701118]

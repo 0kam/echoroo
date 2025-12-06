@@ -5,6 +5,18 @@
 /* Import Leaflet CSS globally to avoid issues with dynamic imports */
 @import 'leaflet/dist/leaflet.css';
 
+/* Limit Leaflet z-index to prevent it from appearing above modals */
+.leaflet-pane,
+.leaflet-control,
+.leaflet-top,
+.leaflet-bottom {
+  z-index: auto !important;
+}
+
+.leaflet-container {
+  z-index: 0;
+}
+
 .remove-arrow::-webkit-inner-spin-button,
 .remove-arrow::-webkit-outer-spin-button {
   -webkit-appearance: none;

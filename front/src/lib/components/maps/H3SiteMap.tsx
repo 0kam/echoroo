@@ -1,13 +1,14 @@
 "use client";
 
 import L from "leaflet";
-import { Fragment, useMemo } from "react";
+import { Fragment, useEffect, useMemo } from "react";
 import {
   MapContainer,
   Marker,
   Polygon,
   TileLayer,
   Tooltip,
+  useMap,
 } from "react-leaflet";
 
 import MapViewport from "@/lib/components/maps/MapViewport";
@@ -46,6 +47,35 @@ function getMarkerIcon(color: "blue" | "green"): L.Icon {
 
   iconCache.set(color, icon);
   return icon;
+}
+
+/**
+ * Component to handle map resize when container becomes visible
+ */
+function MapResizeHandler() {
+  const map = useMap();
+
+  useEffect(() => {
+    const container = map.getContainer();
+
+    // Invalidate size after mount
+    const timeoutId = setTimeout(() => {
+      map.invalidateSize();
+    }, 100);
+
+    // Use ResizeObserver to detect container resize
+    const resizeObserver = new ResizeObserver(() => {
+      map.invalidateSize();
+    });
+    resizeObserver.observe(container);
+
+    return () => {
+      resizeObserver.disconnect();
+      clearTimeout(timeoutId);
+    };
+  }, [map]);
+
+  return null;
 }
 
 export default function H3SiteMap({
@@ -92,6 +122,7 @@ export default function H3SiteMap({
         scrollWheelZoom={false}
         style={{ height }}
       >
+        <MapResizeHandler />
         <MapViewport
           center={initialCenter}
           zoom={mapZoom}

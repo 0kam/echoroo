@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { useMutation } from "@tanstack/react-query";
 import toast from "react-hot-toast";
 
@@ -25,10 +26,13 @@ export default function useDatasetAnnotationProjects({
   pageSize?: number;
   onCreateAnnotationProject?: (annotationProject: AnnotationProject) => void;
 }) {
+  const defaults = useMemo(
+    () => ({ dataset__eq: dataset.uuid }),
+    [dataset.uuid],
+  );
+
   const filter = useFilter<AnnotationProjectFilter>({
-    defaults: {
-      dataset__eq: dataset.uuid,
-    },
+    defaults,
     fixed: _fixed,
   });
 

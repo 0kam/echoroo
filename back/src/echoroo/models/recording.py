@@ -137,6 +137,7 @@ class Recording(Base):
         sa.Enum(
             DatetimeParseStatus,
             name="recording_datetime_parse_status",
+            values_callable=lambda x: [e.value for e in x],
         ),
         nullable=False,
         default=DatetimeParseStatus.PENDING,

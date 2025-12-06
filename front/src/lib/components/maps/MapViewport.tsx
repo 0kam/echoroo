@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { useMap } from "react-leaflet";
 import type { LatLngExpression } from "leaflet";
 
@@ -13,6 +13,17 @@ export interface MapViewportProps {
   animate?: boolean;
 }
 
+/** Helper to normalize LatLngExpression to [lat, lng] tuple */
+function normalizeCenter(center: LatLngExpression): [number, number] {
+  if (Array.isArray(center)) {
+    return [center[0], center[1]];
+  }
+  if ("lat" in center && "lng" in center) {
+    return [center.lat, center.lng];
+  }
+  return [0, 0];
+}
+
 /**
  * A utility component that controls the map viewport.
  * Must be used as a child of MapContainer.
@@ -23,16 +34,27 @@ export default function MapViewport({
   animate = true,
 }: MapViewportProps) {
   const map = useMap();
+  const isInitializedRef = useRef(false);
+
+  // Normalize center to primitives to avoid object identity issues
+  const [lat, lng] = useMemo(() => normalizeCenter(center), [center]);
 
   useEffect(() => {
     if (!map) return;
 
-    // Wait for map to be ready
-    map.whenReady(() => {
-      const targetZoom = zoom ?? map.getZoom();
-      map.setView(center, targetZoom, { animate });
-    });
-  }, [center, zoom, animate, map]);
+    const targetZoom = zoom ?? map.getZoom();
+
+    if (!isInitializedRef.current) {
+      // Initial setup - wait for map to be ready
+      map.whenReady(() => {
+        map.setView([lat, lng], targetZoom, { animate: false });
+        isInitializedRef.current = true;
+      });
+    } else {
+      // Subsequent updates
+      map.setView([lat, lng], targetZoom, { animate });
+    }
+  }, [lat, lng, zoom, animate, map]);
 
   return null;
 }

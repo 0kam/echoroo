@@ -115,26 +115,37 @@ def get_database_url(
     """
     db_url = settings.db_url
 
-    if settings.dev and db_url is None:
+    # If explicit db_url is provided, use it
+    if db_url:
+        return make_url(db_url)
+
+    # If db_host is configured, build URL from individual settings
+    # This takes precedence over the dev mode SQLite fallback
+    if settings.db_host:
+        url = URL.create(
+            drivername=settings.db_dialect,
+            username=settings.db_username,
+            password=settings.db_password,
+            host=settings.db_host,
+            port=settings.db_port,
+            database=settings.db_name,
+        )
+        return validate_database_url(url, is_async=is_async)
+
+    # Fall back to SQLite for local development without database config
+    if settings.dev:
         db_url = (
             "sqlite+aiosqlite:///echoroo.db"
             if is_async
             else "sqlite:///echoroo.db"
         )
-
-    if db_url:
         return make_url(db_url)
 
-    url = URL.create(
-        drivername=settings.db_dialect,
-        username=settings.db_username,
-        password=settings.db_password,
-        host=settings.db_host,
-        port=settings.db_port,
-        database=settings.db_name,
+    # This should not be reached if configuration is correct
+    raise ValueError(
+        "Database configuration incomplete. Either set ECHOROO_DB_URL "
+        "or configure ECHOROO_DB_HOST with other database settings."
     )
-
-    return validate_database_url(url, is_async=is_async)
 
 
 def create_async_db_engine(database_url: str | URL) -> AsyncEngine:

@@ -1,16 +1,17 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   MapContainer,
   Marker,
   Polygon,
   TileLayer,
   Tooltip,
+  useMap,
   useMapEvents,
 } from "react-leaflet";
 import type { Map as LeafletMap } from "leaflet";
-import { latLngToCell, cellToLatLng, cellToBoundary } from "h3-js";
+import { latLngToCell, cellToLatLng, cellToBoundary, isValidCell } from "h3-js";
 import L from "leaflet";
 
 type H3HexPickerProps = {
@@ -36,6 +37,37 @@ const pickerMarkerIcon = new L.Icon({
   shadowSize: [41, 41],
 });
 
+/**
+ * Component to handle map resize when container becomes visible
+ */
+function MapResizeHandler() {
+  const map = useMap();
+
+  useEffect(() => {
+    // Use ResizeObserver to detect when the map container becomes visible or resizes
+    const container = map.getContainer();
+    const resizeObserver = new ResizeObserver(() => {
+      // Small delay to ensure the container has finished animating
+      setTimeout(() => {
+        map.invalidateSize();
+      }, 100);
+    });
+    resizeObserver.observe(container);
+
+    // Also invalidate on initial mount after a short delay
+    const timeoutId = setTimeout(() => {
+      map.invalidateSize();
+    }, 300);
+
+    return () => {
+      resizeObserver.disconnect();
+      clearTimeout(timeoutId);
+    };
+  }, [map]);
+
+  return null;
+}
+
 function HexLayer({
   value,
   onChange,
@@ -50,20 +82,44 @@ function HexLayer({
   const map = useMapEvents({
     click(event) {
       try {
-        const next = latLngToCell(event.latlng.lat, event.latlng.lng, resolution);
-        onChange?.(next);
+        const { lat, lng } = event.latlng;
+        // Validate coordinates before generating H3 cell
+        if (
+          lat == null ||
+          lng == null ||
+          !Number.isFinite(lat) ||
+          !Number.isFinite(lng)
+        ) {
+          console.error("[H3HexPicker] Invalid coordinates:", { lat, lng });
+          return;
+        }
+        const next = latLngToCell(lat, lng, resolution);
+        if (next && isValidCell(next)) {
+          onChange?.(next);
+        } else {
+          console.error("[H3HexPicker] Generated invalid H3 cell:", next);
+        }
       } catch (error) {
         console.error("[H3HexPicker] Error generating H3 cell:", error);
       }
     },
     mousemove(event) {
       try {
-        const cell = latLngToCell(event.latlng.lat, event.latlng.lng, resolution);
+        const { lat, lng } = event.latlng;
+        if (
+          lat == null ||
+          lng == null ||
+          !Number.isFinite(lat) ||
+          !Number.isFinite(lng)
+        ) {
+          return;
+        }
+        const cell = latLngToCell(lat, lng, resolution);
         if (cell !== hoverCell) {
           setHoverCell(cell);
         }
       } catch (error) {
-        console.error("[H3HexPicker] Error on mousemove:", error);
+        // Silently ignore mousemove errors
       }
     },
     mouseout() {
@@ -72,13 +128,17 @@ function HexLayer({
   });
 
   useEffect(() => {
-    if (!value) return;
-    const [lat, lng] = cellToLatLng(value);
-    const targetZoom = Math.max(map.getZoom(), 10);
-    (map as LeafletMap).flyTo({ lat, lng }, targetZoom, {
-      animate: true,
-      duration: 0.4,
-    });
+    if (!value || !isValidCell(value)) return;
+    try {
+      const [lat, lng] = cellToLatLng(value);
+      const targetZoom = Math.max(map.getZoom(), 10);
+      (map as LeafletMap).flyTo({ lat, lng }, targetZoom, {
+        animate: true,
+        duration: 0.4,
+      });
+    } catch (error) {
+      console.error("[H3HexPicker] Error flying to cell:", error);
+    }
   }, [value, map]);
 
   // Render hover preview
@@ -172,7 +232,15 @@ export default function H3HexPicker({
   onResolutionChange,
   height = 480,
 }: H3HexPickerProps) {
-  const center = value ? (cellToLatLng(value) as [number, number]) : DEFAULT_CENTER;
+  // Safely compute center - use default if value is invalid
+  let center: [number, number] = DEFAULT_CENTER;
+  if (value && isValidCell(value)) {
+    try {
+      center = cellToLatLng(value) as [number, number];
+    } catch {
+      // Fall back to default center
+    }
+  }
 
 
   return (
@@ -206,8 +274,8 @@ export default function H3HexPicker({
           zoom={value ? 10 : DEFAULT_ZOOM}
           scrollWheelZoom={true}
           style={{ height }}
-
         >
+          <MapResizeHandler />
           <TileLayer
             attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
             url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
