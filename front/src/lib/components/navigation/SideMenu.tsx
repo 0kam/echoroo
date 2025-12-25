@@ -17,7 +17,7 @@ import {
   EchorooIcon,
   UsersIcon,
 } from "@/lib/components/icons";
-import { FolderOpen, Search, Settings } from "lucide-react";
+import { Bot, FolderOpen, Search } from "lucide-react";
 import { HorizontalDivider } from "@/lib/components/layouts/Divider";
 import Button from "@/lib/components/ui/Button";
 import Link from "@/lib/components/ui/Link";
@@ -104,6 +104,15 @@ function MainNavigation({ pathname }: { pathname?: string }) {
           href="/projects"
         >
           <FolderOpen className="w-6 h-6" />
+        </SideMenuLink>
+      </li>
+      <li className="px-3">
+        <SideMenuLink
+          isActive={pathname?.startsWith("/ml-projects")}
+          tooltip={"ML Projects"}
+          href="/ml-projects"
+        >
+          <Bot className="w-6 h-6" />
         </SideMenuLink>
       </li>
       <li className="px-3">

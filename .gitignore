@@ -16,6 +16,7 @@ front/.env
 
 # log files
 logs/
+back/temp/
 
 # Coding assistant files
 CLAUDE.md

@@ -220,6 +220,18 @@ PLAN.MD に従った、プロジェクトメンバーシップベースの新し
   - Success rate (e.g., "1234/1250 files parsed successfully")
   - "Parse Datetime" button (opens datetime parser modal, project manager only)
   - Error list link (if failures exist, shows failed files)
+- **Run foundation models section** (replaces legacy Species Detection page):
+  - Two-column card layout placed beneath datetime parsing
+  - **Executed Models panel**:
+    - Lists each foundation model entry (BirdNET v2.4, Perch v2.0, future versions) with status badge (`Not run`, `Last run <timestamp>`, `Running`)
+    - Action menu per row: View last run, Download outputs, Rerun model
+  - **Species summary panel**:
+    - Table of recent detections aggregated from the latest run (per model)
+    - Columns: GBIF scientific name, BirdNET-provided Japanese common name (if available), clip count, avg confidence
+    - Tag badges reuse the annotation tag component keyed by `gbif_taxon_id`
+    - "Create annotation project from this result" button opens the existing AP wizard seeded with the selected run outputs
+  - Footer CTA bar: "Run foundation models" primary button (project manager only) plus helper text about runtime and shared compute budgeting
+  - Run history link navigates to an inline drawer showing all previous runs with statuses and download buttons
 - Related APs list
 - "Edit Dataset" button (project manager only)
 - "Create Annotation Project" button (project manager only)

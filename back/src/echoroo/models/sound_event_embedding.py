@@ -67,10 +67,10 @@ class SoundEventEmbedding(Base):
     """The database id of the model run that generated this embedding."""
 
     embedding: orm.Mapped[list[float]] = orm.mapped_column(
-        Vector(1536),
+        Vector(),
         nullable=False,
     )
-    """The embedding vector (1536 dimensions for Perch 2.0 compatibility)."""
+    """The embedding vector (dynamic dimensions - 1024 for BirdNET, 1536 for Perch)."""
 
     # Relations
     sound_event: orm.Mapped[SoundEvent] = orm.relationship(

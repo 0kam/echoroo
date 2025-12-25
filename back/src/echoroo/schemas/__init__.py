@@ -92,6 +92,15 @@ from echoroo.schemas.features import (
     FeatureNameCreate,
     FeatureNameUpdate,
 )
+from echoroo.schemas.foundation_models import (
+    DatasetFoundationModelSummary,
+    FoundationModel,
+    FoundationModelRun,
+    FoundationModelRunCreate,
+    FoundationModelRunProgress,
+    FoundationModelRunSpecies,
+    FoundationModelRunStatus,
+)
 from echoroo.schemas.inference import (
     InferenceConfig,
     InferenceJob,
@@ -181,6 +190,72 @@ from echoroo.schemas.users import (
     UserCreate,
     UserUpdate,
 )
+from echoroo.schemas.ml_projects import (
+    MLProject,
+    MLProjectCreate,
+    MLProjectStatus,
+    MLProjectStats,
+    MLProjectUpdate,
+)
+from echoroo.schemas.reference_sounds import (
+    ReferenceSound,
+    ReferenceSoundCreate,
+    ReferenceSoundFromClip,
+    ReferenceSoundFromXenoCanto,
+    ReferenceSoundSource,
+    ReferenceSoundUpdate,
+)
+from echoroo.schemas.search_sessions import (
+    BulkLabelRequest,
+    SearchProgress,
+    SearchResult,
+    SearchResultLabel,
+    SearchResultLabelUpdate,
+    SearchSession,
+    SearchSessionCreate,
+)
+from echoroo.schemas.custom_models import (
+    CustomModel,
+    CustomModelCreate,
+    CustomModelMetrics,
+    CustomModelStatus,
+    CustomModelTrainingConfig,
+    CustomModelType,
+    TrainingProgress,
+)
+from echoroo.schemas.inference_batches import (
+    InferenceBatch,
+    InferenceBatchCreate,
+    InferenceBatchStats,
+    InferenceBatchStatus,
+    InferencePrediction,
+    InferencePredictionReview,
+    InferencePredictionReviewStatus,
+    InferenceProgress,
+)
+from echoroo.schemas.species_detection import (
+    ConversionResult,
+    DetectionResult,
+    DetectionReview,
+    DetectionReviewStatus,
+    DetectionReviewUpdate,
+    DetectionSummary,
+    RecordingFilter,
+    SpeciesDetectionJob,
+    SpeciesDetectionJobCreate,
+    SpeciesDetectionJobProgress,
+    SpeciesDetectionJobStatus,
+    SpeciesDetectionJobUpdate,
+    SpeciesSummary,
+)
+from echoroo.schemas.species_filters import (
+    SpeciesFilter,
+    SpeciesFilterApplication,
+    SpeciesFilterApplicationCreate,
+    SpeciesFilterApplicationProgress,
+    SpeciesFilterApplicationStatus,
+    SpeciesFilterType,
+)
 
 __all__ = [
     "AmplitudeParameters",
@@ -224,6 +299,7 @@ __all__ = [
     "DatasetRecordingHeatmapCell",
     "DatasetRecordingSite",
     "DatasetRecordingTimelineSegment",
+    "DatasetFoundationModelSummary",
     "DatasetOverviewStats",
     "DatasetUpdate",
     "Evaluation",
@@ -244,6 +320,12 @@ __all__ = [
     "FeatureName",
     "FeatureNameCreate",
     "FeatureNameUpdate",
+    "FoundationModel",
+    "FoundationModelRun",
+    "FoundationModelRunCreate",
+    "FoundationModelRunProgress",
+    "FoundationModelRunSpecies",
+    "FoundationModelRunStatus",
     "FileState",
     "InferenceConfig",
     "InferenceJob",
@@ -320,4 +402,63 @@ __all__ = [
     "UserAdminUpdate",
     "UserUpdate",
     "Window",
+    # ML Projects
+    "MLProject",
+    "MLProjectCreate",
+    "MLProjectStatus",
+    "MLProjectStats",
+    "MLProjectUpdate",
+    # Reference Sounds
+    "ReferenceSound",
+    "ReferenceSoundCreate",
+    "ReferenceSoundFromClip",
+    "ReferenceSoundFromXenoCanto",
+    "ReferenceSoundSource",
+    "ReferenceSoundUpdate",
+    # Search Sessions
+    "BulkLabelRequest",
+    "SearchProgress",
+    "SearchResult",
+    "SearchResultLabel",
+    "SearchResultLabelUpdate",
+    "SearchSession",
+    "SearchSessionCreate",
+    # Custom Models
+    "CustomModel",
+    "CustomModelCreate",
+    "CustomModelMetrics",
+    "CustomModelStatus",
+    "CustomModelTrainingConfig",
+    "CustomModelType",
+    "TrainingProgress",
+    # Inference Batches
+    "InferenceBatch",
+    "InferenceBatchCreate",
+    "InferenceBatchStats",
+    "InferenceBatchStatus",
+    "InferencePrediction",
+    "InferencePredictionReview",
+    "InferencePredictionReviewStatus",
+    "InferenceProgress",
+    # Species Detection
+    "ConversionResult",
+    "DetectionResult",
+    "DetectionReview",
+    "DetectionReviewStatus",
+    "DetectionReviewUpdate",
+    "DetectionSummary",
+    "RecordingFilter",
+    "SpeciesDetectionJob",
+    "SpeciesDetectionJobCreate",
+    "SpeciesDetectionJobProgress",
+    "SpeciesDetectionJobStatus",
+    "SpeciesDetectionJobUpdate",
+    "SpeciesSummary",
+    # Species Filters
+    "SpeciesFilter",
+    "SpeciesFilterApplication",
+    "SpeciesFilterApplicationCreate",
+    "SpeciesFilterApplicationProgress",
+    "SpeciesFilterApplicationStatus",
+    "SpeciesFilterType",
 ]

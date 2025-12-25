@@ -13,6 +13,8 @@ export default function DatasetDetail(props: {
   DatasetOverview: JSX.Element;
   /** The component for displaying dataset metadata summary. */
   DatasetMetadataSummary?: JSX.Element;
+  /** The component for displaying foundation models. */
+  DatasetFoundationModelsSection?: JSX.Element;
   /** The component for displaying the dataset notes summary. */
   DatasetNotesSummary: JSX.Element;
   /** The component for displaying the annotation projects summary. */
@@ -27,6 +29,7 @@ export default function DatasetDetail(props: {
           <div className="col-span-2 space-y-6">
             {props.DatasetOverview}
             {props.DatasetMetadataSummary ?? null}
+            {props.DatasetFoundationModelsSection ?? null}
           </div>
           <div className="col-span-1">
             {props.DatasetNotesSummary}

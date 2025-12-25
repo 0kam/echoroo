@@ -32,3 +32,5 @@ export type * from "./user_run";
 export type * from "./viewport";
 export type * from "./metadata";
 export type * from "./inference";
+export type * from "./ml_project";
+export type * from "./foundation_model";

@@ -3,6 +3,7 @@ import { z } from "zod";
 import { UserSchema } from "./users";
 
 export const TagSchema = z.object({
+  id: z.number().int().optional(),
   key: z.string(),
   value: z.string(),
   canonical_name: z.string().optional(),

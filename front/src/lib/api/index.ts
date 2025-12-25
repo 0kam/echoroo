@@ -33,6 +33,12 @@ import { registerTagAPI } from "./tags";
 import { registerUserAPI } from "./user";
 import { registerUserRunAPI } from "./user_runs";
 import { registerInferenceAPI } from "./inference";
+import { registerMLProjectAPI } from "./ml_projects";
+import { registerReferenceSoundAPI } from "./reference_sounds";
+import { registerSearchSessionAPI } from "./search_sessions";
+import { registerCustomModelAPI } from "./custom_models";
+import { registerInferenceBatchAPI } from "./inference_batches";
+import { registerFoundationModelAPI } from "./foundation_models";
 
 type APIConfig = {
   baseURL: string;
@@ -81,5 +87,11 @@ export default function createAPI(config: APIConfig = DEFAULT_CONFIG) {
     evaluations: registerEvaluationAPI(instance),
     species: registerSpeciesAPI(instance),
     inference: registerInferenceAPI(instance),
+    mlProjects: registerMLProjectAPI(instance),
+    referenceSounds: registerReferenceSoundAPI(instance),
+    searchSessions: registerSearchSessionAPI(instance),
+    customModels: registerCustomModelAPI(instance),
+    inferenceBatches: registerInferenceBatchAPI(instance),
+    foundationModels: registerFoundationModelAPI(instance),
   } as const;
 }

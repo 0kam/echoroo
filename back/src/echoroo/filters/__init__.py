@@ -14,6 +14,7 @@ from echoroo.filters.clip_evaluations import ClipEvaluationFilter
 from echoroo.filters.clip_predictions import ClipPredictionFilter
 from echoroo.filters.clips import ClipFilter
 from echoroo.filters.datasets import DatasetFilter
+from echoroo.filters.ml_projects import MLProjectFilter
 from echoroo.filters.evaluation_sets import EvaluationSetFilter
 from echoroo.filters.evaluations import EvaluationFilter
 from echoroo.filters.feature_names import FeatureNameFilter
@@ -49,6 +50,7 @@ __all__ = [
     "EvaluationFilter",
     "FeatureNameFilter",
     "Filter",
+    "MLProjectFilter",
     "ModelRunFilter",
     "NoteFilter",
     "RecordingFilter",

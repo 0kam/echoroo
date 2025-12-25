@@ -41,7 +41,7 @@ class SoundEventPrediction(Base):
         ),
     )
 
-    id: orm.Mapped[int] = orm.mapped_column(primary_key=True)
+    id: orm.Mapped[int] = orm.mapped_column(primary_key=True, init=False)
     """The database id of the sound event prediction."""
 
     uuid: orm.Mapped[UUID] = orm.mapped_column(

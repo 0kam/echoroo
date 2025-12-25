@@ -41,7 +41,7 @@ const optionalNullableTrimmedString = z
 
 export const DatasetSchema = z.object({
   uuid: z.string().uuid(),
-  id: z.number().int().optional(),
+  id: z.number().int(),
   name: z.string(),
   audio_dir: z.string(),
   description: z.string().nullable().optional(),

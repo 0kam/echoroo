@@ -11,6 +11,7 @@ from echoroo.api.datasets import datasets
 from echoroo.api.evaluation_sets import evaluation_sets
 from echoroo.api.evaluations import evaluations
 from echoroo.api.features import features, find_feature, find_feature_value
+from echoroo.api.foundation_models import foundation_models
 from echoroo.api.model_runs import model_runs
 from echoroo.api.notes import notes
 from echoroo.api.recordings import recordings
@@ -40,6 +41,13 @@ from echoroo.api.embeddings import (
     search_similar_clips_advanced,
     sound_event_embeddings,
 )
+from echoroo.api.ml_projects import ml_projects
+from echoroo.api.reference_sounds import reference_sounds
+from echoroo.api.search_sessions import search_sessions
+from echoroo.api.custom_models import custom_models
+from echoroo.api.inference_batches import inference_batches
+from echoroo.api.species_detection import species_detection_jobs
+from echoroo.api.species_filters import species_filters
 
 __all__ = [
     "annotation_projects",
@@ -56,6 +64,7 @@ __all__ = [
     "features",
     "find_feature",
     "find_feature_value",
+    "foundation_models",
     "find_tag",
     "find_tag_value",
     "load_audio",
@@ -83,4 +92,11 @@ __all__ = [
     "search_similar_clips",
     "search_similar_clips_advanced",
     "sound_event_embeddings",
+    "ml_projects",
+    "reference_sounds",
+    "search_sessions",
+    "custom_models",
+    "inference_batches",
+    "species_detection_jobs",
+    "species_filters",
 ]

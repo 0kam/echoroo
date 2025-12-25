@@ -7,6 +7,69 @@ This guide covers running Echoroo with Docker in both development and production
 - [Docker](https://docs.docker.com/get-docker/) (version 24.0+)
 - [Docker Compose](https://docs.docker.com/compose/install/) (version 2.0+)
 
+## GPU Support (Optional)
+
+Echoroo uses BirdNET and other ML models that can leverage NVIDIA GPUs for faster inference.
+
+### With NVIDIA GPU
+
+If you have an NVIDIA GPU, follow these steps to enable GPU acceleration:
+
+1. **Install NVIDIA Container Toolkit**:
+   ```bash
+   # Add the package repositories
+   distribution=$(. /etc/os-release;echo $ID$VERSION_ID)
+   curl -s -L https://nvidia.github.io/nvidia-docker/gpgkey | sudo apt-key add -
+   curl -s -L https://nvidia.github.io/nvidia-docker/$distribution/nvidia-docker.list | sudo tee /etc/apt/sources.list.d/nvidia-docker.list
+
+   # Install nvidia-container-toolkit
+   sudo apt-get update
+   sudo apt-get install -y nvidia-container-toolkit
+
+   # Restart Docker
+   sudo systemctl restart docker
+   ```
+
+2. **Verify GPU access**:
+   ```bash
+   docker run --rm --gpus all nvidia/cuda:12.0-base nvidia-smi
+   ```
+
+3. **Start Echoroo** (GPU is enabled by default in compose.dev.yaml):
+   ```bash
+   ./scripts/docker.sh dev
+   ```
+
+The BirdNET model automatically uses the Protobuf backend (`pb`) which supports GPU acceleration.
+
+### Without NVIDIA GPU (CPU only)
+
+If you don't have an NVIDIA GPU or don't want to use GPU acceleration:
+
+1. **Comment out or remove the GPU configuration** in `compose.dev.yaml`:
+   ```yaml
+   backend:
+     # Remove or comment out this section:
+     # deploy:
+     #   resources:
+     #     reservations:
+     #       devices:
+     #         - driver: nvidia
+     #           count: all
+     #           capabilities: [gpu]
+   ```
+
+2. **Start normally**:
+   ```bash
+   ./scripts/docker.sh dev
+   ```
+
+BirdNET will automatically fall back to CPU inference. Processing will be slower but functional.
+
+### ML Model Cache
+
+ML models (BirdNET, etc.) are cached in a Docker volume (`echoroo-dev-ml-models`) to avoid re-downloading on container restarts. The models are stored at `/root/.local/share/birdnet/` inside the container.
+
 ## Quick Start
 
 ```bash

@@ -3,7 +3,7 @@
 This package provides ML inference capabilities including:
 - Core abstractions: ModelLoader, InferenceEngine, ModelSpecification, InferenceResult
 - Model registry: Dynamic model discovery and loading
-- Prediction filters: PredictionFilter, OccurrenceFilter, EBirdOccurrenceFilter
+- Species filters: SpeciesFilter, PassThroughFilter, BirdNETGeoFilter
 - BirdNET: Bird species identification from audio and general-purpose audio embeddings
 - Audio preprocessing utilities
 - Background worker for processing inference jobs
@@ -20,6 +20,8 @@ are available, import the specific model modules or use the convenience imports:
 ['birdnet']
 """
 
+from typing import TYPE_CHECKING
+
 from echoroo.ml.base import (
     InferenceEngine,
     InferenceResult,
@@ -27,23 +29,30 @@ from echoroo.ml.base import (
     ModelSpecification,
 )
 from echoroo.ml.filters import (
-    DEFAULT_OCCURRENCE_THRESHOLD,
-    EBirdOccurrenceFilter,
+    BirdNETGeoFilter,
     FilterContext,
-    OccurrenceFilter,
     PassThroughFilter,
-    PredictionFilter,
+    SpeciesFilter,
 )
 from echoroo.ml.registry import ModelInfo, ModelNotFoundError, ModelRegistry
 from echoroo.ml.search import SearchFilter, SimilarityResult, VectorSearch, vector_search
 
-# Import worker lazily to avoid circular import
+# Type hints for lazy-loaded workers (avoids circular imports at runtime)
+if TYPE_CHECKING:
+    from echoroo.ml.species_detection_worker import SpeciesDetectionWorker as SpeciesDetectionWorker
+    from echoroo.ml.species_filter_worker import SpeciesFilterWorker as SpeciesFilterWorker
+
+
+# Import workers lazily to avoid circular import at runtime
 # (worker imports from echoroo.api, which imports from echoroo.schemas,
 #  which imports from echoroo.ml)
 def __getattr__(name: str):
-    if name == "InferenceWorker":
-        from echoroo.ml.worker import InferenceWorker
-        return InferenceWorker
+    if name == "SpeciesDetectionWorker":
+        from echoroo.ml.species_detection_worker import SpeciesDetectionWorker
+        return SpeciesDetectionWorker
+    if name == "SpeciesFilterWorker":
+        from echoroo.ml.species_filter_worker import SpeciesFilterWorker
+        return SpeciesFilterWorker
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 # Import model modules to trigger registration
@@ -54,20 +63,20 @@ __all__ = [
     # Core abstractions
     "InferenceEngine",
     "InferenceResult",
-    "InferenceWorker",
     "ModelLoader",
     "ModelSpecification",
+    # Workers
+    "SpeciesDetectionWorker",
+    "SpeciesFilterWorker",
     # Model registry
     "ModelRegistry",
     "ModelInfo",
     "ModelNotFoundError",
-    # Prediction filters
+    # Species filters
     "FilterContext",
-    "PredictionFilter",
+    "SpeciesFilter",
     "PassThroughFilter",
-    "OccurrenceFilter",
-    "EBirdOccurrenceFilter",
-    "DEFAULT_OCCURRENCE_THRESHOLD",
+    "BirdNETGeoFilter",
     # Search
     "SearchFilter",
     "SimilarityResult",

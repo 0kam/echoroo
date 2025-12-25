@@ -58,6 +58,7 @@ export function makeDataset(overrides: Partial<Dataset> = {}): Dataset {
 
   const base: Dataset = {
     uuid: "00000000-0000-0000-0000-000000000001",
+    id: 1,
     name: "Demo Dataset",
     audio_dir: "/data/demo",
     description: "Example dataset used in stories.",

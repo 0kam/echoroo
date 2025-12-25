@@ -25,11 +25,17 @@ from echoroo.models.clip_annotation import (
 from echoroo.models.clip_embedding import ClipEmbedding
 from echoroo.models.clip_evaluation import ClipEvaluation, ClipEvaluationMetric
 from echoroo.models.clip_prediction import ClipPrediction, ClipPredictionTag
+from echoroo.models.custom_model import (
+    CustomModel,
+    CustomModelStatus,
+    CustomModelType,
+)
 from echoroo.models.dataset import Dataset, DatasetRecording, VisibilityLevel
 from echoroo.models.datetime_pattern import (
     DatasetDatetimePattern,
     DatetimePatternType,
 )
+from echoroo.models.detection_review import DetectionReview, DetectionReviewStatus
 from echoroo.models.evaluation import Evaluation, EvaluationMetric
 from echoroo.models.evaluation_set import (
     EvaluationSet,
@@ -39,8 +45,25 @@ from echoroo.models.evaluation_set import (
     EvaluationSetUserRun,
 )
 from echoroo.models.feature import FeatureName
+from echoroo.models.foundation_model import (
+    FoundationModel,
+    FoundationModelRun,
+    FoundationModelRunSpecies,
+    FoundationModelRunStatus,
+)
+from echoroo.models.inference_batch import (
+    InferenceBatch,
+    InferenceBatchStatus,
+    InferencePrediction,
+    InferencePredictionReviewStatus,
+)
 from echoroo.models.inference_job import InferenceJob, InferenceJobStatus
 from echoroo.models.license import License
+from echoroo.models.ml_project import (
+    MLProject,
+    MLProjectStatus,
+    MLProjectTag,
+)
 from echoroo.models.model_run import (
     ModelRun,
     ModelRunEvaluation,
@@ -57,6 +80,16 @@ from echoroo.models.recording import (
     RecordingOwner,
     RecordingTag,
 )
+from echoroo.models.reference_sound import (
+    ReferenceSound,
+    ReferenceSoundSource,
+)
+from echoroo.models.search_session import (
+    SearchResult,
+    SearchResultLabel,
+    SearchSession,
+    SearchSessionReferenceSound,
+)
 from echoroo.models.site import Site, SiteImage
 from echoroo.models.sound_event import SoundEvent, SoundEventFeature
 from echoroo.models.sound_event_annotation import (
@@ -72,6 +105,21 @@ from echoroo.models.sound_event_evaluation import (
 from echoroo.models.sound_event_prediction import (
     SoundEventPrediction,
     SoundEventPredictionTag,
+)
+from echoroo.models.species_detection_job import (
+    SpeciesDetectionJob,
+    SpeciesDetectionJobStatus,
+)
+from echoroo.models.species_filter import (
+    SpeciesFilter,
+    SpeciesFilterApplication,
+    SpeciesFilterApplicationStatus,
+    SpeciesFilterMask,
+    SpeciesFilterType,
+)
+from echoroo.models.species_occurrence_cache import (
+    GBIFResolutionStatus,
+    SpeciesOccurrenceCache,
 )
 from echoroo.models.tag import Tag
 from echoroo.models.token import AccessToken
@@ -99,11 +147,16 @@ __all__ = [
     "ClipFeature",
     "ClipPrediction",
     "ClipPredictionTag",
+    "CustomModel",
+    "CustomModelStatus",
+    "CustomModelType",
     "Dataset",
     "DatasetDatetimePattern",
     "DatasetRecording",
     "DatetimeParseStatus",
     "DatetimePatternType",
+    "DetectionReview",
+    "DetectionReviewStatus",
     "Evaluation",
     "EvaluationMetric",
     "EvaluationSet",
@@ -112,9 +165,20 @@ __all__ = [
     "EvaluationSetTag",
     "EvaluationSetUserRun",
     "FeatureName",
+    "FoundationModel",
+    "FoundationModelRun",
+    "FoundationModelRunSpecies",
+    "FoundationModelRunStatus",
+    "InferenceBatch",
+    "InferenceBatchStatus",
     "InferenceJob",
     "InferenceJobStatus",
+    "InferencePrediction",
+    "InferencePredictionReviewStatus",
     "License",
+    "MLProject",
+    "MLProjectStatus",
+    "MLProjectTag",
     "ModelRun",
     "ModelRunEvaluation",
     "ModelRunPrediction",
@@ -128,6 +192,12 @@ __all__ = [
     "RecordingNote",
     "RecordingOwner",
     "RecordingTag",
+    "ReferenceSound",
+    "ReferenceSoundSource",
+    "SearchResult",
+    "SearchResultLabel",
+    "SearchSession",
+    "SearchSessionReferenceSound",
     "Site",
     "SiteImage",
     "SoundEvent",
@@ -140,6 +210,15 @@ __all__ = [
     "SoundEventFeature",
     "SoundEventPrediction",
     "SoundEventPredictionTag",
+    "SpeciesDetectionJob",
+    "SpeciesDetectionJobStatus",
+    "SpeciesFilter",
+    "SpeciesFilterApplication",
+    "SpeciesFilterApplicationStatus",
+    "SpeciesFilterMask",
+    "SpeciesFilterType",
+    "SpeciesOccurrenceCache",
+    "GBIFResolutionStatus",
     "Tag",
     "User",
     "UserRun",

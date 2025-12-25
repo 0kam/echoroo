@@ -37,7 +37,7 @@ from typing import TYPE_CHECKING, Type
 
 if TYPE_CHECKING:
     from echoroo.ml.base import InferenceEngine, ModelLoader, ModelSpecification
-    from echoroo.ml.filters import PredictionFilter
+    from echoroo.ml.filters import SpeciesFilter
 
 __all__ = [
     "ModelRegistry",
@@ -66,7 +66,7 @@ class ModelInfo:
         Class for loading the model.
     engine_class : Type[InferenceEngine]
         Class for running inference.
-    filter_class : Type[PredictionFilter] | None
+    filter_class : Type[SpeciesFilter] | None
         Optional class for filtering predictions.
     description : str
         Human-readable description of the model.
@@ -75,7 +75,7 @@ class ModelInfo:
     name: str
     loader_class: Type[ModelLoader]
     engine_class: Type[InferenceEngine]
-    filter_class: Type[PredictionFilter] | None = None
+    filter_class: Type[SpeciesFilter] | None = None
     description: str = ""
 
 
@@ -135,7 +135,7 @@ class ModelRegistry:
         name: str,
         loader_class: Type[ModelLoader],
         engine_class: Type[InferenceEngine],
-        filter_class: Type[PredictionFilter] | None = None,
+        filter_class: Type[SpeciesFilter] | None = None,
         description: str = "",
     ) -> None:
         """Register a model with the registry.
@@ -151,9 +151,9 @@ class ModelRegistry:
         engine_class : Type[InferenceEngine]
             Class for running inference. Must implement the InferenceEngine
             protocol.
-        filter_class : Type[PredictionFilter] | None, optional
+        filter_class : Type[SpeciesFilter] | None, optional
             Optional class for filtering predictions. If provided, must
-            implement the PredictionFilter protocol.
+            implement the SpeciesFilter protocol.
         description : str, optional
             Human-readable description of the model.
 
@@ -251,7 +251,7 @@ class ModelRegistry:
         return info.engine_class
 
     @classmethod
-    def get_filter_class(cls, name: str) -> Type[PredictionFilter] | None:
+    def get_filter_class(cls, name: str) -> Type[SpeciesFilter] | None:
         """Get the prediction filter class for a model.
 
         Parameters
@@ -261,7 +261,7 @@ class ModelRegistry:
 
         Returns
         -------
-        Type[PredictionFilter] | None
+        Type[SpeciesFilter] | None
             The filter class if one is registered, None otherwise.
 
         Raises
