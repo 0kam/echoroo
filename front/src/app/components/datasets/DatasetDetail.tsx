@@ -8,6 +8,7 @@ import DatasetNotesSummary from "./DatasetNotesSummary";
 import DatasetOverview from "./DatasetOverview";
 import DatasetUpdate from "./DatasetUpdate";
 import DatasetMetadataSummary from "./DatasetMetadataSummary";
+import DatasetFoundationModelsSection from "./DatasetFoundationModelsSection";
 
 export default function DatasetDetail({
   dataset,
@@ -25,6 +26,9 @@ export default function DatasetDetail({
       DatasetUpdate={<DatasetUpdate dataset={dataset} />}
       DatasetOverview={<DatasetOverview dataset={dataset} />}
       DatasetMetadataSummary={<DatasetMetadataSummary dataset={dataset} />}
+      DatasetFoundationModelsSection={
+        <DatasetFoundationModelsSection dataset={dataset} />
+      }
       DatasetAnnotationProjectsSummary={
         <DatasetAnnotationProjectsSummary dataset={dataset} canCreate={true} />
       }

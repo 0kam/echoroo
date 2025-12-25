@@ -49,12 +49,22 @@ services:
         condition: service_healthy
     ports:
       - "${ECHOROO_PORT:-5000}:5000"
+    # Enable NVIDIA GPU support for ML inference
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
     volumes:
       # Mount source code for hot reload - NO REBUILD NEEDED
       - ./back/src:/code/src:ro
       - ./back/README.md:/code/README.md:ro
       - ${ECHOROO_AUDIO_DIR:?ECHOROO_AUDIO_DIR must be set}:/audio:ro
       - backend-data:/data
+      # Cache for ML models (BirdNET, Perch, etc.) - persists across restarts
+      - ml-models:/root/.local/share
     environment:
       # PYTHONPATH to find the mounted source code
       - PYTHONPATH=/code/src
@@ -143,3 +153,5 @@ volumes:
     name: echoroo-dev-db
   backend-data:
     name: echoroo-dev-data
+  ml-models:
+    name: echoroo-dev-ml-models

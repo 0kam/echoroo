@@ -94,7 +94,7 @@ class BirdNETLoader(ModelLoader):
         Notes
         -----
         Species list is populated after the model is loaded. Before loading,
-        the species_list will be None.
+        the species_list will be None and supports_classification will be False.
         """
         return ModelSpecification(
             name="birdnet",
@@ -102,7 +102,7 @@ class BirdNETLoader(ModelLoader):
             sample_rate=SAMPLE_RATE,
             segment_duration=SEGMENT_DURATION,
             embedding_dim=EMBEDDING_DIM,
-            supports_classification=True,
+            supports_classification=self._species_list is not None,
             species_list=self._species_list,
         )
 
@@ -134,8 +134,9 @@ class BirdNETLoader(ModelLoader):
             ) from e
 
         try:
-            # Load acoustic model v2.4 with TensorFlow backend
-            model = birdnet.load("acoustic", BIRDNET_VERSION, "tf")
+            # Load acoustic model v2.4 with Protobuf backend (supports GPU)
+            # 'pb' = protobuf (GPU capable), 'tf' = TFLite (CPU only)
+            model = birdnet.load("acoustic", BIRDNET_VERSION, "pb")
 
             # Cache the species list for the specification
             self._species_list = list(model.species_list)

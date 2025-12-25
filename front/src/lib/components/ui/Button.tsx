@@ -47,6 +47,22 @@ const CLASS_NAMES = {
     common:
       "bg-transparent hover:underline hover:decoration-solid hover:decoration-2 hover:underline-offset-2 disabled:no-underline disabled:font-medium stroke-2 hover:stroke-4 disabled:stroke-1",
   },
+  ghost: {
+    primary:
+      "hover:bg-emerald-50 dark:hover:bg-emerald-900/20",
+    secondary:
+      "hover:bg-stone-100 dark:hover:bg-stone-800",
+    danger:
+      "hover:bg-rose-50 dark:hover:bg-rose-900/20",
+    success:
+      "hover:bg-green-50 dark:hover:bg-green-900/20",
+    warning:
+      "hover:bg-yellow-50 dark:hover:bg-yellow-900/20",
+    info:
+      "hover:bg-blue-50 dark:hover:bg-blue-900/20",
+    common:
+      "border-transparent text-stone-700 dark:text-stone-300 disabled:text-stone-400 dark:disabled:text-stone-600",
+  },
 };
 
 export function getButtonClassName({

@@ -20,6 +20,8 @@ with other ML models in Echoroo.
 from __future__ import annotations
 
 import logging
+import os
+import tempfile
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -229,13 +231,13 @@ class PerchInference(InferenceEngine):
             logger.debug(f"Could not extract predictions: {e}")
             return []
 
-    def _get_embedding(self, audio: NDArray[np.float32]) -> NDArray[np.float32]:
-        """Extract embedding using model.encode().
+    def _get_embedding_from_file(self, file_path: str) -> NDArray[np.float32]:
+        """Extract embedding from audio file using model.encode().
 
         Parameters
         ----------
-        audio : NDArray[np.float32]
-            Audio segment, shape (segment_samples,).
+        file_path : str
+            Path to audio file.
 
         Returns
         -------
@@ -249,13 +251,27 @@ class PerchInference(InferenceEngine):
         so we normalize to ensure (1536,) output.
         """
         # Use birdnet's encode API for embeddings
-        embedding = self._model.encode(audio)
+        embeddings_result = self._model.encode(file_path)
+
+        # Handle EmbeddingsResult object from birdnet
+        if hasattr(embeddings_result, "embeddings"):
+            embeddings = embeddings_result.embeddings
+        else:
+            embeddings = embeddings_result
 
         # Convert to numpy if needed
-        if hasattr(embedding, "numpy"):
-            embedding = embedding.numpy()
+        if hasattr(embeddings, "numpy"):
+            embeddings = embeddings.numpy()
 
-        embedding = np.asarray(embedding, dtype=np.float32).flatten()
+        embeddings = np.asarray(embeddings, dtype=np.float32)
+
+        # Shape: (n_inputs, n_segments, embedding_dim) -> flatten to single embedding
+        if embeddings.ndim == 3:
+            embedding = embeddings[0, 0, :]
+        elif embeddings.ndim == 2:
+            embedding = embeddings[0, :]
+        else:
+            embedding = embeddings.flatten()
 
         # Handle multi-frame embeddings by averaging
         if embedding.shape[0] != EMBEDDING_DIM:
@@ -272,6 +288,37 @@ class PerchInference(InferenceEngine):
                     embedding = padded
 
         return embedding
+
+    def _get_embedding(self, audio: NDArray[np.float32]) -> NDArray[np.float32]:
+        """Extract embedding using model.encode() via temporary file.
+
+        Parameters
+        ----------
+        audio : NDArray[np.float32]
+            Audio segment, shape (segment_samples,).
+
+        Returns
+        -------
+        NDArray[np.float32]
+            Embedding vector, shape (1536,).
+
+        Notes
+        -----
+        The birdnet Perch API expects file paths, so we write audio to
+        a temporary file for processing.
+        """
+        import soundfile as sf
+
+        # Write to temporary file for birdnet processing
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+            sf.write(tmp.name, audio, SAMPLE_RATE)
+            tmp_path = tmp.name
+
+        try:
+            return self._get_embedding_from_file(tmp_path)
+        finally:
+            # Clean up temp file
+            os.unlink(tmp_path)
 
     def predict_segment(
         self,

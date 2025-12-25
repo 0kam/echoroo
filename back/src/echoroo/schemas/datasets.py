@@ -82,7 +82,7 @@ class Dataset(BaseSchema):
     uuid: UUID
     """The uuid of the dataset."""
 
-    id: int = Field(..., exclude=True)
+    id: int
     """The database id of the dataset."""
 
     audio_dir: Path

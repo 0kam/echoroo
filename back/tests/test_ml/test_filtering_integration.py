@@ -1,30 +1,22 @@
 """Integration tests for prediction filtering.
 
 This module tests the filtering architecture including:
-- PredictionFilter base class
-- PassThroughFilter implementation
-- OccurrenceFilter with FilterContext
-- EBirdOccurrenceFilter implementation
-- Backward compatibility with BirdNETMetadataFilter
-- Filtering works with both BirdNET and Perch predictions
-- Graceful degradation when metadata unavailable
+- FilterContext dataclass
+- SpeciesFilter abstract base class
+- PassThroughFilter (no-op implementation)
+- BirdNETGeoFilter (using BirdNET geo model)
+- filter_predictions helper method
 """
 
-import numpy as np
 import pytest
 from datetime import date
-from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
-from echoroo.ml.filters.base import (
+from echoroo.ml.filters import (
     FilterContext,
     PassThroughFilter,
-    PredictionFilter,
-)
-from echoroo.ml.filters.occurrence import (
-    EBirdOccurrenceFilter,
-    OccurrenceFilter,
-    DEFAULT_OCCURRENCE_THRESHOLD,
+    SpeciesFilter,
+    BirdNETGeoFilter,
 )
 
 
@@ -36,16 +28,12 @@ class TestFilterContext:
         ctx = FilterContext(
             latitude=35.6762,
             longitude=139.6503,
-            date=date(2024, 5, 15),
-            time_of_day="dawn",
-            habitat="forest",
+            week=19,
         )
 
         assert ctx.latitude == 35.6762
         assert ctx.longitude == 139.6503
-        assert ctx.date == date(2024, 5, 15)
-        assert ctx.time_of_day == "dawn"
-        assert ctx.habitat == "forest"
+        assert ctx.week == 19
 
     def test_create_minimal_context(self):
         """Test creating FilterContext with minimal fields."""
@@ -53,33 +41,19 @@ class TestFilterContext:
 
         assert ctx.latitude is None
         assert ctx.longitude is None
-        assert ctx.date is None
-        assert ctx.time_of_day is None
-        assert ctx.habitat is None
+        assert ctx.week is None
 
-    def test_has_location_property(self):
-        """Test has_location property."""
-        ctx_with = FilterContext(latitude=35.6762, longitude=139.6503)
-        ctx_lat_only = FilterContext(latitude=35.6762)
-        ctx_lon_only = FilterContext(longitude=139.6503)
-        ctx_without = FilterContext()
+    def test_is_valid_property(self):
+        """Test is_valid property."""
+        ctx_valid = FilterContext(latitude=35.6762, longitude=139.6503, week=19)
+        ctx_no_week = FilterContext(latitude=35.6762, longitude=139.6503)
+        ctx_no_lat = FilterContext(longitude=139.6503, week=19)
+        ctx_empty = FilterContext()
 
-        assert ctx_with.has_location is True
-        assert ctx_lat_only.has_location is False
-        assert ctx_lon_only.has_location is False
-        assert ctx_without.has_location is False
-
-    def test_has_temporal_property(self):
-        """Test has_temporal property."""
-        ctx_date = FilterContext(date=date(2024, 5, 15))
-        ctx_time = FilterContext(time_of_day="dawn")
-        ctx_both = FilterContext(date=date(2024, 5, 15), time_of_day="dawn")
-        ctx_neither = FilterContext()
-
-        assert ctx_date.has_temporal is True
-        assert ctx_time.has_temporal is True
-        assert ctx_both.has_temporal is True
-        assert ctx_neither.has_temporal is False
+        assert ctx_valid.is_valid is True
+        assert ctx_no_week.is_valid is False
+        assert ctx_no_lat.is_valid is False
+        assert ctx_empty.is_valid is False
 
     def test_invalid_latitude(self):
         """Test validation of invalid latitude."""
@@ -97,29 +71,79 @@ class TestFilterContext:
         with pytest.raises(ValueError, match="longitude must be in"):
             FilterContext(latitude=0.0, longitude=-181.0)
 
-    def test_invalid_time_of_day(self):
-        """Test validation of invalid time_of_day."""
-        with pytest.raises(ValueError, match="time_of_day must be one of"):
-            FilterContext(time_of_day="midnight")  # Not a valid value
+    def test_invalid_week(self):
+        """Test validation of invalid week."""
+        with pytest.raises(ValueError, match="week must be in"):
+            FilterContext(week=0)
 
-    def test_valid_time_of_day_values(self):
-        """Test all valid time_of_day values."""
-        for time_value in ["dawn", "day", "dusk", "night"]:
-            ctx = FilterContext(time_of_day=time_value)
-            assert ctx.time_of_day == time_value
+        with pytest.raises(ValueError, match="week must be in"):
+            FilterContext(week=49)
+
+    def test_valid_week_range(self):
+        """Test valid week values (1-48)."""
+        for week in [1, 24, 48]:
+            ctx = FilterContext(week=week)
+            assert ctx.week == week
+
+    def test_from_recording_with_date(self):
+        """Test creating FilterContext from recording metadata with date."""
+        # May 15 is approximately week 19-20
+        ctx = FilterContext.from_recording(
+            latitude=35.6762,
+            longitude=139.6503,
+            recording_date=date(2024, 5, 15),
+        )
+
+        assert ctx.latitude == 35.6762
+        assert ctx.longitude == 139.6503
+        assert ctx.week is not None
+        assert 1 <= ctx.week <= 48
+
+    def test_from_recording_without_date(self):
+        """Test creating FilterContext without date."""
+        ctx = FilterContext.from_recording(
+            latitude=35.6762,
+            longitude=139.6503,
+            recording_date=None,
+        )
+
+        assert ctx.latitude == 35.6762
+        assert ctx.longitude == 139.6503
+        assert ctx.week is None
+
+    def test_from_recording_all_none(self):
+        """Test creating FilterContext with all None values."""
+        ctx = FilterContext.from_recording(
+            latitude=None,
+            longitude=None,
+            recording_date=None,
+        )
+
+        assert ctx.latitude is None
+        assert ctx.longitude is None
+        assert ctx.week is None
 
 
 class TestPassThroughFilter:
     """Test PassThroughFilter implementation."""
 
-    def test_is_subclass_of_prediction_filter(self):
-        """Test PassThroughFilter is a PredictionFilter."""
-        assert issubclass(PassThroughFilter, PredictionFilter)
+    def test_is_subclass_of_species_filter(self):
+        """Test PassThroughFilter is a SpeciesFilter."""
+        assert issubclass(PassThroughFilter, SpeciesFilter)
+
+    def test_get_species_probabilities_returns_none(self):
+        """Test get_species_probabilities returns None."""
+        filter = PassThroughFilter()
+        context = FilterContext(latitude=35.6762, longitude=139.6503, week=19)
+
+        result = filter.get_species_probabilities(context)
+
+        assert result is None
 
     def test_filter_predictions_returns_unchanged(self):
-        """Test filter_predictions returns predictions unchanged."""
+        """Test filter_predictions returns predictions unchanged when no probs."""
         filter = PassThroughFilter()
-        context = FilterContext(latitude=35.6762, longitude=139.6503)
+        context = FilterContext(latitude=35.6762, longitude=139.6503, week=19)
         predictions = [
             ("species_a", 0.95),
             ("species_b", 0.82),
@@ -129,25 +153,6 @@ class TestPassThroughFilter:
         result = filter.filter_predictions(predictions, context)
 
         assert result == predictions
-        assert result is predictions  # Same object
-
-    def test_get_species_mask_returns_none(self):
-        """Test get_species_mask returns None."""
-        filter = PassThroughFilter()
-        context = FilterContext(latitude=35.6762, longitude=139.6503)
-
-        mask = filter.get_species_mask(context)
-
-        assert mask is None
-
-    def test_get_occurrence_probability_returns_none(self):
-        """Test get_occurrence_probability returns None."""
-        filter = PassThroughFilter()
-        context = FilterContext(latitude=35.6762, longitude=139.6503)
-
-        prob = filter.get_occurrence_probability("species_a", context)
-
-        assert prob is None
 
     def test_repr(self):
         """Test string representation."""
@@ -158,185 +163,192 @@ class TestPassThroughFilter:
         assert "PassThroughFilter" in repr_str
 
 
-class TestOccurrenceFilterBase:
-    """Test OccurrenceFilter base class."""
+class TestSpeciesFilterBase:
+    """Test SpeciesFilter abstract base class."""
 
-    def test_is_subclass_of_prediction_filter(self):
-        """Test OccurrenceFilter is a PredictionFilter."""
-        assert issubclass(OccurrenceFilter, PredictionFilter)
+    def test_filter_predictions_with_occurrence_data(self):
+        """Test filter_predictions filters based on occurrence probabilities."""
 
-    def test_abstract_methods_required(self):
-        """Test OccurrenceFilter requires implementing abstract methods."""
+        class MockFilter(SpeciesFilter):
+            def get_species_probabilities(self, context):
+                return {
+                    "species_a": 0.8,  # Above default threshold (0.03)
+                    "species_b": 0.01,  # Below threshold
+                    "species_c": 0.5,  # Above threshold
+                }
 
-        # Should be able to instantiate a concrete subclass
-        class ConcreteFilter(OccurrenceFilter):
-            def _load_data(self):
-                self._species_list = ["species_a", "species_b"]
-                self._species_to_idx = {"species_a": 0, "species_b": 1}
-                self._is_loaded = True
-                return True
+        filter = MockFilter()
+        context = FilterContext(latitude=35.0, longitude=139.0, week=19)
+        predictions = [
+            ("species_a", 0.95),
+            ("species_b", 0.82),
+            ("species_c", 0.65),
+        ]
 
-            def _get_occurrence_vector(self, latitude, longitude, week):
-                return np.array([0.8, 0.2], dtype=np.float32)
+        result = filter.filter_predictions(predictions, context)
 
-        filter = ConcreteFilter()
-        filter._load_data()
+        # Should include species_a and species_c (above threshold)
+        # Should exclude species_b (below threshold)
+        assert len(result) == 2
+        labels = [label for label, _ in result]
+        assert "species_a" in labels
+        assert "species_c" in labels
+        assert "species_b" not in labels
 
-        assert filter.is_loaded is True
+    def test_filter_predictions_includes_unknown_species(self):
+        """Test filter includes species not in occurrence data."""
 
-    def test_threshold_property(self):
-        """Test threshold property can be get/set."""
+        class MockFilter(SpeciesFilter):
+            def get_species_probabilities(self, context):
+                return {
+                    "known_a": 0.8,
+                    "known_b": 0.01,
+                }
 
-        class TestFilter(OccurrenceFilter):
-            def _load_data(self):
-                return True
+        filter = MockFilter()
+        context = FilterContext(latitude=35.0, longitude=139.0, week=19)
+        predictions = [
+            ("known_a", 0.95),  # In data, above threshold
+            ("known_b", 0.82),  # In data, below threshold
+            ("unknown_c", 0.75),  # Not in data - should be included
+        ]
 
-            def _get_occurrence_vector(self, lat, lon, week):
+        result = filter.filter_predictions(predictions, context)
+
+        assert len(result) == 2
+        labels = [label for label, _ in result]
+        assert "known_a" in labels
+        assert "unknown_c" in labels
+        assert "known_b" not in labels
+
+    def test_filter_predictions_custom_threshold(self):
+        """Test filter_predictions with custom threshold."""
+
+        class MockFilter(SpeciesFilter):
+            def get_species_probabilities(self, context):
+                return {
+                    "species_a": 0.1,  # Above 0.05, below 0.15
+                }
+
+        filter = MockFilter()
+        context = FilterContext(latitude=35.0, longitude=139.0, week=19)
+        predictions = [("species_a", 0.95)]
+
+        # With threshold 0.05, species_a should be included
+        result = filter.filter_predictions(predictions, context, threshold=0.05)
+        assert len(result) == 1
+
+        # With threshold 0.15, species_a should be excluded
+        result = filter.filter_predictions(predictions, context, threshold=0.15)
+        assert len(result) == 0
+
+    def test_filter_predictions_returns_unchanged_when_no_probs(self):
+        """Test filter returns unchanged when get_species_probabilities returns None."""
+
+        class NullFilter(SpeciesFilter):
+            def get_species_probabilities(self, context):
                 return None
 
-        filter = TestFilter(threshold=0.05)
-
-        assert filter.threshold == 0.05
-
-        filter.threshold = 0.1
-        assert filter.threshold == 0.1
-
-    def test_threshold_validation(self):
-        """Test threshold validation."""
-
-        class TestFilter(OccurrenceFilter):
-            def _load_data(self):
-                return True
-
-            def _get_occurrence_vector(self, lat, lon, week):
-                return None
-
-        filter = TestFilter()
-
-        with pytest.raises(ValueError, match="threshold must be in"):
-            filter.threshold = 1.5
-
-    def test_default_week_property(self):
-        """Test default_week property."""
-
-        class TestFilter(OccurrenceFilter):
-            def _load_data(self):
-                return True
-
-            def _get_occurrence_vector(self, lat, lon, week):
-                return None
-
-        filter = TestFilter(default_week=12)
-
-        assert filter.default_week == 12
-
-
-class TestEBirdOccurrenceFilter:
-    """Test EBirdOccurrenceFilter implementation."""
-
-    @pytest.fixture
-    def mock_occurrence_data(self, tmp_path):
-        """Create mock occurrence data file."""
-        data_path = tmp_path / "test_occurrence.npz"
-
-        # Create mock data
-        num_cells = 10
-        num_weeks = 48
-        num_species = 3
-
-        occurrence = np.random.rand(num_cells, num_weeks, num_species).astype(
-            np.float32
-        )
-        h3_cells = np.array([f"cell_{i}" for i in range(num_cells)])
-        species = np.array(["species_a", "species_b", "species_c"])
-
-        np.savez(
-            data_path,
-            occurrence=occurrence,
-            h3_cells=h3_cells,
-            species=species,
-        )
-
-        return data_path
-
-    def test_is_occurrence_filter(self):
-        """Test EBirdOccurrenceFilter is an OccurrenceFilter."""
-        assert issubclass(EBirdOccurrenceFilter, OccurrenceFilter)
-
-    def test_initialization_with_nonexistent_file(self, tmp_path):
-        """Test initialization with nonexistent file logs warning."""
-        nonexistent = tmp_path / "nonexistent.npz"
-
-        filter = EBirdOccurrenceFilter(nonexistent)
-
-        # Should not raise, but filter won't be loaded
-        assert filter.is_loaded is False
-
-    def test_load_data_success(self, mock_occurrence_data):
-        """Test loading occurrence data successfully."""
-        filter = EBirdOccurrenceFilter(mock_occurrence_data)
-
-        assert filter.is_loaded is True
-        assert filter.num_species == 3
-        assert len(filter.species_list) == 3
-
-    def test_filter_predictions_without_location(self, mock_occurrence_data):
-        """Test filtering returns unchanged without location."""
-        filter = EBirdOccurrenceFilter(mock_occurrence_data)
-
-        context = FilterContext()  # No location
+        filter = NullFilter()
+        context = FilterContext(latitude=35.0, longitude=139.0, week=19)
         predictions = [("species_a", 0.95), ("species_b", 0.82)]
 
         result = filter.filter_predictions(predictions, context)
 
         assert result == predictions
 
-    @pytest.mark.skipif(
-        not pytest.importorskip("h3", reason="h3 library not installed"),
-        reason="Requires h3 library",
-    )
-    def test_get_species_mask_with_location(self, mock_occurrence_data):
-        """Test getting species mask with valid location."""
-        filter = EBirdOccurrenceFilter(mock_occurrence_data, threshold=0.5)
 
-        context = FilterContext(
-            latitude=35.6762,
-            longitude=139.6503,
-            date=date(2024, 5, 15),
-        )
+class TestBirdNETGeoFilter:
+    """Test BirdNETGeoFilter implementation."""
 
-        mask = filter.get_species_mask(context)
+    def test_is_subclass_of_species_filter(self):
+        """Test BirdNETGeoFilter is a SpeciesFilter."""
+        assert issubclass(BirdNETGeoFilter, SpeciesFilter)
 
-        # Result depends on whether H3 cell is in data
-        # May be None if cell not found
-        if mask is not None:
-            assert isinstance(mask, np.ndarray)
-            assert mask.dtype == np.bool_
-            assert len(mask) == 3
+    def test_initialization_default_values(self):
+        """Test BirdNETGeoFilter initializes with default values."""
+        filter = BirdNETGeoFilter()
 
-    def test_data_path_property(self, mock_occurrence_data):
-        """Test data_path property."""
-        filter = EBirdOccurrenceFilter(mock_occurrence_data)
+        assert filter._version == "2.4"
+        assert filter._backend == "tf"
+        assert filter._model is None
 
-        assert filter.data_path == mock_occurrence_data
+    def test_initialization_custom_values(self):
+        """Test BirdNETGeoFilter initializes with custom values."""
+        filter = BirdNETGeoFilter(version="2.3", backend="np")
 
-    def test_h3_resolution_property(self, mock_occurrence_data):
-        """Test h3_resolution property."""
-        filter = EBirdOccurrenceFilter(mock_occurrence_data, h3_resolution=5)
+        assert filter._version == "2.3"
+        assert filter._backend == "np"
 
-        assert filter.h3_resolution == 5
+    def test_is_loaded_initially_false(self):
+        """Test is_loaded is False before model is loaded."""
+        filter = BirdNETGeoFilter()
 
-    def test_invalid_data_format(self, tmp_path):
-        """Test handling of invalid data format."""
-        data_path = tmp_path / "invalid.npz"
-
-        # Missing required keys
-        np.savez(data_path, some_data=np.array([1, 2, 3]))
-
-        filter = EBirdOccurrenceFilter(data_path)
-
-        # Should not raise during init, but won't load
         assert filter.is_loaded is False
+
+    def test_repr(self):
+        """Test string representation."""
+        filter = BirdNETGeoFilter()
+
+        repr_str = repr(filter)
+
+        assert "BirdNETGeoFilter" in repr_str
+        assert "2.4" in repr_str
+        assert "not loaded" in repr_str
+
+    def test_get_species_probabilities_invalid_context(self):
+        """Test get_species_probabilities returns None for invalid context."""
+        filter = BirdNETGeoFilter()
+
+        # Context without all required fields
+        context = FilterContext(latitude=35.0)
+
+        result = filter.get_species_probabilities(context)
+
+        assert result is None
+
+    @patch("echoroo.ml.filters.birdnet_geo.birdnet")
+    def test_get_species_probabilities_with_mock(self, mock_birdnet):
+        """Test get_species_probabilities with mocked birdnet."""
+        # Setup mock
+        mock_model = Mock()
+        mock_result = [
+            Mock(species_name="Parus minor_Japanese Tit", confidence=0.85),
+            Mock(species_name="Corvus macrorhynchos_Large-billed Crow", confidence=0.3),
+        ]
+        mock_model.predict.return_value = mock_result
+        mock_birdnet.load.return_value = mock_model
+
+        filter = BirdNETGeoFilter()
+        context = FilterContext(latitude=35.67, longitude=139.65, week=19)
+
+        result = filter.get_species_probabilities(context)
+
+        assert result is not None
+        assert "Parus minor_Japanese Tit" in result
+        assert result["Parus minor_Japanese Tit"] == 0.85
+        assert result["Corvus macrorhynchos_Large-billed Crow"] == 0.3
+
+        mock_birdnet.load.assert_called_once_with("geo", "2.4", "tf")
+        mock_model.predict.assert_called_once_with(35.67, 139.65, week=19)
+
+    @patch("echoroo.ml.filters.birdnet_geo.birdnet")
+    def test_model_loads_once(self, mock_birdnet):
+        """Test model is only loaded once (lazy loading with caching)."""
+        mock_model = Mock()
+        mock_model.predict.return_value = []
+        mock_birdnet.load.return_value = mock_model
+
+        filter = BirdNETGeoFilter()
+        context = FilterContext(latitude=35.67, longitude=139.65, week=19)
+
+        # Call multiple times
+        filter.get_species_probabilities(context)
+        filter.get_species_probabilities(context)
+        filter.get_species_probabilities(context)
+
+        # Model should only be loaded once
+        mock_birdnet.load.assert_called_once()
 
 
 class TestFilteringIntegration:
@@ -345,7 +357,7 @@ class TestFilteringIntegration:
     def test_filter_birdnet_predictions(self):
         """Test filtering BirdNET-style predictions."""
         filter = PassThroughFilter()
-        context = FilterContext(latitude=35.6762, longitude=139.6503)
+        context = FilterContext(latitude=35.6762, longitude=139.6503, week=19)
 
         # BirdNET format: (scientific_name_common_name, confidence)
         predictions = [
@@ -360,7 +372,7 @@ class TestFilteringIntegration:
     def test_filter_perch_predictions(self):
         """Test filtering Perch-style predictions."""
         filter = PassThroughFilter()
-        context = FilterContext(latitude=35.6762, longitude=139.6503)
+        context = FilterContext(latitude=35.6762, longitude=139.6503, week=19)
 
         # Perch format: (class_label, confidence)
         predictions = [
@@ -375,7 +387,7 @@ class TestFilteringIntegration:
     def test_empty_predictions(self):
         """Test filtering empty predictions list."""
         filter = PassThroughFilter()
-        context = FilterContext(latitude=35.6762, longitude=139.6503)
+        context = FilterContext(latitude=35.6762, longitude=139.6503, week=19)
 
         result = filter.filter_predictions([], context)
 
@@ -384,18 +396,13 @@ class TestFilteringIntegration:
     def test_graceful_degradation_no_context(self):
         """Test filter degrades gracefully with minimal context."""
 
-        class StrictFilter(OccurrenceFilter):
-            def _load_data(self):
-                self._is_loaded = True
-                return True
-
-            def _get_occurrence_vector(self, lat, lon, week):
-                # This shouldn't be called without location
-                raise RuntimeError("Should not be called")
+        class StrictFilter(SpeciesFilter):
+            def get_species_probabilities(self, context):
+                if not context.is_valid:
+                    return None
+                raise RuntimeError("Should not be called for invalid context")
 
         filter = StrictFilter()
-        filter._load_data()
-
         context = FilterContext()  # No location
         predictions = [("species_a", 0.95)]
 
@@ -404,47 +411,13 @@ class TestFilteringIntegration:
 
         assert result == predictions
 
-    def test_filter_with_unknown_species(self, mock_occurrence_data):
-        """Test filtering includes species not in occurrence data."""
-
-        class TestFilter(OccurrenceFilter):
-            def _load_data(self):
-                self._species_list = ["known_a", "known_b"]
-                self._species_to_idx = {"known_a": 0, "known_b": 1}
-                self._is_loaded = True
-                return True
-
-            def _get_occurrence_vector(self, lat, lon, week):
-                # known_a present, known_b not present
-                return np.array([0.9, 0.01], dtype=np.float32)
-
-        filter = TestFilter(threshold=0.03)
-        filter._load_data()
-
-        context = FilterContext(latitude=35.0, longitude=139.0)
-
-        predictions = [
-            ("known_a", 0.95),  # In data, above threshold
-            ("known_b", 0.80),  # In data, below threshold
-            ("unknown_c", 0.75),  # Not in data
-        ]
-
-        result = filter.filter_predictions(predictions, context)
-
-        # Should include known_a (above threshold) and unknown_c (not in data)
-        # Should exclude known_b (below threshold)
-        assert len(result) == 2
-        labels = [label for label, _ in result]
-        assert "known_a" in labels
-        assert "unknown_c" in labels
-        assert "known_b" not in labels
-
 
 class TestFilteringWithModelIntegration:
     """Test filters can be used with model inference results."""
 
     def test_filter_inference_result_predictions(self):
         """Test filtering predictions from InferenceResult."""
+        import numpy as np
         from echoroo.ml.base import InferenceResult
 
         # Create inference result with predictions
@@ -464,7 +437,7 @@ class TestFilteringWithModelIntegration:
 
         # Filter the predictions
         filter = PassThroughFilter()
-        context = FilterContext(latitude=35.6762, longitude=139.6503)
+        context = FilterContext(latitude=35.6762, longitude=139.6503, week=19)
 
         filtered_predictions = filter.filter_predictions(
             result.predictions, context
@@ -489,7 +462,7 @@ class TestFilteringWithModelIntegration:
             ("species_c", 0.65),
         ]
 
-        context = FilterContext(latitude=35.6762, longitude=139.6503)
+        context = FilterContext(latitude=35.6762, longitude=139.6503, week=19)
 
         # Apply first filter
         filter1 = PassThroughFilter()
@@ -500,55 +473,3 @@ class TestFilteringWithModelIntegration:
         result2 = filter2.filter_predictions(result1, context)
 
         assert result2 == predictions
-
-
-class TestAbstractFilterMethods:
-    """Test PredictionFilter abstract methods."""
-
-    def test_filter_predictions_required(self):
-        """Test filter_predictions must be implemented."""
-
-        class IncompleteFilter(PredictionFilter):
-            def get_species_mask(self, context):
-                return None
-
-            def get_occurrence_probability(self, species, context):
-                return None
-
-        filter = IncompleteFilter()
-        context = FilterContext()
-
-        with pytest.raises(NotImplementedError):
-            filter.filter_predictions([], context)
-
-    def test_get_species_mask_required(self):
-        """Test get_species_mask must be implemented."""
-
-        class IncompleteFilter(PredictionFilter):
-            def filter_predictions(self, predictions, context):
-                return predictions
-
-            def get_occurrence_probability(self, species, context):
-                return None
-
-        filter = IncompleteFilter()
-        context = FilterContext()
-
-        with pytest.raises(NotImplementedError):
-            filter.get_species_mask(context)
-
-    def test_get_occurrence_probability_required(self):
-        """Test get_occurrence_probability must be implemented."""
-
-        class IncompleteFilter(PredictionFilter):
-            def filter_predictions(self, predictions, context):
-                return predictions
-
-            def get_species_mask(self, context):
-                return None
-
-        filter = IncompleteFilter()
-        context = FilterContext()
-
-        with pytest.raises(NotImplementedError):
-            filter.get_occurrence_probability("species", context)

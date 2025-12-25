@@ -21,7 +21,7 @@ class ClipPrediction(Base):
 
     __tablename__ = "clip_prediction"
 
-    id: orm.Mapped[int] = orm.mapped_column(primary_key=True)
+    id: orm.Mapped[int] = orm.mapped_column(primary_key=True, init=False)
     """The database id of the clip prediction."""
 
     uuid: orm.Mapped[UUID] = orm.mapped_column(

@@ -24,10 +24,6 @@ from echoroo.ml.birdnet.constants import (
 )
 from echoroo.ml.birdnet.inference import BirdNETInference
 from echoroo.ml.birdnet.loader import BirdNETLoader, BirdNETNotLoadedError
-from echoroo.ml.birdnet.metadata import (
-    BirdNETMetadataFilter,
-    MetadataNotLoadedError,
-)
 from echoroo.ml.registry import ModelRegistry
 
 __all__ = [
@@ -40,9 +36,7 @@ __all__ = [
     # Classes
     "BirdNETInference",
     "BirdNETLoader",
-    "BirdNETMetadataFilter",
     "BirdNETNotLoadedError",
-    "MetadataNotLoadedError",
 ]
 
 # Register BirdNET with the model registry
@@ -50,6 +44,5 @@ ModelRegistry.register(
     name="birdnet",
     loader_class=BirdNETLoader,
     engine_class=BirdNETInference,
-    filter_class=BirdNETMetadataFilter,
     description="BirdNET V2.4 bird species identification model",
 )

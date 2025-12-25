@@ -14,6 +14,7 @@ from echoroo.routes.datasets import get_dataset_router
 from echoroo.routes.evaluation_sets import evaluation_sets_router
 from echoroo.routes.evaluations import evaluations_router
 from echoroo.routes.features import features_router
+from echoroo.routes.foundation_models import get_foundation_model_router
 from echoroo.routes.model_runs import model_runs_router
 from echoroo.routes.notes import notes_router
 from echoroo.routes.plugins import plugin_router
@@ -36,6 +37,11 @@ from echoroo.routes.setup import get_setup_router
 from echoroo.routes.user_runs import get_user_runs_router
 from echoroo.routes.users import get_admin_users_router, get_users_router
 from echoroo.routes.inference import inference_router
+from echoroo.routes.ml_projects import get_ml_projects_router
+from echoroo.routes.species_filters import (
+    get_species_filters_router,
+    get_species_filter_applications_router,
+)
 from echoroo.system.settings import Settings
 
 __all__ = [
@@ -106,6 +112,20 @@ def get_main_router(settings: Settings):
         datasets_router,
         prefix="/datasets",
         tags=["Datasets"],
+    )
+    foundation_models_router = get_foundation_model_router(settings)
+    main_router.include_router(
+        foundation_models_router,
+        prefix="/foundation_models",
+        tags=["Foundation Models"],
+    )
+
+    # Species Filters
+    species_filters_router = get_species_filters_router(settings)
+    main_router.include_router(
+        species_filters_router,
+        prefix="/species-filters",
+        tags=["Species Filters"],
     )
 
     # Audio Content
@@ -218,6 +238,17 @@ def get_main_router(settings: Settings):
         prefix="/inference",
         tags=["Inference"],
     )
+
+    # ML Projects
+    ml_projects_router = get_ml_projects_router(settings)
+    main_router.include_router(
+        ml_projects_router,
+        prefix="/ml_projects",
+        tags=["ML Projects"],
+    )
+
+    # Note: Species Detection endpoints are now unified under Foundation Models API
+    # at /api/v1/foundation_models/runs/{run_uuid}/...
 
     setup_router = get_setup_router(settings)
     main_router.include_router(
