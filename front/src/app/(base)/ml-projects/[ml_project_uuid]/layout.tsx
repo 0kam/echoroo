@@ -15,6 +15,7 @@ import { isAxiosError } from "axios";
 import toast from "react-hot-toast";
 import {
   LayoutDashboard,
+  Database,
   Music,
   Search,
   Cpu,
@@ -22,6 +23,8 @@ import {
   Clock,
   CheckCircle,
   Archive,
+  ListChecks,
+  FolderOpen,
 } from "lucide-react";
 
 import api from "@/app/api";
@@ -98,6 +101,15 @@ function MLProjectTabs({ uuid }: { uuid: string }) {
       </li>
       <li>
         <Tab
+          active={selectedLayoutSegment === "datasets"}
+          onClick={() => router.push(`/ml-projects/${uuid}/datasets/`)}
+        >
+          <Database className="w-4 h-4" />
+          Datasets
+        </Tab>
+      </li>
+      <li>
+        <Tab
           active={selectedLayoutSegment === "reference-sounds"}
           onClick={() => router.push(`/ml-projects/${uuid}/reference-sounds/`)}
         >
@@ -116,11 +128,29 @@ function MLProjectTabs({ uuid }: { uuid: string }) {
       </li>
       <li>
         <Tab
-          active={selectedLayoutSegment === "models"}
-          onClick={() => router.push(`/ml-projects/${uuid}/models/`)}
+          active={selectedLayoutSegment === "curation"}
+          onClick={() => router.push(`/ml-projects/${uuid}/curation/`)}
+        >
+          <ListChecks className="w-4 h-4" />
+          Curation
+        </Tab>
+      </li>
+      <li>
+        <Tab
+          active={selectedLayoutSegment === "annotation-projects"}
+          onClick={() => router.push(`/ml-projects/${uuid}/annotation-projects/`)}
+        >
+          <FolderOpen className="w-4 h-4" />
+          Annotation Projects
+        </Tab>
+      </li>
+      <li>
+        <Tab
+          active={selectedLayoutSegment === "training"}
+          onClick={() => router.push(`/ml-projects/${uuid}/training/`)}
         >
           <Cpu className="w-4 h-4" />
-          Models
+          Training
         </Tab>
       </li>
       <li>

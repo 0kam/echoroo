@@ -13,7 +13,7 @@ Echorooで使用するMLモデルのセットアップ方法です。
 pip install birdnet
 
 # または、ML extras経由でインストール
-pip install whombat[ml]
+pip install echoroo[ml]
 ```
 
 ---
@@ -65,10 +65,10 @@ species_probs = predictions_result.species_probs  # shape: (n_files, n_segments,
 species_list = model.species_list  # List of species names
 ```
 
-### Whombatでの使用
+### Echorooでの使用
 
 ```python
-from whombat.ml.birdnet import BirdNETLoader, BirdNETInference
+from echoroo.ml.birdnet import BirdNETLoader, BirdNETInference
 
 # ローダーを初期化してモデルをロード
 loader = BirdNETLoader()
@@ -116,11 +116,11 @@ print(f"Embeddings shape: {embeddings.shape}")  # (n_segments, 1024)
 
 ## 以前のPerchサポートについて
 
-**注意**: Whombat v0.8.6以降、perch-hopliteパッケージのサポートは終了しました。
+**注意**: Echoroo v0.8.6以降、perch-hopliteパッケージのサポートは終了しました。
 
 ### 移行理由
 
-1. **依存関係の競合**: perch-hopliteはnumpy>=2.0を必要としますが、soundevent（Whombatのコア依存関係）はnumpy<2.0を必要とします
+1. **依存関係の競合**: perch-hopliteはnumpy>=2.0を必要としますが、soundevent（Echorooのコア依存関係）はnumpy<2.0を必要とします
 2. **統一されたAPI**: BirdNETは埋め込みと分類の両方を単一のAPIで提供します
 3. **GPU対応**: BirdNETはCUDAを通じてGPU加速をサポートします
 4. **メンテナンス性**: 単一のMLバックエンドにより、コードベースがシンプルになります
@@ -133,7 +133,7 @@ print(f"Embeddings shape: {embeddings.shape}")  # (n_segments, 1024)
 
 **Before (Perch)**:
 ```python
-from whombat.ml.perch import PerchLoader
+from echoroo.ml.perch import PerchLoader
 loader = PerchLoader()
 loader.load()
 model = loader.get_model()
@@ -141,7 +141,7 @@ model = loader.get_model()
 
 **After (BirdNET)**:
 ```python
-from whombat.ml.birdnet import BirdNETLoader
+from echoroo.ml.birdnet import BirdNETLoader
 loader = BirdNETLoader()
 loader.load()
 model = loader.get_model()
@@ -168,8 +168,8 @@ import birdnet
 model = birdnet.load('acoustic', '2.4', 'tf')
 print(f"BirdNET loaded: {model.n_species} species")
 
-# Whombat ML API
-from whombat.ml.birdnet import BirdNETLoader, BirdNETInference
+# Echoroo ML API
+from echoroo.ml.birdnet import BirdNETLoader, BirdNETInference
 loader = BirdNETLoader()
 loader.load()
 print(f"Loader: {loader}")

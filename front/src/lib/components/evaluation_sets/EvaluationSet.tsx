@@ -3,15 +3,17 @@ import { CalendarIcon, TagsIcon, TasksIcon } from "@/lib/components/icons";
 import Button from "@/lib/components/ui/Button";
 
 import type { EvaluationSet, Tag } from "@/lib/types";
-import { type Color, getTagColor, getTagKey } from "@/lib/utils/tags";
+import { type Color, getTagKey } from "@/lib/utils/tags";
 
 import TagComponent from "../tags/Tag";
+
+const DEFAULT_COLOR: Color = { color: "stone", level: 3 };
 
 export default function EvaluationSetComponent({
   evaluationSet,
   onClickEvaluationSet,
   onClickEvaluationSetTag,
-  tagColorFn = getTagColor,
+  tagColorFn,
 }: {
   evaluationSet: EvaluationSet;
   onClickEvaluationSetTag?: (tag: Tag) => void;
@@ -59,7 +61,7 @@ export default function EvaluationSetComponent({
                   key={getTagKey(tag)}
                   tag={tag}
                   onClick={() => onClickEvaluationSetTag?.(tag)}
-                  {...tagColorFn(tag)}
+                  {...(tagColorFn ? tagColorFn(tag) : DEFAULT_COLOR)}
                 />
               ))}
             </span>

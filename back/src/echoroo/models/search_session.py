@@ -31,13 +31,15 @@ from echoroo.models.base import Base
 from echoroo.models.tag import Tag
 
 if TYPE_CHECKING:
+    from echoroo.models.annotation_project import AnnotationProject
     from echoroo.models.clip import Clip
-    from echoroo.models.ml_project import MLProject
+    from echoroo.models.ml_project import MLProject, MLProjectDatasetScope
     from echoroo.models.reference_sound import ReferenceSound
     from echoroo.models.user import User
 
 __all__ = [
     "SearchSession",
+    "SearchSessionDatasetScope",
     "SearchSessionReferenceSound",
     "SearchResult",
     "SearchResultLabel",
@@ -61,6 +63,12 @@ class SearchResultLabel(str, enum.Enum):
 
     SKIPPED = "skipped"
     """Result was skipped during labeling."""
+
+    POSITIVE_REFERENCE = "positive_reference"
+    """Result selected as a positive reference for further training."""
+
+    NEGATIVE_REFERENCE = "negative_reference"
+    """Result selected as a negative reference for further training."""
 
 
 class SearchSession(Base):
@@ -142,6 +150,12 @@ class SearchSession(Base):
     )
     """Whether labeling of results has been completed."""
 
+    search_all_scopes: orm.Mapped[bool] = orm.mapped_column(
+        nullable=False,
+        default=True,
+    )
+    """Whether to search all dataset scopes or only selected ones."""
+
     # Relationships
     ml_project: orm.Mapped["MLProject"] = orm.relationship(
         "MLProject",
@@ -189,6 +203,17 @@ class SearchSession(Base):
         init=False,
     )
     """Junction table entries for reference sounds."""
+
+    # Dataset scopes for multi-dataset search
+    dataset_scopes: orm.Mapped[list["SearchSessionDatasetScope"]] = orm.relationship(
+        "SearchSessionDatasetScope",
+        back_populates="search_session",
+        default_factory=list,
+        cascade="all, delete-orphan",
+        repr=False,
+        init=False,
+    )
+    """Dataset scopes for this search session (if not search_all_scopes)."""
 
     # Search results
     search_results: orm.Mapped[list["SearchResult"]] = orm.relationship(
@@ -331,6 +356,13 @@ class SearchResult(Base):
     )
     """Optional notes about this result."""
 
+    saved_to_annotation_project_id: orm.Mapped[int | None] = orm.mapped_column(
+        ForeignKey("annotation_project.id", ondelete="SET NULL"),
+        nullable=True,
+        default=None,
+    )
+    """The annotation project this result was exported to (if any)."""
+
     # Relationships
     search_session: orm.Mapped[SearchSession] = orm.relationship(
         "SearchSession",
@@ -356,3 +388,75 @@ class SearchResult(Base):
         repr=False,
     )
     """The user who labeled this result."""
+
+    saved_to_annotation_project: orm.Mapped["AnnotationProject | None"] = (
+        orm.relationship(
+            "AnnotationProject",
+            foreign_keys=[saved_to_annotation_project_id],
+            viewonly=True,
+            init=False,
+            repr=False,
+        )
+    )
+    """The annotation project this result was exported to."""
+
+
+class SearchSessionDatasetScope(Base):
+    """Search Session Dataset Scope model.
+
+    Tracks which datasets have been searched within a search session
+    and their progress statistics.
+    """
+
+    __tablename__ = "search_session_dataset_scope"
+    __table_args__ = (
+        UniqueConstraint(
+            "search_session_id",
+            "ml_project_dataset_scope_id",
+            name="uq_search_session_dataset_scope",
+        ),
+    )
+
+    id: orm.Mapped[int] = orm.mapped_column(primary_key=True, init=False)
+    """The database id of the search session dataset scope."""
+
+    search_session_id: orm.Mapped[int] = orm.mapped_column(
+        ForeignKey("search_session.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    """The search session this scope belongs to."""
+
+    ml_project_dataset_scope_id: orm.Mapped[int] = orm.mapped_column(
+        ForeignKey("ml_project_dataset_scope.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    """The ML project dataset scope to search within."""
+
+    clips_searched: orm.Mapped[int] = orm.mapped_column(
+        nullable=False,
+        default=0,
+    )
+    """Number of clips searched in this dataset scope."""
+
+    results_found: orm.Mapped[int] = orm.mapped_column(
+        nullable=False,
+        default=0,
+    )
+    """Number of results found in this dataset scope."""
+
+    # Relationships
+    search_session: orm.Mapped[SearchSession] = orm.relationship(
+        "SearchSession",
+        back_populates="dataset_scopes",
+        init=False,
+        repr=False,
+    )
+    """The search session this scope belongs to."""
+
+    ml_project_dataset_scope: orm.Mapped["MLProjectDatasetScope"] = orm.relationship(
+        "MLProjectDatasetScope",
+        lazy="joined",
+        init=False,
+        repr=False,
+    )
+    """The ML project dataset scope."""

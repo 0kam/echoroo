@@ -10,6 +10,7 @@ import { Page } from "./common";
 
 const DEFAULT_ENDPOINTS = {
   list: "/api/v1/foundation_models/",
+  queueStatus: "/api/v1/foundation_models/queue-status",
   datasetSummary: (uuid: string) =>
     `/api/v1/foundation_models/datasets/${uuid}/summary/`,
   runs: "/api/v1/foundation_models/runs/",
@@ -27,6 +28,8 @@ const DEFAULT_ENDPOINTS = {
     `/api/v1/foundation_models/runs/${runUuid}/detections/${clipPredictionUuid}/review`,
   runDetectionsBulkReview: (runUuid: string) =>
     `/api/v1/foundation_models/runs/${runUuid}/detections/bulk-review`,
+  runConvertToAnnotationProject: (runUuid: string) =>
+    `/api/v1/foundation_models/runs/${runUuid}/convert-to-annotation-project`,
 };
 
 const ListRunsQuerySchema = z.object({
@@ -51,6 +54,14 @@ export function registerFoundationModelAPI(instance: AxiosInstance) {
   async function list(): Promise<types.FoundationModel[]> {
     const { data } = await instance.get(DEFAULT_ENDPOINTS.list);
     return z.array(schemas.FoundationModelSchema).parse(data);
+  }
+
+  /**
+   * Get the current job queue status.
+   */
+  async function getQueueStatus(): Promise<types.JobQueueStatus> {
+    const { data } = await instance.get(DEFAULT_ENDPOINTS.queueStatus);
+    return schemas.JobQueueStatusSchema.parse(data);
   }
 
   /**
@@ -203,8 +214,28 @@ export function registerFoundationModelAPI(instance: AxiosInstance) {
     return schemas.BulkReviewResponseSchema.parse(data);
   }
 
+  /**
+   * Convert a foundation model run to an annotation project.
+   */
+  async function convertToAnnotationProject(
+    runUuid: string,
+    payload: {
+      name: string;
+      description?: string;
+      include_only_filtered?: boolean;
+      species_filter_application_uuid?: string;
+    },
+  ): Promise<types.ConvertToAnnotationProjectResponse> {
+    const { data } = await instance.post(
+      DEFAULT_ENDPOINTS.runConvertToAnnotationProject(runUuid),
+      payload,
+    );
+    return schemas.ConvertToAnnotationProjectResponseSchema.parse(data);
+  }
+
   return {
     list,
+    getQueueStatus,
     getDatasetSummary,
     listRuns,
     createRun,
@@ -216,5 +247,6 @@ export function registerFoundationModelAPI(instance: AxiosInstance) {
     getDetectionSummary,
     reviewDetection,
     bulkReviewDetections,
+    convertToAnnotationProject,
   };
 }

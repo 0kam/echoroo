@@ -38,9 +38,11 @@ services:
     networks:
       - echoroo-net
 
-  # Backend API Server (using pre-built base image)
+  # Backend API Server (using dev image with GPU-compatible TensorFlow)
   backend:
-    image: echoroo-base:latest
+    build:
+      context: back
+      dockerfile: Dockerfile.dev
     container_name: echoroo-backend
     restart: unless-stopped
     command: ["python", "-m", "echoroo"]
@@ -82,6 +84,12 @@ services:
       - ECHOROO_LOG_TO_STDOUT=true
       - ECHOROO_LOG_TO_FILE=false
       - ECHOROO_OPEN_ON_STARTUP=false
+      # Reduce batch size to avoid GPU OOM (default 16 is too large for some GPUs)
+      - ECHOROO_ML_GPU_BATCH_SIZE=4
+      # Force CPU mode to use TFLite backend which avoids asyncio deadlocks
+      - ECHOROO_ML_USE_GPU=false
+      # Enable debug timing for ML inference performance analysis
+      - ECHOROO_ML_DEBUG_TIMING=true
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:5000/docs"]
       interval: 30s
@@ -108,6 +116,7 @@ services:
       # Mount source for hot reload
       - ./front/src:/code/src:ro
       - ./front/public:/code/public:ro
+      - ./front/next.config.js:/code/next.config.js:ro
     environment:
       - NEXT_PUBLIC_BACKEND_HOST=http://${ECHOROO_DOMAIN:-localhost}:${ECHOROO_PORT:-5000}
       - PORT=3000

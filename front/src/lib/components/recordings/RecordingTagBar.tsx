@@ -8,9 +8,10 @@ import TagSearchBarBase, {
 } from "@/lib/components/tags/TagSearchBar";
 
 import type { Tag } from "@/lib/types";
-import { type Color, getTagColor } from "@/lib/utils/tags";
+import type { Color } from "@/lib/utils/tags";
 
 const _emptyTags: Tag[] = [];
+const DEFAULT_COLOR: Color = { color: "stone", level: 3 };
 
 /**
  * RecordingTagBar Component
@@ -38,7 +39,7 @@ export default function RecordingTagBar({
   canClose = true,
   onClickTag,
   onDeleteTag,
-  tagColorFn = getTagColor,
+  tagColorFn,
   TagSearchBar = TagSearchBarBase,
   ...props
 }: {
@@ -75,7 +76,7 @@ export default function RecordingTagBar({
           <TagComponent
             key={`${tag.key}-${tag.value}`}
             tag={tag}
-            {...tagColorFn(tag)}
+            {...(tagColorFn ? tagColorFn(tag) : DEFAULT_COLOR)}
             onClick={() => onClickTag?.(tag)}
             onClose={() => onDeleteTag?.(tag)}
             canClose={canClose && !disabled}

@@ -27,7 +27,7 @@ from echoroo.api.sound_event_annotations import sound_event_annotations
 from echoroo.api.sound_event_evaluations import sound_event_evaluations
 from echoroo.api.sound_event_predictions import sound_event_predictions
 from echoroo.api.sound_events import sound_events
-from echoroo.api.species import search_gbif_species
+from echoroo.api.species import get_gbif_vernacular_name, search_gbif_species
 from echoroo.api.spectrograms import compute_spectrogram
 from echoroo.api.tags import find_tag, find_tag_value, tags
 from echoroo.api.user_runs import user_runs
@@ -48,6 +48,9 @@ from echoroo.api.custom_models import custom_models
 from echoroo.api.inference_batches import inference_batches
 from echoroo.api.species_detection import species_detection_jobs
 from echoroo.api.species_filters import species_filters
+from echoroo.api.foundation_model_conversion import (
+    convert_foundation_model_run_to_annotation_project,
+)
 
 __all__ = [
     "annotation_projects",
@@ -81,6 +84,7 @@ __all__ = [
     "sound_event_evaluations",
     "sound_event_predictions",
     "sound_events",
+    "get_gbif_vernacular_name",
     "search_gbif_species",
     "tags",
     "user_runs",
@@ -99,4 +103,5 @@ __all__ = [
     "inference_batches",
     "species_detection_jobs",
     "species_filters",
+    "convert_foundation_model_run_to_annotation_project",
 ]

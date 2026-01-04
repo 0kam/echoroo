@@ -638,6 +638,584 @@ Uses `SectionTabs` component with `Tab` items:
 
 ---
 
+### 10. Species Filter UI
+
+#### Overview
+The Species Filter system uses geographic and temporal occurrence data to filter foundation model detections. After a foundation model run completes, users can apply filters (e.g., BirdNET Geo) to identify species that are unlikely to occur at the recording location and time. This helps reduce false positives from species that are geographically or seasonally impossible.
+
+#### Backend API Integration
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/species-filters/` | GET | List available filters (e.g., BirdNET Geo v2.4) |
+| `/runs/{run_uuid}/species-filter-applications/apply` | POST | Apply filter to run with threshold |
+| `/runs/{run_uuid}/species-filter-applications/` | GET | List applied filters for run |
+| `/runs/{run_uuid}/species-filter-applications/{uuid}` | GET | Get filter application details |
+| `/runs/{run_uuid}/species-filter-applications/{uuid}/progress` | GET | Poll filter processing progress |
+| `/runs/{run_uuid}/detections?filter_uuid={uuid}&include_excluded={bool}` | GET | Get filtered detection results |
+
+---
+
+#### 10.1 Apply Species Filter Dialog
+
+**Trigger Points**
+- Post-run completion notification: "Run complete! Apply species filter?" button
+- Run detail header: "Apply Filter" button (visible when run status = completed)
+- Run history drawer: "Apply Filter" action in each completed run row
+
+**Dialog Layout**
+```
++--------------------------------------------------+
+| Apply Species Filter                     [X]      |
++--------------------------------------------------+
+| Filter species detections based on geographic    |
+| and temporal occurrence probability data.         |
++--------------------------------------------------+
+| Select Filter                                     |
+| +----------------------------------------------+ |
+| | ( ) BirdNET Geo v2.4                         | |
+| |     Uses BirdNET's geographic occurrence     | |
+| |     model based on eBird data. Requires      | |
+| |     location coordinates and recording date. | |
+| +----------------------------------------------+ |
++--------------------------------------------------+
+| Occurrence Threshold                              |
+| [=======|------------------] 3%                   |
+| Species with occurrence probability below this   |
+| threshold will be excluded.                       |
+|                                                   |
+| Suggested thresholds:                             |
+| - 1%: Very permissive (keep rare visitors)       |
+| - 3%: Recommended (default, balanced filtering)  |
+| - 10%: Strict (only common species)              |
++--------------------------------------------------+
+| Apply Scope                                       |
+| [x] Apply to all detections                       |
+| [ ] Apply to unreviewed detections only           |
++--------------------------------------------------+
+| /!\ Location Data Warning                         |
+| 23 recordings (15%) lack location coordinates.   |
+| Detections from these recordings will be         |
+| skipped by the filter.                           |
++--------------------------------------------------+
+|                          [Cancel] [Apply Filter]  |
++--------------------------------------------------+
+```
+
+**Components**
+
+**FilterSelectionRadioGroup**
+- Lists available filters from `GET /species-filters/`
+- Each option shows:
+  - Filter name + version badge
+  - Description text (line-clamp-2)
+  - Requirements icons: MapPin (location), Calendar (date)
+  - Provider badge (e.g., "BirdNET", "eBird")
+- Selected state: emerald border + background
+
+**ThresholdSlider**
+- Range: 0% to 100%
+- Step: 1%
+- Default: from `filter.default_threshold` (typically 3%)
+- Tick marks at 1%, 3%, 5%, 10%, 25%, 50%
+- Current value displayed prominently
+- Color gradient: green (permissive) to orange (strict)
+
+**ScopeCheckbox**
+- `apply_to_all_detections: true` (default)
+- When unchecked, only affects `review_status = unreviewed`
+
+**LocationDataWarning**
+- Displayed when recordings lack coordinates
+- Shows count and percentage of affected recordings
+- Icon: AlertTriangle (yellow)
+- Collapsible details showing affected recording names
+
+**Empty State (No Filters Available)**
+```
++--------------------------------------------------+
+| Apply Species Filter                     [X]      |
++--------------------------------------------------+
+| [Globe icon]                                      |
+| No species filters available                      |
+| Contact your administrator to enable geographic   |
+| occurrence filtering for your instance.           |
+|                                        [Close]    |
++--------------------------------------------------+
+```
+
+---
+
+#### 10.2 Filter Application Progress
+
+**Layout (Inline in Run Detail)**
+```
++--------------------------------------------------+
+| Applying Species Filter...                        |
+| BirdNET Geo v2.4 | Threshold: 3%                 |
++--------------------------------------------------+
+| [========================================] 67%    |
+| Processing 1,340 / 2,000 detections               |
++--------------------------------------------------+
+| Live Statistics                                   |
+| +------------+ +------------+ +------------+      |
+| | Included   | | Excluded   | | Pass Rate  |      |
+| | 892        | | 448        | | 66.6%      |      |
+| +------------+ +------------+ +------------+      |
++--------------------------------------------------+
+|                                        [Cancel]   |
++--------------------------------------------------+
+```
+
+**Components**
+
+**FilterProgressCard**
+- Filter name + version
+- Threshold display
+- Animated progress bar
+- Detection count: processed / total
+- Estimated time remaining (when available)
+- Status badge: `pending`, `running`, `completed`, `failed`, `cancelled`
+
+**LiveStatisticsGrid**
+- Three stat boxes updated in real-time
+- Included: Count with CheckCircle icon (emerald)
+- Excluded: Count with XCircle icon (stone)
+- Pass Rate: Percentage with PieChart icon
+- Uses optimistic updates during polling
+
+**ProgressPolling**
+- Poll `GET /runs/{uuid}/species-filter-applications/{filter_uuid}/progress`
+- Interval: 2000ms while status = `running`
+- Auto-stop when status = `completed` or `failed`
+- Show error panel with retry button on failure
+
+**Status Color Scheme**
+| Status | Color |
+|--------|-------|
+| Pending | stone-200/stone-700 |
+| Running | blue-100/blue-700 (animated pulse) |
+| Completed | emerald-100/emerald-700 |
+| Failed | red-100/red-700 |
+| Cancelled | stone-300/stone-600 |
+
+---
+
+#### 10.3 Filter Summary Panel
+
+**Layout (Sidebar in Detection Results View)**
+```
++----------------------------------+
+| Species Filter Applied           |
+| BirdNET Geo v2.4                 |
++----------------------------------+
+| Threshold: 3%                    |
+| Applied: 2 hours ago             |
++----------------------------------+
+|         [Pie Chart]              |
+|      Included: 1,542 (77%)       |
+|      Excluded: 458 (23%)         |
++----------------------------------+
+| Statistics                       |
+| Total Detections: 2,000          |
+| Included: 1,542                  |
+| Excluded: 458                    |
+| Pass Rate: 77.1%                 |
++----------------------------------+
+| Top Excluded Species             |
+| - Turdus migratorius (45)        |
+| - Zenaida macroura (38)          |
+| - Sturnus vulgaris (31)          |
++----------------------------------+
+| [Re-apply with different        ]|
+| [threshold                      ]|
++----------------------------------+
+```
+
+**Components**
+
+**FilterSummaryCard**
+- Collapsible panel on right side of detection results
+- Shows filter metadata: name, version, threshold, applied time
+- Mini pie chart (Included vs Excluded)
+- Key statistics
+
+**ExcludedSpeciesList**
+- Top 5 most excluded species
+- Each row: scientific name + exclusion count
+- Click to filter detection table to that species
+- "View all excluded" expands to full modal
+
+**ReapplyButton**
+- Opens simplified dialog with only threshold slider
+- Pre-filled with current filter selection
+- Warning: "This will replace the existing filter application"
+
+---
+
+#### 10.4 Detection Results with Filter
+
+**Layout Updates**
+```
++--------------------------------------------------+
+| Detections                                        |
+| +-------------+ +-------------------+ +--------+  |
+| | Filter: v   | | Show: All v       | | Export |  |
+| | BirdNET Geo | | Included Only     | +--------+  |
+| |             | | Excluded Only     |             |
+| |  No Filter  | | All               |             |
+| +-------------+ +-------------------+             |
++--------------------------------------------------+
+| +------+------+---------+--------+-------+------+ |
+| | Spec | Conf | Species | Review | Incl. | Prob | |
+| +------+------+---------+--------+-------+------+ |
+| | [img]| 0.92 | Parus   | Unrevi | [Y]   | 45%  | |
+| |      |      | major   | ewed   |       |      | |
+| +------+------+---------+--------+-------+------+ |
+| | [img]| 0.85 | Turdus  | Unrevi | [N]   | 0.2% | | <- grayed out row
+| |      |      | migrat  | ewed   |       |      | |
+| +------+------+---------+--------+-------+------+ |
+| | [img]| 0.78 | Sitta   | Confir | [Y]   | 78%  | |
+| |      |      | europae | med    |       |      | |
+| +------+------+---------+--------+-------+------+ |
++--------------------------------------------------+
+```
+
+**New Column Definitions**
+
+**Included Column ("Incl.")**
+- Width: 60px
+- Header: Filter icon
+- Values:
+  - `[Y]`: CheckCircle icon, emerald color (is_included = true)
+  - `[N]`: XCircle icon, stone color (is_included = false)
+  - `[-]`: Minus icon, stone color (no filter applied or skipped)
+- Sortable: Yes
+
+**Occurrence Probability Column ("Prob")**
+- Width: 80px
+- Header: "Occur. %" or just "%"
+- Values: Percentage with 1 decimal (e.g., "45.2%")
+- Visual: Mini progress bar background
+- Color: Red (<3%), Yellow (3-10%), Green (>10%)
+- Sortable: Yes
+- Only shown when filter is selected
+
+**Filter Selector Dropdown**
+- Lists applied filter applications for the run
+- Each option shows: filter name + applied timestamp
+- "No Filter" option to view all detections without filter overlay
+- Badge showing pass rate next to each filter option
+
+**Show Toggle Dropdown**
+- "All": Show all detections (excluded ones grayed out)
+- "Included Only": Hide excluded detections entirely
+- "Excluded Only": Show only excluded detections
+
+**Excluded Row Styling**
+```css
+/* Excluded detection row */
+.detection-row-excluded {
+  opacity: 0.5;
+  background-color: var(--stone-50); /* Light mode */
+  background-color: var(--stone-900); /* Dark mode */
+}
+
+.detection-row-excluded .species-name {
+  text-decoration: line-through;
+  color: var(--stone-500);
+}
+```
+
+**Bulk Actions with Filter**
+- "Reject All Excluded" button: Sets review_status = rejected for all excluded detections
+- Confirmation dialog: "Mark 458 excluded detections as rejected?"
+- Success toast: "458 detections marked as rejected"
+
+---
+
+#### 10.5 Multiple Filter Applications
+
+**Filter History Dropdown**
+```
++--------------------------------------------------+
+| Applied Filters for This Run                      |
++--------------------------------------------------+
+| +----------------------------------------------+ |
+| | BirdNET Geo v2.4 @ 3%          [Active] [v]  | |
+| | Applied 2h ago by @user                       | |
+| | Included: 1,542 | Excluded: 458 | 77.1%      | |
+| +----------------------------------------------+ |
+| | BirdNET Geo v2.4 @ 10%                   [v] | |
+| | Applied 3h ago by @user                       | |
+| | Included: 1,234 | Excluded: 766 | 61.7%      | |
+| +----------------------------------------------+ |
+|                           [Apply New Filter]     |
++--------------------------------------------------+
+```
+
+**Comparison View**
+- Side-by-side comparison of two filter applications
+- Venn diagram showing overlap
+- Table of species that differ between filters
+- "Species only included in Filter A", "Only in B", "In both"
+
+**Filter Application Card**
+- Shows filter name, threshold, applied timestamp
+- Active filter highlighted with emerald border
+- Click to switch active filter
+- Delete button (with confirmation)
+
+---
+
+#### 10.6 User Flow: Applying and Viewing Species Filters
+
+**Flow 1: Apply Filter After Run Completion**
+1. Foundation model run completes
+2. Toast notification: "Run complete! 2,000 detections found. Apply species filter?"
+3. User clicks "Apply Filter" button
+4. ApplySpeciesFilterDialog opens
+5. User selects BirdNET Geo filter
+6. User adjusts threshold (default 3%)
+7. User clicks "Apply Filter"
+8. Dialog closes, progress card appears inline
+9. Progress updates every 2s
+10. On completion, detection table refreshes with filter columns
+
+**Flow 2: View Filtered Results**
+1. Navigate to run detail / detection results
+2. Filter selector dropdown shows applied filters
+3. Select filter to activate
+4. Table updates: new columns appear (Included, Occur. %)
+5. Excluded rows shown grayed out
+6. Toggle "Included Only" to hide excluded
+7. Review included detections
+8. Optionally bulk-reject excluded detections
+
+**Flow 3: Re-apply with Different Threshold**
+1. From Filter Summary Panel, click "Re-apply with different threshold"
+2. Simplified dialog opens with threshold slider only
+3. Adjust threshold (e.g., 3% to 10%)
+4. Click "Apply"
+5. New filter application created
+6. Old filter remains in history for comparison
+7. New filter becomes active
+
+**Flow 4: Compare Filter Results**
+1. From filter dropdown, click "Compare Filters"
+2. CompareFiltersDialog opens
+3. Select two filter applications to compare
+4. View side-by-side statistics
+5. See species that differ between thresholds
+6. Decide which threshold to use for final review
+
+---
+
+#### 10.7 Component Specifications
+
+**ApplySpeciesFilterDialog**
+```typescript
+interface ApplySpeciesFilterDialogProps {
+  runUuid: string;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onFilterApplied: (application: SpeciesFilterApplication) => void;
+}
+```
+
+**FilterProgressCard**
+```typescript
+interface FilterProgressCardProps {
+  runUuid: string;
+  applicationUuid: string;
+  onComplete: () => void;
+  onCancel: () => void;
+}
+```
+
+**FilterSummaryPanel**
+```typescript
+interface FilterSummaryPanelProps {
+  application: SpeciesFilterApplication;
+  onReapply: (threshold: number) => void;
+  onViewExcluded: () => void;
+}
+```
+
+**DetectionTableWithFilter**
+```typescript
+interface DetectionTableWithFilterProps {
+  runUuid: string;
+  activeFilterUuid: string | null;
+  showMode: 'all' | 'included_only' | 'excluded_only';
+  onFilterChange: (filterUuid: string | null) => void;
+  onShowModeChange: (mode: ShowMode) => void;
+}
+```
+
+**FilterComparisonDialog**
+```typescript
+interface FilterComparisonDialogProps {
+  runUuid: string;
+  applications: SpeciesFilterApplication[];
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}
+```
+
+---
+
+#### 10.8 State Management Additions
+
+**Server State (React Query)**
+```typescript
+// Available species filters
+["species_filters"]
+
+// Filter applications for a run
+["foundation_model_run", runUuid, "filter_applications"]
+
+// Single filter application
+["foundation_model_run", runUuid, "filter_application", applicationUuid]
+
+// Filter application progress (with refetchInterval during running)
+["foundation_model_run", runUuid, "filter_application", applicationUuid, "progress"]
+
+// Detections with filter applied
+["foundation_model_run", runUuid, "detections", { filterUuid, includeExcluded }]
+```
+
+**Local State**
+```typescript
+interface FilterUIState {
+  // Currently selected filter for viewing
+  activeFilterUuid: string | null;
+
+  // Detection display mode
+  showMode: 'all' | 'included_only' | 'excluded_only';
+
+  // Dialog states
+  applyDialogOpen: boolean;
+  compareDialogOpen: boolean;
+
+  // Comparison selection
+  comparisonFilterUuids: [string, string] | null;
+}
+```
+
+---
+
+#### 10.9 Data Model Reference
+
+**species_filter**
+| Column | Type | Notes |
+|--------|------|-------|
+| uuid | uuid (PK) | |
+| slug | text | e.g., `birdnet-geo-v2-4` |
+| display_name | text | "BirdNET Geo" |
+| provider | text | `birdnet`, `ebird` |
+| version | text | "2.4" |
+| description | text | Optional |
+| filter_type | enum | `geographic`, `occurrence`, `custom` |
+| default_threshold | numeric | 0.03 (3%) |
+| requires_location | bool | True for geographic filters |
+| requires_date | bool | True for temporal filters |
+| is_active | bool | |
+
+**species_filter_application**
+| Column | Type | Notes |
+|--------|------|-------|
+| uuid | uuid (PK) | |
+| foundation_model_run_id | int (FK) | |
+| species_filter_id | int (FK) | |
+| threshold | numeric | User-specified threshold |
+| apply_to_all_detections | bool | |
+| status | enum | `pending`, `running`, `completed`, `failed`, `cancelled` |
+| progress | numeric | 0.0 to 1.0 |
+| total_detections | int | |
+| filtered_detections | int | Passed filter (included) |
+| excluded_detections | int | Failed filter |
+| applied_by_id | uuid (FK) | User |
+| started_on | timestamptz | |
+| completed_on | timestamptz | |
+| error | jsonb | |
+
+**species_filter_mask**
+| Column | Type | Notes |
+|--------|------|-------|
+| id | int (PK) | |
+| species_filter_application_id | int (FK) | |
+| clip_prediction_id | int (FK) | |
+| tag_id | int (FK) | Species tag |
+| is_included | bool | Passed threshold check |
+| occurrence_probability | numeric | From filter model |
+| exclusion_reason | text | e.g., "below_threshold" |
+
+---
+
+#### 10.10 Accessibility Considerations
+
+**Keyboard Navigation**
+- Filter selector dropdown: Arrow keys, Enter to select
+- Threshold slider: Arrow keys for 1% increments, Page Up/Down for 10%
+- Dialog: Tab through fields, Escape to close
+- Excluded row indication: Screen reader announces "Excluded by species filter"
+
+**Screen Reader Announcements**
+- Filter application start: "Applying BirdNET Geo filter at 3% threshold"
+- Progress updates: "Processing 67%, 448 detections excluded so far"
+- Completion: "Filter complete. 77% of detections passed. 458 excluded."
+- Row status: "Detection excluded. Occurrence probability 0.2%"
+
+**Color-Blind Safe**
+- Excluded rows use strikethrough in addition to color
+- Included/Excluded icons have distinct shapes (check vs X)
+- Occurrence probability uses pattern fills in addition to color gradient
+
+---
+
+#### 10.11 File Structure Additions
+
+```
+front/src/app/components/species_filters/
+  ApplySpeciesFilterDialog.tsx        # Main apply dialog
+  FilterProgressCard.tsx              # Progress display
+  FilterSummaryPanel.tsx              # Summary sidebar
+  FilterSelector.tsx                  # Dropdown for filter selection
+  FilterComparisonDialog.tsx          # Compare two filters
+  ThresholdSlider.tsx                 # Threshold input component
+  LocationWarning.tsx                 # Missing location data alert
+  ExcludedSpeciesList.tsx             # Top excluded species
+  index.ts                            # Exports
+
+front/src/lib/api/species_filters.ts  # API client functions
+front/src/lib/schemas/species_filters.ts  # Zod schemas
+front/src/lib/types/species_filter.ts     # TypeScript types
+front/src/app/store/speciesFilter.ts      # Zustand store (optional)
+```
+
+---
+
+#### 10.12 Implementation Checklist
+
+- [ ] Species filter schemas and types
+- [ ] API client for species filter endpoints
+- [ ] ApplySpeciesFilterDialog component
+- [ ] ThresholdSlider component
+- [ ] LocationWarning component
+- [ ] FilterProgressCard with polling
+- [ ] FilterSummaryPanel component
+- [ ] Detection table filter columns (Included, Occur. %)
+- [ ] Filter selector dropdown
+- [ ] Show mode toggle (All/Included/Excluded)
+- [ ] Excluded row styling
+- [ ] Bulk reject excluded action
+- [ ] Filter comparison dialog
+- [ ] React Query hooks for filter state
+- [ ] Accessibility testing
+- [ ] Mobile responsive layouts
+
+---
+
 ## Responsive Behavior
 
 ### Breakpoints
@@ -654,6 +1232,9 @@ Uses `SectionTabs` component with `Tab` items:
 | Model Cards | 1 col | 1 col | 2 col |
 | Result Cards | 2 col | 3 col | 4 col |
 | Prediction Cards | 2 col | 3 col | 4 col |
+| Detection Table | Full width, horizontal scroll on mobile |
+| Filter Summary Panel | Full width modal (mobile) | Sidebar 320px (tablet+) |
+| Filter Stat Boxes | 1 col stacked | 3 col inline | 3 col inline |
 
 ---
 
@@ -689,6 +1270,10 @@ Uses `SectionTabs` component with `Tab` items:
 - Search Results: `["ml_project", uuid, "search_session", sessionUuid, "results"]`
 - Custom Models: `["ml_project", uuid, "custom_models"]`
 - Inference Batches: `["ml_project", uuid, "inference_batches"]`
+- Species Filters: `["species_filters"]`
+- Filter Applications: `["foundation_model_run", runUuid, "filter_applications"]`
+- Filter Progress: `["foundation_model_run", runUuid, "filter_application", appUuid, "progress"]`
+- Filtered Detections: `["foundation_model_run", runUuid, "detections", { filterUuid, includeExcluded }]`
 
 ### Local State
 - Selected result index in labeling mode
@@ -696,6 +1281,8 @@ Uses `SectionTabs` component with `Tab` items:
 - Pagination (page number)
 - Dialog open states
 - Expanded batch IDs
+- Active species filter UUID for detection view
+- Detection show mode (all, included_only, excluded_only)
 
 ### Context
 - `MLProjectContext`: Current project data passed to child components
@@ -781,6 +1368,24 @@ Based on the codebase analysis, the following components are already implemented
 - [ ] Advanced filtering options
 - [ ] Batch operations for reference sounds
 
+### Species Filter UI (New - Section 10)
+- [ ] Species filter schemas and types
+- [ ] API client for species filter endpoints
+- [ ] ApplySpeciesFilterDialog component
+- [ ] ThresholdSlider component
+- [ ] LocationWarning component
+- [ ] FilterProgressCard with polling
+- [ ] FilterSummaryPanel component
+- [ ] Detection table filter columns (Included, Occur. %)
+- [ ] Filter selector dropdown
+- [ ] Show mode toggle (All/Included/Excluded)
+- [ ] Excluded row styling
+- [ ] Bulk reject excluded action
+- [ ] Filter comparison dialog
+- [ ] React Query hooks for filter state
+- [ ] Accessibility testing
+- [ ] Mobile responsive layouts
+
 ---
 
 ## Appendix: API Endpoints
@@ -822,3 +1427,11 @@ Based on the codebase analysis, the following components are already implemented
 - `POST /api/ml-projects/:uuid/inference-batches/:batchUuid/cancel` - Cancel batch
 - `GET /api/ml-projects/:uuid/inference-batches/:batchUuid/predictions` - Get predictions
 - `POST /api/ml-projects/:uuid/inference-batches/:batchUuid/predictions/:predUuid/review` - Review prediction
+
+### Species Filters
+- `GET /api/species-filters/` - List available species filters
+- `POST /api/runs/:runUuid/species-filter-applications/apply` - Apply filter to run
+- `GET /api/runs/:runUuid/species-filter-applications/` - List filter applications for run
+- `GET /api/runs/:runUuid/species-filter-applications/:filterUuid` - Get filter application details
+- `GET /api/runs/:runUuid/species-filter-applications/:filterUuid/progress` - Get filter progress
+- `GET /api/runs/:runUuid/detections?filter_uuid={uuid}&include_excluded={bool}` - Get filtered detections

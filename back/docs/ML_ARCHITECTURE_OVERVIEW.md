@@ -2,7 +2,7 @@
 
 ## プロジェクト概要
 
-Whombat (Echoroo) のML推論システムは、複数の音響解析モデル（BirdNET V2.4、Perch V2など）を統合し、音声データから種の識別と音響埋め込みを抽出するための拡張可能なアーキテクチャを提供します。
+EchorooのML推論システムは、複数の音響解析モデル（BirdNET V2.4、Perch V2など）を統合し、音声データから種の識別と音響埋め込みを抽出するための拡張可能なアーキテクチャを提供します。
 
 ### 主な改善点
 
@@ -68,7 +68,7 @@ Whombat (Echoroo) のML推論システムは、複数の音響解析モデル（
 
 **実装例:**
 ```python
-from whombat.ml.base import ModelLoader, ModelSpecification
+from echoroo.ml.base import ModelLoader, ModelSpecification
 
 class MyModelLoader(ModelLoader):
     @property
@@ -101,7 +101,7 @@ class MyModelLoader(ModelLoader):
 
 **実装例:**
 ```python
-from whombat.ml.base import InferenceEngine, InferenceResult
+from echoroo.ml.base import InferenceEngine, InferenceResult
 import numpy as np
 
 class MyInferenceEngine(InferenceEngine):
@@ -144,7 +144,7 @@ class MyInferenceEngine(InferenceEngine):
 
 **実装例:**
 ```python
-from whombat.ml.filters import PredictionFilter, FilterContext
+from echoroo.ml.filters import PredictionFilter, FilterContext
 
 # Create filter context from recording metadata
 context = FilterContext(
@@ -170,7 +170,7 @@ filtered = filter.filter_predictions(predictions, context)
 
 **使用例:**
 ```python
-from whombat.ml.registry import ModelRegistry
+from echoroo.ml.registry import ModelRegistry
 
 # Register model (typically in model's __init__.py)
 ModelRegistry.register(

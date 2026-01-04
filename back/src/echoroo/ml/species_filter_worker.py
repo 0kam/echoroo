@@ -13,6 +13,7 @@ import logging
 from typing import Callable
 from uuid import UUID
 
+import h3
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
@@ -128,6 +129,30 @@ class SpeciesFilterWorker:
 
         return self._filters[slug]
 
+    def _get_location_bucket(
+        self, context: FilterContext
+    ) -> tuple[int, int, int] | None:
+        """Get location bucket key for caching (1-degree grid).
+
+        Parameters
+        ----------
+        context : FilterContext
+            Location and time context.
+
+        Returns
+        -------
+        tuple[int, int, int] | None
+            (lat_bucket, lon_bucket, week) for cache key,
+            or None if context is invalid.
+        """
+        if not context.is_valid:
+            return None
+
+        # 1-degree grid resolution
+        lat_bucket = int(context.latitude // 1)  # type: ignore[operator]
+        lon_bucket = int(context.longitude // 1)  # type: ignore[operator]
+        return (lat_bucket, lon_bucket, context.week)  # type: ignore[return-value]
+
     async def start(
         self,
         session_factory: Callable[[], AsyncSession],
@@ -242,7 +267,15 @@ class SpeciesFilterWorker:
         session: AsyncSession,
         application: models.SpeciesFilterApplication,
     ) -> None:
-        """Process a single species filter application.
+        """Process a single species filter application using batch processing.
+
+        This method uses a 4-step batch processing approach to minimize
+        redundant GBIF lookups and geo model calls:
+
+        1. Data Collection: Scan all predictions and collect unique (bucket, taxon_key) pairs
+        2. Batch Probability Fetch: Get probabilities for each unique bucket once
+        3. Filter Result Calculation: Compute filter results for unique combinations
+        4. Mask Creation: Create mask records using lookup from pre-computed results
 
         Parameters
         ----------
@@ -281,7 +314,9 @@ class SpeciesFilterWorker:
                 )
 
             # Get predictions with their clips and recordings
+            logger.info("Fetching predictions for model run %d", model_run_id)
             predictions = await self._get_predictions(session, model_run_id)
+            logger.info("Fetched %d predictions", len(predictions))
 
             if not predictions:
                 logger.warning(
@@ -302,16 +337,111 @@ class SpeciesFilterWorker:
             application.total_detections = total_detections
             await session.flush()
 
-            # Process each prediction
-            filtered_count = 0
-            excluded_count = 0
-            processed = 0
+            # Check for cancellation
+            if self._cancel_requested:
+                logger.info("Application %s cancelled by user", application.uuid)
+                await self._update_application_status(
+                    session,
+                    application,
+                    status=models.SpeciesFilterApplicationStatus.CANCELLED,
+                )
+                await session.commit()
+                return
+
+            # ============================================================
+            # Step 1: Data Collection
+            # Scan all predictions and collect unique (bucket, taxon_key) pairs
+            # ============================================================
+            logger.info("Step 1: Collecting prediction data and unique buckets")
+
+            # Type aliases for clarity
+            # Bucket = (lat_bucket, lon_bucket, week)
+            prediction_data_list: list[
+                tuple[
+                    models.ClipPrediction,
+                    tuple[int, int, int] | None,
+                    list[models.ClipPredictionTag],
+                ]
+            ] = []
+            bucket_taxon_keys: dict[tuple[int, int, int], set[str]] = {}
 
             for prediction in predictions:
+                # Get recording metadata for filter context
+                recording = prediction.clip.recording
+
+                # Use direct lat/lng if available, otherwise convert from h3_index
+                latitude = recording.latitude
+                longitude = recording.longitude
+                if latitude is None and longitude is None and recording.h3_index:
+                    try:
+                        latitude, longitude = h3.cell_to_latlng(recording.h3_index)
+                    except Exception as e:
+                        logger.debug(
+                            "Failed to convert h3_index %s to lat/lng: %s",
+                            recording.h3_index,
+                            e,
+                        )
+
+                # Use date if available, otherwise extract date from datetime
+                recording_date = recording.date
+                if recording_date is None and recording.datetime is not None:
+                    recording_date = recording.datetime.date()
+
+                filter_context = FilterContext.from_recording(
+                    latitude=latitude,
+                    longitude=longitude,
+                    recording_date=recording_date,
+                )
+
+                # Get bucket for this context
+                bucket = self._get_location_bucket(filter_context)
+
+                # Collect tags for this prediction
+                tags = list(prediction.tags)
+
+                # Store prediction data
+                prediction_data_list.append((prediction, bucket, tags))
+
+                # Collect unique taxon keys per bucket
+                if bucket is not None:
+                    if bucket not in bucket_taxon_keys:
+                        bucket_taxon_keys[bucket] = set()
+                    for pred_tag in tags:
+                        bucket_taxon_keys[bucket].add(pred_tag.tag.value)
+
+            logger.info(
+                "Collected %d predictions with %d unique buckets",
+                len(prediction_data_list),
+                len(bucket_taxon_keys),
+            )
+
+            # Check for cancellation
+            if self._cancel_requested:
+                logger.info("Application %s cancelled by user", application.uuid)
+                await self._update_application_status(
+                    session,
+                    application,
+                    status=models.SpeciesFilterApplicationStatus.CANCELLED,
+                )
+                await session.commit()
+                return
+
+            # ============================================================
+            # Step 2: Batch Probability Fetch
+            # Get probabilities for each unique bucket once
+            # ============================================================
+            logger.info("Step 2: Fetching probabilities for %d unique buckets", len(bucket_taxon_keys))
+
+            # Check if filter supports batch probability fetching
+            use_batch_probs = hasattr(filter_instance, "get_probabilities_for_taxon_keys")
+
+            # bucket -> {taxon_key: probability}
+            bucket_probs: dict[tuple[int, int, int], dict[str, float]] = {}
+
+            for idx, (bucket, taxon_keys) in enumerate(bucket_taxon_keys.items()):
+                # Check for cancellation periodically
                 if self._cancel_requested:
-                    logger.info(
-                        "Application %s cancelled by user", application.uuid
-                    )
+                    logger.info("Application %s cancelled by user", application.uuid)
                     await self._update_application_status(
                         session,
                         application,
@@ -320,45 +450,128 @@ class SpeciesFilterWorker:
                     await session.commit()
                     return
 
-                # Get recording metadata for filter context
-                recording = prediction.clip.recording
-                filter_context = FilterContext.from_recording(
-                    latitude=recording.latitude,
-                    longitude=recording.longitude,
-                    recording_date=recording.date,
+                # Create a context for this bucket (use bucket center coordinates)
+                lat_bucket, lon_bucket, week = bucket
+                bucket_context = FilterContext(
+                    latitude=float(lat_bucket) + 0.5,
+                    longitude=float(lon_bucket) + 0.5,
+                    week=week,
                 )
 
-                # Get occurrence probabilities
-                occurrence_probs = await filter_instance.get_species_probabilities(
-                    filter_context, session
-                )
+                if use_batch_probs:
+                    # Use efficient batch method
+                    probs = await filter_instance.get_probabilities_for_taxon_keys(  # type: ignore[attr-defined]
+                        bucket_context, taxon_keys
+                    )
+                    bucket_probs[bucket] = probs
+                else:
+                    # Fallback: get all probabilities (less efficient)
+                    raw_probs = await filter_instance.get_raw_species_probabilities(  # type: ignore[attr-defined]
+                        bucket_context
+                    )
+                    bucket_probs[bucket] = raw_probs if raw_probs else {}
 
-                # Process each tag in the prediction
-                for pred_tag in prediction.tags:
-                    tag = pred_tag.tag
+                # Update progress
+                if (idx + 1) % 10 == 0 or idx == len(bucket_taxon_keys) - 1:
+                    progress = 0.3 * (idx + 1) / len(bucket_taxon_keys)
+                    application.progress = progress
+                    await session.commit()
+                    logger.debug(
+                        "Fetched probabilities for %d/%d buckets",
+                        idx + 1,
+                        len(bucket_taxon_keys),
+                    )
 
-                    # Determine if species should be included
-                    occurrence_prob = None
-                    is_included = True
-                    exclusion_reason = None
+            logger.info("Completed probability fetching for all buckets")
 
-                    if occurrence_probs is not None:
-                        # Try to match by tag value (GBIF taxon key)
-                        occurrence_prob = occurrence_probs.get(tag.value)
+            # ============================================================
+            # Step 3: Filter Result Calculation
+            # Compute filter results for unique (bucket, taxon_key) combinations
+            # ============================================================
+            logger.info("Step 3: Computing filter results")
 
-                        if occurrence_prob is None:
-                            # Species not in occurrence data - include by default
-                            is_included = True
-                        elif occurrence_prob < application.threshold:
-                            is_included = False
-                            exclusion_reason = (
-                                f"Occurrence probability {occurrence_prob:.2%} "
-                                f"below threshold {application.threshold:.2%}"
-                            )
+            # (bucket, taxon_key) -> (is_included, occurrence_prob, exclusion_reason)
+            filter_results: dict[
+                tuple[tuple[int, int, int], str],
+                tuple[bool, float | None, str | None],
+            ] = {}
+
+            threshold = application.threshold
+
+            for bucket, taxon_keys in bucket_taxon_keys.items():
+                probs = bucket_probs.get(bucket, {})
+
+                for taxon_key in taxon_keys:
+                    occurrence_prob = probs.get(taxon_key)
+
+                    if occurrence_prob is None:
+                        # Species not in occurrence data - include by default
+                        is_included = True
+                        exclusion_reason = None
+                    elif occurrence_prob >= threshold:
+                        is_included = True
+                        exclusion_reason = None
                     else:
-                        # No filter context available - include by default
-                        if not filter_context.is_valid:
-                            exclusion_reason = "Invalid filter context (missing location/date)"
+                        is_included = False
+                        exclusion_reason = (
+                            f"Occurrence probability {occurrence_prob:.2%} "
+                            f"below threshold {threshold:.2%}"
+                        )
+
+                    filter_results[(bucket, taxon_key)] = (
+                        is_included,
+                        occurrence_prob,
+                        exclusion_reason,
+                    )
+
+            logger.info(
+                "Computed filter results for %d unique (bucket, taxon_key) combinations",
+                len(filter_results),
+            )
+
+            # ============================================================
+            # Step 4: Mask Creation
+            # Create mask records using lookup from pre-computed results
+            # ============================================================
+            logger.info("Step 4: Creating mask records")
+
+            filtered_count = 0
+            excluded_count = 0
+            processed = 0
+
+            for prediction, bucket, tags in prediction_data_list:
+                # Check for cancellation periodically
+                if processed % self._batch_size == 0 and self._cancel_requested:
+                    logger.info("Application %s cancelled by user", application.uuid)
+                    await self._update_application_status(
+                        session,
+                        application,
+                        status=models.SpeciesFilterApplicationStatus.CANCELLED,
+                    )
+                    await session.commit()
+                    return
+
+                for pred_tag in tags:
+                    tag = pred_tag.tag
+                    taxon_key = tag.value
+
+                    if bucket is None:
+                        # Invalid context - include by default
+                        is_included = True
+                        occurrence_prob = None
+                        exclusion_reason = (
+                            "Invalid filter context (missing location/date)"
+                        )
+                    else:
+                        # Look up pre-computed result
+                        result = filter_results.get((bucket, taxon_key))
+                        if result is not None:
+                            is_included, occurrence_prob, exclusion_reason = result
+                        else:
+                            # Should not happen, but handle gracefully
+                            is_included = True
+                            occurrence_prob = None
+                            exclusion_reason = None
 
                     # Create mask record
                     mask = models.SpeciesFilterMask(
@@ -380,7 +593,7 @@ class SpeciesFilterWorker:
 
                 # Update progress periodically
                 if processed % self._batch_size == 0:
-                    progress = processed / len(predictions)
+                    progress = 0.3 + 0.7 * (processed / len(prediction_data_list))
                     application.progress = progress
                     application.filtered_detections = filtered_count
                     application.excluded_detections = excluded_count
@@ -399,11 +612,13 @@ class SpeciesFilterWorker:
             await session.commit()
 
             logger.info(
-                "Application %s completed: %d filtered, %d excluded from %d total",
+                "Application %s completed: %d filtered, %d excluded from %d total "
+                "(processed %d unique buckets)",
                 application.uuid,
                 filtered_count,
                 excluded_count,
                 total_detections,
+                len(bucket_taxon_keys),
             )
 
         except Exception as e:

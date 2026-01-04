@@ -5,14 +5,16 @@ import Button from "@/lib/components/ui/Button";
 import useListWithSearch from "@/lib/hooks/lists/useListWithSearch";
 
 import type { Tag } from "@/lib/types";
-import { Color, getTagColor } from "@/lib/utils/tags";
+import type { Color } from "@/lib/utils/tags";
+
+const DEFAULT_COLOR: Color = { color: "stone", level: 3 };
 
 export default function TagList({
   tags,
   onClick,
   onRemove,
   showMax = 10,
-  tagColorFn = getTagColor,
+  tagColorFn,
 }: {
   tags: Tag[];
   onClick?: (tag: Tag) => void;
@@ -37,7 +39,7 @@ export default function TagList({
           <TagComponent
             key={`${tag.key}-${tag.value}`}
             tag={tag}
-            {...tagColorFn(tag)}
+            {...(tagColorFn ? tagColorFn(tag) : DEFAULT_COLOR)}
             onClick={onClick && (() => onClick(tag))}
             onClose={onRemove && (() => onRemove(tag))}
           />

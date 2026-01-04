@@ -76,6 +76,7 @@ export const FoundationModelRunCreateSchema = z.object({
   foundation_model_slug: z.string(),
   confidence_threshold: z.number().min(0).max(1).optional(),
   scope: z.record(z.any()).optional(),
+  locale: z.string().optional(),
 });
 
 // ============================================================================
@@ -120,6 +121,8 @@ export const FoundationModelDetectionSchema = z.object({
   reviewed_by_id: z.string().uuid().nullable(),
   notes: z.string().nullable(),
   converted_to_annotation: z.boolean(),
+  is_included: z.boolean().nullable(),
+  occurrence_probability: z.number().nullable(),
 });
 
 // ============================================================================
@@ -170,9 +173,10 @@ export const FoundationModelDetectionSummarySchema = z.object({
   total_rejected: z.number().int(),
   total_uncertain: z.number().int(),
   total_unreviewed: z.number().int(),
-  confidence_histogram: z.array(z.number().int()),
-  detections_by_date: z.record(z.number().int()),
-  detections_by_location: z.record(z.number().int()),
+  // Optional fields (not currently computed by backend)
+  confidence_histogram: z.array(z.number().int()).optional(),
+  detections_by_date: z.record(z.number().int()).optional(),
+  detections_by_location: z.record(z.number().int()).optional(),
 });
 
 // ============================================================================
@@ -181,4 +185,26 @@ export const FoundationModelDetectionSummarySchema = z.object({
 
 export const BulkReviewResponseSchema = z.object({
   reviewed_count: z.number().int(),
+});
+
+// ============================================================================
+// Job Queue Status
+// ============================================================================
+
+export const JobQueueStatusSchema = z.object({
+  pending: z.number().int(),
+  running: z.number().int(),
+  completed: z.number().int(),
+  failed: z.number().int(),
+});
+
+// ============================================================================
+// Convert to Annotation Project Response
+// ============================================================================
+
+export const ConvertToAnnotationProjectResponseSchema = z.object({
+  annotation_project_uuid: z.string().uuid(),
+  annotation_project_name: z.string(),
+  total_tasks_created: z.number().int(),
+  total_annotations_created: z.number().int(),
 });

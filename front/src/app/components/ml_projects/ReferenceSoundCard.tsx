@@ -9,9 +9,11 @@ import {
   PlayIcon,
   TagIcon,
   TimeIcon,
+  WarningIcon,
 } from "@/lib/components/icons";
-import Button from "@/lib/components/ui/Button";
 import { Toggle } from "@/lib/components/inputs";
+import Alert from "@/lib/components/ui/Alert";
+import Button from "@/lib/components/ui/Button";
 
 import type { ReferenceSound, ReferenceSoundSource } from "@/lib/types";
 
@@ -160,15 +162,60 @@ export default function ReferenceSoundCard({
             {referenceSound.is_active ? "Active" : "Inactive"}
           </span>
         </div>
-        <Button
+        <Alert
+          title={
+            <>
+              <WarningIcon className="inline-block mr-2 w-6 h-6 text-red-500" />
+              Delete reference sound?
+            </>
+          }
+          button={
+            <>
+              <DeleteIcon className="inline-block mr-1 w-4 h-4" />
+              Delete
+            </>
+          }
           mode="text"
           variant="danger"
-          padding="p-1"
-          type="button"
-          onClick={onDelete}
+          padding="px-2 py-1"
         >
-          <DeleteIcon className="w-4 h-4" />
-        </Button>
+          {({ close }) => (
+            <>
+              <div className="flex flex-col gap-2">
+                <p>
+                  Are you sure you want to delete this reference sound? This
+                  action cannot be undone.
+                </p>
+                <h2 className="p-3 font-semibold text-center text-stone-800 dark:text-stone-200">
+                  {referenceSound.name}
+                </h2>
+              </div>
+              <div className="flex flex-row gap-2 justify-end mt-4">
+                <Button
+                  tabIndex={0}
+                  mode="text"
+                  variant="danger"
+                  onClick={() => {
+                    onDelete?.();
+                    close();
+                  }}
+                >
+                  <DeleteIcon className="inline-block mr-2 w-5 h-5" />
+                  Delete
+                </Button>
+                <Button
+                  tabIndex={1}
+                  mode="outline"
+                  variant="primary"
+                  onClick={close}
+                >
+                  <CloseIcon className="inline-block mr-2 w-5 h-5" />
+                  Cancel
+                </Button>
+              </div>
+            </>
+          )}
+        </Alert>
       </div>
     </div>
   );

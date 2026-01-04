@@ -107,6 +107,12 @@ class FoundationModelRunCreate(BaseModel):
     foundation_model_slug: str
     confidence_threshold: float | None = Field(default=None, ge=0.0, le=1.0)
     scope: dict[str, Any] | None = None
+    locale: str = Field(
+        default="ja",
+        max_length=16,
+        description="Locale for species common names (e.g., 'en_us', 'ja')",
+    )
+    """Locale for species common names. Defaults to Japanese ('ja')."""
 
 
 class FoundationModelRunProgress(BaseModel):

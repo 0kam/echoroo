@@ -13,7 +13,7 @@ import Tag from "@/lib/components/tags/Tag";
 import Button from "@/lib/components/ui/Button";
 
 import type { Tag as TagType } from "@/lib/types";
-import { type Color, getTagColor } from "@/lib/utils/tags";
+import type { Color } from "@/lib/utils/tags";
 
 type Query = {
   q: string;
@@ -32,11 +32,11 @@ export type TagSearchBarProps = {
   searchButtonLabel?: string;
   isSearching?: boolean;
   emptyMessage?: string;
+  tagColorFn?: (tag: TagType) => Color;
 };
 
 type TagSearchBarExpandedProps = TagSearchBarProps & {
   onChangeQuery?: (query: Query) => void;
-  tagColorFn?: (tag: TagType) => Color;
 } & Omit<
   InputHTMLAttributes<HTMLInputElement>,
   "onSelect" | "onChange" | "onKeyDown" | "onBlur"
@@ -50,7 +50,7 @@ const TagSearchBar = forwardRef<HTMLInputElement, TagSearchBarExpandedProps>(
   function TagSearchBar(
     {
       tags = _emptyTags,
-      tagColorFn = getTagColor,
+      tagColorFn,
       canCreate = false,
       onSelectTag,
       onChangeQuery,
@@ -135,6 +135,9 @@ const TagSearchBar = forwardRef<HTMLInputElement, TagSearchBarExpandedProps>(
         if (tag.canonical_name) {
           candidates.push(tag.canonical_name);
         }
+        if (tag.vernacular_name) {
+          candidates.push(tag.vernacular_name);
+        }
         if (tag.value) {
           candidates.push(tag.value);
         }
@@ -193,7 +196,9 @@ const TagSearchBar = forwardRef<HTMLInputElement, TagSearchBarExpandedProps>(
                         disabled
                         className="pointer-events-none"
                         tag={tag}
-                        {...tagColorFn(tag)}
+                        {...(tagColorFn
+                          ? tagColorFn(tag)
+                          : { color: "stone", level: 3 })}
                       />
                     </button>
                   </li>

@@ -17,6 +17,7 @@ __all__ = [
     "InferenceJobCreate",
     "InferenceJobUpdate",
     "InferenceStatus",
+    "JobQueueStatus",
 ]
 
 
@@ -47,8 +48,8 @@ class InferenceConfig(BaseModel):
     use_gpu: bool = True
     """Whether to use GPU acceleration if available."""
 
-    use_metadata_filter: bool = True
-    """Use location and season metadata to filter predictions (BirdNET)."""
+    use_metadata_filter: bool = False
+    """Apply species filters explicitly after the run (BirdNET)."""
 
     custom_species_list: list[str] | None = None
     """Custom list of species to detect (limits predictions to these species)."""
@@ -132,3 +133,19 @@ class InferenceJobUpdate(BaseModel):
 
     error_message: str | None = None
     """Error message to set (if job failed)."""
+
+
+class JobQueueStatus(BaseModel):
+    """Status of the job queue."""
+
+    pending: int = 0
+    """Number of jobs waiting to be processed."""
+
+    running: int = 0
+    """Number of jobs currently being processed."""
+
+    completed: int = 0
+    """Number of completed jobs."""
+
+    failed: int = 0
+    """Number of failed jobs."""

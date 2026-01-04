@@ -34,10 +34,10 @@ keywords = ["audio", "annotation", "tool", "bioacoustics", "machine learning"]
 license-files = ["LICENSE"]
 
 [project.urls]
-Homepage = "https://github.com/mbsantiago/whombat"
-Documentation = "https://mbsantiago.github.io/whombat/"
-"Isue Tracker" = "https://github.com/mbsantiago/whombat/issues"
-Releases = "https://github.com/mbsantiago/whombat/releases"
+Homepage = "https://github.com/okamoto/echoroo"
+Documentation = "https://okamoto.github.io/echoroo/"
+"Issue Tracker" = "https://github.com/okamoto/echoroo/issues"
+Releases = "https://github.com/okamoto/echoroo/releases"
 
 [project.scripts]
 echoroo = "echoroo.__main__:main"
@@ -46,6 +46,7 @@ echoroo = "echoroo.__main__:main"
 postgresql = ["asyncpg>=0.29.0", "psycopg2-binary>=2.9.9", "pgvector>=0.3.0"]
 ml = [
     "birdnet>=0.2.0",
+    "tensorflow>=2.18.0",
     "soundfile>=0.12.0",
 ]
 # ML models use BirdNET for audio analysis and embeddings

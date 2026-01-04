@@ -5,6 +5,9 @@ birdnet Python package (v0.2.x), extracting embeddings and species predictions.
 
 Inherits from the base InferenceEngine class to provide consistent interface
 with other ML models in Echoroo.
+
+This implementation uses the compact file-based APIs from birdnet to minimize
+overhead and avoid complex session management.
 """
 
 from __future__ import annotations
@@ -12,8 +15,10 @@ from __future__ import annotations
 import logging
 import os
 import tempfile
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 from numpy.typing import NDArray
@@ -36,6 +41,16 @@ __all__ = [
     "BirdNETInference",
 ]
 
+# Default batch size for GPU processing
+# Adjust based on GPU memory (higher = more GPU utilization but more memory)
+DEFAULT_BATCH_SIZE = 16
+
+# Default number of file reading processes
+DEFAULT_FEEDERS = 1
+
+# Default number of GPU inference workers
+DEFAULT_WORKERS = 1
+
 
 class BirdNETInference(InferenceEngine):
     """Run BirdNET inference on audio files using the birdnet package.
@@ -56,6 +71,14 @@ class BirdNETInference(InferenceEngine):
     top_k : int, optional
         Maximum number of top predictions to return per segment.
         Default is 10.
+    device : str, optional
+        Device to use for inference: "GPU" or "CPU". Default is "GPU".
+    batch_size : int, optional
+        Batch size for GPU processing. Default is 16.
+    feeders : int, optional
+        Number of file reading processes for parallel I/O. Default is 1.
+    workers : int, optional
+        Number of GPU inference workers. Default is 1.
 
     Attributes
     ----------
@@ -63,6 +86,12 @@ class BirdNETInference(InferenceEngine):
         Current confidence threshold.
     top_k : int
         Current top-k setting.
+    device : str
+        Device being used for inference.
+    feeders : int
+        Number of file reading processes.
+    workers : int
+        Number of GPU inference workers.
 
     Examples
     --------
@@ -101,6 +130,10 @@ class BirdNETInference(InferenceEngine):
         loader: BirdNETLoader,
         confidence_threshold: float = 0.1,
         top_k: int = 10,
+        device: str = "GPU",
+        batch_size: int = DEFAULT_BATCH_SIZE,
+        feeders: int = DEFAULT_FEEDERS,
+        workers: int = DEFAULT_WORKERS,
     ) -> None:
         """Initialize the BirdNET inference engine.
 
@@ -112,6 +145,15 @@ class BirdNETInference(InferenceEngine):
             Minimum confidence score for predictions. Default is 0.1.
         top_k : int, optional
             Maximum number of top predictions to return. Default is 10.
+        device : str, optional
+            Device to use for inference: "GPU" or "CPU". Default is "GPU".
+        batch_size : int, optional
+            Batch size for GPU processing. Higher values use more GPU memory
+            but improve throughput. Default is 16.
+    feeders : int, optional
+        Number of file reading processes for parallel I/O. Default is 1.
+        workers : int, optional
+            Number of GPU inference workers. Default is 1.
 
         Raises
         ------
@@ -121,6 +163,10 @@ class BirdNETInference(InferenceEngine):
         super().__init__(loader)
         self._confidence_threshold = confidence_threshold
         self._top_k = top_k
+        self._device = device
+        self._batch_size = batch_size
+        self._feeders = feeders
+        self._workers = workers
 
     @property
     def confidence_threshold(self) -> float:
@@ -150,6 +196,11 @@ class BirdNETInference(InferenceEngine):
         """Get the current top-k setting."""
         return self._top_k
 
+    @property
+    def device(self) -> str:
+        """Get the device being used for inference."""
+        return self._device
+
     @top_k.setter
     def top_k(self, value: int) -> None:
         """Set the top-k value.
@@ -167,6 +218,152 @@ class BirdNETInference(InferenceEngine):
         if value < 1:
             raise ValueError(f"top_k must be >= 1, got {value}")
         self._top_k = value
+
+    @property
+    def batch_size(self) -> int:
+        """Get the batch size for GPU processing."""
+        return self._batch_size
+
+    @batch_size.setter
+    def batch_size(self, value: int) -> None:
+        """Set the batch size.
+
+        Parameters
+        ----------
+        value : int
+            New batch size (>= 1).
+
+        Raises
+        ------
+        ValueError
+            If value is less than 1.
+        """
+        if value < 1:
+            raise ValueError(f"batch_size must be >= 1, got {value}")
+        self._batch_size = value
+
+    @property
+    def feeders(self) -> int:
+        """Get the number of file reading processes."""
+        return self._feeders
+
+    @property
+    def workers(self) -> int:
+        """Get the number of GPU inference workers."""
+        return self._workers
+
+    def _build_infer_kwargs(self) -> dict[str, Any]:
+        """Build kwargs for birdnet encode/predict calls."""
+        kwargs: dict[str, Any] = {"device": self._device}
+        if self._batch_size > 0:
+            kwargs["batch_size"] = self._batch_size
+        # Only pass multiprocessing params for GPU mode (protobuf backend)
+        # TFLite backend (CPU mode) doesn't use these and they cause issues
+        if self._device != "CPU":
+            if self._feeders > 0:
+                kwargs["n_feeders"] = self._feeders
+            if self._workers > 0:
+                kwargs["n_workers"] = self._workers
+        return kwargs
+
+    def _extract_embeddings(self, embeddings_result: Any) -> NDArray[np.float32]:
+        """Normalize embeddings result into a float32 numpy array."""
+        embeddings = (
+            embeddings_result.embeddings
+            if hasattr(embeddings_result, "embeddings")
+            else embeddings_result
+        )
+        if hasattr(embeddings, "numpy"):
+            embeddings = embeddings.numpy()
+        return np.asarray(embeddings, dtype=np.float32)
+
+    def _normalize_embedding_batch(
+        self, embeddings: NDArray[np.float32]
+    ) -> NDArray[np.float32]:
+        """Normalize embeddings into (n_segments, embedding_dim)."""
+        if embeddings.ndim == 3:
+            return embeddings[0]
+        if embeddings.ndim == 2:
+            return embeddings
+        return embeddings.reshape(1, -1)
+
+    def _filter_predictions(
+        self,
+        probs: NDArray[np.float32],
+        species_ids: NDArray[np.int_],
+        species_list: list[str],
+    ) -> list[tuple[str, float]]:
+        """Filter predictions by top_k and confidence threshold."""
+        if probs.size == 0:
+            return []
+        top_k = min(self._top_k, probs.size)
+        top_indices = np.argsort(probs)[-top_k:][::-1]
+        predictions: list[tuple[str, float]] = []
+        for idx in top_indices:
+            conf = float(probs[idx])
+            if conf >= self._confidence_threshold:
+                actual_idx = int(species_ids[idx])
+                predictions.append((species_list[actual_idx], conf))
+        return predictions
+
+    def _collect_predictions_by_segment(
+        self, predictions_result: Any
+    ) -> list[list[tuple[str, float]]]:
+        """Extract predictions for each segment from birdnet output."""
+        if not hasattr(predictions_result, "species_probs"):
+            return []
+
+        species_probs = predictions_result.species_probs
+        species_ids = predictions_result.species_ids
+        if species_probs is None or species_probs.size == 0:
+            return []
+
+        if species_probs.ndim == 3:
+            probs = species_probs[0]
+            ids = species_ids[0]
+        elif species_probs.ndim == 2:
+            probs = species_probs
+            ids = species_ids
+        else:
+            probs = species_probs.reshape(1, -1)
+            ids = species_ids.reshape(1, -1)
+
+        species_list = self._model.species_list
+        return [
+            self._filter_predictions(seg_probs, seg_ids, species_list)
+            for seg_probs, seg_ids in zip(probs, ids)
+        ]
+
+    def _run_on_file(
+        self, file_path: str
+    ) -> tuple[NDArray[np.float32], list[list[tuple[str, float]]]]:
+        """Run encode/predict on a file and return embeddings and predictions."""
+        infer_kwargs = self._build_infer_kwargs()
+        embeddings_result = self._model.encode(file_path, **infer_kwargs)
+        predictions_result = self._model.predict(
+            file_path,
+            top_k=self._top_k,
+            default_confidence_threshold=self._confidence_threshold,
+            **infer_kwargs,
+        )
+        embeddings = self._extract_embeddings(embeddings_result)
+        embeddings_by_segment = self._normalize_embedding_batch(embeddings)
+        predictions_by_segment = self._collect_predictions_by_segment(predictions_result)
+        return embeddings_by_segment, predictions_by_segment
+
+    @contextmanager
+    def _temp_audio_file(self, audio: NDArray[np.float32]) -> Iterator[str]:
+        """Write audio to a temporary WAV file and yield its path."""
+        import soundfile as sf
+
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+            sf.write(tmp.name, audio, SAMPLE_RATE)
+            tmp_path = tmp.name
+
+        try:
+            yield tmp_path
+        finally:
+            os.unlink(tmp_path)
 
     def predict_file(
         self,
@@ -205,28 +402,9 @@ class BirdNETInference(InferenceEngine):
         if not path.exists():
             raise FileNotFoundError(f"Audio file not found: {path}")
 
-        # Get embeddings using birdnet
-        embeddings_result = self._model.encode(str(path))
-        embeddings = embeddings_result.embeddings
-
-        # Get predictions
-        predictions_result = self._model.predict(
-            str(path),
-            top_k=self._top_k,
-            default_confidence_threshold=self._confidence_threshold,
-        )
-        species_probs = predictions_result.species_probs
-        species_list = self._model.species_list
-
-        # Build results for each segment
+        embeddings_by_segment, predictions_by_segment = self._run_on_file(str(path))
+        n_segments = embeddings_by_segment.shape[0]
         results: list[InferenceResult] = []
-
-        # Calculate number of segments
-        # Embeddings shape: (n_inputs, n_segments, embedding_dim)
-        if embeddings.ndim == 3:
-            n_segments = embeddings.shape[1]
-        else:
-            n_segments = 1
 
         # Calculate time step between segments
         hop_duration = SEGMENT_DURATION - overlap
@@ -235,29 +413,12 @@ class BirdNETInference(InferenceEngine):
             start_time = seg_idx * hop_duration
             end_time = start_time + SEGMENT_DURATION
 
-            # Extract embedding
-            if embeddings.ndim == 3:
-                embedding = embeddings[0, seg_idx, :]
-            else:
-                embedding = embeddings.flatten()[:EMBEDDING_DIM]
-
-            # Extract predictions for this segment
-            segment_predictions: list[tuple[str, float]] = []
-            if species_probs is not None and species_probs.size > 0:
-                if species_probs.ndim == 3:
-                    probs = species_probs[0, seg_idx, :]
-                elif species_probs.ndim == 2:
-                    probs = species_probs[seg_idx, :]
-                else:
-                    probs = species_probs.flatten()
-
-                # Get top-k predictions above threshold
-                top_indices = np.argsort(probs)[-self._top_k:][::-1]
-                for idx in top_indices:
-                    conf = float(probs[idx])
-                    if conf >= self._confidence_threshold:
-                        species = species_list[idx]
-                        segment_predictions.append((species, conf))
+            embedding = embeddings_by_segment[seg_idx]
+            segment_predictions = (
+                predictions_by_segment[seg_idx]
+                if seg_idx < len(predictions_by_segment)
+                else []
+            )
 
             result = InferenceResult(
                 start_time=start_time,
@@ -304,8 +465,6 @@ class BirdNETInference(InferenceEngine):
         >>> print(f"Embedding shape: {result.embedding.shape}")
         Embedding shape: (1024,)
         """
-        import soundfile as sf
-
         # Validate audio using shared function
         audio = validate_audio_segment(
             audio,
@@ -314,49 +473,17 @@ class BirdNETInference(InferenceEngine):
             model_name="BirdNET",
         )
 
-        # Write to temporary file for birdnet processing
-        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
-            sf.write(tmp.name, audio, SAMPLE_RATE)
-            tmp_path = tmp.name
+        with self._temp_audio_file(audio) as tmp_path:
+            embeddings_by_segment, predictions_by_segment = self._run_on_file(tmp_path)
 
-        try:
-            # Get embeddings
-            embeddings_result = self._model.encode(tmp_path)
-            embeddings = embeddings_result.embeddings
-
-            # Get predictions
-            predictions_result = self._model.predict(
-                tmp_path,
-                top_k=self._top_k,
-                default_confidence_threshold=self._confidence_threshold,
-            )
-        finally:
-            # Clean up temp file
-            os.unlink(tmp_path)
-
-        # Extract embedding (shape: n_inputs, n_segments, embedding_dim)
-        if embeddings.ndim == 3:
-            embedding = embeddings[0, 0, :]
+        if embeddings_by_segment.size == 0:
+            embedding = np.zeros(EMBEDDING_DIM, dtype=np.float32)
         else:
-            embedding = embeddings.flatten()[:EMBEDDING_DIM]
+            embedding = embeddings_by_segment[0]
 
-        # Extract predictions
-        segment_predictions: list[tuple[str, float]] = []
-        species_list = self._model.species_list
-        species_probs = predictions_result.species_probs
-
-        if species_probs is not None and species_probs.size > 0:
-            if species_probs.ndim == 3:
-                probs = species_probs[0, 0, :]
-            else:
-                probs = species_probs.flatten()
-
-            top_indices = np.argsort(probs)[-self._top_k:][::-1]
-            for idx in top_indices:
-                conf = float(probs[idx])
-                if conf >= self._confidence_threshold:
-                    species = species_list[idx]
-                    segment_predictions.append((species, conf))
+        segment_predictions = (
+            predictions_by_segment[0] if predictions_by_segment else []
+        )
 
         return InferenceResult(
             start_time=start_time,
@@ -469,10 +596,7 @@ class BirdNETInference(InferenceEngine):
         if not path.exists():
             raise FileNotFoundError(f"Audio file not found: {path}")
 
-        embeddings_result = self._model.encode(str(path))
-        embeddings = embeddings_result.embeddings
-
-        # Shape: (n_inputs, n_segments, embedding_dim) -> (n_segments, embedding_dim)
-        if embeddings.ndim == 3:
-            return embeddings[0].astype(np.float32)
-        return embeddings.astype(np.float32)
+        infer_kwargs = self._build_infer_kwargs()
+        embeddings_result = self._model.encode(str(path), **infer_kwargs)
+        embeddings = self._extract_embeddings(embeddings_result)
+        return self._normalize_embedding_batch(embeddings).astype(np.float32)

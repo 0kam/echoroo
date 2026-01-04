@@ -15,8 +15,9 @@ Example
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from echoroo.ml.base import ModelLoader, ModelSpecification
 from echoroo.ml.birdnet.constants import (
@@ -57,6 +58,9 @@ class BirdNETLoader(ModelLoader):
         Directory containing model files. Not used for BirdNET as it
         downloads models automatically. Kept for API consistency.
         Default is None.
+    device : str, optional
+        Device to use for inference: "GPU" or "CPU".
+        Default is "GPU".
 
     Examples
     --------
@@ -68,9 +72,19 @@ class BirdNETLoader(ModelLoader):
     >>> model = loader.get_model()
     >>> print(f"Model: {loader.specification.name} v{loader.specification.version}")
     Model: birdnet v2.4
+
+    Using CPU device:
+
+    >>> loader = BirdNETLoader(device="CPU")
+    >>> loader.load()
     """
 
-    def __init__(self, model_dir: Path | None = None) -> None:
+    def __init__(
+        self,
+        model_dir: Path | None = None,
+        device: Literal["GPU", "CPU"] = "GPU",
+        lang: str = "en_us",
+    ) -> None:
         """Initialize the BirdNET loader.
 
         Parameters
@@ -78,9 +92,28 @@ class BirdNETLoader(ModelLoader):
         model_dir : Path | None, optional
             Directory containing model files. Not used for BirdNET.
             Default is None.
+        device : Literal["GPU", "CPU"], optional
+            Device to use for inference: "GPU" or "CPU".
+            Default is "GPU".
+        lang : str, optional
+            Language code for species common names (e.g., 'en_us', 'ja').
+            Default is "en_us".
         """
         super().__init__(model_dir)
+        self._device = device
+        self._lang = lang
         self._species_list: list[str] | None = None
+
+    @property
+    def device(self) -> str:
+        """Get the device being used.
+
+        Returns
+        -------
+        str
+            The device ("GPU" or "CPU").
+        """
+        return self._device
 
     @property
     def specification(self) -> ModelSpecification:
@@ -106,6 +139,24 @@ class BirdNETLoader(ModelLoader):
             species_list=self._species_list,
         )
 
+    def _configure_device(self) -> None:
+        """Configure TensorFlow to use the specified device.
+
+        This method sets TensorFlow environment variables before importing
+        the birdnet package to control GPU/CPU usage. TensorFlow reads these
+        variables at import time.
+        """
+        if self._device == "CPU":
+            # Force CPU usage by hiding all GPUs
+            os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
+            logger.info("BirdNET configured to use CPU (GPU disabled)")
+        else:
+            # Allow GPU usage (default behavior)
+            # Remove the environment variable if it was set to -1
+            if os.environ.get("CUDA_VISIBLE_DEVICES") == "-1":
+                del os.environ["CUDA_VISIBLE_DEVICES"]
+            logger.info(f"BirdNET configured to use device: {self._device}")
+
     def _load_model(self) -> Any:
         """Load the BirdNET model into memory.
 
@@ -123,7 +174,17 @@ class BirdNETLoader(ModelLoader):
             If the birdnet package is not installed.
         RuntimeError
             If model loading fails for any other reason.
+
+        Notes
+        -----
+        GPU/CPU selection is controlled via the CUDA_VISIBLE_DEVICES
+        environment variable. When device="CPU", this variable is set
+        to "-1" to force TensorFlow to use CPU only. This must be done
+        before importing TensorFlow (which happens when importing birdnet).
         """
+        # Configure device before importing TensorFlow/birdnet
+        self._configure_device()
+
         # Import and load birdnet model
         try:
             import birdnet
@@ -134,9 +195,12 @@ class BirdNETLoader(ModelLoader):
             ) from e
 
         try:
-            # Load acoustic model v2.4 with Protobuf backend (supports GPU)
-            # 'pb' = protobuf (GPU capable), 'tf' = TFLite (CPU only)
-            model = birdnet.load("acoustic", BIRDNET_VERSION, "pb")
+            # Load acoustic model v2.4
+            # 'pb' = protobuf (GPU capable, uses multiprocessing)
+            # 'tf' = TFLite (CPU only, no multiprocessing)
+            # Use TFLite for CPU mode to avoid asyncio deadlocks
+            backend = "tf" if self._device == "CPU" else "pb"
+            model = birdnet.load("acoustic", BIRDNET_VERSION, backend, lang=self._lang)
 
             # Cache the species list for the specification
             self._species_list = list(model.species_list)
@@ -145,7 +209,9 @@ class BirdNETLoader(ModelLoader):
                 f"BirdNET model initialized with "
                 f"sample_rate={model.get_sample_rate()}Hz, "
                 f"embedding_dim={model.get_embeddings_dim()}, "
-                f"n_species={model.n_species}"
+                f"n_species={model.n_species}, "
+                f"device={self._device}, "
+                f"lang={self._lang}"
             )
 
             return model

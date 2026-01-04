@@ -76,6 +76,8 @@ class BirdNETGeoFilter(SpeciesFilter):
 
         # GBIF resolution cache: {scientific_name: (taxon_key, canonical_name)}
         self._gbif_cache: dict[str, tuple[str | None, str | None]] = {}
+        # Reverse cache: {taxon_key: scientific_name}
+        self._gbif_reverse_cache: dict[str, str] = {}
 
         # Occurrence cache: {(lat_bucket, lon_bucket, week): {taxon_key: probability}}
         self._occurrence_cache: dict[
@@ -153,6 +155,44 @@ class BirdNETGeoFilter(SpeciesFilter):
         scientific = parts[0] if parts else label
         # Clean up any internal underscores in scientific name
         return scientific.replace("_", " ").strip()
+
+    async def get_scientific_name_for_taxon_key(
+        self,
+        taxon_key: str,
+    ) -> str | None:
+        """Get scientific name for a GBIF taxon key.
+
+        Uses memory cache, then falls back to GBIF API.
+
+        Parameters
+        ----------
+        taxon_key : str
+            GBIF taxon key.
+
+        Returns
+        -------
+        str | None
+            Scientific name (lowercase) for matching with raw probabilities.
+        """
+        # Check reverse cache first
+        if taxon_key in self._gbif_reverse_cache:
+            return self._gbif_reverse_cache[taxon_key]
+
+        # Query GBIF API
+        try:
+            from echoroo.api.species import get_gbif_species_by_key
+
+            scientific_name = await get_gbif_species_by_key(taxon_key)
+            if scientific_name:
+                result = scientific_name.lower()
+                self._gbif_reverse_cache[taxon_key] = result
+                return result
+        except Exception as e:
+            logger.warning(
+                "GBIF reverse lookup failed for '%s': %s", taxon_key, e
+            )
+
+        return None
 
     async def _resolve_gbif_taxon(
         self,
@@ -283,12 +323,74 @@ class BirdNETGeoFilter(SpeciesFilter):
             logger.warning("BirdNET geo prediction failed: %s", e)
             return None
 
+    async def get_raw_species_probabilities(
+        self,
+        context: FilterContext,
+    ) -> dict[str, float] | None:
+        """Get raw species probabilities from BirdNET geo model.
+
+        Returns probabilities keyed by normalized scientific name (lowercase).
+        This avoids expensive GBIF resolution for all 6000+ species.
+
+        Parameters
+        ----------
+        context : FilterContext
+            Location (latitude, longitude) and time (week).
+
+        Returns
+        -------
+        dict[str, float] | None
+            Mapping of lowercase scientific name to occurrence probability.
+            Returns None if context is invalid or model unavailable.
+        """
+        if not context.is_valid:
+            logger.debug("Invalid context for geo filtering")
+            return None
+
+        # Check cache for this location/time bucket
+        bucket = self._get_location_bucket(context)
+        cache_key = ("raw", *bucket)
+        if cache_key in self._occurrence_cache:
+            return self._occurrence_cache[cache_key]  # type: ignore[return-value]
+
+        # Get raw probabilities from BirdNET geo model
+        loop = asyncio.get_running_loop()
+        raw_probs = await loop.run_in_executor(
+            None, self._get_raw_probabilities, context
+        )
+
+        if raw_probs is None:
+            return None
+
+        # Convert to lowercase scientific name keys for easy matching
+        normalized: dict[str, float] = {}
+        for label, probability in raw_probs.items():
+            scientific_name = self._parse_scientific_name(label).lower()
+            normalized[scientific_name] = probability
+
+        # Cache the result
+        self._occurrence_cache[cache_key] = normalized  # type: ignore[assignment]
+
+        logger.debug(
+            "BirdNET geo raw: %d species at (%.2f, %.2f) week %d",
+            len(normalized),
+            context.latitude,
+            context.longitude,
+            context.week,
+        )
+
+        return normalized
+
     async def get_species_probabilities(
         self,
         context: FilterContext,
         session: AsyncSession,
     ) -> dict[str, float] | None:
         """Get species occurrence probabilities normalized to GBIF taxon keys.
+
+        NOTE: This method resolves ALL species to GBIF keys which is slow.
+        For better performance, use get_raw_species_probabilities() and
+        resolve only the specific species you need.
 
         Parameters
         ----------
@@ -324,12 +426,24 @@ class BirdNETGeoFilter(SpeciesFilter):
             return None
 
         # Normalize to GBIF taxon keys
+        logger.info(
+            "Resolving GBIF taxon keys for %d species from BirdNET geo model",
+            len(raw_probs),
+        )
         gbif_probs: dict[str, float] = {}
+        resolved_count = 0
         for label, probability in raw_probs.items():
             scientific_name = self._parse_scientific_name(label)
             taxon_key, _ = await self._resolve_gbif_taxon(
                 scientific_name, session
             )
+            resolved_count += 1
+            if resolved_count % 500 == 0:
+                logger.info(
+                    "Resolved %d/%d species GBIF taxon keys",
+                    resolved_count,
+                    len(raw_probs),
+                )
 
             if taxon_key is not None:
                 # Use taxon key as the key
@@ -355,6 +469,60 @@ class BirdNETGeoFilter(SpeciesFilter):
         )
 
         return gbif_probs
+
+    async def get_probabilities_for_taxon_keys(
+        self,
+        context: FilterContext,
+        taxon_keys: set[str],
+    ) -> dict[str, float]:
+        """Get occurrence probabilities for specific GBIF taxon keys.
+
+        This method resolves only the requested taxon keys to scientific names,
+        then looks up their probabilities from the raw geo model output.
+        Much more efficient than get_species_probabilities when you only need
+        a subset of species.
+
+        Parameters
+        ----------
+        context : FilterContext
+            Location (latitude, longitude) and time (week).
+        taxon_keys : set[str]
+            Set of GBIF taxon keys to get probabilities for.
+
+        Returns
+        -------
+        dict[str, float]
+            Mapping of GBIF taxon key to occurrence probability (0-1).
+            Only includes taxon keys that were found in the occurrence data.
+        """
+        if not context.is_valid:
+            logger.debug("Invalid context for geo filtering")
+            return {}
+
+        # Get raw probabilities (keyed by lowercase scientific name)
+        raw_probs = await self.get_raw_species_probabilities(context)
+        if raw_probs is None:
+            return {}
+
+        # Resolve only the requested taxon keys to scientific names
+        result: dict[str, float] = {}
+        for taxon_key in taxon_keys:
+            scientific_name = await self.get_scientific_name_for_taxon_key(
+                taxon_key
+            )
+            if scientific_name is not None and scientific_name in raw_probs:
+                result[taxon_key] = raw_probs[scientific_name]
+
+        logger.debug(
+            "BirdNET geo subset: %d/%d taxon keys found at (%.2f, %.2f) week %d",
+            len(result),
+            len(taxon_keys),
+            context.latitude,
+            context.longitude,
+            context.week,
+        )
+
+        return result
 
     def clear_cache(self) -> None:
         """Clear all caches (GBIF and occurrence)."""

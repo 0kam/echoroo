@@ -14,6 +14,8 @@ __all__ = [
     "SpeciesFilterApplicationCreate",
     "SpeciesFilterApplicationProgress",
     "SpeciesFilterApplicationStatus",
+    "SpeciesFilterResultItem",
+    "SpeciesFilterResults",
     "SpeciesFilterType",
 ]
 
@@ -90,3 +92,23 @@ class SpeciesFilterApplicationProgress(BaseModel):
     total_detections: int
     filtered_detections: int
     excluded_detections: int
+
+
+class SpeciesFilterResultItem(BaseModel):
+    """A species result from filter application."""
+
+    gbif_taxon_key: str
+    species_name: str | None = None
+    common_name: str | None = None
+    is_included: bool
+    occurrence_probability: float | None = None
+    detection_count: int
+
+
+class SpeciesFilterResults(BaseModel):
+    """Species filter results grouped by status."""
+
+    passed: list[SpeciesFilterResultItem]
+    excluded: list[SpeciesFilterResultItem]
+    total_passed: int
+    total_excluded: int

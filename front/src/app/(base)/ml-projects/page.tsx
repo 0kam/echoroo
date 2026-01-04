@@ -3,11 +3,10 @@
 /**
  * ML Projects list page.
  *
- * Displays a paginated list of ML projects with filtering options
- * for status and dataset. Allows creating new ML projects and
- * navigating to individual project details.
+ * Displays a paginated list of ML projects. Allows creating new ML projects
+ * and navigating to individual project details.
  */
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   Plus,
@@ -23,7 +22,7 @@ import {
 } from "lucide-react";
 
 import api from "@/app/api";
-import useDatasets from "@/app/hooks/api/useDatasets";
+import MLProjectCreateComponent from "@/app/components/ml_projects/MLProjectCreate";
 
 import Button from "@/lib/components/ui/Button";
 import Card from "@/lib/components/ui/Card";
@@ -31,7 +30,6 @@ import Hero from "@/lib/components/ui/Hero";
 import Loading from "@/lib/components/ui/Loading";
 import Empty from "@/lib/components/ui/Empty";
 import { DialogOverlay } from "@/lib/components/ui/Dialog";
-import useFilter from "@/lib/hooks/utils/useFilter";
 import usePagedQuery from "@/lib/hooks/utils/usePagedQuery";
 
 import type { MLProject, MLProjectStatus, MLProjectCreate } from "@/lib/types";
@@ -53,11 +51,6 @@ const STATUS_ICONS: Record<MLProjectStatus, React.ReactNode> = {
   inference: <Play className="w-4 h-4" />,
   completed: <CheckCircle className="w-4 h-4" />,
   archived: <Archive className="w-4 h-4" />,
-};
-
-type MLProjectFilter = {
-  dataset_id?: number;
-  status?: MLProjectStatus;
 };
 
 function StatusBadge({ status }: { status: MLProjectStatus }) {
@@ -96,10 +89,10 @@ function MLProjectCard({
       </div>
 
       <div className="flex items-center gap-4 mt-4 text-sm text-stone-600 dark:text-stone-400">
-        {project.dataset && (
+        {project.dataset_scope_count !== undefined && project.dataset_scope_count > 0 && (
           <div className="flex items-center gap-1">
             <Database className="w-4 h-4" />
-            <span>{project.dataset.name}</span>
+            <span>{project.dataset_scope_count} datasets</span>
           </div>
         )}
         {project.target_tags && project.target_tags.length > 0 && (
@@ -134,34 +127,13 @@ function CreateMLProjectDialog({
   onClose: () => void;
   onCreate: (data: MLProjectCreate) => void;
 }) {
-  const [name, setName] = useState("");
-  const [description, setDescription] = useState("");
-  const [datasetUuid, setDatasetUuid] = useState<string | null>(null);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-
-  const { items: datasets, isLoading: datasetsLoading } = useDatasets({
-    pageSize: 100,
-  });
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!name || !datasetUuid) return;
-
-    setIsSubmitting(true);
-    try {
-      onCreate({
-        name,
-        description,
-        dataset_uuid: datasetUuid,
-      });
-      setName("");
-      setDescription("");
-      setDatasetUuid(null);
+  const handleCreate = useCallback(
+    (data: MLProjectCreate) => {
+      onCreate(data);
       onClose();
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
+    },
+    [onCreate, onClose],
+  );
 
   return (
     <DialogOverlay
@@ -169,71 +141,9 @@ function CreateMLProjectDialog({
       isOpen={isOpen}
       onClose={onClose}
     >
-      <form onSubmit={handleSubmit} className="w-[400px] space-y-4">
-        <div>
-          <label className="block text-sm font-medium text-stone-700 dark:text-stone-300 mb-1">
-            Project Name
-          </label>
-          <input
-            type="text"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            className="w-full px-3 py-2 border border-stone-300 dark:border-stone-600 rounded-lg bg-white dark:bg-stone-800 text-stone-900 dark:text-stone-100"
-            placeholder="Enter project name"
-            required
-          />
-        </div>
-
-        <div>
-          <label className="block text-sm font-medium text-stone-700 dark:text-stone-300 mb-1">
-            Description
-          </label>
-          <textarea
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            className="w-full px-3 py-2 border border-stone-300 dark:border-stone-600 rounded-lg bg-white dark:bg-stone-800 text-stone-900 dark:text-stone-100"
-            placeholder="Enter project description"
-            rows={3}
-            required
-          />
-        </div>
-
-        <div>
-          <label className="block text-sm font-medium text-stone-700 dark:text-stone-300 mb-1">
-            Dataset
-          </label>
-          {datasetsLoading ? (
-            <div className="text-sm text-stone-500">Loading datasets...</div>
-          ) : (
-            <select
-              value={datasetUuid || ""}
-              onChange={(e) => setDatasetUuid(e.target.value || null)}
-              className="w-full px-3 py-2 border border-stone-300 dark:border-stone-600 rounded-lg bg-white dark:bg-stone-800 text-stone-900 dark:text-stone-100"
-              required
-            >
-              <option value="">Select a dataset</option>
-              {datasets.map((dataset) => (
-                <option key={dataset.uuid} value={dataset.uuid}>
-                  {dataset.name}
-                </option>
-              ))}
-            </select>
-          )}
-        </div>
-
-        <div className="flex justify-end gap-2 pt-4">
-          <Button type="button" variant="secondary" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button
-            type="submit"
-            variant="primary"
-            disabled={!name || !datasetUuid || isSubmitting}
-          >
-            {isSubmitting ? "Creating..." : "Create Project"}
-          </Button>
-        </div>
-      </form>
+      <div className="w-[400px]">
+        <MLProjectCreateComponent onCreateMLProject={handleCreate} />
+      </div>
     </DialogOverlay>
   );
 }
@@ -242,16 +152,12 @@ export default function MLProjectsPage() {
   const router = useRouter();
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
 
-  const filter = useFilter<MLProjectFilter>({ defaults: {} });
-
-  const { items, total, pagination, query } = usePagedQuery<MLProject, MLProjectFilter>({
+  const { items, total, pagination, query } = usePagedQuery<MLProject, {}>({
     name: "ml_projects",
     queryFn: api.mlProjects.getMany,
     pageSize: 12,
-    filter: filter.filter,
+    filter: {},
   });
-
-  const { items: datasets } = useDatasets({ pageSize: 100 });
 
   const handleProjectClick = useCallback(
     (project: MLProject) => {
@@ -273,73 +179,12 @@ export default function MLProjectsPage() {
     [query, router],
   );
 
-  const statusOptions: MLProjectStatus[] = [
-    "draft",
-    "active",
-    "training",
-    "inference",
-    "completed",
-    "archived",
-  ];
-
   return (
     <>
       <Hero text="ML Projects" />
       <div className="container mx-auto p-8">
-        {/* Filters and Actions */}
-        <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
-          <div className="flex items-center gap-4">
-            {/* Status Filter */}
-            <div>
-              <select
-                value={filter.get("status") || ""}
-                onChange={(e) =>
-                  e.target.value
-                    ? filter.set("status", e.target.value as MLProjectStatus)
-                    : filter.clear("status")
-                }
-                className="px-3 py-2 border border-stone-300 dark:border-stone-600 rounded-lg bg-white dark:bg-stone-800 text-stone-900 dark:text-stone-100 text-sm"
-              >
-                <option value="">All statuses</option>
-                {statusOptions.map((status) => (
-                  <option key={status} value={status}>
-                    {status.charAt(0).toUpperCase() + status.slice(1)}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            {/* Dataset Filter */}
-            <div>
-              <select
-                value={filter.get("dataset_id") || ""}
-                onChange={(e) =>
-                  e.target.value
-                    ? filter.set("dataset_id", Number(e.target.value))
-                    : filter.clear("dataset_id")
-                }
-                className="px-3 py-2 border border-stone-300 dark:border-stone-600 rounded-lg bg-white dark:bg-stone-800 text-stone-900 dark:text-stone-100 text-sm"
-              >
-                <option value="">All datasets</option>
-                {datasets.map((dataset) => (
-                  <option key={dataset.uuid} value={dataset.id}>
-                    {dataset.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            {filter.size > 0 && (
-              <Button
-                variant="secondary"
-                mode="text"
-                onClick={() => filter.reset()}
-              >
-                Clear filters
-              </Button>
-            )}
-          </div>
-
+        {/* Actions */}
+        <div className="flex items-center justify-end mb-6">
           <Button
             variant="primary"
             onClick={() => setIsCreateDialogOpen(true)}

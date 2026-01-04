@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 
 from echoroo.schemas.base import BaseSchema
 from echoroo.schemas.datasets import Dataset
+from echoroo.schemas.foundation_models import FoundationModel, FoundationModelRun
 from echoroo.schemas.model_runs import ModelRun
 from echoroo.schemas.tags import Tag
 
@@ -17,6 +18,8 @@ __all__ = [
     "MLProjectCreate",
     "MLProjectUpdate",
     "MLProjectStats",
+    "MLProjectDatasetScope",
+    "MLProjectDatasetScopeCreate",
 ]
 
 
@@ -43,30 +46,16 @@ class MLProjectStatus(str, Enum):
 
 
 class MLProjectCreate(BaseModel):
-    """Schema for creating an ML project."""
+    """Schema for creating an ML project.
+
+    Datasets are added separately via the Datasets tab after project creation.
+    """
 
     name: str = Field(..., min_length=1, max_length=255)
     """Name of the ML project."""
 
     description: str | None = Field(default=None)
     """A description of the ML project goals and methodology."""
-
-    dataset_uuid: UUID = Field(..., description="Primary dataset UUID")
-    """Dataset that contains the audio data for this project."""
-
-    embedding_model_run_id: int | None = Field(
-        default=None,
-        description="Model run used for generating embeddings",
-    )
-    """Model run that provides the embeddings for similarity search."""
-
-    default_similarity_threshold: float = Field(
-        default=0.8,
-        ge=0.0,
-        le=1.0,
-        description="Default similarity threshold for searches",
-    )
-    """Default threshold for similarity searches (0.0 to 1.0)."""
 
 
 class MLProject(BaseSchema):
@@ -87,14 +76,23 @@ class MLProject(BaseSchema):
     status: MLProjectStatus = MLProjectStatus.DRAFT
     """Current status of the ML project."""
 
-    dataset_id: int
-    """Dataset identifier containing the audio data."""
+    project_id: str
+    """Project identifier for access control."""
+
+    dataset_id: int | None = None
+    """Primary dataset identifier containing the audio data (legacy)."""
 
     dataset: Dataset | None = None
-    """Hydrated dataset information."""
+    """Hydrated primary dataset information."""
+
+    foundation_model_id: int | None = None
+    """Foundation model identifier used for embeddings."""
+
+    foundation_model: FoundationModel | None = None
+    """Hydrated foundation model information."""
 
     embedding_model_run_id: int | None = None
-    """Model run identifier used for embeddings."""
+    """Model run identifier used for embeddings (legacy)."""
 
     embedding_model_run: ModelRun | None = None
     """Hydrated model run information."""
@@ -107,6 +105,9 @@ class MLProject(BaseSchema):
 
     target_tags: list[Tag] = Field(default_factory=list)
     """Tags that this project is targeting for detection."""
+
+    dataset_scope_count: int = 0
+    """Number of dataset scopes in the project."""
 
     reference_sound_count: int = 0
     """Number of reference sounds in the project."""
@@ -182,3 +183,29 @@ class MLProjectStats(BaseModel):
 
     last_activity: datetime.datetime | None = None
     """Timestamp of the last activity in the project."""
+
+
+class MLProjectDatasetScopeCreate(BaseModel):
+    """Schema for adding a dataset scope to an ML project."""
+
+    dataset_uuid: UUID = Field(..., description="UUID of the dataset to add")
+    """UUID of the dataset to include in the project."""
+
+    foundation_model_run_uuid: UUID = Field(
+        ...,
+        description="UUID of the foundation model run providing embeddings",
+    )
+    """UUID of the foundation model run that provides embeddings for this dataset."""
+
+
+class MLProjectDatasetScope(BaseSchema):
+    """Schema for an ML project dataset scope returned to the user."""
+
+    uuid: UUID
+    """UUID of the dataset scope."""
+
+    dataset: Dataset
+    """The dataset included in this scope."""
+
+    foundation_model_run: FoundationModelRun
+    """The foundation model run providing embeddings."""

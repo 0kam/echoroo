@@ -1,14 +1,16 @@
 """REST API routes for annotation projects."""
 
+from enum import Enum
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, UploadFile
+from fastapi import APIRouter, Depends, Query, UploadFile
 from fastapi.responses import Response
 from soundevent.io.aoef import to_aeof
 
 from echoroo import api, models, schemas
 from echoroo.api.io import aoef
+from echoroo.api.camtrapdp import to_camtrapdp_csv
 from echoroo.filters.annotation_projects import AnnotationProjectFilter
 from echoroo.routes.dependencies import (
     Session,
@@ -17,6 +19,13 @@ from echoroo.routes.dependencies import (
     get_optional_current_user_dependency,
 )
 from echoroo.routes.types import Limit, Offset
+
+
+class ExportFormat(str, Enum):
+    """Supported export formats for annotation projects."""
+
+    JSON = "json"
+    CSV = "csv"
 
 __all__ = ["get_annotation_projects_router"]
 
@@ -197,6 +206,10 @@ def get_annotation_projects_router(settings: EchorooSettings) -> APIRouter:
         annotation_project_uuid: UUID,
         settings: EchorooSettings,
         user: models.User | None = Depends(optional_user_dep),
+        format: ExportFormat = Query(
+            default=ExportFormat.CSV,
+            description="Export format: 'csv' for CamtrapDP format, 'json' for AOEF format",
+        ),
     ) -> Response:
         audio_dir = settings.audio_dir
 
@@ -206,25 +219,42 @@ def get_annotation_projects_router(settings: EchorooSettings) -> APIRouter:
             user=user,
         )
 
-        base_dir = await api.annotation_projects.get_base_dir(
-            session,
-            echoroo_project,
-        )
+        if format == ExportFormat.CSV:
+            # Export as CamtrapDP CSV
+            csv_content = await to_camtrapdp_csv(session, echoroo_project)
+            # Sanitize filename for CSV
+            safe_name = "".join(
+                c if c.isalnum() or c in (" ", "-", "_") else "_"
+                for c in echoroo_project.name
+            ).strip()
+            filename = f"{safe_name}_observations.csv"
+            return Response(
+                csv_content,
+                media_type="text/csv",
+                status_code=200,
+                headers={"Content-Disposition": f"attachment; filename=\"{filename}\""},
+            )
+        else:
+            # Export as AOEF JSON
+            base_dir = await api.annotation_projects.get_base_dir(
+                session,
+                echoroo_project,
+            )
 
-        project = await api.annotation_projects.to_soundevent(
-            session,
-            echoroo_project,
-            audio_dir=audio_dir / base_dir,
-        )
+            project = await api.annotation_projects.to_soundevent(
+                session,
+                echoroo_project,
+                audio_dir=audio_dir / base_dir,
+            )
 
-        obj = to_aeof(project, audio_dir=audio_dir / base_dir)
-        filename = f"{project.name}_{obj.created_on.isoformat()}.json"
-        return Response(
-            obj.model_dump_json(),
-            media_type="application/json",
-            status_code=200,
-            headers={"Content-Disposition": f"attachment; filename={filename}"},
-        )
+            obj = to_aeof(project, audio_dir=audio_dir / base_dir)
+            filename = f"{project.name}_{obj.created_on.isoformat()}.json"
+            return Response(
+                obj.model_dump_json(),
+                media_type="application/json",
+                status_code=200,
+                headers={"Content-Disposition": f"attachment; filename={filename}"},
+            )
 
     @router.post(
         "/import/",

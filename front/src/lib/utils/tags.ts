@@ -336,9 +336,14 @@ export function getTagClassNames(color: string, level: number) {
   const text = `text-${color}-${level + 3}00 dark:text-${color}-${
     10 - level - 3
   }00`;
+  // Vernacular name uses a slightly lighter shade than the main text for secondary emphasis
+  const vernacular = `text-${color}-${level + 2}00 dark:text-${color}-${
+    10 - level - 2
+  }00`;
   return {
     background,
     border,
     text,
+    vernacular,
   };
 }

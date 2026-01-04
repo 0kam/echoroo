@@ -21,6 +21,8 @@ const LABEL_COLORS: Record<SearchResultLabel, string> = {
   negative: "border-rose-500 bg-rose-50 dark:bg-rose-900/20",
   uncertain: "border-amber-500 bg-amber-50 dark:bg-amber-900/20",
   skipped: "border-stone-400 bg-stone-100 dark:bg-stone-800",
+  positive_reference: "border-blue-500 bg-blue-50 dark:bg-blue-900/20 ring-2 ring-blue-400",
+  negative_reference: "border-purple-500 bg-purple-50 dark:bg-purple-900/20 ring-2 ring-purple-400",
 };
 
 const LABEL_ICONS: Record<SearchResultLabel, React.ReactNode> = {
@@ -29,6 +31,8 @@ const LABEL_ICONS: Record<SearchResultLabel, React.ReactNode> = {
   negative: <CloseIcon className="w-4 h-4 text-rose-600" />,
   uncertain: <HelpIcon className="w-4 h-4 text-amber-600" />,
   skipped: <NextIcon className="w-4 h-4 text-stone-500" />,
+  positive_reference: <CheckIcon className="w-4 h-4 text-blue-600" />,
+  negative_reference: <CloseIcon className="w-4 h-4 text-purple-600" />,
 };
 
 interface SearchResultGridProps {

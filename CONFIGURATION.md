@@ -65,6 +65,24 @@ That's it! Access the application at http://localhost:3000.
 |----------|-------------|---------|
 | `ECHOROO_DEV` | Enable development mode | `true` |
 
+### Machine Learning Settings
+
+Echoroo uses GPU-accelerated machine learning models (BirdNET, Perch) for species detection.
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `ECHOROO_ML_USE_GPU` | Enable GPU acceleration for ML models | `true` |
+| `ECHOROO_ML_GPU_DEVICE` | Device specification (`GPU`, `CPU`, `GPU:0`, `GPU:1`) | `GPU` |
+| `ECHOROO_ML_GPU_BATCH_SIZE` | Segments processed in parallel per GPU inference | `16` |
+| `ECHOROO_ML_FEEDERS` | Number of file feeder processes for audio loading | `8` |
+| `ECHOROO_ML_WORKERS` | Number of GPU inference workers | `1` |
+
+**Performance Tuning:**
+
+- **GPU_BATCH_SIZE:** Higher values improve throughput but require more GPU memory. Reduce if you get `CUDA_ERROR_OUT_OF_MEMORY`.
+- **FEEDERS:** More feeders speed up file I/O but use more CPU. Typical values: 4-16.
+- **WORKERS:** Usually 1 is optimal unless you have multiple GPUs.
+
 ## Deployment Scenarios
 
 ### 1. Local Development with Docker

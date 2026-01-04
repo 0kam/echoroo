@@ -60,8 +60,15 @@ export default function Tag({
         onClick={onClick}
       >
         <span className="font-thin min-w-fit shrink">{tag.key}</span>
-        <span className="flex-1 ml-1 font-bold group-hover:underline grow truncate group-hover:decoration-2 group-hover:underline-offset-2">
-          {getTagLabel(tag)}
+        <span className="flex flex-col ml-1 grow truncate">
+          <span className="font-bold group-hover:underline group-hover:decoration-2 group-hover:underline-offset-2">
+            {getTagLabel(tag)}
+          </span>
+          {tag.vernacular_name && (
+            <span className={classnames("text-xs font-normal truncate", classNames.vernacular)}>
+              {tag.vernacular_name}
+            </span>
+          )}
         </span>
       </button>
     </div>

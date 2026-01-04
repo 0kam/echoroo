@@ -10,38 +10,224 @@ from __future__ import annotations
 import asyncio
 import datetime
 import logging
-from dataclasses import dataclass
+import time
+from contextlib import contextmanager
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable
-from uuid import UUID
+from typing import Callable, Generator
+from uuid import UUID, uuid4
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, tuple_
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from echoroo import exceptions, models, schemas
 from echoroo.api import (
-    clips,
     clip_embeddings,
     clip_predictions,
+    clips,
     datasets,
+    get_gbif_vernacular_name,
     model_runs,
     search_gbif_species,
     tags,
 )
 from echoroo.ml.base import InferenceEngine, InferenceResult, ModelLoader
-from echoroo.ml.filters import (
-    BirdNETGeoFilter,
-    FilterContext,
-    PassThroughFilter,
-    SpeciesFilter,
-)
 from echoroo.ml.registry import ModelNotFoundError, ModelRegistry
+from echoroo.system.settings import get_settings
 
 __all__ = [
     "SpeciesDetectionWorker",
 ]
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Non-species labels in BirdNET that should not be resolved via GBIF
+# These are environmental sounds, not actual species names.
+# ---------------------------------------------------------------------------
+
+# Labels where the scientific and common name parts are identical
+# e.g., "Engine_Engine", "Noise_Noise", "Dog_Dog"
+# These are clearly non-biological sounds
+NON_SPECIES_REPEATED_LABELS = frozenset({
+    "dog",
+    "engine",
+    "environmental",
+    "fireworks",
+    "gun",
+    "noise",
+    "power tools",
+    "siren",
+    "human non-vocal",
+    "human vocal",
+    "human whistle",
+})
+
+
+def _is_non_species_label(scientific_name: str, common_name: str | None) -> bool:
+    """Check if a BirdNET label represents a non-species sound.
+
+    BirdNET includes labels for environmental sounds like "Engine_Engine",
+    "Dog_Dog", "Noise_Noise", etc. These should not be resolved via GBIF
+    as they can match unrelated species (e.g., "Engine" -> "Enginella leucozona").
+
+    Parameters
+    ----------
+    scientific_name : str
+        The parsed scientific name part of the label.
+    common_name : str | None
+        The parsed common name part of the label.
+
+    Returns
+    -------
+    bool
+        True if this is a non-species environmental sound label.
+    """
+    # Check if the label follows the "X_X" pattern (same word repeated)
+    if common_name and scientific_name.lower() == common_name.lower():
+        return True
+
+    # Check against known non-species labels
+    if scientific_name.lower() in NON_SPECIES_REPEATED_LABELS:
+        return True
+
+    return False
+
+
+# ---------------------------------------------------------------------------
+# Timing utilities for debug mode
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class _TimingStats:
+    """Container for timing statistics during job processing."""
+
+    job_start: float = 0.0
+    inference_total: float = 0.0
+    store_total: float = 0.0
+    get_recordings_total: float = 0.0
+    recording_count: int = 0
+
+    # Per-recording breakdown
+    inference_per_recording: list[float] = field(default_factory=list)
+    store_per_recording: list[float] = field(default_factory=list)
+
+    # Detailed store breakdown
+    store_clip_create: float = 0.0
+    store_embedding_create: float = 0.0
+    store_prediction_create: float = 0.0
+    store_tag_lookup: float = 0.0
+    store_tag_add: float = 0.0
+
+    def log_summary(self, job_uuid: UUID) -> None:
+        """Log timing summary for the job."""
+        job_total = time.perf_counter() - self.job_start
+        if job_total <= 0:
+            return
+
+        inference_pct = (self.inference_total / job_total) * 100
+        store_pct = (self.store_total / job_total) * 100
+        get_recordings_pct = (self.get_recordings_total / job_total) * 100
+
+        logger.info("[TIMING] Job %s summary:", job_uuid)
+        logger.info("[TIMING] process_job total: %.1fs", job_total)
+        logger.info(
+            "[TIMING] _run_inference: %.1fs (%.1f%%)",
+            self.inference_total,
+            inference_pct,
+        )
+        logger.info(
+            "[TIMING] _store_result: %.1fs (%.1f%%)",
+            self.store_total,
+            store_pct,
+        )
+        logger.info(
+            "[TIMING] _get_filtered_recordings: %.1fs (%.1f%%)",
+            self.get_recordings_total,
+            get_recordings_pct,
+        )
+
+        if self.recording_count > 0:
+            avg_total = job_total / self.recording_count
+            avg_inference = self.inference_total / self.recording_count
+            avg_store = self.store_total / self.recording_count
+            logger.info(
+                "[TIMING] Per recording avg: %.2fs (inference: %.2fs, store: %.2fs)",
+                avg_total,
+                avg_inference,
+                avg_store,
+            )
+
+        # Detailed store breakdown
+        if self.store_total > 0:
+            logger.info("[TIMING] _store_result breakdown:")
+            logger.info(
+                "[TIMING]   clip_create: %.1fs (%.1f%%)",
+                self.store_clip_create,
+                (self.store_clip_create / self.store_total) * 100,
+            )
+            logger.info(
+                "[TIMING]   embedding_create: %.1fs (%.1f%%)",
+                self.store_embedding_create,
+                (self.store_embedding_create / self.store_total) * 100,
+            )
+            logger.info(
+                "[TIMING]   prediction_create: %.1fs (%.1f%%)",
+                self.store_prediction_create,
+                (self.store_prediction_create / self.store_total) * 100,
+            )
+            logger.info(
+                "[TIMING]   tag_lookup: %.1fs (%.1f%%)",
+                self.store_tag_lookup,
+                (self.store_tag_lookup / self.store_total) * 100,
+            )
+            logger.info(
+                "[TIMING]   tag_add: %.1fs (%.1f%%)",
+                self.store_tag_add,
+                (self.store_tag_add / self.store_total) * 100,
+            )
+
+
+@contextmanager
+def _timing_context(
+    stats: _TimingStats | None,
+    attr_name: str,
+) -> Generator[None, None, None]:
+    """Context manager for measuring elapsed time.
+
+    Accumulates time into the specified attribute of the stats object.
+    If stats is None (timing disabled), this is a no-op.
+
+    Parameters
+    ----------
+    stats : _TimingStats | None
+        Stats object to accumulate time into, or None if timing disabled.
+    attr_name : str
+        Name of the attribute to accumulate time into.
+
+    Yields
+    ------
+    None
+    """
+    if stats is None:
+        yield
+        return
+
+    start = time.perf_counter()
+    try:
+        yield
+    finally:
+        elapsed = time.perf_counter() - start
+        current = getattr(stats, attr_name, 0.0)
+        setattr(stats, attr_name, current + elapsed)
+
+        # Also record per-recording times if applicable
+        if attr_name == "inference_total":
+            stats.inference_per_recording.append(elapsed)
+        elif attr_name == "store_total":
+            stats.store_per_recording.append(elapsed)
 
 
 @dataclass
@@ -77,12 +263,45 @@ class SpeciesDetectionWorker:
         poll_interval: float = 5.0,
         batch_size: int = 32,
         use_geo_filter: bool = True,
+        gpu_batch_size: int = 16,
+        feeders: int = 1,
+        workers: int = 1,
     ):
+        """Initialize the species detection worker.
+
+        Parameters
+        ----------
+        audio_dir : Path
+            Directory containing audio files.
+        model_dir : Path | None, optional
+            Directory for model files. Default is None.
+        poll_interval : float, optional
+            Seconds to wait between polling for new jobs. Default is 5.0.
+        batch_size : int, optional
+            Number of recordings to process before updating progress.
+            Default is 32.
+        use_geo_filter : bool, optional
+            Deprecated. Species filters are applied explicitly after runs.
+        gpu_batch_size : int, optional
+            Batch size for GPU inference. Higher values use more GPU memory
+            but improve throughput. Default is 16.
+        feeders : int, optional
+            Number of file reading processes for BirdNET inference.
+            Controls parallel I/O for reading and preprocessing audio files.
+            Default is 1.
+        workers : int, optional
+            Number of GPU inference workers for BirdNET.
+            Usually 1 is sufficient unless you have multiple GPUs.
+            Default is 1.
+        """
         self._audio_dir = audio_dir
         self._model_dir = model_dir
         self._poll_interval = poll_interval
         self._batch_size = batch_size
         self._use_geo_filter = use_geo_filter
+        self._gpu_batch_size = gpu_batch_size
+        self._feeders = feeders
+        self._workers = workers
         self._running = False
         self._current_job: UUID | None = None
         self._cancel_requested = False
@@ -92,26 +311,17 @@ class SpeciesDetectionWorker:
         self._loaders: dict[str, ModelLoader] = {}
         self._engines: dict[str, InferenceEngine] = {}
 
-        # Prediction filters (lazy loaded)
-        self._geo_filter: SpeciesFilter | None = None
-        self._passthrough_filter: SpeciesFilter = PassThroughFilter()
+        # Prediction filters are applied explicitly after runs.
         self._run_species_stats: dict[UUID, dict[str, _SpeciesSummary]] = {}
         self._foundation_run_ids: dict[int, int] = {}
-        self._gbif_cache: dict[str, tuple[str | None, str]] = {}
+        # Cache for GBIF resolution: (scientific_name, locale) -> (usage_key, canonical, vernacular)
+        self._gbif_cache: dict[tuple[str, str], tuple[str | None, str, str | None]] = {}
 
-    def _get_geo_filter(self) -> SpeciesFilter:
-        """Get or create BirdNET geo filter (lazy loaded)."""
-        if not self._use_geo_filter:
-            return self._passthrough_filter
-
-        if self._geo_filter is None:
-            self._geo_filter = BirdNETGeoFilter()
-            if self._geo_filter.is_loaded:
-                logger.info("BirdNET geo filter loaded")
-            else:
-                logger.info("BirdNET geo filter will load on first use")
-
-        return self._geo_filter
+        # Pending species for batch GBIF resolution at job end
+        # Maps job UUID -> set of scientific names that need GBIF lookup
+        self._pending_species: dict[UUID, set[str]] = {}
+        # Maps scientific_name -> tag_id for updating after GBIF resolution
+        self._species_tag_ids: dict[UUID, dict[str, int]] = {}
 
     @property
     def is_running(self) -> bool:
@@ -122,6 +332,74 @@ class SpeciesDetectionWorker:
     def current_job(self) -> UUID | None:
         """Get the UUID of the currently processing job."""
         return self._current_job
+
+    async def _reset_orphaned_jobs(
+        self,
+        session: AsyncSession,
+    ) -> None:
+        """Reset jobs that were left in 'running' state after worker restart.
+
+        Jobs can become orphaned if the worker was restarted while processing.
+        This method:
+        - Marks 100% complete jobs as completed
+        - Resets other running jobs back to pending
+        """
+        stmt = select(models.SpeciesDetectionJob).where(
+            models.SpeciesDetectionJob.status
+            == models.SpeciesDetectionJobStatus.RUNNING
+        )
+        result = await session.execute(stmt)
+        orphaned_jobs = result.scalars().all()
+
+        for db_job in orphaned_jobs:
+            # Check if job was actually complete (progress=1 and all recordings processed)
+            is_complete = (
+                db_job.progress == 1.0
+                and db_job.total_recordings is not None
+                and db_job.processed_recordings == db_job.total_recordings
+            )
+
+            if is_complete:
+                # Job was complete, just mark it as completed
+                db_job.status = models.SpeciesDetectionJobStatus.COMPLETED
+                db_job.completed_on = datetime.datetime.now(datetime.UTC)
+                logger.info(
+                    "Marked orphaned job %s as completed (was 100%% done)",
+                    db_job.uuid,
+                )
+
+                # Also update foundation model run if it exists
+                if db_job.model_run_id:
+                    await self._mark_foundation_run_completed(
+                        session, db_job.model_run_id
+                    )
+            else:
+                # Job was interrupted mid-processing, reset to pending
+                db_job.status = models.SpeciesDetectionJobStatus.PENDING
+                db_job.started_on = None
+                db_job.progress = 0
+                db_job.processed_recordings = 0
+                logger.info(
+                    "Reset orphaned job %s to pending (was %d%% done)",
+                    db_job.uuid,
+                    int((db_job.progress or 0) * 100),
+                )
+
+    async def _mark_foundation_run_completed(
+        self,
+        session: AsyncSession,
+        model_run_id: int,
+    ) -> None:
+        """Mark a foundation model run as completed."""
+        stmt = select(models.FoundationModelRun).where(
+            models.FoundationModelRun.id == model_run_id
+        )
+        result = await session.execute(stmt)
+        run = result.scalar_one_or_none()
+        if run and run.status != models.FoundationModelRunStatus.COMPLETED:
+            run.status = models.FoundationModelRunStatus.COMPLETED
+            run.completed_on = datetime.datetime.now(datetime.UTC)
+            logger.info("Marked foundation model run %s as completed", run.uuid)
 
     async def start(
         self,
@@ -136,6 +414,11 @@ class SpeciesDetectionWorker:
         self._cancel_requested = False
 
         logger.info("Starting species detection worker")
+
+        # Reset orphaned jobs that were interrupted during previous runs
+        async with session_factory() as session:
+            await self._reset_orphaned_jobs(session)
+            await session.commit()
 
         self._task = asyncio.create_task(
             self._run_loop(session_factory),
@@ -222,6 +505,7 @@ class SpeciesDetectionWorker:
                 model_version=db_job.model_version,
                 confidence_threshold=db_job.confidence_threshold,
                 overlap=db_job.overlap,
+                locale=db_job.locale,
                 use_metadata_filter=db_job.use_metadata_filter,
                 custom_species_list=db_job.custom_species_list,
                 recording_filters=db_job.recording_filters,
@@ -241,6 +525,47 @@ class SpeciesDetectionWorker:
             logger.error("Failed to fetch pending jobs: %s", e)
             return None
 
+    def _is_timing_enabled(self) -> bool:
+        """Check if timing debug mode is enabled via settings."""
+        settings = get_settings()
+        return settings.ml_debug_timing
+
+    async def _is_job_cancelled(
+        self,
+        session: AsyncSession,
+        job: schemas.SpeciesDetectionJob,
+    ) -> bool:
+        """Check if the job has been cancelled in the database."""
+        if job.id is None:
+            return False
+        # Refresh from DB to get the latest status
+        stmt = select(models.SpeciesDetectionJob.status).where(
+            models.SpeciesDetectionJob.id == job.id
+        )
+        result = await session.execute(stmt)
+        status = result.scalar_one_or_none()
+        return status == models.SpeciesDetectionJobStatus.CANCELLED
+
+    async def _update_foundation_run_status(
+        self,
+        session: AsyncSession,
+        job: schemas.SpeciesDetectionJob,
+        status: models.FoundationModelRunStatus,
+    ) -> None:
+        """Update the foundation model run status."""
+        if job.id is None:
+            return
+        run_id = self._foundation_run_ids.get(job.id)
+        if run_id is None:
+            return
+        stmt = select(models.FoundationModelRun).where(
+            models.FoundationModelRun.id == run_id
+        )
+        result = await session.execute(stmt)
+        run = result.scalar_one_or_none()
+        if run:
+            run.status = status
+
     async def process_job(
         self,
         session: AsyncSession,
@@ -249,6 +574,16 @@ class SpeciesDetectionWorker:
         """Process a single species detection job."""
         logger.info("Processing species detection job %s", job.uuid)
         self._cancel_requested = False
+
+        # Initialize timing stats if debug timing is enabled
+        timing_stats: _TimingStats | None = None
+        if self._is_timing_enabled():
+            timing_stats = _TimingStats(job_start=time.perf_counter())
+            logger.info("[TIMING] Debug timing enabled for job %s", job.uuid)
+
+        # Initialize pending species collection for this job
+        self._pending_species[job.uuid] = set()
+        self._species_tag_ids[job.uuid] = {}
 
         tracked_run = await self._get_foundation_model_run(session, job)
         if tracked_run is not None and job.id is not None:
@@ -269,8 +604,9 @@ class SpeciesDetectionWorker:
             )
             await session.commit()
 
-            # Get filtered recordings
-            recording_list = await self._get_filtered_recordings(session, job)
+            # Get filtered recordings (with timing)
+            with _timing_context(timing_stats, "get_recordings_total"):
+                recording_list = await self._get_filtered_recordings(session, job)
 
             if not recording_list:
                 logger.warning("No recordings found for job %s", job.uuid)
@@ -282,6 +618,9 @@ class SpeciesDetectionWorker:
                     completed_on=datetime.datetime.now(datetime.UTC),
                 )
                 await session.commit()
+                # Log timing summary even for empty jobs
+                if timing_stats is not None:
+                    timing_stats.log_summary(job.uuid)
                 return
 
             # Update total recordings
@@ -292,35 +631,44 @@ class SpeciesDetectionWorker:
             )
             await session.commit()
 
+            # Track recording count for timing stats
+            if timing_stats is not None:
+                timing_stats.recording_count = len(recording_list)
+
             # Ensure model is loaded
             engine = self._ensure_model_loaded(job)
 
-            # Get prediction filter
-            filter_instance = self._get_filter(job)
-
-            # Process each recording
+            # Process recordings sequentially (birdnet internal pipeline handles batching)
             total_clips = 0
             total_detections = 0
 
             for i, recording in enumerate(recording_list):
-                if self._cancel_requested:
+                # Check for cancellation (from API or internal flag)
+                if self._cancel_requested or await self._is_job_cancelled(session, job):
                     logger.info("Job %s cancelled by user", job.uuid)
                     await self._update_job_status(
                         session,
                         job,
                         status=models.SpeciesDetectionJobStatus.CANCELLED,
                     )
+                    await self._update_foundation_run_status(
+                        session, job, models.FoundationModelRunStatus.CANCELLED
+                    )
                     await session.commit()
+                    # Log timing summary on cancellation
+                    if timing_stats is not None:
+                        timing_stats.recording_count = i
+                        timing_stats.log_summary(job.uuid)
                     return
 
                 try:
-                    clips_count, detections_count = await self._process_recording(
+                    clips_count, detections_count = await self._process_recording_timed(
                         session,
                         recording,
                         model_run,
                         engine,
-                        filter_instance,
                         job,
+                        timing_stats,
                     )
                     total_clips += clips_count
                     total_detections += detections_count
@@ -344,6 +692,9 @@ class SpeciesDetectionWorker:
                 )
                 await session.commit()
 
+            # Resolve pending species via GBIF in batch
+            await self._resolve_pending_species_batch(session, job)
+
             # Mark complete
             await self._persist_species_summary(session, job)
             await self._update_job_status(
@@ -362,6 +713,10 @@ class SpeciesDetectionWorker:
                 len(recording_list),
             )
 
+            # Log timing summary on successful completion
+            if timing_stats is not None:
+                timing_stats.log_summary(job.uuid)
+
         except Exception as e:
             logger.exception("Job %s failed: %s", job.uuid, e)
             try:
@@ -374,10 +729,15 @@ class SpeciesDetectionWorker:
                 await session.commit()
             except Exception as commit_error:
                 logger.error("Failed to update job status: %s", commit_error)
+            # Log timing summary on failure
+            if timing_stats is not None:
+                timing_stats.log_summary(job.uuid)
         finally:
             if job.id is not None:
                 self._foundation_run_ids.pop(job.id, None)
             self._run_species_stats.pop(job.uuid, None)
+            self._pending_species.pop(job.uuid, None)
+            self._species_tag_ids.pop(job.uuid, None)
 
     async def _get_or_create_model_run(
         self,
@@ -408,7 +768,7 @@ class SpeciesDetectionWorker:
             f"overlap={job.overlap}",
         ]
         if job.use_metadata_filter:
-            description_parts.append("metadata_filter=true")
+            description_parts.append("metadata_filter=deferred")
         if job.custom_species_list:
             description_parts.append(f"custom_species={len(job.custom_species_list)}")
 
@@ -446,13 +806,14 @@ class SpeciesDetectionWorker:
 
         # Create a minimal dataset schema for get_recordings
         # We only need uuid and id for the recordings query
+        # Note: recording_count is a computed column property, use getattr for type safety
         dataset_schema = schemas.Dataset(
             uuid=dataset_obj.uuid,
             id=dataset_obj.id,
             audio_dir=dataset_obj.audio_dir,
             name=dataset_obj.name,
             description=dataset_obj.description,
-            recording_count=dataset_obj.recording_count,
+            recording_count=getattr(dataset_obj, "recording_count", 0),
             visibility=dataset_obj.visibility,
             created_by_id=dataset_obj.created_by_id,
             project_id=dataset_obj.project_id,
@@ -511,15 +872,36 @@ class SpeciesDetectionWorker:
 
         return recording_list
 
+    def _get_device_setting(self) -> str:
+        """Get the device setting from application configuration.
+
+        Returns
+        -------
+        str
+            Device to use for inference ("GPU" or "CPU").
+        """
+        settings = get_settings()
+        if not settings.ml_use_gpu:
+            return "CPU"
+        return settings.ml_gpu_device
+
     def _ensure_model_loaded(
         self,
         job: schemas.SpeciesDetectionJob,
     ) -> InferenceEngine:
-        """Ensure the required model is loaded."""
-        model_name = job.model_name
+        """Ensure the required model is loaded.
 
-        if model_name in self._engines:
-            engine = self._engines[model_name]
+        For models that support locale (e.g., BirdNET), the locale is included
+        in the cache key to allow different locale versions to coexist.
+        """
+        model_name = job.model_name
+        locale = getattr(job, "locale", "en_us")
+
+        # Include locale in cache key for locale-aware models
+        cache_key = f"{model_name}_{locale}" if model_name == "birdnet" else model_name
+
+        if cache_key in self._engines:
+            engine = self._engines[cache_key]
             if hasattr(engine, "confidence_threshold"):
                 engine.confidence_threshold = job.confidence_threshold  # type: ignore[attr-defined]
             return engine
@@ -534,50 +916,73 @@ class SpeciesDetectionWorker:
                 f"Available models: {', '.join(available) if available else 'none'}"
             ) from e
 
-        logger.info("Loading %s model", model_name)
+        # Get device setting from configuration
+        device = self._get_device_setting()
+        logger.info(
+            "Loading %s model (device: %s, gpu_batch_size: %d, feeders: %d, workers: %d, locale: %s)",
+            model_name,
+            device,
+            self._gpu_batch_size,
+            self._feeders,
+            self._workers,
+            locale,
+        )
 
-        loader = loader_class(model_dir=self._model_dir)
+        # Create loader with device and lang parameters
+        # BirdNETLoader supports the lang parameter for locale-specific species names
+        if model_name == "birdnet":
+            loader = loader_class(model_dir=self._model_dir, device=device, lang=locale)  # type: ignore[call-arg]
+        else:
+            loader = loader_class(model_dir=self._model_dir, device=device)  # type: ignore[call-arg]
         loader.load()
-        self._loaders[model_name] = loader
+        self._loaders[cache_key] = loader
 
         engine = engine_class(
             loader,
             confidence_threshold=job.confidence_threshold,  # type: ignore[call-arg]
+            device=device,  # type: ignore[call-arg]
+            batch_size=self._gpu_batch_size,  # type: ignore[call-arg]
+            feeders=self._feeders,  # type: ignore[call-arg]
+            workers=self._workers,  # type: ignore[call-arg]
         )
-        self._engines[model_name] = engine
+        self._engines[cache_key] = engine
 
         return engine
 
-    def _get_filter(
-        self,
-        job: schemas.SpeciesDetectionJob,
-    ) -> SpeciesFilter:
-        """Get appropriate prediction filter."""
-        if job.use_metadata_filter:
-            return self._get_geo_filter()
-        return self._passthrough_filter
-
-    def _create_filter_context(
-        self,
-        recording: schemas.Recording,
-    ) -> FilterContext:
-        """Create filter context from recording metadata."""
-        return FilterContext.from_recording(
-            latitude=recording.latitude,
-            longitude=recording.longitude,
-            recording_date=recording.date,
-        )
-
-    async def _process_recording(
+    async def _process_recording_timed(
         self,
         session: AsyncSession,
         recording: schemas.Recording,
         model_run: schemas.ModelRun,
         engine: InferenceEngine,
-        filter_instance: SpeciesFilter,
         job: schemas.SpeciesDetectionJob,
+        timing_stats: _TimingStats | None,
     ) -> tuple[int, int]:
-        """Process a single recording. Returns (clips_count, detections_count)."""
+        """Process a single recording with optional timing measurement.
+
+        This wrapper adds timing measurement around inference and storage
+        operations when timing_stats is provided.
+
+        Parameters
+        ----------
+        session
+            Database session.
+        recording
+            Recording to process.
+        model_run
+            Model run for this job.
+        engine
+            Inference engine to use.
+        job
+            Species detection job configuration.
+        timing_stats
+            Timing stats object for accumulation, or None if timing disabled.
+
+        Returns
+        -------
+        tuple[int, int]
+            (clips_count, detections_count)
+        """
         logger.debug("Processing recording %s", recording.uuid)
 
         audio_path = self._audio_dir / recording.path
@@ -586,11 +991,10 @@ class SpeciesDetectionWorker:
             logger.warning("Audio file not found: %s", audio_path)
             return 0, 0
 
-        filter_context = self._create_filter_context(recording)
-
-        # Run inference
+        # Run inference (with timing)
         try:
-            results = await self._run_inference(engine, audio_path, job.overlap)
+            with _timing_context(timing_stats, "inference_total"):
+                results = await self._run_inference(engine, audio_path, job.overlap)
         except Exception as e:
             logger.error("Inference failed for %s: %s", recording.uuid, e)
             return 0, 0
@@ -598,27 +1002,272 @@ class SpeciesDetectionWorker:
         if not results:
             return 0, 0
 
-        # Store results
-        clips_created = 0
-        detections_created = 0
+        # Check for cancellation before storage
+        if self._cancel_requested:
+            return 0, 0
 
-        for result in results:
-            if self._cancel_requested:
-                break
-
-            clip_count, det_count = await self._store_result(
+        # Store all results in bulk for better performance (with timing)
+        with _timing_context(timing_stats, "store_total"):
+            clips_count, detections_count = await self._store_results_bulk(
                 session,
                 recording,
                 model_run,
-                result,
-                filter_instance,
-                filter_context,
+                results,
                 job,
             )
-            clips_created += clip_count
-            detections_created += det_count
 
-        return clips_created, detections_created
+        return clips_count, detections_count
+
+    async def _process_recording(
+        self,
+        session: AsyncSession,
+        recording: schemas.Recording,
+        model_run: schemas.ModelRun,
+        engine: InferenceEngine,
+        job: schemas.SpeciesDetectionJob,
+    ) -> tuple[int, int]:
+        """Process a single recording. Returns (clips_count, detections_count).
+
+        Note: This method is kept for backwards compatibility.
+        For timed processing, use _process_recording_timed instead.
+        """
+        return await self._process_recording_timed(
+            session,
+            recording,
+            model_run,
+            engine,
+            job,
+            timing_stats=None,
+        )
+
+    async def _store_results_bulk(
+        self,
+        session: AsyncSession,
+        recording: schemas.Recording,
+        model_run: schemas.ModelRun,
+        results: list[InferenceResult],
+        job: schemas.SpeciesDetectionJob,
+    ) -> tuple[int, int]:
+        """Store inference results in bulk for better performance.
+
+        This method batches all DB operations to minimize round trips:
+        1. Create all clips in bulk
+        2. Insert all embeddings in bulk
+        3. Create predictions and tags in bulk
+
+        Parameters
+        ----------
+        session
+            Database session.
+        recording
+            Recording being processed.
+        model_run
+            Model run for this job.
+        results
+            List of inference results from the model.
+        job
+            Species detection job configuration.
+
+        Returns
+        -------
+        tuple[int, int]
+            (clips_count, detections_count)
+        """
+        if not results:
+            return 0, 0
+
+        # Step 1: Create all clips in bulk using pg_insert
+        now = datetime.datetime.now(datetime.timezone.utc)
+        clips_data = [
+            dict(
+                uuid=uuid4(),
+                recording_id=recording.id,
+                start_time=r.start_time,
+                end_time=r.end_time,
+                created_on=now,
+            )
+            for r in results
+        ]
+
+        # Insert clips with ON CONFLICT DO NOTHING
+        stmt = pg_insert(models.Clip).values(clips_data)
+        stmt = stmt.on_conflict_do_nothing(
+            index_elements=["recording_id", "start_time", "end_time"]
+        )
+        await session.execute(stmt)
+        await session.flush()
+
+        # Fetch clip IDs for all time ranges (including pre-existing ones)
+        time_ranges = [(r.start_time, r.end_time) for r in results]
+        clip_query = select(
+            models.Clip.id,
+            models.Clip.start_time,
+            models.Clip.end_time,
+        ).where(
+            models.Clip.recording_id == recording.id,
+            tuple_(models.Clip.start_time, models.Clip.end_time).in_(time_ranges),
+        )
+        clip_rows = await session.execute(clip_query)
+
+        # Build a mapping from (start_time, end_time) -> clip_id
+        clip_map: dict[tuple[float, float], int] = {
+            (row.start_time, row.end_time): row.id for row in clip_rows
+        }
+
+        # Step 2: Bulk insert embeddings
+        now = datetime.datetime.now(datetime.timezone.utc)
+        embeddings_data = []
+        for result in results:
+            clip_id = clip_map.get((result.start_time, result.end_time))
+            if clip_id is None:
+                continue
+
+            embeddings_data.append(
+                dict(
+                    uuid=uuid4(),
+                    clip_id=clip_id,
+                    model_run_id=model_run.id,
+                    embedding=result.embedding.tolist(),
+                    created_on=now,
+                )
+            )
+
+        if embeddings_data:
+            # Use ON CONFLICT DO NOTHING to handle duplicates gracefully
+            stmt = pg_insert(models.ClipEmbedding).values(embeddings_data)
+            stmt = stmt.on_conflict_do_nothing(
+                index_elements=["clip_id", "model_run_id"]
+            )
+            await session.execute(stmt)
+            await session.flush()
+
+        # Step 3: Prepare species tags in batch (N+1 prevention)
+        # Collect all unique species labels first
+        all_species_labels: set[str] = set()
+        for result in results:
+            if result.predictions:
+                for species_label, _ in result.predictions:
+                    all_species_labels.add(species_label)
+
+        # Pre-resolve/create all species tags
+        species_tag_cache: dict[str, tuple[schemas.Tag, str, str | None, str | None]] = {}
+        for species_label in all_species_labels:
+            tag, scientific_name, common_name, gbif_taxon_id = (
+                await self._get_or_create_species_tag(
+                    session,
+                    species_label,
+                    job.uuid,
+                )
+            )
+            species_tag_cache[species_label] = (tag, scientific_name, common_name, gbif_taxon_id)
+
+        # Step 4: Create predictions and prediction tags in bulk
+        detections_count = 0
+        predictions_to_create: list[dict] = []
+        prediction_tags_to_create: list[tuple[int, int, float, str]] = []
+        model_run_predictions_to_create: list[dict] = []
+
+        # First pass: create clip predictions
+        clip_to_filtered_predictions: dict[int, list[tuple[str, float]]] = {}
+
+        for result in results:
+            if not result.predictions:
+                continue
+
+            clip_id = clip_map.get((result.start_time, result.end_time))
+            if clip_id is None:
+                continue
+
+            # Filter predictions by custom species list if configured
+            filtered_predictions = result.predictions
+            if job.custom_species_list:
+                filtered_predictions = [
+                    (species, conf)
+                    for species, conf in filtered_predictions
+                    if self._matches_custom_species(species, job.custom_species_list)
+                ]
+
+            if filtered_predictions:
+                predictions_to_create.append(dict(uuid=uuid4(), clip_id=clip_id, created_on=now))
+                clip_to_filtered_predictions[clip_id] = filtered_predictions
+
+        # Bulk insert clip predictions
+        if predictions_to_create:
+            # Insert and get back the created predictions
+            stmt = (
+                pg_insert(models.ClipPrediction)
+                .values(predictions_to_create)
+                .returning(models.ClipPrediction.id, models.ClipPrediction.clip_id)
+            )
+            result_rows = await session.execute(stmt)
+            created_predictions = result_rows.fetchall()
+
+            # Map clip_id -> prediction_id
+            clip_to_prediction_id: dict[int, int] = {
+                row.clip_id: row.id for row in created_predictions
+            }
+
+            # Prepare prediction tags and model run predictions
+            for clip_id, filtered_predictions in clip_to_filtered_predictions.items():
+                prediction_id = clip_to_prediction_id.get(clip_id)
+                if prediction_id is None:
+                    continue
+
+                model_run_predictions_to_create.append(
+                    dict(model_run_id=model_run.id, clip_prediction_id=prediction_id, created_on=now)
+                )
+
+                for species_label, confidence in filtered_predictions:
+                    cached = species_tag_cache.get(species_label)
+                    if cached is None:
+                        continue
+
+                    tag, scientific_name, common_name, gbif_taxon_id = cached
+                    if tag.id is None:
+                        continue
+
+                    prediction_tags_to_create.append(
+                        (prediction_id, tag.id, confidence, species_label)
+                    )
+
+                    # Record species summary for foundation model tracking
+                    self._record_species_summary(
+                        job,
+                        tag,
+                        scientific_name,
+                        common_name,
+                        gbif_taxon_id,
+                        confidence,
+                    )
+                    detections_count += 1
+
+            # Bulk insert model run predictions
+            if model_run_predictions_to_create:
+                stmt = pg_insert(models.ModelRunPrediction).values(
+                    model_run_predictions_to_create
+                )
+                stmt = stmt.on_conflict_do_nothing()
+                await session.execute(stmt)
+
+            # Bulk insert prediction tags
+            if prediction_tags_to_create:
+                tags_data = [
+                    dict(
+                        clip_prediction_id=pred_id,
+                        tag_id=tag_id,
+                        score=score,
+                        created_on=now,
+                    )
+                    for pred_id, tag_id, score, _ in prediction_tags_to_create
+                ]
+                stmt = pg_insert(models.ClipPredictionTag).values(tags_data)
+                stmt = stmt.on_conflict_do_nothing()
+                await session.execute(stmt)
+
+            await session.flush()
+
+        clips_count = len(clip_map)
+        return clips_count, detections_count
 
     async def _run_inference(
         self,
@@ -626,17 +1275,23 @@ class SpeciesDetectionWorker:
         audio_path: Path,
         overlap: float,
     ) -> list[InferenceResult]:
-        """Run inference on an audio file."""
+        """Run inference on an audio file.
+
+        Note: We run inference synchronously since this worker runs in its own
+        asyncio task and BirdNET handles internal parallelism.
+        """
         spec = engine.specification
         overlap_seconds = overlap * spec.segment_duration
 
-        loop = asyncio.get_running_loop()
-        results = await loop.run_in_executor(
-            None,
-            engine.predict_file,
-            audio_path,
-            overlap_seconds,
-        )
+        logger.info("Starting inference on %s (overlap=%.2f)", audio_path, overlap_seconds)
+
+        start_time = time.time()
+
+        # Run synchronously - the worker is in its own task
+        results = engine.predict_file(audio_path, overlap_seconds)
+
+        elapsed = time.time() - start_time
+        logger.info("Inference completed in %.2fs, got %d results", elapsed, len(results))
 
         return results
 
@@ -646,20 +1301,26 @@ class SpeciesDetectionWorker:
         recording: schemas.Recording,
         model_run: schemas.ModelRun,
         result: InferenceResult,
-        filter_instance: SpeciesFilter,
-        filter_context: FilterContext,
         job: schemas.SpeciesDetectionJob,
+        timing_stats: _TimingStats | None = None,
     ) -> tuple[int, int]:
-        """Store inference result. Returns (clips_count, detections_count)."""
+        """Store inference result using API-based approach.
+
+        Returns (clips_count, detections_count).
+        """
         # Get or create clip
+        t0 = time.perf_counter()
         clip = await self._get_or_create_clip(
             session,
-            recording=recording,
-            start_time=result.start_time,
-            end_time=result.end_time,
+            recording,
+            result.start_time,
+            result.end_time,
         )
+        if timing_stats:
+            timing_stats.store_clip_create += time.perf_counter() - t0
 
-        # Store embedding (always, for search functionality)
+        # Store embedding
+        t0 = time.perf_counter()
         embedding_list = result.embedding.tolist()
         await clip_embeddings.create(
             session,
@@ -667,18 +1328,15 @@ class SpeciesDetectionWorker:
             model_run=model_run,
             embedding=embedding_list,
         )
+        if timing_stats:
+            timing_stats.store_embedding_create += time.perf_counter() - t0
 
         clips_created = 1
         detections_created = 0
 
         # Store predictions if available
         if result.predictions:
-            # Apply filtering
-            filtered_predictions = await filter_instance.filter_predictions(
-                result.predictions, filter_context, session
-            )
-
-            # Apply custom species list
+            filtered_predictions = result.predictions
             if job.custom_species_list:
                 filtered_predictions = [
                     (species, conf)
@@ -688,35 +1346,41 @@ class SpeciesDetectionWorker:
 
             if filtered_predictions:
                 # Create clip prediction
-                clip_pred = await clip_predictions.create(
-                    session,
-                    clip=clip,
-                )
+                t0 = time.perf_counter()
+                clip_pred = await clip_predictions.create(session, clip=clip)
 
                 # Link to model run
-                await model_runs.add_clip_prediction(
-                    session,
-                    model_run,
-                    clip_pred,
-                )
+                await model_runs.add_clip_prediction(session, model_run, clip_pred)
+                if timing_stats:
+                    timing_stats.store_prediction_create += time.perf_counter() - t0
 
-                # Add tags
+                # Add tags for each species prediction
                 for species_label, confidence in filtered_predictions:
-                    (
-                        tag,
-                        scientific_name,
-                        common_name,
-                        gbif_taxon_id,
-                    ) = await self._get_or_create_species_tag(
-                        session,
-                        species_label,
+                    t0 = time.perf_counter()
+                    tag, scientific_name, common_name, gbif_taxon_id = (
+                        await self._get_or_create_species_tag(
+                            session,
+                            species_label,
+                            job.uuid,
+                        )
                     )
-                    clip_pred = await clip_predictions.add_tag(
-                        session,
-                        clip_pred,
-                        tag,
-                        score=confidence,
-                    )
+                    if timing_stats:
+                        timing_stats.store_tag_lookup += time.perf_counter() - t0
+
+                    t0 = time.perf_counter()
+                    try:
+                        clip_pred = await clip_predictions.add_tag(
+                            session,
+                            clip_pred,
+                            tag,
+                            score=confidence,
+                        )
+                    except exceptions.DuplicateObjectError:
+                        # Tag already exists on this prediction, skip
+                        pass
+                    if timing_stats:
+                        timing_stats.store_tag_add += time.perf_counter() - t0
+
                     self._record_species_summary(
                         job,
                         tag,
@@ -744,13 +1408,41 @@ class SpeciesDetectionWorker:
         self,
         session: AsyncSession,
         species_label: str,
+        job_uuid: UUID,
     ) -> tuple[schemas.Tag, str, str | None, str | None]:
-        """Get or create a species tag."""
-        scientific_name, common_name = self._parse_species_label(species_label)
-        gbif_taxon_id, canonical_name = await self._resolve_gbif_taxon(scientific_name)
+        """Get or create a species tag.
 
-        resolved_name = canonical_name or scientific_name
-        tag_value = gbif_taxon_id or resolved_name
+        During inference, GBIF lookup is deferred. Species names are collected
+        and resolved in batch at job completion for better performance.
+
+        Non-species labels (e.g., "Engine_Engine", "Dog_Dog") are detected
+        and excluded from GBIF resolution to prevent false matches.
+        """
+        scientific_name, common_name = self._parse_species_label(species_label)
+
+        # Skip GBIF resolution for non-species labels (environmental sounds)
+        if _is_non_species_label(scientific_name, common_name):
+            logger.debug(
+                "Skipping GBIF resolution for non-species label: %s",
+                species_label,
+            )
+            tag = await tags.get_or_create(
+                session,
+                key="species",
+                value=scientific_name,
+                canonical_name=common_name or scientific_name,
+            )
+            return tag, scientific_name, common_name, None
+
+        # Defer GBIF lookup - use scientific name as temporary tag value
+        # GBIF resolution with vernacular name is done in batch at job completion
+        resolved_name = scientific_name
+        tag_value = scientific_name
+        gbif_taxon_id = None
+
+        # Collect for batch resolution at job end
+        if job_uuid in self._pending_species:
+            self._pending_species[job_uuid].add(scientific_name)
 
         tag = await tags.get_or_create(
             session,
@@ -772,22 +1464,178 @@ class SpeciesDetectionWorker:
     async def _resolve_gbif_taxon(
         self,
         scientific_name: str,
-    ) -> tuple[str | None, str | None]:
-        """Resolve GBIF taxon id for a scientific name."""
-        if scientific_name in self._gbif_cache:
-            return self._gbif_cache[scientific_name]
+        locale: str = "ja",
+    ) -> tuple[str | None, str | None, str | None]:
+        """Resolve GBIF taxon id and vernacular name for a scientific name.
+
+        Args:
+            scientific_name: The scientific name to resolve.
+            locale: Locale for vernacular name (e.g., "ja", "en").
+
+        Returns:
+            Tuple of (usage_key, canonical_name, vernacular_name).
+        """
+        # Check cache (keyed by scientific_name + locale)
+        cache_key = (scientific_name, locale)
+        if cache_key in self._gbif_cache:
+            return self._gbif_cache[cache_key]
 
         candidates = await search_gbif_species(scientific_name, limit=1)
         if candidates:
             candidate = candidates[0]
             usage_key = candidate.usage_key
             canonical = candidate.canonical_name or scientific_name
+            # Fetch vernacular name from GBIF
+            vernacular = await get_gbif_vernacular_name(usage_key, locale)
         else:
             usage_key = None
             canonical = scientific_name
+            vernacular = None
 
-        self._gbif_cache[scientific_name] = (usage_key, canonical)
-        return usage_key, canonical
+        self._gbif_cache[cache_key] = (usage_key, canonical, vernacular)
+        return usage_key, canonical, vernacular
+
+    async def _resolve_pending_species_batch(
+        self,
+        session: AsyncSession,
+        job: schemas.SpeciesDetectionJob,
+    ) -> None:
+        """Resolve pending species names via GBIF API in batch.
+
+        This is called at job completion to resolve all species names
+        that were deferred during inference for better performance.
+        Also fetches vernacular names from GBIF and updates species stats.
+        """
+        pending = self._pending_species.get(job.uuid, set())
+        if not pending:
+            logger.debug("No pending species to resolve for job %s", job.uuid)
+            return
+
+        # Extract base locale (e.g., "en_us" -> "en", "ja" -> "ja")
+        locale = job.locale.split("_")[0] if job.locale else "ja"
+
+        # Filter out already cached species (keyed by name + locale)
+        to_resolve = [
+            name for name in pending
+            if (name, locale) not in self._gbif_cache
+        ]
+
+        if not to_resolve:
+            logger.debug("All species already cached for job %s", job.uuid)
+            # Still need to update species stats with cached vernacular names
+            await self._update_species_stats_with_vernacular(job, locale)
+            return
+
+        logger.info(
+            "Resolving %d species via GBIF for job %s (locale=%s)",
+            len(to_resolve),
+            job.uuid,
+            locale,
+        )
+
+        # Resolve each species and update tags
+        for scientific_name in to_resolve:
+            try:
+                gbif_taxon_id, canonical_name, vernacular_name = await self._resolve_gbif_taxon(
+                    scientific_name,
+                    locale=locale,
+                )
+
+                # Update existing tag if GBIF info was found
+                if gbif_taxon_id and gbif_taxon_id != scientific_name:
+                    await self._update_species_tag(
+                        session,
+                        old_value=scientific_name,
+                        new_value=gbif_taxon_id,
+                        canonical_name=canonical_name or scientific_name,
+                        vernacular_name=vernacular_name,
+                    )
+
+            except Exception as e:
+                logger.warning(
+                    "Failed to resolve GBIF for %s: %s",
+                    scientific_name,
+                    e,
+                )
+
+        # Update species stats with vernacular names from cache
+        await self._update_species_stats_with_vernacular(job, locale)
+
+        await session.commit()
+        logger.info("GBIF resolution completed for job %s", job.uuid)
+
+    async def _update_species_tag(
+        self,
+        session: AsyncSession,
+        old_value: str,
+        new_value: str,
+        canonical_name: str,
+        vernacular_name: str | None = None,
+    ) -> None:
+        """Update a species tag with resolved GBIF information."""
+        # Find the tag with the old value
+        stmt = select(models.Tag).where(
+            models.Tag.key == "species",
+            models.Tag.value == old_value,
+        )
+        result = await session.execute(stmt)
+        tag = result.scalar_one_or_none()
+
+        if tag is None:
+            return
+
+        # Check if a tag with the new value already exists
+        stmt_new = select(models.Tag).where(
+            models.Tag.key == "species",
+            models.Tag.value == new_value,
+        )
+        result_new = await session.execute(stmt_new)
+        existing_tag = result_new.scalar_one_or_none()
+
+        if existing_tag is not None:
+            # Tag with GBIF ID already exists, merge references
+            # Update all clip_prediction_tags to point to the existing tag
+            from sqlalchemy import update
+            await session.execute(
+                update(models.ClipPredictionTag)
+                .where(models.ClipPredictionTag.tag_id == tag.id)
+                .values(tag_id=existing_tag.id)
+            )
+            # Update vernacular_name on existing tag if we have a new one
+            if vernacular_name and not existing_tag.vernacular_name:
+                existing_tag.vernacular_name = vernacular_name
+            # Delete the old tag
+            await session.delete(tag)
+        else:
+            # Update the existing tag with GBIF info
+            tag.value = new_value
+            tag.canonical_name = canonical_name
+            tag.vernacular_name = vernacular_name
+
+        await session.flush()
+
+    async def _update_species_stats_with_vernacular(
+        self,
+        job: schemas.SpeciesDetectionJob,
+        locale: str,
+    ) -> None:
+        """Update species stats with vernacular names from GBIF cache.
+
+        This is called after GBIF resolution to update the common_name_ja
+        field in species stats with the vernacular names fetched from GBIF.
+        """
+        stats_map = self._run_species_stats.get(job.uuid)
+        if stats_map is None:
+            return
+
+        for summary in stats_map.values():
+            # Look up vernacular name in cache using scientific_name + locale
+            cache_key = (summary.scientific_name, locale)
+            cached = self._gbif_cache.get(cache_key)
+            if cached:
+                _usage_key, _canonical, vernacular_name = cached
+                if vernacular_name:
+                    summary.common_name_ja = vernacular_name
 
     def _record_species_summary(
         self,
@@ -837,16 +1685,35 @@ class SpeciesDetectionWorker:
             )
         )
 
+        # Collect all tag IDs that we want to reference
+        tag_ids_to_check = [
+            s.annotation_tag_id for s in stats_map.values()
+            if s.annotation_tag_id is not None
+        ]
+
+        # Verify which tag IDs still exist (some may have been deleted during GBIF merge)
+        valid_tag_ids: set[int] = set()
+        if tag_ids_to_check:
+            stmt = select(models.Tag.id).where(models.Tag.id.in_(tag_ids_to_check))
+            result = await session.execute(stmt)
+            valid_tag_ids = {row[0] for row in result.fetchall()}
+
         total_detections = 0
         for summary in stats_map.values():
             if summary.detections == 0:
                 continue
             avg_conf = summary.total_confidence / summary.detections
+
+            # Only use annotation_tag_id if it still exists in the database
+            tag_id = summary.annotation_tag_id
+            if tag_id is not None and tag_id not in valid_tag_ids:
+                tag_id = None
+
             session.add(
                 models.FoundationModelRunSpecies(
                     foundation_model_run_id=run.id,
                     gbif_taxon_id=summary.gbif_taxon_id,
-                    annotation_tag_id=summary.annotation_tag_id,
+                    annotation_tag_id=tag_id,
                     scientific_name=summary.scientific_name,
                     common_name_ja=summary.common_name_ja,
                     detection_count=summary.detections,

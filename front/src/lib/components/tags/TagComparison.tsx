@@ -4,7 +4,9 @@ import TagComponent from "@/lib/components/tags/Tag";
 import Empty from "@/lib/components/ui/Empty";
 
 import type { PredictionTag, Tag } from "@/lib/types";
-import { Color, getTagColor, getTagKey } from "@/lib/utils/tags";
+import { type Color, getTagKey } from "@/lib/utils/tags";
+
+const DEFAULT_COLOR: Color = { color: "stone", level: 3 };
 
 export default function TagComparison(props: {
   tags?: Tag[];
@@ -14,7 +16,8 @@ export default function TagComparison(props: {
   onClickTrueTag?: (tag: Tag) => void;
   tagColorFn?: (tag: Tag) => Color;
 }) {
-  const { threshold = 0.5, tagColorFn = getTagColor } = props;
+  const { threshold = 0.5, tagColorFn } = props;
+  const getColor = tagColorFn ?? (() => DEFAULT_COLOR);
 
   const predictedMapping = useMemo(() => {
     return new Map<string, number>(
@@ -75,7 +78,7 @@ export default function TagComparison(props: {
             <TagComponent
               tag={predictedTag.tag}
               onClick={() => props.onClickPredictedTag?.(predictedTag)}
-              {...tagColorFn(predictedTag.tag)}
+              {...getColor(predictedTag.tag)}
             />
           </div>
         ))}
@@ -95,7 +98,7 @@ export default function TagComparison(props: {
             <TagComponent
               tag={tag}
               onClick={() => props.onClickTrueTag?.(tag)}
-              {...getTagColor(tag)}
+              {...getColor(tag)}
             />
           </div>
         ))}

@@ -7,6 +7,7 @@ export const TagSchema = z.object({
   key: z.string(),
   value: z.string(),
   canonical_name: z.string().optional(),
+  vernacular_name: z.string().optional().nullable(),
 });
 
 export const TagCountSchema = z.object({

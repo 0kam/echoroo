@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Query, status
 
 from echoroo import models, schemas
 from echoroo.api import species_filters
@@ -127,6 +127,26 @@ def get_species_filter_applications_router(settings: EchorooSettings) -> APIRout
             run_uuid,
             filter_uuid,
             user=user,
+        )
+
+    @router.get(
+        "/{filter_uuid}/species",
+        response_model=schemas.SpeciesFilterResults,
+    )
+    async def get_filter_species(
+        run_uuid: UUID,
+        filter_uuid: UUID,
+        session: Session,
+        user: models.User | None = Depends(optional_user_dep),
+        locale: str = Query("ja", description="Locale for common names (e.g., 'ja', 'en')"),
+    ):
+        """Get species results for a filter application."""
+        return await species_filters.get_application_species_results(
+            session,
+            run_uuid,
+            filter_uuid,
+            user=user,
+            locale=locale,
         )
 
     return router

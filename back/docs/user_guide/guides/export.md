@@ -1,8 +1,8 @@
 # Export Annotations for ML Development
 
-**Whombat** is degined to facilitate the generation of high-quality labeled audio data.
+**Echoroo** is designed to facilitate the generation of high-quality labeled audio data.
 But the real utility comes from using that data to train machine learning models.
-This guide will show you how to take your Whombat annotations and build a simple species classifier in Python
+This guide will show you how to take your Echoroo annotations and build a simple species classifier in Python
 
 ## Data formats
 
@@ -14,12 +14,12 @@ While these formats serve their purpose, they often present limitations:
 2. They lack information on annotation completeness and can't indicate if a clip or whole recording was annotated.
 3. They have rigid ways of representing the ROI of a sound event.
 
-To overcome these challenges and ensure that your valuable annotation data is fully preserved and readily usable for machine learning, Whombat utilizes a custom format called the Acoustic Object Exchange Format (AOEF).
+To overcome these challenges and ensure that your valuable annotation data is fully preserved and readily usable for machine learning, Echoroo utilizes a custom format called the Acoustic Object Exchange Format (AOEF).
 This JSON-based format retains all the essential data and rich metadata required for effective model development.
 
-## Exporting Your Work from Whombat
+## Exporting Your Work from Echoroo
 
-**Whombat** provides a convenient way to export your work, allowing you to share data and collaborate with others.
+**Echoroo** provides a convenient way to export your work, allowing you to share data and collaborate with others.
 You can export various types of information:
 
 - **Datasets**: Share the meticulously curated metadata of your recordings with colleagues or collaborators.
@@ -31,12 +31,12 @@ You can export various types of information:
 
 ## How to Export
 
-Exporting your data from Whombat is a straightforward process:
+Exporting your data from Echoroo is a straightforward process:
 
 1. **Navigate to the Detail View**: Open the detail view of the dataset, annotation project, evaluation set, or evaluation that you wish to export.
 2. **Click "Download"**: In the top right section of the page, you'll find a "Download" button.
       Click this button to initiate the download process.
-3. **Wait for File Preparation**: Whombat will prepare the export file, which may take a few seconds depending on the size of the data.
+3. **Wait for File Preparation**: Echoroo will prepare the export file, which may take a few seconds depending on the size of the data.
 4. **Access the Downloaded File**: Once the download is complete, the file will be saved to your designated "Downloads" folder.
 
 Exported files will have a descriptive filename.
@@ -48,8 +48,8 @@ Each exported file also includes information about the export timestamp, allowin
 ## Loading Annotations with `soundevent`
 
 The `soundevent` library is a helpful tool for working with audio annotation data in Python.
-It provides convenient functions for loading, manipulating, and analysing the annotated audio files as exported from Whombat.
-We'll use it to load the exported JSON file from Whombat into a `soundevent.data.AnnotationProject` object.
+It provides convenient functions for loading, manipulating, and analysing the annotated audio files as exported from Echoroo.
+We'll use it to load the exported JSON file from Echoroo into a `soundevent.data.AnnotationProject` object.
 
 ```python
 from soundevent import data, io
@@ -57,7 +57,7 @@ from soundevent import data, io
 annotation_project = io.load("example_annotation_project.json")
 ```
 
-This `AnnotationProject` object mirrors how Whombat organizes annotation data in its database.
+This `AnnotationProject` object mirrors how Echoroo organizes annotation data in its database.
 Let's explore its contents:
 
 ```python
@@ -217,7 +217,7 @@ import uuid
 
 # Ignore this bit, it is just to make sure the uuid is unique but still
 # deterministic
-namespace = uuid.uuid5(uuid.NAMESPACE_DNS, "whombat")
+namespace = uuid.uuid5(uuid.NAMESPACE_DNS, "echoroo")
 evaluation_set_uuid = uuid.uuid5(namespace, "Example Evaluation Set")
 
 # Now we can define the evaluation set
@@ -236,7 +236,7 @@ Finally, we can save the evaluation set to a JSON file.
 io.save(evaluation_set, "example_evaluation_set.json")
 ```
 
-This saved file can be easily loaded back into Python or even imported back into **Whombat**, allowing you to upload and analyze model predictions on this standardized evaluation set.
+This saved file can be easily loaded back into Python or even imported back into **Echoroo**, allowing you to upload and analyze model predictions on this standardized evaluation set.
 
 ## Create a Simple Classifier with Features
 
@@ -378,7 +378,7 @@ model_run = data.ModelRun(
 io.save(model_run, "example_model_run.json")
 ```
 
-This file can be imported into **Whombat** to visualize and analyze the model's predictions on the evaluation set.
+This file can be imported into **Echoroo** to visualize and analyze the model's predictions on the evaluation set.
 
 ### Evaluating the Model
 
@@ -432,7 +432,7 @@ This allows others to see exactly where the model succeeded and where it failed,
 
 ## Conclusions
 
-This guide has demonstrated how to leverage annotated audio data from Whombat to train a machine learning model for bat species classification.
+This guide has demonstrated how to leverage annotated audio data from Echoroo to train a machine learning model for bat species classification.
 We covered key steps, including loading and preprocessing annotation data, splitting data into training and testing sets, creating an evaluation set, extracting features, training a simple classifier, and evaluating its performance.
 
 While our example focused on a basic classifier using manually engineered features, the underlying principles and workflow apply to more complex models and tasks.

@@ -286,6 +286,73 @@ def get_ml_projects_router(settings: EchorooSettings) -> APIRouter:
         return reference_sound
 
     @router.get(
+        "/{ml_project_uuid}/reference_sounds/xeno_canto/{xeno_canto_id}/audio",
+        # Also handle trailing slash
+        include_in_schema=True,
+    )
+    @router.get(
+        "/{ml_project_uuid}/reference_sounds/xeno_canto/{xeno_canto_id}/audio/",
+        include_in_schema=False,  # Hide duplicate from docs
+    )
+    async def proxy_xeno_canto_audio(
+        session: Session,
+        ml_project_uuid: UUID,
+        xeno_canto_id: str,
+        user: models.User | None = Depends(optional_user_dep),
+    ):
+        """Proxy audio download from Xeno-Canto.
+
+        This endpoint downloads audio from Xeno-Canto and streams it to the client.
+        Used for previewing Xeno-Canto recordings before creating a reference sound.
+
+        Parameters
+        ----------
+        xeno_canto_id
+            The Xeno-Canto recording ID (e.g., "123456" or "XC123456").
+        """
+        import httpx
+        from fastapi.responses import Response
+
+        # Verify project access
+        await api.ml_projects.get(
+            session,
+            ml_project_uuid,
+            user=user,
+        )
+
+        # Extract numeric ID from XC format
+        xc_num = xeno_canto_id.upper()
+        if xc_num.startswith("XC"):
+            xc_num = xc_num[2:]
+
+        download_url = f"https://xeno-canto.org/{xc_num}/download"
+
+        try:
+            async with httpx.AsyncClient(follow_redirects=True, timeout=60.0) as client:
+                response = await client.get(download_url)
+                if response.status_code != 200:
+                    from fastapi import HTTPException
+                    raise HTTPException(
+                        status_code=response.status_code,
+                        detail=f"Failed to download Xeno-Canto recording {xeno_canto_id}",
+                    )
+
+                content_type = response.headers.get("content-type", "audio/mpeg")
+                return Response(
+                    content=response.content,
+                    media_type=content_type,
+                    headers={
+                        "Content-Disposition": f'inline; filename="xc_{xeno_canto_id}.audio"',
+                    },
+                )
+        except httpx.RequestError as e:
+            from fastapi import HTTPException
+            raise HTTPException(
+                status_code=502,
+                detail=f"Failed to connect to Xeno-Canto: {str(e)}",
+            )
+
+    @router.get(
         "/{ml_project_uuid}/reference_sounds/{reference_sound_uuid}",
         response_model=schemas.ReferenceSound,
     )
@@ -307,6 +374,38 @@ def get_ml_projects_router(settings: EchorooSettings) -> APIRouter:
             reference_sound_uuid,
             user=user,
         )
+
+    @router.patch(
+        "/{ml_project_uuid}/reference_sounds/{reference_sound_uuid}",
+        response_model=schemas.ReferenceSound,
+    )
+    async def update_reference_sound(
+        session: Session,
+        ml_project_uuid: UUID,
+        reference_sound_uuid: UUID,
+        data: schemas.ReferenceSoundUpdate,
+        user: models.User = Depends(current_user_dep),
+    ) -> schemas.ReferenceSound:
+        """Update a reference sound."""
+        # Verify project access
+        await api.ml_projects.get(
+            session,
+            ml_project_uuid,
+            user=user,
+        )
+        reference_sound = await api.reference_sounds.get(
+            session,
+            reference_sound_uuid,
+            user=user,
+        )
+        updated = await api.reference_sounds.update(
+            session,
+            reference_sound,
+            data,
+            user=user,
+        )
+        await session.commit()
+        return updated
 
     @router.delete(
         "/{ml_project_uuid}/reference_sounds/{reference_sound_uuid}",
@@ -344,11 +443,21 @@ def get_ml_projects_router(settings: EchorooSettings) -> APIRouter:
     )
     async def compute_reference_sound_embedding(
         session: Session,
+        settings: EchorooSettings,
         ml_project_uuid: UUID,
         reference_sound_uuid: UUID,
         user: models.User = Depends(current_user_dep),
     ) -> schemas.ReferenceSound:
-        """Recompute the embedding for a reference sound."""
+        """Recompute the embedding for a reference sound.
+
+        This endpoint loads audio from the source (Xeno-Canto, dataset clip,
+        or custom upload), extracts the segment defined by start_time/end_time,
+        runs the Perch model to generate a 1536-dimensional embedding, and
+        stores the result.
+
+        For segments longer than 5 seconds, the audio is split into 5-second
+        segments and the embeddings are averaged.
+        """
         # Verify project access
         await api.ml_projects.get(
             session,
@@ -364,9 +473,54 @@ def get_ml_projects_router(settings: EchorooSettings) -> APIRouter:
             session,
             reference_sound,
             user=user,
+            audio_dir=settings.audio_dir,
         )
         await session.commit()
         return updated
+
+    @router.get(
+        "/{ml_project_uuid}/reference_sounds/{reference_sound_uuid}/audio",
+    )
+    async def get_reference_sound_audio(
+        session: Session,
+        settings: EchorooSettings,
+        ml_project_uuid: UUID,
+        reference_sound_uuid: UUID,
+        user: models.User | None = Depends(optional_user_dep),
+    ):
+        """Stream audio for a reference sound.
+
+        For Xeno-Canto sources, this proxies the audio download from xeno-canto.org.
+        For dataset clips and custom uploads, this serves the local audio file.
+
+        Returns the audio with the appropriate content-type header.
+        """
+        from fastapi.responses import Response
+
+        # Verify project access
+        await api.ml_projects.get(
+            session,
+            ml_project_uuid,
+            user=user,
+        )
+        reference_sound = await api.reference_sounds.get(
+            session,
+            reference_sound_uuid,
+            user=user,
+        )
+        audio_bytes, content_type = await api.reference_sounds.get_audio_bytes(
+            session,
+            reference_sound,
+            user=user,
+            audio_dir=settings.audio_dir,
+        )
+        return Response(
+            content=audio_bytes,
+            media_type=content_type,
+            headers={
+                "Content-Disposition": f'inline; filename="reference_sound_{reference_sound_uuid}.audio"',
+            },
+        )
 
     # =========================================================================
     # Search Sessions
@@ -717,7 +871,8 @@ def get_ml_projects_router(settings: EchorooSettings) -> APIRouter:
             name=data.name,
             description=data.description,
             tag_id=data.tag_id,
-            search_session_ids=data.search_session_ids,
+            search_session_ids=data.search_session_ids or [],
+            annotation_project_uuids=data.annotation_project_uuids or [],
             training_config=data.training_config,
             user=user,
         )
@@ -836,6 +991,120 @@ def get_ml_projects_router(settings: EchorooSettings) -> APIRouter:
             custom_model,
             user=user,
         )
+
+    # =========================================================================
+    # Dataset Scopes (Multi-Dataset Support)
+    # =========================================================================
+
+    @router.get(
+        "/{ml_project_uuid}/dataset_scopes",
+        response_model=list[schemas.MLProjectDatasetScope],
+    )
+    async def get_dataset_scopes(
+        session: Session,
+        ml_project_uuid: UUID,
+        user: models.User | None = Depends(optional_user_dep),
+    ) -> list[schemas.MLProjectDatasetScope]:
+        """Get all dataset scopes for an ML project."""
+        ml_project = await api.ml_projects.get(
+            session,
+            ml_project_uuid,
+            user=user,
+        )
+        return await api.ml_projects.get_dataset_scopes(
+            session,
+            ml_project,
+            user=user,
+        )
+
+    @router.post(
+        "/{ml_project_uuid}/dataset_scopes",
+        response_model=schemas.MLProjectDatasetScope,
+        status_code=status.HTTP_201_CREATED,
+    )
+    async def add_dataset_scope(
+        session: Session,
+        ml_project_uuid: UUID,
+        data: schemas.MLProjectDatasetScopeCreate,
+        user: models.User = Depends(current_user_dep),
+    ) -> schemas.MLProjectDatasetScope:
+        """Add a dataset scope to an ML project."""
+        ml_project = await api.ml_projects.get(
+            session,
+            ml_project_uuid,
+            user=user,
+        )
+
+        # Get the dataset by UUID
+        dataset = await api.datasets.get(
+            session,
+            data.dataset_uuid,
+            user=user,
+        )
+
+        # Get the foundation model run by UUID
+        foundation_model_run = await api.foundation_models.get_run_with_relations(
+            session,
+            data.foundation_model_run_uuid,
+        )
+
+        scope = await api.ml_projects.add_dataset_scope(
+            session,
+            ml_project,
+            dataset,
+            foundation_model_run,
+            user=user,
+        )
+        await session.commit()
+        return scope
+
+    @router.get(
+        "/{ml_project_uuid}/dataset_scopes/{scope_uuid}",
+        response_model=schemas.MLProjectDatasetScope,
+    )
+    async def get_dataset_scope(
+        session: Session,
+        ml_project_uuid: UUID,
+        scope_uuid: UUID,
+        user: models.User | None = Depends(optional_user_dep),
+    ) -> schemas.MLProjectDatasetScope:
+        """Get a specific dataset scope."""
+        ml_project = await api.ml_projects.get(
+            session,
+            ml_project_uuid,
+            user=user,
+        )
+        return await api.ml_projects.get_dataset_scope(
+            session,
+            ml_project,
+            scope_uuid,
+            user=user,
+        )
+
+    @router.delete(
+        "/{ml_project_uuid}/dataset_scopes/{scope_uuid}",
+        response_model=schemas.MLProjectDatasetScope,
+    )
+    async def remove_dataset_scope(
+        session: Session,
+        ml_project_uuid: UUID,
+        scope_uuid: UUID,
+        user: models.User = Depends(current_user_dep),
+    ) -> schemas.MLProjectDatasetScope:
+        """Remove a dataset scope from an ML project."""
+        ml_project = await api.ml_projects.get(
+            session,
+            ml_project_uuid,
+            user=user,
+        )
+        removed = await api.ml_projects.remove_dataset_scope(
+            session,
+            ml_project,
+            scope_uuid,
+            user=user,
+        )
+        await session.commit()
+        return removed
 
     # =========================================================================
     # Inference Batches
@@ -1068,5 +1337,106 @@ def get_ml_projects_router(settings: EchorooSettings) -> APIRouter:
         )
         await session.commit()
         return updated
+
+    # =========================================================================
+    # Search Session Curation & Export
+    # =========================================================================
+
+    @router.post(
+        "/{ml_project_uuid}/search_sessions/{search_session_uuid}/bulk_curate",
+        response_model=list[schemas.SearchResult],
+    )
+    async def bulk_curate_search_results(
+        session: Session,
+        ml_project_uuid: UUID,
+        search_session_uuid: UUID,
+        data: schemas.BulkCurateRequest,
+        user: models.User = Depends(current_user_dep),
+    ) -> list[schemas.SearchResult]:
+        """Bulk curate search results as positive or negative references.
+
+        This endpoint allows selecting high-quality examples for model training.
+        Valid labels are 'positive_reference' and 'negative_reference'.
+        """
+        # Verify project access
+        await api.ml_projects.get(
+            session,
+            ml_project_uuid,
+            user=user,
+        )
+        search_session = await api.search_sessions.get(
+            session,
+            search_session_uuid,
+            user=user,
+        )
+        curated = await api.search_sessions.bulk_curate(
+            session,
+            search_session,
+            data.result_uuids,
+            data.label.value,
+            user=user,
+        )
+        await session.commit()
+        return curated
+
+    @router.post(
+        "/{ml_project_uuid}/search_sessions/{search_session_uuid}/export_to_annotation_project",
+        response_model=schemas.ExportToAnnotationProjectResponse,
+        status_code=status.HTTP_201_CREATED,
+    )
+    async def export_to_annotation_project(
+        session: Session,
+        ml_project_uuid: UUID,
+        search_session_uuid: UUID,
+        data: schemas.ExportToAnnotationProjectRequest,
+        user: models.User = Depends(current_user_dep),
+    ) -> schemas.ExportToAnnotationProjectResponse:
+        """Export labeled search results to a new annotation project.
+
+        Creates a new annotation project and annotation tasks for clips
+        with the specified labels (e.g., 'positive', 'positive_reference').
+        """
+        # Verify project access
+        await api.ml_projects.get(
+            session,
+            ml_project_uuid,
+            user=user,
+        )
+        search_session = await api.search_sessions.get(
+            session,
+            search_session_uuid,
+            user=user,
+        )
+        result = await api.search_sessions.export_to_annotation_project(
+            session,
+            search_session,
+            name=data.name,
+            description=data.description,
+            include_labels=data.include_labels,
+            user=user,
+        )
+        await session.commit()
+        return result
+
+    @router.get(
+        "/{ml_project_uuid}/annotation_projects",
+        response_model=list[schemas.AnnotationProject],
+    )
+    async def get_ml_project_annotation_projects(
+        session: Session,
+        ml_project_uuid: UUID,
+        user: models.User | None = Depends(optional_user_dep),
+    ) -> list[schemas.AnnotationProject]:
+        """Get annotation projects created from this ML project's search sessions."""
+        ml_project = await api.ml_projects.get(
+            session,
+            ml_project_uuid,
+            user=user,
+        )
+        return await api.search_sessions.get_annotation_projects(
+            session,
+            ml_project.id,
+            user=user,
+        )
 
     return router

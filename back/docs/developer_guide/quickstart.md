@@ -11,7 +11,7 @@ These development servers include:
 
 This guide will show you how to start these servers, allowing you to see how your code changes are reflected in the app in real time.
 
-This guide provides two ways to set up your _Whombat_ development environment:
+This guide provides two ways to set up your _Echoroo_ development environment:
 
 **Manual Setup**: Ideal if you prefer direct control over your development environment and are comfortable managing dependencies.
 
@@ -21,15 +21,15 @@ This guide provides two ways to set up your _Whombat_ development environment:
 
 ### Pre-requisites
 
-Before setting up your Whombat development environment, ensure you have the following tools installed:
+Before setting up your Echoroo development environment, ensure you have the following tools installed:
 
-1. **Python 3.12**: We developed Whombat using this version, but any version greater or equal to 3.11 should be compatible.
+1. **Python 3.12**: We developed Echoroo using this version, but any version greater or equal to 3.11 should be compatible.
       Download Python 3.12 [here](https://www.python.org/downloads/release/python-3117/).
 
-2. **uv**: UV is a Python package dependency manager that we use to manage dependencies for the Python part of Whombat.
+2. **uv**: UV is a Python package dependency manager that we use to manage dependencies for the Python part of Echoroo.
       Download uv [uv](https://docs.astral.sh/uv/#highlights).
 
-3. **Node.js**: We use Node.js to develop and bundle the final JavaScript code for the Whombat frontend.
+3. **Node.js**: We use Node.js to develop and bundle the final JavaScript code for the Echoroo frontend.
       Download the latest version [here](https://nodejs.org/dist/v20.11.0/node-v20.11.0-linux-x64.tar.xz).
 
 ### Set Up
@@ -39,13 +39,13 @@ After confirming that you have all the prerequisites ready, follow these steps t
 1. Clone the repository:
 
 ```bash
-git clone https://github.com/okamoto-group/echoroo.git
+git clone https://github.com/okamoto/echoroo.git
 ```
 
 2. Navigate to the backend directory and install dependencies:
 
 ```bash
-cd whombat/back
+cd echoroo/back
 uv sync --dev
 ```
 
@@ -56,7 +56,7 @@ cd ../front
 npm install
 ```
 
-These instructions ensure you have the necessary tools and dependencies to kickstart Whombat development on your local machine.
+These instructions ensure you have the necessary tools and dependencies to kickstart Echoroo development on your local machine.
 
 ### Running the Development Servers
 
@@ -72,7 +72,7 @@ make serve-back
 make serve-front
 ```
 
-Once both servers are running, navigate to [http://localhost:3000](http://localhost:3000) in your web browser to access the Whombat development environment.
+Once both servers are running, navigate to [http://localhost:3000](http://localhost:3000) in your web browser to access the Echoroo development environment.
 
 - **Storybook:**
 
@@ -103,13 +103,13 @@ Once you have Docker Compose installed, follow these steps:
 1. Clone the Repository
 
 ```bash
-git clone https://github.com/okamoto-group/echoroo.git
+git clone https://github.com/okamoto/echoroo.git
 ```
 
 2. Navigate to the Project Directory
 
 ```bash
-cd whombat
+cd echoroo
 ```
 
 ### Run Services
@@ -120,7 +120,7 @@ cd whombat
   docker-compose -f compose.dev.yaml up backend frontend
   ```
 
-  Access the Whombat development environment at http://localhost:3000
+  Access the Echoroo development environment at http://localhost:3000
 
 - **Storybook:**
 

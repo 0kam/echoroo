@@ -16,17 +16,22 @@ Each ML Project is associated with a dataset and a parent project,
 inheriting access control from the parent project. The project tracks
 the embedding model used for similarity search and maintains
 relationships to target species tags.
+
+ML Projects support multiple datasets through MLProjectDatasetScope,
+allowing similarity searches and inference across different datasets
+with their respective foundation model runs.
 """
 
 from __future__ import annotations
 
 import enum
+from datetime import datetime
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
 import sqlalchemy as sa
 import sqlalchemy.orm as orm
-from sqlalchemy import ForeignKey, UniqueConstraint
+from sqlalchemy import ForeignKey, Index, UniqueConstraint
 
 from echoroo.models.base import Base
 from echoroo.models.tag import Tag
@@ -34,6 +39,7 @@ from echoroo.models.tag import Tag
 if TYPE_CHECKING:
     from echoroo.models.custom_model import CustomModel
     from echoroo.models.dataset import Dataset
+    from echoroo.models.foundation_model import FoundationModel, FoundationModelRun
     from echoroo.models.inference_batch import InferenceBatch
     from echoroo.models.model_run import ModelRun
     from echoroo.models.project import Project
@@ -43,6 +49,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "MLProject",
+    "MLProjectDatasetScope",
     "MLProjectStatus",
     "MLProjectTag",
 ]
@@ -99,11 +106,16 @@ class MLProject(Base):
     name: orm.Mapped[str] = orm.mapped_column(nullable=False)
     """The name of the ML project."""
 
-    dataset_id: orm.Mapped[int] = orm.mapped_column(
+    dataset_id: orm.Mapped[int | None] = orm.mapped_column(
         ForeignKey("dataset.id", ondelete="RESTRICT"),
-        nullable=False,
+        nullable=True,
     )
-    """The dataset from which this ML project derives recordings."""
+    """The primary dataset from which this ML project derives recordings.
+
+    Note: This field is nullable to support multi-dataset projects.
+    For new projects, use dataset_scopes instead. When dataset_id is set,
+    it represents the primary dataset for backward compatibility.
+    """
 
     project_id: orm.Mapped[str] = orm.mapped_column(
         ForeignKey("project.project_id", ondelete="RESTRICT"),
@@ -123,6 +135,17 @@ class MLProject(Base):
         default=None,
     )
     """A textual description of the ML project."""
+
+    foundation_model_id: orm.Mapped[int | None] = orm.mapped_column(
+        ForeignKey("foundation_model.id", ondelete="RESTRICT"),
+        nullable=True,
+        default=None,
+    )
+    """The foundation model used for embeddings across all datasets.
+
+    This defines which model (e.g., BirdNET, Perch) is used for
+    generating embeddings for similarity search and classification.
+    """
 
     embedding_model_run_id: orm.Mapped[int | None] = orm.mapped_column(
         ForeignKey("model_run.id", ondelete="SET NULL"),
@@ -194,6 +217,26 @@ class MLProject(Base):
         init=False,
     )
     """The model run used for generating embeddings."""
+
+    foundation_model: orm.Mapped["FoundationModel | None"] = orm.relationship(
+        "FoundationModel",
+        foreign_keys=[foundation_model_id],
+        viewonly=True,
+        repr=False,
+        init=False,
+    )
+    """The foundation model used for embeddings."""
+
+    # Dataset scopes for multi-dataset support
+    dataset_scopes: orm.Mapped[list["MLProjectDatasetScope"]] = orm.relationship(
+        "MLProjectDatasetScope",
+        back_populates="ml_project",
+        default_factory=list,
+        cascade="all, delete-orphan",
+        repr=False,
+        init=False,
+    )
+    """Dataset scopes for this ML project, linking datasets with their embeddings."""
 
     # Tag relationships via junction table
     tags: orm.Mapped[list[Tag]] = orm.relationship(
@@ -302,3 +345,85 @@ class MLProjectTag(Base):
         repr=False,
     )
     """The tag associated with the ML project."""
+
+
+class MLProjectDatasetScope(Base):
+    """ML Project Dataset Scope model.
+
+    Defines which datasets are included in an ML project and which
+    foundation model run provides the embeddings for similarity search.
+    This enables multi-dataset support where a single ML project can
+    work across multiple datasets, each with its own embedding run.
+    """
+
+    __tablename__ = "ml_project_dataset_scope"
+    __table_args__ = (
+        UniqueConstraint(
+            "ml_project_id",
+            "dataset_id",
+            name="uq_ml_project_dataset_scope_project_dataset",
+        ),
+        Index(
+            "ix_ml_project_dataset_scope_ml_project_id",
+            "ml_project_id",
+        ),
+    )
+
+    # Primary key
+    id: orm.Mapped[int] = orm.mapped_column(primary_key=True, init=False)
+    """The database id of the dataset scope."""
+
+    uuid: orm.Mapped[UUID] = orm.mapped_column(
+        default_factory=uuid4,
+        kw_only=True,
+        unique=True,
+    )
+    """The UUID of the dataset scope."""
+
+    # Required fields
+    ml_project_id: orm.Mapped[int] = orm.mapped_column(
+        ForeignKey("ml_project.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    """The ML project this scope belongs to."""
+
+    dataset_id: orm.Mapped[int] = orm.mapped_column(
+        ForeignKey("dataset.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    """The dataset included in this scope."""
+
+    foundation_model_run_id: orm.Mapped[int] = orm.mapped_column(
+        ForeignKey("foundation_model_run.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    """The foundation model run that provides embeddings for this dataset."""
+
+    # Relationships
+    ml_project: orm.Mapped["MLProject"] = orm.relationship(
+        "MLProject",
+        back_populates="dataset_scopes",
+        init=False,
+        repr=False,
+    )
+    """The ML project this scope belongs to."""
+
+    dataset: orm.Mapped["Dataset"] = orm.relationship(
+        "Dataset",
+        foreign_keys=[dataset_id],
+        viewonly=True,
+        init=False,
+        repr=False,
+        lazy="joined",
+    )
+    """The dataset included in this scope."""
+
+    foundation_model_run: orm.Mapped["FoundationModelRun"] = orm.relationship(
+        "FoundationModelRun",
+        foreign_keys=[foundation_model_run_id],
+        viewonly=True,
+        init=False,
+        repr=False,
+        lazy="joined",
+    )
+    """The foundation model run providing embeddings."""

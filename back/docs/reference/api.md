@@ -1,12 +1,12 @@
-# Whombat Python API
+# Echoroo Python API
 
-Welcome to the Whombat Python API reference page. This section provides a
-comprehensive guide to all the functions available through the `whombat.api`
-module, designed to simplify the use of Whombat objects without the need to
+Welcome to the Echoroo Python API reference page. This section provides a
+comprehensive guide to all the functions available through the `echoroo.api`
+module, designed to simplify the use of Echoroo objects without the need to
 handle the intricacies of SQLAlchemy internals.
 
 The API is organized into distinct submodules, each corresponding to a crucial
-data object within Whombat. Each sub-API contains functions tailored for
+data object within Echoroo. Each sub-API contains functions tailored for
 interactions with that specific type of object.
 
 ## Getting Started
@@ -14,7 +14,7 @@ interactions with that specific type of object.
 To get started, follow the example below, which demonstrates how to use these functions:
 
 ```python
-from whombat import api
+from echoroo import api
 
 async def main():
     # Create a session
@@ -31,7 +31,7 @@ async def main():
 
 !!! info "Async functions"
 
-    Most functions in the Whombat API are asynchronous. This design choice enhances
+    Most functions in the Echoroo API are asynchronous. This design choice enhances
     code efficiency, particularly since many operations involve database
     transactions that can potentially slow down the program if executed
     synchronously.
@@ -41,86 +41,86 @@ they provide. It's worth noting that each submodule is an instance of a BaseAPI
 class, which manages an internal cache to minimize unnecessary database
 queries. To access the reference for a specific submodule, such as
 `api.sound_events`, please consult the corresponding class, in this case,
-[`SoundEventAPI`][whombat.api.sound_events.SoundEventAPI], to discover all the available functions.
+[`SoundEventAPI`][echoroo.api.sound_events.SoundEventAPI], to discover all the available functions.
 
-::: whombat.api
+::: echoroo.api
 
-::: whombat.api.users.UserAPI
+::: echoroo.api.users.UserAPI
     options:
         inherited_members: true
 
-::: whombat.api.tags.TagAPI
+::: echoroo.api.tags.TagAPI
     options:
         inherited_members: true
 
-::: whombat.api.features.FeatureNameAPI
+::: echoroo.api.features.FeatureNameAPI
     options:
         inherited_members: true
 
-::: whombat.api.notes.NoteAPI
+::: echoroo.api.notes.NoteAPI
     options:
         inherited_members: true
 
-::: whombat.api.recordings.RecordingAPI
+::: echoroo.api.recordings.RecordingAPI
     options:
         inherited_members: true
 
-::: whombat.api.datasets.DatasetAPI
+::: echoroo.api.datasets.DatasetAPI
     options:
         inherited_members: true
 
-::: whombat.api.sound_events.SoundEventAPI
+::: echoroo.api.sound_events.SoundEventAPI
     options:
         inherited_members: true
 
-::: whombat.api.clips.ClipAPI
+::: echoroo.api.clips.ClipAPI
     options:
         inherited_members: true
 
-::: whombat.api.sound_event_annotations.SoundEventAnnotationAPI
+::: echoroo.api.sound_event_annotations.SoundEventAnnotationAPI
     options:
         inherited_members: true
 
-::: whombat.api.clip_annotations.ClipAnnotationAPI
+::: echoroo.api.clip_annotations.ClipAnnotationAPI
     options:
         inherited_members: true
 
-::: whombat.api.annotation_tasks.AnnotationTaskAPI
+::: echoroo.api.annotation_tasks.AnnotationTaskAPI
     options:
         inherited_members: true
 
-::: whombat.api.annotation_projects.AnnotationProjectAPI
+::: echoroo.api.annotation_projects.AnnotationProjectAPI
     options:
         inherited_members: true
 
-::: whombat.api.sound_event_predictions.SoundEventPredictionAPI
+::: echoroo.api.sound_event_predictions.SoundEventPredictionAPI
     options:
         inherited_members: true
 
-::: whombat.api.clip_predictions.ClipPredictionAPI
+::: echoroo.api.clip_predictions.ClipPredictionAPI
     options:
         inherited_members: true
 
-::: whombat.api.model_runs.ModelRunAPI
+::: echoroo.api.model_runs.ModelRunAPI
     options:
         inherited_members: true
 
-::: whombat.api.user_runs.UserRunAPI
+::: echoroo.api.user_runs.UserRunAPI
     options:
         inherited_members: true
 
-::: whombat.api.sound_event_evaluations.SoundEventEvaluationAPI
+::: echoroo.api.sound_event_evaluations.SoundEventEvaluationAPI
     options:
         inherited_members: true
 
-::: whombat.api.clip_evaluations.ClipEvaluationAPI
+::: echoroo.api.clip_evaluations.ClipEvaluationAPI
     options:
         inherited_members: true
 
-::: whombat.api.evaluations.EvaluationAPI
+::: echoroo.api.evaluations.EvaluationAPI
     options:
         inherited_members: true
 
-::: whombat.api.evaluation_sets.EvaluationSetAPI
+::: echoroo.api.evaluation_sets.EvaluationSetAPI
     options:
         inherited_members: true

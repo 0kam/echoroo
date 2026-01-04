@@ -1,6 +1,6 @@
 # ML Integration Tests
 
-This directory contains comprehensive integration tests for the ML model architecture in Whombat.
+This directory contains comprehensive integration tests for the ML model architecture in Echoroo.
 
 ## Test Files
 
@@ -110,7 +110,7 @@ pytest tests/test_ml/test_birdnet_integration.py::TestBirdNETInferenceResults -v
 
 ### Run with Coverage
 ```bash
-pytest tests/test_ml/ --cov=whombat.ml --cov-report=html
+pytest tests/test_ml/ --cov=echoroo.ml --cov-report=html
 ```
 
 ## Test Dependencies
@@ -177,11 +177,11 @@ def test_legacy_api():
 ## Coverage Goals
 
 Target coverage for ML modules:
-- `whombat.ml.base`: >95% (core abstractions)
-- `whombat.ml.birdnet`: >90% (BirdNET implementation)
-- `whombat.ml.perch`: >90% (Perch implementation)
-- `whombat.ml.filters`: >85% (filtering system)
-- `whombat.ml.installer`: >85% (installation system)
+- `echoroo.ml.base`: >95% (core abstractions)
+- `echoroo.ml.birdnet`: >90% (BirdNET implementation)
+- `echoroo.ml.perch`: >90% (Perch implementation)
+- `echoroo.ml.filters`: >85% (filtering system)
+- `echoroo.ml.installer`: >85% (installation system)
 
 ## Notes
 

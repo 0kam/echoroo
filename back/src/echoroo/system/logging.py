@@ -59,7 +59,7 @@ def generate_dev_logging_config():
                 "formatter": "echoroo",
                 "stream": "ext://sys.stdout",
             },
-            "console": {
+            "access": {
                 "class": "logging.StreamHandler",
                 "formatter": "access",
                 "stream": "ext://sys.stdout",
@@ -72,22 +72,22 @@ def generate_dev_logging_config():
         },
         "loggers": {
             "uvicorn": {
-                "handlers": ["default", "console"],
+                "handlers": ["default"],
                 "level": "INFO",
                 "propagate": False,
             },
             "uvicorn.error": {
-                "handlers": ["default", "console.error"],
+                "handlers": ["console.error"],
                 "level": "INFO",
                 "propagate": False,
             },
             "uvicorn.access": {
-                "handlers": ["console"],
+                "handlers": ["access"],
                 "level": "INFO",
                 "propagate": False,
             },
             "echoroo": {
-                "handlers": ["default", "console"],
+                "handlers": ["default"],
                 "level": "DEBUG",
                 "propagate": False,
             },
@@ -147,6 +147,11 @@ def generate_logging_config(settings: Settings) -> dict[str, Any]:
     console_handlers = {
         "console": {
             "class": "logging.StreamHandler",
+            "formatter": "echoroo",
+            "stream": "ext://sys.stdout",
+        },
+        "console.access": {
+            "class": "logging.StreamHandler",
             "formatter": "access",
             "stream": "ext://sys.stdout",
         },
@@ -186,7 +191,7 @@ def generate_logging_config(settings: Settings) -> dict[str, Any]:
                 "propagate": False,
             },
             "uvicorn.access": {
-                "handlers": _get_handlers("access", "console", settings),
+                "handlers": _get_handlers("access", "console.access", settings),
                 "level": "INFO",
                 "propagate": False,
             },

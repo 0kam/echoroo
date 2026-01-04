@@ -56,7 +56,7 @@ jobs:
       - name: Run tests
         run: |
           cd back
-          uv run pytest --cov=src/whombat --cov=src/echoroo --cov-report=xml -n auto
+          uv run pytest --cov=src/echoroo --cov-report=xml -n auto
 
       - name: "Create cache key for documentation"
         if: ${{ matrix.os == 'ubuntu-latest' }}

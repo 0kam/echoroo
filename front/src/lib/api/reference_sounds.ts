@@ -10,20 +10,21 @@ export type ReferenceSoundFilter = {
   is_active?: boolean;
 };
 
-const DEFAULT_ENDPOINTS = {
-  getMany: "/api/v1/ml_projects/detail/reference_sounds/",
-  get: "/api/v1/ml_projects/detail/reference_sounds/detail/",
-  createFromXenoCanto: "/api/v1/ml_projects/detail/reference_sounds/from_xeno_canto/",
-  createFromClip: "/api/v1/ml_projects/detail/reference_sounds/from_clip/",
-  delete: "/api/v1/ml_projects/detail/reference_sounds/detail/",
-  computeEmbedding: "/api/v1/ml_projects/detail/reference_sounds/detail/compute_embedding/",
-  toggleActive: "/api/v1/ml_projects/detail/reference_sounds/detail/toggle_active/",
-};
+// Helper to build endpoints with ml_project_uuid
+function buildEndpoints(mlProjectUuid: string) {
+  const base = `/api/v1/ml_projects/${mlProjectUuid}/reference_sounds`;
+  return {
+    getMany: base,
+    get: (uuid: string) => `${base}/${uuid}`,
+    createFromXenoCanto: `${base}/from_xeno_canto`,
+    createFromClip: `${base}/from_clip`,
+    update: (uuid: string) => `${base}/${uuid}`,
+    delete: (uuid: string) => `${base}/${uuid}`,
+    computeEmbedding: (uuid: string) => `${base}/${uuid}/compute_embedding`,
+  };
+}
 
-export function registerReferenceSoundAPI(
-  instance: AxiosInstance,
-  endpoints: typeof DEFAULT_ENDPOINTS = DEFAULT_ENDPOINTS,
-) {
+export function registerReferenceSoundAPI(instance: AxiosInstance) {
   const ReferenceSoundFilterSchema = z.object({
     is_active: z.boolean().optional(),
   });
@@ -40,9 +41,9 @@ export function registerReferenceSoundAPI(
     query: types.GetMany & ReferenceSoundFilter = {},
   ): Promise<types.Page<types.ReferenceSound>> {
     const params = GetMany(ReferenceSoundFilterSchema).parse(query);
+    const endpoints = buildEndpoints(mlProjectUuid);
     const { data } = await instance.get(endpoints.getMany, {
       params: {
-        ml_project_uuid: mlProjectUuid,
         limit: params.limit,
         offset: params.offset,
         is_active__eq: params.is_active,
@@ -62,12 +63,8 @@ export function registerReferenceSoundAPI(
     mlProjectUuid: string,
     uuid: string,
   ): Promise<types.ReferenceSound> {
-    const { data } = await instance.get(endpoints.get, {
-      params: {
-        ml_project_uuid: mlProjectUuid,
-        reference_sound_uuid: uuid,
-      },
-    });
+    const endpoints = buildEndpoints(mlProjectUuid);
+    const { data } = await instance.get(endpoints.get(uuid));
     return schemas.ReferenceSoundSchema.parse(data);
   }
 
@@ -83,12 +80,10 @@ export function registerReferenceSoundAPI(
     data: types.ReferenceSoundFromXenoCanto,
   ): Promise<types.ReferenceSound> {
     const body = schemas.ReferenceSoundFromXenoCantoSchema.parse(data);
+    const endpoints = buildEndpoints(mlProjectUuid);
     const { data: responseData } = await instance.post(
       endpoints.createFromXenoCanto,
       body,
-      {
-        params: { ml_project_uuid: mlProjectUuid },
-      },
     );
     return schemas.ReferenceSoundSchema.parse(responseData);
   }
@@ -105,14 +100,50 @@ export function registerReferenceSoundAPI(
     data: types.ReferenceSoundFromClip,
   ): Promise<types.ReferenceSound> {
     const body = schemas.ReferenceSoundFromClipSchema.parse(data);
+    const endpoints = buildEndpoints(mlProjectUuid);
     const { data: responseData } = await instance.post(
       endpoints.createFromClip,
       body,
-      {
-        params: { ml_project_uuid: mlProjectUuid },
-      },
     );
     return schemas.ReferenceSoundSchema.parse(responseData);
+  }
+
+  /**
+   * Update a reference sound.
+   *
+   * @param mlProjectUuid - The UUID of the ML project
+   * @param uuid - The UUID of the reference sound
+   * @param data - The update data
+   * @returns The updated reference sound
+   */
+  async function update(
+    mlProjectUuid: string,
+    uuid: string,
+    data: types.ReferenceSoundUpdate,
+  ): Promise<types.ReferenceSound> {
+    const body = schemas.ReferenceSoundUpdateSchema.parse(data);
+    const endpoints = buildEndpoints(mlProjectUuid);
+    const { data: responseData } = await instance.patch(
+      endpoints.update(uuid),
+      body,
+    );
+    return schemas.ReferenceSoundSchema.parse(responseData);
+  }
+
+  /**
+   * Toggle the active state of a reference sound.
+   *
+   * @param mlProjectUuid - The UUID of the ML project
+   * @param uuid - The UUID of the reference sound
+   * @param isActive - The new active state
+   * @returns The updated reference sound
+   */
+  async function toggleActive(
+    mlProjectUuid: string,
+    uuid: string,
+    isActive: boolean,
+  ): Promise<types.ReferenceSound> {
+    return update(mlProjectUuid, uuid, { is_active: isActive });
   }
 
   /**
@@ -126,12 +157,8 @@ export function registerReferenceSoundAPI(
     mlProjectUuid: string,
     uuid: string,
   ): Promise<types.ReferenceSound> {
-    const { data } = await instance.delete(endpoints.delete, {
-      params: {
-        ml_project_uuid: mlProjectUuid,
-        reference_sound_uuid: uuid,
-      },
-    });
+    const endpoints = buildEndpoints(mlProjectUuid);
+    const { data } = await instance.delete(endpoints.delete(uuid));
     return schemas.ReferenceSoundSchema.parse(data);
   }
 
@@ -146,40 +173,8 @@ export function registerReferenceSoundAPI(
     mlProjectUuid: string,
     uuid: string,
   ): Promise<types.ReferenceSound> {
-    const { data } = await instance.post(
-      endpoints.computeEmbedding,
-      {},
-      {
-        params: {
-          ml_project_uuid: mlProjectUuid,
-          reference_sound_uuid: uuid,
-        },
-      },
-    );
-    return schemas.ReferenceSoundSchema.parse(data);
-  }
-
-  /**
-   * Toggle the active state of a reference sound.
-   *
-   * @param mlProjectUuid - The UUID of the ML project
-   * @param uuid - The UUID of the reference sound
-   * @returns The updated reference sound
-   */
-  async function toggleActive(
-    mlProjectUuid: string,
-    uuid: string,
-  ): Promise<types.ReferenceSound> {
-    const { data } = await instance.post(
-      endpoints.toggleActive,
-      {},
-      {
-        params: {
-          ml_project_uuid: mlProjectUuid,
-          reference_sound_uuid: uuid,
-        },
-      },
-    );
+    const endpoints = buildEndpoints(mlProjectUuid);
+    const { data } = await instance.post(endpoints.computeEmbedding(uuid), {});
     return schemas.ReferenceSoundSchema.parse(data);
   }
 
@@ -188,8 +183,9 @@ export function registerReferenceSoundAPI(
     get,
     createFromXenoCanto,
     createFromClip,
+    update,
+    toggleActive,
     delete: deleteReferenceSound,
     computeEmbedding,
-    toggleActive,
   } as const;
 }

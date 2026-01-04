@@ -14,9 +14,15 @@ __all__ = [
     "CustomModelStatus",
     "CustomModel",
     "CustomModelCreate",
+    "CustomModelCreateStandalone",
     "CustomModelTrainingConfig",
     "TrainingProgress",
     "CustomModelMetrics",
+    "DatasetScopeCreate",
+    "DatasetScope",
+    "TrainingSourceCreate",
+    "TrainingSource",
+    "TrainingDataSource",
 ]
 
 
@@ -157,11 +163,16 @@ class CustomModelCreate(BaseModel):
     """Tag that this model is trained to detect."""
 
     search_session_ids: list[int] = Field(
-        ...,
-        min_length=1,
+        default_factory=list,
         description="Search sessions to use for training data",
     )
     """Search sessions whose labeled results will be used for training."""
+
+    annotation_project_uuids: list[UUID] = Field(
+        default_factory=list,
+        description="Annotation projects to use for training data",
+    )
+    """Annotation projects whose labeled annotations will be used for training."""
 
     training_config: CustomModelTrainingConfig = Field(
         default_factory=CustomModelTrainingConfig,
@@ -313,3 +324,160 @@ class TrainingProgress(BaseModel):
 
     message: str | None = None
     """Human-readable status message."""
+
+
+class TrainingDataSource(str, Enum):
+    """Source type for training data."""
+
+    SOUND_SEARCH = "sound_search"
+    """Training data from Sound Search results saved as annotations."""
+
+    ANNOTATION_PROJECT = "annotation_project"
+    """Training data from existing annotation project."""
+
+
+class DatasetScopeCreate(BaseModel):
+    """Schema for creating a dataset scope for custom model training."""
+
+    dataset_uuid: UUID = Field(
+        ...,
+        description="UUID of the dataset to include for training",
+    )
+    """The dataset to include for training."""
+
+    foundation_model_run_uuid: UUID = Field(
+        ...,
+        description="UUID of the foundation model run providing embeddings",
+    )
+    """The foundation model run providing embeddings for this dataset."""
+
+
+class DatasetScope(BaseModel):
+    """Schema for a dataset scope returned to the user."""
+
+    id: int = Field(..., exclude=True)
+    """Database ID of the dataset scope."""
+
+    dataset_id: int = Field(..., exclude=True)
+    """Dataset identifier."""
+
+    dataset_uuid: UUID
+    """UUID of the dataset."""
+
+    dataset_name: str
+    """Name of the dataset."""
+
+    foundation_model_run_id: int = Field(..., exclude=True)
+    """Foundation model run identifier."""
+
+    foundation_model_run_uuid: UUID
+    """UUID of the foundation model run."""
+
+    foundation_model_slug: str
+    """Slug of the foundation model."""
+
+
+class TrainingSourceCreate(BaseModel):
+    """Schema for creating a training source for custom model training."""
+
+    source_type: TrainingDataSource = Field(
+        ...,
+        description="Type of data source (sound_search or annotation_project)",
+    )
+    """The type of data source."""
+
+    source_uuid: UUID = Field(
+        ...,
+        description="UUID of the source (SoundSearch or AnnotationProject)",
+    )
+    """The UUID of the source."""
+
+    is_positive: bool = Field(
+        default=True,
+        description="Whether this source provides positive (True) or negative (False) examples",
+    )
+    """Whether this source provides positive or negative examples."""
+
+    tag_uuid: UUID | None = Field(
+        default=None,
+        description="Optional tag UUID to filter data by a specific tag",
+    )
+    """Optional tag UUID to filter data."""
+
+
+class TrainingSource(BaseModel):
+    """Schema for a training source returned to the user."""
+
+    uuid: UUID
+    """UUID of the training source."""
+
+    source_type: TrainingDataSource
+    """Type of the data source."""
+
+    source_uuid: UUID
+    """UUID of the source."""
+
+    source_name: str | None = None
+    """Name of the source (if available)."""
+
+    is_positive: bool
+    """Whether this source provides positive examples."""
+
+    tag_uuid: UUID | None = None
+    """Optional tag UUID filter."""
+
+    tag_key: str | None = None
+    """Optional tag key filter."""
+
+    tag_value: str | None = None
+    """Optional tag value filter."""
+
+    sample_count: int = 0
+    """Number of samples from this source used in training."""
+
+
+class CustomModelCreateStandalone(BaseModel):
+    """Schema for creating a standalone custom model (not via ML Project)."""
+
+    name: str = Field(..., min_length=1, max_length=255)
+    """Human-readable name for the model."""
+
+    description: str | None = Field(default=None, max_length=2000)
+    """Description of the model purpose and training data."""
+
+    project_uuid: str = Field(
+        ...,
+        description="Project UUID for access control",
+    )
+    """The project this model belongs to (for access control)."""
+
+    target_tag_uuid: UUID = Field(
+        ...,
+        description="UUID of the target tag for classification",
+    )
+    """Tag that this model is trained to detect."""
+
+    model_type: CustomModelType = Field(
+        default=CustomModelType.MLP,
+        description="Type of model architecture to use",
+    )
+    """Type of model architecture."""
+
+    dataset_scopes: list[DatasetScopeCreate] = Field(
+        ...,
+        min_length=1,
+        description="Dataset scopes defining which datasets to use",
+    )
+    """Dataset scopes for training data."""
+
+    training_sources: list[TrainingSourceCreate] = Field(
+        ...,
+        min_length=1,
+        description="Training data sources (at least one positive required)",
+    )
+    """Training data sources."""
+
+    training_config: CustomModelTrainingConfig = Field(
+        default_factory=CustomModelTrainingConfig,
+    )
+    """Training configuration and hyperparameters."""

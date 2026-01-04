@@ -6,9 +6,10 @@
  * Displays project statistics, status progress indicator, quick actions,
  * and recent activity for an ML project.
  */
-import { useContext, useMemo } from "react";
+import { useContext, useMemo, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import toast from "react-hot-toast";
 import {
   Music,
   Search,
@@ -20,6 +21,8 @@ import {
   CheckCircle2,
   Circle,
   Tag,
+  Trash2,
+  AlertTriangle,
 } from "lucide-react";
 
 import api from "@/app/api";
@@ -27,7 +30,7 @@ import api from "@/app/api";
 import Button from "@/lib/components/ui/Button";
 import Card from "@/lib/components/ui/Card";
 import Link from "@/lib/components/ui/Link";
-import ProgressBar from "@/lib/components/ui/ProgressBar";
+import { DialogOverlay } from "@/lib/components/ui/Dialog";
 
 import type { MLProject, MLProjectStatus } from "@/lib/types";
 
@@ -232,7 +235,63 @@ function QuickActions({ project }: { project: MLProject }) {
   );
 }
 
-function ProjectDetails({ project }: { project: MLProject }) {
+function DeleteConfirmDialog({
+  isOpen,
+  onClose,
+  onConfirm,
+  projectName,
+  isDeleting,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  onConfirm: () => void;
+  projectName: string;
+  isDeleting: boolean;
+}) {
+  return (
+    <DialogOverlay title="Delete ML Project" isOpen={isOpen} onClose={onClose}>
+      <div className="w-[400px] space-y-4">
+        <div className="flex items-start gap-3 p-4 bg-red-50 dark:bg-red-900/20 rounded-lg">
+          <AlertTriangle className="w-5 h-5 text-red-600 dark:text-red-400 flex-shrink-0 mt-0.5" />
+          <div>
+            <p className="text-sm font-medium text-red-700 dark:text-red-300">
+              This action cannot be undone
+            </p>
+            <p className="text-sm text-red-600 dark:text-red-400 mt-1">
+              Deleting this project will permanently remove all reference sounds,
+              search sessions, custom models, and associated data.
+            </p>
+          </div>
+        </div>
+
+        <p className="text-stone-700 dark:text-stone-300">
+          Are you sure you want to delete <strong>{projectName}</strong>?
+        </p>
+
+        <div className="flex justify-end gap-2 pt-4">
+          <Button variant="secondary" onClick={onClose} disabled={isDeleting}>
+            Cancel
+          </Button>
+          <Button
+            variant="danger"
+            onClick={onConfirm}
+            disabled={isDeleting}
+          >
+            {isDeleting ? "Deleting..." : "Delete Project"}
+          </Button>
+        </div>
+      </div>
+    </DialogOverlay>
+  );
+}
+
+function ProjectDetails({
+  project,
+  onDelete,
+}: {
+  project: MLProject;
+  onDelete: () => void;
+}) {
   return (
     <Card className="p-6">
       <h3 className="text-lg font-semibold mb-4">Project Details</h3>
@@ -283,6 +342,21 @@ function ProjectDetails({ project }: { project: MLProject }) {
             </div>
           </div>
         )}
+
+        {/* Danger Zone */}
+        <div className="pt-4 mt-4 border-t border-stone-200 dark:border-stone-700">
+          <p className="text-sm font-medium text-stone-700 dark:text-stone-300 mb-2">
+            Danger Zone
+          </p>
+          <Button
+            variant="danger"
+            mode="outline"
+            onClick={onDelete}
+          >
+            <Trash2 className="w-4 h-4 mr-2" />
+            Delete Project
+          </Button>
+        </div>
       </div>
     </Card>
   );
@@ -290,6 +364,29 @@ function ProjectDetails({ project }: { project: MLProject }) {
 
 export default function MLProjectOverviewPage() {
   const project = useContext(MLProjectContext);
+  const router = useRouter();
+  const queryClient = useQueryClient();
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+
+  const deleteMutation = useMutation({
+    mutationFn: () => api.mlProjects.delete(project!),
+    onSuccess: () => {
+      toast.success("ML project deleted");
+      queryClient.invalidateQueries({ queryKey: ["ml_projects"] });
+      router.push("/ml-projects/");
+    },
+    onError: () => {
+      toast.error("Failed to delete ML project");
+    },
+  });
+
+  const handleDelete = useCallback(() => {
+    setIsDeleteDialogOpen(true);
+  }, []);
+
+  const handleConfirmDelete = useCallback(() => {
+    deleteMutation.mutate();
+  }, [deleteMutation]);
 
   if (!project) {
     return null;
@@ -333,8 +430,17 @@ export default function MLProjectOverviewPage() {
       {/* Quick Actions and Details */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         <QuickActions project={project} />
-        <ProjectDetails project={project} />
+        <ProjectDetails project={project} onDelete={handleDelete} />
       </div>
+
+      {/* Delete Confirmation Dialog */}
+      <DeleteConfirmDialog
+        isOpen={isDeleteDialogOpen}
+        onClose={() => setIsDeleteDialogOpen(false)}
+        onConfirm={handleConfirmDelete}
+        projectName={project.name}
+        isDeleting={deleteMutation.isPending}
+      />
     </div>
   );
 }
