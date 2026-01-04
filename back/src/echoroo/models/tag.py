@@ -90,6 +90,18 @@ class Tag(Base):
     rendered in the UI when presenting the label to the annotator.
     """
 
+    vernacular_name: orm.Mapped[str | None] = orm.mapped_column(
+        nullable=True,
+        default=None,
+    )
+    """
+    Vernacular (common) name of the species.
+
+    For species tags, this holds the common name in the locale specified
+    during species detection (e.g., Japanese name for locale='ja').
+    Fetched from GBIF API during species resolution.
+    """
+
     # ========================================================================
     # Relationships (backrefs)
 

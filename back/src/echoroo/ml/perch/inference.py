@@ -22,7 +22,9 @@ from __future__ import annotations
 import logging
 import os
 import tempfile
-from typing import TYPE_CHECKING
+from collections.abc import Iterator
+from contextlib import contextmanager
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 from numpy.typing import NDArray
@@ -65,13 +67,17 @@ class PerchInference(InferenceEngine):
     loader : PerchLoader
         PerchLoader instance (must be loaded).
     batch_size : int, optional
-        Batch size for processing multiple segments. Default is 32.
+        Batch size for GPU inference. Default is 16.
     confidence_threshold : float, optional
         Minimum confidence threshold for predictions (0.0 to 1.0).
         Predictions below this threshold are filtered out. Default is 0.1.
     top_k : int | None, optional
         Maximum number of top predictions to return per segment.
         If None, all predictions above threshold are returned. Default is None.
+    feeders : int, optional
+        Number of file reading processes. Default is 1.
+    workers : int, optional
+        Number of GPU inference workers. Default is 1.
 
     Attributes
     ----------
@@ -98,9 +104,12 @@ class PerchInference(InferenceEngine):
     def __init__(
         self,
         loader: PerchLoader,
-        batch_size: int = 32,
+        batch_size: int = 16,
         confidence_threshold: float = 0.1,
         top_k: int | None = None,
+        feeders: int = 1,
+        workers: int = 1,
+        device: str | None = None,
     ):
         """Initialize the Perch V2 inference engine.
 
@@ -109,11 +118,17 @@ class PerchInference(InferenceEngine):
         loader : PerchLoader
             PerchLoader instance (must be loaded).
         batch_size : int, optional
-            Batch size for processing. Default is 32.
+            Batch size for GPU inference. Default is 16.
         confidence_threshold : float, optional
             Minimum confidence threshold. Default is 0.1.
         top_k : int | None, optional
             Maximum predictions per segment. Default is None.
+    feeders : int, optional
+        Number of file reading processes. Default is 1.
+        workers : int, optional
+            Number of GPU inference workers. Default is 1.
+        device : str | None, optional
+            Device for inference. If None, uses loader's device. Default is None.
 
         Raises
         ------
@@ -128,6 +143,9 @@ class PerchInference(InferenceEngine):
         self._batch_size = batch_size
         self._confidence_threshold = confidence_threshold
         self._top_k = top_k
+        self._feeders = feeders
+        self._workers = workers
+        self._device = device if device is not None else loader.device
 
         # Validate parameters
         if not 0.0 <= confidence_threshold <= 1.0:
@@ -173,15 +191,119 @@ class PerchInference(InferenceEngine):
             raise ValueError(f"top_k must be positive, got {value}")
         self._top_k = value
 
-    def _extract_predictions(
-        self, audio: NDArray[np.float32]
+    def _build_infer_kwargs(self) -> dict[str, Any]:
+        """Build kwargs for birdnet encode/predict calls."""
+        kwargs: dict[str, Any] = {"device": self._device}
+        if self._batch_size > 0:
+            kwargs["batch_size"] = self._batch_size
+        if self._feeders > 0:
+            kwargs["n_feeders"] = self._feeders
+        if self._workers > 0:
+            kwargs["n_workers"] = self._workers
+        return kwargs
+
+    def _extract_embeddings(self, embeddings_result: Any) -> NDArray[np.float32]:
+        """Normalize embeddings result into a float32 numpy array."""
+        embeddings = (
+            embeddings_result.embeddings
+            if hasattr(embeddings_result, "embeddings")
+            else embeddings_result
+        )
+        if hasattr(embeddings, "numpy"):
+            embeddings = embeddings.numpy()
+        return np.asarray(embeddings, dtype=np.float32)
+
+    def _normalize_embedding(self, embeddings: NDArray[np.float32]) -> NDArray[np.float32]:
+        """Normalize embeddings into a single (1536,) vector."""
+        if embeddings.ndim == 3:
+            embedding = embeddings[0, 0, :]
+        elif embeddings.ndim == 2:
+            embedding = embeddings[0, :]
+        else:
+            embedding = embeddings.flatten()
+
+        if embedding.shape[0] != EMBEDDING_DIM:
+            num_frames = embedding.shape[0] // EMBEDDING_DIM
+            if num_frames > 0 and embedding.shape[0] == num_frames * EMBEDDING_DIM:
+                embedding = embedding.reshape(num_frames, EMBEDDING_DIM).mean(axis=0)
+            elif embedding.shape[0] > EMBEDDING_DIM:
+                embedding = embedding[:EMBEDDING_DIM]
+            else:
+                padded = np.zeros(EMBEDDING_DIM, dtype=np.float32)
+                padded[: embedding.shape[0]] = embedding
+                embedding = padded
+
+        return embedding.astype(np.float32)
+
+    def _filter_predictions(
+        self,
+        probs: NDArray[np.float32],
+        species_ids: NDArray[np.int_],
+        species_list: list[str],
+    ) -> list[tuple[str, float]]:
+        """Filter predictions by top_k and confidence threshold."""
+        if probs.size == 0:
+            return []
+        top_k = probs.size if self._top_k is None else min(self._top_k, probs.size)
+        top_indices = np.argsort(probs)[-top_k:][::-1]
+        predictions: list[tuple[str, float]] = []
+        for idx in top_indices:
+            conf = float(probs[idx])
+            if conf >= self._confidence_threshold:
+                actual_idx = int(species_ids[idx])
+                predictions.append((species_list[actual_idx], conf))
+        return predictions
+
+    def _extract_predictions_from_result(
+        self, predictions_result: Any
+    ) -> list[tuple[str, float]]:
+        """Extract predictions from birdnet result."""
+        predictions: list[tuple[str, float]] = []
+        species_list = self._model.species_list
+
+        if hasattr(predictions_result, "species_probs"):
+            species_probs = predictions_result.species_probs
+            species_ids = predictions_result.species_ids
+
+            if species_probs is not None and species_probs.size > 0:
+                if species_probs.ndim == 3:
+                    probs = species_probs[0, 0, :]
+                    ids = species_ids[0, 0, :]
+                elif species_probs.ndim == 2:
+                    probs = species_probs[0, :]
+                    ids = species_ids[0, :]
+                else:
+                    probs = species_probs.flatten()
+                    ids = species_ids.flatten()
+
+                predictions = self._filter_predictions(probs, ids, species_list)
+
+        predictions.sort(key=lambda x: x[1], reverse=True)
+        return predictions
+
+    @contextmanager
+    def _temp_audio_file(self, audio: NDArray[np.float32]) -> Iterator[str]:
+        """Write audio to a temporary WAV file and yield its path."""
+        import soundfile as sf
+
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+            sf.write(tmp.name, audio, SAMPLE_RATE)
+            tmp_path = tmp.name
+
+        try:
+            yield tmp_path
+        finally:
+            os.unlink(tmp_path)
+
+    def _extract_predictions_from_file(
+        self, file_path: str
     ) -> list[tuple[str, float]]:
         """Extract species predictions using model.predict().
 
         Parameters
         ----------
-        audio : NDArray[np.float32]
-            Audio segment, shape (segment_samples,).
+        file_path : str
+            Path to audio file.
 
         Returns
         -------
@@ -198,35 +320,14 @@ class PerchInference(InferenceEngine):
             return []
 
         try:
-            # Use birdnet's predict API
-            # Returns list of predictions with species and confidence
-            predictions_raw = self._model.predict(audio)
-
-            # Convert to our format and filter by threshold
-            predictions: list[tuple[str, float]] = []
-            for pred in predictions_raw:
-                # Extract species and confidence from prediction
-                if isinstance(pred, dict):
-                    species = pred.get("species", pred.get("label", ""))
-                    confidence = float(pred.get("confidence", pred.get("score", 0.0)))
-                elif isinstance(pred, (tuple, list)) and len(pred) >= 2:
-                    species, confidence = str(pred[0]), float(pred[1])
-                else:
-                    continue
-
-                # Filter by threshold
-                if confidence >= self._confidence_threshold:
-                    predictions.append((species, confidence))
-
-            # Sort by confidence descending
-            predictions.sort(key=lambda x: x[1], reverse=True)
-
-            # Apply top_k if specified
-            if self._top_k is not None:
-                predictions = predictions[: self._top_k]
-
-            return predictions
-
+            infer_kwargs = self._build_infer_kwargs()
+            predictions_result = self._model.predict(
+                file_path,
+                default_confidence_threshold=self._confidence_threshold,
+                top_k=self._top_k,
+                **infer_kwargs,
+            )
+            return self._extract_predictions_from_result(predictions_result)
         except Exception as e:
             logger.debug(f"Could not extract predictions: {e}")
             return []
@@ -250,75 +351,10 @@ class PerchInference(InferenceEngine):
         The API may return different shapes depending on implementation,
         so we normalize to ensure (1536,) output.
         """
-        # Use birdnet's encode API for embeddings
-        embeddings_result = self._model.encode(file_path)
-
-        # Handle EmbeddingsResult object from birdnet
-        if hasattr(embeddings_result, "embeddings"):
-            embeddings = embeddings_result.embeddings
-        else:
-            embeddings = embeddings_result
-
-        # Convert to numpy if needed
-        if hasattr(embeddings, "numpy"):
-            embeddings = embeddings.numpy()
-
-        embeddings = np.asarray(embeddings, dtype=np.float32)
-
-        # Shape: (n_inputs, n_segments, embedding_dim) -> flatten to single embedding
-        if embeddings.ndim == 3:
-            embedding = embeddings[0, 0, :]
-        elif embeddings.ndim == 2:
-            embedding = embeddings[0, :]
-        else:
-            embedding = embeddings.flatten()
-
-        # Handle multi-frame embeddings by averaging
-        if embedding.shape[0] != EMBEDDING_DIM:
-            num_frames = embedding.shape[0] // EMBEDDING_DIM
-            if num_frames > 0 and embedding.shape[0] == num_frames * EMBEDDING_DIM:
-                embedding = embedding.reshape(num_frames, EMBEDDING_DIM).mean(axis=0)
-            else:
-                # Truncate or pad to expected dimension
-                if embedding.shape[0] > EMBEDDING_DIM:
-                    embedding = embedding[:EMBEDDING_DIM]
-                else:
-                    padded = np.zeros(EMBEDDING_DIM, dtype=np.float32)
-                    padded[: embedding.shape[0]] = embedding
-                    embedding = padded
-
-        return embedding
-
-    def _get_embedding(self, audio: NDArray[np.float32]) -> NDArray[np.float32]:
-        """Extract embedding using model.encode() via temporary file.
-
-        Parameters
-        ----------
-        audio : NDArray[np.float32]
-            Audio segment, shape (segment_samples,).
-
-        Returns
-        -------
-        NDArray[np.float32]
-            Embedding vector, shape (1536,).
-
-        Notes
-        -----
-        The birdnet Perch API expects file paths, so we write audio to
-        a temporary file for processing.
-        """
-        import soundfile as sf
-
-        # Write to temporary file for birdnet processing
-        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
-            sf.write(tmp.name, audio, SAMPLE_RATE)
-            tmp_path = tmp.name
-
-        try:
-            return self._get_embedding_from_file(tmp_path)
-        finally:
-            # Clean up temp file
-            os.unlink(tmp_path)
+        infer_kwargs = self._build_infer_kwargs()
+        embeddings_result = self._model.encode(file_path, **infer_kwargs)
+        embeddings = self._extract_embeddings(embeddings_result)
+        return self._normalize_embedding(embeddings)
 
     def predict_segment(
         self,
@@ -363,11 +399,9 @@ class PerchInference(InferenceEngine):
             model_name="Perch V2",
         )
 
-        # Extract embedding
-        embedding = self._get_embedding(audio)
-
-        # Extract predictions
-        predictions = self._extract_predictions(audio)
+        with self._temp_audio_file(audio) as tmp_path:
+            embedding = self._get_embedding_from_file(tmp_path)
+            predictions = self._extract_predictions_from_file(tmp_path)
 
         return InferenceResult(
             start_time=start_time,
@@ -433,11 +467,9 @@ class PerchInference(InferenceEngine):
         # Process each segment
         results = []
         for audio, start_time in zip(validated_segments, start_times):
-            # Extract embedding
-            embedding = self._get_embedding(audio)
-
-            # Extract predictions
-            predictions = self._extract_predictions(audio)
+            with self._temp_audio_file(audio) as tmp_path:
+                embedding = self._get_embedding_from_file(tmp_path)
+                predictions = self._extract_predictions_from_file(tmp_path)
 
             result = InferenceResult(
                 start_time=start_time,
@@ -483,7 +515,8 @@ class PerchInference(InferenceEngine):
 
         embeddings = []
         for audio in validated_segments:
-            embedding = self._get_embedding(audio)
-            embeddings.append(embedding)
+            with self._temp_audio_file(audio) as tmp_path:
+                embedding = self._get_embedding_from_file(tmp_path)
+                embeddings.append(embedding)
 
         return np.stack(embeddings)

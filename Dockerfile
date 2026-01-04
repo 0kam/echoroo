@@ -56,10 +56,10 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 ADD back /app
 
 # Copy the guide
-COPY --from=guide_builder /guide/out/ /app/src/whombat/user_guide/
+COPY --from=guide_builder /guide/out/ /app/src/echoroo/user_guide/
 
 # Copy the statics
-COPY --from=frontend_builder /front/out/ /app/src/whombat/statics/
+COPY --from=frontend_builder /front/out/ /app/src/echoroo/statics/
 
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev --all-extras

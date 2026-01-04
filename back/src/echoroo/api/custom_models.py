@@ -247,7 +247,8 @@ class CustomModelAPI(
         name: str,
         description: str | None = None,
         tag_id: int,
-        search_session_ids: list[int],
+        search_session_ids: list[int] | None = None,
+        annotation_project_uuids: list[UUID] | None = None,
         training_config: schemas.CustomModelTrainingConfig,
         user: models.User | schemas.SimpleUser,
     ) -> schemas.CustomModel:
@@ -262,6 +263,14 @@ class CustomModelAPI(
         if not await can_edit_ml_project(session, db_ml_project, db_user):
             raise exceptions.PermissionDeniedError(
                 "You do not have permission to create custom models in this ML project"
+            )
+
+        # Ensure at least one training source is provided
+        search_session_ids = search_session_ids or []
+        annotation_project_uuids = annotation_project_uuids or []
+        if not search_session_ids and not annotation_project_uuids:
+            raise exceptions.InvalidDataError(
+                "At least one search session or annotation project must be provided for training data"
             )
 
         # Validate tag exists
@@ -280,6 +289,20 @@ class CustomModelAPI(
                 raise exceptions.InvalidDataError(
                     f"Search session {session_id} does not belong to this ML project"
                 )
+
+        # Validate annotation projects exist
+        annotation_project_ids = []
+        for ap_uuid in annotation_project_uuids:
+            stmt = select(models.AnnotationProject).where(
+                models.AnnotationProject.uuid == ap_uuid
+            )
+            result = await session.execute(stmt)
+            ap = result.scalar_one_or_none()
+            if ap is None:
+                raise exceptions.NotFoundError(
+                    f"Annotation project with uuid {ap_uuid} not found"
+                )
+            annotation_project_ids.append(ap.id)
 
         # Map model type
         model_type_map = {
@@ -303,6 +326,16 @@ class CustomModelAPI(
             status=models.CustomModelStatus.PENDING,
             created_by_id=db_user.id,
         )
+
+        # Create training sources for annotation projects
+        for ap_uuid in annotation_project_uuids:
+            training_source = models.CustomModelTrainingSource(
+                custom_model_id=db_obj.id,
+                source_type=models.TrainingDataSource.ANNOTATION_PROJECT,
+                source_uuid=ap_uuid,
+                is_positive=True,
+            )
+            session.add(training_source)
 
         return await self._build_schema(session, db_obj)
 

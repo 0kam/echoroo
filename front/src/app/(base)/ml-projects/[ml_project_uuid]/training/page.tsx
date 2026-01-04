@@ -223,6 +223,9 @@ function ModelCard({
   );
 }
 
+// Training data source type
+type TrainingSourceType = "search_session" | "annotation_project";
+
 function CreateModelDialog({
   isOpen,
   onClose,
@@ -238,7 +241,9 @@ function CreateModelDialog({
   const [description, setDescription] = useState("");
   const [targetTagId, setTargetTagId] = useState<number | null>(null);
   const [modelType, setModelType] = useState<CustomModelType>("logistic_regression");
+  const [sourceType, setSourceType] = useState<TrainingSourceType>("search_session");
   const [selectedSessionIds, setSelectedSessionIds] = useState<string[]>([]);
+  const [selectedAnnotationProjectIds, setSelectedAnnotationProjectIds] = useState<string[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Fetch available tags
@@ -257,9 +262,22 @@ function CreateModelDialog({
     (s) => s.is_search_complete && s.labeled_count > 0
   );
 
+  // Fetch annotation projects for this ML project
+  const { data: annotationProjectsData } = useQuery({
+    queryKey: ["ml_project_annotation_projects", mlProjectUuid],
+    queryFn: () => api.mlProjects.annotationProjects.list(mlProjectUuid),
+    enabled: !!mlProjectUuid,
+  });
+  const annotationProjects = annotationProjectsData || [];
+
+  // Check if any training data is selected
+  const hasTrainingData =
+    (sourceType === "search_session" && selectedSessionIds.length > 0) ||
+    (sourceType === "annotation_project" && selectedAnnotationProjectIds.length > 0);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!name || !targetTagId || selectedSessionIds.length === 0) return;
+    if (!name || !targetTagId || !hasTrainingData) return;
 
     setIsSubmitting(true);
     try {
@@ -268,14 +286,17 @@ function CreateModelDialog({
         description: description || undefined,
         target_tag_id: targetTagId,
         model_type: modelType,
-        training_session_ids: selectedSessionIds,
+        training_session_ids: sourceType === "search_session" ? selectedSessionIds : [],
+        annotation_project_uuids: sourceType === "annotation_project" ? selectedAnnotationProjectIds : [],
       });
       toast.success("Model created");
       setName("");
       setDescription("");
       setTargetTagId(null);
       setModelType("logistic_regression");
+      setSourceType("search_session");
       setSelectedSessionIds([]);
+      setSelectedAnnotationProjectIds([]);
       onSuccess();
       onClose();
     } catch (error) {
@@ -288,6 +309,12 @@ function CreateModelDialog({
 
   const toggleSession = (uuid: string) => {
     setSelectedSessionIds((prev) =>
+      prev.includes(uuid) ? prev.filter((id) => id !== uuid) : [...prev, uuid]
+    );
+  };
+
+  const toggleAnnotationProject = (uuid: string) => {
+    setSelectedAnnotationProjectIds((prev) =>
       prev.includes(uuid) ? prev.filter((id) => id !== uuid) : [...prev, uuid]
     );
   };
@@ -366,45 +393,125 @@ function CreateModelDialog({
           </select>
         </div>
 
+        {/* Training Data Source Type Selection */}
         <div>
-          <label className="block text-sm font-medium text-stone-700 dark:text-stone-300 mb-1">
-            Training Data (Search Sessions)
+          <label className="block text-sm font-medium text-stone-700 dark:text-stone-300 mb-2">
+            Training Data Source
           </label>
-          {sessions.length === 0 ? (
-            <p className="text-sm text-stone-500">
-              No completed search sessions with labeled data available.
-            </p>
-          ) : (
-            <div className="space-y-2 max-h-40 overflow-y-auto border border-stone-200 dark:border-stone-700 rounded-lg p-2">
-              {sessions.map((session) => (
-                <label
-                  key={session.uuid}
-                  className="flex items-center gap-2 p-2 rounded hover:bg-stone-100 dark:hover:bg-stone-700 cursor-pointer"
-                >
-                  <input
-                    type="checkbox"
-                    checked={selectedSessionIds.includes(session.uuid)}
-                    onChange={() => toggleSession(session.uuid)}
-                    className="rounded border-stone-300 text-emerald-600 focus:ring-emerald-500"
-                  />
-                  <div className="flex-1">
-                    <span className="text-sm text-stone-700 dark:text-stone-300">
-                      {session.name}
-                    </span>
-                    <span className="text-xs text-stone-500 ml-2">
-                      ({session.labeled_count} labeled)
-                    </span>
-                  </div>
-                </label>
-              ))}
-            </div>
-          )}
-          {selectedSessionIds.length > 0 && (
-            <p className="text-xs text-stone-500 mt-1">
-              {selectedSessionIds.length} session(s) selected
-            </p>
-          )}
+          <div className="flex gap-4">
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="radio"
+                name="sourceType"
+                value="search_session"
+                checked={sourceType === "search_session"}
+                onChange={() => setSourceType("search_session")}
+                className="text-emerald-600 focus:ring-emerald-500"
+              />
+              <span className="text-sm text-stone-700 dark:text-stone-300">Search Sessions</span>
+            </label>
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="radio"
+                name="sourceType"
+                value="annotation_project"
+                checked={sourceType === "annotation_project"}
+                onChange={() => setSourceType("annotation_project")}
+                className="text-emerald-600 focus:ring-emerald-500"
+              />
+              <span className="text-sm text-stone-700 dark:text-stone-300">Annotation Projects</span>
+            </label>
+          </div>
         </div>
+
+        {/* Search Sessions Selection */}
+        {sourceType === "search_session" && (
+          <div>
+            <label className="block text-sm font-medium text-stone-700 dark:text-stone-300 mb-1">
+              Select Search Sessions
+            </label>
+            {sessions.length === 0 ? (
+              <p className="text-sm text-stone-500">
+                No completed search sessions with labeled data available.
+              </p>
+            ) : (
+              <div className="space-y-2 max-h-40 overflow-y-auto border border-stone-200 dark:border-stone-700 rounded-lg p-2">
+                {sessions.map((session) => (
+                  <label
+                    key={session.uuid}
+                    className="flex items-center gap-2 p-2 rounded hover:bg-stone-100 dark:hover:bg-stone-700 cursor-pointer"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selectedSessionIds.includes(session.uuid)}
+                      onChange={() => toggleSession(session.uuid)}
+                      className="rounded border-stone-300 text-emerald-600 focus:ring-emerald-500"
+                    />
+                    <div className="flex-1">
+                      <span className="text-sm text-stone-700 dark:text-stone-300">
+                        {session.name}
+                      </span>
+                      <span className="text-xs text-stone-500 ml-2">
+                        ({session.labeled_count} labeled)
+                      </span>
+                    </div>
+                  </label>
+                ))}
+              </div>
+            )}
+            {selectedSessionIds.length > 0 && (
+              <p className="text-xs text-stone-500 mt-1">
+                {selectedSessionIds.length} session(s) selected
+              </p>
+            )}
+          </div>
+        )}
+
+        {/* Annotation Projects Selection */}
+        {sourceType === "annotation_project" && (
+          <div>
+            <label className="block text-sm font-medium text-stone-700 dark:text-stone-300 mb-1">
+              Select Annotation Projects
+            </label>
+            {annotationProjects.length === 0 ? (
+              <div className="text-sm text-stone-500 p-3 bg-stone-50 dark:bg-stone-800 rounded-lg">
+                <p>No annotation projects available.</p>
+                <p className="mt-1 text-xs">
+                  Create annotation projects by exporting curated search results first.
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-2 max-h-40 overflow-y-auto border border-stone-200 dark:border-stone-700 rounded-lg p-2">
+                {annotationProjects.map((project) => (
+                  <label
+                    key={project.uuid}
+                    className="flex items-center gap-2 p-2 rounded hover:bg-stone-100 dark:hover:bg-stone-700 cursor-pointer"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selectedAnnotationProjectIds.includes(project.uuid)}
+                      onChange={() => toggleAnnotationProject(project.uuid)}
+                      className="rounded border-stone-300 text-emerald-600 focus:ring-emerald-500"
+                    />
+                    <div className="flex-1">
+                      <span className="text-sm text-stone-700 dark:text-stone-300">
+                        {project.name}
+                      </span>
+                      <span className="text-xs text-stone-500 ml-2">
+                        ({project.clip_count} clips)
+                      </span>
+                    </div>
+                  </label>
+                ))}
+              </div>
+            )}
+            {selectedAnnotationProjectIds.length > 0 && (
+              <p className="text-xs text-stone-500 mt-1">
+                {selectedAnnotationProjectIds.length} project(s) selected
+              </p>
+            )}
+          </div>
+        )}
 
         <div className="flex justify-end gap-2 pt-4">
           <Button type="button" variant="secondary" onClick={onClose}>
@@ -413,7 +520,7 @@ function CreateModelDialog({
           <Button
             type="submit"
             variant="primary"
-            disabled={!name || !targetTagId || selectedSessionIds.length === 0 || isSubmitting}
+            disabled={!name || !targetTagId || !hasTrainingData || isSubmitting}
           >
             {isSubmitting ? (
               <>

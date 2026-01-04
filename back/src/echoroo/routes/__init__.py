@@ -42,6 +42,9 @@ from echoroo.routes.species_filters import (
     get_species_filters_router,
     get_species_filter_applications_router,
 )
+from echoroo.routes.custom_models import get_custom_models_router
+from echoroo.routes.inference_batches import get_inference_batches_router
+from echoroo.routes.detection_visualization import get_detection_visualization_router
 from echoroo.system.settings import Settings
 
 __all__ = [
@@ -249,6 +252,14 @@ def get_main_router(settings: Settings):
 
     # Note: Species Detection endpoints are now unified under Foundation Models API
     # at /api/v1/foundation_models/runs/{run_uuid}/...
+
+    # Detection Visualization
+    detection_visualization_router = get_detection_visualization_router(settings)
+    main_router.include_router(
+        detection_visualization_router,
+        prefix="/detection_visualization",
+        tags=["Detection Visualization"],
+    )
 
     setup_router = get_setup_router(settings)
     main_router.include_router(

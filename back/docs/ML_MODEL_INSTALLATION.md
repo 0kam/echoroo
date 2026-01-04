@@ -2,13 +2,13 @@
 
 ## Overview
 
-The ML model installation system provides automated downloading, verification, and installation of machine learning models used in Whombat. It supports multiple model backends (BirdNET, Perch) with different installation methods.
+The ML model installation system provides automated downloading, verification, and installation of machine learning models used in Echoroo. It supports multiple model backends (BirdNET, Perch) with different installation methods.
 
 ## Architecture
 
 ### Core Components
 
-1. **Base Installer (`whombat.ml.installer.base`)**
+1. **Base Installer (`echoroo.ml.installer.base`)**
    - `ModelInstaller`: Abstract base class for all installers
    - `InstallStatus`: Enum for tracking installation state
    - `ModelArtifact`: Metadata for downloadable files
@@ -18,12 +18,12 @@ The ML model installation system provides automated downloading, verification, a
    - `BirdNETInstaller`: Manages BirdNET metadata files
    - `PerchInstaller`: Manages Perch model via perch-hoplite
 
-3. **REST API (`whombat.routes.setup`)**
+3. **REST API (`echoroo.routes.setup`)**
    - `GET /api/v1/setup/models/status/`: Check all models
    - `POST /api/v1/setup/models/{model_name}/install/`: Install model
    - `POST /api/v1/setup/models/{model_name}/uninstall/`: Uninstall model
 
-4. **Schemas (`whombat.schemas.setup`)**
+4. **Schemas (`echoroo.schemas.setup`)**
    - `ModelStatus`: Status of single model
    - `ModelsStatus`: Status of all models
    - `InstallRequest`: Installation request
@@ -46,7 +46,7 @@ The BirdNET model itself is distributed via the `birdnet` pip package (~100MB). 
 pip install birdnet
 ```
 
-**Default Directory**: `~/.whombat/models/birdnet/`
+**Default Directory**: `~/.echoroo/models/birdnet/`
 
 ### Perch
 
@@ -75,14 +75,14 @@ export KAGGLE_KEY=your_api_key
 }
 ```
 
-**Default Directory**: `~/.whombat/models/perch/`
+**Default Directory**: `~/.echoroo/models/perch/`
 
 ## API Usage
 
 ### Check Installation Status
 
 ```python
-from whombat.ml.installer import check_all_models, get_installer
+from echoroo.ml.installer import check_all_models, get_installer
 
 # Check all models
 status = check_all_models()
@@ -98,7 +98,7 @@ print(f"BirdNET status: {status.value}")
 ### Install Model
 
 ```python
-from whombat.ml.installer import get_installer
+from echoroo.ml.installer import get_installer
 
 # Create installer
 installer = get_installer("birdnet")
@@ -114,7 +114,7 @@ await installer.install(progress_callback=on_progress)
 ### Uninstall Model
 
 ```python
-from whombat.ml.installer import get_installer
+from echoroo.ml.installer import get_installer
 
 installer = get_installer("birdnet")
 installer.uninstall()
@@ -233,7 +233,7 @@ Example error response:
 The installation system supports real-time progress updates via callbacks:
 
 ```python
-from whombat.ml.installer.base import InstallationProgress
+from echoroo.ml.installer.base import InstallationProgress
 
 def progress_callback(progress: InstallationProgress):
     print(f"Status: {progress.status.value}")
@@ -256,7 +256,7 @@ To add a new model installer:
 
 Example:
 ```python
-from whombat.ml.installer.base import ModelInstaller, ModelArtifact
+from echoroo.ml.installer.base import ModelInstaller, ModelArtifact
 
 class MyModelInstaller(ModelInstaller):
     def __init__(self):
@@ -271,7 +271,7 @@ class MyModelInstaller(ModelInstaller):
         ]
         super().__init__(
             model_name="my_model",
-            model_dir=Path.home() / ".whombat" / "models" / "my_model",
+            model_dir=Path.home() / ".echoroo" / "models" / "my_model",
             artifacts=artifacts,
         )
 
@@ -282,9 +282,9 @@ class MyModelInstaller(ModelInstaller):
 
 ## File Locations
 
-- **BirdNET**: `~/.whombat/models/birdnet/`
-- **Perch**: `~/.whombat/models/perch/`
-- **Settings**: Uses paths from `whombat.system.settings`
+- **BirdNET**: `~/.echoroo/models/birdnet/`
+- **Perch**: `~/.echoroo/models/perch/`
+- **Settings**: Uses paths from `echoroo.system.settings`
 
 ## Dependencies
 
@@ -297,13 +297,13 @@ class MyModelInstaller(ModelInstaller):
 Run installer tests:
 ```bash
 cd back
-uv run python -c "from whombat.ml.installer import check_all_models; print(check_all_models())"
+uv run python -c "from echoroo.ml.installer import check_all_models; print(check_all_models())"
 ```
 
 Type checking:
 ```bash
 cd back
-uv run pyright src/whombat/ml/installer/
+uv run pyright src/echoroo/ml/installer/
 ```
 
 ## Troubleshooting
@@ -339,7 +339,7 @@ export KAGGLE_KEY=your_api_key
 **Issue**: Checksum verification failed
 **Solution**: Remove corrupted files and reinstall
 ```bash
-rm -rf ~/.whombat/models/birdnet/
+rm -rf ~/.echoroo/models/birdnet/
 # Then reinstall via API
 ```
 

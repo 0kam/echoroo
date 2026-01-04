@@ -69,6 +69,9 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(
         env_prefix="ECHOROO_",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
     )
 
     dev: bool = False
@@ -168,6 +171,57 @@ class Settings(BaseSettings):
         default_factory=lambda: get_app_data_dir() / "metadata",
     )
     """Root directory where metadata assets (e.g., site images) are stored."""
+
+    ml_use_gpu: bool = True
+    """Enable GPU acceleration for ML models (BirdNET, Perch).
+
+    When True, models will attempt to use GPU for inference.
+    When False, models will use CPU only.
+    Set to False if GPU is not available or causing issues.
+    """
+
+    ml_gpu_device: str = "GPU"
+    """Device specification for ML models.
+
+    Common values:
+    - "GPU": Use first available GPU
+    - "CPU": Force CPU usage
+    - "GPU:0", "GPU:1": Specific GPU device
+
+    Note: This setting only applies when ml_use_gpu is True.
+    """
+
+    ml_gpu_batch_size: int = 16
+    """Batch size for GPU inference in ML models.
+
+    Higher values use more GPU memory but improve throughput.
+    Reduce this if you encounter CUDA_ERROR_OUT_OF_MEMORY errors.
+    Typical values: 8-32.
+    """
+
+    ml_feeders: int = 1
+    """Number of file reading processes for BirdNET inference.
+
+    Controls how many parallel processes read and preprocess audio files
+    before sending to the GPU. Higher values improve I/O throughput when
+    processing many files. Typical values: 1-4.
+    """
+
+    ml_workers: int = 1
+    """Number of GPU inference workers for BirdNET.
+
+    Controls the number of parallel GPU inference workers. Usually 1 is
+    sufficient unless you have multiple GPUs. Higher values require more
+    GPU memory. Typical values: 1-2.
+    """
+
+    ml_debug_timing: bool = False
+    """Enable detailed timing measurements for ML inference.
+
+    When True, logs detailed timing information for each phase of
+    species detection processing including inference, DB storage,
+    and per-recording statistics.
+    """
 
     @model_validator(mode="after")
     def set_default_cors_origins(self) -> "Settings":

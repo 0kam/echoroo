@@ -84,8 +84,10 @@ export default function SearchSessionCreate({
   const availableTags = useMemo(() => {
     const tagMap = new Map<number, Tag>();
     activeReferenceSounds.forEach((rs) => {
-      if (!tagMap.has(rs.tag_id)) {
-        tagMap.set(rs.tag_id, rs.tag);
+      // tag_id can be undefined in schema, but we always have tag which contains id
+      const tagId = rs.tag_id ?? rs.tag.id;
+      if (tagId != null && !tagMap.has(tagId)) {
+        tagMap.set(tagId, rs.tag);
       }
     });
     return Array.from(tagMap.entries()); // Returns [tag_id, tag] pairs
@@ -94,7 +96,10 @@ export default function SearchSessionCreate({
   // Filter reference sounds by selected tag
   const filteredReferenceSounds = useMemo(() => {
     if (!targetTagId) return activeReferenceSounds;
-    return activeReferenceSounds.filter((rs) => rs.tag_id === targetTagId);
+    return activeReferenceSounds.filter((rs) => {
+      const tagId = rs.tag_id ?? rs.tag.id;
+      return tagId === targetTagId;
+    });
   }, [activeReferenceSounds, targetTagId]);
 
   const tagOptions: Option<number>[] = useMemo(() => {

@@ -9,7 +9,7 @@ from uuid import UUID
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload, selectinload
-from sqlalchemy.sql import ColumnElement
+from sqlalchemy.sql import ColumnElement, false as sql_false
 
 from echoroo import exceptions, models, schemas
 from echoroo.api import datasets, common
@@ -81,7 +81,8 @@ async def filter_runs_by_access(
 ) -> list[ColumnElement[bool]]:
     """Return filter conditions limiting runs accessible to the user."""
     if user is None:
-        return [models.FoundationModelRun.id == -1]
+        # Return a condition that always evaluates to FALSE (no access for anonymous users)
+        return [sql_false()]
     if user.is_superuser:
         return []
 
@@ -193,6 +194,19 @@ class FoundationModelAPI:
             .options(
                 joinedload(models.FoundationModelRun.foundation_model),
                 joinedload(models.FoundationModelRun.requested_by),
+                joinedload(models.FoundationModelRun.dataset).options(
+                    joinedload(models.Dataset.project).joinedload(
+                        models.Project.memberships
+                    ).joinedload(models.ProjectMember.user),
+                    joinedload(models.Dataset.primary_site).joinedload(
+                        models.Site.images
+                    ),
+                    joinedload(models.Dataset.primary_recorder),
+                    joinedload(models.Dataset.license),
+                ),
+                selectinload(models.FoundationModelRun.species).joinedload(
+                    models.FoundationModelRunSpecies.tag,
+                ),
             )
             .where(
                 models.FoundationModelRun.dataset_id == dataset_id,
@@ -250,8 +264,20 @@ class FoundationModelAPI:
         stmt = (
             base_query.options(
                 joinedload(models.FoundationModelRun.foundation_model),
-                joinedload(models.FoundationModelRun.dataset),
+                joinedload(models.FoundationModelRun.dataset).options(
+                    joinedload(models.Dataset.project).joinedload(
+                        models.Project.memberships
+                    ).joinedload(models.ProjectMember.user),
+                    joinedload(models.Dataset.primary_site).joinedload(
+                        models.Site.images
+                    ),
+                    joinedload(models.Dataset.primary_recorder),
+                    joinedload(models.Dataset.license),
+                ),
                 joinedload(models.FoundationModelRun.requested_by),
+                selectinload(models.FoundationModelRun.species).joinedload(
+                    models.FoundationModelRunSpecies.tag,
+                ),
             )
             .order_by(models.FoundationModelRun.created_on.desc())
             .offset(offset)
@@ -341,6 +367,7 @@ class FoundationModelAPI:
         user: models.User,
         confidence_threshold: float | None = None,
         scope: dict[str, Any] | None = None,
+        locale: str = "ja",
     ) -> schemas.FoundationModelRun:
         if not await can_manage_project(session, dataset_obj.project_id, user):
             raise exceptions.PermissionDeniedError(
@@ -364,7 +391,9 @@ class FoundationModelAPI:
             try:
                 recording_filters = schemas.RecordingFilter.model_validate(scope)
             except Exception:
-                recording_filters = None
+                # Invalid scope format - proceed without recording filters
+                # This is intentional as scope may contain custom data
+                pass
 
         # Import lazily to avoid circular dependency
         from echoroo.api import species_detection_jobs
@@ -378,8 +407,9 @@ class FoundationModelAPI:
                 model_version=model.version,
                 confidence_threshold=threshold,
                 overlap=0.0,
-                use_metadata_filter=True,
+                use_metadata_filter=False,
                 recording_filters=recording_filters,
+                locale=locale,
             ),
             user=user,
         )
@@ -416,6 +446,20 @@ class FoundationModelAPI:
 
         db_run.status = models.FoundationModelRunStatus.CANCELLED
         await session.flush()
+
+        # Also cancel the underlying species detection job
+        job_stmt = select(models.SpeciesDetectionJob).where(
+            models.SpeciesDetectionJob.model_run_id == db_run.id,
+            models.SpeciesDetectionJob.status.in_([
+                models.SpeciesDetectionJobStatus.PENDING,
+                models.SpeciesDetectionJobStatus.RUNNING,
+            ]),
+        )
+        result = await session.execute(job_stmt)
+        db_job = result.scalar_one_or_none()
+        if db_job:
+            db_job.status = models.SpeciesDetectionJobStatus.CANCELLED
+            await session.flush()
 
         return await self.get_run_with_relations(session, run.uuid)
 
@@ -524,13 +568,21 @@ class FoundationModelAPI:
 
         db_run = await self.get_run(session, run.uuid)
 
-        # Get the species detection job linked to this run
-        if db_run.species_detection_job_id is None:
-            return [], 0
-
-        job = await session.get(models.SpeciesDetectionJob, db_run.species_detection_job_id)
-        if job is None or job.model_run_id is None:
-            return [], 0
+        # Use model_run_id from FoundationModelRun directly (more reliable)
+        # Fall back to SpeciesDetectionJob.model_run_id if not available
+        model_run_id = db_run.model_run_id
+        if model_run_id is None:
+            if db_run.species_detection_job_id is None:
+                return [], 0
+            job = await session.get(models.SpeciesDetectionJob, db_run.species_detection_job_id)
+            if job is None or job.model_run_id is None:
+                return [], 0
+            model_run_id = job.model_run_id
+        else:
+            # Still need job for DetectionReview queries
+            job = None
+            if db_run.species_detection_job_id is not None:
+                job = await session.get(models.SpeciesDetectionJob, db_run.species_detection_job_id)
 
         # Get filter application if filter_uuid is provided
         filter_application: models.SpeciesFilterApplication | None = None
@@ -546,9 +598,9 @@ class FoundationModelAPI:
                     f"Species filter application with uuid {filter_uuid} not found for this run"
                 )
 
-        # Base query - get ClipPredictions linked to this job's ModelRun
+        # Base query - get ClipPredictions linked to the ModelRun
         base_conditions: list[Any] = [
-            models.ModelRunPrediction.model_run_id == job.model_run_id,
+            models.ModelRunPrediction.model_run_id == model_run_id,
         ]
 
         # Build query with joins
@@ -611,7 +663,7 @@ class FoundationModelAPI:
                 models.ModelRunPrediction,
                 models.ClipPrediction.id == models.ModelRunPrediction.clip_prediction_id,
             )
-            .where(models.ModelRunPrediction.model_run_id == job.model_run_id)
+            .where(models.ModelRunPrediction.model_run_id == model_run_id)
         )
 
         if filter_application is not None:
@@ -631,20 +683,30 @@ class FoundationModelAPI:
         clip_predictions = result.scalars().unique().all()
 
         # Pre-fetch filter mask data for all predictions if filter is applied
+        cp_ids = [cp.id for cp in clip_predictions]
         mask_data: dict[int, tuple[bool, float | None]] = {}
-        if filter_application is not None:
-            cp_ids = [cp.id for cp in clip_predictions]
-            if cp_ids:
-                mask_query = select(models.SpeciesFilterMask).where(
-                    models.SpeciesFilterMask.species_filter_application_id == filter_application.id,
-                    models.SpeciesFilterMask.clip_prediction_id.in_(cp_ids),
+        if filter_application is not None and cp_ids:
+            mask_query = select(models.SpeciesFilterMask).where(
+                models.SpeciesFilterMask.species_filter_application_id == filter_application.id,
+                models.SpeciesFilterMask.clip_prediction_id.in_(cp_ids),
+            )
+            mask_result = await session.scalars(mask_query)
+            for mask in mask_result.all():
+                mask_data[mask.clip_prediction_id] = (
+                    mask.is_included,
+                    mask.occurrence_probability,
                 )
-                mask_result = await session.scalars(mask_query)
-                for mask in mask_result.all():
-                    mask_data[mask.clip_prediction_id] = (
-                        mask.is_included,
-                        mask.occurrence_probability,
-                    )
+
+        # Pre-fetch all reviews for the predictions (N+1 fix)
+        reviews_by_cp_id: dict[int, models.DetectionReview] = {}
+        if cp_ids and job is not None:
+            reviews_query = select(models.DetectionReview).where(
+                models.DetectionReview.clip_prediction_id.in_(cp_ids),
+                models.DetectionReview.species_detection_job_id == job.id,
+            )
+            reviews_result = await session.scalars(reviews_query)
+            for review in reviews_result.all():
+                reviews_by_cp_id[review.clip_prediction_id] = review
 
         # Build detection results
         detections = []
@@ -660,13 +722,8 @@ class FoundationModelAPI:
             if top_tag is None:
                 continue
 
-            # Check for existing review (using species_detection_job_id)
-            review = await session.scalar(
-                select(models.DetectionReview).where(
-                    models.DetectionReview.clip_prediction_id == cp.id,
-                    models.DetectionReview.species_detection_job_id == job.id,
-                )
-            )
+            # Get review from pre-fetched data (N+1 fix)
+            review = reviews_by_cp_id.get(cp.id)
 
             review_status_value = schemas.DetectionReviewStatus.UNREVIEWED
             reviewed_on = None
@@ -723,13 +780,21 @@ class FoundationModelAPI:
 
         db_run = await self.get_run(session, run.uuid)
 
-        # Get the species detection job linked to this run
-        if db_run.species_detection_job_id is None:
-            return schemas.DetectionSummary()
-
-        job = await session.get(models.SpeciesDetectionJob, db_run.species_detection_job_id)
-        if job is None or job.model_run_id is None:
-            return schemas.DetectionSummary()
+        # Use model_run_id from FoundationModelRun directly (more reliable)
+        # Fall back to SpeciesDetectionJob.model_run_id if not available
+        model_run_id = db_run.model_run_id
+        job: models.SpeciesDetectionJob | None = None
+        if model_run_id is None:
+            if db_run.species_detection_job_id is None:
+                return schemas.DetectionSummary()
+            job = await session.get(models.SpeciesDetectionJob, db_run.species_detection_job_id)
+            if job is None or job.model_run_id is None:
+                return schemas.DetectionSummary()
+            model_run_id = job.model_run_id
+        else:
+            # Still need job for review counts
+            if db_run.species_detection_job_id is not None:
+                job = await session.get(models.SpeciesDetectionJob, db_run.species_detection_job_id)
 
         # Get total detections
         total_query = (
@@ -738,7 +803,7 @@ class FoundationModelAPI:
                 models.ModelRunPrediction,
                 models.ClipPrediction.id == models.ModelRunPrediction.clip_prediction_id,
             )
-            .where(models.ModelRunPrediction.model_run_id == job.model_run_id)
+            .where(models.ModelRunPrediction.model_run_id == model_run_id)
         )
         total_detections = await session.scalar(total_query) or 0
 
@@ -762,7 +827,7 @@ class FoundationModelAPI:
                 models.ModelRunPrediction,
                 models.ClipPrediction.id == models.ModelRunPrediction.clip_prediction_id,
             )
-            .where(models.ModelRunPrediction.model_run_id == job.model_run_id)
+            .where(models.ModelRunPrediction.model_run_id == model_run_id)
             .group_by(models.Tag.id, models.Tag.value)
             .order_by(func.count(models.ClipPredictionTag.clip_prediction_id).desc())
         )
@@ -777,33 +842,34 @@ class FoundationModelAPI:
                 average_confidence=float(row[3]) if row[3] else None,
             ))
 
-        # Get review counts
-        review_counts_query = (
-            select(
-                models.DetectionReview.status,
-                func.count(models.DetectionReview.id),
-            )
-            .where(models.DetectionReview.species_detection_job_id == job.id)
-            .group_by(models.DetectionReview.status)
-        )
-        review_results = await session.execute(review_counts_query)
-
+        # Get review counts (only if job is available)
         total_reviewed = 0
         total_confirmed = 0
         total_rejected = 0
         total_uncertain = 0
 
-        for row in review_results.all():
-            status, count = row
-            if status == "confirmed":
-                total_confirmed = count
-                total_reviewed += count
-            elif status == "rejected":
-                total_rejected = count
-                total_reviewed += count
-            elif status == "uncertain":
-                total_uncertain = count
-                total_reviewed += count
+        if job is not None:
+            review_counts_query = (
+                select(
+                    models.DetectionReview.status,
+                    func.count(models.DetectionReview.id),
+                )
+                .where(models.DetectionReview.species_detection_job_id == job.id)
+                .group_by(models.DetectionReview.status)
+            )
+            review_results = await session.execute(review_counts_query)
+
+            for row in review_results.all():
+                status, count = row
+                if status == "confirmed":
+                    total_confirmed = count
+                    total_reviewed += count
+                elif status == "rejected":
+                    total_rejected = count
+                    total_reviewed += count
+                elif status == "uncertain":
+                    total_uncertain = count
+                    total_reviewed += count
 
         total_unreviewed = total_detections - total_reviewed
 
@@ -935,24 +1001,34 @@ class FoundationModelAPI:
         if job is None:
             raise exceptions.ValidationError("Detection job not found")
 
-        count = 0
         now = datetime.datetime.now(datetime.UTC)
 
-        for cp_uuid in clip_prediction_uuids:
-            clip_prediction = await session.scalar(
-                select(models.ClipPrediction).where(
-                    models.ClipPrediction.uuid == cp_uuid
-                )
+        # Batch fetch all clip predictions (N+1 fix)
+        predictions_query = select(models.ClipPrediction).where(
+            models.ClipPrediction.uuid.in_(clip_prediction_uuids)
+        )
+        predictions_result = await session.scalars(predictions_query)
+        predictions_by_uuid = {cp.uuid: cp for cp in predictions_result.all()}
+
+        # Batch fetch all existing reviews (N+1 fix)
+        cp_ids = [cp.id for cp in predictions_by_uuid.values()]
+        reviews_by_cp_id: dict[int, models.DetectionReview] = {}
+        if cp_ids:
+            reviews_query = select(models.DetectionReview).where(
+                models.DetectionReview.clip_prediction_id.in_(cp_ids),
+                models.DetectionReview.species_detection_job_id == job.id,
             )
+            reviews_result = await session.scalars(reviews_query)
+            for review in reviews_result.all():
+                reviews_by_cp_id[review.clip_prediction_id] = review
+
+        count = 0
+        for cp_uuid in clip_prediction_uuids:
+            clip_prediction = predictions_by_uuid.get(cp_uuid)
             if clip_prediction is None:
                 continue
 
-            review = await session.scalar(
-                select(models.DetectionReview).where(
-                    models.DetectionReview.clip_prediction_id == clip_prediction.id,
-                    models.DetectionReview.species_detection_job_id == job.id,
-                )
-            )
+            review = reviews_by_cp_id.get(clip_prediction.id)
 
             if review:
                 review.status = data.status.value
@@ -961,7 +1037,7 @@ class FoundationModelAPI:
                 if data.notes is not None:
                     review.notes = data.notes
             else:
-                await common.create_object(
+                new_review = await common.create_object(
                     session,
                     models.DetectionReview,
                     clip_prediction_id=clip_prediction.id,
@@ -971,10 +1047,36 @@ class FoundationModelAPI:
                     reviewed_on=now,
                     notes=data.notes,
                 )
+                # Add to cache for consistency if same prediction appears twice
+                reviews_by_cp_id[clip_prediction.id] = new_review
             count += 1
 
         await session.flush()
         return count
+
+    async def get_queue_status(
+        self,
+        session: AsyncSession,
+    ) -> schemas.JobQueueStatus:
+        """Get status counts for the job queue."""
+        # Query species_detection_job to count by status
+        stmt = select(
+            models.SpeciesDetectionJob.status,
+            func.count().label("count"),
+        ).group_by(models.SpeciesDetectionJob.status)
+
+        result = await session.execute(stmt)
+        rows = result.all()
+
+        # Map status to counts
+        counts = {row.status: row.count for row in rows}
+
+        return schemas.JobQueueStatus(
+            pending=counts.get(models.SpeciesDetectionJobStatus.PENDING, 0),
+            running=counts.get(models.SpeciesDetectionJobStatus.RUNNING, 0),
+            completed=counts.get(models.SpeciesDetectionJobStatus.COMPLETED, 0),
+            failed=counts.get(models.SpeciesDetectionJobStatus.FAILED, 0),
+        )
 
 
 foundation_models = FoundationModelAPI()

@@ -95,14 +95,14 @@ ModelRun
 
 ### 2.2 Database Configuration
 
-PostgreSQL support already exists in `back/src/whombat/system/database.py`:
+PostgreSQL support already exists in `back/src/echoroo/system/database.py`:
 - `postgresql+asyncpg` for async operations
 - `postgresql+psycopg2` for sync operations
 - Environment-based configuration via `WHOMBAT_DB_*` settings
 
 ### 2.3 Audio Processing
 
-`back/src/whombat/api/audio.py` provides:
+`back/src/echoroo/api/audio.py` provides:
 - `load_audio()`: Load audio with resampling, filtering
 - Uses `torchaudio.functional.resample()` for sample rate conversion
 - Returns `xarray.DataArray` with metadata
@@ -254,12 +254,12 @@ ALTER TABLE model_run ADD COLUMN IF NOT EXISTS sample_rate INTEGER;
 ### 4.2 SQLAlchemy Models
 
 ```python
-# back/src/whombat/models/embedding.py
+# back/src/echoroo/models/embedding.py
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import ForeignKey, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from whombat.models.base import Base
+from echoroo.models.base import Base
 
 class ClipEmbedding(Base):
     """Embedding vector for a clip."""
@@ -390,8 +390,8 @@ class EmbeddingSearchResult(BaseModel):
 
 **Files to modify:**
 - `docker-compose.yml`
-- `back/src/whombat/system/settings.py`
-- `back/src/whombat/system/database.py`
+- `back/src/echoroo/system/settings.py`
+- `back/src/echoroo/system/database.py`
 - Add migration guide documentation
 
 ### Phase 2: Core Inference Infrastructure (3-4 days)
@@ -401,16 +401,16 @@ class EmbeddingSearchResult(BaseModel):
 **Tasks:**
 1. Create new models: `InferenceJob`, `ClipEmbedding`, `SoundEventEmbedding`
 2. Create Alembic migrations
-3. Implement inference job API (`back/src/whombat/api/inference.py`)
-4. Implement inference routes (`back/src/whombat/routes/inference.py`)
+3. Implement inference job API (`back/src/echoroo/api/inference.py`)
+4. Implement inference routes (`back/src/echoroo/routes/inference.py`)
 5. Add background task processing (using asyncio or Celery)
 
 **New files:**
-- `back/src/whombat/models/embedding.py`
-- `back/src/whombat/models/inference_job.py`
-- `back/src/whombat/api/inference.py`
-- `back/src/whombat/routes/inference.py`
-- `back/src/whombat/schemas/inference.py`
+- `back/src/echoroo/models/embedding.py`
+- `back/src/echoroo/models/inference_job.py`
+- `back/src/echoroo/api/inference.py`
+- `back/src/echoroo/routes/inference.py`
+- `back/src/echoroo/schemas/inference.py`
 
 ### Phase 3: BirdNET Integration (4-5 days)
 
@@ -428,9 +428,9 @@ class EmbeddingSearchResult(BaseModel):
 7. Extract and store embeddings
 
 **New files:**
-- `back/src/whombat/ml/__init__.py`
-- `back/src/whombat/ml/birdnet.py`
-- `back/src/whombat/ml/base.py` (abstract model interface)
+- `back/src/echoroo/ml/__init__.py`
+- `back/src/echoroo/ml/birdnet.py`
+- `back/src/echoroo/ml/base.py` (abstract model interface)
 
 **Dependencies:**
 ```
@@ -450,7 +450,7 @@ tensorflow>=2.15
 5. Store predictions and embeddings
 
 **New files:**
-- `back/src/whombat/ml/perch.py`
+- `back/src/echoroo/ml/perch.py`
 
 **Dependencies:**
 ```
@@ -470,8 +470,8 @@ tensorflow-hub
 4. Implement "find similar" functionality in frontend
 
 **New files:**
-- `back/src/whombat/api/embeddings.py`
-- `back/src/whombat/routes/embeddings.py`
+- `back/src/echoroo/api/embeddings.py`
+- `back/src/echoroo/routes/embeddings.py`
 
 ### Phase 6: Frontend Integration (3-4 days)
 

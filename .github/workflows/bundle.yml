@@ -48,33 +48,33 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: frontend
-          path: back/src/whombat/statics/
+          path: back/src/echoroo/statics/
 
       - name: Retrieve built user guide
         uses: actions/download-artifact@v4
         with:
           name: user_guide
-          path: back/src/whombat/user_guide/
+          path: back/src/echoroo/user_guide/
 
       - name: Bundle app (Windows)
         if: ${{ matrix.os == 'windows-latest' }}
         shell: pwsh
         run: |
           scripts/bundle_windows.ps1
-          mv "dist\whombat.zip" "dist\whombat-${{ matrix.os }}-${{ github.ref_name }}.zip"
+          mv "dist\echoroo.zip" "dist\echoroo-${{ matrix.os }}-${{ github.ref_name }}.zip"
 
       - name: Bundle app (Linux/macOS)
         if: ${{ matrix.os == 'ubuntu-20.04' || matrix.os == 'macos-13' }}
         run: |
           bash scripts/bundle_linux.sh
-          mv dist/whombat.zip "dist/whombat-${{ matrix.os }}-${{ github.ref_name }}.zip"
+          mv dist/echoroo.zip "dist/echoroo-${{ matrix.os }}-${{ github.ref_name }}.zip"
 
       # Only run if triggered by user
       - uses: actions/upload-artifact@v4
         if: ${{ github.event_name == 'workflow_dispatch' }}
         with:
           name: "${{ matrix.os }}-${{ github.ref_name }}" # Include ref_name for better organization
-          path: "dist/whombat-${{ matrix.os }}-${{ github.ref_name }}.zip"
+          path: "dist/echoroo-${{ matrix.os }}-${{ github.ref_name }}.zip"
 
       # Only run if release
       - name: Upload release
@@ -82,4 +82,4 @@ jobs:
         uses: shogo82148/actions-upload-release-asset@v1
         with:
           upload_url: ${{ github.event.release.upload_url }}
-          asset_path: "dist/whombat-${{ matrix.os }}-${{ github.ref_name }}.zip"
+          asset_path: "dist/echoroo-${{ matrix.os }}-${{ github.ref_name }}.zip"

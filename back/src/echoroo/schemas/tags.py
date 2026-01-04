@@ -29,7 +29,7 @@ class TagCreate(BaseModel):
 class Tag(BaseSchema):
     """Schema for Tag objects returned to the user."""
 
-    id: int = Field(..., exclude=True)
+    id: int
     """Database ID of the tag."""
 
     key: str
@@ -40,6 +40,9 @@ class Tag(BaseSchema):
 
     canonical_name: str
     """Human readable representation of the tag."""
+
+    vernacular_name: str | None = None
+    """Vernacular (common) name for species tags."""
 
 
 class TagUpdate(BaseModel):

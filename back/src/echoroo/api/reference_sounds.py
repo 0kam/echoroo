@@ -1,10 +1,16 @@
 """Python API for Reference Sounds."""
 
+import io
 import logging
+import tempfile
+from pathlib import Path
 from typing import Sequence
 from uuid import UUID
 
 import httpx
+import numpy as np
+import soundfile as sf
+from numpy.typing import NDArray
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -60,8 +66,17 @@ class ReferenceSoundAPI(
         session: AsyncSession,
         ml_project_id: int,
     ) -> models.MLProject:
-        """Get ML project by ID."""
-        ml_project = await session.get(models.MLProject, ml_project_id)
+        """Get ML project by ID with embedding_model_run loaded."""
+        from sqlalchemy import select
+        from sqlalchemy.orm import selectinload
+
+        stmt = (
+            select(models.MLProject)
+            .where(models.MLProject.id == ml_project_id)
+            .options(selectinload(models.MLProject.embedding_model_run))
+        )
+        result = await session.execute(stmt)
+        ml_project = result.unique().scalar_one_or_none()
         if ml_project is None:
             raise exceptions.NotFoundError(
                 f"ML Project with id {ml_project_id} not found"
@@ -364,12 +379,40 @@ class ReferenceSoundAPI(
         obj: schemas.ReferenceSound,
         *,
         user: models.User | schemas.SimpleUser | None = None,
+        audio_dir: Path | None = None,
     ) -> schemas.ReferenceSound:
         """Compute or recompute embedding for a reference sound.
 
-        This is a placeholder that would integrate with the ML pipeline
-        to compute embeddings from the audio.
+        This method loads audio from the source (Xeno-Canto, dataset clip,
+        or custom upload), extracts the segment defined by start_time/end_time,
+        runs the appropriate model (BirdNET or Perch) based on the ML project's
+        embedding_model_run to generate embeddings, and stores the result.
+
+        Parameters
+        ----------
+        session
+            SQLAlchemy AsyncSession.
+        obj
+            The reference sound to compute embedding for.
+        user
+            The user performing the operation.
+        audio_dir
+            Directory containing audio files (required for dataset clips).
+
+        Returns
+        -------
+        schemas.ReferenceSound
+            Updated reference sound with embedding.
+
+        Raises
+        ------
+        PermissionDeniedError
+            If user doesn't have edit permission.
+        InvalidDataError
+            If audio cannot be loaded from the source or model is not configured.
         """
+        from echoroo.system.settings import get_settings
+
         db_user = await self._resolve_user(session, user)
 
         db_obj = await common.get_object(
@@ -384,19 +427,678 @@ class ReferenceSoundAPI(
                 "You do not have permission to modify this reference sound"
             )
 
-        # TODO: Implement actual embedding computation
-        # This would:
-        # 1. Load the audio from the source (Xeno-Canto, clip, or uploaded file)
-        # 2. Extract the segment defined by start_time/end_time
-        # 3. Run the embedding model
-        # 4. Store the embedding
+        # Determine which model to use from ML project's embedding_model_run
+        embedding_model_run = ml_project.embedding_model_run
+        if embedding_model_run is None:
+            raise exceptions.InvalidDataError(
+                "ML Project does not have an embedding model configured. "
+                "Please run foundation model detection on the datasets first."
+            )
+
+        model_name = embedding_model_run.name.lower()
+
+        # Get audio directory from settings if not provided
+        if audio_dir is None:
+            settings = get_settings()
+            audio_dir = settings.audio_dir
+
+        # Load audio from the source
+        audio_data = await self._load_audio_from_source(
+            session, db_obj, audio_dir
+        )
+
+        # Compute embedding using the appropriate model
+        if "birdnet" in model_name:
+            from echoroo.ml.birdnet.constants import SAMPLE_RATE as BIRDNET_SAMPLE_RATE
+
+            # Extract the segment at BirdNET's sample rate (48kHz)
+            segment_audio = self._extract_segment(
+                audio_data["samples"],
+                audio_data["samplerate"],
+                db_obj.start_time,
+                db_obj.end_time,
+                target_samplerate=BIRDNET_SAMPLE_RATE,
+            )
+            embedding = await self._compute_birdnet_embedding(segment_audio)
+        elif "perch" in model_name:
+            from echoroo.ml.perch.constants import SAMPLE_RATE as PERCH_SAMPLE_RATE
+
+            # Extract the segment at Perch's sample rate (32kHz)
+            segment_audio = self._extract_segment(
+                audio_data["samples"],
+                audio_data["samplerate"],
+                db_obj.start_time,
+                db_obj.end_time,
+                target_samplerate=PERCH_SAMPLE_RATE,
+            )
+            embedding = await self._compute_perch_embedding(segment_audio)
+        else:
+            raise exceptions.InvalidDataError(
+                f"Unknown embedding model: {model_name}. "
+                "Supported models are 'birdnet' and 'perch'."
+            )
+
+        # Store the embedding
+        db_obj = await common.update_object(
+            session,
+            self._model,
+            self._get_pk_condition(obj.uuid),
+            embedding=embedding.tolist(),
+        )
 
         logger.info(
-            f"Embedding computation requested for reference sound {obj.uuid}. "
-            "This feature requires ML pipeline integration."
+            f"Computed embedding for reference sound {obj.uuid} "
+            f"using {model_name} model (dimension: {len(embedding)})"
         )
 
         return await self._build_schema(session, db_obj)
+
+    async def _load_audio_from_source(
+        self,
+        session: AsyncSession,
+        db_obj: models.ReferenceSound,
+        audio_dir: Path,
+    ) -> dict:
+        """Load audio data from the reference sound's source.
+
+        Parameters
+        ----------
+        session
+            SQLAlchemy AsyncSession.
+        db_obj
+            The reference sound database object.
+        audio_dir
+            Directory containing audio files.
+
+        Returns
+        -------
+        dict
+            Dictionary with 'samples' (np.ndarray) and 'samplerate' (int).
+
+        Raises
+        ------
+        InvalidDataError
+            If audio cannot be loaded from the source.
+        """
+        source = db_obj.source
+
+        if source == models.ReferenceSoundSource.XENO_CANTO:
+            return await self._load_xeno_canto_audio(db_obj.xeno_canto_id)
+
+        elif source == models.ReferenceSoundSource.DATASET_CLIP:
+            return await self._load_clip_audio(session, db_obj.clip_id, audio_dir)
+
+        elif source == models.ReferenceSoundSource.CUSTOM_UPLOAD:
+            return await self._load_custom_upload_audio(db_obj.audio_path, audio_dir)
+
+        else:
+            raise exceptions.InvalidDataError(
+                f"Unknown reference sound source: {source}"
+            )
+
+    async def _load_xeno_canto_audio(self, xc_id: str | None) -> dict:
+        """Download audio from Xeno-Canto.
+
+        Parameters
+        ----------
+        xc_id
+            Xeno-Canto recording ID (e.g., 'XC123456').
+
+        Returns
+        -------
+        dict
+            Dictionary with 'samples' and 'samplerate'.
+        """
+        if not xc_id:
+            raise exceptions.InvalidDataError(
+                "Xeno-Canto ID is required for Xeno-Canto reference sounds"
+            )
+
+        # Extract numeric ID from XC format
+        xc_num = xc_id.upper()
+        if xc_num.startswith("XC"):
+            xc_num = xc_num[2:]
+
+        download_url = f"https://xeno-canto.org/{xc_num}/download"
+
+        logger.info(f"Downloading Xeno-Canto audio from {download_url}")
+
+        async with httpx.AsyncClient(follow_redirects=True, timeout=60.0) as client:
+            response = await client.get(download_url)
+            if response.status_code != 200:
+                raise exceptions.InvalidDataError(
+                    f"Failed to download Xeno-Canto recording {xc_id}: "
+                    f"HTTP {response.status_code}"
+                )
+
+            audio_bytes = response.content
+
+        # Load audio from bytes
+        with io.BytesIO(audio_bytes) as audio_buffer:
+            samples, samplerate = sf.read(audio_buffer)
+
+        # Ensure mono
+        if len(samples.shape) > 1:
+            samples = np.mean(samples, axis=1)
+
+        return {"samples": samples.astype(np.float32), "samplerate": samplerate}
+
+    async def _load_clip_audio(
+        self,
+        session: AsyncSession,
+        clip_id: int | None,
+        audio_dir: Path,
+    ) -> dict:
+        """Load audio from a dataset clip.
+
+        Parameters
+        ----------
+        session
+            SQLAlchemy AsyncSession.
+        clip_id
+            The clip database ID.
+        audio_dir
+            Directory containing audio files.
+
+        Returns
+        -------
+        dict
+            Dictionary with 'samples' and 'samplerate'.
+        """
+        if not clip_id:
+            raise exceptions.InvalidDataError(
+                "Clip ID is required for dataset clip reference sounds"
+            )
+
+        # Load clip with recording relationship
+        stmt = (
+            select(models.Clip)
+            .options(selectinload(models.Clip.recording))
+            .where(models.Clip.id == clip_id)
+        )
+        result = await session.execute(stmt)
+        clip = result.scalar_one_or_none()
+
+        if clip is None:
+            raise exceptions.NotFoundError(f"Clip with id {clip_id} not found")
+
+        recording = clip.recording
+        if recording is None:
+            raise exceptions.InvalidDataError(
+                f"Clip {clip_id} has no associated recording"
+            )
+
+        # Load audio from recording file
+        audio_path = audio_dir / recording.path
+        if not audio_path.exists():
+            raise exceptions.InvalidDataError(
+                f"Audio file not found: {audio_path}"
+            )
+
+        samples, samplerate = sf.read(str(audio_path))
+
+        # Ensure mono
+        if len(samples.shape) > 1:
+            samples = np.mean(samples, axis=1)
+
+        return {"samples": samples.astype(np.float32), "samplerate": samplerate}
+
+    async def _load_custom_upload_audio(
+        self,
+        audio_path: str | None,
+        audio_dir: Path,
+    ) -> dict:
+        """Load audio from a custom upload.
+
+        Parameters
+        ----------
+        audio_path
+            Relative path to the uploaded audio file.
+        audio_dir
+            Directory containing audio files.
+
+        Returns
+        -------
+        dict
+            Dictionary with 'samples' and 'samplerate'.
+        """
+        if not audio_path:
+            raise exceptions.InvalidDataError(
+                "Audio path is required for custom upload reference sounds"
+            )
+
+        full_path = audio_dir / audio_path
+        if not full_path.exists():
+            raise exceptions.InvalidDataError(
+                f"Audio file not found: {full_path}"
+            )
+
+        samples, samplerate = sf.read(str(full_path))
+
+        # Ensure mono
+        if len(samples.shape) > 1:
+            samples = np.mean(samples, axis=1)
+
+        return {"samples": samples.astype(np.float32), "samplerate": samplerate}
+
+    def _extract_segment(
+        self,
+        samples: NDArray[np.float32],
+        samplerate: int,
+        start_time: float,
+        end_time: float,
+        target_samplerate: int = 32000,
+    ) -> NDArray[np.float32]:
+        """Extract and resample a segment of audio.
+
+        Parameters
+        ----------
+        samples
+            Audio samples as numpy array.
+        samplerate
+            Sample rate of the input audio.
+        start_time
+            Start time in seconds.
+        end_time
+            End time in seconds.
+        target_samplerate
+            Target sample rate for output. Default is 32kHz (Perch requirement).
+
+        Returns
+        -------
+        NDArray[np.float32]
+            Extracted and resampled audio segment.
+        """
+        import torchaudio.functional as taF
+        import torch
+
+        # Calculate sample indices
+        start_sample = int(start_time * samplerate)
+        end_sample = int(end_time * samplerate)
+
+        # Clamp to valid range
+        start_sample = max(0, start_sample)
+        end_sample = min(len(samples), end_sample)
+
+        if start_sample >= end_sample:
+            raise exceptions.InvalidDataError(
+                f"Invalid time range: start={start_time}s, end={end_time}s"
+            )
+
+        # Extract segment
+        segment = samples[start_sample:end_sample]
+
+        # Resample if necessary
+        if samplerate != target_samplerate:
+            segment_tensor = torch.from_numpy(segment).unsqueeze(0)
+            resampled = taF.resample(segment_tensor, samplerate, target_samplerate)
+            segment = resampled.squeeze(0).numpy()
+
+        return segment.astype(np.float32)
+
+    async def _compute_perch_embedding(
+        self,
+        audio: NDArray[np.float32],
+    ) -> NDArray[np.float32]:
+        """Compute embedding using Perch model.
+
+        For segments longer than 5 seconds, splits into 5-second segments
+        and averages the embeddings.
+
+        Parameters
+        ----------
+        audio
+            Audio samples at 32kHz sample rate.
+
+        Returns
+        -------
+        NDArray[np.float32]
+            1536-dimensional embedding vector.
+        """
+        from echoroo.ml.perch.constants import (
+            EMBEDDING_DIM,
+            SAMPLE_RATE,
+            SEGMENT_DURATION,
+            SEGMENT_SAMPLES,
+        )
+        from echoroo.ml.perch.loader import PerchLoader
+        from echoroo.ml.perch.inference import PerchInference
+        from echoroo.system.settings import get_settings
+
+        from typing import Literal
+
+        # Get device setting
+        settings = get_settings()
+        device: Literal["GPU", "CPU"] = "GPU" if settings.ml_use_gpu else "CPU"
+
+        # Load Perch model (lazy loading with caching would be better in production)
+        loader = PerchLoader(device=device)
+        loader.load()
+
+        inference = PerchInference(
+            loader,
+            confidence_threshold=0.1,
+            device=device,
+        )
+
+        # Determine number of 5-second segments
+        total_samples = len(audio)
+        num_segments = max(1, int(np.ceil(total_samples / SEGMENT_SAMPLES)))
+
+        embeddings = []
+
+        for i in range(num_segments):
+            start_idx = i * SEGMENT_SAMPLES
+            end_idx = min(start_idx + SEGMENT_SAMPLES, total_samples)
+
+            segment = audio[start_idx:end_idx]
+
+            # Pad if necessary (must be exactly 5 seconds = 160000 samples)
+            if len(segment) < SEGMENT_SAMPLES:
+                padded = np.zeros(SEGMENT_SAMPLES, dtype=np.float32)
+                padded[:len(segment)] = segment
+                segment = padded
+
+            # Get embedding for this segment
+            result = inference.predict_segment(segment, start_time=0.0)
+            embeddings.append(result.embedding)
+
+        # Average embeddings if multiple segments
+        if len(embeddings) == 1:
+            embedding = embeddings[0]
+        else:
+            embeddings_array = np.stack(embeddings)
+            embedding = np.mean(embeddings_array, axis=0)
+
+        return embedding.astype(np.float32)
+
+    async def _compute_birdnet_embedding(
+        self,
+        audio: NDArray[np.float32],
+    ) -> NDArray[np.float32]:
+        """Compute embedding using BirdNET model.
+
+        For segments longer than 3 seconds, splits into 3-second segments
+        and averages the embeddings.
+
+        Parameters
+        ----------
+        audio
+            Audio samples at 48kHz sample rate.
+
+        Returns
+        -------
+        NDArray[np.float32]
+            1024-dimensional embedding vector.
+        """
+        from echoroo.ml.birdnet.constants import (
+            EMBEDDING_DIM,
+            SAMPLE_RATE,
+            SEGMENT_DURATION,
+            SEGMENT_SAMPLES,
+        )
+        from echoroo.ml.birdnet.loader import BirdNETLoader
+        from echoroo.ml.birdnet.inference import BirdNETInference
+        from echoroo.system.settings import get_settings
+
+        from typing import Literal
+
+        # Get device setting
+        settings = get_settings()
+        device: Literal["GPU", "CPU"] = "GPU" if settings.ml_use_gpu else "CPU"
+
+        # Load BirdNET model
+        loader = BirdNETLoader(device=device)
+        loader.load()
+
+        inference = BirdNETInference(
+            loader,
+            confidence_threshold=0.1,
+            device=device,
+        )
+
+        # Determine number of 3-second segments
+        total_samples = len(audio)
+        num_segments = max(1, int(np.ceil(total_samples / SEGMENT_SAMPLES)))
+
+        embeddings = []
+
+        for i in range(num_segments):
+            start_idx = i * SEGMENT_SAMPLES
+            end_idx = min(start_idx + SEGMENT_SAMPLES, total_samples)
+
+            segment = audio[start_idx:end_idx]
+
+            # Pad if necessary (must be exactly 3 seconds = 144000 samples)
+            if len(segment) < SEGMENT_SAMPLES:
+                padded = np.zeros(SEGMENT_SAMPLES, dtype=np.float32)
+                padded[:len(segment)] = segment
+                segment = padded
+
+            # Get embedding for this segment
+            result = inference.predict_segment(segment, start_time=0.0)
+            embeddings.append(result.embedding)
+
+        # Average embeddings if multiple segments
+        if len(embeddings) == 1:
+            embedding = embeddings[0]
+        else:
+            embeddings_array = np.stack(embeddings)
+            embedding = np.mean(embeddings_array, axis=0)
+
+        return embedding.astype(np.float32)
+
+    async def get_audio_bytes(
+        self,
+        session: AsyncSession,
+        obj: schemas.ReferenceSound,
+        *,
+        user: models.User | schemas.SimpleUser | None = None,
+        audio_dir: Path | None = None,
+    ) -> tuple[bytes, str]:
+        """Get audio bytes for a reference sound.
+
+        Parameters
+        ----------
+        session
+            SQLAlchemy AsyncSession.
+        obj
+            The reference sound.
+        user
+            The user making the request.
+        audio_dir
+            Directory containing audio files.
+
+        Returns
+        -------
+        tuple[bytes, str]
+            Audio bytes and content type.
+        """
+        from echoroo.system.settings import get_settings
+
+        db_user = await self._resolve_user(session, user)
+
+        db_obj = await common.get_object(
+            session,
+            self._model,
+            self._get_pk_condition(obj.uuid),
+        )
+        ml_project = await self._get_ml_project(session, db_obj.ml_project_id)
+
+        if not await can_view_ml_project(session, ml_project, db_user):
+            raise exceptions.NotFoundError(
+                f"Reference sound with uuid {obj.uuid} not found"
+            )
+
+        # Get audio directory from settings if not provided
+        if audio_dir is None:
+            settings = get_settings()
+            audio_dir = settings.audio_dir
+
+        source = db_obj.source
+
+        if source == models.ReferenceSoundSource.XENO_CANTO:
+            return await self._stream_xeno_canto_audio(db_obj.xeno_canto_id)
+
+        elif source == models.ReferenceSoundSource.DATASET_CLIP:
+            return await self._get_clip_audio_bytes(
+                session, db_obj.clip_id, audio_dir
+            )
+
+        elif source == models.ReferenceSoundSource.CUSTOM_UPLOAD:
+            return await self._get_custom_upload_bytes(db_obj.audio_path, audio_dir)
+
+        else:
+            raise exceptions.InvalidDataError(
+                f"Unknown reference sound source: {source}"
+            )
+
+    async def _stream_xeno_canto_audio(
+        self,
+        xc_id: str | None,
+    ) -> tuple[bytes, str]:
+        """Stream audio from Xeno-Canto.
+
+        Parameters
+        ----------
+        xc_id
+            Xeno-Canto recording ID.
+
+        Returns
+        -------
+        tuple[bytes, str]
+            Audio bytes and content type.
+        """
+        if not xc_id:
+            raise exceptions.InvalidDataError(
+                "Xeno-Canto ID is required for Xeno-Canto reference sounds"
+            )
+
+        # Extract numeric ID
+        xc_num = xc_id.upper()
+        if xc_num.startswith("XC"):
+            xc_num = xc_num[2:]
+
+        download_url = f"https://xeno-canto.org/{xc_num}/download"
+
+        async with httpx.AsyncClient(follow_redirects=True, timeout=60.0) as client:
+            response = await client.get(download_url)
+            if response.status_code != 200:
+                raise exceptions.InvalidDataError(
+                    f"Failed to download Xeno-Canto recording {xc_id}: "
+                    f"HTTP {response.status_code}"
+                )
+
+            content_type = response.headers.get("content-type", "audio/mpeg")
+            return response.content, content_type
+
+    async def _get_clip_audio_bytes(
+        self,
+        session: AsyncSession,
+        clip_id: int | None,
+        audio_dir: Path,
+    ) -> tuple[bytes, str]:
+        """Get audio bytes from a dataset clip.
+
+        Parameters
+        ----------
+        session
+            SQLAlchemy AsyncSession.
+        clip_id
+            The clip database ID.
+        audio_dir
+            Directory containing audio files.
+
+        Returns
+        -------
+        tuple[bytes, str]
+            Audio bytes and content type.
+        """
+        if not clip_id:
+            raise exceptions.InvalidDataError(
+                "Clip ID is required for dataset clip reference sounds"
+            )
+
+        stmt = (
+            select(models.Clip)
+            .options(selectinload(models.Clip.recording))
+            .where(models.Clip.id == clip_id)
+        )
+        result = await session.execute(stmt)
+        clip = result.scalar_one_or_none()
+
+        if clip is None:
+            raise exceptions.NotFoundError(f"Clip with id {clip_id} not found")
+
+        recording = clip.recording
+        if recording is None:
+            raise exceptions.InvalidDataError(
+                f"Clip {clip_id} has no associated recording"
+            )
+
+        audio_path = audio_dir / recording.path
+        if not audio_path.exists():
+            raise exceptions.InvalidDataError(f"Audio file not found: {audio_path}")
+
+        with open(audio_path, "rb") as f:
+            audio_bytes = f.read()
+
+        # Determine content type from extension
+        suffix = audio_path.suffix.lower()
+        content_type_map = {
+            ".mp3": "audio/mpeg",
+            ".wav": "audio/wav",
+            ".flac": "audio/flac",
+            ".ogg": "audio/ogg",
+            ".m4a": "audio/mp4",
+        }
+        content_type = content_type_map.get(suffix, "audio/mpeg")
+
+        return audio_bytes, content_type
+
+    async def _get_custom_upload_bytes(
+        self,
+        audio_path: str | None,
+        audio_dir: Path,
+    ) -> tuple[bytes, str]:
+        """Get audio bytes from a custom upload.
+
+        Parameters
+        ----------
+        audio_path
+            Relative path to the uploaded audio file.
+        audio_dir
+            Directory containing audio files.
+
+        Returns
+        -------
+        tuple[bytes, str]
+            Audio bytes and content type.
+        """
+        if not audio_path:
+            raise exceptions.InvalidDataError(
+                "Audio path is required for custom upload reference sounds"
+            )
+
+        full_path = audio_dir / audio_path
+        if not full_path.exists():
+            raise exceptions.InvalidDataError(f"Audio file not found: {full_path}")
+
+        with open(full_path, "rb") as f:
+            audio_bytes = f.read()
+
+        # Determine content type from extension
+        suffix = Path(audio_path).suffix.lower()
+        content_type_map = {
+            ".mp3": "audio/mpeg",
+            ".wav": "audio/wav",
+            ".flac": "audio/flac",
+            ".ogg": "audio/ogg",
+            ".m4a": "audio/mp4",
+        }
+        content_type = content_type_map.get(suffix, "audio/mpeg")
+
+        return audio_bytes, content_type
 
     async def update(
         self,
@@ -447,7 +1149,7 @@ class ReferenceSoundAPI(
                 session,
                 self._model,
                 self._get_pk_condition(obj.uuid),
-                update_data,
+                **update_data,
             )
 
         return await self._build_schema(session, db_obj)

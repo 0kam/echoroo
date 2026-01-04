@@ -32,6 +32,10 @@ export type ReferenceSoundFromClip = z.input<
   typeof schemas.ReferenceSoundFromClipSchema
 >;
 
+export type ReferenceSoundUpdate = z.input<
+  typeof schemas.ReferenceSoundUpdateSchema
+>;
+
 // ============================================================================
 // SearchSession Types
 // ============================================================================
@@ -72,6 +76,10 @@ export type CustomModelCreate = z.input<typeof schemas.CustomModelCreateSchema>;
 
 export type TrainingProgress = z.infer<typeof schemas.TrainingProgressSchema>;
 
+export type TrainingDataSourceType = z.infer<
+  typeof schemas.TrainingDataSourceTypeSchema
+>;
+
 // ============================================================================
 // InferenceBatch Types
 // ============================================================================
@@ -103,3 +111,29 @@ export type InferencePredictionReview = z.input<
 >;
 
 export type InferenceProgress = z.infer<typeof schemas.InferenceProgressSchema>;
+
+// ============================================================================
+// MLProject Dataset Scope Types
+// ============================================================================
+
+export type MLProjectDatasetScope = z.infer<
+  typeof schemas.MLProjectDatasetScopeSchema
+>;
+
+export type MLProjectDatasetScopeCreate = z.input<
+  typeof schemas.MLProjectDatasetScopeCreateSchema
+>;
+
+// ============================================================================
+// Curation Types
+// ============================================================================
+
+export type CurationLabel = z.infer<typeof schemas.CurationLabelSchema>;
+
+export type BulkCurateRequest = z.input<typeof schemas.BulkCurateRequestSchema>;
+
+export type ExportToAPRequest = z.input<typeof schemas.ExportToAPRequestSchema>;
+
+export type MLProjectAnnotationProject = z.infer<
+  typeof schemas.MLProjectAnnotationProjectSchema
+>;

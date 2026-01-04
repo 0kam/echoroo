@@ -17,7 +17,6 @@ import {
   getLabelPosition,
   getTagKey,
   getTagLabel,
-  getTagColor,
   type Color,
   type TagElement,
 } from "@/lib/utils/tags";
@@ -85,12 +84,14 @@ export type SoundEventSpectrogramTagsProps = {
   emptyMessage?: string;
 };
 
+const DEFAULT_COLOR: Color = { color: "stone", level: 3 };
+
 export function SoundEventSpectrogramTagsBase({
   soundEvent,
   viewport,
   dimensions,
   enabled = true,
-  tagColorFn = getTagColor,
+  tagColorFn,
   onRemoveTag,
   onAddTag,
   availableTags = [],
@@ -126,7 +127,7 @@ export function SoundEventSpectrogramTagsBase({
           <SpectrogramTag
             key={getTagKey(tag)}
             disabled={!enabled}
-            tagColorFn={tagColorFn}
+            tagColorFn={tagColorFn ?? (() => DEFAULT_COLOR)}
             onClick={() => onRemoveTag?.(soundEvent, tag)}
             tag={tag}
           />
@@ -137,6 +138,7 @@ export function SoundEventSpectrogramTagsBase({
           onSelectTag={(tag) => onAddTag?.(soundEvent, tag)}
           TagSearchBar={TagSearchComponent}
           tags={suggestions}
+          tagColorFn={tagColorFn}
           emptyMessage={emptyMessage ?? "No project tags available."}
           disabled={suggestions.length === 0}
           {...props}
@@ -149,7 +151,7 @@ export function SoundEventSpectrogramTagsBase({
 export function SpectrogramTag({
   tag,
   onClick,
-  tagColorFn = getTagColor,
+  tagColorFn,
   disabled = false,
 }: TagElement & { disabled?: boolean; tagColorFn: (tag: TagType) => Color }) {
   const color = tagColorFn(tag);
@@ -169,8 +171,15 @@ export function SpectrogramTag({
         <span className="hidden text-xs font-thin whitespace-nowrap opacity-0 transition-all group-hover:inline-block group-hover:opacity-100">
           {tag.key}
         </span>
-        <span className="hidden text-sm font-medium whitespace-nowrap opacity-0 transition-all group-hover:inline-block group-hover:opacity-100">
-          {getTagLabel(tag)}
+        <span className="hidden flex-col opacity-0 transition-all group-hover:inline-flex group-hover:opacity-100">
+          <span className="text-sm font-medium whitespace-nowrap">
+            {getTagLabel(tag)}
+          </span>
+          {tag.vernacular_name && (
+            <span className="text-xs text-stone-500 dark:text-stone-400 font-normal whitespace-nowrap">
+              {tag.vernacular_name}
+            </span>
+          )}
         </span>
         {!disabled && <CloseIcon className="inline-block w-3 h-3 stroke-2" />}
       </button>

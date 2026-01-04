@@ -107,6 +107,7 @@ from echoroo.schemas.inference import (
     InferenceJobCreate,
     InferenceJobUpdate,
     InferenceStatus,
+    JobQueueStatus,
 )
 from echoroo.schemas.metadata import (
     License,
@@ -193,6 +194,8 @@ from echoroo.schemas.users import (
 from echoroo.schemas.ml_projects import (
     MLProject,
     MLProjectCreate,
+    MLProjectDatasetScope,
+    MLProjectDatasetScopeCreate,
     MLProjectStatus,
     MLProjectStats,
     MLProjectUpdate,
@@ -206,7 +209,10 @@ from echoroo.schemas.reference_sounds import (
     ReferenceSoundUpdate,
 )
 from echoroo.schemas.search_sessions import (
+    BulkCurateRequest,
     BulkLabelRequest,
+    ExportToAnnotationProjectRequest,
+    ExportToAnnotationProjectResponse,
     SearchProgress,
     SearchResult,
     SearchResultLabel,
@@ -217,11 +223,17 @@ from echoroo.schemas.search_sessions import (
 from echoroo.schemas.custom_models import (
     CustomModel,
     CustomModelCreate,
+    CustomModelCreateStandalone,
     CustomModelMetrics,
     CustomModelStatus,
     CustomModelTrainingConfig,
     CustomModelType,
+    DatasetScope,
+    DatasetScopeCreate,
+    TrainingDataSource,
     TrainingProgress,
+    TrainingSource,
+    TrainingSourceCreate,
 )
 from echoroo.schemas.inference_batches import (
     InferenceBatch,
@@ -254,7 +266,18 @@ from echoroo.schemas.species_filters import (
     SpeciesFilterApplicationCreate,
     SpeciesFilterApplicationProgress,
     SpeciesFilterApplicationStatus,
+    SpeciesFilterResultItem,
+    SpeciesFilterResults,
     SpeciesFilterType,
+)
+from echoroo.schemas.foundation_model_conversion import (
+    ConvertToAnnotationProjectRequest,
+    ConvertToAnnotationProjectResponse,
+)
+from echoroo.schemas.detection_visualization import (
+    DetectionTemporalData,
+    HourlyDetection,
+    SpeciesTemporalData,
 )
 
 __all__ = [
@@ -405,6 +428,8 @@ __all__ = [
     # ML Projects
     "MLProject",
     "MLProjectCreate",
+    "MLProjectDatasetScope",
+    "MLProjectDatasetScopeCreate",
     "MLProjectStatus",
     "MLProjectStats",
     "MLProjectUpdate",
@@ -416,7 +441,10 @@ __all__ = [
     "ReferenceSoundSource",
     "ReferenceSoundUpdate",
     # Search Sessions
+    "BulkCurateRequest",
     "BulkLabelRequest",
+    "ExportToAnnotationProjectRequest",
+    "ExportToAnnotationProjectResponse",
     "SearchProgress",
     "SearchResult",
     "SearchResultLabel",
@@ -426,11 +454,17 @@ __all__ = [
     # Custom Models
     "CustomModel",
     "CustomModelCreate",
+    "CustomModelCreateStandalone",
     "CustomModelMetrics",
     "CustomModelStatus",
     "CustomModelTrainingConfig",
     "CustomModelType",
+    "DatasetScope",
+    "DatasetScopeCreate",
+    "TrainingDataSource",
     "TrainingProgress",
+    "TrainingSource",
+    "TrainingSourceCreate",
     # Inference Batches
     "InferenceBatch",
     "InferenceBatchCreate",
@@ -460,5 +494,14 @@ __all__ = [
     "SpeciesFilterApplicationCreate",
     "SpeciesFilterApplicationProgress",
     "SpeciesFilterApplicationStatus",
+    "SpeciesFilterResultItem",
+    "SpeciesFilterResults",
     "SpeciesFilterType",
+    # Foundation Model Conversion
+    "ConvertToAnnotationProjectRequest",
+    "ConvertToAnnotationProjectResponse",
+    # Detection Visualization
+    "DetectionTemporalData",
+    "HourlyDetection",
+    "SpeciesTemporalData",
 ]

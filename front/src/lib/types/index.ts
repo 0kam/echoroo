@@ -34,3 +34,4 @@ export type * from "./metadata";
 export type * from "./inference";
 export type * from "./ml_project";
 export type * from "./foundation_model";
+export type * from "./species_filter";

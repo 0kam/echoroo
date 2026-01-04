@@ -14,6 +14,11 @@ WORKDIR /code
 COPY README.md ./
 COPY src/ ./src/
 
+# Upgrade TensorFlow for GPU compatibility with PyTorch's CUDA libraries
+# TensorFlow 2.18+ works with cuDNN 9.x which PyTorch 2.9+ requires
+# nvidia-cuda-nvcc-cu12 provides libdevice.10.bc needed for XLA JIT compilation
+RUN pip install --no-cache-dir --upgrade tensorflow==2.18.1 nvidia-cuda-nvcc-cu12
+
 # Install the project itself (fast - dependencies already installed)
 RUN pip install -e . --no-deps
 
@@ -21,8 +26,7 @@ VOLUME ["/data"]
 
 ENV ECHOROO_AUDIO_DIR=/audio \
     ECHOROO_HOST="0.0.0.0" \
-    ECHOROO_DOMAIN="localhost" \
-    ECHOROO_DB_URL="sqlite+aiosqlite:////data/echoroo.db"
+    ECHOROO_DOMAIN="localhost"
 
 # Default command for development
 CMD ["python", "-m", "echoroo"]

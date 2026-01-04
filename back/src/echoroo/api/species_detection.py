@@ -315,6 +315,7 @@ class SpeciesDetectionJobAPI(
             use_metadata_filter=data.use_metadata_filter,
             custom_species_list=data.custom_species_list,
             recording_filters=data.recording_filters.model_dump() if data.recording_filters else None,
+            locale=data.locale,
         )
 
         return await self._build_schema(session, db_obj)

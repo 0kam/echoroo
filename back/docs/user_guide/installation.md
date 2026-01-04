@@ -1,19 +1,19 @@
 # Installation
 
-Getting Whombat up and running is a breeze! We offer two straightforward methods
+Getting Echoroo up and running is a breeze! We offer two straightforward methods
 to suit your preferences and needs.
 
-??? note "Whombat on the cloud"
+??? note "Echoroo on the cloud"
 
     Interested in hosting a publicly accessible and collaborative instance of
-    Whombat? Let us know, and we'll be more than happy to guide you through the
+    Echoroo? Let us know, and we'll be more than happy to guide you through the
     process.
 
 ## Installation Methods
 
 ### 🐳 Docker (Recommended)
 
-The easiest and most reliable way to run Whombat is using Docker. This method works on all platforms and ensures a consistent environment.
+The easiest and most reliable way to run Echoroo is using Docker. This method works on all platforms and ensures a consistent environment.
 
 **Prerequisites:**
 - [Docker Desktop](https://www.docker.com/products/docker-desktop/) installed on your system
@@ -22,36 +22,36 @@ The easiest and most reliable way to run Whombat is using Docker. This method wo
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/okamoto-group/echoroo.git
-cd whombat
+git clone https://github.com/okamoto/echoroo.git
+cd echoroo
 
 # 2. Configure settings
 cp .env.example .env
 # Edit .env to set your audio directory path
 
-# 3. Start Whombat
+# 3. Start Echoroo
 ./scripts/docker.sh start
 ```
 
-Whombat will be available at http://localhost:5000
+Echoroo will be available at http://localhost:5000
 
 For detailed Docker instructions, see our [Docker Guide](../../DOCKER.md).
 
 ### 📦 Standalone Executable
 
-Download our pre-packaged executable file for Windows, Mac OS, or Ubuntu from our GitHub repository's [releases](https://github.com/okamoto-group/echoroo/releases) section.
+Download our pre-packaged executable file for Windows, Mac OS, or Ubuntu from our GitHub repository's [releases](https://github.com/okamoto/echoroo/releases) section.
 
 This is a good option if you prefer not to use Docker and want a simple double-click installation.
 
 ### 🐍 Python Package
 
-If you're comfortable with Python and want to integrate Whombat into your Python environment:
+If you're comfortable with Python and want to integrate Echoroo into your Python environment:
 
 ```bash
-pip install whombat
+pip install echoroo
 ```
 
-This method is ideal for developers who want to customize Whombat or integrate it into their workflow.
+This method is ideal for developers who want to customize Echoroo or integrate it into their workflow.
 
 ??? tip "Which installation method should I choose?"
 
@@ -59,20 +59,20 @@ This method is ideal for developers who want to customize Whombat or integrate i
     - **Standalone Executable**: Good for users who want a simple desktop application.
     - **Python Package**: Best for developers and advanced users who need customization.
 
-## Running Whombat
+## Running Echoroo
 
-How you start Whombat depends on your installation method:
+How you start Echoroo depends on your installation method:
 
 ### Docker Installation
 
 ```bash
-# Start Whombat
+# Start Echoroo
 ./scripts/docker.sh start
 
 # View logs
 ./scripts/docker.sh logs
 
-# Stop Whombat
+# Stop Echoroo
 ./scripts/docker.sh stop
 ```
 
@@ -90,19 +90,19 @@ After the window displays the "ready" message, a browser will automatically open
 
 ### Python Package
 
-To start Whombat using the Python installation, run:
+To start Echoroo using the Python installation, run:
 
 ```bash
-python -m whombat
+python -m echoroo
 # or simply
-whombat
+echoroo
 ```
 
 Then open your browser and navigate to http://localhost:5000
 
 ## First User
 
-If this is your initial encounter with Whombat, you'll be greeted with a screen
+If this is your initial encounter with Echoroo, you'll be greeted with a screen
 to create your user profile. Please enter your details and set up your user
 account.
 
@@ -118,15 +118,15 @@ account.
 
 ## Login
 
-For returning users, Whombat welcomes you with a login form. Enter your username
-and password to access the home page. Whombat's user system supports multiple
+For returning users, Echoroo welcomes you with a login form. Enter your username
+and password to access the home page. Echoroo's user system supports multiple
 users, allowing for individual work tracking.
 
 ![login](../assets/img/login.png)
 
 ## Home Screen
 
-Welcome to the Whombat Home screen! After logging in, your view should resemble
+Welcome to the Echoroo Home screen! After logging in, your view should resemble
 the image below:
 
 ![login page](../assets/img/homepage.png)

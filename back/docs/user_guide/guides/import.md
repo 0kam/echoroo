@@ -1,30 +1,30 @@
-# Import Data to Whombat
+# Import Data to Echoroo
 
-**Whombat**'s import functionality is a key part of its ability to integrate with machine learning workflows.
+**Echoroo**'s import functionality is a key part of its ability to integrate with machine learning workflows.
 It offers several advantages:
 
-- **Collaboration and Sharing**: Easily share your work with others who have Whombat installed.
+- **Collaboration and Sharing**: Easily share your work with others who have Echoroo installed.
 - **Leveraging Existing Data**: Jumpstart your annotation projects by importing existing data.
-- **Closing the Loop with Machine Learning**: Import results and insights from your model development process back into Whombat.
+- **Closing the Loop with Machine Learning**: Import results and insights from your model development process back into Echoroo.
 
-This guide will provide a practical example of how to import data into Whombat.
+This guide will provide a practical example of how to import data into Echoroo.
 
 ## Getting Started with Example Data
 
-To help you explore Whombat's import functionality and see it in action, we've prepared a set of example data.
+To help you explore Echoroo's import functionality and see it in action, we've prepared a set of example data.
 This data includes:
 
 - **Bat Echolocation Recordings**: 10 audio recordings of bat echolocation calls sourced from Xeno-canto, a comprehensive online database of bird and bat sounds.
 - **Example Dataset**: A pre-defined dataset containing metadata for these recordings.
 - **Example Annotation Project**: An annotation project based on the example dataset, complete with annotations of bat calls.
 - **Example Evaluation Set**: An evaluation set derived from the annotation project, designed for assessing model performance.
-- **Example Model Run**: A set of model predictions on the evaluation set, showcasing how model outputs can be integrated into Whombat.
+- **Example Model Run**: A set of model predictions on the evaluation set, showcasing how model outputs can be integrated into Echoroo.
 
-By importing this example data, you can familiarize yourself with Whombat's interface and features without needing to create annotations from scratch.
+By importing this example data, you can familiarize yourself with Echoroo's interface and features without needing to create annotations from scratch.
 
 ## Downloading the Example Data
 
-1. **Visit the Whombat Repository**: Navigate to the Whombat repository on GitHub: https://github.com/okamoto-group/echoroo
+1. **Visit the Echoroo Repository**: Navigate to the Echoroo repository on GitHub: https://github.com/okamoto-group/echoroo
 2. **Download the Repository**: Click the green "Code" button and select "Download ZIP" from the dropdown menu.
       This will download the entire repository as a ZIP file to your computer.
 3. **Extract the ZIP File**: Once the download is complete, extract the contents of the ZIP file.
@@ -65,7 +65,7 @@ Let's begin the import process by bringing in the example dataset, which contain
 3. **Provide the Required Information**: The import dialog requires two pieces of information:
    - Dataset File: Select the `example_dataset.json` file located in the `example_data` folder.
    - Audio Directory (`audio_dir`): Specify the full path to the directory containing the example audio recordings.
-          For instance: `/home/user/Downloads/whombat/example_data/audio/`
+          For instance: `/home/user/Downloads/echoroo/example_data/audio/`
 4. **Import**: Once you've provided both the dataset file and the audio directory, click the "Import" button to begin the import process.
 
 ### Understanding the `audio_dir`
@@ -75,7 +75,7 @@ Dataset files store information about your recordings, including their file path
 However, to make datasets easily transferable between different computers, these paths are stored relative to the `audio_dir`.
 
 Think of the `audio_dir` as the root folder of your audio data.
-As long as the internal folder structure within the `audio_dir` matches the relative paths stored in the dataset file, Whombat can successfully locate and import your recordings, regardless of where the `audio_dir` is located on your machine.
+As long as the internal folder structure within the `audio_dir` matches the relative paths stored in the dataset file, Echoroo can successfully locate and import your recordings, regardless of where the `audio_dir` is located on your machine.
 
 **Example**:
 
@@ -105,7 +105,7 @@ Imagine your audio recordings are organized in the following structure:
 ```
 
 If you have a dataset file that references recordings within `project1`, and `project1` is your `audio_dir`, the entry for `recording1.wav` in the dataset file would have the relative path `site1/april/recording1.wav`.
-When importing this dataset into Whombat, you would specify the full path to the audio_dir: `/home/user/example_data/project1/` By correctly specifying the `audio_dir`, you ensure that Whombat can accurately locate and import your recordings.
+When importing this dataset into Echoroo, you would specify the full path to the audio_dir: `/home/user/example_data/project1/` By correctly specifying the `audio_dir`, you ensure that Echoroo can accurately locate and import your recordings.
 
 ## Import the Annotation Project
 
@@ -118,13 +118,10 @@ Once the dataset is successfully imported, you can proceed with importing the an
       The import process may take a few moments, especially for larger projects.
       Once the import is complete, you'll be redirected to the annotation project's detail page.
 
-Take some time to explore the imported annotation project.
-You can now utilize Whombat's exploration tools (accessible via the sidebar) to interact with the annotations and audio data.
-
 !!! warning "Import the dataset first"
 
     It's crucial to import the dataset **before** importing the annotation project.
-    This ensures that the recordings referenced in the annotation project are already registered in Whombat's database, allowing for a smooth import.
+    This ensures that the recordings referenced in the annotation project are already registered in Echoroo's database, allowing for a smooth import.
 
 ## Import the Evaluation Set
 
@@ -134,11 +131,11 @@ Importing the evaluation set follows a similar procedure:
 2. **Open the Import Dialog**: On the Evaluations page, click the "Import" button to open the import dialog.
 3. **Import the Evaluation Set**: Select the `example_evaluation_set.json` file and click the "Import" button.
 
-Once the import is complete, you can explore the evaluation set and its associated data within Whombat.
+Once the import is complete, you can explore the evaluation set and its associated data within Echoroo.
 
 ## Importing a Model Run
 
-Whombat allows you to import and evaluate model predictions by importing them as a "Model Run" within an Evaluation Set.
+Echoroo allows you to import and evaluate model predictions by importing them as a "Model Run" within an Evaluation Set.
 This enables you to compare your model's predictions against the ground truth annotations in the evaluation set and obtain a detailed performance report.
 
 Here's how you can import a Model Run:
@@ -153,5 +150,5 @@ Here's how you can import a Model Run:
 5. **Import the Model Run:** Select the `example_model_run.json` file and click the "Import" button.
 
 After importing the model run, you can initiate the evaluation process to assess its performance against the evaluation set.
-Whombat will generate a comprehensive report, including overall scores, detailed metrics, and a breakdown of individual predictions.
+Echoroo will generate a comprehensive report, including overall scores, detailed metrics, and a breakdown of individual predictions.
 You can then explore these results to gain insights into your model's strengths and weaknesses.

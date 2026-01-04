@@ -266,12 +266,17 @@ class RecordingAPI(
             # slow for large numbers of files or large files.
             all_data: list[dict | None] = results.get()
 
+        # Use return_all=True to ensure existing recordings are returned
+        # even if they were already in the database. This is important when
+        # adding the same files to multiple datasets or when a file was
+        # previously registered under a different dataset.
         recordings = await common.create_objects_without_duplicates(
             session,
             models.Recording,
             [rec for rec in all_data if rec is not None],
             key=lambda recording: recording.get("hash"),
             key_column=models.Recording.hash,
+            return_all=True,
         )
 
         return [schemas.Recording.model_validate(rec) for rec in recordings]

@@ -118,10 +118,10 @@ class SpeciesDetectionJobCreate(BaseModel):
     """Overlap between consecutive analysis windows (0.0 to 0.9)."""
 
     use_metadata_filter: bool = Field(
-        default=True,
-        description="Use eBird occurrence data to filter species",
+        default=False,
+        description="Apply species filters explicitly after the run",
     )
-    """Whether to filter predictions using location/date metadata."""
+    """Whether to apply species filters explicitly after the run."""
 
     custom_species_list: list[str] | None = Field(
         default=None,
@@ -134,6 +134,13 @@ class SpeciesDetectionJobCreate(BaseModel):
         description="Filters for selecting recordings",
     )
     """Optional filters to select which recordings to process."""
+
+    locale: str = Field(
+        default="en_us",
+        max_length=16,
+        description="Locale for species common names (e.g., 'en_us', 'ja')",
+    )
+    """Locale for species common names in model output."""
 
 
 class SpeciesDetectionJobUpdate(BaseModel):
@@ -182,8 +189,11 @@ class SpeciesDetectionJob(BaseSchema):
     overlap: float = 0.0
     """Overlap between analysis windows."""
 
-    use_metadata_filter: bool = True
-    """Whether eBird filtering was enabled."""
+    locale: str = "en_us"
+    """Locale for species common names."""
+
+    use_metadata_filter: bool = False
+    """Whether species filtering was requested for explicit post-processing."""
 
     custom_species_list: list[str] | None = None
     """Custom species list if specified."""

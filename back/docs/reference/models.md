@@ -1,11 +1,11 @@
 # Database Models
 
-Welcome to the comprehensive database models reference for **Whombat**! Here, you'll
+Welcome to the comprehensive database models reference for **Echoroo**! Here, you'll
 discover an organized collection of all the database models defined within the
-Whombat framework. Our categorization mirrors the structure outlined in
+Echoroo framework. Our categorization mirrors the structure outlined in
 [`soundevent`](https://mbsantiago.github.io/soundevent/data_schemas/).
 
-The models within **Whombat** share an analogical relationship with those in
+The models within **Echoroo** share an analogical relationship with those in
 `soundevent` and are essentially a **SQLAlchemy** port. While the core concepts remain
 consistent, it's essential to note that some minor differences do exist.
 
@@ -13,28 +13,28 @@ consistent, it's essential to note that some minor differences do exist.
 
 ### Users
 
-::: whombat.models.User
+::: echoroo.models.User
     options:
         heading_level: 4
         members: None
 
 ### Tags
 
-::: whombat.models.Tag
+::: echoroo.models.Tag
     options:
         heading_level: 4
         members: None
 
 ### Features
 
-::: whombat.models.FeatureName
+::: echoroo.models.FeatureName
     options:
         members: None
         heading_level: 4
 
 ### Notes
 
-::: whombat.models.Note
+::: echoroo.models.Note
     options:
         heading_level: 4
         members: None
@@ -43,39 +43,39 @@ consistent, it's essential to note that some minor differences do exist.
 
 ### Recordings
 
-::: whombat.models.Recording
+::: echoroo.models.Recording
     options:
         heading_level: 4
         members: None
 
-::: whombat.models.RecordingTag
+::: echoroo.models.RecordingTag
     options:
         heading_level: 4
         members: None
 
-::: whombat.models.RecordingNote
+::: echoroo.models.RecordingNote
     options:
         heading_level: 4
         members: None
 
-::: whombat.models.RecordingFeature
+::: echoroo.models.RecordingFeature
     options:
         heading_level: 4
         members: None
 
-::: whombat.models.RecordingOwner
+::: echoroo.models.RecordingOwner
     options:
         heading_level: 4
         members: None
 
 ### Datasets
 
-::: whombat.models.Dataset
+::: echoroo.models.Dataset
     options:
         heading_level: 4
         members: None
 
-::: whombat.models.DatasetRecording
+::: echoroo.models.DatasetRecording
     options:
         heading_level: 4
         members: None
@@ -84,24 +84,24 @@ consistent, it's essential to note that some minor differences do exist.
 
 ### Sound Events
 
-::: whombat.models.SoundEvent
+::: echoroo.models.SoundEvent
     options:
         heading_level: 4
         members: None
 
-::: whombat.models.SoundEventFeature
+::: echoroo.models.SoundEventFeature
     options:
         heading_level: 4
         members: None
 
 ### Clips
 
-::: whombat.models.Clip
+::: echoroo.models.Clip
     options:
         heading_level: 4
         members: None
 
-::: whombat.models.ClipFeature
+::: echoroo.models.ClipFeature
     options:
         heading_level: 4
         members: None
@@ -110,58 +110,58 @@ consistent, it's essential to note that some minor differences do exist.
 
 ### Sound Event Annotation
 
-::: whombat.models.SoundEventAnnotation
+::: echoroo.models.SoundEventAnnotation
     options:
         heading_level: 4
         members: None
 
-::: whombat.models.SoundEventAnnotationTag
+::: echoroo.models.SoundEventAnnotationTag
     options:
         heading_level: 4
         members: None
 
-::: whombat.models.SoundEventAnnotationNote
+::: echoroo.models.SoundEventAnnotationNote
     options:
         heading_level: 4
         members: None
 
 ### Clip Annotation
 
-::: whombat.models.ClipAnnotation
+::: echoroo.models.ClipAnnotation
     options:
         heading_level: 4
         members: None
 
-::: whombat.models.ClipAnnotationTag
+::: echoroo.models.ClipAnnotationTag
     options:
         heading_level: 4
         members: None
 
-::: whombat.models.ClipAnnotationNote
+::: echoroo.models.ClipAnnotationNote
     options:
         heading_level: 4
         members: None
 
 ### Annotation Task
 
-::: whombat.models.AnnotationTask
+::: echoroo.models.AnnotationTask
     options:
         heading_level: 4
         members: None
 
-::: whombat.models.AnnotationStatusBadge
+::: echoroo.models.AnnotationStatusBadge
     options:
         heading_level: 4
         members: None
 
 ### Annotation Project
 
-::: whombat.models.AnnotationProject
+::: echoroo.models.AnnotationProject
     options:
         heading_level: 4
         members: None
 
-::: whombat.models.AnnotationProjectTag
+::: echoroo.models.AnnotationProjectTag
     options:
         heading_level: 4
         members: None
@@ -170,38 +170,38 @@ consistent, it's essential to note that some minor differences do exist.
 
 ### Sound Event Prediction
 
-::: whombat.models.SoundEventPrediction
+::: echoroo.models.SoundEventPrediction
     options:
         heading_level: 4
         members: None
 
-::: whombat.models.SoundEventPredictionTag
+::: echoroo.models.SoundEventPredictionTag
     options:
         heading_level: 4
         members: None
 
 ### Clip Prediction
 
-::: whombat.models.ClipPrediction
+::: echoroo.models.ClipPrediction
     options:
         heading_level: 4
         members: None
 
-::: whombat.models.ClipPredictionTag
+::: echoroo.models.ClipPredictionTag
     options:
         heading_level: 4
         members: None
 
 ### Model Run
 
-::: whombat.models.ModelRun
+::: echoroo.models.ModelRun
     options:
         heading_level: 4
         members: None
 
 ### User Run
 
-::: whombat.models.UserRun
+::: echoroo.models.UserRun
     options:
         heading_level: 4
         members: None
@@ -210,53 +210,53 @@ consistent, it's essential to note that some minor differences do exist.
 
 ### Sound Event Evaluation
 
-::: whombat.models.SoundEventEvaluation
+::: echoroo.models.SoundEventEvaluation
     options:
         heading_level: 4
         members: None
 
-::: whombat.models.SoundEventEvaluationMetric
+::: echoroo.models.SoundEventEvaluationMetric
     options:
         heading_level: 4
         members: None
 
 ### Clip Evaluation
 
-::: whombat.models.ClipEvaluation
+::: echoroo.models.ClipEvaluation
     options:
         heading_level: 4
         members: None
 
-::: whombat.models.ClipEvaluationMetric
+::: echoroo.models.ClipEvaluationMetric
     options:
         heading_level: 4
         members: None
 
 ### Evaluation
 
-::: whombat.models.Evaluation
+::: echoroo.models.Evaluation
     options:
         heading_level: 4
         members: None
 
-::: whombat.models.EvaluationMetric
+::: echoroo.models.EvaluationMetric
     options:
         heading_level: 4
         members: None
 
 ### Evaluation Set
 
-::: whombat.models.EvaluationSet
+::: echoroo.models.EvaluationSet
     options:
         heading_level: 4
         members: None
 
-::: whombat.models.EvaluationSetTag
+::: echoroo.models.EvaluationSetTag
     options:
         heading_level: 4
         members: None
 
-::: whombat.models.EvaluationSetAnnotation
+::: echoroo.models.EvaluationSetAnnotation
     options:
         heading_level: 4
         members: None

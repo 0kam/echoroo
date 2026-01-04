@@ -55,6 +55,18 @@ const LABEL_CONFIG: Record<
     className: "bg-stone-500 hover:bg-stone-600 text-white border-stone-600",
     icon: <NextIcon className="w-5 h-5" />,
   },
+  positive_reference: {
+    label: "+ Ref",
+    shortcut: "+",
+    className: "bg-blue-600 hover:bg-blue-700 text-white border-blue-700",
+    icon: <CheckIcon className="w-5 h-5" />,
+  },
+  negative_reference: {
+    label: "- Ref",
+    shortcut: "-",
+    className: "bg-purple-600 hover:bg-purple-700 text-white border-purple-700",
+    icon: <CloseIcon className="w-5 h-5" />,
+  },
 };
 
 const SHORTCUTS: Shortcut[] = [

@@ -1,6 +1,6 @@
 # Adding New Models Guide
 
-新しい機械学習モデルをWhombat/EchorooのML推論システムに統合するための完全ガイド。
+新しい機械学習モデルをEchorooのML推論システムに統合するための完全ガイド。
 
 ## クイックスタートチェックリスト
 
@@ -46,7 +46,7 @@ Number of Species: 3500
 新しいモデル用のモジュールを作成：
 
 ```
-back/src/whombat/ml/
+back/src/echoroo/ml/
 └── mybird/
     ├── __init__.py          # モジュールの初期化とレジストリ登録
     ├── constants.py         # モデル定数
@@ -93,8 +93,8 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from whombat.ml.base import ModelLoader, ModelSpecification
-from whombat.ml.mybird.constants import (
+from echoroo.ml.base import ModelLoader, ModelSpecification
+from echoroo.ml.mybird.constants import (
     MYBIRD_VERSION,
     EMBEDDING_DIM,
     SAMPLE_RATE,
@@ -195,9 +195,9 @@ from typing import TYPE_CHECKING
 import numpy as np
 from numpy.typing import NDArray
 
-from whombat.ml.audio import validate_audio_segment
-from whombat.ml.base import InferenceEngine, InferenceResult
-from whombat.ml.mybird.constants import (
+from echoroo.ml.audio import validate_audio_segment
+from echoroo.ml.base import InferenceEngine, InferenceResult
+from echoroo.ml.mybird.constants import (
     EMBEDDING_DIM,
     SAMPLE_RATE,
     SEGMENT_DURATION,
@@ -205,7 +205,7 @@ from whombat.ml.mybird.constants import (
 )
 
 if TYPE_CHECKING:
-    from whombat.ml.mybird.loader import MyBirdLoader
+    from echoroo.ml.mybird.loader import MyBirdLoader
 
 logger = logging.getLogger(__name__)
 
@@ -392,7 +392,7 @@ class MyBirdInference(InferenceEngine):
 `__init__.py`を作成：
 
 ```python
-"""MyBird model integration for Whombat.
+"""MyBird model integration for Echoroo.
 
 This module provides functionality to load and use the MyBird model
 for bird species identification from audio recordings.
@@ -402,16 +402,16 @@ Model specifications:
 - Output: 768-dim embedding + species classification
 """
 
-from whombat.ml.mybird.constants import (
+from echoroo.ml.mybird.constants import (
     MYBIRD_VERSION,
     EMBEDDING_DIM,
     SAMPLE_RATE,
     SEGMENT_DURATION,
     SEGMENT_SAMPLES,
 )
-from whombat.ml.mybird.inference import MyBirdInference
-from whombat.ml.mybird.loader import MyBirdLoader
-from whombat.ml.registry import ModelRegistry
+from echoroo.ml.mybird.inference import MyBirdInference
+from echoroo.ml.mybird.loader import MyBirdLoader
+from echoroo.ml.registry import ModelRegistry
 
 __all__ = [
     # Constants
@@ -437,12 +437,12 @@ ModelRegistry.register(
 
 ### ステップ 7: モデルの有効化
 
-`back/src/whombat/ml/__init__.py`に新しいモデルをインポート：
+`back/src/echoroo/ml/__init__.py`に新しいモデルをインポート：
 
 ```python
 # Import model modules to trigger registration
-from whombat.ml import birdnet as birdnet  # noqa: F401
-from whombat.ml import mybird as mybird  # noqa: F401  # ADD THIS LINE
+from echoroo.ml import birdnet as birdnet  # noqa: F401
+from echoroo.ml import mybird as mybird  # noqa: F401  # ADD THIS LINE
 
 __all__ = [
     # ... existing exports
@@ -460,7 +460,7 @@ __all__ = [
 import numpy as np
 import pytest
 
-from whombat.ml.mybird import (
+from echoroo.ml.mybird import (
     MyBirdInference,
     MyBirdLoader,
     SAMPLE_RATE,
@@ -562,8 +562,8 @@ class TestMyBirdInference:
 import pytest
 from pathlib import Path
 
-from whombat.ml.worker import InferenceWorker
-from whombat.ml.registry import ModelRegistry
+from echoroo.ml.worker import InferenceWorker
+from echoroo.ml.registry import ModelRegistry
 
 
 def test_mybird_with_worker(tmp_path, db_session):
@@ -580,7 +580,7 @@ def test_mybird_with_worker(tmp_path, db_session):
     )
 
     # Worker should be able to load MyBird
-    from whombat.schemas import InferenceConfig
+    from echoroo.schemas import InferenceConfig
     config = InferenceConfig(
         model_name="mybird",
         model_version="1.0",
@@ -616,7 +616,7 @@ pip install mybird
 ### 使用例
 
 ```python
-from whombat.ml.mybird import MyBirdLoader, MyBirdInference
+from echoroo.ml.mybird import MyBirdLoader, MyBirdInference
 
 # Load model
 loader = MyBirdLoader()
@@ -635,7 +635,7 @@ results = inference.predict_file("/path/to/audio.wav")
 ### ファイル命名規則
 
 ```
-モジュール名: whombat.ml.<model_name>
+モジュール名: echoroo.ml.<model_name>
 クラス名: <ModelName>Loader, <ModelName>Inference
 定数ファイル: constants.py
 テストファイル: test_<model_name>.py
@@ -679,7 +679,7 @@ result = model.predict(audio)
 
 **解決策:**
 ```python
-from whombat.ml.audio import validate_audio_segment
+from echoroo.ml.audio import validate_audio_segment
 
 audio = validate_audio_segment(
     audio,
@@ -748,7 +748,7 @@ ModelRegistry.register(
 
 import time
 import numpy as np
-from whombat.ml.mybird import MyBirdLoader, MyBirdInference
+from echoroo.ml.mybird import MyBirdLoader, MyBirdInference
 
 # Load model
 loader = MyBirdLoader()
@@ -779,7 +779,7 @@ print(f"Batch time: {elapsed:.2f}s ({len(segments) / elapsed:.2f} segments/s)")
 モデルがワーカーで利用可能になるように、設定スキーマを確認：
 
 ```python
-# back/src/whombat/schemas/inference.py
+# back/src/echoroo/schemas/inference.py
 
 class InferenceConfig(BaseModel):
     """Configuration for inference jobs."""
@@ -812,12 +812,12 @@ if config.model_name == "mybird":
 ### モデルが見つからない
 
 ```python
->>> from whombat.ml.registry import ModelRegistry
+>>> from echoroo.ml.registry import ModelRegistry
 >>> ModelRegistry.available_models()
 []  # Empty! Model not registered
 ```
 
-**解決策:** `whombat.ml.__init__.py`にモデルをインポート
+**解決策:** `echoroo.ml.__init__.py`にモデルをインポート
 
 ### Import エラー
 
@@ -852,7 +852,7 @@ SEGMENT_DURATION = 1.0
 EMBEDDING_DIM = 128
 
 # loader.py
-from whombat.ml.base import ModelLoader, ModelSpecification
+from echoroo.ml.base import ModelLoader, ModelSpecification
 
 class SimpleLoader(ModelLoader):
     @property
@@ -871,7 +871,7 @@ class SimpleLoader(ModelLoader):
         return {"loaded": True}
 
 # inference.py
-from whombat.ml.base import InferenceEngine, InferenceResult
+from echoroo.ml.base import InferenceEngine, InferenceResult
 import numpy as np
 
 class SimpleInference(InferenceEngine):
@@ -893,7 +893,7 @@ class SimpleInference(InferenceEngine):
         ]
 
 # __init__.py
-from whombat.ml.registry import ModelRegistry
+from echoroo.ml.registry import ModelRegistry
 from .loader import SimpleLoader
 from .inference import SimpleInference
 
@@ -915,6 +915,6 @@ ModelRegistry.register(
 ## 参考資料
 
 - [ML Architecture Overview](./ML_ARCHITECTURE_OVERVIEW.md)
-- [whombat.ml.base module documentation](../src/whombat/ml/base.py)
-- [BirdNET implementation](../src/whombat/ml/birdnet/)
-- [Prediction Filters](../src/whombat/ml/filters/)
+- [echoroo.ml.base module documentation](../src/echoroo/ml/base.py)
+- [BirdNET implementation](../src/echoroo/ml/birdnet/)
+- [Prediction Filters](../src/echoroo/ml/filters/)

@@ -6,7 +6,7 @@ from typing import Sequence
 from uuid import UUID
 
 import numpy as np
-from sqlalchemy import func, select, text
+from sqlalchemy import func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlalchemy.sql import ColumnExpressionArgument
@@ -385,10 +385,6 @@ class SearchSessionAPI(
                 "Please compute embeddings for reference sounds first."
             )
 
-        # Average the embeddings
-        embeddings_array = np.array(embeddings)
-        query_embedding = np.mean(embeddings_array, axis=0).tolist()
-
         # Check that ML project has an embedding model run
         if not ml_project.embedding_model_run_id:
             raise exceptions.InvalidDataError(
@@ -396,44 +392,82 @@ class SearchSessionAPI(
                 "Please set an embedding model run for the project."
             )
 
-        # Convert embedding to string format for pgvector
-        embedding_str = "[" + ",".join(str(x) for x in query_embedding) + "]"
-
         # Get the dataset to filter clips
         dataset_id = ml_project.dataset_id
 
-        # Query for similar clips using pgvector cosine distance
-        search_query = text("""
-            WITH dataset_clips AS (
-                SELECT DISTINCT c.id as clip_id
-                FROM clip c
-                JOIN recording r ON c.recording_id = r.id
-                JOIN dataset_recording dr ON dr.recording_id = r.id
-                WHERE dr.dataset_id = :dataset_id
+        # Use MAX similarity across all reference embeddings
+        # For each clip, we take the maximum similarity score across all reference sounds
+        # This ensures clips that match ANY reference sound well will rank high
+
+        # Collect all results with max similarity per clip
+        all_results: dict[int, float] = {}  # clip_id -> max_similarity
+
+        for embedding in embeddings:
+            # Convert embedding to string format for pgvector
+            embedding_str = "[" + ",".join(str(x) for x in embedding) + "]"
+
+            # Query for similar clips using pgvector cosine distance
+            # We request more results than max_results since we'll merge later
+            search_query = text("""
+                WITH dataset_clips AS (
+                    SELECT DISTINCT c.id as clip_id
+                    FROM clip c
+                    JOIN recording r ON c.recording_id = r.id
+                    JOIN dataset_recording dr ON dr.recording_id = r.id
+                    WHERE dr.dataset_id = :dataset_id
+                )
+                SELECT
+                    ce.clip_id,
+                    1 - (ce.embedding <=> :query_embedding::vector) as similarity
+                FROM clip_embedding ce
+                JOIN dataset_clips dc ON dc.clip_id = ce.clip_id
+                WHERE ce.model_run_id = :model_run_id
+                AND 1 - (ce.embedding <=> :query_embedding::vector) >= :threshold
+                ORDER BY ce.embedding <=> :query_embedding::vector
+                LIMIT :query_limit
+            """)
+
+            search_result = await session.execute(
+                search_query,
+                {
+                    "query_embedding": embedding_str,
+                    "model_run_id": ml_project.embedding_model_run_id,
+                    "threshold": db_obj.similarity_threshold,
+                    # Request more results per embedding to ensure we capture all relevant clips
+                    "query_limit": db_obj.max_results * 2,
+                    "dataset_id": dataset_id,
+                },
             )
-            SELECT
-                ce.clip_id,
-                1 - (ce.embedding <=> :query_embedding::vector) as similarity
-            FROM clip_embedding ce
-            JOIN dataset_clips dc ON dc.clip_id = ce.clip_id
-            WHERE ce.model_run_id = :model_run_id
-            AND 1 - (ce.embedding <=> :query_embedding::vector) >= :threshold
-            ORDER BY ce.embedding <=> :query_embedding::vector
-            LIMIT :max_results
-        """)
 
-        search_result = await session.execute(
-            search_query,
-            {
-                "query_embedding": embedding_str,
-                "model_run_id": ml_project.embedding_model_run_id,
-                "threshold": db_obj.similarity_threshold,
-                "max_results": db_obj.max_results,
-                "dataset_id": dataset_id,
-            },
-        )
+            for row in search_result.fetchall():
+                clip_id = row.clip_id
+                similarity = row.similarity
+                # Keep the maximum similarity for each clip
+                if clip_id not in all_results:
+                    all_results[clip_id] = similarity
+                else:
+                    all_results[clip_id] = max(all_results[clip_id], similarity)
 
-        rows = search_result.fetchall()
+        # Sort by max similarity and take top N
+        sorted_results = sorted(
+            all_results.items(),
+            key=lambda x: x[1],
+            reverse=True,
+        )[:db_obj.max_results]
+
+        # Create a simple data class for row results
+        from dataclasses import dataclass
+
+        @dataclass
+        class SimilarityRow:
+            clip_id: int
+            similarity: float
+
+        # Convert to rows format for compatibility with existing code
+        rows = [
+            SimilarityRow(clip_id=clip_id, similarity=similarity)
+            for clip_id, similarity in sorted_results
+        ]
 
         # Create search results
         for rank, row in enumerate(rows, start=1):
@@ -747,6 +781,307 @@ class SearchSessionAPI(
             unlabeled=unlabeled,
             progress_percent=progress_percent,
         )
+
+    async def bulk_curate(
+        self,
+        session: AsyncSession,
+        search_session: schemas.SearchSession,
+        result_uuids: list[UUID],
+        label: str,
+        *,
+        user: models.User | schemas.SimpleUser,
+    ) -> list[schemas.SearchResult]:
+        """Bulk curate search results as positive or negative references.
+
+        This is used to select high-quality examples for further model
+        training or as references for active learning.
+
+        Parameters
+        ----------
+        session
+            SQLAlchemy AsyncSession.
+        search_session
+            The search session containing the results.
+        result_uuids
+            UUIDs of results to curate.
+        label
+            Curation label ('positive_reference' or 'negative_reference').
+        user
+            The user performing the curation.
+
+        Returns
+        -------
+        list[schemas.SearchResult]
+            Updated search results.
+        """
+        db_user = await self._resolve_user(session, user)
+        if db_user is None:
+            raise exceptions.PermissionDeniedError(
+                "Authentication required to curate results"
+            )
+
+        # Validate label is a valid curation label
+        valid_labels = [
+            models.SearchResultLabel.POSITIVE_REFERENCE.value,
+            models.SearchResultLabel.NEGATIVE_REFERENCE.value,
+        ]
+        if label not in valid_labels:
+            raise exceptions.InvalidDataError(
+                f"Invalid curation label '{label}'. Must be one of: {valid_labels}"
+            )
+
+        # Verify access
+        db_session = await common.get_object(
+            session,
+            self._model,
+            self._get_pk_condition(search_session.uuid),
+        )
+        ml_project = await self._get_ml_project(session, db_session.ml_project_id)
+        if not await can_edit_ml_project(session, ml_project, db_user):
+            raise exceptions.PermissionDeniedError(
+                "You do not have permission to curate results in this session"
+            )
+
+        # Update results
+        curated_results = []
+        for result_uuid in result_uuids:
+            try:
+                result = await self.label_result(
+                    session,
+                    result_uuid,
+                    schemas.SearchResultLabel(label),
+                    user=db_user,
+                )
+                curated_results.append(result)
+            except exceptions.NotFoundError:
+                logger.warning(
+                    f"Search result {result_uuid} not found during bulk curation"
+                )
+            except exceptions.PermissionDeniedError:
+                logger.warning(
+                    f"Permission denied for result {result_uuid} during bulk curation"
+                )
+
+        return curated_results
+
+    async def export_to_annotation_project(
+        self,
+        session: AsyncSession,
+        search_session: schemas.SearchSession,
+        name: str,
+        description: str,
+        include_labels: list[str],
+        *,
+        user: models.User | schemas.SimpleUser,
+    ) -> schemas.ExportToAnnotationProjectResponse:
+        """Export labeled search results to a new annotation project.
+
+        Creates a new annotation project and annotation tasks for each
+        clip from results with the specified labels.
+
+        Parameters
+        ----------
+        session
+            SQLAlchemy AsyncSession.
+        search_session
+            The search session containing the results.
+        name
+            Name for the new annotation project.
+        description
+            Description for the annotation project.
+        include_labels
+            List of labels to include (e.g., ['positive', 'positive_reference']).
+        user
+            The user performing the export.
+
+        Returns
+        -------
+        schemas.ExportToAnnotationProjectResponse
+            Response with the created annotation project details.
+        """
+        from echoroo.api.annotation_projects import annotation_projects
+        from echoroo.api.clips import clips
+
+        db_user = await self._resolve_user(session, user)
+        if db_user is None:
+            raise exceptions.PermissionDeniedError(
+                "Authentication required to export results"
+            )
+
+        # Verify access
+        db_session = await common.get_object(
+            session,
+            self._model,
+            self._get_pk_condition(search_session.uuid),
+        )
+        db_session = await self._eager_load_relationships(session, db_session)
+        ml_project = await self._get_ml_project(session, db_session.ml_project_id)
+
+        if not await can_edit_ml_project(session, ml_project, db_user):
+            raise exceptions.PermissionDeniedError(
+                "You do not have permission to export results from this session"
+            )
+
+        # Validate labels
+        valid_labels = {label.value for label in models.SearchResultLabel}
+        for label in include_labels:
+            if label not in valid_labels:
+                raise exceptions.InvalidDataError(
+                    f"Invalid label '{label}'. Valid labels: {valid_labels}"
+                )
+
+        # Get results with specified labels
+        label_enums = [models.SearchResultLabel(lbl) for lbl in include_labels]
+        results_query = (
+            select(models.SearchResult)
+            .where(models.SearchResult.search_session_id == db_session.id)
+            .where(models.SearchResult.label.in_(label_enums))
+        )
+        result = await session.execute(results_query)
+        db_results = result.scalars().all()
+
+        if not db_results:
+            raise exceptions.InvalidDataError(
+                f"No results found with labels: {include_labels}"
+            )
+
+        # Get the dataset_id from the ML project
+        dataset_id = ml_project.dataset_id
+        if dataset_id is None:
+            # Try to get from dataset scopes
+            if ml_project.dataset_scopes:
+                dataset_id = ml_project.dataset_scopes[0].dataset_id
+            else:
+                raise exceptions.InvalidDataError(
+                    "ML Project has no associated dataset"
+                )
+
+        # Create the annotation project
+        annotation_project = await annotation_projects.create(
+            session,
+            name=name,
+            description=description,
+            annotation_instructions=(
+                f"Review clips from search session: {db_session.name}. "
+                f"These clips were selected based on labels: {', '.join(include_labels)}"
+            ),
+            user=db_user,
+            dataset_id=dataset_id,
+        )
+
+        # Add the target tag to the annotation project
+        if db_session.target_tag:
+            tag_schema = schemas.Tag.model_validate(db_session.target_tag)
+            await annotation_projects.add_tag(
+                session,
+                annotation_project,
+                tag_schema,
+                user=db_user,
+            )
+
+        # Create annotation tasks for each result's clip
+        exported_count = 0
+        for db_result in db_results:
+            try:
+                # Get the clip schema
+                clip = await clips.get(session, db_result.clip.uuid)
+
+                # Add task to annotation project
+                await annotation_projects.add_task(
+                    session,
+                    annotation_project,
+                    clip,
+                    user=db_user,
+                )
+
+                # Update the search result to track which AP it was exported to
+                await common.update_object(
+                    session,
+                    models.SearchResult,
+                    models.SearchResult.uuid == db_result.uuid,
+                    {"saved_to_annotation_project_id": annotation_project.id},
+                )
+
+                exported_count += 1
+            except Exception as e:
+                logger.warning(
+                    f"Failed to export result {db_result.uuid} to annotation project: {e}"
+                )
+
+        logger.info(
+            f"Exported {exported_count} results from search session {search_session.uuid} "
+            f"to annotation project {annotation_project.uuid}"
+        )
+
+        return schemas.ExportToAnnotationProjectResponse(
+            annotation_project_uuid=annotation_project.uuid,
+            annotation_project_name=annotation_project.name,
+            exported_count=exported_count,
+            message=f"Successfully exported {exported_count} clips to annotation project '{name}'",
+        )
+
+    async def get_annotation_projects(
+        self,
+        session: AsyncSession,
+        ml_project_id: int,
+        *,
+        user: models.User | None = None,
+    ) -> list[schemas.AnnotationProject]:
+        """Get annotation projects created from this ML project's search sessions.
+
+        Parameters
+        ----------
+        session
+            SQLAlchemy AsyncSession.
+        ml_project_id
+            The ML project ID.
+        user
+            Optional user for access control.
+
+        Returns
+        -------
+        list[schemas.AnnotationProject]
+            List of annotation projects linked to this ML project.
+        """
+        from echoroo.api.annotation_projects import annotation_projects
+
+        db_user = await self._resolve_user(session, user)
+        ml_project = await self._get_ml_project(session, ml_project_id)
+
+        if not await can_view_ml_project(session, ml_project, db_user):
+            raise exceptions.NotFoundError(
+                f"ML Project with id {ml_project_id} not found"
+            )
+
+        # Find all annotation projects that have search results from this ML project
+        query = (
+            select(models.AnnotationProject.uuid)
+            .distinct()
+            .join(
+                models.SearchResult,
+                models.SearchResult.saved_to_annotation_project_id
+                == models.AnnotationProject.id,
+            )
+            .join(
+                models.SearchSession,
+                models.SearchSession.id == models.SearchResult.search_session_id,
+            )
+            .where(models.SearchSession.ml_project_id == ml_project_id)
+        )
+
+        result = await session.execute(query)
+        ap_uuids = [row[0] for row in result.fetchall()]
+
+        # Fetch full annotation project schemas
+        ap_list = []
+        for ap_uuid in ap_uuids:
+            try:
+                ap = await annotation_projects.get(session, ap_uuid, user=db_user)
+                ap_list.append(ap)
+            except exceptions.NotFoundError:
+                pass
+
+        return ap_list
 
 
 search_sessions = SearchSessionAPI()

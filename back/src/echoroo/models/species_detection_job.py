@@ -103,8 +103,11 @@ class SpeciesDetectionJob(Base):
     overlap: orm.Mapped[float] = orm.mapped_column(default=0.0)
     """Overlap fraction between consecutive analysis windows."""
 
-    use_metadata_filter: orm.Mapped[bool] = orm.mapped_column(default=True)
-    """Whether to use recording metadata to filter species list."""
+    locale: orm.Mapped[str] = orm.mapped_column(default="en_us")
+    """Locale for species common names (e.g., 'en_us', 'ja')."""
+
+    use_metadata_filter: orm.Mapped[bool] = orm.mapped_column(default=False)
+    """Whether to apply species filters explicitly after the run."""
 
     custom_species_list: orm.Mapped[Optional[list[str]]] = orm.mapped_column(
         JSON,

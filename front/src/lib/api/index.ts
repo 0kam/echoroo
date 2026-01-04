@@ -39,6 +39,8 @@ import { registerSearchSessionAPI } from "./search_sessions";
 import { registerCustomModelAPI } from "./custom_models";
 import { registerInferenceBatchAPI } from "./inference_batches";
 import { registerFoundationModelAPI } from "./foundation_models";
+import { registerSpeciesFiltersAPI } from "./species_filters";
+import { registerDetectionVisualizationAPI } from "./detection_visualization";
 
 type APIConfig = {
   baseURL: string;
@@ -93,5 +95,7 @@ export default function createAPI(config: APIConfig = DEFAULT_CONFIG) {
     customModels: registerCustomModelAPI(instance),
     inferenceBatches: registerInferenceBatchAPI(instance),
     foundationModels: registerFoundationModelAPI(instance),
+    speciesFilters: registerSpeciesFiltersAPI(instance),
+    detectionVisualization: registerDetectionVisualizationAPI(instance),
   } as const;
 }

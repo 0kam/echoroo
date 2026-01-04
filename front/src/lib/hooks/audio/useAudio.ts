@@ -61,7 +61,7 @@ export default function useAudio({
 
   useEffect(() => {
     const { current } = audio;
-    current.preload = "none";
+    current.preload = "auto";
     current.src = url;
     current.currentTime = 0;
 
@@ -163,6 +163,16 @@ export default function useAudio({
     return () => current.removeEventListener("seeking", handleSeeking);
   }, [onSeeking]);
 
+  // Sync time state after seeking completes to ensure correct position
+  useEffect(() => {
+    const { current } = audio;
+    const handleSeeked = () => {
+      setTime(current.currentTime);
+    };
+    current.addEventListener("seeked", handleSeeked);
+    return () => current.removeEventListener("seeked", handleSeeked);
+  }, []);
+
   useEffect(() => {
     if (onWaiting == null) return;
     const { current } = audio;
@@ -251,9 +261,18 @@ export default function useAudio({
 
   const handleSeek = useCallback(
     (time: number) => {
-      setTime(time);
+      const { current } = audio;
+      // Validate seek time against audio duration
+      // If duration is not available yet (NaN or Infinity), allow the seek
+      // as the browser will handle it when data becomes available
+      const duration = current.duration;
+      const validTime = !isNaN(duration) && isFinite(duration)
+        ? Math.max(0, Math.min(time, duration))
+        : Math.max(0, time);
+
+      setTime(validTime);
       onSeeking?.();
-      audio.current.currentTime = time;
+      current.currentTime = validTime;
     },
     [onSeeking],
   );

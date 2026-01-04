@@ -20,8 +20,7 @@ const _fixed: (keyof ReferenceSoundFilter)[] = [];
  * Custom hook for managing reference sounds for an ML project.
  *
  * This hook encapsulates the logic for querying, creating, deleting,
- * and managing reference sounds including computing embeddings and
- * toggling active state.
+ * and managing reference sounds including computing embeddings.
  */
 export default function useReferenceSounds({
   mlProjectUuid,
@@ -32,7 +31,6 @@ export default function useReferenceSounds({
   onCreateReferenceSound,
   onDeleteReferenceSound,
   onComputeEmbedding,
-  onToggleActive,
 }: {
   mlProjectUuid: string;
   filter?: ReferenceSoundFilter;
@@ -42,7 +40,6 @@ export default function useReferenceSounds({
   onCreateReferenceSound?: (referenceSound: ReferenceSound) => void;
   onDeleteReferenceSound?: (referenceSound: ReferenceSound) => void;
   onComputeEmbedding?: (referenceSound: ReferenceSound) => void;
-  onToggleActive?: (referenceSound: ReferenceSound) => void;
 } = { mlProjectUuid: "" }) {
   const queryClient = useQueryClient();
 
@@ -111,19 +108,6 @@ export default function useReferenceSounds({
     },
   });
 
-  const toggleActive = useMutation({
-    mutationFn: (uuid: string) =>
-      api.referenceSounds.toggleActive(mlProjectUuid, uuid),
-    onSuccess: (data) => {
-      toast.success(data.is_active ? "Reference sound activated" : "Reference sound deactivated");
-      onToggleActive?.(data);
-      queryClient.invalidateQueries({ queryKey });
-    },
-    onError: () => {
-      toast.error("Failed to toggle active state");
-    },
-  });
-
   return {
     ...query,
     items,
@@ -134,6 +118,5 @@ export default function useReferenceSounds({
     createFromClip,
     delete: delete_,
     computeEmbedding,
-    toggleActive,
   } as const;
 }

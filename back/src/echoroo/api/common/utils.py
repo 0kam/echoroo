@@ -9,7 +9,7 @@ from sqlalchemy import Result, Select, func, insert, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.inspection import inspect
-from sqlalchemy.orm import InstrumentedAttribute
+from sqlalchemy.orm import InstrumentedAttribute, lazyload
 from sqlalchemy.sql import ColumnExpressionArgument
 from sqlalchemy.sql.base import ExecutableOption
 from sqlalchemy.sql.expression import ColumnElement
@@ -539,12 +539,19 @@ async def get_objects_by_keys_batched(
     keys: Sequence[Any],
     batch_size: int = 200,
 ):
+    """Retrieve objects by their keys in batches.
+
+    Uses lazyload('*') to disable automatic joined loading, ensuring
+    that newly inserted objects can be retrieved immediately after flush
+    without requiring their related objects to be present in the session.
+    """
     created = []
     for batch in batched(keys, batch_size):
         subset, _ = await get_objects(
             session,
             model,
             filters=[key_column.in_(batch)],
+            options=[lazyload("*")],
             limit=None,
         )
         created.extend(subset)

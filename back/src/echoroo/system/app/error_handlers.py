@@ -75,6 +75,30 @@ async def data_integrity_error_handler(
     )
 
 
+async def invalid_data_error_handler(
+    _,
+    exc: exceptions.InvalidDataError,
+):
+    """Handle invalid data errors.
+
+    Parameters
+    ----------
+    _ : Request
+        The request that caused the exception (unused).
+    exc : exceptions.InvalidDataError
+        The exception that was raised.
+
+    Returns
+    -------
+    JSONResponse
+        A JSON response with a 400 status code and an error message.
+    """
+    return JSONResponse(
+        status_code=400,
+        content={"message": str(exc)},
+    )
+
+
 def add_error_handlers(app: FastAPI, settings: Settings):
     """Add error handlers to the FastAPI application.
 
@@ -91,4 +115,7 @@ def add_error_handlers(app: FastAPI, settings: Settings):
     )
     app.exception_handler(exceptions.DataIntegrityError)(
         data_integrity_error_handler
+    )
+    app.exception_handler(exceptions.InvalidDataError)(
+        invalid_data_error_handler
     )

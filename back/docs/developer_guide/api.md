@@ -1,3 +1,3 @@
-# Whombat Python API
+# Echoroo Python API
 
-::: whombat.api
+::: echoroo.api

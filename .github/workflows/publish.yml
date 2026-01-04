@@ -26,13 +26,13 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: frontend
-          path: back/src/whombat/statics/
+          path: back/src/echoroo/statics/
 
       - name: Retrieve built user guide
         uses: actions/download-artifact@v4
         with:
           name: user_guide
-          path: back/src/whombat/user_guide/
+          path: back/src/echoroo/user_guide/
 
       - name: Build a binary wheel and source tarball
         run: |
@@ -54,7 +54,7 @@ jobs:
 
     environment:
       name: pypi
-      url: https://pypi.org/p/whombat
+      url: https://pypi.org/p/echoroo
 
     permissions:
       id-token: write
@@ -102,7 +102,7 @@ jobs:
 
     environment:
       name: testpypi
-      url: https://test.pypi.org/p/whombat
+      url: https://test.pypi.org/p/echoroo
 
     permissions:
       id-token: write

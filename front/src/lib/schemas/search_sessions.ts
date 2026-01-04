@@ -13,6 +13,8 @@ export const SearchResultLabelSchema = z.enum([
   "negative",
   "uncertain",
   "skipped",
+  "positive_reference",
+  "negative_reference",
 ]);
 
 export type SearchResultLabel = z.infer<typeof SearchResultLabelSchema>;
@@ -95,6 +97,50 @@ export const SearchProgressSchema = z.object({
   uncertain: z.number().int(),
   skipped: z.number().int(),
   unlabeled: z.number().int(),
+  positive_reference: z.number().int().default(0),
+  negative_reference: z.number().int().default(0),
 });
 
 export type SearchProgress = z.infer<typeof SearchProgressSchema>;
+
+// Curation related schemas
+export const CurationLabelSchema = z.enum([
+  "positive",
+  "negative",
+  "uncertain",
+  "skipped",
+  "positive_reference",
+  "negative_reference",
+]);
+
+export type CurationLabel = z.infer<typeof CurationLabelSchema>;
+
+// Bulk curate request schema
+export const BulkCurateRequestSchema = z.object({
+  result_uuids: z.array(z.string().uuid()).min(1),
+  label: CurationLabelSchema,
+});
+
+export type BulkCurateRequest = z.infer<typeof BulkCurateRequestSchema>;
+
+// Export to annotation project request schema
+export const ExportToAPRequestSchema = z.object({
+  name: z.string().min(1, "Name is required"),
+  description: z.string().optional(),
+  include_labels: z.array(z.string()).min(1, "At least one label must be selected"),
+  search_session_uuid: z.string().uuid(),
+});
+
+export type ExportToAPRequest = z.infer<typeof ExportToAPRequestSchema>;
+
+// ML Project annotation project schema
+export const MLProjectAnnotationProjectSchema = z.object({
+  uuid: z.string().uuid(),
+  name: z.string(),
+  description: z.string(),
+  source_search_session_uuid: z.string().uuid().nullable(),
+  clip_count: z.number().int().default(0),
+  created_on: z.coerce.date(),
+});
+
+export type MLProjectAnnotationProject = z.infer<typeof MLProjectAnnotationProjectSchema>;

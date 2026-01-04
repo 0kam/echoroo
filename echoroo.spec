@@ -3,9 +3,9 @@
 from PyInstaller.utils.hooks import copy_metadata
 
 datas = [
-    ("back/src/whombat/migrations", "echoroo/migrations"),
-    ("back/src/whombat/statics", "echoroo/statics"),
-    ("back/src/whombat/user_guide", "echoroo/user_guide"),
+    ("back/src/echoroo/migrations", "echoroo/migrations"),
+    ("back/src/echoroo/statics", "echoroo/statics"),
+    ("back/src/echoroo/user_guide", "echoroo/user_guide"),
     ("back/alembic.ini", "."),
 ]
 

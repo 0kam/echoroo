@@ -6,13 +6,14 @@
  * Displays a list of reference sounds with spectrogram thumbnails.
  * Allows adding reference sounds from Xeno-Canto or dataset clips,
  * toggling active/inactive state, and deleting sounds.
+ *
+ * Uses spectrogram-based segment selection for precise time range selection.
  */
 import { useCallback, useContext, useState } from "react";
 import { useParams } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import toast from "react-hot-toast";
 import {
-  Plus,
   Music,
   Globe,
   Database,
@@ -20,22 +21,26 @@ import {
   ToggleRight,
   Trash2,
   ExternalLink,
-  Clock,
   CheckCircle,
   XCircle,
-  Play,
   Loader2,
+  X,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
 
 import api from "@/app/api";
+import TagSearchBar from "@/app/components/tags/TagSearchBar";
+import SpectrogramSegmentSelector from "@/app/components/ml_projects/SpectrogramSegmentSelector";
 
 import Button from "@/lib/components/ui/Button";
 import Card from "@/lib/components/ui/Card";
 import Empty from "@/lib/components/ui/Empty";
 import Loading from "@/lib/components/ui/Loading";
 import { DialogOverlay } from "@/lib/components/ui/Dialog";
+import TagComponent from "@/lib/components/tags/Tag";
 
-import type { ReferenceSound, ReferenceSoundFromXenoCanto, ReferenceSoundFromClip, Tag } from "@/lib/types";
+import type { ReferenceSound, Tag } from "@/lib/types";
 
 import MLProjectContext from "../context";
 
@@ -50,8 +55,6 @@ function ReferenceSoundCard({
   onToggle: () => void;
   onDelete: () => void;
 }) {
-  const [isPlaying, setIsPlaying] = useState(false);
-
   const sourceIcon = {
     xeno_canto: <Globe className="w-4 h-4" />,
     custom_upload: <Music className="w-4 h-4" />,
@@ -103,7 +106,10 @@ function ReferenceSoundCard({
           <span>{sourceLabel[sound.source]}</span>
           {sound.xeno_canto_id && (
             <a
-              href={sound.xeno_canto_url || `https://xeno-canto.org/${sound.xeno_canto_id}`}
+              href={
+                sound.xeno_canto_url ||
+                `https://xeno-canto.org/${sound.xeno_canto_id}`
+              }
               target="_blank"
               rel="noopener noreferrer"
               className="text-blue-500 hover:text-blue-600 inline-flex items-center gap-1"
@@ -153,7 +159,10 @@ function ReferenceSoundCard({
         <Button
           variant="danger"
           mode="text"
-          onClick={onDelete}
+          onClick={() => {
+            console.log("Delete button UI clicked");
+            onDelete();
+          }}
         >
           <Trash2 className="w-4 h-4" />
         </Button>
@@ -161,6 +170,10 @@ function ReferenceSoundCard({
     </Card>
   );
 }
+
+// Dialog step types
+type XenoCantoDialogStep = "info" | "select";
+type ClipDialogStep = "info" | "select";
 
 function AddFromXenoCantoDialog({
   isOpen,
@@ -173,39 +186,75 @@ function AddFromXenoCantoDialog({
   mlProjectUuid: string;
   onSuccess: () => void;
 }) {
+  // Step state
+  const [step, setStep] = useState<XenoCantoDialogStep>("info");
+
+  // Form state
   const [xenoCantoId, setXenoCantoId] = useState("");
   const [name, setName] = useState("");
-  const [tagId, setTagId] = useState<number | null>(null);
-  const [startTime, setStartTime] = useState("");
-  const [endTime, setEndTime] = useState("");
+  const [selectedTag, setSelectedTag] = useState<Tag | null>(null);
+
+  // Segment selection state
+  const [startTime, setStartTime] = useState<number>(0);
+  const [endTime, setEndTime] = useState<number>(5);
+  const [audioError, setAudioError] = useState<string | null>(null);
+
+  // Submission state
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // Fetch available tags
-  const { data: tagsData } = useQuery({
-    queryKey: ["tags"],
-    queryFn: () => api.tags.get({ limit: 100 }),
-  });
-  const tags = tagsData?.items || [];
+  // Audio URL for Xeno-Canto
+  // Note: This assumes a backend endpoint that proxies Xeno-Canto audio
+  const audioUrl =
+    step === "select" && xenoCantoId
+      ? `/api/v1/ml_projects/${mlProjectUuid}/reference_sounds/xeno_canto/${xenoCantoId}/audio`
+      : "";
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!xenoCantoId || !name || !tagId) return;
+  const handleTagSelect = useCallback((tag: Tag) => {
+    setSelectedTag(tag);
+  }, []);
+
+  const handleClearTag = useCallback(() => {
+    setSelectedTag(null);
+  }, []);
+
+  const handleLoadAudio = useCallback(() => {
+    if (!xenoCantoId || !name || !selectedTag?.id) return;
+    setAudioError(null);
+    setStep("select");
+  }, [xenoCantoId, name, selectedTag]);
+
+  const handleSegmentChange = useCallback(
+    (start: number, end: number) => {
+      setStartTime(start);
+      setEndTime(end);
+    },
+    [],
+  );
+
+  const handleBack = useCallback(() => {
+    setStep("info");
+  }, []);
+
+  const handleSubmit = async () => {
+    if (!xenoCantoId || !name || !selectedTag?.id) return;
 
     setIsSubmitting(true);
     try {
       await api.referenceSounds.createFromXenoCanto(mlProjectUuid, {
         xeno_canto_id: xenoCantoId,
         name,
-        tag_id: tagId,
-        start_time: startTime ? parseFloat(startTime) : undefined,
-        end_time: endTime ? parseFloat(endTime) : undefined,
+        tag_id: selectedTag.id,
+        start_time: startTime,
+        end_time: endTime,
       });
       toast.success("Reference sound added from Xeno-Canto");
+      // Reset state
       setXenoCantoId("");
       setName("");
-      setTagId(null);
-      setStartTime("");
-      setEndTime("");
+      setSelectedTag(null);
+      setStartTime(0);
+      setEndTime(5);
+      setStep("info");
       onSuccess();
       onClose();
     } catch (error) {
@@ -216,112 +265,212 @@ function AddFromXenoCantoDialog({
     }
   };
 
+  const handleClose = useCallback(() => {
+    // Reset state when closing
+    setStep("info");
+    setXenoCantoId("");
+    setName("");
+    setSelectedTag(null);
+    setStartTime(0);
+    setEndTime(5);
+    setAudioError(null);
+    onClose();
+  }, [onClose]);
+
+  const canProceedToSelect = xenoCantoId && name && selectedTag?.id;
+  const canSubmit = startTime < endTime && endTime - startTime >= 1;
+
   return (
     <DialogOverlay
-      title="Add from Xeno-Canto"
+      title={
+        step === "info"
+          ? "Add from Xeno-Canto"
+          : "Select Segment"
+      }
       isOpen={isOpen}
-      onClose={onClose}
+      onClose={handleClose}
     >
-      <form onSubmit={handleSubmit} className="w-[400px] space-y-4">
-        <div>
-          <label className="block text-sm font-medium text-stone-700 dark:text-stone-300 mb-1">
-            Xeno-Canto Recording ID
-          </label>
-          <input
-            type="text"
-            value={xenoCantoId}
-            onChange={(e) => setXenoCantoId(e.target.value)}
-            className="w-full px-3 py-2 border border-stone-300 dark:border-stone-600 rounded-lg bg-white dark:bg-stone-800 text-stone-900 dark:text-stone-100"
-            placeholder="e.g., 123456"
-            required
-          />
-          <p className="text-xs text-stone-500 mt-1">
-            Enter the numeric ID from xeno-canto.org
-          </p>
-        </div>
-
-        <div>
-          <label className="block text-sm font-medium text-stone-700 dark:text-stone-300 mb-1">
-            Name
-          </label>
-          <input
-            type="text"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            className="w-full px-3 py-2 border border-stone-300 dark:border-stone-600 rounded-lg bg-white dark:bg-stone-800 text-stone-900 dark:text-stone-100"
-            placeholder="Reference sound name"
-            required
-          />
-        </div>
-
-        <div>
-          <label className="block text-sm font-medium text-stone-700 dark:text-stone-300 mb-1">
-            Species Tag
-          </label>
-          <select
-            value={tagId || ""}
-            onChange={(e) => setTagId(Number(e.target.value) || null)}
-            className="w-full px-3 py-2 border border-stone-300 dark:border-stone-600 rounded-lg bg-white dark:bg-stone-800 text-stone-900 dark:text-stone-100"
-            required
+      <div className={step === "select" ? "w-[600px]" : "w-[400px]"}>
+        {/* Step indicator */}
+        <div className="flex items-center gap-2 mb-4">
+          <div
+            className={`flex items-center justify-center w-6 h-6 rounded-full text-xs font-medium ${
+              step === "info"
+                ? "bg-emerald-500 text-white"
+                : "bg-stone-200 dark:bg-stone-700 text-stone-600 dark:text-stone-400"
+            }`}
           >
-            <option value="">Select a tag</option>
-            {tags.map((tag: Tag) => (
-              <option key={`${tag.key}:${tag.value}`} value={tag.id}>
-                {tag.key}: {tag.value}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div className="grid grid-cols-2 gap-4">
-          <div>
-            <label className="block text-sm font-medium text-stone-700 dark:text-stone-300 mb-1">
-              Start Time (s)
-            </label>
-            <input
-              type="number"
-              step="0.01"
-              value={startTime}
-              onChange={(e) => setStartTime(e.target.value)}
-              className="w-full px-3 py-2 border border-stone-300 dark:border-stone-600 rounded-lg bg-white dark:bg-stone-800 text-stone-900 dark:text-stone-100"
-              placeholder="0.00"
-            />
+            1
           </div>
-          <div>
-            <label className="block text-sm font-medium text-stone-700 dark:text-stone-300 mb-1">
-              End Time (s)
-            </label>
-            <input
-              type="number"
-              step="0.01"
-              value={endTime}
-              onChange={(e) => setEndTime(e.target.value)}
-              className="w-full px-3 py-2 border border-stone-300 dark:border-stone-600 rounded-lg bg-white dark:bg-stone-800 text-stone-900 dark:text-stone-100"
-              placeholder="5.00"
-            />
+          <div className="flex-1 h-0.5 bg-stone-200 dark:bg-stone-700" />
+          <div
+            className={`flex items-center justify-center w-6 h-6 rounded-full text-xs font-medium ${
+              step === "select"
+                ? "bg-emerald-500 text-white"
+                : "bg-stone-200 dark:bg-stone-700 text-stone-600 dark:text-stone-400"
+            }`}
+          >
+            2
           </div>
         </div>
 
-        <div className="flex justify-end gap-2 pt-4">
-          <Button type="button" variant="secondary" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button
-            type="submit"
-            variant="primary"
-            disabled={!xenoCantoId || !name || !tagId || isSubmitting}
-          >
-            {isSubmitting ? (
-              <>
-                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                Adding...
-              </>
+        {step === "info" ? (
+          /* Step 1: Basic info */
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-stone-700 dark:text-stone-300 mb-1">
+                Xeno-Canto Recording ID
+              </label>
+              <input
+                type="text"
+                value={xenoCantoId}
+                onChange={(e) => setXenoCantoId(e.target.value)}
+                className="w-full px-3 py-2 border border-stone-300 dark:border-stone-600 rounded-lg bg-white dark:bg-stone-800 text-stone-900 dark:text-stone-100"
+                placeholder="e.g., 123456"
+              />
+              <p className="text-xs text-stone-500 mt-1">
+                Enter the numeric ID from xeno-canto.org
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-stone-700 dark:text-stone-300 mb-1">
+                Name
+              </label>
+              <input
+                type="text"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                className="w-full px-3 py-2 border border-stone-300 dark:border-stone-600 rounded-lg bg-white dark:bg-stone-800 text-stone-900 dark:text-stone-100"
+                placeholder="Reference sound name"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-stone-700 dark:text-stone-300 mb-1">
+                Species Tag
+              </label>
+              {selectedTag ? (
+                <div className="flex items-center gap-2 p-2 border border-stone-300 dark:border-stone-600 rounded-lg bg-stone-50 dark:bg-stone-800">
+                  <TagComponent
+                    tag={selectedTag}
+                    color="emerald"
+                    level={3}
+                    disabled
+                    className="pointer-events-none"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleClearTag}
+                    className="ml-auto p-1 text-stone-400 hover:text-stone-600 dark:hover:text-stone-300 rounded"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              ) : (
+                <TagSearchBar
+                  onSelectTag={handleTagSelect}
+                  onCreateTag={handleTagSelect}
+                />
+              )}
+            </div>
+
+            <div className="flex justify-end gap-2 pt-4">
+              <Button type="button" variant="secondary" onClick={handleClose}>
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                disabled={!canProceedToSelect}
+                onClick={handleLoadAudio}
+              >
+                Load Audio
+                <ChevronRight className="w-4 h-4 ml-1" />
+              </Button>
+            </div>
+          </div>
+        ) : (
+          /* Step 2: Segment selection */
+          <div className="space-y-4">
+            {audioError ? (
+              <div className="p-4 bg-red-50 dark:bg-red-900/20 rounded-lg text-red-600 dark:text-red-400">
+                <p className="font-medium">Failed to load audio</p>
+                <p className="text-sm mt-1">{audioError}</p>
+                <Button
+                  variant="secondary"
+                  className="mt-3"
+                  onClick={handleBack}
+                >
+                  <ChevronLeft className="w-4 h-4 mr-1" />
+                  Back
+                </Button>
+              </div>
             ) : (
-              "Add Reference Sound"
+              <>
+                <div className="p-3 bg-stone-50 dark:bg-stone-800 rounded-lg">
+                  <div className="flex items-center gap-4 text-sm">
+                    <div>
+                      <span className="text-stone-500 dark:text-stone-400">
+                        ID:
+                      </span>{" "}
+                      <span className="font-medium">{xenoCantoId}</span>
+                    </div>
+                    <div>
+                      <span className="text-stone-500 dark:text-stone-400">
+                        Name:
+                      </span>{" "}
+                      <span className="font-medium">{name}</span>
+                    </div>
+                    {selectedTag && (
+                      <TagComponent
+                        tag={selectedTag}
+                        color="emerald"
+                        level={3}
+                        disabled
+                        className="pointer-events-none"
+                      />
+                    )}
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-stone-700 dark:text-stone-300 mb-2">
+                    Select Audio Segment
+                  </label>
+                  <SpectrogramSegmentSelector
+                    audioUrl={audioUrl}
+                    onSegmentChange={handleSegmentChange}
+                    initialStartTime={startTime}
+                    initialEndTime={endTime}
+                    height={180}
+                  />
+                </div>
+
+                <div className="flex justify-between gap-2 pt-4">
+                  <Button variant="secondary" onClick={handleBack}>
+                    <ChevronLeft className="w-4 h-4 mr-1" />
+                    Back
+                  </Button>
+                  <Button
+                    variant="primary"
+                    disabled={!canSubmit || isSubmitting}
+                    onClick={handleSubmit}
+                  >
+                    {isSubmitting ? (
+                      <>
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        Adding...
+                      </>
+                    ) : (
+                      "Add Reference Sound"
+                    )}
+                  </Button>
+                </div>
+              </>
             )}
-          </Button>
-        </div>
-      </form>
+          </div>
+        )}
+      </div>
     </DialogOverlay>
   );
 }
@@ -337,39 +486,74 @@ function AddFromClipDialog({
   mlProjectUuid: string;
   onSuccess: () => void;
 }) {
-  const [clipId, setClipId] = useState("");
+  // Step state
+  const [step, setStep] = useState<ClipDialogStep>("info");
+
+  // Form state
+  const [clipUuid, setClipUuid] = useState("");
   const [name, setName] = useState("");
-  const [tagId, setTagId] = useState<number | null>(null);
-  const [startTime, setStartTime] = useState("");
-  const [endTime, setEndTime] = useState("");
+  const [selectedTag, setSelectedTag] = useState<Tag | null>(null);
+
+  // Segment selection state
+  const [startTime, setStartTime] = useState<number>(0);
+  const [endTime, setEndTime] = useState<number>(5);
+  const [audioError, setAudioError] = useState<string | null>(null);
+
+  // Submission state
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // Fetch available tags
-  const { data: tagsData } = useQuery({
-    queryKey: ["tags"],
-    queryFn: () => api.tags.get({ limit: 100 }),
-  });
-  const tags = tagsData?.items || [];
+  // Audio URL for clip
+  const audioUrl =
+    step === "select" && clipUuid
+      ? `/api/v1/clips/${clipUuid}/audio`
+      : "";
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!clipId || !name || !tagId) return;
+  const handleTagSelect = useCallback((tag: Tag) => {
+    setSelectedTag(tag);
+  }, []);
+
+  const handleClearTag = useCallback(() => {
+    setSelectedTag(null);
+  }, []);
+
+  const handleLoadAudio = useCallback(() => {
+    if (!clipUuid || !name || !selectedTag?.id) return;
+    setAudioError(null);
+    setStep("select");
+  }, [clipUuid, name, selectedTag]);
+
+  const handleSegmentChange = useCallback(
+    (start: number, end: number) => {
+      setStartTime(start);
+      setEndTime(end);
+    },
+    [],
+  );
+
+  const handleBack = useCallback(() => {
+    setStep("info");
+  }, []);
+
+  const handleSubmit = async () => {
+    if (!clipUuid || !name || !selectedTag?.id) return;
 
     setIsSubmitting(true);
     try {
       await api.referenceSounds.createFromClip(mlProjectUuid, {
-        clip_id: parseInt(clipId),
+        clip_uuid: clipUuid,
         name,
-        tag_id: tagId,
-        start_time: startTime ? parseFloat(startTime) : undefined,
-        end_time: endTime ? parseFloat(endTime) : undefined,
+        tag_id: selectedTag.id,
+        start_time: startTime,
+        end_time: endTime,
       });
       toast.success("Reference sound added from clip");
-      setClipId("");
+      // Reset state
+      setClipUuid("");
       setName("");
-      setTagId(null);
-      setStartTime("");
-      setEndTime("");
+      setSelectedTag(null);
+      setStartTime(0);
+      setEndTime(5);
+      setStep("info");
       onSuccess();
       onClose();
     } catch (error) {
@@ -380,109 +564,210 @@ function AddFromClipDialog({
     }
   };
 
+  const handleClose = useCallback(() => {
+    // Reset state when closing
+    setStep("info");
+    setClipUuid("");
+    setName("");
+    setSelectedTag(null);
+    setStartTime(0);
+    setEndTime(5);
+    setAudioError(null);
+    onClose();
+  }, [onClose]);
+
+  const canProceedToSelect = clipUuid && name && selectedTag?.id;
+  const canSubmit = startTime < endTime && endTime - startTime >= 1;
+
   return (
     <DialogOverlay
-      title="Add from Dataset Clip"
+      title={step === "info" ? "Add from Dataset Clip" : "Select Segment"}
       isOpen={isOpen}
-      onClose={onClose}
+      onClose={handleClose}
     >
-      <form onSubmit={handleSubmit} className="w-[400px] space-y-4">
-        <div>
-          <label className="block text-sm font-medium text-stone-700 dark:text-stone-300 mb-1">
-            Clip ID
-          </label>
-          <input
-            type="number"
-            value={clipId}
-            onChange={(e) => setClipId(e.target.value)}
-            className="w-full px-3 py-2 border border-stone-300 dark:border-stone-600 rounded-lg bg-white dark:bg-stone-800 text-stone-900 dark:text-stone-100"
-            placeholder="Enter clip ID"
-            required
-          />
-        </div>
-
-        <div>
-          <label className="block text-sm font-medium text-stone-700 dark:text-stone-300 mb-1">
-            Name
-          </label>
-          <input
-            type="text"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            className="w-full px-3 py-2 border border-stone-300 dark:border-stone-600 rounded-lg bg-white dark:bg-stone-800 text-stone-900 dark:text-stone-100"
-            placeholder="Reference sound name"
-            required
-          />
-        </div>
-
-        <div>
-          <label className="block text-sm font-medium text-stone-700 dark:text-stone-300 mb-1">
-            Species Tag
-          </label>
-          <select
-            value={tagId || ""}
-            onChange={(e) => setTagId(Number(e.target.value) || null)}
-            className="w-full px-3 py-2 border border-stone-300 dark:border-stone-600 rounded-lg bg-white dark:bg-stone-800 text-stone-900 dark:text-stone-100"
-            required
+      <div className={step === "select" ? "w-[600px]" : "w-[400px]"}>
+        {/* Step indicator */}
+        <div className="flex items-center gap-2 mb-4">
+          <div
+            className={`flex items-center justify-center w-6 h-6 rounded-full text-xs font-medium ${
+              step === "info"
+                ? "bg-emerald-500 text-white"
+                : "bg-stone-200 dark:bg-stone-700 text-stone-600 dark:text-stone-400"
+            }`}
           >
-            <option value="">Select a tag</option>
-            {tags.map((tag: Tag) => (
-              <option key={`${tag.key}:${tag.value}`} value={tag.id}>
-                {tag.key}: {tag.value}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div className="grid grid-cols-2 gap-4">
-          <div>
-            <label className="block text-sm font-medium text-stone-700 dark:text-stone-300 mb-1">
-              Start Time (s)
-            </label>
-            <input
-              type="number"
-              step="0.01"
-              value={startTime}
-              onChange={(e) => setStartTime(e.target.value)}
-              className="w-full px-3 py-2 border border-stone-300 dark:border-stone-600 rounded-lg bg-white dark:bg-stone-800 text-stone-900 dark:text-stone-100"
-              placeholder="0.00"
-            />
+            1
           </div>
-          <div>
-            <label className="block text-sm font-medium text-stone-700 dark:text-stone-300 mb-1">
-              End Time (s)
-            </label>
-            <input
-              type="number"
-              step="0.01"
-              value={endTime}
-              onChange={(e) => setEndTime(e.target.value)}
-              className="w-full px-3 py-2 border border-stone-300 dark:border-stone-600 rounded-lg bg-white dark:bg-stone-800 text-stone-900 dark:text-stone-100"
-              placeholder="5.00"
-            />
+          <div className="flex-1 h-0.5 bg-stone-200 dark:bg-stone-700" />
+          <div
+            className={`flex items-center justify-center w-6 h-6 rounded-full text-xs font-medium ${
+              step === "select"
+                ? "bg-emerald-500 text-white"
+                : "bg-stone-200 dark:bg-stone-700 text-stone-600 dark:text-stone-400"
+            }`}
+          >
+            2
           </div>
         </div>
 
-        <div className="flex justify-end gap-2 pt-4">
-          <Button type="button" variant="secondary" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button
-            type="submit"
-            variant="primary"
-            disabled={!clipId || !name || !tagId || isSubmitting}
-          >
-            {isSubmitting ? (
-              <>
-                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                Adding...
-              </>
+        {step === "info" ? (
+          /* Step 1: Basic info */
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-stone-700 dark:text-stone-300 mb-1">
+                Clip UUID
+              </label>
+              <input
+                type="text"
+                value={clipUuid}
+                onChange={(e) => setClipUuid(e.target.value)}
+                className="w-full px-3 py-2 border border-stone-300 dark:border-stone-600 rounded-lg bg-white dark:bg-stone-800 text-stone-900 dark:text-stone-100"
+                placeholder="Enter clip UUID"
+              />
+              <p className="text-xs text-stone-500 mt-1">
+                Enter the UUID of the clip from your dataset
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-stone-700 dark:text-stone-300 mb-1">
+                Name
+              </label>
+              <input
+                type="text"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                className="w-full px-3 py-2 border border-stone-300 dark:border-stone-600 rounded-lg bg-white dark:bg-stone-800 text-stone-900 dark:text-stone-100"
+                placeholder="Reference sound name"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-stone-700 dark:text-stone-300 mb-1">
+                Species Tag
+              </label>
+              {selectedTag ? (
+                <div className="flex items-center gap-2 p-2 border border-stone-300 dark:border-stone-600 rounded-lg bg-stone-50 dark:bg-stone-800">
+                  <TagComponent
+                    tag={selectedTag}
+                    color="emerald"
+                    level={3}
+                    disabled
+                    className="pointer-events-none"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleClearTag}
+                    className="ml-auto p-1 text-stone-400 hover:text-stone-600 dark:hover:text-stone-300 rounded"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              ) : (
+                <TagSearchBar
+                  onSelectTag={handleTagSelect}
+                  onCreateTag={handleTagSelect}
+                />
+              )}
+            </div>
+
+            <div className="flex justify-end gap-2 pt-4">
+              <Button type="button" variant="secondary" onClick={handleClose}>
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                disabled={!canProceedToSelect}
+                onClick={handleLoadAudio}
+              >
+                Load Audio
+                <ChevronRight className="w-4 h-4 ml-1" />
+              </Button>
+            </div>
+          </div>
+        ) : (
+          /* Step 2: Segment selection */
+          <div className="space-y-4">
+            {audioError ? (
+              <div className="p-4 bg-red-50 dark:bg-red-900/20 rounded-lg text-red-600 dark:text-red-400">
+                <p className="font-medium">Failed to load audio</p>
+                <p className="text-sm mt-1">{audioError}</p>
+                <Button
+                  variant="secondary"
+                  className="mt-3"
+                  onClick={handleBack}
+                >
+                  <ChevronLeft className="w-4 h-4 mr-1" />
+                  Back
+                </Button>
+              </div>
             ) : (
-              "Add Reference Sound"
+              <>
+                <div className="p-3 bg-stone-50 dark:bg-stone-800 rounded-lg">
+                  <div className="flex items-center gap-4 text-sm">
+                    <div>
+                      <span className="text-stone-500 dark:text-stone-400">
+                        Clip:
+                      </span>{" "}
+                      <span className="font-medium font-mono text-xs">
+                        {clipUuid.slice(0, 8)}...
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-stone-500 dark:text-stone-400">
+                        Name:
+                      </span>{" "}
+                      <span className="font-medium">{name}</span>
+                    </div>
+                    {selectedTag && (
+                      <TagComponent
+                        tag={selectedTag}
+                        color="emerald"
+                        level={3}
+                        disabled
+                        className="pointer-events-none"
+                      />
+                    )}
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-stone-700 dark:text-stone-300 mb-2">
+                    Select Audio Segment
+                  </label>
+                  <SpectrogramSegmentSelector
+                    audioUrl={audioUrl}
+                    onSegmentChange={handleSegmentChange}
+                    initialStartTime={startTime}
+                    initialEndTime={endTime}
+                    height={180}
+                  />
+                </div>
+
+                <div className="flex justify-between gap-2 pt-4">
+                  <Button variant="secondary" onClick={handleBack}>
+                    <ChevronLeft className="w-4 h-4 mr-1" />
+                    Back
+                  </Button>
+                  <Button
+                    variant="primary"
+                    disabled={!canSubmit || isSubmitting}
+                    onClick={handleSubmit}
+                  >
+                    {isSubmitting ? (
+                      <>
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        Adding...
+                      </>
+                    ) : (
+                      "Add Reference Sound"
+                    )}
+                  </Button>
+                </div>
+              </>
             )}
-          </Button>
-        </div>
-      </form>
+          </div>
+        )}
+      </div>
     </DialogOverlay>
   );
 }
@@ -512,11 +797,18 @@ export default function ReferenceSoundsPage() {
 
   // Toggle active mutation
   const toggleMutation = useMutation({
-    mutationFn: (soundUuid: string) =>
-      api.referenceSounds.toggleActive(mlProjectUuid, soundUuid),
+    mutationFn: ({
+      soundUuid,
+      isActive,
+    }: {
+      soundUuid: string;
+      isActive: boolean;
+    }) => api.referenceSounds.toggleActive(mlProjectUuid, soundUuid, isActive),
     onSuccess: () => {
       refetch();
-      queryClient.invalidateQueries({ queryKey: ["ml_project", mlProjectUuid] });
+      queryClient.invalidateQueries({
+        queryKey: ["ml_project", mlProjectUuid],
+      });
     },
     onError: () => {
       toast.error("Failed to toggle reference sound");
@@ -530,7 +822,9 @@ export default function ReferenceSoundsPage() {
     onSuccess: () => {
       toast.success("Reference sound deleted");
       refetch();
-      queryClient.invalidateQueries({ queryKey: ["ml_project", mlProjectUuid] });
+      queryClient.invalidateQueries({
+        queryKey: ["ml_project", mlProjectUuid],
+      });
     },
     onError: () => {
       toast.error("Failed to delete reference sound");
@@ -538,15 +832,17 @@ export default function ReferenceSoundsPage() {
   });
 
   const handleToggle = useCallback(
-    (soundUuid: string) => {
-      toggleMutation.mutate(soundUuid);
+    (soundUuid: string, currentIsActive: boolean) => {
+      toggleMutation.mutate({ soundUuid, isActive: !currentIsActive });
     },
     [toggleMutation],
   );
 
   const handleDelete = useCallback(
     (soundUuid: string) => {
+      console.log("Delete button clicked, soundUuid:", soundUuid);
       if (confirm("Are you sure you want to delete this reference sound?")) {
+        console.log("Confirmed deletion, calling mutation");
         deleteMutation.mutate(soundUuid);
       }
     },
@@ -581,10 +877,7 @@ export default function ReferenceSoundsPage() {
           >
             {showActiveOnly ? "Show All" : "Active Only"}
           </Button>
-          <Button
-            variant="secondary"
-            onClick={() => setShowClipDialog(true)}
-          >
+          <Button variant="secondary" onClick={() => setShowClipDialog(true)}>
             <Database className="w-4 h-4 mr-2" />
             From Clip
           </Button>
@@ -607,10 +900,7 @@ export default function ReferenceSoundsPage() {
             Add reference sounds to start finding similar audio in your dataset
           </p>
           <div className="flex gap-2 mt-4">
-            <Button
-              variant="secondary"
-              onClick={() => setShowClipDialog(true)}
-            >
+            <Button variant="secondary" onClick={() => setShowClipDialog(true)}>
               <Database className="w-4 h-4 mr-2" />
               From Dataset Clip
             </Button>
@@ -630,7 +920,7 @@ export default function ReferenceSoundsPage() {
               key={sound.uuid}
               sound={sound}
               mlProjectUuid={mlProjectUuid}
-              onToggle={() => handleToggle(sound.uuid)}
+              onToggle={() => handleToggle(sound.uuid, sound.is_active)}
               onDelete={() => handleDelete(sound.uuid)}
             />
           ))}

@@ -18,6 +18,9 @@ __all__ = [
     "SearchResultLabelUpdate",
     "SearchProgress",
     "BulkLabelRequest",
+    "BulkCurateRequest",
+    "ExportToAnnotationProjectRequest",
+    "ExportToAnnotationProjectResponse",
 ]
 
 
@@ -38,6 +41,12 @@ class SearchResultLabel(str, Enum):
 
     SKIPPED = "skipped"
     """Result was skipped without labeling."""
+
+    POSITIVE_REFERENCE = "positive_reference"
+    """Result curated as a positive reference for model training."""
+
+    NEGATIVE_REFERENCE = "negative_reference"
+    """Result curated as a negative reference for model training."""
 
 
 class SearchSessionCreate(BaseModel):
@@ -243,3 +252,63 @@ class BulkLabelRequest(BaseModel):
 
     notes: str | None = Field(default=None, max_length=2000)
     """Optional notes to apply to all results."""
+
+
+class BulkCurateRequest(BaseModel):
+    """Schema for bulk curation of search results as references."""
+
+    result_uuids: list[UUID] = Field(
+        ...,
+        min_length=1,
+        max_length=500,
+        description="UUIDs of results to curate",
+    )
+    """List of search result UUIDs to curate."""
+
+    label: SearchResultLabel = Field(
+        ...,
+        description="Curation label to apply (positive_reference or negative_reference)",
+    )
+    """Curation label to apply. Must be positive_reference or negative_reference."""
+
+
+class ExportToAnnotationProjectRequest(BaseModel):
+    """Schema for exporting search results to an annotation project."""
+
+    name: str = Field(
+        ...,
+        min_length=1,
+        max_length=255,
+        description="Name for the new annotation project",
+    )
+    """Name for the annotation project."""
+
+    description: str = Field(
+        default="",
+        max_length=2000,
+        description="Description for the annotation project",
+    )
+    """Description for the annotation project."""
+
+    include_labels: list[str] = Field(
+        ...,
+        min_length=1,
+        description="Labels to include in the export",
+    )
+    """Labels of results to include (e.g., 'positive', 'positive_reference')."""
+
+
+class ExportToAnnotationProjectResponse(BaseModel):
+    """Schema for export operation response."""
+
+    annotation_project_uuid: UUID
+    """UUID of the created annotation project."""
+
+    annotation_project_name: str
+    """Name of the created annotation project."""
+
+    exported_count: int
+    """Number of search results exported."""
+
+    message: str
+    """Success message."""

@@ -30,6 +30,7 @@ FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04
 WORKDIR /code
 
 # Install Python 3.12 and runtime dependencies
+ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
     software-properties-common \
     && add-apt-repository ppa:deadsnakes/ppa \

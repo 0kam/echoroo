@@ -42,7 +42,9 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from echoroo.models.dataset import Dataset
+    from echoroo.models.foundation_model import FoundationModelRun
     from echoroo.models.project import Project
+    from echoroo.models.species_filter import SpeciesFilterApplication
     from echoroo.models.user import User
 
 __all__ = [
@@ -105,6 +107,42 @@ class AnnotationProject(Base):
         server_default=VisibilityLevel.RESTRICTED.value,
     )
     """Visibility level for the project."""
+
+    # Source tracking for projects created from Foundation Model detections
+    source_foundation_model_run_id: orm.Mapped[int | None] = orm.mapped_column(
+        sa.ForeignKey("foundation_model_run.id", ondelete="SET NULL"),
+        nullable=True,
+        default=None,
+    )
+    """The Foundation Model Run this project was created from (if any)."""
+
+    source_species_filter_application_id: orm.Mapped[int | None] = orm.mapped_column(
+        sa.ForeignKey("species_filter_application.id", ondelete="SET NULL"),
+        nullable=True,
+        default=None,
+    )
+    """The Species Filter Application used when creating this project (if any)."""
+
+    # Source relationships
+    source_foundation_model_run: orm.Mapped["FoundationModelRun | None"] = (
+        orm.relationship(
+            "FoundationModelRun",
+            foreign_keys=[source_foundation_model_run_id],
+            init=False,
+            repr=False,
+        )
+    )
+    """The Foundation Model Run this project was created from."""
+
+    source_species_filter_application: orm.Mapped["SpeciesFilterApplication | None"] = (
+        orm.relationship(
+            "SpeciesFilterApplication",
+            foreign_keys=[source_species_filter_application_id],
+            init=False,
+            repr=False,
+        )
+    )
+    """The Species Filter Application used when creating this project."""
 
     created_by: orm.Mapped["User"] = orm.relationship(
         "User",

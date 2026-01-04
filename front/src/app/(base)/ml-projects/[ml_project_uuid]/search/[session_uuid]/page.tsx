@@ -44,6 +44,8 @@ const LABEL_COLORS: Record<SearchResultLabel, string> = {
   negative: "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400",
   uncertain: "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400",
   skipped: "bg-stone-200 text-stone-500 dark:bg-stone-600 dark:text-stone-400",
+  positive_reference: "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400",
+  negative_reference: "bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400",
 };
 
 const LABEL_ICONS: Record<SearchResultLabel, React.ReactNode> = {
@@ -52,6 +54,8 @@ const LABEL_ICONS: Record<SearchResultLabel, React.ReactNode> = {
   negative: <XCircle className="w-4 h-4" />,
   uncertain: <HelpCircle className="w-4 h-4" />,
   skipped: <SkipForward className="w-4 h-4" />,
+  positive_reference: <CheckCircle className="w-4 h-4" />,
+  negative_reference: <XCircle className="w-4 h-4" />,
 };
 
 function LabelButton({

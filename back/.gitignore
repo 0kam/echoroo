@@ -161,11 +161,11 @@ cython_debug/
 
 old/
 
-whombat.db
+echoroo.db
 .ruff_cache/
 .pdm-python
 
 scripts/
-src/whombat/statics/*
-src/whombat/user_guide/*
+src/echoroo/statics/*
+src/echoroo/user_guide/*
 .build_venv

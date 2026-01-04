@@ -55,15 +55,27 @@ export const CustomModelSchema = z.object({
 
 export type CustomModel = z.infer<typeof CustomModelSchema>;
 
+// Training data source type
+export const TrainingDataSourceTypeSchema = z.enum([
+  "search_session",
+  "annotation_project",
+]);
+
+export type TrainingDataSourceType = z.infer<typeof TrainingDataSourceTypeSchema>;
+
 // Create schema
 export const CustomModelCreateSchema = z.object({
   name: z.string().min(1, "Name is required"),
   description: z.string().optional(),
   target_tag_id: z.number().int(),
   model_type: CustomModelTypeSchema,
-  training_session_ids: z.array(z.string().uuid()).min(1, "At least one training session is required"),
+  training_session_ids: z.array(z.string().uuid()).optional().default([]),
+  annotation_project_uuids: z.array(z.string().uuid()).optional().default([]),
   hyperparameters: z.record(z.unknown()).optional(),
-});
+}).refine(
+  (data) => (data.training_session_ids?.length ?? 0) > 0 || (data.annotation_project_uuids?.length ?? 0) > 0,
+  { message: "At least one training session or annotation project is required" }
+);
 
 export type CustomModelCreate = z.infer<typeof CustomModelCreateSchema>;
 

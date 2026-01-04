@@ -44,6 +44,17 @@ def get_foundation_model_router(settings: EchorooSettings) -> APIRouter:
         return await foundation_models.list_models(session)
 
     @router.get(
+        "/queue-status",
+        response_model=schemas.JobQueueStatus,
+    )
+    async def get_queue_status(
+        session: Session,
+        user: models.User | None = Depends(optional_user_dep),
+    ):
+        """Get current job queue status counts."""
+        return await foundation_models.get_queue_status(session)
+
+    @router.get(
         "/datasets/{dataset_uuid}/summary/",
         response_model=list[schemas.DatasetFoundationModelSummary],
     )
@@ -138,6 +149,7 @@ def get_foundation_model_router(settings: EchorooSettings) -> APIRouter:
             user=user,
             confidence_threshold=data.confidence_threshold,
             scope=data.scope,
+            locale=data.locale,
         )
         await session.commit()
         return run
@@ -370,13 +382,58 @@ def get_foundation_model_router(settings: EchorooSettings) -> APIRouter:
         return {"reviewed_count": count}
 
     # =========================================================================
+    # Conversion to Annotation Project
+    # =========================================================================
+
+    @router.post(
+        "/runs/{run_uuid}/convert-to-annotation-project",
+        response_model=schemas.ConvertToAnnotationProjectResponse,
+        status_code=status.HTTP_201_CREATED,
+    )
+    async def convert_to_annotation_project(
+        run_uuid: UUID,
+        request: schemas.ConvertToAnnotationProjectRequest,
+        session: Session,
+        user: models.User = Depends(current_user_dep),
+    ):
+        """Convert foundation model detections to an annotation project.
+
+        Creates a new annotation project from the detection results of a
+        foundation model run. Each detection becomes an annotation task
+        with the detected species tags.
+
+        When include_only_filtered is True, only detections that passed
+        the specified species filter are included. This requires providing
+        the species_filter_application_uuid.
+        """
+        from echoroo.api.foundation_model_conversion import (
+            convert_foundation_model_run_to_annotation_project,
+        )
+
+        run_schema = await foundation_models.get_run_with_relations(
+            session,
+            run_uuid,
+        )
+        result = await convert_foundation_model_run_to_annotation_project(
+            session,
+            run_schema,
+            name=request.name,
+            description=request.description,
+            user=user,
+            include_only_filtered=request.include_only_filtered,
+            species_filter_application_uuid=request.species_filter_application_uuid,
+        )
+        await session.commit()
+        return result
+
+    # =========================================================================
     # Species Filter Applications (nested under runs)
     # =========================================================================
 
     filter_applications_router = get_species_filter_applications_router(settings)
     router.include_router(
         filter_applications_router,
-        prefix="/runs/{run_uuid}/filters",
+        prefix="/runs/{run_uuid}/species-filter-applications",
         tags=["Species Filters"],
     )
 

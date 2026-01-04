@@ -17,6 +17,7 @@ from echoroo.filters.base import Filter
 __all__ = [
     "MLProjectAPI",
     "ml_projects",
+    "dataset_scope_to_schema",
 ]
 
 
@@ -173,6 +174,7 @@ class MLProjectAPI(
                     selectinload(models.Dataset.license),
                 ),
                 selectinload(self._model.embedding_model_run),
+                selectinload(self._model.foundation_model),
                 selectinload(self._model.tags),
                 selectinload(self._model.created_by),
             )
@@ -189,6 +191,11 @@ class MLProjectAPI(
         db_obj = await self._eager_load_relationships(session, db_obj)
 
         # Get counts
+        dataset_scope_count = await session.scalar(
+            select(func.count(models.MLProjectDatasetScope.id)).where(
+                models.MLProjectDatasetScope.ml_project_id == db_obj.id
+            )
+        )
         ref_sound_count = await session.scalar(
             select(func.count(models.ReferenceSound.id)).where(
                 models.ReferenceSound.ml_project_id == db_obj.id
@@ -230,10 +237,17 @@ class MLProjectAPI(
             "name": db_obj.name,
             "description": db_obj.description,
             "status": schema_status,
+            "project_id": db_obj.project_id,
             "dataset_id": db_obj.dataset_id,
             "dataset": (
                 schemas.Dataset.model_validate(db_obj.dataset)
                 if db_obj.dataset
+                else None
+            ),
+            "foundation_model_id": db_obj.foundation_model_id,
+            "foundation_model": (
+                schemas.FoundationModel.model_validate(db_obj.foundation_model)
+                if db_obj.foundation_model
                 else None
             ),
             "embedding_model_run_id": db_obj.embedding_model_run_id,
@@ -245,6 +259,7 @@ class MLProjectAPI(
             "default_similarity_threshold": db_obj.default_similarity_threshold,
             "created_by_id": db_obj.created_by_id,
             "target_tags": [schemas.Tag.model_validate(t) for t in db_obj.tags],
+            "dataset_scope_count": dataset_scope_count or 0,
             "reference_sound_count": ref_sound_count or 0,
             "search_session_count": search_session_count or 0,
             "custom_model_count": custom_model_count or 0,
@@ -318,27 +333,49 @@ class MLProjectAPI(
         *,
         user: models.User | schemas.SimpleUser,
     ) -> schemas.MLProject:
-        """Create a new ML project."""
+        """Create a new ML project.
+
+        ML Projects are created without a dataset. Datasets are added
+        later via the dataset_scopes relationship in the Datasets tab.
+        """
         db_user = await self._resolve_user(session, user)
         if db_user is None:
             raise exceptions.PermissionDeniedError(
                 "Authentication required to create ML projects"
             )
 
-        # Get the dataset by UUID to determine project_id
-        dataset = await session.scalar(
-            select(models.Dataset).where(models.Dataset.uuid == data.dataset_uuid)
+        # Get the user's first project where they are a manager
+        project_membership = await session.scalar(
+            select(models.ProjectMember).where(
+                models.ProjectMember.user_id == db_user.id,
+                models.ProjectMember.role == models.ProjectMemberRole.MANAGER,
+            )
         )
-        if dataset is None:
-            raise exceptions.NotFoundError(
-                f"Dataset with uuid {data.dataset_uuid} not found"
-            )
 
-        # Check permission to create in this project
-        if not await can_manage_project(session, dataset.project_id, db_user):
-            raise exceptions.PermissionDeniedError(
-                "You do not have permission to create ML projects in this project"
+        if project_membership is None:
+            # Create a default project for the user
+            project_id = f"user_{db_user.id}"
+            existing_project = await session.scalar(
+                select(models.Project).where(
+                    models.Project.project_id == project_id
+                )
             )
+            if existing_project is None:
+                new_project = models.Project(
+                    project_id=project_id,
+                    project_name=f"{db_user.username}'s Project",
+                )
+                session.add(new_project)
+                # Add user as manager
+                membership = models.ProjectMember(
+                    project_id=project_id,
+                    user_id=db_user.id,
+                    role=models.ProjectMemberRole.MANAGER,
+                )
+                session.add(membership)
+                await session.flush()
+        else:
+            project_id = project_membership.project_id
 
         # Create the ML project
         db_obj = await common.create_object(
@@ -346,10 +383,8 @@ class MLProjectAPI(
             self._model,
             name=data.name,
             description=data.description,
-            dataset_id=dataset.id,
-            project_id=dataset.project_id,
-            embedding_model_run_id=data.embedding_model_run_id,
-            default_similarity_threshold=data.default_similarity_threshold,
+            dataset_id=None,
+            project_id=project_id,
             created_by_id=db_user.id,
         )
 
@@ -695,6 +730,303 @@ class MLProjectAPI(
             reviewed_predictions=reviewed_predictions,
             last_activity=last_activity,
         )
+
+    # =========================================================================
+    # Dataset Scope Methods
+    # =========================================================================
+
+    async def add_dataset_scope(
+        self,
+        session: AsyncSession,
+        ml_project: schemas.MLProject,
+        dataset: schemas.Dataset,
+        foundation_model_run: schemas.FoundationModelRun,
+        *,
+        user: models.User | schemas.SimpleUser | None = None,
+    ) -> schemas.MLProjectDatasetScope:
+        """Add a dataset scope to an ML project.
+
+        Args:
+            session: Database session.
+            ml_project: The ML project to add the scope to.
+            dataset: The dataset to add.
+            foundation_model_run: The foundation model run providing embeddings.
+            user: The user performing the action.
+
+        Returns:
+            The created dataset scope.
+
+        Raises:
+            PermissionDeniedError: If the user cannot edit the project.
+            DuplicateObjectError: If the dataset is already in the project.
+        """
+        db_user = await self._resolve_user(session, user)
+
+        if not await can_edit_ml_project(session, ml_project, db_user):
+            raise exceptions.PermissionDeniedError(
+                "You do not have permission to modify this ML project"
+            )
+
+        # Check if dataset scope already exists
+        existing = await session.scalar(
+            select(models.MLProjectDatasetScope).where(
+                and_(
+                    models.MLProjectDatasetScope.ml_project_id == ml_project.id,
+                    models.MLProjectDatasetScope.dataset_id == dataset.id,
+                )
+            )
+        )
+        if existing:
+            raise exceptions.DuplicateObjectError(
+                f"Dataset {dataset.uuid} is already in ML project {ml_project.uuid}"
+            )
+
+        # Create the dataset scope
+        db_scope = await common.create_object(
+            session,
+            models.MLProjectDatasetScope,
+            ml_project_id=ml_project.id,
+            dataset_id=dataset.id,
+            foundation_model_run_id=foundation_model_run.id,
+        )
+
+        # Reload with all necessary relationships for serialization
+        db_scope = await session.scalar(
+            select(models.MLProjectDatasetScope)
+            .where(models.MLProjectDatasetScope.id == db_scope.id)
+            .options(
+                selectinload(models.MLProjectDatasetScope.dataset).options(
+                    selectinload(models.Dataset.project).options(
+                        selectinload(models.Project.memberships)
+                    ),
+                    selectinload(models.Dataset.primary_site).options(
+                        selectinload(models.Site.images)
+                    ),
+                    selectinload(models.Dataset.primary_recorder),
+                    selectinload(models.Dataset.license),
+                ),
+                selectinload(models.MLProjectDatasetScope.foundation_model_run).options(
+                    selectinload(models.FoundationModelRun.foundation_model),
+                    selectinload(models.FoundationModelRun.dataset),
+                    selectinload(models.FoundationModelRun.species),
+                ),
+            )
+        )
+
+        return await dataset_scope_to_schema(session, db_scope)
+
+    async def remove_dataset_scope(
+        self,
+        session: AsyncSession,
+        ml_project: schemas.MLProject,
+        scope_uuid: UUID,
+        *,
+        user: models.User | schemas.SimpleUser | None = None,
+    ) -> schemas.MLProjectDatasetScope:
+        """Remove a dataset scope from an ML project.
+
+        Args:
+            session: Database session.
+            ml_project: The ML project to remove the scope from.
+            scope_uuid: UUID of the scope to remove.
+            user: The user performing the action.
+
+        Returns:
+            The removed dataset scope.
+
+        Raises:
+            PermissionDeniedError: If the user cannot edit the project.
+            NotFoundError: If the scope is not found.
+        """
+        db_user = await self._resolve_user(session, user)
+
+        if not await can_edit_ml_project(session, ml_project, db_user):
+            raise exceptions.PermissionDeniedError(
+                "You do not have permission to modify this ML project"
+            )
+
+        # Get the scope
+        db_scope = await session.scalar(
+            select(models.MLProjectDatasetScope)
+            .where(
+                and_(
+                    models.MLProjectDatasetScope.ml_project_id == ml_project.id,
+                    models.MLProjectDatasetScope.uuid == scope_uuid,
+                )
+            )
+            .options(
+                selectinload(models.MLProjectDatasetScope.dataset).options(
+                    selectinload(models.Dataset.project).options(
+                        selectinload(models.Project.memberships)
+                    ),
+                    selectinload(models.Dataset.primary_site).options(
+                        selectinload(models.Site.images)
+                    ),
+                    selectinload(models.Dataset.primary_recorder),
+                    selectinload(models.Dataset.license),
+                ),
+                selectinload(models.MLProjectDatasetScope.foundation_model_run).options(
+                    selectinload(models.FoundationModelRun.foundation_model),
+                    selectinload(models.FoundationModelRun.dataset),
+                    selectinload(models.FoundationModelRun.species),
+                ),
+            )
+        )
+        if db_scope is None:
+            raise exceptions.NotFoundError(
+                f"Dataset scope with uuid {scope_uuid} not found in ML project"
+            )
+
+        # Build schema before deletion
+        result = await dataset_scope_to_schema(session, db_scope)
+
+        # Delete the scope
+        await session.delete(db_scope)
+
+        return result
+
+    async def get_dataset_scopes(
+        self,
+        session: AsyncSession,
+        ml_project: schemas.MLProject,
+        *,
+        user: models.User | schemas.SimpleUser | None = None,
+    ) -> list[schemas.MLProjectDatasetScope]:
+        """Get all dataset scopes for an ML project.
+
+        Args:
+            session: Database session.
+            ml_project: The ML project to get scopes for.
+            user: The user performing the action.
+
+        Returns:
+            List of dataset scopes.
+
+        Raises:
+            NotFoundError: If the project is not accessible.
+        """
+        db_user = await self._resolve_user(session, user)
+
+        if not await can_view_ml_project(session, ml_project, db_user):
+            raise exceptions.NotFoundError(
+                f"ML Project with uuid {ml_project.uuid} not found"
+            )
+
+        # Get all scopes
+        stmt = (
+            select(models.MLProjectDatasetScope)
+            .where(models.MLProjectDatasetScope.ml_project_id == ml_project.id)
+            .options(
+                selectinload(models.MLProjectDatasetScope.dataset).options(
+                    selectinload(models.Dataset.project).options(
+                        selectinload(models.Project.memberships)
+                    ),
+                    selectinload(models.Dataset.primary_site).options(
+                        selectinload(models.Site.images)
+                    ),
+                    selectinload(models.Dataset.primary_recorder),
+                    selectinload(models.Dataset.license),
+                ),
+                selectinload(models.MLProjectDatasetScope.foundation_model_run).options(
+                    selectinload(models.FoundationModelRun.foundation_model),
+                    selectinload(models.FoundationModelRun.dataset),
+                    selectinload(models.FoundationModelRun.species),
+                ),
+            )
+            .order_by(
+                models.MLProjectDatasetScope.created_on,
+            )
+        )
+        result = await session.execute(stmt)
+        db_scopes = result.scalars().all()
+
+        return [await dataset_scope_to_schema(session, s) for s in db_scopes]
+
+    async def get_dataset_scope(
+        self,
+        session: AsyncSession,
+        ml_project: schemas.MLProject,
+        scope_uuid: UUID,
+        *,
+        user: models.User | schemas.SimpleUser | None = None,
+    ) -> schemas.MLProjectDatasetScope:
+        """Get a specific dataset scope by UUID.
+
+        Args:
+            session: Database session.
+            ml_project: The ML project the scope belongs to.
+            scope_uuid: UUID of the scope to get.
+            user: The user performing the action.
+
+        Returns:
+            The dataset scope.
+
+        Raises:
+            NotFoundError: If the scope is not found.
+        """
+        db_user = await self._resolve_user(session, user)
+
+        if not await can_view_ml_project(session, ml_project, db_user):
+            raise exceptions.NotFoundError(
+                f"ML Project with uuid {ml_project.uuid} not found"
+            )
+
+        # Get the scope
+        db_scope = await session.scalar(
+            select(models.MLProjectDatasetScope)
+            .where(
+                and_(
+                    models.MLProjectDatasetScope.ml_project_id == ml_project.id,
+                    models.MLProjectDatasetScope.uuid == scope_uuid,
+                )
+            )
+            .options(
+                selectinload(models.MLProjectDatasetScope.dataset).options(
+                    selectinload(models.Dataset.project).options(
+                        selectinload(models.Project.memberships)
+                    ),
+                    selectinload(models.Dataset.primary_site).options(
+                        selectinload(models.Site.images)
+                    ),
+                    selectinload(models.Dataset.primary_recorder),
+                    selectinload(models.Dataset.license),
+                ),
+                selectinload(models.MLProjectDatasetScope.foundation_model_run).options(
+                    selectinload(models.FoundationModelRun.foundation_model),
+                    selectinload(models.FoundationModelRun.dataset),
+                    selectinload(models.FoundationModelRun.species),
+                ),
+            )
+        )
+        if db_scope is None:
+            raise exceptions.NotFoundError(
+                f"Dataset scope with uuid {scope_uuid} not found"
+            )
+
+        return await dataset_scope_to_schema(session, db_scope)
+
+
+async def dataset_scope_to_schema(
+    session: AsyncSession,
+    db_scope: models.MLProjectDatasetScope,
+) -> schemas.MLProjectDatasetScope:
+    """Convert a database dataset scope to a schema.
+
+    Args:
+        session: Database session.
+        db_scope: The database model to convert.
+
+    Returns:
+        The schema representation.
+    """
+    return schemas.MLProjectDatasetScope(
+        uuid=db_scope.uuid,
+        dataset=schemas.Dataset.model_validate(db_scope.dataset),
+        foundation_model_run=schemas.FoundationModelRun.model_validate(
+            db_scope.foundation_model_run
+        ),
+        created_on=db_scope.created_on,
+    )
 
 
 ml_projects = MLProjectAPI()

@@ -4,7 +4,7 @@ SHELL := /bin/bash
 .DEFAULT_GOAL := help
 
 ENV_PREFIX=.venv/bin/
-WHOMBAT_BACKEND_DEV_PORT ?= 5000
+ECHOROO_BACKEND_DEV_PORT ?= 5000
 
 define BROWSER_PYSCRIPT
 import os, webbrowser, sys
@@ -73,7 +73,7 @@ install: clean  ## install the package to the active Python's site-packages
 	$(ENV_PREFIX)pip install .
 
 coverage:  ## check code coverage
-	$(ENV_PREFIX)coverage run --source whombat -m pytest
+	$(ENV_PREFIX)coverage run --source echoroo -m pytest
 	$(ENV_PREFIX)coverage report -m
 	$(ENV_PREFIX)coverage html
 	$(BROWSER) htmlcov/index.html
@@ -82,7 +82,7 @@ build-docs:  ## build documentation
 	$(ENV_PREFIX)mkdocs build
 
 build-guide:  ## build user guide
-	$(ENV_PREFIX)mkdocs build -f mkdocs-guide.yml -d src/whombat/user_guide
+	$(ENV_PREFIX)mkdocs build -f mkdocs-guide.yml -d src/echoroo/user_guide
 
 serve-docs:  ## serve documentation
 	$(ENV_PREFIX)mkdocs serve --open
@@ -91,4 +91,4 @@ serve-guide:  ## serve user guide
 	$(ENV_PREFIX)mkdocs serve -f mkdocs-guide.yml --open
 
 serve-dev:  ## serve development backend
-	WHOMBAT_DEV=true $(ENV_PREFIX)python -m whombat
+	ECHOROO_DEV=true $(ENV_PREFIX)python -m echoroo

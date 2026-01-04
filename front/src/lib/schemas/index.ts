@@ -31,3 +31,4 @@ export * from "./search_sessions";
 export * from "./custom_models";
 export * from "./inference_batches";
 export * from "./foundation_models";
+export * from "./species_filters";

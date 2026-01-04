@@ -9,7 +9,7 @@ You can contribute in many ways:
 
 ### Report Bugs
 
-Report bugs at <https://github.com/okamoto-group/echoroo/issues>.
+Report bugs at <https://github.com/okamoto/echoroo/issues>.
 
 If you are reporting a bug, please include:
 
@@ -29,14 +29,14 @@ and "help wanted" is open to whoever wants to implement it.
 
 ### Write Documentation
 
-Whombat could always use more documentation, whether as part of the official
-Whombat docs, in docstrings, or even on the web in blog posts, articles, and
+Echoroo could always use more documentation, whether as part of the official
+Echoroo docs, in docstrings, or even on the web in blog posts, articles, and
 such.
 
 ### Submit Feedback
 
 The best way to send feedback is to file an issue at
-<https://github.com/okamoto-group/echoroo/issues>.
+<https://github.com/okamoto/echoroo/issues>.
 
 If you are proposing a feature:
 
@@ -47,13 +47,13 @@ If you are proposing a feature:
 
 ## Get Started
 
-Ready to contribute? Here's how to set up `whombat` for local development.
+Ready to contribute? Here's how to set up `echoroo` for local development.
 
-1. Fork the `whombat` repo on GitHub.
+1. Fork the `echoroo` repo on GitHub.
 2. Clone your fork locally
 
        ```{bash}
-       git clone git@github.com:your_name_here/whombat.git
+       git clone git@github.com:your_name_here/echoroo.git
        ```
 
 3. We recommend the use of [uv](https://docs.astral.sh/uv/#highlights) to manage the

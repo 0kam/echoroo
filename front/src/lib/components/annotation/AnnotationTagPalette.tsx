@@ -11,7 +11,9 @@ import { H4 } from "@/lib/components/ui/Headings";
 import Tooltip from "@/lib/components/ui/Tooltip";
 
 import type { Tag } from "@/lib/types";
-import { type Color, getTagColor, getTagKey } from "@/lib/utils/tags";
+import { type Color, getTagKey } from "@/lib/utils/tags";
+
+const DEFAULT_COLOR: Color = { color: "stone", level: 3 };
 
 export default function AnnotationTagPalette({
   tags,
@@ -19,7 +21,7 @@ export default function AnnotationTagPalette({
   onClick,
   onRemoveTag,
   onClearTags,
-  tagColorFn = getTagColor,
+  tagColorFn,
   TagSearchBar = TagSearchBarBase,
   projectTagActions,
   ...tagSearchProps
@@ -68,6 +70,7 @@ export default function AnnotationTagPalette({
         <div className="grow">
           <TagSearchBar
             tags={suggestions}
+            tagColorFn={tagColorFn}
             emptyMessage={effectiveEmptyMessage}
             disabled={availableTags.length === 0}
             {...(tagSearchProps as any)}
@@ -80,7 +83,7 @@ export default function AnnotationTagPalette({
           <TagComponent
             key={`${tag.key}-${tag.value}`}
             tag={tag}
-            {...tagColorFn(tag)}
+            {...(tagColorFn ? tagColorFn(tag) : DEFAULT_COLOR)}
             onClick={() => onClick?.(tag)}
             onClose={() => onRemoveTag?.(tag)}
           />

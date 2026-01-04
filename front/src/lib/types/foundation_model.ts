@@ -67,3 +67,17 @@ export type FoundationModelDetectionSummary = z.infer<
 export type BulkReviewResponse = z.infer<
   typeof schemas.BulkReviewResponseSchema
 >;
+
+// ============================================================================
+// Job Queue Status
+// ============================================================================
+
+export type JobQueueStatus = z.infer<typeof schemas.JobQueueStatusSchema>;
+
+// ============================================================================
+// Convert to Annotation Project Response
+// ============================================================================
+
+export type ConvertToAnnotationProjectResponse = z.infer<
+  typeof schemas.ConvertToAnnotationProjectResponseSchema
+>;

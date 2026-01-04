@@ -21,6 +21,8 @@ const DEFAULT_ENDPOINTS = {
   labelResult: "/api/v1/ml_projects/detail/search_sessions/detail/results/label/",
   bulkLabel: "/api/v1/ml_projects/detail/search_sessions/detail/bulk_label/",
   markComplete: "/api/v1/ml_projects/detail/search_sessions/detail/mark_complete/",
+  bulkCurate: "/api/v1/ml_projects/detail/search_sessions/detail/bulk_curate/",
+  exportToAnnotationProject: "/api/v1/ml_projects/detail/search_sessions/detail/export_to_annotation_project/",
 };
 
 export function registerSearchSessionAPI(
@@ -254,6 +256,56 @@ export function registerSearchSessionAPI(
     return schemas.SearchSessionSchema.parse(data);
   }
 
+  /**
+   * Bulk curate multiple search results with curation-specific labels.
+   *
+   * @param mlProjectUuid - The UUID of the ML project
+   * @param sessionUuid - The UUID of the search session
+   * @param data - The bulk curate request
+   * @returns The updated count
+   */
+  async function bulkCurate(
+    mlProjectUuid: string,
+    sessionUuid: string,
+    data: types.BulkCurateRequest,
+  ): Promise<{ updated_count: number }> {
+    const body = schemas.BulkCurateRequestSchema.parse(data);
+    const { data: responseData } = await instance.post(endpoints.bulkCurate, body, {
+      params: {
+        ml_project_uuid: mlProjectUuid,
+        search_session_uuid: sessionUuid,
+      },
+    });
+    return z.object({ updated_count: z.number().int().nonnegative() }).parse(responseData);
+  }
+
+  /**
+   * Export search session results to an annotation project.
+   *
+   * @param mlProjectUuid - The UUID of the ML project
+   * @param sessionUuid - The UUID of the search session
+   * @param data - The export request
+   * @returns The created annotation project info
+   */
+  async function exportToAnnotationProject(
+    mlProjectUuid: string,
+    sessionUuid: string,
+    data: types.ExportToAPRequest,
+  ): Promise<types.MLProjectAnnotationProject> {
+    const body = schemas.ExportToAPRequestSchema.parse(data);
+    const { data: responseData } = await instance.post(
+      endpoints.exportToAnnotationProject,
+      body,
+      {
+        params: {
+          ml_project_uuid: mlProjectUuid,
+          search_session_uuid: sessionUuid,
+        },
+      },
+    );
+    return schemas.MLProjectAnnotationProjectSchema.parse(responseData);
+  }
+
   return {
     getMany,
     get,
@@ -265,5 +317,7 @@ export function registerSearchSessionAPI(
     labelResult,
     bulkLabel,
     markComplete,
+    bulkCurate,
+    exportToAnnotationProject,
   } as const;
 }

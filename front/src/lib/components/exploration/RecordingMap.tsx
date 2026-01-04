@@ -10,15 +10,12 @@ import * as icons from "@/lib/components/icons";
 import Tag from "@/lib/components/tags/Tag";
 
 import type * as types from "@/lib/types";
-import {
-  Color,
-  getTagClassNames,
-  getTagColor,
-  getTagKey,
-} from "@/lib/utils/tags";
+import { type Color, getTagClassNames, getTagKey } from "@/lib/utils/tags";
+
+const DEFAULT_COLOR: Color = { color: "stone", level: 3 };
 
 export default function RecordingMap({
-  tagColorFn = getTagColor,
+  tagColorFn,
   recordings,
   ...props
 }: {
@@ -76,7 +73,7 @@ function RecordingMarker({
   recording,
   onClick,
   colorBy,
-  tagColorFn = getTagColor,
+  tagColorFn,
 }: {
   recording: types.Recording;
   onClick?: () => void;
@@ -113,7 +110,7 @@ function RecordingMarker({
 function getMarkerColor({
   recording,
   colorBy = null,
-  tagColorFn = getTagColor,
+  tagColorFn,
 }: {
   recording: types.Recording;
   colorBy?: string | null;
@@ -131,14 +128,14 @@ function getMarkerColor({
     return classNames(common, "bg-stone-200 border-stone-500");
   }
 
-  let { color, level } = tagColorFn(tag);
+  let { color, level } = tagColorFn ? tagColorFn(tag) : DEFAULT_COLOR;
   let names = getTagClassNames(color, level);
   return classNames(names.background, names.border, common);
 }
 
 function RecordingPopup({
   recording,
-  tagColorFn = getTagColor,
+  tagColorFn,
 }: {
   recording: types.Recording;
   tagColorFn?: (tag: types.Tag) => Color;
@@ -168,7 +165,11 @@ function RecordingPopup({
           <icons.TagsIcon className="w-4 h-4 text-stone-500" />
           <div className="flex flex-col gap-2">
             {recording.tags?.map((tag) => (
-              <Tag key={getTagKey(tag)} tag={tag} {...tagColorFn(tag)} />
+              <Tag
+                key={getTagKey(tag)}
+                tag={tag}
+                {...(tagColorFn ? tagColorFn(tag) : DEFAULT_COLOR)}
+              />
             ))}
           </div>
         </div>

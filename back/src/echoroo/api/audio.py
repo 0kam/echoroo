@@ -487,6 +487,10 @@ def load_clip_bytes(
             f"expected={(audio_data.shape[0] * audio_data.shape[1] * bit_depth // 8)}"
         )
 
+        # Calculate total file size for Content-Range header
+        # This must be the full size of the audio data plus header, not just the current chunk
+        total_filesize = filesize + HEADER_SIZE
+
         # Generate WAV header only at the start of the stream
         if start == 0:
             # Apply speed and time_expansion adjustments to the sample rate in the header
@@ -496,10 +500,13 @@ def load_clip_bytes(
                 f"Generating WAV header: samplerate={header_samplerate}, "
                 f"channels={channels}, data_size={filesize}, bit_depth={bit_depth}"
             )
+            # IMPORTANT: Use the total data size (filesize) for the WAV header,
+            # not the current chunk size. This allows browsers to correctly seek
+            # within the audio stream.
             header = generate_wav_header(
                 samplerate=header_samplerate,
                 channels=channels,
-                data_size=data_size,
+                data_size=filesize,
                 bit_depth=bit_depth,
             )
             audio_bytes = header + audio_bytes
@@ -513,7 +520,7 @@ def load_clip_bytes(
             audio_bytes,
             actual_start,
             actual_end,
-            data_size + HEADER_SIZE,
+            total_filesize,
         )
 
 

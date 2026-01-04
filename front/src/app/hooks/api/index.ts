@@ -52,6 +52,11 @@ export { default as useUserRuns } from "./useUserRuns";
 // ML Project hooks
 export { default as useMLProject } from "./useMLProject";
 export { default as useMLProjects } from "./useMLProjects";
+export {
+  useMLProjectDatasetScopes,
+  useAddMLProjectDatasetScope,
+  useRemoveMLProjectDatasetScope,
+} from "./useMLProjectDatasetScopes";
 export { default as useReferenceSounds } from "./useReferenceSounds";
 export { default as useSearchSession } from "./useSearchSession";
 export { default as useSearchSessions } from "./useSearchSessions";
@@ -67,5 +72,6 @@ export { default as useFoundationModelRuns } from "./useFoundationModelRuns";
 export { default as useFoundationModelRunProgress } from "./useFoundationModelRunProgress";
 export { default as useFoundationModelRunSpecies } from "./useFoundationModelRunSpecies";
 export { default as useFoundationModelSummary } from "./useFoundationModelSummary";
-export { default as useFoundationModelDetections } from "./useFoundationModelDetections";
-export { default as useFoundationModelDetectionSummary } from "./useFoundationModelDetectionSummary";
+
+// Detection Visualization hooks
+export { default as useDetectionTemporalData } from "./useDetectionTemporalData";

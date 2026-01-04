@@ -37,6 +37,9 @@ async def lifespan(settings: Settings, _: FastAPI):
             audio_dir=settings.audio_dir,
             model_dir=None,  # Uses default model directory
             poll_interval=5.0,
+            gpu_batch_size=settings.ml_gpu_batch_size,
+            feeders=settings.ml_feeders,
+            workers=settings.ml_workers,
         )
 
         await _species_detection_worker.start(session_factory)

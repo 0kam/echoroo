@@ -11,9 +11,10 @@ import Empty from "@/lib/components/ui/Empty";
 import { H4 } from "@/lib/components/ui/Headings";
 
 import type { Tag } from "@/lib/types";
-import { type Color, getTagColor } from "@/lib/utils/tags";
+import type { Color } from "@/lib/utils/tags";
 
 const _emptyTags: Tag[] = [];
+const DEFAULT_COLOR: Color = { color: "stone", level: 3 };
 
 export default function TagPanel({
   tags = _emptyTags,
@@ -23,7 +24,7 @@ export default function TagPanel({
   onClickTag,
   onCreateTag,
   onClearTags,
-  tagColorFn = getTagColor,
+  tagColorFn,
   TagSearchBar = TagSearchBarBase,
   EmptyTags = <NoTags />,
 }: {
@@ -49,7 +50,7 @@ export default function TagPanel({
           <TagComponent
             key={`${tag.key}-${tag.value}`}
             tag={tag}
-            {...tagColorFn(tag)}
+            {...(tagColorFn ? tagColorFn(tag) : DEFAULT_COLOR)}
             onClick={() => onClickTag?.(tag)}
             onClose={() => onRemoveTag?.(tag)}
           />
@@ -72,6 +73,7 @@ export default function TagPanel({
           placement="bottom-end"
           onSelectTag={onAddTag}
           onCreateTag={onCreateTag}
+          tagColorFn={tagColorFn}
           TagSearchBar={TagSearchBar}
         />
       </div>

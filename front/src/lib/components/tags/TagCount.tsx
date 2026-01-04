@@ -6,8 +6,9 @@ import TagComponent from "@/lib/components/tags/Tag";
 import useListWithSearch from "@/lib/hooks/lists/useListWithSearch";
 
 import type { Tag } from "@/lib/types";
-import { type Color, getTagColor } from "@/lib/utils/tags";
-import { getTagKey } from "@/lib/utils/tags";
+import { type Color, getTagKey } from "@/lib/utils/tags";
+
+const DEFAULT_COLOR: Color = { color: "stone", level: 3 };
 
 /**
  * Component to display tags and their respective frequencies.
@@ -20,7 +21,7 @@ export default function TagCount({
   tagCount,
   showMax: initialShowMax = 5,
   onTagClick,
-  tagColorFn = getTagColor,
+  tagColorFn,
 }: {
   tagCount: { tag: Tag; count: number }[];
   showMax?: number;
@@ -67,7 +68,7 @@ export default function TagCount({
             <TagComponent
               tag={tag}
               disabled
-              {...tagColorFn(tag)}
+              {...(tagColorFn ? tagColorFn(tag) : DEFAULT_COLOR)}
               onClick={() => onTagClick?.(tag)}
             />
           </div>

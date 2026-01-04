@@ -18,7 +18,9 @@ import Loading from "@/lib/components/ui/Loading";
 import useListWithSearch from "@/lib/hooks/lists/useListWithSearch";
 
 import type * as types from "@/lib/types";
-import { Color, getTagColor, getTagKey, getTagLabel } from "@/lib/utils/tags";
+import { type Color, getTagKey, getTagLabel } from "@/lib/utils/tags";
+
+const DEFAULT_COLOR: Color = { color: "stone", level: 3 };
 
 const _emptyList: types.TagCount[] = [];
 
@@ -88,7 +90,7 @@ function TagCounts({
   sortBy: initialSortBy = "clip",
   showMax: initialShowMax = 10,
   onClickTag,
-  tagColorFn = getTagColor,
+  tagColorFn,
 }: {
   counts: { tag: types.Tag; clipCount: number; soundEventCount: number }[];
   sortBy?: "clip" | "soundEvent" | "-clip" | "-soundEvent" | "tag" | "-tag";
@@ -276,7 +278,7 @@ function TagTable({
   onSortBySoundEvent,
   onSortByClip,
   onClickTag,
-  tagColorFn = getTagColor,
+  tagColorFn,
 }: {
   items: TagRow[];
   sortBy: "clip" | "soundEvent" | "-clip" | "-soundEvent" | "tag" | "-tag";
@@ -333,7 +335,7 @@ function TagTable({
               <TagComponent
                 tag={tag}
                 onClick={() => onClickTag?.(tag)}
-                {...tagColorFn(tag)}
+                {...(tagColorFn ? tagColorFn(tag) : DEFAULT_COLOR)}
               />
             </td>
             <td className="py-2 whitespace-nowrap">{clipCount}</td>

@@ -105,19 +105,32 @@ export function registerAnnotationProjectAPI(
     return schemas.AnnotationProjectSchema.parse(data);
   }
 
-  function getDownloadUrl(annotationProject: types.AnnotationProject): string {
-    return `${baseUrl}${endpoints.download}?annotation_project_uuid=${annotationProject.uuid}`;
+  function getDownloadUrl(
+    annotationProject: types.AnnotationProject,
+    format: "csv" | "json" = "csv",
+  ): string {
+    return `${baseUrl}${endpoints.download}?annotation_project_uuid=${annotationProject.uuid}&format=${format}`;
   }
 
-  async function download(uuid: string) {
+  async function download(uuid: string, format: "csv" | "json" = "csv") {
     const { data } = await instance.get(endpoints.download, {
-      params: { annotation_project_uuid: uuid },
+      params: { annotation_project_uuid: uuid, format },
+      responseType: format === "csv" ? "text" : "json",
     });
-    downloadContent(
-      JSON.stringify(data),
-      `annotation-project-${uuid}.json`,
-      "application/json",
-    );
+
+    if (format === "csv") {
+      downloadContent(
+        data as string,
+        `annotation-project-${uuid}_observations.csv`,
+        "text/csv",
+      );
+    } else {
+      downloadContent(
+        JSON.stringify(data),
+        `annotation-project-${uuid}.json`,
+        "application/json",
+      );
+    }
   }
 
   async function importProject(

@@ -11,9 +11,10 @@ import TagSearchBarBase, {
 } from "@/lib/components/tags/TagSearchBar";
 
 import type { Tag } from "@/lib/types";
-import { type Color, getTagColor } from "@/lib/utils/tags";
+import type { Color } from "@/lib/utils/tags";
 
 const _emptyList: Tag[] = [];
+const DEFAULT_COLOR: Color = { color: "stone", level: 3 };
 
 /** A table cell that displays a list of tags.
  *
@@ -25,7 +26,7 @@ const TableTags = memo(function TableTags({
   tags = _emptyList,
   onDeleteTag,
   onClickTag,
-  tagColorFn = getTagColor,
+  tagColorFn,
   TagSearchBar = TagSearchBarBase,
   ...props
 }: {
@@ -51,7 +52,7 @@ const TableTags = memo(function TableTags({
         <TagComponent
           key={`${tag.key}:${tag.value}`}
           tag={tag}
-          {...tagColorFn(tag)}
+          {...(tagColorFn ? tagColorFn(tag) : DEFAULT_COLOR)}
           onClick={() => onClickTag?.(tag)}
           onClose={() => onDeleteTag?.(tag)}
         />

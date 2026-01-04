@@ -27,8 +27,11 @@ from echoroo.models.clip_evaluation import ClipEvaluation, ClipEvaluationMetric
 from echoroo.models.clip_prediction import ClipPrediction, ClipPredictionTag
 from echoroo.models.custom_model import (
     CustomModel,
+    CustomModelDatasetScope,
     CustomModelStatus,
+    CustomModelTrainingSource,
     CustomModelType,
+    TrainingDataSource,
 )
 from echoroo.models.dataset import Dataset, DatasetRecording, VisibilityLevel
 from echoroo.models.datetime_pattern import (
@@ -53,6 +56,7 @@ from echoroo.models.foundation_model import (
 )
 from echoroo.models.inference_batch import (
     InferenceBatch,
+    InferenceBatchDatasetScope,
     InferenceBatchStatus,
     InferencePrediction,
     InferencePredictionReviewStatus,
@@ -61,6 +65,7 @@ from echoroo.models.inference_job import InferenceJob, InferenceJobStatus
 from echoroo.models.license import License
 from echoroo.models.ml_project import (
     MLProject,
+    MLProjectDatasetScope,
     MLProjectStatus,
     MLProjectTag,
 )
@@ -88,6 +93,7 @@ from echoroo.models.search_session import (
     SearchResult,
     SearchResultLabel,
     SearchSession,
+    SearchSessionDatasetScope,
     SearchSessionReferenceSound,
 )
 from echoroo.models.site import Site, SiteImage
@@ -148,8 +154,11 @@ __all__ = [
     "ClipPrediction",
     "ClipPredictionTag",
     "CustomModel",
+    "CustomModelDatasetScope",
     "CustomModelStatus",
+    "CustomModelTrainingSource",
     "CustomModelType",
+    "TrainingDataSource",
     "Dataset",
     "DatasetDatetimePattern",
     "DatasetRecording",
@@ -170,6 +179,7 @@ __all__ = [
     "FoundationModelRunSpecies",
     "FoundationModelRunStatus",
     "InferenceBatch",
+    "InferenceBatchDatasetScope",
     "InferenceBatchStatus",
     "InferenceJob",
     "InferenceJobStatus",
@@ -177,6 +187,7 @@ __all__ = [
     "InferencePredictionReviewStatus",
     "License",
     "MLProject",
+    "MLProjectDatasetScope",
     "MLProjectStatus",
     "MLProjectTag",
     "ModelRun",
@@ -197,6 +208,7 @@ __all__ = [
     "SearchResult",
     "SearchResultLabel",
     "SearchSession",
+    "SearchSessionDatasetScope",
     "SearchSessionReferenceSound",
     "Site",
     "SiteImage",
