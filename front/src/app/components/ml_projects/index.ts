@@ -10,11 +10,6 @@ export { default as SpectrogramSegmentSelector } from "./SpectrogramSegmentSelec
 
 // Search Session components
 export { default as SearchSessionCreate } from "./SearchSessionCreate";
-export { default as LabelingInterface } from "./LabelingInterface";
-export { default as SearchResultGrid } from "./SearchResultGrid";
-
-// Curation components
-export { default as CurationGrid } from "./CurationGrid";
 export { default as ExportToAnnotationProjectDialog } from "./ExportToAnnotationProjectDialog";
 
 // Custom Model components

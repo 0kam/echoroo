@@ -109,13 +109,13 @@ class ClipEmbeddingAPI(
 
         # Query using pgvector cosine distance
         stmt = text("""
-            SELECT 
+            SELECT
                 ce.*,
-                1 - (ce.embedding <=> :query_embedding::vector) as similarity
+                1 - (ce.embedding <=> CAST(:query_embedding AS vector)) as similarity
             FROM clip_embedding ce
             WHERE ce.model_run_id = :model_run_id
-            AND 1 - (ce.embedding <=> :query_embedding::vector) >= :min_similarity
-            ORDER BY ce.embedding <=> :query_embedding::vector
+            AND 1 - (ce.embedding <=> CAST(:query_embedding AS vector)) >= :min_similarity
+            ORDER BY ce.embedding <=> CAST(:query_embedding AS vector)
             LIMIT :limit
         """)
 
@@ -234,13 +234,13 @@ class SoundEventEmbeddingAPI(
         embedding_str = "[" + ",".join(str(x) for x in embedding) + "]"
 
         stmt = text("""
-            SELECT 
+            SELECT
                 se.*,
-                1 - (se.embedding <=> :query_embedding::vector) as similarity
+                1 - (se.embedding <=> CAST(:query_embedding AS vector)) as similarity
             FROM sound_event_embedding se
             WHERE se.model_run_id = :model_run_id
-            AND 1 - (se.embedding <=> :query_embedding::vector) >= :min_similarity
-            ORDER BY se.embedding <=> :query_embedding::vector
+            AND 1 - (se.embedding <=> CAST(:query_embedding AS vector)) >= :min_similarity
+            ORDER BY se.embedding <=> CAST(:query_embedding AS vector)
             LIMIT :limit
         """)
 
@@ -396,12 +396,12 @@ async def search_similar_clips(
             ce.id,
             ce.clip_id,
             ce.model_run_id,
-            1 - (ce.embedding <=> :query_embedding::vector) as similarity
+            1 - (ce.embedding <=> CAST(:query_embedding AS vector)) as similarity
         FROM clip_embedding ce
         JOIN model_run mr ON ce.model_run_id = mr.id
         WHERE mr.name = :model_name
-        AND 1 - (ce.embedding <=> :query_embedding::vector) >= :min_similarity
-        ORDER BY ce.embedding <=> :query_embedding::vector
+        AND 1 - (ce.embedding <=> CAST(:query_embedding AS vector)) >= :min_similarity
+        ORDER BY ce.embedding <=> CAST(:query_embedding AS vector)
         LIMIT :limit
     """)
 
@@ -481,13 +481,13 @@ async def search_similar_clips_advanced(
             ce.clip_id,
             ce.model_run_id,
             c.recording_id,
-            1 - (ce.embedding <=> :query_embedding::vector) as similarity
+            1 - (ce.embedding <=> CAST(:query_embedding AS vector)) as similarity
         FROM clip_embedding ce
         JOIN model_run mr ON ce.model_run_id = mr.id
         JOIN clip c ON ce.clip_id = c.id
         JOIN recording r ON c.recording_id = r.id
         WHERE mr.name = :model_name
-        AND 1 - (ce.embedding <=> :query_embedding::vector) >= :min_similarity
+        AND 1 - (ce.embedding <=> CAST(:query_embedding AS vector)) >= :min_similarity
     """
 
     params: dict = {
@@ -506,7 +506,7 @@ async def search_similar_clips_advanced(
         params["recording_uuids"] = [str(u) for u in recording_uuids]
 
     base_query += """
-        ORDER BY ce.embedding <=> :query_embedding::vector
+        ORDER BY ce.embedding <=> CAST(:query_embedding AS vector)
         LIMIT :limit
     """
 

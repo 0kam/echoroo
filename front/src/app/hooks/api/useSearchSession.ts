@@ -11,10 +11,9 @@ import type {
   SearchSession,
   SearchProgress,
   SearchResult,
-  SearchResultLabel,
-  SearchResultLabelUpdate,
+  SearchResultLabelData,
   BulkLabelRequest,
-} from "@/lib/types";
+} from "@/lib/schemas/search_sessions";
 import type { SearchResultFilter } from "@/lib/api/search_sessions";
 
 const emptyResultFilter: SearchResultFilter = {};
@@ -38,7 +37,6 @@ export default function useSearchSession({
   onExecute,
   onLabelResult,
   onBulkLabel,
-  onMarkComplete,
   onError,
 }: {
   mlProjectUuid: string;
@@ -51,7 +49,6 @@ export default function useSearchSession({
   onExecute?: (session: SearchSession) => void;
   onLabelResult?: (result: SearchResult) => void;
   onBulkLabel?: (count: number) => void;
-  onMarkComplete?: (session: SearchSession) => void;
   onError?: (error: AxiosError) => void;
 }) {
   const queryClient = useQueryClient();
@@ -103,14 +100,14 @@ export default function useSearchSession({
     },
   });
 
-  // Label result mutation
+  // Label result mutation with optimistic update
   const labelResult = useMutation({
     mutationFn: ({
       resultUuid,
       data,
     }: {
       resultUuid: string;
-      data: SearchResultLabelUpdate;
+      data: SearchResultLabelData;
     }) =>
       api.searchSessions.labelResult(
         mlProjectUuid,
@@ -118,11 +115,59 @@ export default function useSearchSession({
         resultUuid,
         data,
       ),
+    onMutate: async ({ resultUuid, data }) => {
+      // Cancel outgoing refetches
+      await queryClient.cancelQueries({
+        queryKey: [`search_session_${sessionUuid}_results`],
+      });
+
+      // Snapshot previous value
+      const previousResults = queryClient.getQueryData([
+        `search_session_${sessionUuid}_results`,
+      ]);
+
+      // Optimistically update the cache
+      queryClient.setQueriesData(
+        { queryKey: [`search_session_${sessionUuid}_results`] },
+        (old: unknown) => {
+          if (!old || typeof old !== "object") return old;
+          const oldData = old as { items?: SearchResult[]; total?: number };
+          if (!oldData.items) return old;
+
+          return {
+            ...oldData,
+            items: oldData.items.map((item: SearchResult) =>
+              item.uuid === resultUuid
+                ? {
+                    ...item,
+                    assigned_tag_id: data.assigned_tag_id ?? null,
+                    is_negative: data.is_negative,
+                    is_uncertain: data.is_uncertain,
+                    is_skipped: data.is_skipped,
+                  }
+                : item,
+            ),
+          };
+        },
+      );
+
+      return { previousResults };
+    },
     onSuccess: (data) => {
       onLabelResult?.(data);
-      results.query.refetch();
+      // Invalidate progress to update counts
+      queryClient.invalidateQueries({
+        queryKey: ["search_session", mlProjectUuid, sessionUuid, "progress"],
+      });
     },
-    onError: (error: AxiosError) => {
+    onError: (error: AxiosError, _variables, context) => {
+      // Rollback on error
+      if (context?.previousResults) {
+        queryClient.setQueriesData(
+          { queryKey: [`search_session_${sessionUuid}_results`] },
+          context.previousResults,
+        );
+      }
       toast.error("Failed to label result");
       onError?.(error);
     },
@@ -143,22 +188,6 @@ export default function useSearchSession({
     },
   });
 
-  // Mark complete mutation
-  const markComplete = useMutation({
-    mutationFn: () =>
-      api.searchSessions.markComplete(mlProjectUuid, sessionUuid),
-    onSuccess: (data) => {
-      toast.success("Search session marked as complete");
-      onMarkComplete?.(data);
-      queryClient.invalidateQueries({
-        queryKey: ["search_session", mlProjectUuid, sessionUuid],
-      });
-    },
-    onError: (error: AxiosError) => {
-      toast.error("Failed to mark session complete");
-      onError?.(error);
-    },
-  });
 
   return {
     // Session data
@@ -185,6 +214,5 @@ export default function useSearchSession({
     execute,
     labelResult,
     bulkLabel,
-    markComplete,
   } as const;
 }

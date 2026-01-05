@@ -8,8 +8,8 @@ import { TagSchema } from "./tags";
 // Reference sound source enum
 export const ReferenceSoundSourceSchema = z.enum([
   "xeno_canto",
-  "custom_upload",
-  "dataset_clip",
+  "upload",
+  "clip",
 ]);
 
 export type ReferenceSoundSource = z.infer<typeof ReferenceSoundSourceSchema>;
@@ -32,7 +32,7 @@ export const ReferenceSoundSchema = z.object({
   tag: TagSchema,
   start_time: z.number(),
   end_time: z.number(),
-  has_embedding: z.boolean(),
+  embedding_count: z.number().int(),
   is_active: z.boolean(),
   created_by_id: z.string().uuid().optional(),
   created_on: z.coerce.date(),

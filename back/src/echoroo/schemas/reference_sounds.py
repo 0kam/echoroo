@@ -135,11 +135,8 @@ class ReferenceSound(BaseSchema):
     audio_path: str | None = None
     """Path to the cached audio file."""
 
-    embedding_id: int | None = Field(default=None, exclude=True)
-    """Associated embedding identifier."""
-
-    has_embedding: bool = False
-    """Whether an embedding has been computed for this sound."""
+    embedding_count: int = 0
+    """Number of embeddings computed for this sound."""
 
     notes: str | None = None
     """Optional notes about the reference sound."""

@@ -58,6 +58,7 @@ export default function TagSearchBar({
       key: "species",
       value: candidate.usage_key,
       canonical_name: candidate.canonical_name,
+      vernacular_name: candidate.vernacular_name ?? undefined,
     }));
   }, [suggestions]);
 

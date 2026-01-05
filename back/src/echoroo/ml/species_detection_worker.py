@@ -34,6 +34,7 @@ from echoroo.api import (
 )
 from echoroo.ml.base import InferenceEngine, InferenceResult, ModelLoader
 from echoroo.ml.registry import ModelNotFoundError, ModelRegistry
+from echoroo.ml.species_resolver import SpeciesInfo, SpeciesResolver
 from echoroo.system.settings import get_settings
 
 __all__ = [
@@ -314,8 +315,9 @@ class SpeciesDetectionWorker:
         # Prediction filters are applied explicitly after runs.
         self._run_species_stats: dict[UUID, dict[str, _SpeciesSummary]] = {}
         self._foundation_run_ids: dict[int, int] = {}
-        # Cache for GBIF resolution: (scientific_name, locale) -> (usage_key, canonical, vernacular)
-        self._gbif_cache: dict[tuple[str, str], tuple[str | None, str, str | None]] = {}
+
+        # Species resolver for GBIF lookups
+        self._species_resolver = SpeciesResolver()
 
         # Pending species for batch GBIF resolution at job end
         # Maps job UUID -> set of scientific names that need GBIF lookup
@@ -891,14 +893,11 @@ class SpeciesDetectionWorker:
     ) -> InferenceEngine:
         """Ensure the required model is loaded.
 
-        For models that support locale (e.g., BirdNET), the locale is included
-        in the cache key to allow different locale versions to coexist.
+        Models are cached by name only. Locale-specific vernacular names
+        are now handled by SpeciesResolver after inference.
         """
         model_name = job.model_name
-        locale = getattr(job, "locale", "en_us")
-
-        # Include locale in cache key for locale-aware models
-        cache_key = f"{model_name}_{locale}" if model_name == "birdnet" else model_name
+        cache_key = model_name
 
         if cache_key in self._engines:
             engine = self._engines[cache_key]
@@ -919,21 +918,16 @@ class SpeciesDetectionWorker:
         # Get device setting from configuration
         device = self._get_device_setting()
         logger.info(
-            "Loading %s model (device: %s, gpu_batch_size: %d, feeders: %d, workers: %d, locale: %s)",
+            "Loading %s model (device: %s, gpu_batch_size: %d, feeders: %d, workers: %d)",
             model_name,
             device,
             self._gpu_batch_size,
             self._feeders,
             self._workers,
-            locale,
         )
 
-        # Create loader with device and lang parameters
-        # BirdNETLoader supports the lang parameter for locale-specific species names
-        if model_name == "birdnet":
-            loader = loader_class(model_dir=self._model_dir, device=device, lang=locale)  # type: ignore[call-arg]
-        else:
-            loader = loader_class(model_dir=self._model_dir, device=device)  # type: ignore[call-arg]
+        # Create loader with device parameter
+        loader = loader_class(model_dir=self._model_dir, device=device)  # type: ignore[call-arg]
         loader.load()
         self._loaders[cache_key] = loader
 
@@ -1475,25 +1469,12 @@ class SpeciesDetectionWorker:
         Returns:
             Tuple of (usage_key, canonical_name, vernacular_name).
         """
-        # Check cache (keyed by scientific_name + locale)
-        cache_key = (scientific_name, locale)
-        if cache_key in self._gbif_cache:
-            return self._gbif_cache[cache_key]
-
-        candidates = await search_gbif_species(scientific_name, limit=1)
-        if candidates:
-            candidate = candidates[0]
-            usage_key = candidate.usage_key
-            canonical = candidate.canonical_name or scientific_name
-            # Fetch vernacular name from GBIF
-            vernacular = await get_gbif_vernacular_name(usage_key, locale)
-        else:
-            usage_key = None
-            canonical = scientific_name
-            vernacular = None
-
-        self._gbif_cache[cache_key] = (usage_key, canonical, vernacular)
-        return usage_key, canonical, vernacular
+        # Delegate to SpeciesResolver
+        info: SpeciesInfo = await self._species_resolver.resolve(
+            scientific_name,
+            locale=locale,
+        )
+        return info.gbif_taxon_id, info.canonical_name, info.vernacular_name
 
     async def _resolve_pending_species_batch(
         self,
@@ -1514,52 +1495,41 @@ class SpeciesDetectionWorker:
         # Extract base locale (e.g., "en_us" -> "en", "ja" -> "ja")
         locale = job.locale.split("_")[0] if job.locale else "ja"
 
-        # Filter out already cached species (keyed by name + locale)
-        to_resolve = [
-            name for name in pending
-            if (name, locale) not in self._gbif_cache
-        ]
-
-        if not to_resolve:
-            logger.debug("All species already cached for job %s", job.uuid)
-            # Still need to update species stats with cached vernacular names
-            await self._update_species_stats_with_vernacular(job, locale)
-            return
-
         logger.info(
             "Resolving %d species via GBIF for job %s (locale=%s)",
-            len(to_resolve),
+            len(pending),
             job.uuid,
             locale,
         )
 
-        # Resolve each species and update tags
-        for scientific_name in to_resolve:
-            try:
-                gbif_taxon_id, canonical_name, vernacular_name = await self._resolve_gbif_taxon(
-                    scientific_name,
-                    locale=locale,
-                )
+        # Use SpeciesResolver batch resolution
+        results: dict[str, SpeciesInfo] = await self._species_resolver.resolve_batch(
+            list(pending),
+            locale=locale,
+        )
 
+        # Update tags with GBIF information
+        for scientific_name, info in results.items():
+            try:
                 # Update existing tag if GBIF info was found
-                if gbif_taxon_id and gbif_taxon_id != scientific_name:
+                if info.gbif_taxon_id and info.gbif_taxon_id != scientific_name:
                     await self._update_species_tag(
                         session,
                         old_value=scientific_name,
-                        new_value=gbif_taxon_id,
-                        canonical_name=canonical_name or scientific_name,
-                        vernacular_name=vernacular_name,
+                        new_value=info.gbif_taxon_id,
+                        canonical_name=info.canonical_name,
+                        vernacular_name=info.vernacular_name,
                     )
 
             except Exception as e:
                 logger.warning(
-                    "Failed to resolve GBIF for %s: %s",
+                    "Failed to update tag for %s: %s",
                     scientific_name,
                     e,
                 )
 
-        # Update species stats with vernacular names from cache
-        await self._update_species_stats_with_vernacular(job, locale)
+        # Update species stats with vernacular names
+        await self._update_species_stats_with_vernacular(job, locale, results)
 
         await session.commit()
         logger.info("GBIF resolution completed for job %s", job.uuid)
@@ -1618,8 +1588,9 @@ class SpeciesDetectionWorker:
         self,
         job: schemas.SpeciesDetectionJob,
         locale: str,
+        resolved_species: dict[str, SpeciesInfo],
     ) -> None:
-        """Update species stats with vernacular names from GBIF cache.
+        """Update species stats with vernacular names from resolved species.
 
         This is called after GBIF resolution to update the common_name_ja
         field in species stats with the vernacular names fetched from GBIF.
@@ -1629,13 +1600,10 @@ class SpeciesDetectionWorker:
             return
 
         for summary in stats_map.values():
-            # Look up vernacular name in cache using scientific_name + locale
-            cache_key = (summary.scientific_name, locale)
-            cached = self._gbif_cache.get(cache_key)
-            if cached:
-                _usage_key, _canonical, vernacular_name = cached
-                if vernacular_name:
-                    summary.common_name_ja = vernacular_name
+            # Look up vernacular name in resolved species results
+            info = resolved_species.get(summary.scientific_name)
+            if info and info.vernacular_name:
+                summary.common_name_ja = info.vernacular_name
 
     def _record_species_summary(
         self,

@@ -3,11 +3,18 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Any, Sequence
 
+import requests
 from pygbif import species as gbif_species
 
 from echoroo import schemas
+
+logger = logging.getLogger(__name__)
+
+# GBIF Backbone Taxonomy dataset key
+GBIF_BACKBONE_DATASET_KEY = "d7dddbf4-2cf0-4f39-9b2a-bb099caae36c"
 
 __all__ = ["search_gbif_species", "get_gbif_species_by_key", "get_gbif_vernacular_name"]
 
@@ -36,6 +43,23 @@ _LANG_CODE_MAP: dict[str, str] = {
 def _extract_candidates(  # pragma: no cover - simple data parser
     payload: Sequence[dict[str, Any]],
 ) -> list[schemas.SpeciesCandidate]:
+    """Extract species candidates from GBIF API response.
+
+    Deduplicates entries by canonical name, preferring GBIF Backbone Taxonomy
+    entries over regional datasets. When multiple entries share the same
+    canonical name and dataset priority, prefers the entry with more
+    vernacular names.
+
+    Parameters
+    ----------
+    payload : Sequence[dict[str, Any]]
+        List of species results from GBIF API.
+
+    Returns
+    -------
+    list[schemas.SpeciesCandidate]
+        Filtered and deduplicated list of species candidates.
+    """
     candidates: list[schemas.SpeciesCandidate] = []
     for item in payload:
         usage_key = item.get("usageKey") or item.get("key")
@@ -47,6 +71,32 @@ def _extract_candidates(  # pragma: no cover - simple data parser
         canonical = item.get("canonicalName") or item.get("scientificName")
         if canonical is None:
             continue
+
+        # Extract vernacular names
+        vernacular_names_raw = item.get("vernacularNames", [])
+        vernacular_name = None
+        vernacular_names = None
+
+        if vernacular_names_raw:
+            # Convert GBIF camelCase to snake_case for consistency with schema
+            vernacular_names = [
+                {
+                    "vernacular_name": vn.get("vernacularName"),
+                    "language": vn.get("language"),
+                    "source": vn.get("source"),
+                }
+                for vn in vernacular_names_raw
+            ]
+            # Try to find English vernacular name as primary
+            for vn in vernacular_names_raw:
+                lang = vn.get("language", "").lower()
+                if lang in ("eng", "en"):
+                    vernacular_name = vn.get("vernacularName")
+                    break
+            # If no English name found, use the first available
+            if vernacular_name is None and vernacular_names_raw:
+                vernacular_name = vernacular_names_raw[0].get("vernacularName")
+
         candidates.append(
             schemas.SpeciesCandidate(
                 usage_key=str(usage_key),
@@ -55,44 +105,135 @@ def _extract_candidates(  # pragma: no cover - simple data parser
                 rank=item.get("rank"),
                 synonym=item.get("synonym", False),
                 dataset_key=item.get("datasetKey"),
+                vernacular_name=vernacular_name,
+                vernacular_names=vernacular_names,
             )
         )
-    # Remove duplicates by usage key while preserving order.
+    # Remove duplicates by canonical name while preserving order.
+    # When duplicates exist, prefer GBIF Backbone Taxonomy entries.
     unique: dict[str, schemas.SpeciesCandidate] = {}
     for candidate in candidates:
-        if candidate.usage_key not in unique:
-            unique[candidate.usage_key] = candidate
+        canonical_key = candidate.canonical_name
+
+        # Skip if no canonical name (defensive programming)
+        if not canonical_key:
+            continue
+
+        # If this canonical name not seen yet, add it
+        if canonical_key not in unique:
+            unique[canonical_key] = candidate
+        else:
+            # Prefer GBIF Backbone Taxonomy entries
+            existing = unique[canonical_key]
+
+            # Check if current entry is from Backbone Taxonomy
+            is_current_backbone = candidate.dataset_key == GBIF_BACKBONE_DATASET_KEY
+            is_existing_backbone = existing.dataset_key == GBIF_BACKBONE_DATASET_KEY
+
+            # Replace if current is from Backbone and existing is not
+            if is_current_backbone and not is_existing_backbone:
+                unique[canonical_key] = candidate
+            # If neither or both are from Backbone, prefer entry with more vernacular names
+            elif is_current_backbone == is_existing_backbone:
+                existing_vn_count = len(existing.vernacular_names or [])
+                current_vn_count = len(candidate.vernacular_names or [])
+                if current_vn_count > existing_vn_count:
+                    unique[canonical_key] = candidate
+
     return list(unique.values())
+
+
+def _call_gbif_species_search(
+    query: str,
+    limit: int,
+    q_field: str | None = None,
+) -> list[dict[str, Any]]:
+    """Call GBIF species search API synchronously.
+
+    Parameters
+    ----------
+    query : str
+        Search query string.
+    limit : int
+        Maximum number of results to return.
+    q_field : str | None
+        Query field to search in (e.g., "VERNACULAR", "SCIENTIFIC").
+        If None, searches all fields.
+
+    Returns
+    -------
+    list[dict[str, Any]]
+        List of species results from GBIF API.
+    """
+    url = "https://api.gbif.org/v1/species/search"
+    params: dict[str, Any] = {
+        "q": query,
+        "limit": limit,
+        "rank": "SPECIES",
+    }
+    if q_field:
+        params["qField"] = q_field
+
+    try:
+        response = requests.get(url, params=params, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+        return data.get("results", [])
+    except requests.exceptions.RequestException as e:
+        logger.error(f"GBIF API request failed: {e}")
+        return []
+    except Exception as e:
+        logger.error(f"Unexpected error during GBIF search: {e}")
+        return []
 
 
 async def search_gbif_species(
     query: str,
     *,
     limit: int = 10,
+    q_field: str | None = None,
 ) -> list[schemas.SpeciesCandidate]:
-    """Search GBIF species suggestions asynchronously."""
+    """Search GBIF species asynchronously.
 
+    Parameters
+    ----------
+    query : str
+        Search query string (scientific name, vernacular name, etc.).
+    limit : int
+        Maximum number of results to return (default: 10).
+    q_field : str | None
+        Query field to search in:
+        - "VERNACULAR": Search in vernacular (common) names
+        - "SCIENTIFIC": Search in scientific names
+        - None: Search all fields (default)
+
+    Returns
+    -------
+    list[schemas.SpeciesCandidate]
+        List of matching species candidates with vernacular names included.
+
+    Examples
+    --------
+    Search by scientific name:
+    >>> await search_gbif_species("Passer montanus")
+
+    Search by vernacular name:
+    >>> await search_gbif_species("robin", q_field="VERNACULAR")
+
+    Search by Japanese vernacular name:
+    >>> await search_gbif_species("スズメ", q_field="VERNACULAR")
+    """
     if not query.strip():
         return []
 
     loop = asyncio.get_running_loop()
-    response: dict[str, Any] | list[dict[str, Any]] | None = await loop.run_in_executor(
+    payload = await loop.run_in_executor(
         None,
-        lambda: gbif_species.name_suggest(  # type: ignore[arg-type]
-            q=query,
-            limit=limit,
-            rank="species",
-        ),
+        _call_gbif_species_search,
+        query,
+        limit,
+        q_field,
     )
-    if response is None:
-        return []
-
-    payload: Sequence[dict[str, Any]]
-    if isinstance(response, dict):
-        results = response.get("results")
-        payload = results if results else []
-    else:
-        payload = list(response)
 
     return _extract_candidates(payload)
 

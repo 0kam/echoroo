@@ -2,7 +2,7 @@
 
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useQuery } from "@tanstack/react-query";
-import { useCallback, useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
 
 import api from "@/app/api";
@@ -10,28 +10,25 @@ import api from "@/app/api";
 import {
   Group,
   Input,
-  Select,
-  Slider,
   Submit,
   TextArea,
 } from "@/lib/components/inputs";
-import type { Option } from "@/lib/components/inputs/Select";
-import { AudioIcon, CheckIcon } from "@/lib/components/icons";
+import { AudioIcon, CheckIcon, ChevronDownIcon, ChevronUpIcon } from "@/lib/components/icons";
 import Button from "@/lib/components/ui/Button";
 import { SearchSessionCreateSchema } from "@/lib/schemas";
-import type { ReferenceSound, SearchSessionCreate, Tag, Page } from "@/lib/types";
+import type { ReferenceSound, SearchSessionCreate, Page } from "@/lib/types";
 
 export default function SearchSessionCreate({
   mlProjectUuid,
-  defaultThreshold = 0.7,
   onCreateSession,
   onCancel,
 }: {
   mlProjectUuid: string;
-  defaultThreshold?: number;
   onCreateSession?: (data: SearchSessionCreate) => void;
   onCancel?: () => void;
 }) {
+  const [showAdvanced, setShowAdvanced] = useState(false);
+
   const {
     register,
     handleSubmit,
@@ -44,24 +41,20 @@ export default function SearchSessionCreate({
     defaultValues: {
       name: "",
       description: "",
-      target_tag_id: 0,
       reference_sound_ids: [],
-      similarity_threshold: defaultThreshold,
-      max_results: 1000,
+      easy_positive_k: 5,
+      boundary_n: 200,
+      boundary_m: 10,
+      others_p: 20,
+      distance_metric: "cosine",
     },
   });
 
   useEffect(() => {
-    register("target_tag_id");
     register("reference_sound_ids");
-    register("similarity_threshold");
-    register("max_results");
   }, [register]);
 
-  const targetTagId = watch("target_tag_id");
   const selectedReferenceSoundIds = watch("reference_sound_ids");
-  const threshold = watch("similarity_threshold") ?? defaultThreshold;
-  const maxResults = watch("max_results") ?? 1000;
 
   // Fetch reference sounds for this ML project
   const {
@@ -75,85 +68,10 @@ export default function SearchSessionCreate({
 
   const referenceSounds = referenceSoundsPage?.items ?? [];
 
-  // Filter to only active reference sounds
+  // Filter to only active reference sounds with embeddings
   const activeReferenceSounds = useMemo(() => {
-    return referenceSounds.filter((rs) => rs.is_active && rs.has_embedding);
+    return referenceSounds.filter((rs) => rs.is_active && rs.embedding_count > 0);
   }, [referenceSounds]);
-
-  // Get unique tags from reference sounds (using tag_id as key)
-  const availableTags = useMemo(() => {
-    const tagMap = new Map<number, Tag>();
-    activeReferenceSounds.forEach((rs) => {
-      // tag_id can be undefined in schema, but we always have tag which contains id
-      const tagId = rs.tag_id ?? rs.tag.id;
-      if (tagId != null && !tagMap.has(tagId)) {
-        tagMap.set(tagId, rs.tag);
-      }
-    });
-    return Array.from(tagMap.entries()); // Returns [tag_id, tag] pairs
-  }, [activeReferenceSounds]);
-
-  // Filter reference sounds by selected tag
-  const filteredReferenceSounds = useMemo(() => {
-    if (!targetTagId) return activeReferenceSounds;
-    return activeReferenceSounds.filter((rs) => {
-      const tagId = rs.tag_id ?? rs.tag.id;
-      return tagId === targetTagId;
-    });
-  }, [activeReferenceSounds, targetTagId]);
-
-  const tagOptions: Option<number>[] = useMemo(() => {
-    const placeholder: Option<number> = {
-      id: "tag-placeholder",
-      label: referenceSoundsLoading
-        ? "Loading..."
-        : availableTags.length === 0
-          ? "No reference sounds available"
-          : "Select target species",
-      value: 0,
-      disabled: true,
-    };
-    const options = availableTags.map(([tagId, tag]) => ({
-      id: `tag-${tagId}`,
-      label: `${tag.value}${tag.key ? ` (${tag.key})` : ""}`,
-      value: tagId,
-    }));
-    return [placeholder, ...options];
-  }, [availableTags, referenceSoundsLoading]);
-
-  const selectedTagOption =
-    tagOptions.find((option) => option.value === targetTagId) ?? tagOptions[0];
-
-  const handleTagChange = useCallback(
-    (value: number) => {
-      setValue("target_tag_id", value, { shouldValidate: true, shouldDirty: true });
-      // Reset reference sound selection when tag changes
-      setValue("reference_sound_ids", [], { shouldValidate: true });
-    },
-    [setValue],
-  );
-
-  const handleThresholdChange = useCallback(
-    (value: number | number[]) => {
-      const newValue = Array.isArray(value) ? value[0] : value;
-      setValue("similarity_threshold", newValue, {
-        shouldValidate: true,
-        shouldDirty: true,
-      });
-    },
-    [setValue],
-  );
-
-  const handleMaxResultsChange = useCallback(
-    (value: number | number[]) => {
-      const newValue = Array.isArray(value) ? value[0] : value;
-      setValue("max_results", Math.round(newValue), {
-        shouldValidate: true,
-        shouldDirty: true,
-      });
-    },
-    [setValue],
-  );
 
   const handleToggleReferenceSound = useCallback(
     (uuid: string) => {
@@ -171,12 +89,12 @@ export default function SearchSessionCreate({
   );
 
   const handleSelectAll = useCallback(() => {
-    const allIds = filteredReferenceSounds.map((rs) => rs.uuid);
+    const allIds = activeReferenceSounds.map((rs) => rs.uuid);
     setValue("reference_sound_ids", allIds, {
       shouldValidate: true,
       shouldDirty: true,
     });
-  }, [filteredReferenceSounds, setValue]);
+  }, [activeReferenceSounds, setValue]);
 
   const handleDeselectAll = useCallback(() => {
     setValue("reference_sound_ids", [], {
@@ -186,7 +104,7 @@ export default function SearchSessionCreate({
   }, [setValue]);
 
   const canSubmit =
-    targetTagId > 0 && selectedReferenceSoundIds && selectedReferenceSoundIds.length > 0;
+    selectedReferenceSoundIds && selectedReferenceSoundIds.length > 0;
 
   const onSubmit = useCallback(
     (data: SearchSessionCreate) => {
@@ -225,22 +143,6 @@ export default function SearchSessionCreate({
         />
       </Group>
 
-      {/* Target Species */}
-      <Group
-        name="target_tag_id"
-        label="Target Species"
-        help="Select the species to search for."
-        error={errors.target_tag_id?.message}
-      >
-        <Select
-          label="Species"
-          options={tagOptions}
-          selected={selectedTagOption}
-          onChange={handleTagChange}
-          placement="bottom-start"
-        />
-      </Group>
-
       {/* Reference Sounds Selection */}
       <Group
         name="reference_sound_ids"
@@ -252,7 +154,7 @@ export default function SearchSessionCreate({
           {/* Selection Actions */}
           <div className="flex items-center justify-between px-3 py-2 bg-stone-50 dark:bg-stone-800 border-b border-stone-200 dark:border-stone-700">
             <span className="text-sm text-stone-600 dark:text-stone-400">
-              {filteredReferenceSounds.length} reference sounds available
+              {activeReferenceSounds.length} reference sounds available
             </span>
             <div className="flex gap-2">
               <Button
@@ -261,7 +163,7 @@ export default function SearchSessionCreate({
                 variant="primary"
                 padding="p-1"
                 onClick={handleSelectAll}
-                disabled={filteredReferenceSounds.length === 0}
+                disabled={activeReferenceSounds.length === 0}
               >
                 Select All
               </Button>
@@ -280,14 +182,12 @@ export default function SearchSessionCreate({
 
           {/* Reference Sounds List */}
           <div className="max-h-48 overflow-y-auto">
-            {filteredReferenceSounds.length === 0 ? (
+            {activeReferenceSounds.length === 0 ? (
               <div className="p-4 text-center text-sm text-stone-500">
-                {targetTagId
-                  ? "No reference sounds available for the selected species."
-                  : "Select a target species to see available reference sounds."}
+                No reference sounds available. Add reference sounds first.
               </div>
             ) : (
-              filteredReferenceSounds.map((rs) => {
+              activeReferenceSounds.map((rs) => {
                 const isSelected = selectedReferenceSoundIds?.includes(rs.uuid) ?? false;
                 return (
                   <button
@@ -316,11 +216,20 @@ export default function SearchSessionCreate({
                       <div className="text-sm font-medium text-stone-800 dark:text-stone-200 truncate">
                         {rs.name}
                       </div>
-                      <div className="text-xs text-stone-500 dark:text-stone-500">
-                        {rs.source === "xeno_canto" && `XC${rs.xeno_canto_id}`}
-                        {rs.source === "dataset_clip" && "Dataset Clip"}
-                        {rs.source === "custom_upload" && "Custom Upload"}
-                        {" - "}
+                      <div className="text-xs text-stone-500 dark:text-stone-500 truncate">
+                        {rs.tag.vernacular_name && (
+                          <span>{rs.tag.vernacular_name}</span>
+                        )}
+                        {rs.tag.vernacular_name && rs.tag.canonical_name && " · "}
+                        {rs.tag.canonical_name && (
+                          <span className="italic">{rs.tag.canonical_name}</span>
+                        )}
+                      </div>
+                      <div className="text-xs text-stone-400 dark:text-stone-600">
+                        {rs.source === "xeno_canto" && rs.xeno_canto_id}
+                        {rs.source === "clip" && "Dataset Clip"}
+                        {rs.source === "upload" && "Custom Upload"}
+                        {" · "}
                         {(rs.end_time - rs.start_time).toFixed(1)}s
                       </div>
                     </div>
@@ -332,39 +241,121 @@ export default function SearchSessionCreate({
         </div>
       </Group>
 
-      {/* Similarity Threshold */}
-      <Group
-        name="similarity_threshold"
-        label={`Similarity Threshold: ${(threshold * 100).toFixed(0)}%`}
-        help="Minimum similarity score for results. Higher values return fewer, more similar results."
-      >
-        <Slider
-          label="Threshold"
-          minValue={0}
-          maxValue={1}
-          step={0.01}
-          value={threshold}
-          onChange={handleThresholdChange}
-          formatter={(v) => `${(v * 100).toFixed(0)}%`}
-        />
-      </Group>
+      {/* Advanced Settings (Collapsible) */}
+      <div className="border border-stone-200 dark:border-stone-700 rounded-md overflow-hidden">
+        <button
+          type="button"
+          onClick={() => setShowAdvanced(!showAdvanced)}
+          className="w-full flex items-center justify-between px-4 py-3 bg-stone-50 dark:bg-stone-800 hover:bg-stone-100 dark:hover:bg-stone-750 transition-colors"
+        >
+          <span className="text-sm font-medium text-stone-700 dark:text-stone-300">
+            Advanced Settings (Active Learning)
+          </span>
+          {showAdvanced ? (
+            <ChevronUpIcon className="w-4 h-4 text-stone-500" />
+          ) : (
+            <ChevronDownIcon className="w-4 h-4 text-stone-500" />
+          )}
+        </button>
 
-      {/* Max Results */}
-      <Group
-        name="max_results"
-        label={`Maximum Results: ${maxResults.toLocaleString()}`}
-        help="Maximum number of results to return from the search."
-      >
-        <Slider
-          label="Max Results"
-          minValue={100}
-          maxValue={10000}
-          step={100}
-          value={maxResults}
-          onChange={handleMaxResultsChange}
-          formatter={(v) => v.toLocaleString()}
-        />
-      </Group>
+        {showAdvanced && (
+          <div className="p-4 space-y-4 border-t border-stone-200 dark:border-stone-700">
+            <p className="text-xs text-stone-500 dark:text-stone-400 mb-4">
+              These parameters control how samples are selected for each labeling iteration.
+              The defaults work well for most cases.
+            </p>
+
+            {/* Easy Positive K */}
+            <Group
+              name="easy_positive_k"
+              label="Easy Positives (k)"
+              help="Number of high-confidence positive samples per reference sound per iteration."
+              error={errors.easy_positive_k?.message}
+            >
+              <Input
+                type="number"
+                min={0}
+                max={50}
+                {...register("easy_positive_k", { valueAsNumber: true })}
+              />
+            </Group>
+
+            {/* Boundary N */}
+            <Group
+              name="boundary_n"
+              label="Boundary Pool Size (n)"
+              help="Number of boundary candidates to consider for uncertainty sampling."
+              error={errors.boundary_n?.message}
+            >
+              <Input
+                type="number"
+                min={0}
+                max={1000}
+                {...register("boundary_n", { valueAsNumber: true })}
+              />
+            </Group>
+
+            {/* Boundary M */}
+            <Group
+              name="boundary_m"
+              label="Boundary Samples (m)"
+              help="Number of boundary samples to select from the pool per iteration."
+              error={errors.boundary_m?.message}
+            >
+              <Input
+                type="number"
+                min={0}
+                max={100}
+                {...register("boundary_m", { valueAsNumber: true })}
+              />
+            </Group>
+
+            {/* Others P */}
+            <Group
+              name="others_p"
+              label="Exploration Samples (p)"
+              help="Number of random samples from the rest of the dataset per iteration."
+              error={errors.others_p?.message}
+            >
+              <Input
+                type="number"
+                min={0}
+                max={200}
+                {...register("others_p", { valueAsNumber: true })}
+              />
+            </Group>
+
+            {/* Distance Metric */}
+            <Group
+              name="distance_metric"
+              label="Distance Metric"
+              help="Method for measuring similarity between audio clips."
+              error={errors.distance_metric?.message}
+            >
+              <div className="flex gap-4">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="radio"
+                    value="cosine"
+                    {...register("distance_metric")}
+                    className="text-emerald-600"
+                  />
+                  <span className="text-sm">Cosine Similarity (Recommended)</span>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="radio"
+                    value="euclidean"
+                    {...register("distance_metric")}
+                    className="text-emerald-600"
+                  />
+                  <span className="text-sm">Euclidean Distance</span>
+                </label>
+              </div>
+            </Group>
+          </div>
+        )}
+      </div>
 
       {/* Actions */}
       <div className="flex justify-end gap-3 pt-4 border-t border-stone-200 dark:border-stone-700">

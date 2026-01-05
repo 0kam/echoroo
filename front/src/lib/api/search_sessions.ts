@@ -5,32 +5,50 @@ import { GetMany, Page } from "@/lib/api/common";
 import * as schemas from "@/lib/schemas";
 import type * as types from "@/lib/types";
 
-// Filter type for SearchResult
+// Filter type for SearchResult with Active Learning fields
 export type SearchResultFilter = {
-  label?: types.SearchResultLabel;
+  assigned_tag_id?: number;
+  is_negative?: boolean;
+  is_uncertain?: boolean;
+  is_skipped?: boolean;
+  sample_type?: types.SampleType;
+  is_labeled?: boolean;
+  iteration_added?: number;
 };
 
-const DEFAULT_ENDPOINTS = {
-  getMany: "/api/v1/ml_projects/detail/search_sessions/",
-  get: "/api/v1/ml_projects/detail/search_sessions/detail/",
-  create: "/api/v1/ml_projects/detail/search_sessions/",
-  delete: "/api/v1/ml_projects/detail/search_sessions/detail/",
-  execute: "/api/v1/ml_projects/detail/search_sessions/detail/execute/",
-  progress: "/api/v1/ml_projects/detail/search_sessions/detail/progress/",
-  results: "/api/v1/ml_projects/detail/search_sessions/detail/results/",
-  labelResult: "/api/v1/ml_projects/detail/search_sessions/detail/results/label/",
-  bulkLabel: "/api/v1/ml_projects/detail/search_sessions/detail/bulk_label/",
-  markComplete: "/api/v1/ml_projects/detail/search_sessions/detail/mark_complete/",
-  bulkCurate: "/api/v1/ml_projects/detail/search_sessions/detail/bulk_curate/",
-  exportToAnnotationProject: "/api/v1/ml_projects/detail/search_sessions/detail/export_to_annotation_project/",
-};
+// Helper to build endpoints with ml_project_uuid and optional search_session_uuid
+function buildEndpoints(mlProjectUuid: string, searchSessionUuid?: string) {
+  const base = `/api/v1/ml_projects/${mlProjectUuid}/search_sessions`;
+  const sessionBase = searchSessionUuid ? `${base}/${searchSessionUuid}` : base;
+
+  return {
+    getMany: base,
+    get: sessionBase,
+    create: base,
+    delete: sessionBase,
+    execute: `${sessionBase}/execute`,
+    runIteration: `${sessionBase}/run_iteration`,
+    progress: `${sessionBase}/progress`,
+    results: `${sessionBase}/results`,
+    labelResult: (resultUuid: string) => `${sessionBase}/results/${resultUuid}/label`,
+    bulkLabel: `${sessionBase}/bulk_label`,
+    bulkCurate: `${sessionBase}/bulk_curate`,
+    exportToAnnotationProject: `${sessionBase}/export_to_annotation_project`,
+    scoreDistribution: `${sessionBase}/score_distribution`,
+  };
+}
 
 export function registerSearchSessionAPI(
   instance: AxiosInstance,
-  endpoints: typeof DEFAULT_ENDPOINTS = DEFAULT_ENDPOINTS,
 ) {
   const SearchResultFilterSchema = z.object({
-    label: schemas.SearchResultLabelSchema.optional(),
+    assigned_tag_id: z.number().int().optional(),
+    is_negative: z.boolean().optional(),
+    is_uncertain: z.boolean().optional(),
+    is_skipped: z.boolean().optional(),
+    sample_type: schemas.SampleTypeSchema.optional(),
+    is_labeled: z.boolean().optional(),
+    iteration_added: z.number().int().optional(),
   });
 
   /**
@@ -45,9 +63,9 @@ export function registerSearchSessionAPI(
     query: types.GetMany = {},
   ): Promise<types.Page<types.SearchSession>> {
     const params = GetMany(z.object({})).parse(query);
+    const endpoints = buildEndpoints(mlProjectUuid);
     const { data } = await instance.get(endpoints.getMany, {
       params: {
-        ml_project_uuid: mlProjectUuid,
         limit: params.limit,
         offset: params.offset,
       },
@@ -66,20 +84,16 @@ export function registerSearchSessionAPI(
     mlProjectUuid: string,
     uuid: string,
   ): Promise<types.SearchSession> {
-    const { data } = await instance.get(endpoints.get, {
-      params: {
-        ml_project_uuid: mlProjectUuid,
-        search_session_uuid: uuid,
-      },
-    });
+    const endpoints = buildEndpoints(mlProjectUuid, uuid);
+    const { data } = await instance.get(endpoints.get);
     return schemas.SearchSessionSchema.parse(data);
   }
 
   /**
-   * Create a new search session.
+   * Create a new search session with Active Learning parameters.
    *
    * @param mlProjectUuid - The UUID of the ML project
-   * @param data - The search session data
+   * @param data - The search session data with Active Learning parameters
    * @returns The created search session
    */
   async function create(
@@ -87,9 +101,8 @@ export function registerSearchSessionAPI(
     data: types.SearchSessionCreate,
   ): Promise<types.SearchSession> {
     const body = schemas.SearchSessionCreateSchema.parse(data);
-    const { data: responseData } = await instance.post(endpoints.create, body, {
-      params: { ml_project_uuid: mlProjectUuid },
-    });
+    const endpoints = buildEndpoints(mlProjectUuid);
+    const { data: responseData } = await instance.post(endpoints.create, body);
     return schemas.SearchSessionSchema.parse(responseData);
   }
 
@@ -104,17 +117,13 @@ export function registerSearchSessionAPI(
     mlProjectUuid: string,
     uuid: string,
   ): Promise<types.SearchSession> {
-    const { data } = await instance.delete(endpoints.delete, {
-      params: {
-        ml_project_uuid: mlProjectUuid,
-        search_session_uuid: uuid,
-      },
-    });
+    const endpoints = buildEndpoints(mlProjectUuid, uuid);
+    const { data } = await instance.delete(endpoints.delete);
     return schemas.SearchSessionSchema.parse(data);
   }
 
   /**
-   * Execute a search session.
+   * Execute initial sampling for a search session.
    *
    * @param mlProjectUuid - The UUID of the ML project
    * @param sessionUuid - The UUID of the search session
@@ -124,16 +133,27 @@ export function registerSearchSessionAPI(
     mlProjectUuid: string,
     sessionUuid: string,
   ): Promise<types.SearchSession> {
-    const { data } = await instance.post(
-      endpoints.execute,
-      {},
-      {
-        params: {
-          ml_project_uuid: mlProjectUuid,
-          search_session_uuid: sessionUuid,
-        },
-      },
-    );
+    const endpoints = buildEndpoints(mlProjectUuid, sessionUuid);
+    const { data } = await instance.post(endpoints.execute, {});
+    return schemas.SearchSessionSchema.parse(data);
+  }
+
+  /**
+   * Run an active learning iteration to add new samples based on current labels.
+   *
+   * @param mlProjectUuid - The UUID of the ML project
+   * @param sessionUuid - The UUID of the search session
+   * @param params - Optional iteration parameters (uncertainty range, sample count)
+   * @returns The updated search session with new samples
+   */
+  async function runIteration(
+    mlProjectUuid: string,
+    sessionUuid: string,
+    params?: types.RunIterationRequest,
+  ): Promise<types.SearchSession> {
+    const body = params ? schemas.RunIterationRequestSchema.parse(params) : {};
+    const endpoints = buildEndpoints(mlProjectUuid, sessionUuid);
+    const { data } = await instance.post(endpoints.runIteration, body);
     return schemas.SearchSessionSchema.parse(data);
   }
 
@@ -142,23 +162,19 @@ export function registerSearchSessionAPI(
    *
    * @param mlProjectUuid - The UUID of the ML project
    * @param sessionUuid - The UUID of the search session
-   * @returns The search progress
+   * @returns The search progress with tag counts
    */
   async function getProgress(
     mlProjectUuid: string,
     sessionUuid: string,
   ): Promise<types.SearchProgress> {
-    const { data } = await instance.get(endpoints.progress, {
-      params: {
-        ml_project_uuid: mlProjectUuid,
-        search_session_uuid: sessionUuid,
-      },
-    });
+    const endpoints = buildEndpoints(mlProjectUuid, sessionUuid);
+    const { data } = await instance.get(endpoints.progress);
     return schemas.SearchProgressSchema.parse(data);
   }
 
   /**
-   * Get search results for a session.
+   * Get search results for a session with Active Learning filter support.
    *
    * @param mlProjectUuid - The UUID of the ML project
    * @param sessionUuid - The UUID of the search session
@@ -171,50 +187,50 @@ export function registerSearchSessionAPI(
     query: types.GetMany & SearchResultFilter = {},
   ): Promise<types.Page<types.SearchResult>> {
     const params = GetMany(SearchResultFilterSchema).parse(query);
+    const endpoints = buildEndpoints(mlProjectUuid, sessionUuid);
     const { data } = await instance.get(endpoints.results, {
       params: {
-        ml_project_uuid: mlProjectUuid,
-        search_session_uuid: sessionUuid,
         limit: params.limit,
         offset: params.offset,
-        label__eq: params.label,
+        assigned_tag_id: params.assigned_tag_id,
+        is_negative: params.is_negative,
+        is_uncertain: params.is_uncertain,
+        is_skipped: params.is_skipped,
+        sample_type: params.sample_type,
+        is_labeled: params.is_labeled,
+        iteration_added: params.iteration_added,
       },
     });
     return Page(schemas.SearchResultSchema).parse(data);
   }
 
   /**
-   * Label a search result.
+   * Label a search result with Active Learning label data.
    *
    * @param mlProjectUuid - The UUID of the ML project
    * @param sessionUuid - The UUID of the search session
    * @param resultUuid - The UUID of the search result
-   * @param data - The label update data
+   * @param data - The label data (assigned_tag_id, is_negative, is_uncertain, is_skipped)
    * @returns The updated search result
    */
   async function labelResult(
     mlProjectUuid: string,
     sessionUuid: string,
     resultUuid: string,
-    data: types.SearchResultLabelUpdate,
+    data: types.SearchResultLabelData,
   ): Promise<types.SearchResult> {
-    const body = schemas.SearchResultLabelUpdateSchema.parse(data);
-    const { data: responseData } = await instance.post(endpoints.labelResult, body, {
-      params: {
-        ml_project_uuid: mlProjectUuid,
-        search_session_uuid: sessionUuid,
-        search_result_uuid: resultUuid,
-      },
-    });
+    const body = schemas.SearchResultLabelDataSchema.parse(data);
+    const endpoints = buildEndpoints(mlProjectUuid, sessionUuid);
+    const { data: responseData } = await instance.post(endpoints.labelResult(resultUuid), body);
     return schemas.SearchResultSchema.parse(responseData);
   }
 
   /**
-   * Bulk label multiple search results.
+   * Bulk label multiple search results with Active Learning labels.
    *
    * @param mlProjectUuid - The UUID of the ML project
    * @param sessionUuid - The UUID of the search session
-   * @param data - The bulk label request
+   * @param data - The bulk label request with label_data
    * @returns The updated count
    */
   async function bulkLabel(
@@ -223,45 +239,18 @@ export function registerSearchSessionAPI(
     data: types.BulkLabelRequest,
   ): Promise<{ updated_count: number }> {
     const body = schemas.BulkLabelRequestSchema.parse(data);
-    const { data: responseData } = await instance.post(endpoints.bulkLabel, body, {
-      params: {
-        ml_project_uuid: mlProjectUuid,
-        search_session_uuid: sessionUuid,
-      },
-    });
+    const endpoints = buildEndpoints(mlProjectUuid, sessionUuid);
+    const { data: responseData } = await instance.post(endpoints.bulkLabel, body);
     return z.object({ updated_count: z.number().int().nonnegative() }).parse(responseData);
   }
 
-  /**
-   * Mark a search session as labeling complete.
-   *
-   * @param mlProjectUuid - The UUID of the ML project
-   * @param sessionUuid - The UUID of the search session
-   * @returns The updated search session
-   */
-  async function markComplete(
-    mlProjectUuid: string,
-    sessionUuid: string,
-  ): Promise<types.SearchSession> {
-    const { data } = await instance.post(
-      endpoints.markComplete,
-      {},
-      {
-        params: {
-          ml_project_uuid: mlProjectUuid,
-          search_session_uuid: sessionUuid,
-        },
-      },
-    );
-    return schemas.SearchSessionSchema.parse(data);
-  }
 
   /**
-   * Bulk curate multiple search results with curation-specific labels.
+   * Bulk curate multiple search results by assigning a tag.
    *
    * @param mlProjectUuid - The UUID of the ML project
    * @param sessionUuid - The UUID of the search session
-   * @param data - The bulk curate request
+   * @param data - The bulk curate request with assigned_tag_id
    * @returns The updated count
    */
   async function bulkCurate(
@@ -270,12 +259,8 @@ export function registerSearchSessionAPI(
     data: types.BulkCurateRequest,
   ): Promise<{ updated_count: number }> {
     const body = schemas.BulkCurateRequestSchema.parse(data);
-    const { data: responseData } = await instance.post(endpoints.bulkCurate, body, {
-      params: {
-        ml_project_uuid: mlProjectUuid,
-        search_session_uuid: sessionUuid,
-      },
-    });
+    const endpoints = buildEndpoints(mlProjectUuid, sessionUuid);
+    const { data: responseData } = await instance.post(endpoints.bulkCurate, body);
     return z.object({ updated_count: z.number().int().nonnegative() }).parse(responseData);
   }
 
@@ -285,25 +270,36 @@ export function registerSearchSessionAPI(
    * @param mlProjectUuid - The UUID of the ML project
    * @param sessionUuid - The UUID of the search session
    * @param data - The export request
-   * @returns The created annotation project info
+   * @returns The export response with annotation project details
    */
   async function exportToAnnotationProject(
     mlProjectUuid: string,
     sessionUuid: string,
     data: types.ExportToAPRequest,
-  ): Promise<types.MLProjectAnnotationProject> {
+  ): Promise<types.ExportToAPResponse> {
     const body = schemas.ExportToAPRequestSchema.parse(data);
+    const endpoints = buildEndpoints(mlProjectUuid, sessionUuid);
     const { data: responseData } = await instance.post(
       endpoints.exportToAnnotationProject,
       body,
-      {
-        params: {
-          ml_project_uuid: mlProjectUuid,
-          search_session_uuid: sessionUuid,
-        },
-      },
     );
-    return schemas.MLProjectAnnotationProjectSchema.parse(responseData);
+    return schemas.ExportToAPResponseSchema.parse(responseData);
+  }
+
+  /**
+   * Get score distribution for all target tags across iterations.
+   *
+   * @param mlProjectUuid - The UUID of the ML project
+   * @param sessionUuid - The UUID of the search session
+   * @returns The score distribution response with histograms per tag and iteration
+   */
+  async function getScoreDistribution(
+    mlProjectUuid: string,
+    sessionUuid: string,
+  ): Promise<types.ScoreDistributionResponse> {
+    const endpoints = buildEndpoints(mlProjectUuid, sessionUuid);
+    const { data } = await instance.get(endpoints.scoreDistribution);
+    return schemas.ScoreDistributionResponseSchema.parse(data);
   }
 
   return {
@@ -312,12 +308,13 @@ export function registerSearchSessionAPI(
     create,
     delete: deleteSearchSession,
     execute,
+    runIteration,
     getProgress,
     getResults,
     labelResult,
     bulkLabel,
-    markComplete,
     bulkCurate,
     exportToAnnotationProject,
+    getScoreDistribution,
   } as const;
 }

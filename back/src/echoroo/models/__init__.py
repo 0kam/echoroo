@@ -87,14 +87,16 @@ from echoroo.models.recording import (
 )
 from echoroo.models.reference_sound import (
     ReferenceSound,
+    ReferenceSoundEmbedding,
     ReferenceSoundSource,
 )
 from echoroo.models.search_session import (
+    IterationScoreDistribution,
     SearchResult,
-    SearchResultLabel,
     SearchSession,
     SearchSessionDatasetScope,
     SearchSessionReferenceSound,
+    SearchSessionTargetTag,
 )
 from echoroo.models.site import Site, SiteImage
 from echoroo.models.sound_event import SoundEvent, SoundEventFeature
@@ -185,6 +187,7 @@ __all__ = [
     "InferenceJobStatus",
     "InferencePrediction",
     "InferencePredictionReviewStatus",
+    "IterationScoreDistribution",
     "License",
     "MLProject",
     "MLProjectDatasetScope",
@@ -204,12 +207,13 @@ __all__ = [
     "RecordingOwner",
     "RecordingTag",
     "ReferenceSound",
+    "ReferenceSoundEmbedding",
     "ReferenceSoundSource",
     "SearchResult",
-    "SearchResultLabel",
     "SearchSession",
     "SearchSessionDatasetScope",
     "SearchSessionReferenceSound",
+    "SearchSessionTargetTag",
     "Site",
     "SiteImage",
     "SoundEvent",

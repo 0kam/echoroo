@@ -1,4 +1,4 @@
-"""Python API for Search Sessions."""
+"""Python API for Search Sessions with Active Learning support."""
 
 import datetime
 import logging
@@ -6,7 +6,7 @@ from typing import Sequence
 from uuid import UUID
 
 import numpy as np
-from sqlalchemy import func, select, text, update
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlalchemy.sql import ColumnExpressionArgument
@@ -16,6 +16,11 @@ from echoroo.api import common
 from echoroo.api.common import BaseAPI
 from echoroo.api.ml_projects import can_edit_ml_project, can_view_ml_project
 from echoroo.filters.base import Filter
+from echoroo.ml.active_learning import (
+    ActiveLearningConfig,
+    compute_initial_samples,
+    run_active_learning_iteration,
+)
 
 __all__ = [
     "SearchSessionAPI",
@@ -34,7 +39,7 @@ class SearchSessionAPI(
         schemas.SearchSession,
     ]
 ):
-    """API for managing Search Sessions."""
+    """API for managing Search Sessions with Active Learning."""
 
     _model = models.SearchSession
     _schema = schemas.SearchSession
@@ -77,10 +82,23 @@ class SearchSessionAPI(
             select(self._model)
             .where(self._model.uuid == db_obj.uuid)
             .options(
-                selectinload(self._model.target_tag),
+                selectinload(self._model.target_tags).selectinload(
+                    models.SearchSessionTargetTag.tag
+                ),
                 selectinload(self._model.ml_project),
                 selectinload(self._model.created_by),
-                selectinload(self._model.reference_sounds),
+                selectinload(self._model.reference_sounds).selectinload(
+                    models.ReferenceSound.ml_project
+                ),
+                selectinload(self._model.reference_sounds).selectinload(
+                    models.ReferenceSound.tag
+                ),
+                selectinload(self._model.reference_sounds).selectinload(
+                    models.ReferenceSound.clip
+                ),
+                selectinload(self._model.reference_sounds).selectinload(
+                    models.ReferenceSound.embeddings
+                ),
             )
         )
         result = await session.execute(stmt)
@@ -91,7 +109,7 @@ class SearchSessionAPI(
         session: AsyncSession,
         db_obj: models.SearchSession,
     ) -> schemas.SearchSession:
-        """Build schema from database object."""
+        """Build schema from database object with Active Learning fields."""
         db_obj = await self._eager_load_relationships(session, db_obj)
 
         # Get result counts
@@ -99,61 +117,139 @@ class SearchSessionAPI(
             select(func.count(models.SearchResult.id)).where(
                 models.SearchResult.search_session_id == db_obj.id
             )
-        )
+        ) or 0
 
+        # Count labeled results (has assigned_tag_id OR is_negative OR is_uncertain OR is_skipped)
         labeled_count = await session.scalar(
             select(func.count(models.SearchResult.id))
             .where(models.SearchResult.search_session_id == db_obj.id)
-            .where(models.SearchResult.label != models.SearchResultLabel.UNLABELED)
-        )
-
-        positive_count = await session.scalar(
-            select(func.count(models.SearchResult.id))
-            .where(models.SearchResult.search_session_id == db_obj.id)
-            .where(models.SearchResult.label == models.SearchResultLabel.POSITIVE)
-        )
+            .where(
+                (models.SearchResult.assigned_tag_id.isnot(None))
+                | (models.SearchResult.is_negative == True)
+                | (models.SearchResult.is_uncertain == True)
+                | (models.SearchResult.is_skipped == True)
+            )
+        ) or 0
 
         negative_count = await session.scalar(
             select(func.count(models.SearchResult.id))
             .where(models.SearchResult.search_session_id == db_obj.id)
-            .where(models.SearchResult.label == models.SearchResultLabel.NEGATIVE)
-        )
+            .where(models.SearchResult.is_negative == True)
+        ) or 0
 
         uncertain_count = await session.scalar(
             select(func.count(models.SearchResult.id))
             .where(models.SearchResult.search_session_id == db_obj.id)
-            .where(models.SearchResult.label == models.SearchResultLabel.UNCERTAIN)
-        )
+            .where(models.SearchResult.is_uncertain == True)
+        ) or 0
 
         skipped_count = await session.scalar(
             select(func.count(models.SearchResult.id))
             .where(models.SearchResult.search_session_id == db_obj.id)
-            .where(models.SearchResult.label == models.SearchResultLabel.SKIPPED)
+            .where(models.SearchResult.is_skipped == True)
+        ) or 0
+
+        # Get tag counts (assigned_tag_id -> count)
+        tag_counts_query = (
+            select(
+                models.SearchResult.assigned_tag_id,
+                func.count(models.SearchResult.id),
+            )
+            .where(models.SearchResult.search_session_id == db_obj.id)
+            .where(models.SearchResult.assigned_tag_id.isnot(None))
+            .group_by(models.SearchResult.assigned_tag_id)
         )
+        tag_counts_result = await session.execute(tag_counts_query)
+        tag_counts = {row[0]: row[1] for row in tag_counts_result.fetchall()}
+
+        # Build target tags list
+        target_tags = []
+        for tt in db_obj.target_tags:
+            target_tags.append(
+                schemas.SearchSessionTargetTag(
+                    tag_id=tt.tag_id,
+                    tag=schemas.Tag.model_validate(tt.tag),
+                    shortcut_key=tt.shortcut_key,
+                )
+            )
+
+        # Build reference sounds list
+        from echoroo.schemas.reference_sounds import ReferenceSound
+
+        reference_sounds = []
+        if hasattr(db_obj, "reference_sounds") and db_obj.reference_sounds:
+            for ref_sound in db_obj.reference_sounds:
+                # Map source enum
+                source_map = {
+                    models.ReferenceSoundSource.XENO_CANTO: schemas.ReferenceSoundSource.XENO_CANTO,
+                    models.ReferenceSoundSource.CUSTOM_UPLOAD: schemas.ReferenceSoundSource.UPLOAD,
+                    models.ReferenceSoundSource.DATASET_CLIP: schemas.ReferenceSoundSource.CLIP,
+                }
+                source = source_map.get(
+                    ref_sound.source, schemas.ReferenceSoundSource.UPLOAD
+                )
+
+                ref_data = {
+                    "uuid": ref_sound.uuid,
+                    "id": ref_sound.id,
+                    "name": ref_sound.name,
+                    "ml_project_id": ref_sound.ml_project_id,
+                    "ml_project_uuid": (
+                        ref_sound.ml_project.uuid if ref_sound.ml_project else None
+                    ),
+                    "source": source,
+                    "tag_id": ref_sound.tag_id,
+                    "tag": (
+                        schemas.Tag.model_validate(ref_sound.tag)
+                        if ref_sound.tag
+                        else None
+                    ),
+                    "start_time": ref_sound.start_time,
+                    "end_time": ref_sound.end_time,
+                    "duration": ref_sound.end_time - ref_sound.start_time,
+                    "xeno_canto_id": ref_sound.xeno_canto_id,
+                    "clip_id": ref_sound.clip_id,
+                    "clip": (
+                        schemas.Clip.model_validate(ref_sound.clip)
+                        if ref_sound.clip
+                        else None
+                    ),
+                    "audio_path": ref_sound.audio_path,
+                    "embedding_count": len(ref_sound.embeddings) if ref_sound.embeddings else 0,
+                    "is_active": ref_sound.is_active,
+                    "created_by_id": ref_sound.created_by_id,
+                    "created_on": ref_sound.created_on,
+                }
+                reference_sounds.append(ReferenceSound.model_validate(ref_data))
+
+        unlabeled_count = total_results - labeled_count
 
         data = {
             "uuid": db_obj.uuid,
             "id": db_obj.id,
             "name": db_obj.name,
+            "description": db_obj.description,
             "ml_project_id": db_obj.ml_project_id,
             "ml_project_uuid": db_obj.ml_project.uuid if db_obj.ml_project else None,
-            "similarity_threshold": db_obj.similarity_threshold,
-            "max_results": db_obj.max_results,
-            "tag_id": db_obj.target_tag_id,
-            "tag": (
-                schemas.Tag.model_validate(db_obj.target_tag)
-                if db_obj.target_tag
-                else None
-            ),
-            "total_results": total_results or 0,
-            "labeled_count": labeled_count or 0,
-            "positive_count": positive_count or 0,
-            "negative_count": negative_count or 0,
-            "uncertain_count": uncertain_count or 0,
-            "skipped_count": skipped_count or 0,
+            "target_tags": target_tags,
+            "easy_positive_k": db_obj.easy_positive_k,
+            "boundary_n": db_obj.boundary_n,
+            "boundary_m": db_obj.boundary_m,
+            "others_p": db_obj.others_p,
+            "distance_metric": db_obj.distance_metric,
+            "current_iteration": db_obj.current_iteration,
+            "is_search_complete": db_obj.is_search_complete,
+            "total_results": total_results,
+            "labeled_count": labeled_count,
+            "unlabeled_count": unlabeled_count,
+            "negative_count": negative_count,
+            "uncertain_count": uncertain_count,
+            "skipped_count": skipped_count,
+            "tag_counts": tag_counts,
+            "notes": db_obj.description,
+            "reference_sounds": reference_sounds,
             "created_by_id": db_obj.created_by_id,
             "created_on": db_obj.created_on,
-            "completed_at": None,  # Could be set when is_labeling_complete is True
         }
 
         return schemas.SearchSession.model_validate(data)
@@ -231,7 +327,7 @@ class SearchSessionAPI(
         *,
         user: models.User | schemas.SimpleUser,
     ) -> schemas.SearchSession:
-        """Create a new search session."""
+        """Create a new search session with auto-populated target tags."""
         db_user = await self._resolve_user(session, user)
         if db_user is None:
             raise exceptions.PermissionDeniedError(
@@ -244,32 +340,34 @@ class SearchSessionAPI(
                 "You do not have permission to create search sessions in this ML project"
             )
 
-        # Validate reference sounds exist and belong to this ML project
+        # Validate reference sounds and collect unique tags
+        reference_sound_int_ids = []
+        unique_tag_ids: dict[int, None] = {}  # Using dict for ordered uniqueness
+
         for ref_id in data.reference_sound_ids:
-            ref = await session.get(models.ReferenceSound, ref_id)
-            if ref is None:
-                raise exceptions.NotFoundError(
-                    f"Reference sound with id {ref_id} not found"
-                )
+            ref = await common.get_object(
+                session,
+                models.ReferenceSound,
+                models.ReferenceSound.uuid == ref_id,
+            )
+
             if ref.ml_project_id != ml_project_id:
                 raise exceptions.InvalidDataError(
                     f"Reference sound {ref_id} does not belong to this ML project"
                 )
+            reference_sound_int_ids.append(ref.id)
 
-        # Validate tag if specified
-        target_tag_id = data.tag_id
-        if target_tag_id:
-            tag = await session.get(models.Tag, target_tag_id)
-            if tag is None:
-                raise exceptions.NotFoundError(
-                    f"Tag with id {target_tag_id} not found"
-                )
-        else:
-            # Use the first reference sound's tag
-            first_ref = await session.get(
-                models.ReferenceSound, data.reference_sound_ids[0]
+            # Collect unique tag IDs
+            if ref.tag_id is not None and ref.tag_id not in unique_tag_ids:
+                unique_tag_ids[ref.tag_id] = None
+
+        # Limit to 9 tags (for keyboard shortcuts 1-9)
+        tag_ids_list = list(unique_tag_ids.keys())[:9]
+
+        if not tag_ids_list:
+            raise exceptions.InvalidDataError(
+                "Reference sounds must have associated tags"
             )
-            target_tag_id = first_ref.tag_id
 
         # Create the search session
         name = data.name or f"Search {datetime.datetime.now(datetime.UTC).isoformat()}"
@@ -280,16 +378,28 @@ class SearchSessionAPI(
             name=name,
             description=data.notes,
             ml_project_id=ml_project_id,
-            target_tag_id=target_tag_id,
-            similarity_threshold=data.similarity_threshold,
-            max_results=data.max_results,
+            easy_positive_k=data.easy_positive_k,
+            boundary_n=data.boundary_n,
+            boundary_m=data.boundary_m,
+            others_p=data.others_p,
+            distance_metric=data.distance_metric,
+            current_iteration=0,
             is_search_complete=False,
-            is_labeling_complete=False,
             created_by_id=db_user.id,
         )
 
+        # Create target tag entries with shortcut keys
+        for shortcut_key, tag_id in enumerate(tag_ids_list, start=1):
+            await common.create_object(
+                session,
+                models.SearchSessionTargetTag,
+                search_session_id=db_obj.id,
+                tag_id=tag_id,
+                shortcut_key=shortcut_key,
+            )
+
         # Link reference sounds
-        for ref_id in data.reference_sound_ids:
+        for ref_id in reference_sound_int_ids:
             await common.create_object(
                 session,
                 models.SearchSessionReferenceSound,
@@ -331,17 +441,17 @@ class SearchSessionAPI(
 
         return result
 
-    async def execute_search(
+    async def execute_initial_sampling(
         self,
         session: AsyncSession,
         search_session: schemas.SearchSession,
         *,
         user: models.User | schemas.SimpleUser | None = None,
     ) -> schemas.SearchSession:
-        """Execute the similarity search using pgvector.
+        """Execute initial sampling: Easy Positives + Boundary + Others.
 
-        This performs the actual similarity search using reference sound
-        embeddings to find similar clips in the dataset.
+        Uses the active learning module to compute initial samples based on
+        reference sound embeddings and sampling parameters.
         """
         db_user = await self._resolve_user(session, user)
 
@@ -360,137 +470,232 @@ class SearchSessionAPI(
 
         if db_obj.is_search_complete:
             raise exceptions.InvalidDataError(
-                "Search has already been executed for this session"
+                "Initial sampling has already been executed for this session"
             )
 
-        # Get reference embeddings
+        # Get reference embeddings grouped by tag
+        # Each reference sound can have multiple embeddings from sliding windows
         ref_embeddings_query = (
-            select(models.ReferenceSound.embedding)
+            select(
+                models.ReferenceSound.tag_id,
+                models.ReferenceSoundEmbedding.embedding,
+            )
             .join(
                 models.SearchSessionReferenceSound,
                 models.SearchSessionReferenceSound.reference_sound_id
                 == models.ReferenceSound.id,
             )
+            .join(
+                models.ReferenceSoundEmbedding,
+                models.ReferenceSoundEmbedding.reference_sound_id
+                == models.ReferenceSound.id,
+            )
             .where(
                 models.SearchSessionReferenceSound.search_session_id == db_obj.id
             )
-            .where(models.ReferenceSound.embedding.isnot(None))
         )
         result = await session.execute(ref_embeddings_query)
-        embeddings = [row[0] for row in result.fetchall() if row[0] is not None]
+        rows = result.fetchall()
 
-        if not embeddings:
+        if not rows:
             raise exceptions.InvalidDataError(
                 "No reference sounds with embeddings found. "
                 "Please compute embeddings for reference sounds first."
             )
 
-        # Check that ML project has an embedding model run
-        if not ml_project.embedding_model_run_id:
-            raise exceptions.InvalidDataError(
-                "ML Project does not have an embedding model configured. "
-                "Please set an embedding model run for the project."
-            )
+        # Group embeddings by tag_id
+        # Each tag may have multiple embeddings from multiple reference sounds
+        # and multiple sliding windows per reference sound
+        reference_embeddings_by_tag: dict[int, list[np.ndarray]] = {}
+        for tag_id, embedding in rows:
+            if tag_id not in reference_embeddings_by_tag:
+                reference_embeddings_by_tag[tag_id] = []
+            reference_embeddings_by_tag[tag_id].append(np.array(embedding))
 
-        # Get the dataset to filter clips
-        dataset_id = ml_project.dataset_id
+        # Configure active learning
+        config = ActiveLearningConfig(
+            easy_positive_k=db_obj.easy_positive_k,
+            boundary_n=db_obj.boundary_n,
+            boundary_m=db_obj.boundary_m,
+            others_p=db_obj.others_p,
+        )
 
-        # Use MAX similarity across all reference embeddings
-        # For each clip, we take the maximum similarity score across all reference sounds
-        # This ensures clips that match ANY reference sound well will rank high
+        # Compute initial samples
+        samples = await compute_initial_samples(
+            session=session,
+            search_session_id=db_obj.id,
+            ml_project_id=db_obj.ml_project_id,
+            reference_embeddings_by_tag=reference_embeddings_by_tag,
+            config=config,
+            distance_metric=db_obj.distance_metric,
+        )
 
-        # Collect all results with max similarity per clip
-        all_results: dict[int, float] = {}  # clip_id -> max_similarity
-
-        for embedding in embeddings:
-            # Convert embedding to string format for pgvector
-            embedding_str = "[" + ",".join(str(x) for x in embedding) + "]"
-
-            # Query for similar clips using pgvector cosine distance
-            # We request more results than max_results since we'll merge later
-            search_query = text("""
-                WITH dataset_clips AS (
-                    SELECT DISTINCT c.id as clip_id
-                    FROM clip c
-                    JOIN recording r ON c.recording_id = r.id
-                    JOIN dataset_recording dr ON dr.recording_id = r.id
-                    WHERE dr.dataset_id = :dataset_id
-                )
-                SELECT
-                    ce.clip_id,
-                    1 - (ce.embedding <=> :query_embedding::vector) as similarity
-                FROM clip_embedding ce
-                JOIN dataset_clips dc ON dc.clip_id = ce.clip_id
-                WHERE ce.model_run_id = :model_run_id
-                AND 1 - (ce.embedding <=> :query_embedding::vector) >= :threshold
-                ORDER BY ce.embedding <=> :query_embedding::vector
-                LIMIT :query_limit
-            """)
-
-            search_result = await session.execute(
-                search_query,
-                {
-                    "query_embedding": embedding_str,
-                    "model_run_id": ml_project.embedding_model_run_id,
-                    "threshold": db_obj.similarity_threshold,
-                    # Request more results per embedding to ensure we capture all relevant clips
-                    "query_limit": db_obj.max_results * 2,
-                    "dataset_id": dataset_id,
-                },
-            )
-
-            for row in search_result.fetchall():
-                clip_id = row.clip_id
-                similarity = row.similarity
-                # Keep the maximum similarity for each clip
-                if clip_id not in all_results:
-                    all_results[clip_id] = similarity
-                else:
-                    all_results[clip_id] = max(all_results[clip_id], similarity)
-
-        # Sort by max similarity and take top N
-        sorted_results = sorted(
-            all_results.items(),
-            key=lambda x: x[1],
-            reverse=True,
-        )[:db_obj.max_results]
-
-        # Create a simple data class for row results
-        from dataclasses import dataclass
-
-        @dataclass
-        class SimilarityRow:
-            clip_id: int
-            similarity: float
-
-        # Convert to rows format for compatibility with existing code
-        rows = [
-            SimilarityRow(clip_id=clip_id, similarity=similarity)
-            for clip_id, similarity in sorted_results
-        ]
-
-        # Create search results
-        for rank, row in enumerate(rows, start=1):
+        # Create search results from samples
+        for rank, sample in enumerate(samples, start=1):
             await common.create_object(
                 session,
                 models.SearchResult,
                 search_session_id=db_obj.id,
-                clip_id=row.clip_id,
-                similarity=row.similarity,
+                clip_id=sample["clip_id"],
+                similarity=sample["similarity"],
                 rank=rank,
-                label=models.SearchResultLabel.UNLABELED,
+                sample_type=sample["sample_type"],
+                source_tag_id=sample.get("source_tag_id"),
+                iteration_added=0,
             )
 
-        # Mark search as complete
+        # Mark initial sampling as complete
         await common.update_object(
             session,
             self._model,
             self._get_pk_condition(search_session.uuid),
-            {"is_search_complete": True},
+            is_search_complete=True,
         )
 
         logger.info(
-            f"Search session {search_session.uuid} completed with {len(rows)} results"
+            f"Search session {search_session.uuid} initial sampling completed "
+            f"with {len(samples)} results"
+        )
+
+        return await self._build_schema(session, db_obj)
+
+    async def run_iteration(
+        self,
+        session: AsyncSession,
+        search_session: schemas.SearchSession,
+        *,
+        uncertainty_low: float = 0.25,
+        uncertainty_high: float = 0.75,
+        samples_per_iteration: int = 20,
+        selected_tag_ids: list[int] | None = None,
+        user: models.User | schemas.SimpleUser | None = None,
+    ) -> schemas.SearchSession:
+        """Run one iteration of active learning.
+
+        Trains classifiers on labeled data and selects new samples from
+        the uncertainty region.
+
+        Parameters
+        ----------
+        uncertainty_low
+            Lower bound of uncertainty region (default 0.25).
+        uncertainty_high
+            Upper bound of uncertainty region (default 0.75).
+        samples_per_iteration
+            Number of samples to add in this iteration (default 20).
+        """
+        db_user = await self._resolve_user(session, user)
+
+        db_obj = await common.get_object(
+            session,
+            self._model,
+            self._get_pk_condition(search_session.uuid),
+        )
+        ml_project = await self._get_ml_project(session, db_obj.ml_project_id)
+
+        if not await can_edit_ml_project(session, ml_project, db_user):
+            raise exceptions.PermissionDeniedError(
+                "You do not have permission to run iterations on this search"
+            )
+
+        if not db_obj.is_search_complete:
+            raise exceptions.InvalidDataError(
+                "Initial sampling must be completed before running iterations"
+            )
+
+        # Configure active learning with user-specified parameters
+        config = ActiveLearningConfig(
+            easy_positive_k=db_obj.easy_positive_k,
+            boundary_n=db_obj.boundary_n,
+            boundary_m=db_obj.boundary_m,
+            others_p=db_obj.others_p,
+            uncertainty_low=uncertainty_low,
+            uncertainty_high=uncertainty_high,
+            samples_per_iteration=samples_per_iteration,
+        )
+
+        # Run active learning iteration
+        selected_tag_set = set(selected_tag_ids) if selected_tag_ids else None
+        new_samples, metrics, score_distributions = await run_active_learning_iteration(
+            session=session,
+            search_session_id=db_obj.id,
+            ml_project_id=db_obj.ml_project_id,
+            config=config,
+            selected_tag_ids=selected_tag_set,
+        )
+
+        # Get current max rank
+        max_rank = await session.scalar(
+            select(func.max(models.SearchResult.rank)).where(
+                models.SearchResult.search_session_id == db_obj.id
+            )
+        ) or 0
+
+        # Create new search results
+        next_iteration = db_obj.current_iteration + 1
+        for i, sample in enumerate(new_samples, start=1):
+            await common.create_object(
+                session,
+                models.SearchResult,
+                search_session_id=db_obj.id,
+                clip_id=sample["clip_id"],
+                similarity=0.0,  # Not similarity-based for AL samples
+                rank=max_rank + i,
+                sample_type=sample["sample_type"],
+                source_tag_id=sample.get("source_tag_id"),
+                model_score=sample.get("model_score"),
+                iteration_added=next_iteration,
+            )
+
+        # Save score distributions to DB
+        for dist in score_distributions:
+            # Check if a distribution already exists for this tag and iteration
+            existing_dist = await session.scalar(
+                select(models.IterationScoreDistribution)
+                .where(models.IterationScoreDistribution.search_session_id == db_obj.id)
+                .where(models.IterationScoreDistribution.tag_id == dist["tag_id"])
+                .where(models.IterationScoreDistribution.iteration == next_iteration)
+            )
+
+            if existing_dist:
+                # Update existing record
+                await common.update_object(
+                    session,
+                    models.IterationScoreDistribution,
+                    models.IterationScoreDistribution.id == existing_dist.id,
+                    None,
+                    bin_counts=dist["bin_counts"],
+                    bin_edges=dist["bin_edges"],
+                    positive_count=dist["positive_count"],
+                    negative_count=dist["negative_count"],
+                    mean_score=dist["mean_score"],
+                )
+            else:
+                # Create new record
+                await common.create_object(
+                    session,
+                    models.IterationScoreDistribution,
+                    search_session_id=db_obj.id,
+                    tag_id=dist["tag_id"],
+                    iteration=next_iteration,
+                    bin_counts=dist["bin_counts"],
+                    bin_edges=dist["bin_edges"],
+                    positive_count=dist["positive_count"],
+                    negative_count=dist["negative_count"],
+                    mean_score=dist["mean_score"],
+                )
+
+        # Increment iteration counter
+        await common.update_object(
+            session,
+            self._model,
+            self._get_pk_condition(search_session.uuid),
+            current_iteration=next_iteration,
+        )
+
+        logger.info(
+            f"Search session {search_session.uuid} iteration {next_iteration} "
+            f"completed with {len(new_samples)} new samples"
         )
 
         return await self._build_schema(session, db_obj)
@@ -524,12 +729,15 @@ class SearchSessionAPI(
                 f"Search session with id {search_session_id} not found"
             )
 
+        from sqlalchemy.orm import selectinload
+
         combined_filters: list[Filter | ColumnExpressionArgument] = [
             models.SearchResult.search_session_id == search_session_id
         ]
         if filters:
             combined_filters.extend(filters)
 
+        # Use eager loading to avoid N+1 queries
         db_objs, count = await common.get_objects(
             session,
             models.SearchResult,
@@ -537,31 +745,18 @@ class SearchSessionAPI(
             offset=offset,
             filters=combined_filters,
             sort_by=sort_by,
+            options=[
+                selectinload(models.SearchResult.clip).selectinload(
+                    models.Clip.recording
+                ),
+                selectinload(models.SearchResult.assigned_tag),
+                selectinload(models.SearchResult.source_tag),
+            ],
         )
 
         results = []
         for db_obj in db_objs:
-            # Load relationships
-            await session.refresh(db_obj, ["clip", "search_session"])
             clip_schema = schemas.Clip.model_validate(db_obj.clip)
-
-            # Get first reference sound for this session
-            ref_query = (
-                select(models.SearchSessionReferenceSound.reference_sound_id)
-                .where(
-                    models.SearchSessionReferenceSound.search_session_id
-                    == search_session_id
-                )
-                .limit(1)
-            )
-            ref_result = await session.execute(ref_query)
-            ref_id = ref_result.scalar_one_or_none()
-
-            ref_uuid = None
-            if ref_id:
-                ref = await session.get(models.ReferenceSound, ref_id)
-                if ref:
-                    ref_uuid = ref.uuid
 
             data = {
                 "uuid": db_obj.uuid,
@@ -570,11 +765,26 @@ class SearchSessionAPI(
                 "search_session_uuid": search_session.uuid,
                 "clip_id": db_obj.clip_id,
                 "clip": clip_schema,
-                "reference_sound_id": ref_id or 0,
-                "reference_sound_uuid": ref_uuid or UUID(int=0),
-                "similarity_score": db_obj.similarity,
+                "similarity": db_obj.similarity,
                 "rank": db_obj.rank,
-                "label": schemas.SearchResultLabel(db_obj.label.value),
+                "assigned_tag_id": db_obj.assigned_tag_id,
+                "assigned_tag": (
+                    schemas.Tag.model_validate(db_obj.assigned_tag)
+                    if db_obj.assigned_tag
+                    else None
+                ),
+                "is_negative": db_obj.is_negative,
+                "is_uncertain": db_obj.is_uncertain,
+                "is_skipped": db_obj.is_skipped,
+                "sample_type": db_obj.sample_type,
+                "iteration_added": db_obj.iteration_added,
+                "model_score": db_obj.model_score,
+                "source_tag_id": db_obj.source_tag_id,
+                "source_tag": (
+                    schemas.Tag.model_validate(db_obj.source_tag)
+                    if db_obj.source_tag
+                    else None
+                ),
                 "labeled_at": db_obj.labeled_on,
                 "labeled_by_id": db_obj.labeled_by_id,
                 "notes": db_obj.notes,
@@ -588,12 +798,11 @@ class SearchSessionAPI(
         self,
         session: AsyncSession,
         result_uuid: UUID,
-        label: schemas.SearchResultLabel,
-        notes: str | None = None,
+        label_data: schemas.SearchResultLabelData,
         *,
         user: models.User | schemas.SimpleUser | None = None,
     ) -> schemas.SearchResult:
-        """Label a search result."""
+        """Label a search result with Active Learning label data."""
         db_user = await self._resolve_user(session, user)
         if db_user is None:
             raise exceptions.PermissionDeniedError(
@@ -620,42 +829,41 @@ class SearchSessionAPI(
                 "You do not have permission to label results in this session"
             )
 
-        # Update the result
+        # Validate assigned_tag_id if provided
+        if label_data.assigned_tag_id is not None:
+            tag = await session.get(models.Tag, label_data.assigned_tag_id)
+            if tag is None:
+                raise exceptions.NotFoundError(
+                    f"Tag with id {label_data.assigned_tag_id} not found"
+                )
+
+        # Build update data
         update_data = {
-            "label": models.SearchResultLabel(label.value),
+            "assigned_tag_id": label_data.assigned_tag_id,
+            "is_negative": label_data.is_negative,
+            "is_uncertain": label_data.is_uncertain,
+            "is_skipped": label_data.is_skipped,
             "labeled_by_id": db_user.id,
             "labeled_on": datetime.datetime.now(datetime.UTC),
         }
-        if notes is not None:
-            update_data["notes"] = notes
+        if label_data.notes is not None:
+            update_data["notes"] = label_data.notes
 
         db_result = await common.update_object(
             session,
             models.SearchResult,
             models.SearchResult.uuid == result_uuid,
-            update_data,
+            None,
+            **update_data,
         )
 
         # Build and return schema
-        await session.refresh(db_result, ["clip", "search_session"])
-        clip_schema = schemas.Clip.model_validate(db_result.clip)
-
-        ref_query = (
-            select(models.SearchSessionReferenceSound.reference_sound_id)
-            .where(
-                models.SearchSessionReferenceSound.search_session_id
-                == db_result.search_session_id
-            )
-            .limit(1)
+        await session.refresh(
+            db_result, ["clip", "search_session", "assigned_tag", "source_tag"]
         )
-        ref_result = await session.execute(ref_query)
-        ref_id = ref_result.scalar_one_or_none()
-
-        ref_uuid = None
-        if ref_id:
-            ref = await session.get(models.ReferenceSound, ref_id)
-            if ref:
-                ref_uuid = ref.uuid
+        if db_result.clip:
+            await session.refresh(db_result.clip, ["recording"])
+        clip_schema = schemas.Clip.model_validate(db_result.clip)
 
         data = {
             "uuid": db_result.uuid,
@@ -664,11 +872,26 @@ class SearchSessionAPI(
             "search_session_uuid": search_session.uuid,
             "clip_id": db_result.clip_id,
             "clip": clip_schema,
-            "reference_sound_id": ref_id or 0,
-            "reference_sound_uuid": ref_uuid or UUID(int=0),
-            "similarity_score": db_result.similarity,
+            "similarity": db_result.similarity,
             "rank": db_result.rank,
-            "label": schemas.SearchResultLabel(db_result.label.value),
+            "assigned_tag_id": db_result.assigned_tag_id,
+            "assigned_tag": (
+                schemas.Tag.model_validate(db_result.assigned_tag)
+                if db_result.assigned_tag
+                else None
+            ),
+            "is_negative": db_result.is_negative,
+            "is_uncertain": db_result.is_uncertain,
+            "is_skipped": db_result.is_skipped,
+            "sample_type": db_result.sample_type,
+            "iteration_added": db_result.iteration_added,
+            "model_score": db_result.model_score,
+            "source_tag_id": db_result.source_tag_id,
+            "source_tag": (
+                schemas.Tag.model_validate(db_result.source_tag)
+                if db_result.source_tag
+                else None
+            ),
             "labeled_at": db_result.labeled_on,
             "labeled_by_id": db_result.labeled_by_id,
             "notes": db_result.notes,
@@ -680,7 +903,7 @@ class SearchSessionAPI(
         self,
         session: AsyncSession,
         result_uuids: list[UUID],
-        label: schemas.SearchResultLabel,
+        label_data: schemas.SearchResultLabelData,
         *,
         user: models.User | schemas.SimpleUser | None = None,
     ) -> int:
@@ -695,11 +918,13 @@ class SearchSessionAPI(
         for result_uuid in result_uuids:
             try:
                 await self.label_result(
-                    session, result_uuid, label, user=db_user
+                    session, result_uuid, label_data, user=db_user
                 )
                 updated_count += 1
             except exceptions.NotFoundError:
-                logger.warning(f"Search result {result_uuid} not found during bulk label")
+                logger.warning(
+                    f"Search result {result_uuid} not found during bulk label"
+                )
             except exceptions.PermissionDeniedError:
                 logger.warning(
                     f"Permission denied for result {result_uuid} during bulk label"
@@ -738,35 +963,48 @@ class SearchSessionAPI(
             )
         ) or 0
 
+        # Labeled = has any label (tag, negative, uncertain, or skipped)
         labeled = await session.scalar(
             select(func.count(models.SearchResult.id))
             .where(models.SearchResult.search_session_id == search_session_id)
-            .where(models.SearchResult.label != models.SearchResultLabel.UNLABELED)
-        ) or 0
-
-        positive = await session.scalar(
-            select(func.count(models.SearchResult.id))
-            .where(models.SearchResult.search_session_id == search_session_id)
-            .where(models.SearchResult.label == models.SearchResultLabel.POSITIVE)
+            .where(
+                (models.SearchResult.assigned_tag_id.isnot(None))
+                | (models.SearchResult.is_negative == True)
+                | (models.SearchResult.is_uncertain == True)
+                | (models.SearchResult.is_skipped == True)
+            )
         ) or 0
 
         negative = await session.scalar(
             select(func.count(models.SearchResult.id))
             .where(models.SearchResult.search_session_id == search_session_id)
-            .where(models.SearchResult.label == models.SearchResultLabel.NEGATIVE)
+            .where(models.SearchResult.is_negative == True)
         ) or 0
 
         uncertain = await session.scalar(
             select(func.count(models.SearchResult.id))
             .where(models.SearchResult.search_session_id == search_session_id)
-            .where(models.SearchResult.label == models.SearchResultLabel.UNCERTAIN)
+            .where(models.SearchResult.is_uncertain == True)
         ) or 0
 
         skipped = await session.scalar(
             select(func.count(models.SearchResult.id))
             .where(models.SearchResult.search_session_id == search_session_id)
-            .where(models.SearchResult.label == models.SearchResultLabel.SKIPPED)
+            .where(models.SearchResult.is_skipped == True)
         ) or 0
+
+        # Get tag counts
+        tag_counts_query = (
+            select(
+                models.SearchResult.assigned_tag_id,
+                func.count(models.SearchResult.id),
+            )
+            .where(models.SearchResult.search_session_id == search_session_id)
+            .where(models.SearchResult.assigned_tag_id.isnot(None))
+            .group_by(models.SearchResult.assigned_tag_id)
+        )
+        tag_counts_result = await session.execute(tag_counts_query)
+        tag_counts = {row[0]: row[1] for row in tag_counts_result.fetchall()}
 
         unlabeled = total - labeled
         progress_percent = (labeled / total * 100) if total > 0 else 0.0
@@ -774,11 +1012,11 @@ class SearchSessionAPI(
         return schemas.SearchProgress(
             total=total,
             labeled=labeled,
-            positive=positive,
+            unlabeled=unlabeled,
             negative=negative,
             uncertain=uncertain,
             skipped=skipped,
-            unlabeled=unlabeled,
+            tag_counts=tag_counts,
             progress_percent=progress_percent,
         )
 
@@ -787,14 +1025,11 @@ class SearchSessionAPI(
         session: AsyncSession,
         search_session: schemas.SearchSession,
         result_uuids: list[UUID],
-        label: str,
+        assigned_tag_id: int,
         *,
         user: models.User | schemas.SimpleUser,
     ) -> list[schemas.SearchResult]:
-        """Bulk curate search results as positive or negative references.
-
-        This is used to select high-quality examples for further model
-        training or as references for active learning.
+        """Bulk curate search results by assigning a tag.
 
         Parameters
         ----------
@@ -804,8 +1039,8 @@ class SearchSessionAPI(
             The search session containing the results.
         result_uuids
             UUIDs of results to curate.
-        label
-            Curation label ('positive_reference' or 'negative_reference').
+        assigned_tag_id
+            Tag ID to assign to all results.
         user
             The user performing the curation.
 
@@ -820,14 +1055,11 @@ class SearchSessionAPI(
                 "Authentication required to curate results"
             )
 
-        # Validate label is a valid curation label
-        valid_labels = [
-            models.SearchResultLabel.POSITIVE_REFERENCE.value,
-            models.SearchResultLabel.NEGATIVE_REFERENCE.value,
-        ]
-        if label not in valid_labels:
-            raise exceptions.InvalidDataError(
-                f"Invalid curation label '{label}'. Must be one of: {valid_labels}"
+        # Validate tag exists
+        tag = await session.get(models.Tag, assigned_tag_id)
+        if tag is None:
+            raise exceptions.NotFoundError(
+                f"Tag with id {assigned_tag_id} not found"
             )
 
         # Verify access
@@ -842,6 +1074,14 @@ class SearchSessionAPI(
                 "You do not have permission to curate results in this session"
             )
 
+        # Create label data with assigned tag
+        label_data = schemas.SearchResultLabelData(
+            assigned_tag_id=assigned_tag_id,
+            is_negative=False,
+            is_uncertain=False,
+            is_skipped=False,
+        )
+
         # Update results
         curated_results = []
         for result_uuid in result_uuids:
@@ -849,7 +1089,7 @@ class SearchSessionAPI(
                 result = await self.label_result(
                     session,
                     result_uuid,
-                    schemas.SearchResultLabel(label),
+                    label_data,
                     user=db_user,
                 )
                 curated_results.append(result)
@@ -870,14 +1110,15 @@ class SearchSessionAPI(
         search_session: schemas.SearchSession,
         name: str,
         description: str,
-        include_labels: list[str],
+        include_labeled: bool = True,
+        include_tag_ids: list[int] | None = None,
         *,
         user: models.User | schemas.SimpleUser,
     ) -> schemas.ExportToAnnotationProjectResponse:
         """Export labeled search results to a new annotation project.
 
         Creates a new annotation project and annotation tasks for each
-        clip from results with the specified labels.
+        clip from results with assigned tags.
 
         Parameters
         ----------
@@ -889,8 +1130,10 @@ class SearchSessionAPI(
             Name for the new annotation project.
         description
             Description for the annotation project.
-        include_labels
-            List of labels to include (e.g., ['positive', 'positive_reference']).
+        include_labeled
+            Whether to include results with assigned tags.
+        include_tag_ids
+            Optional list of specific tag IDs to include.
         user
             The user performing the export.
 
@@ -922,27 +1165,29 @@ class SearchSessionAPI(
                 "You do not have permission to export results from this session"
             )
 
-        # Validate labels
-        valid_labels = {label.value for label in models.SearchResultLabel}
-        for label in include_labels:
-            if label not in valid_labels:
-                raise exceptions.InvalidDataError(
-                    f"Invalid label '{label}'. Valid labels: {valid_labels}"
+        # Build query for results to export
+        results_query = select(models.SearchResult).where(
+            models.SearchResult.search_session_id == db_session.id
+        )
+
+        if include_labeled:
+            if include_tag_ids:
+                # Filter to specific tags
+                results_query = results_query.where(
+                    models.SearchResult.assigned_tag_id.in_(include_tag_ids)
+                )
+            else:
+                # Include all results with assigned tags
+                results_query = results_query.where(
+                    models.SearchResult.assigned_tag_id.isnot(None)
                 )
 
-        # Get results with specified labels
-        label_enums = [models.SearchResultLabel(lbl) for lbl in include_labels]
-        results_query = (
-            select(models.SearchResult)
-            .where(models.SearchResult.search_session_id == db_session.id)
-            .where(models.SearchResult.label.in_(label_enums))
-        )
         result = await session.execute(results_query)
         db_results = result.scalars().all()
 
         if not db_results:
             raise exceptions.InvalidDataError(
-                f"No results found with labels: {include_labels}"
+                "No results found matching the export criteria"
             )
 
         # Get the dataset_id from the ML project
@@ -963,15 +1208,14 @@ class SearchSessionAPI(
             description=description,
             annotation_instructions=(
                 f"Review clips from search session: {db_session.name}. "
-                f"These clips were selected based on labels: {', '.join(include_labels)}"
             ),
             user=db_user,
             dataset_id=dataset_id,
         )
 
-        # Add the target tag to the annotation project
-        if db_session.target_tag:
-            tag_schema = schemas.Tag.model_validate(db_session.target_tag)
+        # Add target tags to the annotation project
+        for tt in db_session.target_tags:
+            tag_schema = schemas.Tag.model_validate(tt.tag)
             await annotation_projects.add_tag(
                 session,
                 annotation_project,
@@ -983,6 +1227,9 @@ class SearchSessionAPI(
         exported_count = 0
         for db_result in db_results:
             try:
+                # Load the clip
+                await session.refresh(db_result, ["clip"])
+
                 # Get the clip schema
                 clip = await clips.get(session, db_result.clip.uuid)
 
@@ -1005,19 +1252,23 @@ class SearchSessionAPI(
                 exported_count += 1
             except Exception as e:
                 logger.warning(
-                    f"Failed to export result {db_result.uuid} to annotation project: {e}"
+                    f"Failed to export result {db_result.uuid} "
+                    f"to annotation project: {e}"
                 )
 
         logger.info(
-            f"Exported {exported_count} results from search session {search_session.uuid} "
-            f"to annotation project {annotation_project.uuid}"
+            f"Exported {exported_count} results from search session "
+            f"{search_session.uuid} to annotation project {annotation_project.uuid}"
         )
 
         return schemas.ExportToAnnotationProjectResponse(
             annotation_project_uuid=annotation_project.uuid,
             annotation_project_name=annotation_project.name,
             exported_count=exported_count,
-            message=f"Successfully exported {exported_count} clips to annotation project '{name}'",
+            message=(
+                f"Successfully exported {exported_count} clips "
+                f"to annotation project '{name}'"
+            ),
         )
 
     async def get_annotation_projects(
@@ -1082,6 +1333,82 @@ class SearchSessionAPI(
                 pass
 
         return ap_list
+
+    async def get_score_distribution(
+        self,
+        session: AsyncSession,
+        ml_project_uuid: UUID,
+        search_session_uuid: UUID,
+        *,
+        user: models.User | None = None,
+    ) -> schemas.ScoreDistributionResponse:
+        """Get saved score distributions from DB.
+
+        Retrieves the score distributions computed during active learning
+        iterations, providing histogram data for visualization.
+
+        Parameters
+        ----------
+        session
+            SQLAlchemy AsyncSession.
+        ml_project_uuid
+            UUID of the ML project (used for access control).
+        search_session_uuid
+            UUID of the search session.
+        user
+            Optional user for access control.
+
+        Returns
+        -------
+        schemas.ScoreDistributionResponse
+            Response containing score distributions for each tag and iteration.
+        """
+        db_user = await self._resolve_user(session, user)
+
+        # Get the search session
+        db_obj = await common.get_object(
+            session,
+            self._model,
+            self._get_pk_condition(search_session_uuid),
+        )
+
+        # Verify access
+        ml_project = await self._get_ml_project(session, db_obj.ml_project_id)
+        if not await can_view_ml_project(session, ml_project, db_user):
+            raise exceptions.NotFoundError(
+                f"Search session with uuid {search_session_uuid} not found"
+            )
+
+        # Fetch score distributions from DB
+        query = (
+            select(models.IterationScoreDistribution)
+            .where(models.IterationScoreDistribution.search_session_id == db_obj.id)
+            .order_by(
+                models.IterationScoreDistribution.iteration,
+                models.IterationScoreDistribution.tag_id,
+            )
+            .options(selectinload(models.IterationScoreDistribution.tag))
+        )
+
+        result = await session.execute(query)
+        db_distributions = result.scalars().all()
+
+        # Build response
+        distributions = []
+        for dist in db_distributions:
+            tag_dist = schemas.TagScoreDistribution(
+                tag_id=dist.tag_id,
+                tag_name=dist.tag.value,
+                iteration=dist.iteration,
+                bin_counts=dist.bin_counts,
+                bin_edges=dist.bin_edges,
+                positive_count=dist.positive_count,
+                negative_count=dist.negative_count,
+                mean_score=dist.mean_score,
+            )
+            distributions.append(tag_dist)
+
+        return schemas.ScoreDistributionResponse(distributions=distributions)
 
 
 search_sessions = SearchSessionAPI()

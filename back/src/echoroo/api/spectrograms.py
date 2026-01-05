@@ -16,6 +16,7 @@ from echoroo.core.spectrograms import normalize_spectrogram
 
 __all__ = [
     "compute_spectrogram",
+    "compute_spectrogram_from_bytes",
 ]
 
 
@@ -192,6 +193,196 @@ def compute_spectrogram(
         },
         attrs={
             **wav.attrs,
+            "window_size": window_size,
+            "hop_size": hop_size,
+            "window_type": spectrogram_parameters.window,
+            arrays.ArrayAttrs.units.value: "V**2/Hz",
+            arrays.ArrayAttrs.standard_name.value: "spectrogram",
+            arrays.ArrayAttrs.long_name.value: "Power Spectral Density",
+        },
+    )
+
+    spectrogram = arrays.to_db(
+        spectrogram,
+        min_db=spectrogram_parameters.min_dB,
+        max_db=spectrogram_parameters.max_dB,
+    )
+
+    spectrogram = normalize_spectrogram(
+        spectrogram,
+        relative=spectrogram_parameters.normalize,
+    )
+
+    return spectrogram.data.squeeze()
+
+
+def compute_spectrogram_from_bytes(
+    audio_bytes: bytes,
+    start_time: float,
+    end_time: float,
+    audio_parameters: schemas.AudioParameters,
+    spectrogram_parameters: schemas.SpectrogramParameters,
+) -> np.ndarray:
+    """Compute a spectrogram from raw audio bytes.
+
+    This function is used for generating spectrograms from Xeno-Canto recordings
+    or other external audio sources where we have bytes instead of a file path.
+
+    Parameters
+    ----------
+    audio_bytes : bytes
+        Raw audio data in any format supported by soundfile.
+    start_time : float
+        Start time in seconds to extract from the audio.
+    end_time : float
+        End time in seconds to extract from the audio.
+    audio_parameters : schemas.AudioParameters
+        Audio processing parameters (resampling, filtering).
+    spectrogram_parameters : schemas.SpectrogramParameters
+        Spectrogram generation parameters.
+
+    Returns
+    -------
+    np.ndarray
+        Spectrogram data as a 2D numpy array (frequency x time).
+    """
+    import io
+    import soundfile as sf
+
+    # Load audio from bytes
+    with io.BytesIO(audio_bytes) as audio_buffer:
+        data, samplerate = sf.read(audio_buffer, always_2d=True)
+
+    # Convert to numpy array and transpose to (channels, samples)
+    if data.ndim == 1:
+        data = data[:, np.newaxis]
+    data = data.T
+
+    # Calculate sample indices for time slicing
+    start_sample = int(start_time * samplerate)
+    end_sample = int(end_time * samplerate)
+
+    # Clamp to valid range
+    start_sample = max(0, start_sample)
+    end_sample = min(data.shape[1], end_sample)
+
+    # Extract time segment
+    if start_sample < end_sample:
+        data = data[:, start_sample:end_sample]
+    else:
+        # If invalid range, return empty spectrogram
+        data = np.zeros((data.shape[0], 1), dtype=np.float32)
+
+    # Convert to torch tensor for processing
+    waveform = torch.from_numpy(data.astype(np.float32))
+
+    # Import torchaudio functional (needed for spectrogram computation)
+    from torchaudio import functional as taF
+
+    # Apply resampling if requested
+    if audio_parameters.resample and audio_parameters.samplerate != samplerate:
+        waveform = taF.resample(
+            waveform,
+            orig_freq=samplerate,
+            new_freq=audio_parameters.samplerate,
+        )
+        samplerate = audio_parameters.samplerate
+
+    # Apply filtering if requested
+    if audio_parameters.low_freq is not None or audio_parameters.high_freq is not None:
+        from echoroo.api.audio import _apply_filters
+        waveform = _apply_filters(
+            waveform,
+            samplerate,
+            audio_parameters.low_freq,
+            audio_parameters.high_freq,
+            audio_parameters.filter_order,
+        )
+
+    # Select channel
+    if waveform.shape[0] > spectrogram_parameters.channel:
+        waveform = waveform[spectrogram_parameters.channel:spectrogram_parameters.channel+1]
+    else:
+        waveform = waveform[0:1]
+
+    # Compute spectrogram parameters
+    window_size = spectrogram_parameters.window_size
+    hop_size = (1 - spectrogram_parameters.overlap) * window_size
+    hop_size = max(hop_size, 1 / samplerate)
+
+    win_length = max(1, int(round(window_size * samplerate)))
+    hop_length = max(1, int(round(hop_size * samplerate)))
+    n_fft = max(2, win_length)
+
+    device = waveform.device
+    window_tensor = _build_window(
+        spectrogram_parameters.window,
+        win_length,
+        device=device,
+    )
+
+    # Compute spectrogram
+    spec = taF.spectrogram(
+        waveform,
+        pad=0,
+        window=window_tensor,
+        n_fft=n_fft,
+        hop_length=hop_length,
+        win_length=win_length,
+        power=2.0,
+        normalized=False,
+        center=True,
+        pad_mode="constant",
+        onesided=True,
+    )
+
+    # Normalize by window energy
+    window_energy = torch.sum(window_tensor.pow(2))
+    if samplerate > 0 and window_energy > 0:
+        spec = spec / (samplerate * window_energy)
+
+    # Apply one-sided correction
+    if n_fft % 2 == 0 and spec.shape[1] > 2:
+        spec[:, 1:-1] *= 2
+    elif spec.shape[1] > 1:
+        spec[:, 1:] *= 2
+
+    # Apply PCEN if requested
+    if spectrogram_parameters.pcen:
+        spec = _apply_pcen(spec)
+
+    # Convert to numpy and create xarray for dB conversion
+    spec_np = spec.squeeze().cpu().numpy()
+
+    # Convert to dB scale
+    from soundevent import arrays
+
+    freq_values = torch.fft.rfftfreq(n_fft, d=1 / samplerate).cpu().numpy()
+    hop_seconds = hop_length / samplerate
+    time_offset = start_time + hop_seconds / 2
+    time_values = (
+        time_offset
+        + np.arange(spec_np.shape[1] if spec_np.ndim > 1 else 1, dtype=np.float64) * hop_seconds
+    )
+
+    # Ensure spec_np is 2D
+    if spec_np.ndim == 1:
+        spec_np = spec_np[:, np.newaxis]
+
+    spectrogram = xr.DataArray(
+        data=spec_np,
+        dims=("frequency", "time"),
+        coords={
+            "frequency": arrays.create_frequency_dim_from_array(
+                freq_values,
+                step=samplerate / n_fft,
+            ),
+            "time": arrays.create_time_dim_from_array(
+                time_values,
+                step=hop_seconds,
+            ),
+        },
+        attrs={
             "window_size": window_size,
             "hop_size": hop_size,
             "window_type": spectrogram_parameters.window,

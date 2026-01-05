@@ -33,3 +33,11 @@ class SpeciesCandidate(BaseModel):
         default=None,
         description="Dataset key provided by GBIF.",
     )
+    vernacular_name: str | None = Field(
+        default=None,
+        description="Primary English vernacular (common) name, if available.",
+    )
+    vernacular_names: list[dict] | None = Field(
+        default=None,
+        description="All available vernacular names with language codes.",
+    )

@@ -21,6 +21,9 @@ import {
   Tag as TagIcon,
   Music,
   Loader2,
+  ChevronDown,
+  ChevronUp,
+  Settings,
 } from "lucide-react";
 
 import api from "@/app/api";
@@ -33,9 +36,25 @@ import ProgressBar from "@/lib/components/ui/ProgressBar";
 import { DialogOverlay } from "@/lib/components/ui/Dialog";
 import Link from "@/lib/components/ui/Link";
 
-import type { SearchSession, SearchSessionCreate, ReferenceSound, Tag } from "@/lib/types";
+import type { SearchSession, ReferenceSound } from "@/lib/types";
 
 import MLProjectContext from "../context";
+
+// Generate a color from tag_id if no color is provided
+function generateTagColor(tagId: number): string {
+  const colors = [
+    "#10b981", // emerald-500
+    "#3b82f6", // blue-500
+    "#8b5cf6", // violet-500
+    "#f59e0b", // amber-500
+    "#ec4899", // pink-500
+    "#06b6d4", // cyan-500
+    "#84cc16", // lime-500
+    "#f97316", // orange-500
+    "#6366f1", // indigo-500
+  ];
+  return colors[tagId % colors.length];
+}
 
 function SessionCard({
   session,
@@ -46,8 +65,8 @@ function SessionCard({
   mlProjectUuid: string;
   onDelete: () => void;
 }) {
-  const labeledPercent = session.result_count > 0
-    ? Math.round((session.labeled_count / session.result_count) * 100)
+  const labeledPercent = session.total_results > 0
+    ? Math.round((session.labeled_count / session.total_results) * 100)
     : 0;
 
   return (
@@ -66,12 +85,7 @@ function SessionCard({
           )}
         </div>
         <div className="flex items-center gap-2">
-          {session.is_labeling_complete ? (
-            <span className="flex items-center gap-1 px-2 py-1 text-xs bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 rounded-full">
-              <CheckCircle className="w-3 h-3" />
-              Complete
-            </span>
-          ) : session.is_search_complete ? (
+          {session.is_search_complete ? (
             <span className="flex items-center gap-1 px-2 py-1 text-xs bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 rounded-full">
               <TagIcon className="w-3 h-3" />
               Labeling
@@ -85,11 +99,19 @@ function SessionCard({
         </div>
       </div>
 
-      {/* Target tag */}
-      <div className="flex items-center gap-2 mt-3 text-sm text-stone-600 dark:text-stone-400">
-        <TagIcon className="w-4 h-4" />
-        <span>Target: {session.target_tag.key}: {session.target_tag.value}</span>
-      </div>
+      {/* Target tags */}
+      {session.target_tags.length > 0 && (
+        <div className="flex items-center gap-2 mt-3 text-sm text-stone-600 dark:text-stone-400">
+          <TagIcon className="w-4 h-4" />
+          <div className="flex flex-wrap gap-1">
+            {session.target_tags.map((tt) => (
+              <span key={tt.tag_id} className="bg-stone-100 dark:bg-stone-800 px-1.5 py-0.5 rounded text-xs">
+                {tt.tag.vernacular_name || tt.tag.canonical_name}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Reference sounds */}
       {session.reference_sounds.length > 0 && (
@@ -107,12 +129,29 @@ function SessionCard({
               Labeling Progress
             </span>
             <span className="text-stone-700 dark:text-stone-300">
-              {session.labeled_count} / {session.result_count} ({labeledPercent}%)
+              {session.labeled_count} / {session.total_results} ({labeledPercent}%)
             </span>
           </div>
           <ProgressBar
-            total={session.result_count}
-            complete={session.labeled_count}
+            total={session.total_results}
+            segments={[
+              // Each tag with its color
+              ...Object.entries(session.tag_counts).map(([tagIdStr, count]) => {
+                const tagId = parseInt(tagIdStr);
+                const targetTag = session.target_tags.find((t) => t.tag_id === tagId);
+                const color = generateTagColor(tagId);
+                const displayName = targetTag
+                  ? targetTag.tag.vernacular_name || targetTag.tag.canonical_name || targetTag.tag.value
+                  : `Tag ${tagId}`;
+                return { count, color, label: displayName };
+              }),
+              // Negative
+              { count: session.negative_count, color: '#ef4444', label: 'Negative' },
+              // Uncertain
+              { count: session.uncertain_count, color: '#f59e0b', label: 'Uncertain' },
+              // Unlabeled
+              { count: session.unlabeled_count, color: '#3b82f6', label: 'Unlabeled' },
+            ]}
             className="mb-0"
           />
         </div>
@@ -121,17 +160,19 @@ function SessionCard({
       {/* Actions */}
       <div className="flex items-center justify-between mt-4 pt-3 border-t border-stone-200 dark:border-stone-700">
         <Button
+          type="button"
           variant="danger"
           mode="text"
           onClick={(e) => {
             e.preventDefault();
+            e.stopPropagation();
             onDelete();
           }}
         >
           <Trash2 className="w-4 h-4" />
         </Button>
         <Link href={`/ml-projects/${mlProjectUuid}/search/${session.uuid}`}>
-          <Button variant="primary" mode="text">
+          <Button type="button" variant="primary" mode="text">
             {session.is_search_complete ? "Continue Labeling" : "View Session"}
             <ArrowRight className="w-4 h-4 ml-1" />
           </Button>
@@ -154,18 +195,15 @@ function CreateSessionDialog({
 }) {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
-  const [targetTagId, setTargetTagId] = useState<number | null>(null);
   const [selectedSoundIds, setSelectedSoundIds] = useState<string[]>([]);
-  const [similarityThreshold, setSimilarityThreshold] = useState("0.7");
-  const [maxResults, setMaxResults] = useState("1000");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
-  // Fetch available tags
-  const { data: tagsData } = useQuery({
-    queryKey: ["tags"],
-    queryFn: () => api.tags.get({ limit: 100 }),
-  });
-  const tags = tagsData?.items || [];
+  // Active Learning parameters
+  const [easyPositiveK, setEasyPositiveK] = useState("5");
+  const [boundaryN, setBoundaryN] = useState("200");
+  const [boundaryM, setBoundaryM] = useState("10");
+  const [othersP, setOthersP] = useState("20");
 
   // Fetch reference sounds
   const { data: soundsData } = useQuery({
@@ -176,25 +214,28 @@ function CreateSessionDialog({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!name || !targetTagId || selectedSoundIds.length === 0) return;
+    if (!name || selectedSoundIds.length === 0) return;
 
     setIsSubmitting(true);
     try {
       await api.searchSessions.create(mlProjectUuid, {
         name,
         description: description || undefined,
-        target_tag_id: targetTagId,
         reference_sound_ids: selectedSoundIds,
-        similarity_threshold: parseFloat(similarityThreshold),
-        max_results: parseInt(maxResults),
+        easy_positive_k: parseInt(easyPositiveK),
+        boundary_n: parseInt(boundaryN),
+        boundary_m: parseInt(boundaryM),
+        others_p: parseInt(othersP),
       });
       toast.success("Search session created");
       setName("");
       setDescription("");
-      setTargetTagId(null);
       setSelectedSoundIds([]);
-      setSimilarityThreshold("0.7");
-      setMaxResults("1000");
+      setEasyPositiveK("5");
+      setBoundaryN("200");
+      setBoundaryM("10");
+      setOthersP("20");
+      setShowAdvanced(false);
       onSuccess();
       onClose();
     } catch (error) {
@@ -249,25 +290,6 @@ function CreateSessionDialog({
 
         <div>
           <label className="block text-sm font-medium text-stone-700 dark:text-stone-300 mb-1">
-            Target Tag
-          </label>
-          <select
-            value={targetTagId || ""}
-            onChange={(e) => setTargetTagId(Number(e.target.value) || null)}
-            className="w-full px-3 py-2 border border-stone-300 dark:border-stone-600 rounded-lg bg-white dark:bg-stone-800 text-stone-900 dark:text-stone-100"
-            required
-          >
-            <option value="">Select a tag</option>
-            {tags.map((tag: Tag) => (
-              <option key={`${tag.key}:${tag.value}`} value={tag.id}>
-                {tag.key}: {tag.value}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div>
-          <label className="block text-sm font-medium text-stone-700 dark:text-stone-300 mb-1">
             Reference Sounds
           </label>
           {sounds.length === 0 ? (
@@ -287,12 +309,27 @@ function CreateSessionDialog({
                     onChange={() => toggleSound(sound.uuid)}
                     className="rounded border-stone-300 text-emerald-600 focus:ring-emerald-500"
                   />
-                  <span className="text-sm text-stone-700 dark:text-stone-300">
-                    {sound.name}
-                  </span>
-                  <span className="text-xs text-stone-500 ml-auto">
-                    {sound.tag.key}: {sound.tag.value}
-                  </span>
+                  <div className="flex-1 min-w-0">
+                    <span className="text-sm text-stone-700 dark:text-stone-300">
+                      {sound.name}
+                    </span>
+                    <div className="text-xs text-stone-500 truncate">
+                      {sound.tag.vernacular_name && (
+                        <span>{sound.tag.vernacular_name}</span>
+                      )}
+                      {sound.tag.vernacular_name && sound.tag.canonical_name && " · "}
+                      {sound.tag.canonical_name && (
+                        <span className="italic">{sound.tag.canonical_name}</span>
+                      )}
+                    </div>
+                    <div className="text-xs text-stone-400 dark:text-stone-600">
+                      {sound.source === "xeno_canto" && sound.xeno_canto_id}
+                      {sound.source === "clip" && "Dataset Clip"}
+                      {sound.source === "upload" && "Custom Upload"}
+                      {" · "}
+                      {(sound.end_time - sound.start_time).toFixed(1)}s
+                    </div>
+                  </div>
                 </label>
               ))}
             </div>
@@ -304,33 +341,98 @@ function CreateSessionDialog({
           )}
         </div>
 
-        <div className="grid grid-cols-2 gap-4">
-          <div>
-            <label className="block text-sm font-medium text-stone-700 dark:text-stone-300 mb-1">
-              Similarity Threshold
-            </label>
-            <input
-              type="number"
-              step="0.01"
-              min="0"
-              max="1"
-              value={similarityThreshold}
-              onChange={(e) => setSimilarityThreshold(e.target.value)}
-              className="w-full px-3 py-2 border border-stone-300 dark:border-stone-600 rounded-lg bg-white dark:bg-stone-800 text-stone-900 dark:text-stone-100"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-stone-700 dark:text-stone-300 mb-1">
-              Max Results
-            </label>
-            <input
-              type="number"
-              min="1"
-              value={maxResults}
-              onChange={(e) => setMaxResults(e.target.value)}
-              className="w-full px-3 py-2 border border-stone-300 dark:border-stone-600 rounded-lg bg-white dark:bg-stone-800 text-stone-900 dark:text-stone-100"
-            />
-          </div>
+        {/* Advanced Settings (Collapsible) */}
+        <div className="border border-stone-200 dark:border-stone-700 rounded-lg overflow-hidden">
+          <button
+            type="button"
+            onClick={() => setShowAdvanced(!showAdvanced)}
+            className="w-full flex items-center justify-between px-4 py-3 bg-stone-50 dark:bg-stone-800/50 hover:bg-stone-100 dark:hover:bg-stone-800 transition-colors"
+          >
+            <div className="flex items-center gap-2 text-sm font-medium text-stone-700 dark:text-stone-300">
+              <Settings className="w-4 h-4" />
+              Advanced Settings
+            </div>
+            {showAdvanced ? (
+              <ChevronUp className="w-4 h-4 text-stone-500" />
+            ) : (
+              <ChevronDown className="w-4 h-4 text-stone-500" />
+            )}
+          </button>
+
+          {showAdvanced && (
+            <div className="p-4 space-y-4 border-t border-stone-200 dark:border-stone-700">
+              <p className="text-xs text-stone-500 dark:text-stone-400 mb-3">
+                Configure Active Learning sampling parameters for diverse result selection.
+              </p>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-stone-700 dark:text-stone-300 mb-1">
+                    Easy Positives (k)
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={easyPositiveK}
+                    onChange={(e) => setEasyPositiveK(e.target.value)}
+                    placeholder="5"
+                    className="w-full px-3 py-2 border border-stone-300 dark:border-stone-600 rounded-lg bg-white dark:bg-stone-800 text-stone-900 dark:text-stone-100"
+                  />
+                  <p className="text-xs text-stone-400 mt-1">
+                    Top-k most similar clips per reference
+                  </p>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-stone-700 dark:text-stone-300 mb-1">
+                    Boundary Pool (n)
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={boundaryN}
+                    onChange={(e) => setBoundaryN(e.target.value)}
+                    placeholder="200"
+                    className="w-full px-3 py-2 border border-stone-300 dark:border-stone-600 rounded-lg bg-white dark:bg-stone-800 text-stone-900 dark:text-stone-100"
+                  />
+                  <p className="text-xs text-stone-400 mt-1">
+                    Number of candidates in boundary zone
+                  </p>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-stone-700 dark:text-stone-300 mb-1">
+                    Boundary Samples (m)
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={boundaryM}
+                    onChange={(e) => setBoundaryM(e.target.value)}
+                    placeholder="10"
+                    className="w-full px-3 py-2 border border-stone-300 dark:border-stone-600 rounded-lg bg-white dark:bg-stone-800 text-stone-900 dark:text-stone-100"
+                  />
+                  <p className="text-xs text-stone-400 mt-1">
+                    Random samples from boundary zone
+                  </p>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-stone-700 dark:text-stone-300 mb-1">
+                    Others (p)
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={othersP}
+                    onChange={(e) => setOthersP(e.target.value)}
+                    placeholder="20"
+                    className="w-full px-3 py-2 border border-stone-300 dark:border-stone-600 rounded-lg bg-white dark:bg-stone-800 text-stone-900 dark:text-stone-100"
+                  />
+                  <p className="text-xs text-stone-400 mt-1">
+                    Diverse samples using farthest-first selection
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="flex justify-end gap-2 pt-4">
@@ -340,7 +442,7 @@ function CreateSessionDialog({
           <Button
             type="submit"
             variant="primary"
-            disabled={!name || !targetTagId || selectedSoundIds.length === 0 || isSubmitting}
+            disabled={!name || selectedSoundIds.length === 0 || isSubmitting}
           >
             {isSubmitting ? (
               <>
