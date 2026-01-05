@@ -27,17 +27,21 @@ import {
   X,
   ChevronLeft,
   ChevronRight,
+  AlertTriangle,
+  Play,
 } from "lucide-react";
 
 import api from "@/app/api";
 import TagSearchBar from "@/app/components/tags/TagSearchBar";
 import SpectrogramSegmentSelector from "@/app/components/ml_projects/SpectrogramSegmentSelector";
+import { DEFAULT_SPECTROGRAM_PARAMETERS } from "@/lib/constants";
 
 import Button from "@/lib/components/ui/Button";
 import Card from "@/lib/components/ui/Card";
 import Empty from "@/lib/components/ui/Empty";
 import Loading from "@/lib/components/ui/Loading";
 import { DialogOverlay } from "@/lib/components/ui/Dialog";
+import Alert from "@/lib/components/ui/Alert";
 import TagComponent from "@/lib/components/tags/Tag";
 
 import type { ReferenceSound, Tag } from "@/lib/types";
@@ -55,29 +59,117 @@ function ReferenceSoundCard({
   onToggle: () => void;
   onDelete: () => void;
 }) {
+  const [spectrogramError, setSpectrogramError] = useState(false);
+
   const sourceIcon = {
     xeno_canto: <Globe className="w-4 h-4" />,
-    custom_upload: <Music className="w-4 h-4" />,
-    dataset_clip: <Database className="w-4 h-4" />,
+    upload: <Music className="w-4 h-4" />,
+    clip: <Database className="w-4 h-4" />,
   };
 
   const sourceLabel = {
     xeno_canto: "Xeno-Canto",
-    custom_upload: "Custom Upload",
-    dataset_clip: "Dataset Clip",
+    upload: "Custom Upload",
+    clip: "Dataset Clip",
   };
+
+  // Get audio URL based on source
+  const getAudioUrl = () => {
+    if (sound.source === "xeno_canto" && sound.xeno_canto_id) {
+      // Include time range parameters for Xeno-Canto audio
+      const params = new URLSearchParams({
+        start_time: sound.start_time.toString(),
+        end_time: sound.end_time.toString(),
+      });
+      return `/api/v1/ml_projects/${mlProjectUuid}/reference_sounds/xeno_canto/${sound.xeno_canto_id}/audio?${params}`;
+    } else if (sound.source === "clip" && sound.clip) {
+      return api.audio.getStreamUrl({
+        recording: sound.clip.recording,
+        startTime: sound.start_time,
+        endTime: sound.end_time,
+      });
+    }
+    return null;
+  };
+
+  // Get spectrogram URL based on source
+  const getSpectrogramUrl = () => {
+    if (sound.source === "xeno_canto" && sound.xeno_canto_id) {
+      // Include time range and spectrogram parameters for consistency with search session page
+      const params = new URLSearchParams({
+        start_time: sound.start_time.toString(),
+        end_time: sound.end_time.toString(),
+        cmap: DEFAULT_SPECTROGRAM_PARAMETERS.cmap || "twilight",
+      });
+      return `/api/v1/ml_projects/${mlProjectUuid}/reference_sounds/xeno_canto/${sound.xeno_canto_id}/spectrogram?${params}`;
+    } else if (sound.source === "clip" && sound.clip) {
+      return api.spectrograms.getUrl({
+        uuid: sound.clip.recording.uuid,
+        interval: { min: sound.start_time, max: sound.end_time },
+        ...DEFAULT_SPECTROGRAM_PARAMETERS,
+      });
+    }
+    return null;
+  };
+
+  const handlePlayAudio = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const audioUrl = getAudioUrl();
+    if (audioUrl) {
+      const audio = new Audio(audioUrl);
+      audio.play().catch((error) => {
+        console.error("Failed to play audio:", error);
+      });
+    }
+  };
+
+  const spectrogramUrl = getSpectrogramUrl();
+  const showSpectrogram = spectrogramUrl && !spectrogramError;
 
   return (
     <Card className="relative">
-      {/* Spectrogram thumbnail placeholder */}
-      <div className="aspect-[3/1] bg-stone-100 dark:bg-stone-800 rounded-lg mb-3 flex items-center justify-center">
-        {/* In a real implementation, this would show a spectrogram image */}
-        <div className="text-stone-400 flex flex-col items-center gap-2">
-          <Music className="w-8 h-8" />
-          <span className="text-xs">
-            {sound.start_time.toFixed(2)}s - {sound.end_time.toFixed(2)}s
-          </span>
-        </div>
+      {/* Spectrogram thumbnail with play button */}
+      <div className="aspect-[3/1] bg-stone-100 dark:bg-stone-800 rounded-lg mb-3 flex items-center justify-center relative overflow-hidden group">
+        {showSpectrogram ? (
+          <>
+            <img
+              src={spectrogramUrl}
+              alt="Spectrogram"
+              className="absolute inset-0 w-full h-full object-cover"
+              onError={() => setSpectrogramError(true)}
+            />
+            {/* Play button overlay - visible on hover */}
+            <button
+              onClick={handlePlayAudio}
+              className="absolute inset-0 flex items-center justify-center bg-black/0 hover:bg-black/30 transition-colors"
+            >
+              <Play className="w-8 h-8 text-white opacity-0 group-hover:opacity-100 transition-opacity" />
+            </button>
+            {/* Time badge */}
+            <span className="absolute bottom-2 left-2 px-2 py-0.5 text-xs bg-black/50 text-white rounded">
+              {sound.start_time.toFixed(2)}s - {sound.end_time.toFixed(2)}s
+            </span>
+          </>
+        ) : (
+          <>
+            {/* Placeholder for when spectrogram is not available */}
+            <div className="text-stone-400 flex flex-col items-center gap-2">
+              <Music className="w-8 h-8" />
+              <span className="text-xs">
+                {sound.start_time.toFixed(2)}s - {sound.end_time.toFixed(2)}s
+              </span>
+            </div>
+            {/* Play button for placeholder */}
+            {getAudioUrl() && (
+              <button
+                onClick={handlePlayAudio}
+                className="absolute top-2 right-2 p-2 bg-black/50 hover:bg-black/70 rounded-full transition-colors"
+              >
+                <Play className="w-4 h-4 text-white" />
+              </button>
+            )}
+          </>
+        )}
       </div>
 
       {/* Sound info */}
@@ -122,7 +214,8 @@ function ReferenceSoundCard({
 
         <div className="flex items-center gap-2">
           <span className="px-2 py-0.5 text-xs bg-stone-100 dark:bg-stone-700 rounded-full">
-            {sound.tag.key}: {sound.tag.value}
+            {sound.tag.canonical_name || `${sound.tag.key}: ${sound.tag.value}`}
+            {sound.tag.vernacular_name && ` (${sound.tag.vernacular_name})`}
           </span>
           {sound.has_embedding ? (
             <span className="px-2 py-0.5 text-xs bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 rounded-full">
@@ -156,16 +249,49 @@ function ReferenceSoundCard({
             </>
           )}
         </Button>
-        <Button
-          variant="danger"
+        <Alert
+          title={
+            <>
+              <AlertTriangle className="inline-block mr-2 w-6 h-6 text-red-500" />
+              Delete reference sound?
+            </>
+          }
+          button={<Trash2 className="w-4 h-4" />}
           mode="text"
-          onClick={() => {
-            console.log("Delete button UI clicked");
-            onDelete();
-          }}
+          variant="danger"
+          padding="p-2"
         >
-          <Trash2 className="w-4 h-4" />
-        </Button>
+          {({ close }) => (
+            <>
+              <div className="flex flex-col gap-2">
+                <p>
+                  Are you sure you want to delete this reference sound? This
+                  action cannot be undone.
+                </p>
+                <h2 className="p-3 font-semibold text-center text-stone-800 dark:text-stone-200">
+                  {sound.name}
+                </h2>
+              </div>
+              <div className="flex flex-row gap-2 justify-end mt-4">
+                <Button
+                  mode="text"
+                  variant="danger"
+                  onClick={() => {
+                    onDelete();
+                    close();
+                  }}
+                >
+                  <Trash2 className="inline-block mr-2 w-5 h-5" />
+                  Delete
+                </Button>
+                <Button mode="outline" variant="primary" onClick={close}>
+                  <X className="inline-block mr-2 w-5 h-5" />
+                  Cancel
+                </Button>
+              </div>
+            </>
+          )}
+        </Alert>
       </div>
     </Card>
   );
@@ -840,11 +966,7 @@ export default function ReferenceSoundsPage() {
 
   const handleDelete = useCallback(
     (soundUuid: string) => {
-      console.log("Delete button clicked, soundUuid:", soundUuid);
-      if (confirm("Are you sure you want to delete this reference sound?")) {
-        console.log("Confirmed deletion, calling mutation");
-        deleteMutation.mutate(soundUuid);
-      }
+      deleteMutation.mutate(soundUuid);
     },
     [deleteMutation],
   );
