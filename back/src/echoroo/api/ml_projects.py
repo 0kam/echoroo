@@ -781,6 +781,32 @@ class MLProjectAPI(
                 f"Dataset {dataset.uuid} is already in ML project {ml_project.uuid}"
             )
 
+        # Validate embedding model compatibility BEFORE creating the scope
+        db_ml_project = await session.get(models.MLProject, ml_project.id)
+        db_fm_run = await session.get(
+            models.FoundationModelRun, foundation_model_run.id
+        )
+
+        if db_fm_run and db_fm_run.model_run_id:
+            if (
+                db_ml_project.embedding_model_run_id is not None
+                and db_ml_project.embedding_model_run_id != db_fm_run.model_run_id
+            ):
+                # Different model - not allowed
+                existing_model = await session.get(
+                    models.ModelRun, db_ml_project.embedding_model_run_id
+                )
+                new_model = await session.get(
+                    models.ModelRun, db_fm_run.model_run_id
+                )
+                raise exceptions.InvalidDataError(
+                    f"Cannot add dataset scope with different embedding model. "
+                    f"ML project uses '{existing_model.name if existing_model else 'unknown'}', "
+                    f"but the selected foundation model run uses "
+                    f"'{new_model.name if new_model else 'unknown'}'. "
+                    f"All dataset scopes in an ML project must use the same embedding model."
+                )
+
         # Create the dataset scope
         db_scope = await common.create_object(
             session,
@@ -789,6 +815,12 @@ class MLProjectAPI(
             dataset_id=dataset.id,
             foundation_model_run_id=foundation_model_run.id,
         )
+
+        # Set ML project's embedding_model_run if not already set
+        if db_fm_run and db_fm_run.model_run_id:
+            if db_ml_project.embedding_model_run_id is None:
+                db_ml_project.embedding_model_run_id = db_fm_run.model_run_id
+                await session.flush()
 
         # Reload with all necessary relationships for serialization
         db_scope = await session.scalar(

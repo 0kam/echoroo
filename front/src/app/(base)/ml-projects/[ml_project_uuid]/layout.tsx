@@ -23,7 +23,6 @@ import {
   Clock,
   CheckCircle,
   Archive,
-  ListChecks,
   FolderOpen,
 } from "lucide-react";
 
@@ -124,15 +123,6 @@ function MLProjectTabs({ uuid }: { uuid: string }) {
         >
           <Search className="w-4 h-4" />
           Search
-        </Tab>
-      </li>
-      <li>
-        <Tab
-          active={selectedLayoutSegment === "curation"}
-          onClick={() => router.push(`/ml-projects/${uuid}/curation/`)}
-        >
-          <ListChecks className="w-4 h-4" />
-          Curation
         </Tab>
       </li>
       <li>

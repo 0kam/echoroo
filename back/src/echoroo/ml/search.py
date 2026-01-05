@@ -26,6 +26,8 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from echoroo.ml.distance_metrics import DistanceMetric
+
 __all__ = [
     "SearchFilter",
     "SimilarityResult",
@@ -251,19 +253,25 @@ class _QueryBuilder:
 
     params: dict = field(default_factory=dict)
     where_clauses: list[str] = field(default_factory=list)
+    distance_metric: str = "cosine"
 
     def add_embedding_param(self, embedding: list[float]) -> str:
         """Add embedding parameter and return the SQL placeholder."""
         embedding_str = "[" + ",".join(str(x) for x in embedding) + "]"
         self.params["query_embedding"] = embedding_str
-        return ":query_embedding::vector"
+        return "CAST(:query_embedding AS vector)"
 
     def add_similarity_filter(self, min_similarity: float) -> None:
         """Add minimum similarity filter."""
         self.params["min_similarity"] = min_similarity
-        self.where_clauses.append(
-            "1 - (ce.embedding <=> :query_embedding::vector) >= :min_similarity"
-        )
+        if self.distance_metric == "cosine":
+            self.where_clauses.append(
+                "1 - (ce.embedding <=> CAST(:query_embedding AS vector)) >= :min_similarity"
+            )
+        elif self.distance_metric == "euclidean":
+            self.where_clauses.append(
+                "1.0 / (1.0 + (ce.embedding <-> CAST(:query_embedding AS vector))) >= :min_similarity"
+            )
 
     def add_limit(self, limit: int) -> None:
         """Add limit parameter."""
@@ -290,11 +298,13 @@ class VectorSearch:
         limit: int = 20,
         min_similarity: float = 0.7,
         filters: SearchFilter | None = None,
+        distance_metric: str = "cosine",
     ) -> list[SimilarityResult]:
         """Search for similar clips with optional filters.
 
-        Uses pgvector's cosine distance operator (<=>).
-        similarity = 1 - cosine_distance
+        Uses pgvector's distance operators:
+        - Cosine: <=> operator, similarity = 1 - cosine_distance
+        - Euclidean: <-> operator, similarity = 1 / (1 + euclidean_distance)
 
         Parameters
         ----------
@@ -306,10 +316,12 @@ class VectorSearch:
         limit
             Maximum number of results to return.
         min_similarity
-            Minimum cosine similarity threshold (0.0 to 1.0).
+            Minimum similarity threshold (0.0 to 1.0).
             Results with lower similarity are excluded.
         filters
             Optional SearchFilter for restricting results.
+        distance_metric
+            Distance metric to use: "cosine" or "euclidean".
 
         Returns
         -------
@@ -327,6 +339,7 @@ class VectorSearch:
             limit=limit,
             min_similarity=min_similarity,
             filters=filters,
+            distance_metric=distance_metric,
         )
 
         result = await session.execute(text(query), params)
@@ -600,6 +613,7 @@ class VectorSearch:
         limit: int,
         min_similarity: float,
         filters: SearchFilter | None,
+        distance_metric: str = "cosine",
     ) -> tuple[str, dict]:
         """Build optimized SQL query for vector search.
 
@@ -616,13 +630,15 @@ class VectorSearch:
             Minimum similarity threshold.
         filters
             Optional search filters.
+        distance_metric
+            Distance metric to use: "cosine" or "euclidean".
 
         Returns
         -------
         tuple[str, dict]
             SQL query string and parameters dictionary.
         """
-        builder = _QueryBuilder()
+        builder = _QueryBuilder(distance_metric=distance_metric)
 
         # Add embedding parameter
         embedding_param = builder.add_embedding_param(embedding)
@@ -639,6 +655,18 @@ class VectorSearch:
         all_where_clauses = builder.where_clauses + filter_components.where_clauses
         where_sql = " AND ".join(all_where_clauses) if all_where_clauses else "1=1"
 
+        # Build similarity calculation and ORDER BY based on metric
+        if distance_metric == "cosine":
+            similarity_sql = f"1 - (ce.embedding <=> {embedding_param}) as similarity"
+            order_by_sql = f"ce.embedding <=> {embedding_param}"
+        elif distance_metric == "euclidean":
+            similarity_sql = f"1.0 / (1.0 + (ce.embedding <-> {embedding_param})) as similarity"
+            order_by_sql = f"ce.embedding <-> {embedding_param}"
+        else:
+            # Default to cosine for unknown metrics
+            similarity_sql = f"1 - (ce.embedding <=> {embedding_param}) as similarity"
+            order_by_sql = f"ce.embedding <=> {embedding_param}"
+
         # Build the final query
         query = f"""
             {filter_components.build_cte_sql()}
@@ -648,7 +676,7 @@ class VectorSearch:
                 r.uuid as recording_uuid,
                 c.start_time,
                 c.end_time,
-                1 - (ce.embedding <=> {embedding_param}) as similarity,
+                {similarity_sql},
                 mr.uuid as model_run_uuid,
                 mr.name as model_name,
                 mr.version as model_version
@@ -658,7 +686,7 @@ class VectorSearch:
             JOIN model_run mr ON ce.model_run_id = mr.id
             {filter_components.build_join_sql()}
             WHERE {where_sql}
-            ORDER BY ce.embedding <=> {embedding_param}
+            ORDER BY {order_by_sql}
             LIMIT :limit
         """
 

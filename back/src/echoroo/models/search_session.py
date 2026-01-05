@@ -1,34 +1,34 @@
-"""Search Session and Search Result models.
+"""Search Session and Search Result models for Active Learning.
 
-A Search Session represents a single similarity search operation within
-an ML Project. Each session targets a specific species/sound tag and
+A Search Session represents an active learning search operation within
+an ML Project. Each session can target multiple species/sound tags and
 uses a set of reference sounds to find similar clips in the dataset.
 
-The search process involves:
-1. Selecting active reference sounds for the target species
-2. Computing similarity between reference embeddings and dataset clip embeddings
-3. Ranking results by similarity score
-4. Allowing users to label results as positive/negative training examples
+The active learning process involves:
+1. Initial sampling from reference sounds (easy positives, boundary, others)
+2. User labeling of samples with target tags or negative/uncertain flags
+3. Iterative model training and sample selection based on labels
+4. Progressive refinement of the search model
 
-Search Results are individual matches found during a search session.
+Search Results are individual samples found during a search session.
 Each result links a dataset clip to the search session with its
-similarity score and user-assigned label.
+sampling metadata and user-assigned labels.
 """
 
 from __future__ import annotations
 
 import datetime
-import enum
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
 import sqlalchemy as sa
 import sqlalchemy.orm as orm
 from sqlalchemy import ForeignKey, UniqueConstraint
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 
 from echoroo.models.base import Base
 from echoroo.models.tag import Tag
+from echoroo.ml.distance_metrics import DistanceMetric
 
 if TYPE_CHECKING:
     from echoroo.models.annotation_project import AnnotationProject
@@ -41,46 +41,22 @@ __all__ = [
     "SearchSession",
     "SearchSessionDatasetScope",
     "SearchSessionReferenceSound",
+    "SearchSessionTargetTag",
     "SearchResult",
-    "SearchResultLabel",
+    "IterationScoreDistribution",
 ]
 
 
-class SearchResultLabel(str, enum.Enum):
-    """Label for search result classification."""
-
-    UNLABELED = "unlabeled"
-    """Result has not been reviewed yet."""
-
-    POSITIVE = "positive"
-    """Result confirmed as positive example of target sound."""
-
-    NEGATIVE = "negative"
-    """Result confirmed as negative (not the target sound)."""
-
-    UNCERTAIN = "uncertain"
-    """Result is ambiguous or difficult to classify."""
-
-    SKIPPED = "skipped"
-    """Result was skipped during labeling."""
-
-    POSITIVE_REFERENCE = "positive_reference"
-    """Result selected as a positive reference for further training."""
-
-    NEGATIVE_REFERENCE = "negative_reference"
-    """Result selected as a negative reference for further training."""
-
-
 class SearchSession(Base):
-    """Search Session model.
+    """Search Session model for Active Learning.
 
-    Represents a similarity search operation targeting a specific
-    species/sound within an ML project.
+    Represents an active learning search operation targeting multiple
+    species/sounds within an ML project.
     """
 
     __tablename__ = "search_session"
 
-    # Fields without defaults (required fields) - must come first
+    # Primary key
     id: orm.Mapped[int] = orm.mapped_column(primary_key=True, init=False)
     """The database id of the search session."""
 
@@ -91,6 +67,7 @@ class SearchSession(Base):
     )
     """The UUID of the search session."""
 
+    # Required fields
     name: orm.Mapped[str] = orm.mapped_column(nullable=False)
     """A descriptive name for this search session."""
 
@@ -100,30 +77,56 @@ class SearchSession(Base):
     )
     """The ML project this search session belongs to."""
 
-    target_tag_id: orm.Mapped[int] = orm.mapped_column(
-        ForeignKey("tag.id", ondelete="RESTRICT"),
-        nullable=False,
-    )
-    """The species/sound tag being searched for."""
-
     created_by_id: orm.Mapped[UUID] = orm.mapped_column(
         ForeignKey("user.id"),
         nullable=False,
     )
     """The user who created this search session."""
 
-    # Fields with defaults (optional fields) - must come after required fields
+    # Optional fields with defaults
     description: orm.Mapped[str | None] = orm.mapped_column(
         nullable=True,
         default=None,
     )
     """Optional description of the search session goals."""
 
-    similarity_threshold: orm.Mapped[float] = orm.mapped_column(
+    # Active Learning sampling parameters
+    easy_positive_k: orm.Mapped[int] = orm.mapped_column(
         nullable=False,
-        default=0.7,
+        default=5,
     )
-    """Minimum similarity score for results (0.0 to 1.0)."""
+    """Number of top-k similar clips to select per reference sound (easy positives)."""
+
+    boundary_n: orm.Mapped[int] = orm.mapped_column(
+        nullable=False,
+        default=200,
+    )
+    """Number of boundary samples (medium similarity) to consider."""
+
+    boundary_m: orm.Mapped[int] = orm.mapped_column(
+        nullable=False,
+        default=10,
+    )
+    """Number of boundary samples to actually select from boundary_n candidates."""
+
+    others_p: orm.Mapped[int] = orm.mapped_column(
+        nullable=False,
+        default=20,
+    )
+    """Number of 'other' samples (low similarity) to include."""
+
+    distance_metric: orm.Mapped[str] = orm.mapped_column(
+        nullable=False,
+        default="cosine",
+    )
+    """Distance metric for similarity search: 'cosine' or 'euclidean'."""
+
+    # Iteration tracking
+    current_iteration: orm.Mapped[int] = orm.mapped_column(
+        nullable=False,
+        default=0,
+    )
+    """Current active learning iteration number (0 = initial sampling)."""
 
     max_results: orm.Mapped[int] = orm.mapped_column(
         nullable=False,
@@ -144,17 +147,17 @@ class SearchSession(Base):
     )
     """Whether the similarity search has completed."""
 
-    is_labeling_complete: orm.Mapped[bool] = orm.mapped_column(
-        nullable=False,
-        default=False,
-    )
-    """Whether labeling of results has been completed."""
-
     search_all_scopes: orm.Mapped[bool] = orm.mapped_column(
         nullable=False,
         default=True,
     )
     """Whether to search all dataset scopes or only selected ones."""
+
+    distance_metric: orm.Mapped[str] = orm.mapped_column(
+        nullable=False,
+        default="cosine",
+    )
+    """Distance metric to use: 'cosine' or 'euclidean'."""
 
     # Relationships
     ml_project: orm.Mapped["MLProject"] = orm.relationship(
@@ -165,14 +168,6 @@ class SearchSession(Base):
     )
     """The ML project this search session belongs to."""
 
-    target_tag: orm.Mapped[Tag] = orm.relationship(
-        "Tag",
-        lazy="joined",
-        init=False,
-        repr=False,
-    )
-    """The target species/sound tag."""
-
     created_by: orm.Mapped["User"] = orm.relationship(
         "User",
         foreign_keys=[created_by_id],
@@ -181,6 +176,17 @@ class SearchSession(Base):
         repr=False,
     )
     """The user who created this search session."""
+
+    # Target tags for this search session (multi-tag support)
+    target_tags: orm.Mapped[list["SearchSessionTargetTag"]] = orm.relationship(
+        "SearchSessionTargetTag",
+        back_populates="search_session",
+        default_factory=list,
+        cascade="all, delete-orphan",
+        repr=False,
+        init=False,
+    )
+    """Target tags for this search session with shortcut keys."""
 
     # Reference sounds used in this search (via junction table)
     reference_sounds: orm.Mapped[list["ReferenceSound"]] = orm.relationship(
@@ -225,6 +231,65 @@ class SearchSession(Base):
         init=False,
     )
     """Results from this search session."""
+
+
+class SearchSessionTargetTag(Base):
+    """Search Session Target Tag model.
+
+    Links target tags to search sessions with keyboard shortcut assignments.
+    Multiple tags can be targeted per session, each with a unique shortcut key.
+    """
+
+    __tablename__ = "search_session_target_tag"
+    __table_args__ = (
+        UniqueConstraint(
+            "search_session_id",
+            "tag_id",
+            name="uq_search_session_target_tag_session_tag",
+        ),
+        UniqueConstraint(
+            "search_session_id",
+            "shortcut_key",
+            name="uq_search_session_target_tag_session_shortcut",
+        ),
+    )
+
+    id: orm.Mapped[int] = orm.mapped_column(primary_key=True, init=False)
+    """The database id of the target tag entry."""
+
+    search_session_id: orm.Mapped[int] = orm.mapped_column(
+        ForeignKey("search_session.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    """The search session ID."""
+
+    tag_id: orm.Mapped[int] = orm.mapped_column(
+        ForeignKey("tag.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    """The target tag ID."""
+
+    shortcut_key: orm.Mapped[int] = orm.mapped_column(
+        nullable=False,
+    )
+    """Keyboard shortcut key (1-9) for quick labeling."""
+
+    # Relationships
+    search_session: orm.Mapped[SearchSession] = orm.relationship(
+        "SearchSession",
+        back_populates="target_tags",
+        init=False,
+        repr=False,
+    )
+    """The search session."""
+
+    tag: orm.Mapped[Tag] = orm.relationship(
+        "Tag",
+        lazy="joined",
+        init=False,
+        repr=False,
+    )
+    """The target tag."""
 
 
 class SearchSessionReferenceSound(Base):
@@ -274,11 +339,11 @@ class SearchSessionReferenceSound(Base):
 
 
 class SearchResult(Base):
-    """Search Result model.
+    """Search Result model for Active Learning.
 
-    Represents a single match found during a similarity search,
-    linking a dataset clip to a search session with its similarity
-    score and user-assigned label.
+    Represents a single sample found during an active learning search,
+    linking a dataset clip to a search session with its sampling metadata
+    and user-assigned labels.
     """
 
     __tablename__ = "search_result"
@@ -289,7 +354,7 @@ class SearchResult(Base):
         ),
     )
 
-    # Fields without defaults (required fields) - must come first
+    # Primary key
     id: orm.Mapped[int] = orm.mapped_column(primary_key=True, init=False)
     """The database id of the search result."""
 
@@ -300,6 +365,7 @@ class SearchResult(Base):
     )
     """The UUID of the search result."""
 
+    # Required fields
     search_session_id: orm.Mapped[int] = orm.mapped_column(
         ForeignKey("search_session.id", ondelete="CASCADE"),
         nullable=False,
@@ -322,20 +388,59 @@ class SearchResult(Base):
     )
     """Rank of this result (1 = most similar)."""
 
-    # Fields with defaults (optional fields) - must come after required fields
-    label: orm.Mapped[SearchResultLabel] = orm.mapped_column(
-        sa.Enum(
-            SearchResultLabel,
-            name="search_result_label",
-            values_callable=lambda x: [e.value for e in x],
-            create_type=False,
-        ),
-        nullable=False,
-        default=SearchResultLabel.UNLABELED,
-        server_default=SearchResultLabel.UNLABELED.value,
+    # Labeling fields (replaces enum-based label)
+    assigned_tag_id: orm.Mapped[int | None] = orm.mapped_column(
+        ForeignKey("tag.id", ondelete="SET NULL"),
+        nullable=True,
+        default=None,
     )
-    """User-assigned label for this result."""
+    """The tag assigned to this result by the user (positive label)."""
 
+    is_negative: orm.Mapped[bool] = orm.mapped_column(
+        nullable=False,
+        default=False,
+    )
+    """Whether this result is marked as negative (not containing target sound)."""
+
+    is_uncertain: orm.Mapped[bool] = orm.mapped_column(
+        nullable=False,
+        default=False,
+    )
+    """Whether this result is marked as uncertain."""
+
+    is_skipped: orm.Mapped[bool] = orm.mapped_column(
+        nullable=False,
+        default=False,
+    )
+    """Whether this result was skipped during labeling."""
+
+    # Sampling metadata
+    sample_type: orm.Mapped[str | None] = orm.mapped_column(
+        nullable=True,
+        default=None,
+    )
+    """Type of sample: 'easy_positive', 'boundary', 'others', or 'active_learning'."""
+
+    iteration_added: orm.Mapped[int | None] = orm.mapped_column(
+        nullable=True,
+        default=None,
+    )
+    """The active learning iteration when this sample was added."""
+
+    model_score: orm.Mapped[float | None] = orm.mapped_column(
+        nullable=True,
+        default=None,
+    )
+    """Model prediction score for active learning samples."""
+
+    source_tag_id: orm.Mapped[int | None] = orm.mapped_column(
+        ForeignKey("tag.id", ondelete="SET NULL"),
+        nullable=True,
+        default=None,
+    )
+    """The source tag from which this sample was derived (for easy_positive samples)."""
+
+    # User tracking
     labeled_by_id: orm.Mapped[UUID | None] = orm.mapped_column(
         ForeignKey("user.id"),
         nullable=True,
@@ -379,6 +484,24 @@ class SearchResult(Base):
         repr=False,
     )
     """The matched clip."""
+
+    assigned_tag: orm.Mapped[Tag | None] = orm.relationship(
+        "Tag",
+        foreign_keys=[assigned_tag_id],
+        lazy="joined",
+        init=False,
+        repr=False,
+    )
+    """The assigned tag for this result."""
+
+    source_tag: orm.Mapped[Tag | None] = orm.relationship(
+        "Tag",
+        foreign_keys=[source_tag_id],
+        lazy="joined",
+        init=False,
+        repr=False,
+    )
+    """The source tag for easy_positive samples."""
 
     labeled_by: orm.Mapped["User | None"] = orm.relationship(
         "User",
@@ -460,3 +583,85 @@ class SearchSessionDatasetScope(Base):
         repr=False,
     )
     """The ML project dataset scope."""
+
+
+class IterationScoreDistribution(Base):
+    """Stores score distribution computed during each iteration.
+
+    During active learning iterations, we compute score distributions
+    for each target tag to visualize model confidence and guide sampling.
+    This model tracks histogram bin counts and statistics for each iteration.
+    """
+
+    __tablename__ = "iteration_score_distribution"
+
+    id: orm.Mapped[int] = orm.mapped_column(primary_key=True, init=False)
+    """The database id of the score distribution entry."""
+
+    search_session_id: orm.Mapped[int] = orm.mapped_column(
+        sa.ForeignKey("search_session.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    """The search session this distribution belongs to."""
+
+    tag_id: orm.Mapped[int] = orm.mapped_column(
+        sa.ForeignKey("tag.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    """The target tag for which this distribution was computed."""
+
+    iteration: orm.Mapped[int] = orm.mapped_column(
+        nullable=False,
+    )
+    """Which iteration this was computed at (0 = initial, 1+ = active learning iterations)."""
+
+    bin_counts: orm.Mapped[list[int]] = orm.mapped_column(
+        ARRAY(sa.Integer),
+        nullable=False,
+    )
+    """Histogram bin counts (20 bins representing score distribution)."""
+
+    bin_edges: orm.Mapped[list[float]] = orm.mapped_column(
+        ARRAY(sa.Float),
+        nullable=False,
+    )
+    """Histogram bin edges (21 edges for 20 bins, typically [0.0, 0.05, ..., 1.0])."""
+
+    positive_count: orm.Mapped[int] = orm.mapped_column(
+        nullable=False,
+    )
+    """Number of samples labeled positive at this iteration."""
+
+    negative_count: orm.Mapped[int] = orm.mapped_column(
+        nullable=False,
+    )
+    """Number of samples labeled negative at this iteration."""
+
+    mean_score: orm.Mapped[float] = orm.mapped_column(
+        nullable=False,
+    )
+    """Mean score across all samples at this iteration."""
+
+    created_on: orm.Mapped[datetime.datetime] = orm.mapped_column(
+        sa.DateTime(timezone=True),
+        nullable=False,
+        default=datetime.datetime.now,
+        init=False,
+    )
+    """Timestamp when this distribution was computed."""
+
+    # Relationships
+    search_session: orm.Mapped[SearchSession] = orm.relationship(
+        "SearchSession",
+        init=False,
+        repr=False,
+    )
+    """The search session this distribution belongs to."""
+
+    tag: orm.Mapped[Tag] = orm.relationship(
+        "Tag",
+        lazy="joined",
+        init=False,
+        repr=False,
+    )
+    """The target tag for this distribution."""

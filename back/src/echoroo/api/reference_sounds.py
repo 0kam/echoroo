@@ -11,7 +11,7 @@ import httpx
 import numpy as np
 import soundfile as sf
 from numpy.typing import NDArray
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlalchemy.sql import ColumnExpressionArgument
@@ -20,6 +20,7 @@ from echoroo import exceptions, models, schemas
 from echoroo.api import common
 from echoroo.api.common import BaseAPI
 from echoroo.api.ml_projects import can_edit_ml_project, can_view_ml_project
+from echoroo.api.species import get_gbif_vernacular_name
 from echoroo.filters.base import Filter
 
 __all__ = [
@@ -97,6 +98,7 @@ class ReferenceSoundAPI(
                 selectinload(self._model.clip),
                 selectinload(self._model.ml_project),
                 selectinload(self._model.created_by),
+                selectinload(self._model.embeddings),
             )
         )
         result = await session.execute(stmt)
@@ -138,7 +140,7 @@ class ReferenceSoundAPI(
                 schemas.Clip.model_validate(db_obj.clip) if db_obj.clip else None
             ),
             "audio_path": db_obj.audio_path,
-            "has_embedding": db_obj.embedding is not None,
+            "embedding_count": len(db_obj.embeddings) if db_obj.embeddings else 0,
             "is_active": db_obj.is_active,
             "created_by_id": db_obj.created_by_id,
             "created_on": db_obj.created_on,
@@ -224,8 +226,9 @@ class ReferenceSoundAPI(
     ) -> schemas.ReferenceSound:
         """Create a reference sound from a Xeno-Canto recording.
 
-        This downloads audio metadata from Xeno-Canto and stores
-        the reference. The embedding will be computed asynchronously.
+        This downloads audio from Xeno-Canto, extracts the specified segment,
+        computes the embedding using the ML project's embedding model, and
+        stores the reference sound with embedding.
         """
         db_user = await self._resolve_user(session, user)
         if db_user is None:
@@ -239,10 +242,28 @@ class ReferenceSoundAPI(
                 "You do not have permission to add reference sounds to this ML project"
             )
 
+        # Verify ML project has an embedding model configured
+        if ml_project.embedding_model_run is None:
+            raise exceptions.InvalidDataError(
+                "ML Project does not have an embedding model configured. "
+                "Please add a dataset scope with foundation model detection first."
+            )
+
         # Check if tag exists
         tag = await session.get(models.Tag, data.tag_id)
         if tag is None:
             raise exceptions.NotFoundError(f"Tag with id {data.tag_id} not found")
+
+        # If tag has no vernacular_name and has a species key, try to fetch from GBIF
+        if tag.vernacular_name is None and tag.key == "species" and tag.value:
+            try:
+                vernacular = await get_gbif_vernacular_name(tag.value, locale="ja")
+                if vernacular:
+                    tag.vernacular_name = vernacular
+                    await session.flush()
+                    logger.info(f"Updated tag {tag.id} with vernacular name: {vernacular}")
+            except Exception as e:
+                logger.warning(f"Failed to fetch vernacular name for tag {tag.id}: {e}")
 
         # Fetch Xeno-Canto recording metadata (optional - for validation)
         xc_id = data.xeno_canto_id.upper()
@@ -254,7 +275,17 @@ class ReferenceSoundAPI(
 
         xc_url = f"https://xeno-canto.org/{xc_id_num}"
 
-        # Create the reference sound
+        # Load audio from Xeno-Canto and compute sliding window embeddings
+        audio_data = await self._load_xeno_canto_audio(xc_id_num)
+        embeddings = await self._compute_embedding_for_segment(
+            ml_project,
+            audio_data["samples"],
+            audio_data["samplerate"],
+            data.start_time,
+            data.end_time,
+        )
+
+        # Create the reference sound without embedding (it's stored separately now)
         db_obj = await common.create_object(
             session,
             self._model,
@@ -270,6 +301,29 @@ class ReferenceSoundAPI(
             is_active=True,
             created_by_id=db_user.id,
         )
+
+        # Create ReferenceSoundEmbedding objects for each sliding window
+        for window_start, window_end, embedding in embeddings:
+            embedding_obj = models.ReferenceSoundEmbedding(
+                reference_sound_id=db_obj.id,
+                embedding=embedding.tolist(),
+                window_start_time=window_start,
+                window_end_time=window_end,
+            )
+            session.add(embedding_obj)
+
+        await session.flush()
+
+        if embeddings:
+            logger.info(
+                f"Created reference sound from Xeno-Canto {xc_id} "
+                f"with {len(embeddings)} embeddings ({len(embeddings[0][2])}-dim each)"
+            )
+        else:
+            logger.warning(
+                f"Created reference sound from Xeno-Canto {xc_id} "
+                "but no embeddings were generated"
+            )
 
         return await self._build_schema(session, db_obj)
 
@@ -302,24 +356,44 @@ class ReferenceSoundAPI(
         if tag is None:
             raise exceptions.NotFoundError(f"Tag with id {data.tag_id} not found")
 
+        # If tag has no vernacular_name and has a species key, try to fetch from GBIF
+        if tag.vernacular_name is None and tag.key == "species" and tag.value:
+            try:
+                vernacular = await get_gbif_vernacular_name(tag.value, locale="ja")
+                if vernacular:
+                    tag.vernacular_name = vernacular
+                    await session.flush()
+                    logger.info(f"Updated tag {tag.id} with vernacular name: {vernacular}")
+            except Exception as e:
+                logger.warning(f"Failed to fetch vernacular name for tag {tag.id}: {e}")
+
         # Check if clip exists
         clip = await session.get(models.Clip, data.clip_id)
         if clip is None:
             raise exceptions.NotFoundError(f"Clip with id {data.clip_id} not found")
 
-        # Try to get clip embedding if ML project has an embedding model run
-        embedding = None
-        if ml_project.embedding_model_run_id:
-            embedding_query = select(models.ClipEmbedding).where(
-                models.ClipEmbedding.clip_id == clip.id,
-                models.ClipEmbedding.model_run_id == ml_project.embedding_model_run_id,
+        # Verify ML project has an embedding model configured
+        if ml_project.embedding_model_run is None:
+            raise exceptions.InvalidDataError(
+                "ML Project does not have an embedding model configured. "
+                "Please add a dataset scope with foundation model detection first."
             )
-            result = await session.execute(embedding_query)
-            clip_embedding = result.scalar_one_or_none()
-            if clip_embedding:
-                embedding = clip_embedding.embedding
 
-        # Create the reference sound
+        # Load audio from clip and compute sliding window embeddings
+        from echoroo.system.settings import get_settings
+        settings = get_settings()
+        audio_dir = settings.audio_dir
+
+        audio_data = await self._load_clip_audio(session, clip.id, audio_dir)
+        embeddings = await self._compute_embedding_for_segment(
+            ml_project,
+            audio_data["samples"],
+            audio_data["samplerate"],
+            data.start_time,
+            data.end_time,
+        )
+
+        # Create the reference sound without embedding (it's stored separately now)
         db_obj = await common.create_object(
             session,
             self._model,
@@ -331,10 +405,32 @@ class ReferenceSoundAPI(
             tag_id=data.tag_id,
             start_time=data.start_time,
             end_time=data.end_time,
-            embedding=embedding,
             is_active=True,
             created_by_id=db_user.id,
         )
+
+        # Create ReferenceSoundEmbedding objects for each sliding window
+        for window_start, window_end, embedding in embeddings:
+            embedding_obj = models.ReferenceSoundEmbedding(
+                reference_sound_id=db_obj.id,
+                embedding=embedding.tolist(),
+                window_start_time=window_start,
+                window_end_time=window_end,
+            )
+            session.add(embedding_obj)
+
+        await session.flush()
+
+        if embeddings:
+            logger.info(
+                f"Created reference sound from clip {clip.id} "
+                f"with {len(embeddings)} embeddings ({len(embeddings[0][2])}-dim each)"
+            )
+        else:
+            logger.warning(
+                f"Created reference sound from clip {clip.id} "
+                "but no embeddings were generated"
+            )
 
         return await self._build_schema(session, db_obj)
 
@@ -427,15 +523,12 @@ class ReferenceSoundAPI(
                 "You do not have permission to modify this reference sound"
             )
 
-        # Determine which model to use from ML project's embedding_model_run
-        embedding_model_run = ml_project.embedding_model_run
-        if embedding_model_run is None:
+        # Verify ML project has an embedding model configured
+        if ml_project.embedding_model_run is None:
             raise exceptions.InvalidDataError(
                 "ML Project does not have an embedding model configured. "
                 "Please run foundation model detection on the datasets first."
             )
-
-        model_name = embedding_model_run.name.lower()
 
         # Get audio directory from settings if not provided
         if audio_dir is None:
@@ -447,48 +540,38 @@ class ReferenceSoundAPI(
             session, db_obj, audio_dir
         )
 
-        # Compute embedding using the appropriate model
-        if "birdnet" in model_name:
-            from echoroo.ml.birdnet.constants import SAMPLE_RATE as BIRDNET_SAMPLE_RATE
-
-            # Extract the segment at BirdNET's sample rate (48kHz)
-            segment_audio = self._extract_segment(
-                audio_data["samples"],
-                audio_data["samplerate"],
-                db_obj.start_time,
-                db_obj.end_time,
-                target_samplerate=BIRDNET_SAMPLE_RATE,
-            )
-            embedding = await self._compute_birdnet_embedding(segment_audio)
-        elif "perch" in model_name:
-            from echoroo.ml.perch.constants import SAMPLE_RATE as PERCH_SAMPLE_RATE
-
-            # Extract the segment at Perch's sample rate (32kHz)
-            segment_audio = self._extract_segment(
-                audio_data["samples"],
-                audio_data["samplerate"],
-                db_obj.start_time,
-                db_obj.end_time,
-                target_samplerate=PERCH_SAMPLE_RATE,
-            )
-            embedding = await self._compute_perch_embedding(segment_audio)
-        else:
-            raise exceptions.InvalidDataError(
-                f"Unknown embedding model: {model_name}. "
-                "Supported models are 'birdnet' and 'perch'."
-            )
-
-        # Store the embedding
-        db_obj = await common.update_object(
-            session,
-            self._model,
-            self._get_pk_condition(obj.uuid),
-            embedding=embedding.tolist(),
+        # Compute sliding window embeddings using the ML project's model
+        embeddings = await self._compute_embedding_for_segment(
+            ml_project,
+            audio_data["samples"],
+            audio_data["samplerate"],
+            db_obj.start_time,
+            db_obj.end_time,
         )
 
+        # Delete existing embeddings
+        await session.execute(
+            delete(models.ReferenceSoundEmbedding).where(
+                models.ReferenceSoundEmbedding.reference_sound_id == db_obj.id
+            )
+        )
+
+        # Create new ReferenceSoundEmbedding objects for each sliding window
+        for window_start, window_end, embedding in embeddings:
+            embedding_obj = models.ReferenceSoundEmbedding(
+                reference_sound_id=db_obj.id,
+                embedding=embedding.tolist(),
+                window_start_time=window_start,
+                window_end_time=window_end,
+            )
+            session.add(embedding_obj)
+
+        await session.flush()
+
+        model_name = ml_project.embedding_model_run.name.lower()
         logger.info(
-            f"Computed embedding for reference sound {obj.uuid} "
-            f"using {model_name} model (dimension: {len(embedding)})"
+            f"Computed {len(embeddings)} embeddings for reference sound {obj.uuid} "
+            f"using {model_name} model (dimension: {len(embeddings[0][2])})"
         )
 
         return await self._build_schema(session, db_obj)
@@ -681,6 +764,253 @@ class ReferenceSoundAPI(
 
         return {"samples": samples.astype(np.float32), "samplerate": samplerate}
 
+    def _compute_sliding_window_embeddings(
+        self,
+        samples: NDArray[np.float32],
+        samplerate: int,
+        start_time: float,
+        end_time: float,
+        window_size: float,
+        overlap_rate: float = 0.7,
+    ) -> list[tuple[float, float, NDArray[np.float32]]]:
+        """Compute embeddings using sliding windows that cover at least 50% of the selected segment.
+
+        Parameters
+        ----------
+        samples
+            Full audio samples array.
+        samplerate
+            Sample rate of the input audio.
+        start_time
+            Start time of the selected segment in seconds.
+        end_time
+            End time of the selected segment in seconds.
+        window_size
+            Size of each window in seconds (3s for BirdNET, 5s for Perch).
+        overlap_rate
+            Overlap rate between consecutive windows (default 0.7 = 70%).
+
+        Returns
+        -------
+        list[tuple[float, float, NDArray[np.float32]]]
+            List of tuples (window_start, window_end, embedding) for each window
+            that overlaps at least 50% with the selected segment.
+        """
+        # Calculate hop size
+        hop_size = window_size * (1.0 - overlap_rate)
+
+        # Calculate minimum overlap required (50% of window)
+        min_overlap = window_size * 0.5
+
+        # Get audio duration
+        audio_duration = len(samples) / samplerate
+
+        # Selected segment duration
+        segment_duration = end_time - start_time
+
+        results = []
+
+        # Start from 0 and iterate with hop_size
+        window_start = 0.0
+        while window_start < audio_duration:
+            window_end = window_start + window_size
+
+            # Clamp window to audio boundaries
+            window_end = min(window_end, audio_duration)
+
+            # Calculate overlap with selected segment
+            overlap_start = max(window_start, start_time)
+            overlap_end = min(window_end, end_time)
+            overlap_duration = max(0.0, overlap_end - overlap_start)
+
+            # Check if overlap is at least 50% of window size
+            if overlap_duration >= min_overlap:
+                # Extract this window's audio
+                start_sample = int(window_start * samplerate)
+                end_sample = int(window_end * samplerate)
+
+                # Clamp to valid sample range
+                start_sample = max(0, start_sample)
+                end_sample = min(len(samples), end_sample)
+
+                window_audio = samples[start_sample:end_sample]
+
+                # Store for later embedding computation
+                results.append((window_start, window_end, window_audio))
+
+            # Move to next window
+            window_start += hop_size
+
+            # Stop if we've passed beyond the segment with enough margin
+            if window_start > end_time and overlap_duration < min_overlap:
+                break
+
+        # If no windows found (segment too short), create one centered on the segment
+        if not results and segment_duration > 0:
+            # Center the window on the segment
+            segment_center = (start_time + end_time) / 2
+            window_start = max(0.0, segment_center - window_size / 2)
+            window_end = min(audio_duration, window_start + window_size)
+
+            # Adjust start if end was clamped
+            if window_end - window_start < window_size:
+                window_start = max(0.0, window_end - window_size)
+
+            start_sample = int(window_start * samplerate)
+            end_sample = int(window_end * samplerate)
+            start_sample = max(0, start_sample)
+            end_sample = min(len(samples), end_sample)
+
+            window_audio = samples[start_sample:end_sample]
+            results.append((window_start, window_end, window_audio))
+
+        return results
+
+    async def _compute_embedding_for_segment(
+        self,
+        ml_project: models.MLProject,
+        samples: NDArray[np.float32],
+        samplerate: int,
+        start_time: float,
+        end_time: float,
+    ) -> list[tuple[float, float, NDArray[np.float32]]]:
+        """Compute sliding window embeddings for an audio segment using the ML project's model.
+
+        Automatically selects BirdNET or Perch based on the ML project's
+        embedding_model_run configuration.
+
+        Parameters
+        ----------
+        ml_project
+            ML project with embedding_model_run loaded.
+        samples
+            Audio samples as numpy array.
+        samplerate
+            Sample rate of the input audio.
+        start_time
+            Start time of the segment in seconds.
+        end_time
+            End time of the segment in seconds.
+
+        Returns
+        -------
+        list[tuple[float, float, NDArray[np.float32]]]
+            List of tuples (window_start, window_end, embedding) for each sliding window.
+        """
+        model_name = ml_project.embedding_model_run.name.lower()
+
+        if "birdnet" in model_name:
+            from echoroo.ml.birdnet.constants import (
+                SAMPLE_RATE as BIRDNET_SAMPLE_RATE,
+                SEGMENT_DURATION,
+                SEGMENT_SAMPLES,
+            )
+
+            # Resample to target sample rate if necessary
+            resampled_samples = samples
+            if samplerate != BIRDNET_SAMPLE_RATE:
+                import torch
+                import torchaudio.functional as taF
+
+                samples_tensor = torch.from_numpy(samples).unsqueeze(0)
+                resampled_tensor = taF.resample(samples_tensor, samplerate, BIRDNET_SAMPLE_RATE)
+                resampled_samples = resampled_tensor.squeeze(0).numpy().astype(np.float32)
+                resampled_samplerate = BIRDNET_SAMPLE_RATE
+            else:
+                resampled_samplerate = samplerate
+
+            # Adjust start/end times for resampled audio
+            time_scale = resampled_samplerate / samplerate
+            adjusted_start = start_time * time_scale
+            adjusted_end = end_time * time_scale
+
+            # Get sliding windows
+            windows = self._compute_sliding_window_embeddings(
+                resampled_samples,
+                resampled_samplerate,
+                adjusted_start,
+                adjusted_end,
+                window_size=SEGMENT_DURATION,
+                overlap_rate=0.7,
+            )
+
+            if not windows:
+                return []
+
+            # Load model once for all windows
+            embeddings = await self._compute_birdnet_embeddings_batch(
+                [w[2] for w in windows],  # Extract audio arrays
+                SEGMENT_SAMPLES,
+            )
+
+            # Combine with time info
+            results = []
+            for i, (window_start, window_end, _) in enumerate(windows):
+                original_start = window_start / time_scale
+                original_end = window_end / time_scale
+                results.append((original_start, original_end, embeddings[i]))
+
+            return results
+
+        elif "perch" in model_name:
+            from echoroo.ml.perch.constants import (
+                SAMPLE_RATE as PERCH_SAMPLE_RATE,
+                SEGMENT_DURATION,
+                SEGMENT_SAMPLES,
+            )
+
+            # Resample to target sample rate if necessary
+            resampled_samples = samples
+            if samplerate != PERCH_SAMPLE_RATE:
+                import torch
+                import torchaudio.functional as taF
+
+                samples_tensor = torch.from_numpy(samples).unsqueeze(0)
+                resampled_tensor = taF.resample(samples_tensor, samplerate, PERCH_SAMPLE_RATE)
+                resampled_samples = resampled_tensor.squeeze(0).numpy().astype(np.float32)
+                resampled_samplerate = PERCH_SAMPLE_RATE
+            else:
+                resampled_samplerate = samplerate
+
+            # Adjust start/end times for resampled audio
+            time_scale = resampled_samplerate / samplerate
+            adjusted_start = start_time * time_scale
+            adjusted_end = end_time * time_scale
+
+            # Get sliding windows
+            windows = self._compute_sliding_window_embeddings(
+                resampled_samples,
+                resampled_samplerate,
+                adjusted_start,
+                adjusted_end,
+                window_size=SEGMENT_DURATION,
+                overlap_rate=0.7,
+            )
+
+            if not windows:
+                return []
+
+            # Load model once for all windows
+            embeddings = await self._compute_perch_embeddings_batch(
+                [w[2] for w in windows],  # Extract audio arrays
+                SEGMENT_SAMPLES,
+            )
+
+            # Combine with time info
+            results = []
+            for i, (window_start, window_end, _) in enumerate(windows):
+                original_start = window_start / time_scale
+                original_end = window_end / time_scale
+                results.append((original_start, original_end, embeddings[i]))
+
+            return results
+
+        else:
+            raise exceptions.InvalidDataError(
+                f"Unknown embedding model: {model_name}. "
+                "Supported models are 'birdnet' and 'perch'."
+            )
+
     def _extract_segment(
         self,
         samples: NDArray[np.float32],
@@ -736,157 +1066,199 @@ class ReferenceSoundAPI(
 
         return segment.astype(np.float32)
 
-    async def _compute_perch_embedding(
+    async def _compute_perch_embeddings_batch(
         self,
-        audio: NDArray[np.float32],
-    ) -> NDArray[np.float32]:
-        """Compute embedding using Perch model.
+        audio_segments: list[NDArray[np.float32]],
+        segment_samples: int,
+    ) -> list[NDArray[np.float32]]:
+        """Compute embeddings for multiple audio segments using Perch model.
 
-        For segments longer than 5 seconds, splits into 5-second segments
-        and averages the embeddings.
+        Concatenates all segments into a single file and processes in one call
+        to avoid multiple model loads.
 
         Parameters
         ----------
-        audio
-            Audio samples at 32kHz sample rate.
+        audio_segments
+            List of audio samples at 32kHz sample rate.
+        segment_samples
+            Expected number of samples per segment (160000 for 5 seconds).
 
         Returns
         -------
-        NDArray[np.float32]
-            1536-dimensional embedding vector.
+        list[NDArray[np.float32]]
+            List of 1536-dimensional embedding vectors.
         """
-        from echoroo.ml.perch.constants import (
-            EMBEDDING_DIM,
-            SAMPLE_RATE,
-            SEGMENT_DURATION,
-            SEGMENT_SAMPLES,
-        )
         from echoroo.ml.perch.loader import PerchLoader
-        from echoroo.ml.perch.inference import PerchInference
+        from echoroo.ml.perch.constants import SAMPLE_RATE, EMBEDDING_DIM
         from echoroo.system.settings import get_settings
-
         from typing import Literal
+
+        if not audio_segments:
+            return []
 
         # Get device setting
         settings = get_settings()
         device: Literal["GPU", "CPU"] = "GPU" if settings.ml_use_gpu else "CPU"
 
-        # Load Perch model (lazy loading with caching would be better in production)
+        # Pad/truncate all segments to exact length
+        processed_segments = []
+        for audio in audio_segments:
+            if len(audio) < segment_samples:
+                padded = np.zeros(segment_samples, dtype=np.float32)
+                padded[:len(audio)] = audio
+                processed_segments.append(padded)
+            elif len(audio) > segment_samples:
+                processed_segments.append(audio[:segment_samples])
+            else:
+                processed_segments.append(audio)
+
+        # Concatenate all segments into one audio array
+        concatenated_audio = np.concatenate(processed_segments, axis=0)
+
+        # Load Perch model once
         loader = PerchLoader(device=device)
         loader.load()
+        model = loader.get_model()
 
-        inference = PerchInference(
-            loader,
-            confidence_threshold=0.1,
-            device=device,
-        )
+        # Write concatenated audio to a single temp file
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+            sf.write(tmp.name, concatenated_audio, SAMPLE_RATE)
+            tmp_path = tmp.name
 
-        # Determine number of 5-second segments
-        total_samples = len(audio)
-        num_segments = max(1, int(np.ceil(total_samples / SEGMENT_SAMPLES)))
+        try:
+            # Build inference kwargs
+            infer_kwargs = {"device": device}
+            if device != "CPU":
+                infer_kwargs["batch_size"] = min(len(audio_segments), 16)
 
-        embeddings = []
+            # Call encode once for all segments
+            embeddings_result = model.encode(tmp_path, **infer_kwargs)
 
-        for i in range(num_segments):
-            start_idx = i * SEGMENT_SAMPLES
-            end_idx = min(start_idx + SEGMENT_SAMPLES, total_samples)
+            # Extract embeddings
+            if hasattr(embeddings_result, "embeddings"):
+                embeddings = embeddings_result.embeddings
+            else:
+                embeddings = embeddings_result
 
-            segment = audio[start_idx:end_idx]
+            if hasattr(embeddings, "numpy"):
+                embeddings = embeddings.numpy()
 
-            # Pad if necessary (must be exactly 5 seconds = 160000 samples)
-            if len(segment) < SEGMENT_SAMPLES:
-                padded = np.zeros(SEGMENT_SAMPLES, dtype=np.float32)
-                padded[:len(segment)] = segment
-                segment = padded
+            embeddings = np.asarray(embeddings, dtype=np.float32)
 
-            # Get embedding for this segment
-            result = inference.predict_segment(segment, start_time=0.0)
-            embeddings.append(result.embedding)
+            # Normalize shape: should be (n_segments, embedding_dim)
+            if embeddings.ndim == 3:
+                embeddings = embeddings[0]
+            elif embeddings.ndim == 1:
+                embeddings = embeddings.reshape(1, -1)
 
-        # Average embeddings if multiple segments
-        if len(embeddings) == 1:
-            embedding = embeddings[0]
-        else:
-            embeddings_array = np.stack(embeddings)
-            embedding = np.mean(embeddings_array, axis=0)
+            # Return as list
+            result = [embeddings[i].astype(np.float32) for i in range(len(audio_segments))]
 
-        return embedding.astype(np.float32)
+            logger.info(
+                f"Perch batch processing: {len(audio_segments)} segments processed in single call"
+            )
 
-    async def _compute_birdnet_embedding(
+            return result
+
+        finally:
+            Path(tmp_path).unlink(missing_ok=True)
+
+    async def _compute_birdnet_embeddings_batch(
         self,
-        audio: NDArray[np.float32],
-    ) -> NDArray[np.float32]:
-        """Compute embedding using BirdNET model.
+        audio_segments: list[NDArray[np.float32]],
+        segment_samples: int,
+    ) -> list[NDArray[np.float32]]:
+        """Compute embeddings for multiple audio segments using BirdNET model.
 
-        For segments longer than 3 seconds, splits into 3-second segments
-        and averages the embeddings.
+        Concatenates all segments into a single file and processes in one call
+        to avoid multiple model loads.
 
         Parameters
         ----------
-        audio
-            Audio samples at 48kHz sample rate.
+        audio_segments
+            List of audio samples at 48kHz sample rate.
+        segment_samples
+            Expected number of samples per segment (144000 for 3 seconds).
 
         Returns
         -------
-        NDArray[np.float32]
-            1024-dimensional embedding vector.
+        list[NDArray[np.float32]]
+            List of 1024-dimensional embedding vectors.
         """
-        from echoroo.ml.birdnet.constants import (
-            EMBEDDING_DIM,
-            SAMPLE_RATE,
-            SEGMENT_DURATION,
-            SEGMENT_SAMPLES,
-        )
         from echoroo.ml.birdnet.loader import BirdNETLoader
-        from echoroo.ml.birdnet.inference import BirdNETInference
+        from echoroo.ml.birdnet.constants import SAMPLE_RATE, EMBEDDING_DIM
         from echoroo.system.settings import get_settings
-
         from typing import Literal
+
+        if not audio_segments:
+            return []
 
         # Get device setting
         settings = get_settings()
         device: Literal["GPU", "CPU"] = "GPU" if settings.ml_use_gpu else "CPU"
 
-        # Load BirdNET model
+        # Pad/truncate all segments to exact length
+        processed_segments = []
+        for audio in audio_segments:
+            if len(audio) < segment_samples:
+                padded = np.zeros(segment_samples, dtype=np.float32)
+                padded[:len(audio)] = audio
+                processed_segments.append(padded)
+            elif len(audio) > segment_samples:
+                processed_segments.append(audio[:segment_samples])
+            else:
+                processed_segments.append(audio)
+
+        # Concatenate all segments into one audio array
+        concatenated_audio = np.concatenate(processed_segments, axis=0)
+
+        # Load BirdNET model once
         loader = BirdNETLoader(device=device)
         loader.load()
+        model = loader.get_model()
 
-        inference = BirdNETInference(
-            loader,
-            confidence_threshold=0.1,
-            device=device,
-        )
+        # Write concatenated audio to a single temp file
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+            sf.write(tmp.name, concatenated_audio, SAMPLE_RATE)
+            tmp_path = tmp.name
 
-        # Determine number of 3-second segments
-        total_samples = len(audio)
-        num_segments = max(1, int(np.ceil(total_samples / SEGMENT_SAMPLES)))
+        try:
+            # Build inference kwargs
+            infer_kwargs = {"device": device}
+            if device != "CPU":
+                infer_kwargs["batch_size"] = min(len(audio_segments), 16)
 
-        embeddings = []
+            # Call encode once for all segments
+            embeddings_result = model.encode(tmp_path, **infer_kwargs)
 
-        for i in range(num_segments):
-            start_idx = i * SEGMENT_SAMPLES
-            end_idx = min(start_idx + SEGMENT_SAMPLES, total_samples)
+            # Extract embeddings
+            if hasattr(embeddings_result, "embeddings"):
+                embeddings = embeddings_result.embeddings
+            else:
+                embeddings = embeddings_result
 
-            segment = audio[start_idx:end_idx]
+            if hasattr(embeddings, "numpy"):
+                embeddings = embeddings.numpy()
 
-            # Pad if necessary (must be exactly 3 seconds = 144000 samples)
-            if len(segment) < SEGMENT_SAMPLES:
-                padded = np.zeros(SEGMENT_SAMPLES, dtype=np.float32)
-                padded[:len(segment)] = segment
-                segment = padded
+            embeddings = np.asarray(embeddings, dtype=np.float32)
 
-            # Get embedding for this segment
-            result = inference.predict_segment(segment, start_time=0.0)
-            embeddings.append(result.embedding)
+            # Normalize shape: should be (n_segments, embedding_dim)
+            if embeddings.ndim == 3:
+                embeddings = embeddings[0]
+            elif embeddings.ndim == 1:
+                embeddings = embeddings.reshape(1, -1)
 
-        # Average embeddings if multiple segments
-        if len(embeddings) == 1:
-            embedding = embeddings[0]
-        else:
-            embeddings_array = np.stack(embeddings)
-            embedding = np.mean(embeddings_array, axis=0)
+            # Return as list
+            result = [embeddings[i].astype(np.float32) for i in range(len(audio_segments))]
 
-        return embedding.astype(np.float32)
+            logger.info(
+                f"BirdNET batch processing: {len(audio_segments)} segments processed in single call"
+            )
+
+            return result
+
+        finally:
+            Path(tmp_path).unlink(missing_ok=True)
 
     async def get_audio_bytes(
         self,

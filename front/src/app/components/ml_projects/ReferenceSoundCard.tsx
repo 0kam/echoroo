@@ -28,11 +28,11 @@ const SOURCE_CONFIG: Record<
     label: "XC",
     className: "bg-orange-100 text-orange-700 border-orange-300",
   },
-  dataset_clip: {
+  clip: {
     label: "Clip",
     className: "bg-blue-100 text-blue-700 border-blue-300",
   },
-  custom_upload: {
+  upload: {
     label: "Upload",
     className: "bg-purple-100 text-purple-700 border-purple-300",
   },
@@ -140,13 +140,13 @@ export default function ReferenceSoundCard({
       </div>
 
       {/* Embedding Status */}
-      {referenceSound.has_embedding ? (
+      {referenceSound.embedding_count > 0 ? (
         <div className="text-xs text-emerald-600 dark:text-emerald-400">
-          Embedding ready
+          {referenceSound.embedding_count} embedding{referenceSound.embedding_count > 1 ? "s" : ""}
         </div>
       ) : (
         <div className="text-xs text-amber-600 dark:text-amber-400">
-          Embedding pending
+          No embeddings
         </div>
       )}
 

@@ -95,12 +95,31 @@ function ReferenceSoundCard({
   // Get spectrogram URL based on source
   const getSpectrogramUrl = () => {
     if (sound.source === "xeno_canto" && sound.xeno_canto_id) {
-      // Include time range and spectrogram parameters for consistency with search session page
+      // Include time range and all spectrogram parameters for consistency with search session page
       const params = new URLSearchParams({
         start_time: sound.start_time.toString(),
         end_time: sound.end_time.toString(),
+        // Spectrogram parameters
+        window_size: DEFAULT_SPECTROGRAM_PARAMETERS.window_size?.toString() || "0.01",
+        overlap: DEFAULT_SPECTROGRAM_PARAMETERS.overlap?.toString() || "0.5",
+        window: DEFAULT_SPECTROGRAM_PARAMETERS.window || "hann",
         cmap: DEFAULT_SPECTROGRAM_PARAMETERS.cmap || "twilight",
+        height: "600", // Sufficient height to show high frequencies without clipping
+        scale: DEFAULT_SPECTROGRAM_PARAMETERS.scale || "dB",
+        normalize: DEFAULT_SPECTROGRAM_PARAMETERS.normalize?.toString() || "true",
+        pcen: DEFAULT_SPECTROGRAM_PARAMETERS.pcen?.toString() || "false",
+        // Audio parameters
+        channel: DEFAULT_SPECTROGRAM_PARAMETERS.channel?.toString() || "0",
       });
+
+      // Add optional parameters if they exist
+      if (DEFAULT_SPECTROGRAM_PARAMETERS.min_dB != null) {
+        params.append("min_dB", DEFAULT_SPECTROGRAM_PARAMETERS.min_dB.toString());
+      }
+      if (DEFAULT_SPECTROGRAM_PARAMETERS.max_dB != null) {
+        params.append("max_dB", DEFAULT_SPECTROGRAM_PARAMETERS.max_dB.toString());
+      }
+
       return `/api/v1/ml_projects/${mlProjectUuid}/reference_sounds/xeno_canto/${sound.xeno_canto_id}/spectrogram?${params}`;
     } else if (sound.source === "clip" && sound.clip) {
       return api.spectrograms.getUrl({
@@ -129,7 +148,7 @@ function ReferenceSoundCard({
   return (
     <Card className="relative">
       {/* Spectrogram thumbnail with play button */}
-      <div className="aspect-[3/1] bg-stone-100 dark:bg-stone-800 rounded-lg mb-3 flex items-center justify-center relative overflow-hidden group">
+      <div className="aspect-[2/1] bg-stone-100 dark:bg-stone-800 rounded-lg mb-3 flex items-center justify-center relative overflow-hidden group">
         {showSpectrogram ? (
           <>
             <img
@@ -217,9 +236,9 @@ function ReferenceSoundCard({
             {sound.tag.canonical_name || `${sound.tag.key}: ${sound.tag.value}`}
             {sound.tag.vernacular_name && ` (${sound.tag.vernacular_name})`}
           </span>
-          {sound.has_embedding ? (
+          {sound.embedding_count > 0 ? (
             <span className="px-2 py-0.5 text-xs bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 rounded-full">
-              Embedding ready
+              {sound.embedding_count} embedding{sound.embedding_count > 1 ? "s" : ""}
             </span>
           ) : (
             <span className="px-2 py-0.5 text-xs bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400 rounded-full">

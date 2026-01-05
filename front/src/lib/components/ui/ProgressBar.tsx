@@ -1,19 +1,58 @@
 import classNames from "classnames";
 
+export interface ProgressSegment {
+  count: number;
+  color: string;
+  label?: string;
+}
+
 export default function ProgressBar({
   total,
   complete,
   verified = 0,
   error = 0,
+  segments,
   className = "mb-4",
 }: {
   total: number;
-  complete: number;
+  complete?: number;
   verified?: number;
   error?: number;
+  segments?: ProgressSegment[];
   className?: string;
 }) {
-  const completedPerc = (complete / total) * 100;
+  // If segments provided, use new multi-segment mode
+  if (segments) {
+    return (
+      <div
+        className={classNames(
+          className,
+          "w-full flex flex-row h-4 overflow-hidden bg-stone-200 rounded-full dark:bg-stone-700",
+        )}
+      >
+        {segments.map((segment, i) => {
+          const perc = total > 0 ? (segment.count / total) * 100 : 0;
+          if (perc === 0) return null;
+          return (
+            <div
+              key={i}
+              className="flex flex-row items-center justify-center h-4 text-xs font-medium text-white"
+              style={{
+                width: `${perc}%`,
+                backgroundColor: segment.color,
+              }}
+              title={segment.label ? `${segment.label}: ${segment.count}` : undefined}
+            >
+              {perc >= 10 ? `${perc.toFixed(0)}%` : ""}
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
+
+  // Otherwise, use legacy 4-segment mode
+  const completedPerc = complete !== undefined ? (complete / total) * 100 : 0;
   const verifiedPerc = (verified / total) * 100;
   const errorPerc = (error / total) * 100;
   const remainingPerc = 100 - completedPerc - verifiedPerc - errorPerc;

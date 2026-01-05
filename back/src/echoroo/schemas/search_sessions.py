@@ -1,7 +1,7 @@
-"""Schemas for Search Sessions and Results."""
+"""Schemas for Search Sessions and Results with Active Learning support."""
 
 import datetime
-from enum import Enum
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -10,86 +10,139 @@ from echoroo.schemas.base import BaseSchema
 from echoroo.schemas.clips import Clip
 from echoroo.schemas.tags import Tag
 
+# Distance metric type for similarity search
+DistanceMetricType = Literal["cosine", "euclidean"]
+
 __all__ = [
-    "SearchResultLabel",
+    "DistanceMetricType",
+    "SearchSessionTargetTag",
     "SearchSession",
     "SearchSessionCreate",
     "SearchResult",
-    "SearchResultLabelUpdate",
+    "SearchResultLabelData",
     "SearchProgress",
     "BulkLabelRequest",
     "BulkCurateRequest",
+    "RunIterationRequest",
     "ExportToAnnotationProjectRequest",
     "ExportToAnnotationProjectResponse",
+    "TagScoreDistribution",
+    "ScoreDistributionResponse",
 ]
 
 
-class SearchResultLabel(str, Enum):
-    """Label assigned to a search result."""
+class SearchSessionTargetTag(BaseSchema):
+    """Target tag within a search session with shortcut key assignment."""
 
-    UNLABELED = "unlabeled"
-    """Result has not been labeled yet."""
+    tag_id: int
+    """The ID of the target tag."""
 
-    POSITIVE = "positive"
-    """Result contains the target sound (true positive)."""
+    tag: Tag
+    """The hydrated tag information."""
 
-    NEGATIVE = "negative"
-    """Result does not contain the target sound (false positive)."""
-
-    UNCERTAIN = "uncertain"
-    """Reviewer is uncertain about the classification."""
-
-    SKIPPED = "skipped"
-    """Result was skipped without labeling."""
-
-    POSITIVE_REFERENCE = "positive_reference"
-    """Result curated as a positive reference for model training."""
-
-    NEGATIVE_REFERENCE = "negative_reference"
-    """Result curated as a negative reference for model training."""
+    shortcut_key: int = Field(ge=1, le=9)
+    """Keyboard shortcut key (1-9) for quick labeling."""
 
 
 class SearchSessionCreate(BaseModel):
-    """Schema for creating a search session."""
+    """Schema for creating a search session with Active Learning parameters."""
 
     name: str | None = Field(default=None, max_length=255)
     """Optional name for the search session."""
 
-    reference_sound_ids: list[int] = Field(
+    reference_sound_ids: list[UUID] = Field(
         ...,
         min_length=1,
-        description="Reference sounds to use for the search",
+        description="Reference sounds to use for the search (UUIDs). "
+        "Target tags are auto-populated from reference sounds.",
     )
-    """List of reference sound IDs to search with."""
+    """List of reference sound UUIDs to search with."""
 
-    similarity_threshold: float = Field(
-        default=0.8,
-        ge=0.0,
-        le=1.0,
-        description="Minimum similarity score for results",
-    )
-    """Minimum similarity threshold for including results."""
-
-    max_results: int = Field(
-        default=1000,
+    # Active Learning sampling parameters
+    easy_positive_k: int = Field(
+        default=5,
         ge=1,
-        le=10000,
-        description="Maximum number of results to return",
+        le=20,
+        description="Number of top-k similar clips per reference (easy positives)",
     )
-    """Maximum number of results to retrieve."""
+    """Number of top-k most similar clips to select as easy positives."""
 
-    tag_id: int | None = Field(
-        default=None,
-        description="Optional tag to filter target species",
+    boundary_n: int = Field(
+        default=200,
+        ge=50,
+        le=1000,
+        description="Number of boundary candidates to consider",
     )
-    """Optional tag to restrict search to a specific species."""
+    """Number of clips below easy positives to consider for boundary sampling."""
+
+    boundary_m: int = Field(
+        default=10,
+        ge=1,
+        le=50,
+        description="Number of boundary samples to select",
+    )
+    """Number of boundary samples to randomly select from candidates."""
+
+    others_p: int = Field(
+        default=20,
+        ge=5,
+        le=100,
+        description="Number of diverse 'others' samples",
+    )
+    """Number of diverse samples to select using farthest-first selection."""
+
+    distance_metric: DistanceMetricType = Field(
+        default="cosine",
+        description="Distance metric for similarity search: 'cosine' or 'euclidean'",
+    )
+    """Distance metric to use for similarity search."""
 
     notes: str | None = Field(default=None, max_length=2000)
     """Optional notes about the search session."""
 
 
+class SearchResultLabelData(BaseModel):
+    """Data for labeling a search result in Active Learning.
+
+    A result can be labeled in one of several ways:
+    - assigned_tag_id: Assign a specific tag (positive label)
+    - is_negative: Mark as not containing any target sound
+    - is_uncertain: Mark as uncertain/needs review
+    - is_skipped: Skip without labeling
+
+    Only one of these should be set at a time.
+    """
+
+    assigned_tag_id: int | None = Field(
+        default=None,
+        description="Tag ID to assign (positive label)",
+    )
+    """The tag to assign to this result. Mutually exclusive with flags."""
+
+    is_negative: bool = Field(
+        default=False,
+        description="Mark as negative (no target sound)",
+    )
+    """Whether this result is negative (does not contain target sound)."""
+
+    is_uncertain: bool = Field(
+        default=False,
+        description="Mark as uncertain",
+    )
+    """Whether this result is uncertain and needs review."""
+
+    is_skipped: bool = Field(
+        default=False,
+        description="Skip without labeling",
+    )
+    """Whether this result was skipped."""
+
+    notes: str | None = Field(default=None, max_length=2000)
+    """Optional notes about the labeling decision."""
+
+
 class SearchResult(BaseSchema):
-    """Schema for a search result returned to the user."""
+    """Search result with Active Learning label fields."""
 
     uuid: UUID
     """UUID of the search result."""
@@ -109,21 +162,45 @@ class SearchResult(BaseSchema):
     clip: Clip
     """Hydrated clip information."""
 
-    reference_sound_id: int = Field(..., exclude=True)
-    """Reference sound that matched this clip."""
-
-    reference_sound_uuid: UUID
-    """UUID of the matched reference sound."""
-
-    similarity_score: float = Field(ge=0.0, le=1.0)
+    similarity: float = Field(ge=0.0, le=1.0)
     """Similarity score between the reference and this clip."""
 
     rank: int = Field(ge=1)
     """Rank of this result within the session (1 = most similar)."""
 
-    label: SearchResultLabel = SearchResultLabel.UNLABELED
-    """Label assigned by the reviewer."""
+    # New Active Learning label fields
+    assigned_tag_id: int | None = None
+    """The tag assigned to this result by the user (positive label)."""
 
+    assigned_tag: Tag | None = None
+    """Hydrated tag information if assigned."""
+
+    is_negative: bool = False
+    """Whether this result is marked as negative."""
+
+    is_uncertain: bool = False
+    """Whether this result is marked as uncertain."""
+
+    is_skipped: bool = False
+    """Whether this result was skipped during labeling."""
+
+    # Sampling metadata
+    sample_type: str | None = None
+    """Type of sample: 'easy_positive', 'boundary', 'others', or 'active_learning'."""
+
+    iteration_added: int | None = None
+    """The active learning iteration when this sample was added (0 = initial)."""
+
+    model_score: float | None = None
+    """Model prediction score for active learning samples."""
+
+    source_tag_id: int | None = None
+    """The source tag from which this sample was derived."""
+
+    source_tag: Tag | None = None
+    """Hydrated source tag information."""
+
+    # User tracking
     labeled_at: datetime.datetime | None = None
     """Timestamp when the result was labeled."""
 
@@ -135,7 +212,7 @@ class SearchResult(BaseSchema):
 
 
 class SearchSession(BaseSchema):
-    """Schema for a search session returned to the user."""
+    """Schema for a search session with Active Learning support."""
 
     uuid: UUID
     """UUID of the search session."""
@@ -146,32 +223,51 @@ class SearchSession(BaseSchema):
     name: str | None = None
     """Optional name for the search session."""
 
+    description: str | None = None
+    """Optional description of the search session."""
+
     ml_project_id: int = Field(..., exclude=True)
     """ML project that owns this session."""
 
     ml_project_uuid: UUID
     """UUID of the owning ML project."""
 
-    similarity_threshold: float
-    """Similarity threshold used for this search."""
+    # Multi-tag support
+    target_tags: list[SearchSessionTargetTag] = Field(default_factory=list)
+    """Target tags for this search session with shortcut keys."""
 
-    max_results: int
-    """Maximum results requested."""
+    # Active Learning parameters
+    easy_positive_k: int = 5
+    """Number of easy positive samples per reference."""
 
-    tag_id: int | None = Field(default=None, exclude=True)
-    """Target tag identifier if specified."""
+    boundary_n: int = 200
+    """Number of boundary candidates to consider."""
 
-    tag: Tag | None = None
-    """Hydrated tag information if specified."""
+    boundary_m: int = 10
+    """Number of boundary samples to select."""
 
+    others_p: int = 20
+    """Number of diverse 'others' samples."""
+
+    distance_metric: str = "cosine"
+    """Distance metric used for this search session."""
+
+    current_iteration: int = 0
+    """Current active learning iteration number (0 = initial sampling)."""
+
+    # Status flags
+    is_search_complete: bool = False
+    """Whether the initial sampling has completed."""
+
+    # Progress counts
     total_results: int = 0
     """Total number of results in this session."""
 
     labeled_count: int = 0
-    """Number of results that have been labeled."""
+    """Number of results that have been labeled (any label)."""
 
-    positive_count: int = 0
-    """Number of results labeled as positive."""
+    unlabeled_count: int = 0
+    """Number of results that have not been labeled."""
 
     negative_count: int = 0
     """Number of results labeled as negative."""
@@ -182,27 +278,21 @@ class SearchSession(BaseSchema):
     skipped_count: int = 0
     """Number of results that were skipped."""
 
+    # Per-tag counts
+    tag_counts: dict[int, int] = Field(default_factory=dict)
+    """Count of results assigned to each tag (tag_id -> count)."""
+
     notes: str | None = None
     """Optional notes about the search session."""
 
-    created_by_id: UUID
+    reference_sounds: list = Field(default_factory=list)
+    """Reference sounds used for this search."""
+
+    created_by_id: UUID | None = None
     """User who created the search session."""
 
-    completed_at: datetime.datetime | None = None
-    """Timestamp when review was completed."""
-
-
-class SearchResultLabelUpdate(BaseModel):
-    """Schema for updating a search result label."""
-
-    label: SearchResultLabel = Field(
-        ...,
-        description="New label for the result",
-    )
-    """New label to assign."""
-
-    notes: str | None = Field(default=None, max_length=2000)
-    """Optional notes about the labeling decision."""
+    created_on: datetime.datetime | None = None
+    """Timestamp when the session was created."""
 
 
 class SearchProgress(BaseModel):
@@ -214,8 +304,8 @@ class SearchProgress(BaseModel):
     labeled: int = 0
     """Number of results that have been labeled."""
 
-    positive: int = 0
-    """Number of positive labels."""
+    unlabeled: int = 0
+    """Number of unlabeled results remaining."""
 
     negative: int = 0
     """Number of negative labels."""
@@ -226,15 +316,15 @@ class SearchProgress(BaseModel):
     skipped: int = 0
     """Number of skipped results."""
 
-    unlabeled: int = 0
-    """Number of unlabeled results remaining."""
+    tag_counts: dict[int, int] = Field(default_factory=dict)
+    """Count of results per assigned tag (tag_id -> count)."""
 
     progress_percent: float = 0.0
     """Percentage of results that have been labeled."""
 
 
 class BulkLabelRequest(BaseModel):
-    """Schema for bulk labeling search results."""
+    """Schema for bulk labeling search results with Active Learning labels."""
 
     result_uuids: list[UUID] = Field(
         ...,
@@ -244,14 +334,11 @@ class BulkLabelRequest(BaseModel):
     )
     """List of search result UUIDs to update."""
 
-    label: SearchResultLabel = Field(
+    label_data: SearchResultLabelData = Field(
         ...,
-        description="Label to apply to all results",
+        description="Label data to apply to all results",
     )
     """Label to apply to all specified results."""
-
-    notes: str | None = Field(default=None, max_length=2000)
-    """Optional notes to apply to all results."""
 
 
 class BulkCurateRequest(BaseModel):
@@ -265,11 +352,45 @@ class BulkCurateRequest(BaseModel):
     )
     """List of search result UUIDs to curate."""
 
-    label: SearchResultLabel = Field(
+    assigned_tag_id: int = Field(
         ...,
-        description="Curation label to apply (positive_reference or negative_reference)",
+        description="Tag ID to assign as positive reference",
     )
-    """Curation label to apply. Must be positive_reference or negative_reference."""
+    """Tag to assign to all specified results."""
+
+
+class RunIterationRequest(BaseModel):
+    """Schema for running an active learning iteration with custom parameters."""
+
+    uncertainty_low: float = Field(
+        default=0.25,
+        ge=0.0,
+        le=0.5,
+        description="Lower bound of uncertainty region (0.0-0.5)",
+    )
+    """Lower threshold for uncertainty region."""
+
+    uncertainty_high: float = Field(
+        default=0.75,
+        ge=0.5,
+        le=1.0,
+        description="Upper bound of uncertainty region (0.5-1.0)",
+    )
+    """Upper threshold for uncertainty region."""
+
+    samples_per_iteration: int = Field(
+        default=20,
+        ge=5,
+        le=100,
+        description="Number of samples to add in this iteration",
+    )
+    """Number of samples to select from the uncertainty region."""
+
+    selected_tag_ids: list[int] | None = Field(
+        default=None,
+        description="Tag IDs to include in this iteration. If None, all tags are included.",
+    )
+    """Optional list of tag IDs to train classifiers for and select samples from."""
 
 
 class ExportToAnnotationProjectRequest(BaseModel):
@@ -290,12 +411,17 @@ class ExportToAnnotationProjectRequest(BaseModel):
     )
     """Description for the annotation project."""
 
-    include_labels: list[str] = Field(
-        ...,
-        min_length=1,
-        description="Labels to include in the export",
+    include_labeled: bool = Field(
+        default=True,
+        description="Include results with assigned tags",
     )
-    """Labels of results to include (e.g., 'positive', 'positive_reference')."""
+    """Whether to include results that have been labeled with tags."""
+
+    include_tag_ids: list[int] | None = Field(
+        default=None,
+        description="Specific tag IDs to include (None = all labeled)",
+    )
+    """Optional list of specific tag IDs to include."""
 
 
 class ExportToAnnotationProjectResponse(BaseModel):
@@ -312,3 +438,38 @@ class ExportToAnnotationProjectResponse(BaseModel):
 
     message: str
     """Success message."""
+
+
+class TagScoreDistribution(BaseModel):
+    """Score distribution for a specific tag at a specific iteration."""
+
+    tag_id: int
+    """ID of the tag."""
+
+    tag_name: str
+    """Name of the tag."""
+
+    iteration: int
+    """Active learning iteration number."""
+
+    bin_counts: list[int]
+    """Count of scores in each bin (20 bins total)."""
+
+    bin_edges: list[float]
+    """Edges of the histogram bins (21 edges: [0.0, 0.05, ..., 1.0])."""
+
+    positive_count: int
+    """Number of positive samples for this tag."""
+
+    negative_count: int
+    """Number of negative samples for this tag."""
+
+    mean_score: float
+    """Mean prediction score across all unlabeled samples."""
+
+
+class ScoreDistributionResponse(BaseModel):
+    """Response for score distribution endpoint."""
+
+    distributions: list[TagScoreDistribution]
+    """Score distributions for each tag."""

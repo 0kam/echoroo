@@ -10,13 +10,14 @@ Reference sounds can come from three sources:
 3. Dataset clip - Existing clips from the dataset being searched
 
 Each reference sound is associated with a specific species tag and
-stores an embedding vector for similarity search. The embedding is
-generated using the same model as the dataset clips to ensure
-compatible similarity comparisons.
+can have multiple embedding vectors generated using a sliding window
+approach. The embeddings are generated using the same model as the
+dataset clips to ensure compatible similarity comparisons.
 """
 
 from __future__ import annotations
 
+import datetime
 import enum
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
@@ -36,6 +37,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "ReferenceSound",
+    "ReferenceSoundEmbedding",
     "ReferenceSoundSource",
 ]
 
@@ -152,19 +154,20 @@ class ReferenceSound(Base):
     )
     """Start time of the relevant segment in seconds."""
 
-    # Embedding for similarity search
-    embedding: orm.Mapped[list[float] | None] = orm.mapped_column(
-        Vector(),
-        nullable=True,
-        default=None,
-    )
-    """The embedding vector (dynamic dimensions - 1024 for BirdNET, 1536 for Perch)."""
-
     is_active: orm.Mapped[bool] = orm.mapped_column(
         nullable=False,
         default=True,
     )
     """Whether this reference sound is active in searches."""
+
+    # Audit fields
+    created_on: orm.Mapped[datetime.datetime] = orm.mapped_column(
+        sa.DateTime(timezone=True),
+        server_default=sa.text("now()"),
+        nullable=False,
+        init=False,
+    )
+    """Timestamp when this reference sound was created."""
 
     # Relationships
     ml_project: orm.Mapped["MLProject"] = orm.relationship(
@@ -199,3 +202,65 @@ class ReferenceSound(Base):
         repr=False,
     )
     """The user who created this reference sound."""
+
+    embeddings: orm.Mapped[list["ReferenceSoundEmbedding"]] = orm.relationship(
+        "ReferenceSoundEmbedding",
+        back_populates="reference_sound",
+        cascade="all, delete-orphan",
+        init=False,
+        repr=False,
+    )
+    """The embedding vectors generated using sliding windows."""
+
+
+class ReferenceSoundEmbedding(Base):
+    """Reference Sound Embedding model.
+
+    Stores individual embedding vectors generated from a reference sound
+    using a sliding window approach. Each reference sound can have multiple
+    embeddings, allowing for better matching against the selected audio segment.
+    """
+
+    __tablename__ = "reference_sound_embeddings"
+
+    id: orm.Mapped[int] = orm.mapped_column(primary_key=True, init=False)
+    """The database id of the embedding."""
+
+    reference_sound_id: orm.Mapped[int] = orm.mapped_column(
+        ForeignKey("reference_sound.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    """The reference sound this embedding belongs to."""
+
+    embedding: orm.Mapped[list[float]] = orm.mapped_column(
+        Vector(),
+        nullable=False,
+    )
+    """The embedding vector (1024-dim for BirdNET, 1536-dim for Perch)."""
+
+    window_start_time: orm.Mapped[float] = orm.mapped_column(
+        nullable=False,
+    )
+    """Start time of the window used to generate this embedding (relative to original audio)."""
+
+    window_end_time: orm.Mapped[float] = orm.mapped_column(
+        nullable=False,
+    )
+    """End time of the window used to generate this embedding (relative to original audio)."""
+
+    created_on: orm.Mapped[datetime.datetime] = orm.mapped_column(
+        sa.DateTime(timezone=True),
+        server_default=sa.text("now()"),
+        nullable=False,
+        init=False,
+    )
+    """Timestamp when this embedding was created."""
+
+    # Relationships
+    reference_sound: orm.Mapped["ReferenceSound"] = orm.relationship(
+        "ReferenceSound",
+        back_populates="embeddings",
+        init=False,
+        repr=False,
+    )
+    """The reference sound this embedding belongs to."""

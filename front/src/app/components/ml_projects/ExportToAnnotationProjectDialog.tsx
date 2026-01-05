@@ -20,13 +20,6 @@ interface ExportToAnnotationProjectDialogProps {
   progress: SearchProgress | null;
 }
 
-// Labels that can be included in the export
-const EXPORTABLE_LABELS = [
-  { value: "positive", label: "Positive (Yes)", description: "Results marked as containing target species" },
-  { value: "positive_reference", label: "Positive Reference", description: "Reference examples for positive training" },
-  { value: "negative_reference", label: "Negative Reference", description: "Reference examples for negative training" },
-];
-
 export default function ExportToAnnotationProjectDialog({
   isOpen,
   onClose,
@@ -38,33 +31,35 @@ export default function ExportToAnnotationProjectDialog({
 
   const [name, setName] = useState(`AP from ${searchSession.name}`);
   const [description, setDescription] = useState("");
-  const [selectedLabels, setSelectedLabels] = useState<Set<string>>(new Set(["positive", "positive_reference"]));
+  // Use Set of tag IDs (numbers) instead of label strings
+  const [selectedTagIds, setSelectedTagIds] = useState<Set<number>>(() => {
+    // Default to all target tags selected
+    return new Set(searchSession.target_tags.map((tt) => tt.tag_id));
+  });
 
-  // Calculate preview counts
-  const previewCounts = useMemo(() => {
-    if (!progress) return {};
-    return {
-      positive: progress.positive,
-      positive_reference: progress.positive_reference ?? 0,
-      negative_reference: progress.negative_reference ?? 0,
-    };
+  // Get tag counts from progress.tag_counts
+  const tagCounts = useMemo(() => {
+    if (!progress?.tag_counts) return {};
+    return progress.tag_counts;
   }, [progress]);
 
+  // Calculate total selected count
   const totalSelected = useMemo(() => {
     let total = 0;
-    selectedLabels.forEach((label) => {
-      total += previewCounts[label as keyof typeof previewCounts] ?? 0;
+    selectedTagIds.forEach((tagId) => {
+      // tag_counts keys are strings in the schema
+      total += tagCounts[String(tagId)] ?? 0;
     });
     return total;
-  }, [selectedLabels, previewCounts]);
+  }, [selectedTagIds, tagCounts]);
 
-  const toggleLabel = useCallback((label: string) => {
-    setSelectedLabels((prev) => {
+  const toggleTag = useCallback((tagId: number) => {
+    setSelectedTagIds((prev) => {
       const next = new Set(prev);
-      if (next.has(label)) {
-        next.delete(label);
+      if (next.has(tagId)) {
+        next.delete(tagId);
       } else {
-        next.add(label);
+        next.add(tagId);
       }
       return next;
     });
@@ -79,7 +74,7 @@ export default function ExportToAnnotationProjectDialog({
       );
     },
     onSuccess: (result) => {
-      toast.success(`Annotation Project "${result.name}" created successfully!`);
+      toast.success(`Annotation Project "${result.annotation_project_name}" created successfully!`);
       queryClient.invalidateQueries({ queryKey: ["ml_project_annotation_projects", mlProjectUuid] });
       onClose();
     },
@@ -95,18 +90,23 @@ export default function ExportToAnnotationProjectDialog({
       toast.error("Please enter a name for the Annotation Project");
       return;
     }
-    if (selectedLabels.size === 0) {
-      toast.error("Please select at least one label to include");
+    if (selectedTagIds.size === 0) {
+      toast.error("Please select at least one tag to include");
       return;
     }
+
+    // Determine if all tags are selected (use null for all)
+    const allTagIds = searchSession.target_tags.map((tt) => tt.tag_id);
+    const allSelected = allTagIds.length === selectedTagIds.size &&
+      allTagIds.every((id) => selectedTagIds.has(id));
 
     mutateExport({
       name: name.trim(),
       description: description.trim() || undefined,
-      include_labels: Array.from(selectedLabels),
-      search_session_uuid: searchSession.uuid,
+      include_labeled: true,
+      include_tag_ids: allSelected ? null : Array.from(selectedTagIds),
     });
-  }, [name, description, selectedLabels, searchSession.uuid, mutateExport]);
+  }, [name, description, selectedTagIds, searchSession.target_tags, mutateExport]);
 
   return (
     <DialogOverlay
@@ -154,53 +154,66 @@ export default function ExportToAnnotationProjectDialog({
           />
         </div>
 
-        {/* Label Selection */}
+        {/* Tag Selection */}
         <div>
           <label className="block text-sm font-medium text-stone-700 dark:text-stone-300 mb-2">
-            Include Results with Labels
+            Include Results with Tags
           </label>
-          <div className="flex flex-col gap-2">
-            {EXPORTABLE_LABELS.map(({ value, label, description }) => {
-              const count = previewCounts[value as keyof typeof previewCounts] ?? 0;
-              const isSelected = selectedLabels.has(value);
+          {searchSession.target_tags.length === 0 ? (
+            <div className="text-sm text-stone-500 dark:text-stone-400 italic p-3 bg-stone-50 dark:bg-stone-800/50 rounded-lg">
+              No target tags defined for this session
+            </div>
+          ) : (
+            <div className="flex flex-col gap-2">
+              {searchSession.target_tags.map(({ tag_id, tag, shortcut_key }) => {
+                const count = tagCounts[String(tag_id)] ?? 0;
+                const isSelected = selectedTagIds.has(tag_id);
+                // Use canonical_name or value for display
+                const displayName = tag.canonical_name || tag.value;
 
-              return (
-                <button
-                  key={value}
-                  type="button"
-                  onClick={() => toggleLabel(value)}
-                  className={`flex items-center justify-between p-3 rounded-lg border-2 transition-colors ${
-                    isSelected
-                      ? "border-emerald-500 bg-emerald-50 dark:bg-emerald-900/20"
-                      : "border-stone-200 dark:border-stone-600 hover:border-stone-300 dark:hover:border-stone-500"
-                  }`}
-                >
-                  <div className="flex items-center gap-3">
-                    <div
-                      className={`w-5 h-5 rounded border-2 flex items-center justify-center transition-colors ${
-                        isSelected
-                          ? "bg-emerald-500 border-emerald-500 text-white"
-                          : "border-stone-400 dark:border-stone-500"
-                      }`}
-                    >
-                      {isSelected && <CheckIcon className="w-3 h-3" />}
-                    </div>
-                    <div className="text-left">
-                      <div className="font-medium text-stone-700 dark:text-stone-200">
-                        {label}
+                return (
+                  <button
+                    key={tag_id}
+                    type="button"
+                    onClick={() => toggleTag(tag_id)}
+                    className={`flex items-center justify-between p-3 rounded-lg border-2 transition-colors ${
+                      isSelected
+                        ? "border-emerald-500 bg-emerald-50 dark:bg-emerald-900/20"
+                        : "border-stone-200 dark:border-stone-600 hover:border-stone-300 dark:hover:border-stone-500"
+                    }`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <div
+                        className={`w-5 h-5 rounded border-2 flex items-center justify-center transition-colors ${
+                          isSelected
+                            ? "bg-emerald-500 border-emerald-500 text-white"
+                            : "border-stone-400 dark:border-stone-500"
+                        }`}
+                      >
+                        {isSelected && <CheckIcon className="w-3 h-3" />}
                       </div>
-                      <div className="text-xs text-stone-500 dark:text-stone-400">
-                        {description}
+                      <div className="text-left">
+                        <div className="font-medium text-stone-700 dark:text-stone-200 flex items-center gap-2">
+                          {displayName}
+                          <span className="text-xs px-1.5 py-0.5 bg-stone-200 dark:bg-stone-700 rounded text-stone-500 dark:text-stone-400">
+                            {shortcut_key}
+                          </span>
+                        </div>
+                        {tag.vernacular_name && (
+                          <div className="text-xs text-stone-500 dark:text-stone-400">
+                            {tag.vernacular_name}
+                          </div>
+                        )}
                       </div>
                     </div>
-                  </div>
-                  <div className="text-sm font-bold text-stone-600 dark:text-stone-300">
-                    {count}
-                  </div>
-                </button>
-              );
-            })}
-          </div>
+                    <div className="text-sm font-bold text-stone-600 dark:text-stone-300">
+                      {count}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          )}
         </div>
 
         {/* Preview */}
@@ -227,7 +240,7 @@ export default function ExportToAnnotationProjectDialog({
           <Button
             variant="primary"
             onClick={handleSubmit}
-            disabled={isExporting || selectedLabels.size === 0 || !name.trim()}
+            disabled={isExporting || selectedTagIds.size === 0 || !name.trim()}
           >
             {isExporting ? "Exporting..." : "Export"}
           </Button>

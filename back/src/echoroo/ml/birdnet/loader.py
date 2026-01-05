@@ -83,7 +83,6 @@ class BirdNETLoader(ModelLoader):
         self,
         model_dir: Path | None = None,
         device: Literal["GPU", "CPU"] = "GPU",
-        lang: str = "en_us",
     ) -> None:
         """Initialize the BirdNET loader.
 
@@ -95,13 +94,9 @@ class BirdNETLoader(ModelLoader):
         device : Literal["GPU", "CPU"], optional
             Device to use for inference: "GPU" or "CPU".
             Default is "GPU".
-        lang : str, optional
-            Language code for species common names (e.g., 'en_us', 'ja').
-            Default is "en_us".
         """
         super().__init__(model_dir)
         self._device = device
-        self._lang = lang
         self._species_list: list[str] | None = None
 
     @property
@@ -200,7 +195,7 @@ class BirdNETLoader(ModelLoader):
             # 'tf' = TFLite (CPU only, no multiprocessing)
             # Use TFLite for CPU mode to avoid asyncio deadlocks
             backend = "tf" if self._device == "CPU" else "pb"
-            model = birdnet.load("acoustic", BIRDNET_VERSION, backend, lang=self._lang)
+            model = birdnet.load("acoustic", BIRDNET_VERSION, backend)
 
             # Cache the species list for the specification
             self._species_list = list(model.species_list)
@@ -210,8 +205,7 @@ class BirdNETLoader(ModelLoader):
                 f"sample_rate={model.get_sample_rate()}Hz, "
                 f"embedding_dim={model.get_embeddings_dim()}, "
                 f"n_species={model.n_species}, "
-                f"device={self._device}, "
-                f"lang={self._lang}"
+                f"device={self._device}"
             )
 
             return model

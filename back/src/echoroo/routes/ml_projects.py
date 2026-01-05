@@ -8,9 +8,10 @@ and custom model training.
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Query, Response, status
 
 from echoroo import api, models, schemas
+from echoroo.core import images
 from echoroo.filters.ml_projects import MLProjectFilter
 from echoroo.routes.dependencies import (
     Session,
@@ -298,6 +299,8 @@ def get_ml_projects_router(settings: EchorooSettings) -> APIRouter:
         session: Session,
         ml_project_uuid: UUID,
         xeno_canto_id: str,
+        start_time: float | None = Query(default=None, description="Start time in seconds"),
+        end_time: float | None = Query(default=None, description="End time in seconds"),
         user: models.User | None = Depends(optional_user_dep),
     ):
         """Proxy audio download from Xeno-Canto.
@@ -305,10 +308,19 @@ def get_ml_projects_router(settings: EchorooSettings) -> APIRouter:
         This endpoint downloads audio from Xeno-Canto and streams it to the client.
         Used for previewing Xeno-Canto recordings before creating a reference sound.
 
+        If start_time and/or end_time are provided, only the specified time range
+        will be returned. Otherwise, the full recording is returned.
+
         Parameters
         ----------
+        ml_project_uuid
+            The ML project UUID.
         xeno_canto_id
             The Xeno-Canto recording ID (e.g., "123456" or "XC123456").
+        start_time
+            Start time in seconds. If None, starts from the beginning.
+        end_time
+            End time in seconds. If None, goes to the end of the recording.
         """
         import httpx
         from fastapi.responses import Response
@@ -328,6 +340,7 @@ def get_ml_projects_router(settings: EchorooSettings) -> APIRouter:
         download_url = f"https://xeno-canto.org/{xc_num}/download"
 
         try:
+            # Download full audio from Xeno-Canto
             async with httpx.AsyncClient(follow_redirects=True, timeout=60.0) as client:
                 response = await client.get(download_url)
                 if response.status_code != 200:
@@ -337,14 +350,195 @@ def get_ml_projects_router(settings: EchorooSettings) -> APIRouter:
                         detail=f"Failed to download Xeno-Canto recording {xeno_canto_id}",
                     )
 
+                audio_bytes = response.content
                 content_type = response.headers.get("content-type", "audio/mpeg")
-                return Response(
-                    content=response.content,
-                    media_type=content_type,
-                    headers={
-                        "Content-Disposition": f'inline; filename="xc_{xeno_canto_id}.audio"',
-                    },
-                )
+
+            # If time range is specified, extract the segment
+            if start_time is not None or end_time is not None:
+                import io
+                import soundfile as sf
+                import numpy as np
+
+                # Load full audio
+                with io.BytesIO(audio_bytes) as audio_buffer:
+                    data, samplerate = sf.read(audio_buffer, always_2d=True)
+
+                # Determine time range
+                if start_time is None:
+                    start_time = 0.0
+                if end_time is None:
+                    end_time = len(data) / samplerate
+
+                # Validate time range
+                if start_time < 0:
+                    start_time = 0.0
+                if end_time > len(data) / samplerate:
+                    end_time = len(data) / samplerate
+                if start_time >= end_time:
+                    from fastapi import HTTPException
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Invalid time range: start_time ({start_time}) must be less than end_time ({end_time})",
+                    )
+
+                # Calculate sample indices
+                start_sample = int(start_time * samplerate)
+                end_sample = int(end_time * samplerate)
+
+                # Clamp to valid range
+                start_sample = max(0, min(start_sample, len(data)))
+                end_sample = max(start_sample, min(end_sample, len(data)))
+
+                # Extract segment
+                segment = data[start_sample:end_sample]
+
+                # Convert back to bytes (WAV format for consistency)
+                output_buffer = io.BytesIO()
+                sf.write(output_buffer, segment, samplerate, format='WAV')
+                audio_bytes = output_buffer.getvalue()
+                content_type = "audio/wav"
+
+            return Response(
+                content=audio_bytes,
+                media_type=content_type,
+                headers={
+                    "Content-Disposition": f'inline; filename="xc_{xeno_canto_id}.audio"',
+                },
+            )
+        except httpx.RequestError as e:
+            from fastapi import HTTPException
+            raise HTTPException(
+                status_code=502,
+                detail=f"Failed to connect to Xeno-Canto: {str(e)}",
+            )
+
+    @router.get(
+        "/{ml_project_uuid}/reference_sounds/xeno_canto/{xeno_canto_id}/spectrogram",
+        include_in_schema=True,
+    )
+    @router.get(
+        "/{ml_project_uuid}/reference_sounds/xeno_canto/{xeno_canto_id}/spectrogram/",
+        include_in_schema=False,  # Hide duplicate from docs
+    )
+    async def get_xeno_canto_spectrogram(
+        session: Session,
+        ml_project_uuid: UUID,
+        xeno_canto_id: str,
+        audio_parameters: Annotated[
+            schemas.AudioParameters, Depends(schemas.AudioParameters)
+        ],
+        spectrogram_parameters: Annotated[
+            schemas.SpectrogramParameters,
+            Depends(schemas.SpectrogramParameters),
+        ],
+        start_time: float = Query(default=0.0, description="Start time in seconds"),
+        end_time: float | None = Query(default=None, description="End time in seconds"),
+        user: models.User | None = Depends(optional_user_dep),
+    ) -> Response:
+        """Get a spectrogram for a Xeno-Canto recording.
+
+        This endpoint downloads audio from Xeno-Canto and generates a spectrogram
+        for the specified time range. Used for previewing Xeno-Canto recordings
+        before creating a reference sound.
+
+        Parameters
+        ----------
+        ml_project_uuid
+            The ML project UUID.
+        xeno_canto_id
+            The Xeno-Canto recording ID (e.g., "123456" or "XC123456").
+        start_time
+            Start time in seconds (default: 0.0).
+        end_time
+            End time in seconds. If None, uses the entire recording from start_time.
+        audio_parameters
+            Audio processing parameters (resampling, filtering).
+        spectrogram_parameters
+            Spectrogram generation parameters (window size, overlap, colormap, etc.).
+
+        Returns
+        -------
+        Response
+            Spectrogram image as PNG.
+        """
+        import httpx
+
+        # Verify project access
+        await api.ml_projects.get(
+            session,
+            ml_project_uuid,
+            user=user,
+        )
+
+        # Extract numeric ID from XC format
+        xc_num = xeno_canto_id.upper()
+        if xc_num.startswith("XC"):
+            xc_num = xc_num[2:]
+
+        download_url = f"https://xeno-canto.org/{xc_num}/download"
+
+        try:
+            # Download audio from Xeno-Canto
+            async with httpx.AsyncClient(follow_redirects=True, timeout=60.0) as client:
+                response = await client.get(download_url)
+                if response.status_code != 200:
+                    from fastapi import HTTPException
+                    raise HTTPException(
+                        status_code=response.status_code,
+                        detail=f"Failed to download Xeno-Canto recording {xeno_canto_id}",
+                    )
+
+                audio_bytes = response.content
+
+            # If end_time is not specified, we need to get the audio duration
+            # For simplicity, we'll use a large default value or load the full audio
+            if end_time is None:
+                # Load audio to get duration
+                import io
+                import soundfile as sf
+                with io.BytesIO(audio_bytes) as audio_buffer:
+                    info = sf.info(audio_buffer)
+                    end_time = info.duration
+
+            # Generate spectrogram from audio bytes
+            from echoroo.api import spectrograms
+            data = spectrograms.compute_spectrogram_from_bytes(
+                audio_bytes,
+                start_time,
+                end_time,
+                audio_parameters,
+                spectrogram_parameters,
+            )
+
+            # Normalize if requested
+            if spectrogram_parameters.normalize:
+                data_min = data.min()
+                data_max = data.max()
+                data = data - data_min
+                data_range = data_max - data_min
+                if data_range > 0:
+                    data = data / data_range
+
+            # Calculate resize dimensions (default 2x for better quality)
+            height, width = data.shape
+            time_scale = spectrogram_parameters.time_scale
+            freq_scale = spectrogram_parameters.freq_scale
+            resize_dims = (int(width * time_scale), int(height * freq_scale))
+
+            # Convert to image
+            image = images.array_to_image(
+                data,
+                cmap=spectrogram_parameters.cmap,
+                resize=resize_dims,
+            )
+
+            buffer = images.image_to_buffer(image)
+
+            return Response(
+                content=buffer.read(),
+                media_type="image/png",
+            )
+
         except httpx.RequestError as e:
             from fastapi import HTTPException
             raise HTTPException(
@@ -646,7 +840,13 @@ def get_ml_projects_router(settings: EchorooSettings) -> APIRouter:
         search_session_uuid: UUID,
         user: models.User = Depends(current_user_dep),
     ) -> schemas.SearchSession:
-        """Execute a search session to find similar clips."""
+        """Execute initial sampling for a search session.
+
+        Performs Active Learning initial sampling:
+        - Easy Positives: Top-k most similar clips per reference
+        - Boundary: Random samples from medium similarity range
+        - Others: Diverse samples using farthest-first selection
+        """
         # Verify project access
         await api.ml_projects.get(
             session,
@@ -658,9 +858,48 @@ def get_ml_projects_router(settings: EchorooSettings) -> APIRouter:
             search_session_uuid,
             user=user,
         )
-        updated = await api.search_sessions.execute_search(
+        updated = await api.search_sessions.execute_initial_sampling(
             session,
             search_session,
+            user=user,
+        )
+        await session.commit()
+        return updated
+
+    @router.post(
+        "/{ml_project_uuid}/search_sessions/{search_session_uuid}/run_iteration",
+        response_model=schemas.SearchSession,
+    )
+    async def run_active_learning_iteration(
+        session: Session,
+        ml_project_uuid: UUID,
+        search_session_uuid: UUID,
+        request: schemas.RunIterationRequest = schemas.RunIterationRequest(),
+        user: models.User = Depends(current_user_dep),
+    ) -> schemas.SearchSession:
+        """Run one iteration of active learning.
+
+        Trains classifiers on labeled data and selects new samples
+        from the uncertainty region.
+        """
+        # Verify project access
+        await api.ml_projects.get(
+            session,
+            ml_project_uuid,
+            user=user,
+        )
+        search_session = await api.search_sessions.get(
+            session,
+            search_session_uuid,
+            user=user,
+        )
+        updated = await api.search_sessions.run_iteration(
+            session,
+            search_session,
+            uncertainty_low=request.uncertainty_low,
+            uncertainty_high=request.uncertainty_high,
+            samples_per_iteration=request.samples_per_iteration,
+            selected_tag_ids=request.selected_tag_ids,
             user=user,
         )
         await session.commit()
@@ -676,10 +915,34 @@ def get_ml_projects_router(settings: EchorooSettings) -> APIRouter:
         search_session_uuid: UUID,
         limit: Limit = 10,
         offset: Offset = 0,
-        label: schemas.SearchResultLabel | None = None,
+        assigned_tag_id: int | None = Query(
+            default=None, description="Filter by assigned tag ID (frontend sends assigned_tag_id)"
+        ),
+        is_negative: bool | None = Query(
+            default=None, description="Filter by negative label (frontend sends is_negative)"
+        ),
+        is_uncertain: bool | None = Query(
+            default=None, description="Filter by uncertain label (frontend sends is_uncertain)"
+        ),
+        is_skipped: bool | None = Query(
+            default=None, description="Filter by skipped label (frontend sends is_skipped)"
+        ),
+        is_labeled: bool | None = Query(
+            default=None, description="Filter by labeled status (frontend sends is_labeled)"
+        ),
+        sample_type: str | None = Query(
+            default=None, description="Filter by sample type (frontend sends sample_type)"
+        ),
+        iteration_added: int | None = Query(
+            default=None, description="Filter by iteration number (frontend sends iteration_added)"
+        ),
         user: models.User | None = Depends(optional_user_dep),
     ) -> schemas.Page[schemas.SearchResult]:
-        """Get paginated search results for a session."""
+        """Get paginated search results for a session.
+
+        Filters can be combined to narrow down results. If no filters
+        are specified, all results are returned.
+        """
         # Verify project access
         await api.ml_projects.get(
             session,
@@ -691,25 +954,60 @@ def get_ml_projects_router(settings: EchorooSettings) -> APIRouter:
             search_session_uuid,
             user=user,
         )
-        # Build label filter if specified
-        filters = None
-        if label is not None:
-            label_map = {
-                schemas.SearchResultLabel.UNLABELED: models.SearchResultLabel.UNLABELED,
-                schemas.SearchResultLabel.POSITIVE: models.SearchResultLabel.POSITIVE,
-                schemas.SearchResultLabel.NEGATIVE: models.SearchResultLabel.NEGATIVE,
-                schemas.SearchResultLabel.UNCERTAIN: models.SearchResultLabel.UNCERTAIN,
-                schemas.SearchResultLabel.SKIPPED: models.SearchResultLabel.SKIPPED,
-            }
-            filters = [models.SearchResult.label == label_map[label]]
+
+        # Build filters based on query parameters
+        filters = []
+
+        if is_labeled is not None:
+            if is_labeled:
+                # Labeled = has any label
+                from sqlalchemy import or_
+                filters.append(
+                    or_(
+                        models.SearchResult.assigned_tag_id.isnot(None),
+                        models.SearchResult.is_negative == True,
+                        models.SearchResult.is_uncertain == True,
+                        models.SearchResult.is_skipped == True,
+                    )
+                )
+            else:
+                # Unlabeled = no assigned_tag AND not negative AND not uncertain AND not skipped
+                filters.append(models.SearchResult.assigned_tag_id.is_(None))
+                filters.append(models.SearchResult.is_negative == False)
+                filters.append(models.SearchResult.is_uncertain == False)
+                filters.append(models.SearchResult.is_skipped == False)
+
+        if is_negative is not None:
+            filters.append(models.SearchResult.is_negative == is_negative)
+
+        if is_uncertain is not None:
+            filters.append(models.SearchResult.is_uncertain == is_uncertain)
+
+        if is_skipped is not None:
+            filters.append(models.SearchResult.is_skipped == is_skipped)
+
+        if assigned_tag_id is not None:
+            filters.append(models.SearchResult.assigned_tag_id == assigned_tag_id)
+
+        if sample_type is not None:
+            filters.append(models.SearchResult.sample_type == sample_type)
+
+        if iteration_added is not None:
+            filters.append(models.SearchResult.iteration_added == iteration_added)
+
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"Getting search results for session {search_session.id}, limit={limit}, offset={offset}")
+
         results, total = await api.search_sessions.get_search_results(
             session,
             search_session.id,
             limit=limit,
             offset=offset,
-            filters=filters,
+            filters=filters if filters else None,
             user=user,
         )
+        logger.info(f"Got {len(results)} results, total={total}")
         return schemas.Page(
             items=results,
             total=total,
@@ -754,10 +1052,17 @@ def get_ml_projects_router(settings: EchorooSettings) -> APIRouter:
         ml_project_uuid: UUID,
         search_session_uuid: UUID,
         result_uuid: UUID,
-        data: schemas.SearchResultLabelUpdate,
+        data: schemas.SearchResultLabelData,
         user: models.User = Depends(current_user_dep),
     ) -> schemas.SearchResult:
-        """Label a search result."""
+        """Label a search result with Active Learning label data.
+
+        A result can be labeled in one of several ways:
+        - assigned_tag_id: Assign a specific tag (positive label)
+        - is_negative: Mark as not containing any target sound
+        - is_uncertain: Mark as uncertain/needs review
+        - is_skipped: Skip without labeling
+        """
         # Verify project access
         await api.ml_projects.get(
             session,
@@ -773,8 +1078,7 @@ def get_ml_projects_router(settings: EchorooSettings) -> APIRouter:
         updated = await api.search_sessions.label_result(
             session,
             result_uuid,
-            data.label,
-            data.notes,
+            data,
             user=user,
         )
         await session.commit()
@@ -791,7 +1095,7 @@ def get_ml_projects_router(settings: EchorooSettings) -> APIRouter:
         data: schemas.BulkLabelRequest,
         user: models.User = Depends(current_user_dep),
     ) -> dict:
-        """Bulk label multiple search results."""
+        """Bulk label multiple search results with Active Learning labels."""
         # Verify project access
         await api.ml_projects.get(
             session,
@@ -807,7 +1111,7 @@ def get_ml_projects_router(settings: EchorooSettings) -> APIRouter:
         count = await api.search_sessions.bulk_label_results(
             session,
             data.result_uuids,
-            data.label,
+            data.label_data,
             user=user,
         )
         await session.commit()
@@ -1353,10 +1657,10 @@ def get_ml_projects_router(settings: EchorooSettings) -> APIRouter:
         data: schemas.BulkCurateRequest,
         user: models.User = Depends(current_user_dep),
     ) -> list[schemas.SearchResult]:
-        """Bulk curate search results as positive or negative references.
+        """Bulk curate search results by assigning a tag.
 
-        This endpoint allows selecting high-quality examples for model training.
-        Valid labels are 'positive_reference' and 'negative_reference'.
+        This endpoint allows selecting high-quality examples and
+        assigning a specific tag to all of them.
         """
         # Verify project access
         await api.ml_projects.get(
@@ -1373,7 +1677,7 @@ def get_ml_projects_router(settings: EchorooSettings) -> APIRouter:
             session,
             search_session,
             data.result_uuids,
-            data.label.value,
+            data.assigned_tag_id,
             user=user,
         )
         await session.commit()
@@ -1394,7 +1698,7 @@ def get_ml_projects_router(settings: EchorooSettings) -> APIRouter:
         """Export labeled search results to a new annotation project.
 
         Creates a new annotation project and annotation tasks for clips
-        with the specified labels (e.g., 'positive', 'positive_reference').
+        with assigned tags. Can optionally filter to specific tag IDs.
         """
         # Verify project access
         await api.ml_projects.get(
@@ -1412,7 +1716,8 @@ def get_ml_projects_router(settings: EchorooSettings) -> APIRouter:
             search_session,
             name=data.name,
             description=data.description,
-            include_labels=data.include_labels,
+            include_labeled=data.include_labeled,
+            include_tag_ids=data.include_tag_ids,
             user=user,
         )
         await session.commit()
@@ -1436,6 +1741,35 @@ def get_ml_projects_router(settings: EchorooSettings) -> APIRouter:
         return await api.search_sessions.get_annotation_projects(
             session,
             ml_project.id,
+            user=user,
+        )
+
+    @router.get(
+        "/{ml_project_uuid}/search_sessions/{search_session_uuid}/score_distribution",
+        response_model=schemas.ScoreDistributionResponse,
+    )
+    async def get_score_distribution(
+        session: Session,
+        ml_project_uuid: UUID,
+        search_session_uuid: UUID,
+        user: models.User | None = Depends(optional_user_dep),
+    ) -> schemas.ScoreDistributionResponse:
+        """Get saved score distributions for active learning visualization.
+
+        Returns the score distributions computed during each iteration,
+        showing how the model's predictions are distributed across the
+        dataset for each target tag.
+        """
+        # Verify project access
+        await api.ml_projects.get(
+            session,
+            ml_project_uuid,
+            user=user,
+        )
+        return await api.search_sessions.get_score_distribution(
+            session,
+            ml_project_uuid,
+            search_session_uuid,
             user=user,
         )
 
