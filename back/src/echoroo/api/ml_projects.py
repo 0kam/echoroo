@@ -10,7 +10,7 @@ from sqlalchemy.sql import ColumnElement, ColumnExpressionArgument
 
 from echoroo import exceptions, models, schemas
 from echoroo.api import common
-from echoroo.api.common import BaseAPI
+from echoroo.api.common import BaseAPI, UserResolutionMixin
 from echoroo.api.common.permissions import can_manage_project
 from echoroo.filters.base import Filter
 
@@ -131,27 +131,13 @@ class MLProjectAPI(
         schemas.MLProject,
         schemas.MLProjectCreate,
         schemas.MLProjectUpdate,
-    ]
+    ],
+    UserResolutionMixin,
 ):
     """API for managing ML Projects."""
 
     _model = models.MLProject
     _schema = schemas.MLProject
-
-    async def _resolve_user(
-        self,
-        session: AsyncSession,
-        user: models.User | schemas.SimpleUser | None,
-    ) -> models.User | None:
-        """Resolve a user schema to a user model."""
-        if user is None:
-            return None
-        if isinstance(user, models.User):
-            return user
-        db_user = await session.get(models.User, user.id)
-        if db_user is None:
-            raise exceptions.NotFoundError(f"User with id {user.id} not found")
-        return db_user
 
     async def _eager_load_relationships(
         self,
@@ -163,17 +149,19 @@ class MLProjectAPI(
             select(self._model)
             .where(self._model.uuid == db_obj.uuid)
             .options(
-                selectinload(self._model.dataset).options(
-                    selectinload(models.Dataset.project).options(
-                        selectinload(models.Project.memberships)
+                selectinload(self._model.dataset_scopes).options(
+                    selectinload(models.MLProjectDatasetScope.dataset).options(
+                        selectinload(models.Dataset.project).options(
+                            selectinload(models.Project.memberships)
+                        ),
+                        selectinload(models.Dataset.primary_site).options(
+                            selectinload(models.Site.images)
+                        ),
+                        selectinload(models.Dataset.primary_recorder),
+                        selectinload(models.Dataset.license),
                     ),
-                    selectinload(models.Dataset.primary_site).options(
-                        selectinload(models.Site.images)
-                    ),
-                    selectinload(models.Dataset.primary_recorder),
-                    selectinload(models.Dataset.license),
+                    selectinload(models.MLProjectDatasetScope.foundation_model_run),
                 ),
-                selectinload(self._model.embedding_model_run),
                 selectinload(self._model.foundation_model),
                 selectinload(self._model.tags),
                 selectinload(self._model.created_by),
@@ -217,43 +205,18 @@ class MLProjectAPI(
             )
         )
 
-        # Map model status to schema status
-        status_map = {
-            models.MLProjectStatus.SETUP: schemas.MLProjectStatus.DRAFT,
-            models.MLProjectStatus.SEARCHING: schemas.MLProjectStatus.ACTIVE,
-            models.MLProjectStatus.LABELING: schemas.MLProjectStatus.ACTIVE,
-            models.MLProjectStatus.TRAINING: schemas.MLProjectStatus.TRAINING,
-            models.MLProjectStatus.INFERENCE: schemas.MLProjectStatus.INFERENCE,
-            models.MLProjectStatus.REVIEW: schemas.MLProjectStatus.ACTIVE,
-            models.MLProjectStatus.COMPLETED: schemas.MLProjectStatus.COMPLETED,
-            models.MLProjectStatus.ARCHIVED: schemas.MLProjectStatus.ARCHIVED,
-        }
-        schema_status = status_map.get(db_obj.status, schemas.MLProjectStatus.DRAFT)
-
         # Build base schema
         base_data = {
             "uuid": db_obj.uuid,
             "id": db_obj.id,
             "name": db_obj.name,
             "description": db_obj.description,
-            "status": schema_status,
+            "status": db_obj.status,
             "project_id": db_obj.project_id,
-            "dataset_id": db_obj.dataset_id,
-            "dataset": (
-                schemas.Dataset.model_validate(db_obj.dataset)
-                if db_obj.dataset
-                else None
-            ),
             "foundation_model_id": db_obj.foundation_model_id,
             "foundation_model": (
                 schemas.FoundationModel.model_validate(db_obj.foundation_model)
                 if db_obj.foundation_model
-                else None
-            ),
-            "embedding_model_run_id": db_obj.embedding_model_run_id,
-            "embedding_model_run": (
-                schemas.ModelRun.model_validate(db_obj.embedding_model_run)
-                if db_obj.embedding_model_run
                 else None
             ),
             "default_similarity_threshold": db_obj.default_similarity_threshold,
@@ -383,7 +346,6 @@ class MLProjectAPI(
             self._model,
             name=data.name,
             description=data.description,
-            dataset_id=None,
             project_id=project_id,
             created_by_id=db_user.id,
         )
@@ -413,20 +375,7 @@ class MLProjectAPI(
         if data.description is not None:
             update_data["description"] = data.description
         if data.status is not None:
-            # Map schema status to model status
-            reverse_status_map = {
-                schemas.MLProjectStatus.DRAFT: models.MLProjectStatus.SETUP,
-                schemas.MLProjectStatus.ACTIVE: models.MLProjectStatus.LABELING,
-                schemas.MLProjectStatus.TRAINING: models.MLProjectStatus.TRAINING,
-                schemas.MLProjectStatus.INFERENCE: models.MLProjectStatus.INFERENCE,
-                schemas.MLProjectStatus.COMPLETED: models.MLProjectStatus.COMPLETED,
-                schemas.MLProjectStatus.ARCHIVED: models.MLProjectStatus.ARCHIVED,
-            }
-            update_data["status"] = reverse_status_map.get(
-                data.status, models.MLProjectStatus.SETUP
-            )
-        if data.embedding_model_run_id is not None:
-            update_data["embedding_model_run_id"] = data.embedding_model_run_id
+            update_data["status"] = data.status
         if data.default_similarity_threshold is not None:
             update_data["default_similarity_threshold"] = (
                 data.default_similarity_threshold
@@ -781,31 +730,41 @@ class MLProjectAPI(
                 f"Dataset {dataset.uuid} is already in ML project {ml_project.uuid}"
             )
 
-        # Validate embedding model compatibility BEFORE creating the scope
-        db_ml_project = await session.get(models.MLProject, ml_project.id)
-        db_fm_run = await session.get(
-            models.FoundationModelRun, foundation_model_run.id
+        # Validate embedding model compatibility with existing scopes
+        existing_scopes_query = select(models.MLProjectDatasetScope).where(
+            models.MLProjectDatasetScope.ml_project_id == ml_project.id
         )
+        existing_scopes_result = await session.execute(existing_scopes_query)
+        existing_scopes = existing_scopes_result.scalars().all()
 
-        if db_fm_run and db_fm_run.model_run_id:
-            if (
-                db_ml_project.embedding_model_run_id is not None
-                and db_ml_project.embedding_model_run_id != db_fm_run.model_run_id
-            ):
-                # Different model - not allowed
-                existing_model = await session.get(
-                    models.ModelRun, db_ml_project.embedding_model_run_id
-                )
-                new_model = await session.get(
-                    models.ModelRun, db_fm_run.model_run_id
-                )
-                raise exceptions.InvalidDataError(
-                    f"Cannot add dataset scope with different embedding model. "
-                    f"ML project uses '{existing_model.name if existing_model else 'unknown'}', "
-                    f"but the selected foundation model run uses "
-                    f"'{new_model.name if new_model else 'unknown'}'. "
-                    f"All dataset scopes in an ML project must use the same embedding model."
-                )
+        if existing_scopes:
+            # Check if any existing scope uses a different embedding model
+            db_fm_run = await session.get(
+                models.FoundationModelRun, foundation_model_run.id
+            )
+            if db_fm_run and db_fm_run.model_run_id:
+                for scope in existing_scopes:
+                    scope_fm_run = await session.get(
+                        models.FoundationModelRun, scope.foundation_model_run_id
+                    )
+                    if (
+                        scope_fm_run
+                        and scope_fm_run.model_run_id
+                        and scope_fm_run.model_run_id != db_fm_run.model_run_id
+                    ):
+                        existing_model = await session.get(
+                            models.ModelRun, scope_fm_run.model_run_id
+                        )
+                        new_model = await session.get(
+                            models.ModelRun, db_fm_run.model_run_id
+                        )
+                        raise exceptions.InvalidDataError(
+                            f"Cannot add dataset scope with different embedding model. "
+                            f"Existing scopes use '{existing_model.name if existing_model else 'unknown'}', "
+                            f"but the selected foundation model run uses "
+                            f"'{new_model.name if new_model else 'unknown'}'. "
+                            f"All dataset scopes in an ML project must use the same embedding model."
+                        )
 
         # Create the dataset scope
         db_scope = await common.create_object(
@@ -816,11 +775,16 @@ class MLProjectAPI(
             foundation_model_run_id=foundation_model_run.id,
         )
 
-        # Set ML project's embedding_model_run if not already set
-        if db_fm_run and db_fm_run.model_run_id:
-            if db_ml_project.embedding_model_run_id is None:
-                db_ml_project.embedding_model_run_id = db_fm_run.model_run_id
-                await session.flush()
+        # If this is the first dataset scope, set the ML project's foundation model
+        if not existing_scopes:
+            db_ml_project = await session.get(models.MLProject, ml_project.id)
+            if db_ml_project:
+                db_fm_run = await session.get(
+                    models.FoundationModelRun, foundation_model_run.id
+                )
+                if db_fm_run:
+                    db_ml_project.foundation_model_id = db_fm_run.foundation_model_id
+                    await session.flush()
 
         # Reload with all necessary relationships for serialization
         db_scope = await session.scalar(
@@ -829,7 +793,9 @@ class MLProjectAPI(
             .options(
                 selectinload(models.MLProjectDatasetScope.dataset).options(
                     selectinload(models.Dataset.project).options(
-                        selectinload(models.Project.memberships)
+                        selectinload(models.Project.memberships).options(
+                            selectinload(models.ProjectMember.user)
+                        )
                     ),
                     selectinload(models.Dataset.primary_site).options(
                         selectinload(models.Site.images)
@@ -840,7 +806,9 @@ class MLProjectAPI(
                 selectinload(models.MLProjectDatasetScope.foundation_model_run).options(
                     selectinload(models.FoundationModelRun.foundation_model),
                     selectinload(models.FoundationModelRun.dataset),
-                    selectinload(models.FoundationModelRun.species),
+                    selectinload(models.FoundationModelRun.species).options(
+                        selectinload(models.FoundationModelRunSpecies.tag)
+                    ),
                 ),
             )
         )
@@ -889,7 +857,9 @@ class MLProjectAPI(
             .options(
                 selectinload(models.MLProjectDatasetScope.dataset).options(
                     selectinload(models.Dataset.project).options(
-                        selectinload(models.Project.memberships)
+                        selectinload(models.Project.memberships).options(
+                            selectinload(models.ProjectMember.user)
+                        )
                     ),
                     selectinload(models.Dataset.primary_site).options(
                         selectinload(models.Site.images)
@@ -900,7 +870,9 @@ class MLProjectAPI(
                 selectinload(models.MLProjectDatasetScope.foundation_model_run).options(
                     selectinload(models.FoundationModelRun.foundation_model),
                     selectinload(models.FoundationModelRun.dataset),
-                    selectinload(models.FoundationModelRun.species),
+                    selectinload(models.FoundationModelRun.species).options(
+                        selectinload(models.FoundationModelRunSpecies.tag)
+                    ),
                 ),
             )
         )
@@ -951,7 +923,9 @@ class MLProjectAPI(
             .options(
                 selectinload(models.MLProjectDatasetScope.dataset).options(
                     selectinload(models.Dataset.project).options(
-                        selectinload(models.Project.memberships)
+                        selectinload(models.Project.memberships).options(
+                            selectinload(models.ProjectMember.user)
+                        )
                     ),
                     selectinload(models.Dataset.primary_site).options(
                         selectinload(models.Site.images)
@@ -962,7 +936,9 @@ class MLProjectAPI(
                 selectinload(models.MLProjectDatasetScope.foundation_model_run).options(
                     selectinload(models.FoundationModelRun.foundation_model),
                     selectinload(models.FoundationModelRun.dataset),
-                    selectinload(models.FoundationModelRun.species),
+                    selectinload(models.FoundationModelRun.species).options(
+                        selectinload(models.FoundationModelRunSpecies.tag)
+                    ),
                 ),
             )
             .order_by(
@@ -1015,7 +991,9 @@ class MLProjectAPI(
             .options(
                 selectinload(models.MLProjectDatasetScope.dataset).options(
                     selectinload(models.Dataset.project).options(
-                        selectinload(models.Project.memberships)
+                        selectinload(models.Project.memberships).options(
+                            selectinload(models.ProjectMember.user)
+                        )
                     ),
                     selectinload(models.Dataset.primary_site).options(
                         selectinload(models.Site.images)
@@ -1026,7 +1004,9 @@ class MLProjectAPI(
                 selectinload(models.MLProjectDatasetScope.foundation_model_run).options(
                     selectinload(models.FoundationModelRun.foundation_model),
                     selectinload(models.FoundationModelRun.dataset),
-                    selectinload(models.FoundationModelRun.species),
+                    selectinload(models.FoundationModelRun.species).options(
+                        selectinload(models.FoundationModelRunSpecies.tag)
+                    ),
                 ),
             )
         )

@@ -16,7 +16,7 @@ from sqlalchemy.sql import ColumnElement, ColumnExpressionArgument
 
 from echoroo import exceptions, models, schemas
 from echoroo.api import common
-from echoroo.api.common import BaseAPI
+from echoroo.api.common import BaseAPI, UserResolutionMixin
 from echoroo.api.common.permissions import can_manage_project
 from echoroo.filters.base import Filter
 
@@ -131,27 +131,13 @@ class CustomModelStandaloneAPI(
         schemas.CustomModel,
         schemas.CustomModelCreateStandalone,
         schemas.CustomModel,
-    ]
+    ],
+    UserResolutionMixin,
 ):
     """API for managing Standalone Custom Models."""
 
     _model = models.CustomModel
     _schema = schemas.CustomModel
-
-    async def _resolve_user(
-        self,
-        session: AsyncSession,
-        user: models.User | schemas.SimpleUser | None,
-    ) -> models.User | None:
-        """Resolve a user schema to a user model."""
-        if user is None:
-            return None
-        if isinstance(user, models.User):
-            return user
-        db_user = await session.get(models.User, user.id)
-        if db_user is None:
-            raise exceptions.NotFoundError(f"User with id {user.id} not found")
-        return db_user
 
     async def _eager_load_relationships(
         self,

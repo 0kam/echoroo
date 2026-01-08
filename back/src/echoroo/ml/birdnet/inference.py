@@ -266,6 +266,7 @@ class BirdNETInference(InferenceEngine):
                 kwargs["n_workers"] = self._workers
         return kwargs
 
+
     def _extract_embeddings(self, embeddings_result: Any) -> NDArray[np.float32]:
         """Normalize embeddings result into a float32 numpy array."""
         embeddings = (
@@ -364,6 +365,7 @@ class BirdNETInference(InferenceEngine):
             yield tmp_path
         finally:
             os.unlink(tmp_path)
+
 
     def predict_file(
         self,

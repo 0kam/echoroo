@@ -234,7 +234,7 @@ class BirdNETGeoFilter(SpeciesFilter):
         try:
             from echoroo.api import search_gbif_species
 
-            candidates = await search_gbif_species(scientific_name, limit=1)
+            candidates = await search_gbif_species(scientific_name, limit=50)
             if candidates:
                 candidate = candidates[0]
                 taxon_key = candidate.usage_key

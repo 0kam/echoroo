@@ -9,10 +9,12 @@ import { TagSchema } from "./tags";
 
 // MLProject status enum - matches backend MLProjectStatus
 export const MLProjectStatusSchema = z.enum([
-  "draft",
-  "active",
+  "setup",
+  "searching",
+  "labeling",
   "training",
   "inference",
+  "review",
   "completed",
   "archived",
 ]);

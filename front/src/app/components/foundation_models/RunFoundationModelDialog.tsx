@@ -92,6 +92,8 @@ export default function RunFoundationModelDialog({
   const [selectedSlug, setSelectedSlug] = useState<string | null>(null);
   const [threshold, setThreshold] = useState(0.1);
   const [locale, setLocale] = useState("ja");
+  const [runEmbeddings, setRunEmbeddings] = useState(true);
+  const [runPredictions, setRunPredictions] = useState(true);
 
   // Set default selection when models load
   useEffect(() => {
@@ -108,6 +110,8 @@ export default function RunFoundationModelDialog({
       setSelectedSlug(null);
       setThreshold(0.1);
       setLocale("ja");
+      setRunEmbeddings(true);
+      setRunPredictions(true);
     }
   }, [isOpen]);
 
@@ -143,6 +147,8 @@ export default function RunFoundationModelDialog({
       dataset_uuid: datasetUuid,
       foundation_model_slug: selectedSlug,
       confidence_threshold: threshold,
+      run_embeddings: runEmbeddings,
+      run_predictions: runPredictions,
       // Only include locale for BirdNET models
       ...(isBirdNetModel(selectedSlug) ? { locale } : {}),
     });
@@ -279,6 +285,42 @@ export default function RunFoundationModelDialog({
           </div>
         )}
 
+        {/* Processing Options */}
+        <div className="space-y-2">
+          <label className="block text-sm font-semibold text-stone-700 dark:text-stone-200">
+            Processing options
+          </label>
+          <div className="space-y-2 rounded-lg border border-stone-200 p-3 dark:border-stone-600">
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={runEmbeddings}
+                onChange={(e) => setRunEmbeddings(e.target.checked)}
+                disabled={!canRun}
+                className="h-4 w-4 rounded border-stone-300 text-emerald-600 focus:ring-emerald-500 disabled:cursor-not-allowed disabled:opacity-60"
+              />
+              <span className="text-sm text-stone-700 dark:text-stone-200">
+                Generate embeddings
+              </span>
+            </label>
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={runPredictions}
+                onChange={(e) => setRunPredictions(e.target.checked)}
+                disabled={!canRun}
+                className="h-4 w-4 rounded border-stone-300 text-emerald-600 focus:ring-emerald-500 disabled:cursor-not-allowed disabled:opacity-60"
+              />
+              <span className="text-sm text-stone-700 dark:text-stone-200">
+                Generate species predictions
+              </span>
+            </label>
+          </div>
+          <p className="text-xs text-stone-500 dark:text-stone-400">
+            Select which outputs to generate. Embeddings enable similarity search, predictions provide species identifications.
+          </p>
+        </div>
+
         {/* Recording Count Info */}
         {recordingCount !== undefined && recordingCount > 0 && (
           <div className="rounded-lg border border-stone-200 bg-stone-50 p-3 dark:border-stone-700 dark:bg-stone-800">
@@ -308,7 +350,12 @@ export default function RunFoundationModelDialog({
           </Button>
           <Button
             type="submit"
-            disabled={!canRun || mutation.isPending || !selectedSlug}
+            disabled={
+              !canRun ||
+              mutation.isPending ||
+              !selectedSlug ||
+              (!runEmbeddings && !runPredictions)
+            }
             variant="primary"
             mode="filled"
           >

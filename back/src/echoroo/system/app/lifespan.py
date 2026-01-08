@@ -1,4 +1,5 @@
 import logging
+import multiprocessing as mp
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -17,11 +18,31 @@ _species_detection_worker = None
 _species_filter_worker = None
 
 
+def _configure_multiprocessing(settings: Settings) -> None:
+    if not settings.ml_use_gpu:
+        return
+
+    try:
+        current = mp.get_start_method(allow_none=True)
+        if current != "spawn":
+            # Use spawn to avoid fork-related deadlocks with GPU multiprocessing.
+            mp.set_start_method("spawn", force=True)
+            logger.info(
+                "Configured multiprocessing start method to 'spawn' for GPU inference"
+            )
+    except RuntimeError as exc:
+        logger.warning(
+            "Unable to configure multiprocessing start method: %s",
+            exc,
+        )
+
+
 @asynccontextmanager
 async def lifespan(settings: Settings, _: FastAPI):
     """Context manager to run startup and shutdown events."""
     global _species_detection_worker, _species_filter_worker
 
+    _configure_multiprocessing(settings)
     await echoroo_init(settings)
 
     # Create shared session factory for workers

@@ -204,6 +204,7 @@ function CreateSessionDialog({
   const [boundaryN, setBoundaryN] = useState("200");
   const [boundaryM, setBoundaryM] = useState("10");
   const [othersP, setOthersP] = useState("20");
+  const [distanceMetric, setDistanceMetric] = useState<"cosine" | "euclidean">("cosine");
 
   // Fetch reference sounds
   const { data: soundsData } = useQuery({
@@ -226,6 +227,7 @@ function CreateSessionDialog({
         boundary_n: parseInt(boundaryN),
         boundary_m: parseInt(boundaryM),
         others_p: parseInt(othersP),
+        distance_metric: distanceMetric,
       });
       toast.success("Search session created");
       setName("");
@@ -235,6 +237,7 @@ function CreateSessionDialog({
       setBoundaryN("200");
       setBoundaryM("10");
       setOthersP("20");
+      setDistanceMetric("cosine");
       setShowAdvanced(false);
       onSuccess();
       onClose();
@@ -431,6 +434,40 @@ function CreateSessionDialog({
                   </p>
                 </div>
               </div>
+
+              {/* Distance Metric */}
+              <div className="mt-4">
+                <label className="block text-sm font-medium text-stone-700 dark:text-stone-300 mb-2">
+                  Distance Metric
+                </label>
+                <div className="flex gap-4">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="distance_metric"
+                      value="cosine"
+                      checked={distanceMetric === "cosine"}
+                      onChange={() => setDistanceMetric("cosine")}
+                      className="text-emerald-600"
+                    />
+                    <span className="text-sm text-stone-700 dark:text-stone-300">Cosine Similarity (Recommended)</span>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="distance_metric"
+                      value="euclidean"
+                      checked={distanceMetric === "euclidean"}
+                      onChange={() => setDistanceMetric("euclidean")}
+                      className="text-emerald-600"
+                    />
+                    <span className="text-sm text-stone-700 dark:text-stone-300">Euclidean Distance</span>
+                  </label>
+                </div>
+                <p className="text-xs text-stone-400 mt-1">
+                  Method for measuring similarity between audio embeddings
+                </p>
+              </div>
             </div>
           )}
         </div>
@@ -467,6 +504,7 @@ export default function SearchSessionsPage() {
   const queryClient = useQueryClient();
 
   const [showCreateDialog, setShowCreateDialog] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
 
   // Fetch search sessions
   const { data, isLoading, refetch } = useQuery({
@@ -493,12 +531,17 @@ export default function SearchSessionsPage() {
 
   const handleDelete = useCallback(
     (sessionUuid: string) => {
-      if (confirm("Are you sure you want to delete this search session?")) {
-        deleteMutation.mutate(sessionUuid);
-      }
+      setDeleteTarget(sessionUuid);
     },
-    [deleteMutation],
+    [],
   );
+
+  const confirmDelete = useCallback(() => {
+    if (deleteTarget) {
+      deleteMutation.mutate(deleteTarget);
+      setDeleteTarget(null);
+    }
+  }, [deleteTarget, deleteMutation]);
 
   const handleSuccess = useCallback(() => {
     refetch();
@@ -564,6 +607,28 @@ export default function SearchSessionsPage() {
         mlProjectUuid={mlProjectUuid}
         onSuccess={handleSuccess}
       />
+
+      {/* Delete Confirmation Dialog */}
+      <DialogOverlay
+        title="Delete Search Session"
+        isOpen={deleteTarget !== null}
+        onClose={() => setDeleteTarget(null)}
+      >
+        <div className="space-y-4">
+          <p className="text-stone-600 dark:text-stone-400">
+            Are you sure you want to delete this search session? This action cannot be undone.
+          </p>
+          <div className="flex justify-end gap-2">
+            <Button variant="secondary" onClick={() => setDeleteTarget(null)}>
+              Cancel
+            </Button>
+            <Button mode="text" variant="danger" onClick={confirmDelete}>
+              <Trash2 className="w-4 h-4 mr-2" />
+              Delete
+            </Button>
+          </div>
+        </div>
+      </DialogOverlay>
     </div>
   );
 }

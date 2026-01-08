@@ -33,7 +33,7 @@ export const FoundationModelRunSpeciesSchema = z.object({
   annotation_tag_id: z.number().nullable().optional(),
   tag: TagSchema.nullish(),
   scientific_name: z.string(),
-  common_name_ja: z.string().nullable().optional(),
+  vernacular_name: z.string().nullable().optional(),
   detection_count: z.number(),
   avg_confidence: z.number(),
   created_on: z.coerce.date(),
@@ -77,6 +77,8 @@ export const FoundationModelRunCreateSchema = z.object({
   confidence_threshold: z.number().min(0).max(1).optional(),
   scope: z.record(z.any()).optional(),
   locale: z.string().optional(),
+  run_embeddings: z.boolean().optional().default(true),
+  run_predictions: z.boolean().optional().default(true),
 });
 
 // ============================================================================

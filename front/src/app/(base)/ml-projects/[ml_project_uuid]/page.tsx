@@ -38,10 +38,12 @@ import MLProjectContext from "./context";
 
 // Define workflow steps - matches backend MLProjectStatus enum
 const WORKFLOW_STEPS: { status: MLProjectStatus; label: string; description: string }[] = [
-  { status: "draft", label: "Draft", description: "Configure project and add reference sounds" },
-  { status: "active", label: "Active", description: "Search, label, and prepare training data" },
+  { status: "setup", label: "Setup", description: "Define targets and add reference sounds" },
+  { status: "searching", label: "Searching", description: "Similarity search in progress" },
+  { status: "labeling", label: "Labeling", description: "Review and label search results" },
   { status: "training", label: "Training", description: "Train custom detection model" },
   { status: "inference", label: "Inference", description: "Run model on new data" },
+  { status: "review", label: "Review", description: "Review model predictions" },
   { status: "completed", label: "Completed", description: "Project workflow complete" },
 ];
 

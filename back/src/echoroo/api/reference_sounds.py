@@ -18,7 +18,7 @@ from sqlalchemy.sql import ColumnExpressionArgument
 
 from echoroo import exceptions, models, schemas
 from echoroo.api import common
-from echoroo.api.common import BaseAPI
+from echoroo.api.common import BaseAPI, UserResolutionMixin
 from echoroo.api.ml_projects import can_edit_ml_project, can_view_ml_project
 from echoroo.api.species import get_gbif_vernacular_name
 from echoroo.filters.base import Filter
@@ -40,41 +40,27 @@ class ReferenceSoundAPI(
         schemas.ReferenceSound,
         schemas.ReferenceSoundCreate,
         schemas.ReferenceSoundUpdate,
-    ]
+    ],
+    UserResolutionMixin,
 ):
     """API for managing Reference Sounds."""
 
     _model = models.ReferenceSound
     _schema = schemas.ReferenceSound
 
-    async def _resolve_user(
-        self,
-        session: AsyncSession,
-        user: models.User | schemas.SimpleUser | None,
-    ) -> models.User | None:
-        """Resolve a user schema to a user model."""
-        if user is None:
-            return None
-        if isinstance(user, models.User):
-            return user
-        db_user = await session.get(models.User, user.id)
-        if db_user is None:
-            raise exceptions.NotFoundError(f"User with id {user.id} not found")
-        return db_user
-
     async def _get_ml_project(
         self,
         session: AsyncSession,
         ml_project_id: int,
     ) -> models.MLProject:
-        """Get ML project by ID with embedding_model_run loaded."""
+        """Get ML project by ID with foundation_model loaded."""
         from sqlalchemy import select
         from sqlalchemy.orm import selectinload
 
         stmt = (
             select(models.MLProject)
             .where(models.MLProject.id == ml_project_id)
-            .options(selectinload(models.MLProject.embedding_model_run))
+            .options(selectinload(models.MLProject.foundation_model))
         )
         result = await session.execute(stmt)
         ml_project = result.unique().scalar_one_or_none()
@@ -242,11 +228,11 @@ class ReferenceSoundAPI(
                 "You do not have permission to add reference sounds to this ML project"
             )
 
-        # Verify ML project has an embedding model configured
-        if ml_project.embedding_model_run is None:
+        # Verify ML project has a foundation model configured
+        if ml_project.foundation_model is None:
             raise exceptions.InvalidDataError(
-                "ML Project does not have an embedding model configured. "
-                "Please add a dataset scope with foundation model detection first."
+                "ML Project does not have a foundation model configured. "
+                "Please select a foundation model for the ML project first."
             )
 
         # Check if tag exists
@@ -372,11 +358,11 @@ class ReferenceSoundAPI(
         if clip is None:
             raise exceptions.NotFoundError(f"Clip with id {data.clip_id} not found")
 
-        # Verify ML project has an embedding model configured
-        if ml_project.embedding_model_run is None:
+        # Verify ML project has a foundation model configured
+        if ml_project.foundation_model is None:
             raise exceptions.InvalidDataError(
-                "ML Project does not have an embedding model configured. "
-                "Please add a dataset scope with foundation model detection first."
+                "ML Project does not have a foundation model configured. "
+                "Please select a foundation model for the ML project first."
             )
 
         # Load audio from clip and compute sliding window embeddings
@@ -482,7 +468,7 @@ class ReferenceSoundAPI(
         This method loads audio from the source (Xeno-Canto, dataset clip,
         or custom upload), extracts the segment defined by start_time/end_time,
         runs the appropriate model (BirdNET or Perch) based on the ML project's
-        embedding_model_run to generate embeddings, and stores the result.
+        foundation_model to generate embeddings, and stores the result.
 
         Parameters
         ----------
@@ -523,11 +509,11 @@ class ReferenceSoundAPI(
                 "You do not have permission to modify this reference sound"
             )
 
-        # Verify ML project has an embedding model configured
-        if ml_project.embedding_model_run is None:
+        # Verify ML project has a foundation model configured
+        if ml_project.foundation_model is None:
             raise exceptions.InvalidDataError(
-                "ML Project does not have an embedding model configured. "
-                "Please run foundation model detection on the datasets first."
+                "ML Project does not have a foundation model configured. "
+                "Please select a foundation model for the ML project first."
             )
 
         # Get audio directory from settings if not provided
@@ -568,7 +554,7 @@ class ReferenceSoundAPI(
 
         await session.flush()
 
-        model_name = ml_project.embedding_model_run.name.lower()
+        model_name = ml_project.foundation_model.provider.lower()
         logger.info(
             f"Computed {len(embeddings)} embeddings for reference sound {obj.uuid} "
             f"using {model_name} model (dimension: {len(embeddings[0][2])})"
@@ -771,9 +757,9 @@ class ReferenceSoundAPI(
         start_time: float,
         end_time: float,
         window_size: float,
-        overlap_rate: float = 0.7,
+        overlap_rate: float = 0.75,
     ) -> list[tuple[float, float, NDArray[np.float32]]]:
-        """Compute embeddings using sliding windows that cover at least 50% of the selected segment.
+        """Compute embeddings using sliding windows that cover at least 75% of the selected segment.
 
         Parameters
         ----------
@@ -788,19 +774,19 @@ class ReferenceSoundAPI(
         window_size
             Size of each window in seconds (3s for BirdNET, 5s for Perch).
         overlap_rate
-            Overlap rate between consecutive windows (default 0.7 = 70%).
+            Overlap rate between consecutive windows (default 0.75 = 75%).
 
         Returns
         -------
         list[tuple[float, float, NDArray[np.float32]]]
             List of tuples (window_start, window_end, embedding) for each window
-            that overlaps at least 50% with the selected segment.
+            that overlaps at least 75% with the selected segment.
         """
         # Calculate hop size
         hop_size = window_size * (1.0 - overlap_rate)
 
-        # Calculate minimum overlap required (50% of window)
-        min_overlap = window_size * 0.5
+        # Calculate minimum overlap required (75% of window)
+        min_overlap = window_size * 0.75
 
         # Get audio duration
         audio_duration = len(samples) / samplerate
@@ -823,7 +809,7 @@ class ReferenceSoundAPI(
             overlap_end = min(window_end, end_time)
             overlap_duration = max(0.0, overlap_end - overlap_start)
 
-            # Check if overlap is at least 50% of window size
+            # Check if overlap is at least 75% of window size
             if overlap_duration >= min_overlap:
                 # Extract this window's audio
                 start_sample = int(window_start * samplerate)
@@ -877,12 +863,12 @@ class ReferenceSoundAPI(
         """Compute sliding window embeddings for an audio segment using the ML project's model.
 
         Automatically selects BirdNET or Perch based on the ML project's
-        embedding_model_run configuration.
+        foundation_model configuration.
 
         Parameters
         ----------
         ml_project
-            ML project with embedding_model_run loaded.
+            ML project with foundation_model loaded.
         samples
             Audio samples as numpy array.
         samplerate
@@ -897,7 +883,7 @@ class ReferenceSoundAPI(
         list[tuple[float, float, NDArray[np.float32]]]
             List of tuples (window_start, window_end, embedding) for each sliding window.
         """
-        model_name = ml_project.embedding_model_run.name.lower()
+        model_name = ml_project.foundation_model.provider.lower()
 
         if "birdnet" in model_name:
             from echoroo.ml.birdnet.constants import (
@@ -931,7 +917,7 @@ class ReferenceSoundAPI(
                 adjusted_start,
                 adjusted_end,
                 window_size=SEGMENT_DURATION,
-                overlap_rate=0.7,
+                overlap_rate=0.75,
             )
 
             if not windows:
@@ -984,7 +970,7 @@ class ReferenceSoundAPI(
                 adjusted_start,
                 adjusted_end,
                 window_size=SEGMENT_DURATION,
-                overlap_rate=0.7,
+                overlap_rate=0.75,
             )
 
             if not windows:
@@ -1096,9 +1082,8 @@ class ReferenceSoundAPI(
         if not audio_segments:
             return []
 
-        # Get device setting
-        settings = get_settings()
-        device: Literal["GPU", "CPU"] = "GPU" if settings.ml_use_gpu else "CPU"
+        # Use CPU for reference sound embeddings to avoid GPU OOM with multiple segments
+        device: Literal["GPU", "CPU"] = "CPU"
 
         # Pad/truncate all segments to exact length
         processed_segments = []
@@ -1126,10 +1111,8 @@ class ReferenceSoundAPI(
             tmp_path = tmp.name
 
         try:
-            # Build inference kwargs
+            # Build inference kwargs - CPU mode doesn't need batch_size
             infer_kwargs = {"device": device}
-            if device != "CPU":
-                infer_kwargs["batch_size"] = min(len(audio_segments), 16)
 
             # Call encode once for all segments
             embeddings_result = model.encode(tmp_path, **infer_kwargs)
@@ -1193,9 +1176,8 @@ class ReferenceSoundAPI(
         if not audio_segments:
             return []
 
-        # Get device setting
-        settings = get_settings()
-        device: Literal["GPU", "CPU"] = "GPU" if settings.ml_use_gpu else "CPU"
+        # Use CPU for reference sound embeddings to avoid GPU OOM with multiple segments
+        device: Literal["GPU", "CPU"] = "CPU"
 
         # Pad/truncate all segments to exact length
         processed_segments = []
@@ -1223,10 +1205,8 @@ class ReferenceSoundAPI(
             tmp_path = tmp.name
 
         try:
-            # Build inference kwargs
+            # Build inference kwargs - CPU mode doesn't need batch_size
             infer_kwargs = {"device": device}
-            if device != "CPU":
-                infer_kwargs["batch_size"] = min(len(audio_segments), 16)
 
             # Call encode once for all segments
             embeddings_result = model.encode(tmp_path, **infer_kwargs)

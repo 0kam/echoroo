@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import datetime
-from enum import Enum
 from typing import Any
 from uuid import UUID
 
 from pydantic import BaseModel, Field
 
+from echoroo.models.foundation_model import (
+    FoundationModelRunStatus,
+)
 from echoroo.schemas.base import BaseSchema
 from echoroo.schemas.datasets import Dataset
 from echoroo.schemas.tags import Tag
@@ -39,17 +41,6 @@ class FoundationModel(BaseSchema):
     is_active: bool = True
 
 
-class FoundationModelRunStatus(str, Enum):
-    """Run status enumeration."""
-
-    QUEUED = "queued"
-    RUNNING = "running"
-    POST_PROCESSING = "post_processing"
-    COMPLETED = "completed"
-    FAILED = "failed"
-    CANCELLED = "cancelled"
-
-
 class FoundationModelRunSpecies(BaseSchema):
     """Aggregated species summary for a run."""
 
@@ -59,13 +50,15 @@ class FoundationModelRunSpecies(BaseSchema):
     annotation_tag_id: int | None = Field(default=None, exclude=True)
     tag: Tag | None = None
     scientific_name: str
-    common_name_ja: str | None = None
+    vernacular_name: str | None = None
     detection_count: int = 0
     avg_confidence: float = 0.0
 
 
 class FoundationModelRun(BaseSchema):
     """Run record schema."""
+
+    model_config = {"protected_namespaces": ()}
 
     id: int = Field(..., exclude=True)
     uuid: UUID
@@ -78,6 +71,19 @@ class FoundationModelRun(BaseSchema):
     status: FoundationModelRunStatus = FoundationModelRunStatus.QUEUED
     confidence_threshold: float = 0.1
     scope: dict[str, Any] | None = None
+
+    # Job configuration fields
+    name: str | None = None
+    model_name: str = "birdnet"
+    model_version: str = "latest"
+    overlap: float = 0.0
+    locale: str = "ja"
+    use_metadata_filter: bool = False
+    custom_species_list: list[str] | None = None
+
+    run_embeddings: bool = True
+    run_predictions: bool = True
+
     progress: float = 0.0
     total_recordings: int = 0
     processed_recordings: int = 0
@@ -103,16 +109,33 @@ class DatasetFoundationModelSummary(BaseModel):
 class FoundationModelRunCreate(BaseModel):
     """Payload to create a new run."""
 
+    model_config = {"protected_namespaces": ()}
+
     dataset_uuid: UUID
     foundation_model_slug: str
     confidence_threshold: float | None = Field(default=None, ge=0.0, le=1.0)
     scope: dict[str, Any] | None = None
+
+    # Job configuration fields
+    name: str | None = Field(default=None, max_length=255)
+    model_name: str = Field(default="birdnet", description="Model to use (birdnet or perch)")
+    model_version: str = Field(default="latest", description="Model version")
+    overlap: float = Field(default=0.0, ge=0.0, le=0.9, description="Overlap between analysis windows")
     locale: str = Field(
         default="ja",
         max_length=16,
         description="Locale for species common names (e.g., 'en_us', 'ja')",
     )
-    """Locale for species common names. Defaults to Japanese ('ja')."""
+    use_metadata_filter: bool = Field(
+        default=False,
+        description="Apply species filters explicitly after the run",
+    )
+    custom_species_list: list[str] | None = Field(
+        default=None,
+        description="Custom list of species to detect",
+    )
+    run_embeddings: bool = Field(default=True, description="Generate embeddings")
+    run_predictions: bool = Field(default=True, description="Generate species predictions")
 
 
 class FoundationModelRunProgress(BaseModel):

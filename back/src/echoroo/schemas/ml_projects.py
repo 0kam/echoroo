@@ -24,25 +24,31 @@ __all__ = [
 
 
 class MLProjectStatus(str, Enum):
-    """Status of an ML project."""
+    """Status of an ML project - matches model definition."""
 
-    DRAFT = "draft"
-    """Project is being configured, not yet ready for searches."""
+    SETUP = "setup"
+    """Initial setup phase - defining targets and references."""
 
-    ACTIVE = "active"
-    """Project is ready for reference sound collection and searches."""
+    SEARCHING = "searching"
+    """Similarity search in progress."""
+
+    LABELING = "labeling"
+    """Reviewing and labeling search results."""
 
     TRAINING = "training"
-    """A custom model is currently being trained."""
+    """Training a custom classifier."""
 
     INFERENCE = "inference"
-    """Running batch inference on the dataset."""
+    """Running inference on unlabeled data."""
+
+    REVIEW = "review"
+    """Reviewing model predictions."""
 
     COMPLETED = "completed"
-    """Project workflow has been completed."""
+    """Workflow completed, ready for export."""
 
     ARCHIVED = "archived"
-    """Project has been archived and is read-only."""
+    """Project archived and no longer active."""
 
 
 class MLProjectCreate(BaseModel):
@@ -73,29 +79,17 @@ class MLProject(BaseSchema):
     description: str | None = None
     """A description of the ML project goals and methodology."""
 
-    status: MLProjectStatus = MLProjectStatus.DRAFT
+    status: MLProjectStatus = MLProjectStatus.SETUP
     """Current status of the ML project."""
 
     project_id: str
     """Project identifier for access control."""
-
-    dataset_id: int | None = None
-    """Primary dataset identifier containing the audio data (legacy)."""
-
-    dataset: Dataset | None = None
-    """Hydrated primary dataset information."""
 
     foundation_model_id: int | None = None
     """Foundation model identifier used for embeddings."""
 
     foundation_model: FoundationModel | None = None
     """Hydrated foundation model information."""
-
-    embedding_model_run_id: int | None = None
-    """Model run identifier used for embeddings (legacy)."""
-
-    embedding_model_run: ModelRun | None = None
-    """Hydrated model run information."""
 
     default_similarity_threshold: float = 0.8
     """Default threshold for similarity searches."""
@@ -133,9 +127,6 @@ class MLProjectUpdate(BaseModel):
 
     status: MLProjectStatus | None = None
     """Current status of the ML project."""
-
-    embedding_model_run_id: int | None = None
-    """Model run identifier used for embeddings."""
 
     default_similarity_threshold: float | None = Field(
         default=None,

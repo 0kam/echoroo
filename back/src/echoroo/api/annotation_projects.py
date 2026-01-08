@@ -14,7 +14,7 @@ from echoroo import exceptions, models, schemas
 from echoroo.api import common
 from echoroo.api.annotation_tasks import annotation_tasks
 from echoroo.api.clip_annotations import clip_annotations
-from echoroo.api.common import BaseAPI
+from echoroo.api.common import BaseAPI, UserResolutionMixin
 from echoroo.api.common.permissions import (
     can_delete_annotation_project,
     can_edit_annotation_project,
@@ -44,26 +44,11 @@ class AnnotationProjectAPI(
         schemas.AnnotationProject,
         schemas.AnnotationProjectCreate,
         schemas.AnnotationProjectUpdate,
-    ]
+    ],
+    UserResolutionMixin,
 ):
     _model = models.AnnotationProject
     _schema = schemas.AnnotationProject
-
-    async def _resolve_user(
-        self,
-        session: AsyncSession,
-        user: models.User | schemas.SimpleUser | None,
-    ) -> models.User | None:
-        if user is None:
-            return None
-        if isinstance(user, models.User):
-            return user
-        db_user = await session.get(models.User, user.id)
-        if db_user is None:
-            raise exceptions.NotFoundError(
-                f"User with id {user.id} not found"
-            )
-        return db_user
 
     async def _ensure_project_manager(
         self,

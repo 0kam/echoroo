@@ -305,6 +305,52 @@ class ModelLoader(ABC):
     The loader separates model loading logic from inference logic, allowing
     models to be loaded/unloaded independently of the inference engine.
 
+    Implementation Checklist
+    ------------------------
+    To implement a new model loader:
+
+    1. Create a `constants.py` file with model-specific constants:
+       - MODEL_NAME, MODEL_VERSION
+       - SAMPLE_RATE, SEGMENT_DURATION, SEGMENT_SAMPLES
+       - EMBEDDING_DIM
+
+    2. Implement the `specification` property returning ModelSpecification
+       with all required metadata.
+
+    3. Implement `_load_model()` to load and return the model object:
+       - Handle ImportError for missing dependencies
+       - Extract species_list from model if available
+       - Log loading progress
+
+    4. (Optional) Add device parameter to __init__ for GPU/CPU selection:
+       - Store as self._device
+       - Override `device` property
+       - Call _configure_device() in _load_model()
+
+    5. Register with ModelRegistry in your model's `__init__.py`.
+
+    Device Management
+    -----------------
+    To add device selection (GPU/CPU), override `__init__` to accept a `device`
+    parameter and implement `_configure_device()`:
+
+    >>> class MyModelLoader(ModelLoader):
+    ...     def __init__(self, model_dir=None, device="GPU"):
+    ...         super().__init__(model_dir)
+    ...         self._device = device
+    ...
+    ...     @property
+    ...     def device(self) -> str:
+    ...         return self._device
+    ...
+    ...     def _configure_device(self) -> None:
+    ...         if self._device == "CPU":
+    ...             os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
+    ...
+    ...     def _load_model(self):
+    ...         self._configure_device()
+    ...         return load_my_model()
+
     Parameters
     ----------
     model_dir : Path | None, optional
@@ -371,6 +417,31 @@ class ModelLoader(ABC):
             True if the model is loaded in memory, False otherwise.
         """
         return self._loaded
+
+    @property
+    def device(self) -> str | None:
+        """Get the device being used for inference.
+
+        Override this property in subclasses that support device selection.
+        Default implementation returns None (device selection not supported).
+
+        Returns
+        -------
+        str | None
+            Device identifier ("GPU", "CPU") or None if not applicable.
+        """
+        return getattr(self, "_device", None)
+
+    def _configure_device(self) -> None:
+        """Configure the device before loading.
+
+        Override this method to implement GPU/CPU selection logic.
+        This is called by subclasses that support device management
+        at the start of _load_model().
+
+        Default implementation does nothing.
+        """
+        pass
 
     @abstractmethod
     def _load_model(self) -> Any:
@@ -502,6 +573,51 @@ class InferenceEngine(ABC):
     The engine depends on a ModelLoader for accessing the loaded model
     and uses AudioPreprocessor for processing audio files.
 
+    Implementation Checklist
+    ------------------------
+    When implementing a new InferenceEngine:
+
+    1. **Required Methods**:
+       - ``predict_segment(audio, start_time)`` - Single segment inference
+       - ``predict_batch(segments, start_times)`` - Batch inference
+
+    2. **Optional Overrides** (for optimization):
+       - ``predict_file(path, overlap)`` - Override when the underlying model
+         supports file-based inference (see Performance Notes below)
+
+    3. **InferenceResult Construction**:
+       Return InferenceResult with all required fields::
+
+           return InferenceResult(
+               start_time=start_time,
+               embedding=embedding,  # NDArray[np.float32], shape (embedding_dim,)
+               predictions=predictions,  # list[SpeciesPrediction]
+           )
+
+    Performance Notes
+    -----------------
+    **When to override predict_file:**
+
+    The default ``predict_file`` implementation:
+    1. Loads audio and segments it in Python
+    2. Passes segments to ``predict_batch``
+
+    Override ``predict_file`` when the model library supports direct file processing
+    (e.g., BirdNET's ``analyze_file()``, Perch's ``model.encode(path)``). This reduces:
+    - Temporary file I/O (N segments → 1 file)
+    - Memory copies between Python and the model
+    - Overhead from repeated model initialization per segment
+
+    **Example: File-based optimization pattern**::
+
+        def predict_file(self, path: Path, overlap: float = 0.0) -> list[InferenceResult]:
+            # Direct file-based inference
+            embeddings = self._model.encode(str(path))
+            predictions = self._model.predict(str(path))
+
+            # Convert to InferenceResults
+            return self._build_results_from_file_output(embeddings, predictions)
+
     Parameters
     ----------
     loader : ModelLoader
@@ -514,12 +630,33 @@ class InferenceEngine(ABC):
 
     Examples
     --------
-    >>> loader = MyModelLoader()
-    >>> loader.load()
-    >>> engine = MyInferenceEngine(loader)
-    >>> results = engine.predict_file(Path("audio.wav"))
-    >>> for result in results:
-    ...     print(f"{result.start_time}s: {result.top_prediction}")
+    Basic usage::
+
+        >>> loader = MyModelLoader()
+        >>> loader.load()
+        >>> engine = MyInferenceEngine(loader)
+        >>> results = engine.predict_file(Path("audio.wav"))
+        >>> for result in results:
+        ...     print(f"{result.start_time}s: {result.top_prediction}")
+
+    Custom implementation with file-based optimization::
+
+        class OptimizedEngine(InferenceEngine):
+            def predict_segment(self, audio, start_time):
+                # Required: handle single segment
+                embedding = self._model.encode_array(audio)
+                preds = self._model.predict_array(audio)
+                return InferenceResult(start_time=start_time, ...)
+
+            def predict_batch(self, segments, start_times):
+                # Required: handle batch (can just call predict_segment in loop)
+                return [self.predict_segment(s, t) for s, t in zip(segments, start_times)]
+
+            def predict_file(self, path, overlap=0.0):
+                # Optional: override for performance when model supports files
+                all_embeddings = self._model.encode(str(path))
+                all_predictions = self._model.predict(str(path))
+                return self._parse_file_results(all_embeddings, all_predictions)
     """
 
     def __init__(self, loader: ModelLoader) -> None:

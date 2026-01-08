@@ -1,6 +1,7 @@
 """Common API functions."""
 
 from echoroo.api.common.base import BaseAPI
+from echoroo.api.common.mixins import UserResolutionMixin
 from echoroo.api.common.utils import (
     add_feature_to_object,
     add_note_to_object,
@@ -22,21 +23,28 @@ from echoroo.api.common.utils import (
     update_feature_on_object,
     update_object,
 )
+from echoroo.api.common.decorators import (  # noqa: F401
+    require_ml_project_access,
+)
 from echoroo.api.common.permissions import (  # noqa: F401
     can_delete_annotation_project,
     can_delete_dataset,
     can_edit_annotation_project,
     can_edit_dataset,
+    can_edit_project,
+    can_manage_project,
     can_manage_project_annotation_projects,
     can_manage_project_datasets,
     can_view_annotation_project,
     can_view_dataset,
+    can_view_project,
     filter_annotation_projects_by_access,
     filter_datasets_by_access,
 )
 
 __all__ = [
     "BaseAPI",
+    "UserResolutionMixin",
     "add_feature_to_object",
     "add_note_to_object",
     "add_tag_to_object",
@@ -60,10 +68,14 @@ __all__ = [
     "can_delete_dataset",
     "can_edit_annotation_project",
     "can_edit_dataset",
+    "can_edit_project",
+    "can_manage_project",
     "can_manage_project_annotation_projects",
     "can_manage_project_datasets",
     "can_view_annotation_project",
     "can_view_dataset",
+    "can_view_project",
     "filter_annotation_projects_by_access",
     "filter_datasets_by_access",
+    "require_ml_project_access",
 ]

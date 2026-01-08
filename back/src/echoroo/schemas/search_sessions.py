@@ -6,6 +6,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
+from echoroo.models.search_session import SampleType
 from echoroo.schemas.base import BaseSchema
 from echoroo.schemas.clips import Clip
 from echoroo.schemas.tags import Tag
@@ -28,6 +29,8 @@ __all__ = [
     "ExportToAnnotationProjectResponse",
     "TagScoreDistribution",
     "ScoreDistributionResponse",
+    "FinalizeRequest",
+    "FinalizeResponse",
 ]
 
 
@@ -105,19 +108,18 @@ class SearchResultLabelData(BaseModel):
     """Data for labeling a search result in Active Learning.
 
     A result can be labeled in one of several ways:
-    - assigned_tag_id: Assign a specific tag (positive label)
+    - assigned_tag_ids: Assign multiple tags (multi-label, preferred)
+    - assigned_tag_id: Assign a single tag (deprecated, for backward compatibility)
     - is_negative: Mark as not containing any target sound
     - is_uncertain: Mark as uncertain/needs review
     - is_skipped: Skip without labeling
-
-    Only one of these should be set at a time.
     """
 
-    assigned_tag_id: int | None = Field(
-        default=None,
-        description="Tag ID to assign (positive label)",
+    assigned_tag_ids: list[int] = Field(
+        default_factory=list,
+        description="Tag IDs to assign (multi-label support)",
     )
-    """The tag to assign to this result. Mutually exclusive with flags."""
+    """Tags to assign to this result (multi-label support)."""
 
     is_negative: bool = Field(
         default=False,
@@ -139,6 +141,16 @@ class SearchResultLabelData(BaseModel):
 
     notes: str | None = Field(default=None, max_length=2000)
     """Optional notes about the labeling decision."""
+
+    def get_tag_ids(self) -> list[int]:
+        """Get all assigned tag IDs.
+
+        Returns
+        -------
+        list[int]
+            List of assigned tag IDs.
+        """
+        return list(self.assigned_tag_ids)
 
 
 class SearchResult(BaseSchema):
@@ -168,12 +180,12 @@ class SearchResult(BaseSchema):
     rank: int = Field(ge=1)
     """Rank of this result within the session (1 = most similar)."""
 
-    # New Active Learning label fields
-    assigned_tag_id: int | None = None
-    """The tag assigned to this result by the user (positive label)."""
+    # Multi-label support
+    assigned_tag_ids: list[int] = Field(default_factory=list)
+    """Tag IDs assigned to this result (multi-label support)."""
 
-    assigned_tag: Tag | None = None
-    """Hydrated tag information if assigned."""
+    assigned_tags: list[Tag] = Field(default_factory=list)
+    """Hydrated tags assigned to this result (multi-label support)."""
 
     is_negative: bool = False
     """Whether this result is marked as negative."""
@@ -185,8 +197,8 @@ class SearchResult(BaseSchema):
     """Whether this result was skipped during labeling."""
 
     # Sampling metadata
-    sample_type: str | None = None
-    """Type of sample: 'easy_positive', 'boundary', 'others', or 'active_learning'."""
+    sample_type: SampleType | None = None
+    """Type of sample: easy_positive, boundary, others, or active_learning."""
 
     iteration_added: int | None = None
     """The active learning iteration when this sample was added (0 = initial)."""
@@ -209,6 +221,16 @@ class SearchResult(BaseSchema):
 
     notes: str | None = None
     """Optional notes about this result."""
+
+    # Score display fields (for percentile and raw value display)
+    raw_score: float | None = None
+    """Raw score value (cosine: similarity 0-1, euclidean: distance 0-inf)."""
+
+    score_percentile: float | None = None
+    """Percentile rank within session (0-100). Higher = more similar."""
+
+    result_distance_metric: DistanceMetricType | None = None
+    """The distance metric used for this result: 'cosine' or 'euclidean'."""
 
 
 class SearchSession(BaseSchema):
@@ -392,6 +414,12 @@ class RunIterationRequest(BaseModel):
     )
     """Optional list of tag IDs to train classifiers for and select samples from."""
 
+    classifier_type: str = Field(
+        default="logistic_regression",
+        description="Classifier type: logistic_regression, svm_linear, mlp_small, mlp_medium, random_forest",
+    )
+    """Type of classifier to use for this iteration."""
+
 
 class ExportToAnnotationProjectRequest(BaseModel):
     """Schema for exporting search results to an annotation project."""
@@ -473,3 +501,68 @@ class ScoreDistributionResponse(BaseModel):
 
     distributions: list[TagScoreDistribution]
     """Score distributions for each tag."""
+
+
+class FinalizeRequest(BaseModel):
+    """Schema for finalizing a search session and saving the trained model."""
+
+    model_config = {"protected_namespaces": ()}
+
+    model_name: str = Field(
+        ...,
+        min_length=1,
+        max_length=255,
+        description="Name for the saved model",
+    )
+    """Name for the custom model to be created."""
+
+    model_type: str = Field(
+        default="logistic_regression",
+        description="Classifier type: logistic_regression, svm_linear, mlp_small, mlp_medium, random_forest",
+    )
+    """Type of classifier to train and save."""
+
+    create_annotation_project: bool = Field(
+        default=True,
+        description="Whether to create an annotation project from labeled results",
+    )
+    """Whether to also create an annotation project with labeled clips."""
+
+    annotation_project_name: str | None = Field(
+        default=None,
+        max_length=255,
+        description="Name for annotation project (defaults to model_name if not provided)",
+    )
+    """Optional name for the annotation project. Uses model_name if not specified."""
+
+    description: str = Field(
+        default="",
+        max_length=2000,
+        description="Description for the model and annotation project",
+    )
+    """Optional description."""
+
+
+class FinalizeResponse(BaseModel):
+    """Response from finalizing a search session."""
+
+    custom_model_uuid: UUID
+    """UUID of the created custom model."""
+
+    custom_model_name: str
+    """Name of the created custom model."""
+
+    annotation_project_uuid: UUID | None = None
+    """UUID of the created annotation project (if created)."""
+
+    annotation_project_name: str | None = None
+    """Name of the created annotation project (if created)."""
+
+    positive_count: int
+    """Number of positive samples used for training."""
+
+    negative_count: int
+    """Number of negative samples used for training."""
+
+    message: str
+    """Success message with details."""

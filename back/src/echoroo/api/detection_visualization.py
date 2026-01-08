@@ -62,22 +62,12 @@ async def get_detection_temporal_data(
     # Resolve model_run_id
     model_run_id = run.model_run_id
     if model_run_id is None:
-        if run.species_detection_job_id is None:
-            return DetectionTemporalData(
-                run_uuid=str(run_uuid),
-                filter_application_uuid=str(filter_application_uuid) if filter_application_uuid else None,
-                date_range=None,
-                species=[],
-            )
-        job = await session.get(models.SpeciesDetectionJob, run.species_detection_job_id)
-        if job is None or job.model_run_id is None:
-            return DetectionTemporalData(
-                run_uuid=str(run_uuid),
-                filter_application_uuid=str(filter_application_uuid) if filter_application_uuid else None,
-                date_range=None,
-                species=[],
-            )
-        model_run_id = job.model_run_id
+        return DetectionTemporalData(
+            run_uuid=str(run_uuid),
+            filter_application_uuid=str(filter_application_uuid) if filter_application_uuid else None,
+            date_range=None,
+            species=[],
+        )
 
     # Get filter application if specified
     filter_application: models.SpeciesFilterApplication | None = None
@@ -95,15 +85,19 @@ async def get_detection_temporal_data(
     # Build the aggregation query
     # We need to group by: species (tag.canonical_name), date, and hour
     # Extract date and hour from recording.datetime
+    # Use AT TIME ZONE to convert to Japan time before extracting date/hour
 
     # Base query: ClipPrediction -> ModelRunPrediction -> Clip -> Recording
     # Also join ClipPredictionTag -> Tag to get species info
+    # Convert to Asia/Tokyo timezone before extracting date and hour
+    datetime_jst = func.timezone("Asia/Tokyo", models.Recording.datetime)
+
     query = (
         select(
             models.Tag.canonical_name.label("scientific_name"),
             models.Tag.vernacular_name.label("common_name"),
-            func.date(models.Recording.datetime).label("detection_date"),
-            extract("hour", models.Recording.datetime).label("detection_hour"),
+            func.date(datetime_jst).label("detection_date"),
+            extract("hour", datetime_jst).label("detection_hour"),
             func.count(models.ClipPrediction.id.distinct()).label("count"),
         )
         .select_from(models.ClipPrediction)
@@ -131,6 +125,7 @@ async def get_detection_temporal_data(
             models.ModelRunPrediction.model_run_id == model_run_id,
             models.Recording.datetime.isnot(None),
             models.Tag.key == "species",
+            models.ClipPredictionTag.score >= run.confidence_threshold,
         )
     )
 
@@ -149,12 +144,12 @@ async def get_detection_temporal_data(
     query = query.group_by(
         models.Tag.canonical_name,
         models.Tag.vernacular_name,
-        func.date(models.Recording.datetime),
-        extract("hour", models.Recording.datetime),
+        func.date(datetime_jst),
+        extract("hour", datetime_jst),
     ).order_by(
         models.Tag.canonical_name,
-        func.date(models.Recording.datetime),
-        extract("hour", models.Recording.datetime),
+        func.date(datetime_jst),
+        extract("hour", datetime_jst),
     )
 
     result = await session.execute(query)

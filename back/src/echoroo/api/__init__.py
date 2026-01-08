@@ -46,7 +46,6 @@ from echoroo.api.reference_sounds import reference_sounds
 from echoroo.api.search_sessions import search_sessions
 from echoroo.api.custom_models import custom_models
 from echoroo.api.inference_batches import inference_batches
-from echoroo.api.species_detection import species_detection_jobs
 from echoroo.api.species_filters import species_filters
 from echoroo.api.foundation_model_conversion import (
     convert_foundation_model_run_to_annotation_project,
@@ -101,7 +100,6 @@ __all__ = [
     "search_sessions",
     "custom_models",
     "inference_batches",
-    "species_detection_jobs",
     "species_filters",
     "convert_foundation_model_run_to_annotation_project",
 ]

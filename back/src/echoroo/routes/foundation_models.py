@@ -201,6 +201,43 @@ def get_foundation_model_router(settings: EchorooSettings) -> APIRouter:
         await session.commit()
         return result
 
+    @router.delete(
+        "/runs/{run_uuid}",
+        response_model=schemas.FoundationModelRun,
+    )
+    async def delete_run(
+        run_uuid: UUID,
+        session: Session,
+        user: models.User = Depends(current_user_dep),
+    ):
+        """Delete a foundation model run and all associated data.
+
+        This endpoint deletes the FoundationModelRun and ALL associated data:
+        - ClipPredictions linked via ModelRunPrediction
+        - ClipPredictionTags for those predictions
+        - ModelRunPredictions
+        - ClipEmbeddings linked to the ModelRun
+        - DetectionReviews for the run
+        - SpeciesFilterApplications and SpeciesFilterMasks
+        - FoundationModelRunSpecies
+        - ModelRun itself
+        - FoundationModelRun itself
+
+        Note: Cannot delete a run that is currently running (status=RUNNING).
+        Cancel the run first before attempting deletion.
+        """
+        run_schema = await foundation_models.get_run_with_relations(
+            session,
+            run_uuid,
+        )
+        result = await foundation_models.delete_run(
+            session,
+            run_schema,
+            user=user,
+        )
+        await session.commit()
+        return result
+
     @router.get(
         "/runs/{run_uuid}/species/",
         response_model=schemas.FoundationModelRun,

@@ -1141,15 +1141,35 @@ def _get_defaults(model: type[A]):
     defaults = {}
     default_factories = {}
 
-    for field in fields(model):
-        if field.default is not MISSING:
-            defaults[field.name] = field.default
+    # First, try to get defaults from dataclass fields
+    try:
+        for field in fields(model):
+            if field.default is not MISSING:
+                defaults[field.name] = field.default
 
-        elif (
-            field.default_factory is not MISSING
-            and field.default_factory is not list
-        ):
-            default_factories[field.name] = field.default_factory
+            elif (
+                field.default_factory is not MISSING
+                and field.default_factory is not list
+            ):
+                default_factories[field.name] = field.default_factory
+    except TypeError:
+        # Not a dataclass, skip
+        pass
+
+    # Also get defaults from SQLAlchemy mapped columns
+    mapper = inspect(model)
+    for column in mapper.columns:
+        column_name = column.key
+        # Skip if already processed from dataclass fields
+        if column_name in defaults or column_name in default_factories:
+            continue
+
+        # Check for default value
+        if column.default is not None:
+            if column.default.is_callable:
+                default_factories[column_name] = column.default.arg
+            else:
+                defaults[column_name] = column.default.arg
 
     return defaults, default_factories
 

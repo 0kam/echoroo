@@ -1,8 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { FilterIcon } from "lucide-react";
+import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
+import { FilterIcon, Trash2 } from "lucide-react";
+import toast from "react-hot-toast";
 
 import api from "@/app/api";
 import useActiveUser from "@/app/hooks/api/useActiveUser";
@@ -118,8 +119,10 @@ function RunHistoryDrawer({
   datasetUuid: string;
   models: DatasetFoundationModelSummary[];
 }) {
+  const queryClient = useQueryClient();
   const [filterSlug, setFilterSlug] = useState<string | undefined>(undefined);
   const [offset, setOffset] = useState(0);
+  const [deletingRunUuid, setDeletingRunUuid] = useState<string | null>(null);
   const limit = 10;
   const runsQuery = useFoundationModelRuns({
     datasetUuid,
@@ -127,6 +130,45 @@ function RunHistoryDrawer({
     limit,
     offset,
   });
+
+  const deleteMutation = useMutation({
+    mutationFn: ({ runUuid }: { runUuid: string }) => {
+      setDeletingRunUuid(runUuid);
+      return api.foundationModels.deleteRun(runUuid);
+    },
+    onSuccess: () => {
+      setDeletingRunUuid(null);
+      toast.success("Foundation model run deleted successfully");
+      void runsQuery.refetch();
+      void queryClient.invalidateQueries({
+        queryKey: ["foundation-models", datasetUuid],
+      });
+    },
+    onError: (error) => {
+      setDeletingRunUuid(null);
+      console.error("Failed to delete run:", error);
+      toast.error("Failed to delete foundation model run");
+    },
+  });
+
+  const handleDelete = useCallback((run: FoundationModelRun) => {
+    if (run.status === "running" || run.status === "queued" || run.status === "post_processing") {
+      toast.error("Cannot delete a run that is currently in progress");
+      return;
+    }
+
+    const confirmMessage =
+      "Are you sure you want to delete this foundation model run?\n\n" +
+      "This will permanently delete:\n" +
+      "- All species predictions\n" +
+      "- All detection results\n" +
+      "- All associated embeddings\n\n" +
+      "This action cannot be undone.";
+
+    if (window.confirm(confirmMessage)) {
+      deleteMutation.mutate({ runUuid: run.uuid });
+    }
+  }, [deleteMutation]);
 
   useEffect(() => {
     setOffset(0);
@@ -195,28 +237,46 @@ function RunHistoryDrawer({
                     <th className="px-3 py-2 text-left">Requested by</th>
                     <th className="px-3 py-2 text-left">Started</th>
                     <th className="px-3 py-2 text-left">Completed</th>
+                    <th className="px-3 py-2 text-right">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-stone-200 dark:divide-stone-700">
-                  {page.items.map((run) => (
-                    <tr key={run.uuid}>
-                      <td className="px-3 py-2">
-                        {run.foundation_model?.display_name ?? run.foundation_model_id}
-                      </td>
-                      <td className="px-3 py-2">
-                        <StatusBadge run={run} />
-                      </td>
-                      <td className="px-3 py-2">
-                        {run.requested_by?.email ?? "---"}
-                      </td>
-                      <td className="px-3 py-2">
-                        {run.started_on ? formatRelativeTime(run.started_on) : "---"}
-                      </td>
-                      <td className="px-3 py-2">
-                        {run.completed_on ? formatRelativeTime(run.completed_on) : "---"}
-                      </td>
-                    </tr>
-                  ))}
+                  {page.items.map((run) => {
+                    const isRunning = run.status === "running" || run.status === "queued" || run.status === "post_processing";
+                    return (
+                      <tr key={run.uuid}>
+                        <td className="px-3 py-2">
+                          {run.foundation_model?.display_name ?? run.foundation_model_id}
+                        </td>
+                        <td className="px-3 py-2">
+                          <StatusBadge run={run} />
+                        </td>
+                        <td className="px-3 py-2">
+                          {run.requested_by?.email ?? "---"}
+                        </td>
+                        <td className="px-3 py-2">
+                          {run.started_on ? formatRelativeTime(run.started_on) : "---"}
+                        </td>
+                        <td className="px-3 py-2">
+                          {run.completed_on ? formatRelativeTime(run.completed_on) : "---"}
+                        </td>
+                        <td className="px-3 py-2 text-right">
+                          <button
+                            onClick={() => handleDelete(run)}
+                            disabled={isRunning || deletingRunUuid === run.uuid}
+                            title={isRunning ? "Cannot delete a run in progress" : deletingRunUuid === run.uuid ? "Deleting..." : "Delete this run and all associated predictions"}
+                            className={`inline-flex items-center justify-center rounded-lg p-1.5 transition-colors ${
+                              isRunning || deletingRunUuid === run.uuid
+                                ? "cursor-not-allowed text-stone-300 dark:text-stone-600"
+                                : "text-stone-400 hover:bg-red-50 hover:text-red-600 dark:text-stone-400 dark:hover:bg-red-900/20 dark:hover:text-red-400"
+                            }`}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -562,7 +622,7 @@ export default function DatasetFoundationModelsSection({
                     <thead className="bg-stone-50 text-xs uppercase tracking-wide text-stone-500 dark:bg-stone-800">
                       <tr>
                         <th className="px-3 py-2 text-left">Scientific name</th>
-                        <th className="px-3 py-2 text-left">Common name (JA)</th>
+                        <th className="px-3 py-2 text-left">Common name</th>
                         <th className="px-3 py-2 text-right">Detections</th>
                         <th className="px-3 py-2 text-right">Avg confidence</th>
                       </tr>
@@ -574,7 +634,7 @@ export default function DatasetFoundationModelsSection({
                             {row.scientific_name}
                           </td>
                           <td className="px-3 py-2 text-stone-500">
-                            {row.common_name_ja ?? "---"}
+                            {row.vernacular_name ?? "---"}
                           </td>
                           <td className="px-3 py-2 text-right">
                             {row.detection_count}

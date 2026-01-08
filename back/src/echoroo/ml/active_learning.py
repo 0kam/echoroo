@@ -26,9 +26,14 @@ from sklearn.preprocessing import Normalizer
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from echoroo.ml.classifiers import ClassifierType, UnifiedClassifier
+from echoroo.models.search_session import SampleType
+
 __all__ = [
     "ActiveLearningConfig",
+    "ClassifierType",
     "SigmoidClassifier",
+    "UnifiedClassifier",
     "compute_initial_samples",
     "compute_similarities",
     "compute_cosine_similarities",
@@ -114,6 +119,10 @@ def filter_valid_embeddings(
 
 class SigmoidClassifier:
     """Simple sigmoid classifier for binary tag classification.
+
+    .. deprecated::
+        Use :class:`~echoroo.ml.classifiers.UnifiedClassifier` instead.
+        This class is kept for backward compatibility.
 
     Wraps sklearn's LogisticRegression with L2 normalization for embedding-based
     classification. Uses cosine-compatible geometry by normalizing embeddings
@@ -524,7 +533,7 @@ async def compute_initial_samples(
     reference_embeddings_by_tag: dict[int, list[np.ndarray]],
     config: ActiveLearningConfig | None = None,
     distance_metric: str = "cosine",
-) -> list[dict]:
+) -> tuple[list[dict], int]:
     """Compute initial sampling: EP + Boundary + Others.
 
     Performs initial sample selection for active learning:
@@ -549,12 +558,14 @@ async def compute_initial_samples(
 
     Returns
     -------
-    list[dict]
-        List of dicts with:
-        - clip_id: int
-        - similarity: float
-        - sample_type: 'easy_positive' | 'boundary' | 'others'
-        - source_tag_id: int | None
+    tuple[list[dict], int]
+        - List of dicts with:
+          - clip_id: int
+          - similarity: float
+          - sample_type: 'easy_positive' | 'boundary' | 'others'
+          - source_tag_id: int | None
+          - dataset_rank: int (1-based rank in full dataset)
+        - Total number of clips in the dataset
     """
     if config is None:
         config = ActiveLearningConfig()
@@ -566,16 +577,18 @@ async def compute_initial_samples(
     )
 
     if not clip_embeddings:
-        return []
+        return [], 0
 
     clip_ids = np.array([ce[0] for ce in clip_embeddings])
     embeddings = np.array([ce[1] for ce in clip_embeddings])
+    total_clips = len(clip_ids)
 
     results: list[dict] = []
     selected_clip_ids: set[int] = set()
     all_reference_embeddings: list[np.ndarray] = []
 
     # Track best rank for each clip across all tags (for Others filtering)
+    # Also used for dataset_rank calculation (1-based)
     clip_best_ranks: dict[int, int] = {}
 
     # Process each target tag
@@ -602,7 +615,7 @@ async def compute_initial_samples(
 
         # Select Easy Positives (top-k)
         ep_count = 0
-        for idx in sorted_indices:
+        for rank_idx, idx in enumerate(sorted_indices):
             if ep_count >= config.easy_positive_k:
                 break
             clip_id = int(clip_ids[idx])
@@ -610,8 +623,9 @@ async def compute_initial_samples(
                 results.append({
                     "clip_id": clip_id,
                     "similarity": float(similarities[idx]),
-                    "sample_type": "easy_positive",
+                    "sample_type": SampleType.EASY_POSITIVE.value,
                     "source_tag_id": tag_id,
+                    "dataset_rank": rank_idx + 1,  # 1-based rank in dataset
                 })
                 selected_clip_ids.add(clip_id)
                 ep_count += 1
@@ -620,13 +634,14 @@ async def compute_initial_samples(
         boundary_start = config.easy_positive_k
         boundary_end = boundary_start + config.boundary_n
 
-        # Get candidate indices for boundary
+        # Get candidate indices for boundary (with rank info)
         boundary_candidates = []
         for i in range(boundary_start, min(boundary_end, len(sorted_indices))):
             idx = sorted_indices[i]
             clip_id = int(clip_ids[idx])
             if clip_id not in selected_clip_ids:
-                boundary_candidates.append((idx, clip_id, float(similarities[idx])))
+                # i is 0-based index in sorted order, so dataset_rank = i + 1
+                boundary_candidates.append((idx, clip_id, float(similarities[idx]), i + 1))
 
         # Random selection from boundary candidates
         if boundary_candidates:
@@ -639,12 +654,13 @@ async def compute_initial_samples(
             )
 
             for i in selected_boundary:
-                idx, clip_id, sim = boundary_candidates[i]
+                idx, clip_id, sim, dataset_rank = boundary_candidates[i]
                 results.append({
                     "clip_id": clip_id,
                     "similarity": sim,
-                    "sample_type": "boundary",
+                    "sample_type": SampleType.BOUNDARY.value,
                     "source_tag_id": tag_id,
+                    "dataset_rank": dataset_rank,
                 })
                 selected_clip_ids.add(clip_id)
 
@@ -699,15 +715,19 @@ async def compute_initial_samples(
                 distance_metric,
             )
 
+            # Get dataset_rank from clip_best_ranks (0-based, convert to 1-based)
+            dataset_rank = clip_best_ranks.get(clip_id, total_clips) + 1
+
             results.append({
                 "clip_id": clip_id,
                 "similarity": float(sim[0]) if len(sim) > 0 else 0.0,
-                "sample_type": "others",
+                "sample_type": SampleType.OTHERS.value,
                 "source_tag_id": None,
+                "dataset_rank": dataset_rank,
             })
             selected_clip_ids.add(clip_id)
 
-    return results
+    return results, total_clips
 
 
 async def run_active_learning_iteration(
@@ -716,6 +736,7 @@ async def run_active_learning_iteration(
     ml_project_id: int,
     config: ActiveLearningConfig | None = None,
     selected_tag_ids: set[int] | None = None,
+    classifier_type: ClassifierType | str = ClassifierType.LOGISTIC_REGRESSION,
 ) -> tuple[list[dict], dict[int, dict], list[dict]]:
     """Run one iteration of active learning.
 
@@ -736,6 +757,9 @@ async def run_active_learning_iteration(
         Optional set of tag IDs to train classifiers for. If None, all target tags
         are used. If specified, only classifiers for these tags will be trained
         and used for sample selection.
+    classifier_type
+        The type of classifier to use for this iteration. Can be a ClassifierType
+        enum or string. Defaults to LOGISTIC_REGRESSION.
 
     Returns
     -------
@@ -746,27 +770,37 @@ async def run_active_learning_iteration(
         - score_distributions: list of dicts with tag_id, bin_counts, bin_edges,
           positive_count, negative_count, mean_score
     """
+    # Convert string to enum if needed
+    if isinstance(classifier_type, str):
+        classifier_type = ClassifierType(classifier_type)
     if config is None:
         config = ActiveLearningConfig()
 
-    # Get labeled data for this search session
+    # Get labeled data for this search session with multi-label support
+    # Using search_result_tag junction table for assigned tags
     labeled_query = """
         SELECT
+            sr.id as search_result_id,
             sr.clip_id,
-            sr.assigned_tag_id,
             sr.is_negative,
-            ce.embedding
+            ce.embedding,
+            COALESCE(
+                array_agg(srt.tag_id) FILTER (WHERE srt.tag_id IS NOT NULL),
+                ARRAY[]::integer[]
+            ) as assigned_tag_ids
         FROM search_result sr
         JOIN clip_embedding ce ON sr.clip_id = ce.clip_id
+        LEFT JOIN search_result_tag srt ON sr.id = srt.search_result_id
         JOIN ml_project_dataset_scope mpds ON (
             SELECT ml_project_id FROM search_session WHERE id = sr.search_session_id
         ) = mpds.ml_project_id
         JOIN foundation_model_run fmr ON mpds.foundation_model_run_id = fmr.id
         WHERE sr.search_session_id = :search_session_id
-          AND (sr.assigned_tag_id IS NOT NULL OR sr.is_negative = true)
           AND sr.is_uncertain = false
           AND sr.is_skipped = false
           AND fmr.model_run_id = ce.model_run_id
+        GROUP BY sr.id, sr.clip_id, sr.is_negative, ce.embedding
+        HAVING COUNT(srt.tag_id) > 0 OR sr.is_negative = true
     """
 
     result = await session.execute(
@@ -799,9 +833,9 @@ async def run_active_learning_iteration(
             return [], {}, []
 
     # Collect all labeled samples with their embeddings
-    # Structure: list of (embedding, assigned_tag_id or None, is_negative)
+    # Structure: list of (embedding, assigned_tag_ids (list), is_negative)
     # Filter out invalid (near-zero) embeddings
-    all_samples: list[tuple[np.ndarray, int | None, bool]] = []
+    all_samples: list[tuple[np.ndarray, list[int], bool]] = []
 
     for row in labeled_rows:
         emb = row.embedding
@@ -813,13 +847,15 @@ async def run_active_learning_iteration(
         if np.linalg.norm(embedding) < MIN_EMBEDDING_NORM:
             continue
 
-        all_samples.append((embedding, row.assigned_tag_id, row.is_negative))
+        # Convert assigned_tag_ids to list
+        assigned_tag_ids_list = list(row.assigned_tag_ids) if row.assigned_tag_ids else []
+        all_samples.append((embedding, assigned_tag_ids_list, row.is_negative))
 
     # Train one classifier per target tag
     # For each tag:
-    #   Positive = samples assigned to this tag
-    #   Negative = explicit negatives (N key) + samples assigned to OTHER tags
-    classifiers: dict[int, SigmoidClassifier] = {}
+    #   Positive = samples that have this tag in their assigned_tag_ids
+    #   Negative = explicit negatives (N key) + samples assigned to OTHER tags only
+    classifiers: dict[int, UnifiedClassifier] = {}
     metrics: dict[int, dict] = {}
 
     for tag_id in target_tag_ids:
@@ -828,16 +864,16 @@ async def run_active_learning_iteration(
         positive_count = 0
         negative_count = 0
 
-        for embedding, assigned_tag_id, is_negative in all_samples:
-            if assigned_tag_id == tag_id and not is_negative:
-                # This sample is positive for this tag
+        for embedding, assigned_tag_ids_list, is_negative in all_samples:
+            if tag_id in assigned_tag_ids_list and not is_negative:
+                # This sample is positive for this tag (multi-label: may have other tags too)
                 embeddings_list.append(embedding)
                 labels_list.append(1)
                 positive_count += 1
-            elif is_negative or (assigned_tag_id is not None and assigned_tag_id != tag_id):
+            elif is_negative or (assigned_tag_ids_list and tag_id not in assigned_tag_ids_list):
                 # This sample is negative for this tag:
                 # - Explicitly marked as negative (N key), OR
-                # - Assigned to a different tag
+                # - Assigned to other tag(s) but NOT this tag
                 embeddings_list.append(embedding)
                 labels_list.append(0)
                 negative_count += 1
@@ -852,7 +888,7 @@ async def run_active_learning_iteration(
             embeddings_array = np.array(embeddings_list)
             labels_array = np.array(labels_list)
 
-            classifier = SigmoidClassifier()
+            classifier = UnifiedClassifier(classifier_type)
             classifier.fit(embeddings_array, labels_array)
             classifiers[tag_id] = classifier
 
@@ -923,7 +959,7 @@ async def run_active_learning_iteration(
             "clip_id": clip_id,
             "model_score": score,
             "source_tag_id": tag_id,
-            "sample_type": "active_learning",
+            "sample_type": SampleType.ACTIVE_LEARNING.value,
         })
 
     return new_samples, metrics, score_distributions

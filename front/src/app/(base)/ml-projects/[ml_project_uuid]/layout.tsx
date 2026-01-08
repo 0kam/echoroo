@@ -38,20 +38,24 @@ import MLProjectContext from "./context";
 
 // Status badge colors (same as in list page for consistency)
 const STATUS_COLORS: Record<MLProjectStatus, string> = {
-  draft: "bg-stone-200 text-stone-700 dark:bg-stone-700 dark:text-stone-300",
-  active: "bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300",
+  setup: "bg-stone-200 text-stone-700 dark:bg-stone-700 dark:text-stone-300",
+  searching: "bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300",
+  labeling: "bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300",
   training: "bg-purple-100 text-purple-700 dark:bg-purple-900 dark:text-purple-300",
   inference: "bg-cyan-100 text-cyan-700 dark:bg-cyan-900 dark:text-cyan-300",
+  review: "bg-indigo-100 text-indigo-700 dark:bg-indigo-900 dark:text-indigo-300",
   completed: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900 dark:text-emerald-300",
   archived: "bg-stone-300 text-stone-600 dark:bg-stone-600 dark:text-stone-400",
 };
 
 function StatusBadge({ status }: { status: MLProjectStatus }) {
   const icons: Record<MLProjectStatus, React.ReactNode> = {
-    draft: <Clock className="w-3 h-3" />,
-    active: <Search className="w-3 h-3" />,
+    setup: <Clock className="w-3 h-3" />,
+    searching: <Search className="w-3 h-3" />,
+    labeling: <Clock className="w-3 h-3" />,
     training: <Cpu className="w-3 h-3" />,
     inference: <Play className="w-3 h-3" />,
+    review: <Clock className="w-3 h-3" />,
     completed: <CheckCircle className="w-3 h-3" />,
     archived: <Archive className="w-3 h-3" />,
   };

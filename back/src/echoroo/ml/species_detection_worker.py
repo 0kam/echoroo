@@ -14,8 +14,10 @@ import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Generator
+from typing import Any, Callable, Generator
 from uuid import UUID, uuid4
+
+import numpy as np
 
 from sqlalchemy import delete, select, tuple_
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -27,12 +29,11 @@ from echoroo.api import (
     clip_predictions,
     clips,
     datasets,
-    get_gbif_vernacular_name,
     model_runs,
-    search_gbif_species,
     tags,
 )
 from echoroo.ml.base import InferenceEngine, InferenceResult, ModelLoader
+from echoroo.ml.constants import is_non_species_label
 from echoroo.ml.registry import ModelNotFoundError, ModelRegistry
 from echoroo.ml.species_resolver import SpeciesInfo, SpeciesResolver
 from echoroo.system.settings import get_settings
@@ -42,58 +43,6 @@ __all__ = [
 ]
 
 logger = logging.getLogger(__name__)
-
-# ---------------------------------------------------------------------------
-# Non-species labels in BirdNET that should not be resolved via GBIF
-# These are environmental sounds, not actual species names.
-# ---------------------------------------------------------------------------
-
-# Labels where the scientific and common name parts are identical
-# e.g., "Engine_Engine", "Noise_Noise", "Dog_Dog"
-# These are clearly non-biological sounds
-NON_SPECIES_REPEATED_LABELS = frozenset({
-    "dog",
-    "engine",
-    "environmental",
-    "fireworks",
-    "gun",
-    "noise",
-    "power tools",
-    "siren",
-    "human non-vocal",
-    "human vocal",
-    "human whistle",
-})
-
-
-def _is_non_species_label(scientific_name: str, common_name: str | None) -> bool:
-    """Check if a BirdNET label represents a non-species sound.
-
-    BirdNET includes labels for environmental sounds like "Engine_Engine",
-    "Dog_Dog", "Noise_Noise", etc. These should not be resolved via GBIF
-    as they can match unrelated species (e.g., "Engine" -> "Enginella leucozona").
-
-    Parameters
-    ----------
-    scientific_name : str
-        The parsed scientific name part of the label.
-    common_name : str | None
-        The parsed common name part of the label.
-
-    Returns
-    -------
-    bool
-        True if this is a non-species environmental sound label.
-    """
-    # Check if the label follows the "X_X" pattern (same word repeated)
-    if common_name and scientific_name.lower() == common_name.lower():
-        return True
-
-    # Check against known non-species labels
-    if scientific_name.lower() in NON_SPECIES_REPEATED_LABELS:
-        return True
-
-    return False
 
 
 # ---------------------------------------------------------------------------
@@ -236,26 +185,18 @@ class _SpeciesSummary:
     gbif_taxon_id: str | None
     annotation_tag_id: int | None
     scientific_name: str
-    common_name_ja: str | None
+    vernacular_name: str | None
     detections: int = 0
     total_confidence: float = 0.0
 
 
 class SpeciesDetectionWorker:
-    """Background worker for processing species detection jobs.
+    """Background worker for processing foundation model runs.
 
-    This worker polls the database for pending species detection jobs,
+    This worker polls the database for queued foundation model runs,
     processes them using BirdNET or Perch models, and stores results
     including embeddings and predictions.
     """
-
-    _RUN_STATUS_MAP = {
-        "pending": models.FoundationModelRunStatus.QUEUED,
-        "running": models.FoundationModelRunStatus.RUNNING,
-        "completed": models.FoundationModelRunStatus.COMPLETED,
-        "failed": models.FoundationModelRunStatus.FAILED,
-        "cancelled": models.FoundationModelRunStatus.CANCELLED,
-    }
 
     def __init__(
         self,
@@ -339,69 +280,47 @@ class SpeciesDetectionWorker:
         self,
         session: AsyncSession,
     ) -> None:
-        """Reset jobs that were left in 'running' state after worker restart.
+        """Reset runs that were left in 'running' state after worker restart.
 
-        Jobs can become orphaned if the worker was restarted while processing.
+        Runs can become orphaned if the worker was restarted while processing.
         This method:
-        - Marks 100% complete jobs as completed
-        - Resets other running jobs back to pending
+        - Marks 100% complete runs as completed
+        - Resets other running runs back to queued
         """
-        stmt = select(models.SpeciesDetectionJob).where(
-            models.SpeciesDetectionJob.status
-            == models.SpeciesDetectionJobStatus.RUNNING
+        stmt = select(models.FoundationModelRun).where(
+            models.FoundationModelRun.status
+            == models.FoundationModelRunStatus.RUNNING
         )
         result = await session.execute(stmt)
-        orphaned_jobs = result.scalars().all()
+        orphaned_runs = result.scalars().all()
 
-        for db_job in orphaned_jobs:
-            # Check if job was actually complete (progress=1 and all recordings processed)
+        for db_run in orphaned_runs:
+            # Check if run was actually complete (progress=1 and all recordings processed)
             is_complete = (
-                db_job.progress == 1.0
-                and db_job.total_recordings is not None
-                and db_job.processed_recordings == db_job.total_recordings
+                db_run.progress == 1.0
+                and db_run.total_recordings is not None
+                and db_run.processed_recordings == db_run.total_recordings
             )
 
             if is_complete:
-                # Job was complete, just mark it as completed
-                db_job.status = models.SpeciesDetectionJobStatus.COMPLETED
-                db_job.completed_on = datetime.datetime.now(datetime.UTC)
+                # Run was complete, just mark it as completed
+                db_run.status = models.FoundationModelRunStatus.COMPLETED
+                db_run.completed_on = datetime.datetime.now(datetime.UTC)
                 logger.info(
-                    "Marked orphaned job %s as completed (was 100%% done)",
-                    db_job.uuid,
+                    "Marked orphaned run %s as completed (was 100%% done)",
+                    db_run.uuid,
                 )
-
-                # Also update foundation model run if it exists
-                if db_job.model_run_id:
-                    await self._mark_foundation_run_completed(
-                        session, db_job.model_run_id
-                    )
             else:
-                # Job was interrupted mid-processing, reset to pending
-                db_job.status = models.SpeciesDetectionJobStatus.PENDING
-                db_job.started_on = None
-                db_job.progress = 0
-                db_job.processed_recordings = 0
+                # Run was interrupted mid-processing, reset to queued
+                db_run.status = models.FoundationModelRunStatus.QUEUED
+                db_run.started_on = None
+                db_run.progress = 0
+                db_run.processed_recordings = 0
                 logger.info(
-                    "Reset orphaned job %s to pending (was %d%% done)",
-                    db_job.uuid,
-                    int((db_job.progress or 0) * 100),
+                    "Reset orphaned run %s to queued (was %d%% done)",
+                    db_run.uuid,
+                    int((db_run.progress or 0) * 100),
                 )
-
-    async def _mark_foundation_run_completed(
-        self,
-        session: AsyncSession,
-        model_run_id: int,
-    ) -> None:
-        """Mark a foundation model run as completed."""
-        stmt = select(models.FoundationModelRun).where(
-            models.FoundationModelRun.id == model_run_id
-        )
-        result = await session.execute(stmt)
-        run = result.scalar_one_or_none()
-        if run and run.status != models.FoundationModelRunStatus.COMPLETED:
-            run.status = models.FoundationModelRunStatus.COMPLETED
-            run.completed_on = datetime.datetime.now(datetime.UTC)
-            logger.info("Marked foundation model run %s as completed", run.uuid)
 
     async def start(
         self,
@@ -455,7 +374,7 @@ class SpeciesDetectionWorker:
         self,
         session_factory: Callable[[], AsyncSession],
     ) -> None:
-        """Main processing loop."""
+        """Run the main processing loop for jobs."""
         while self._running:
             try:
                 async with session_factory() as session:
@@ -477,54 +396,53 @@ class SpeciesDetectionWorker:
     async def _get_next_job(
         self,
         session: AsyncSession,
-    ) -> schemas.SpeciesDetectionJob | None:
-        """Get the next pending job from the database."""
+    ) -> schemas.FoundationModelRun | None:
+        """Get the next queued foundation model run from the database."""
         try:
-            # Query for pending jobs
+            # Query for queued runs
             stmt = (
-                select(models.SpeciesDetectionJob)
+                select(models.FoundationModelRun)
                 .where(
-                    models.SpeciesDetectionJob.status
-                    == models.SpeciesDetectionJobStatus.PENDING
+                    models.FoundationModelRun.status
+                    == models.FoundationModelRunStatus.QUEUED
                 )
-                .order_by(models.SpeciesDetectionJob.id)
+                .order_by(models.FoundationModelRun.id)
                 .limit(1)
             )
             result = await session.execute(stmt)
-            db_job = result.scalar_one_or_none()
+            db_run = result.scalar_one_or_none()
 
-            if db_job is None:
+            if db_run is None:
                 return None
 
             # Build schema manually
-            return schemas.SpeciesDetectionJob(
-                uuid=db_job.uuid,
-                id=db_job.id,
-                name=db_job.name,
-                dataset_id=db_job.dataset_id,
-                created_by_id=db_job.created_by_id,
-                model_name=db_job.model_name,
-                model_version=db_job.model_version,
-                confidence_threshold=db_job.confidence_threshold,
-                overlap=db_job.overlap,
-                locale=db_job.locale,
-                use_metadata_filter=db_job.use_metadata_filter,
-                custom_species_list=db_job.custom_species_list,
-                recording_filters=db_job.recording_filters,
-                status=schemas.SpeciesDetectionJobStatus(db_job.status),
-                progress=db_job.progress,
-                total_recordings=db_job.total_recordings,
-                processed_recordings=db_job.processed_recordings,
-                total_clips=db_job.total_clips,
-                total_detections=db_job.total_detections,
-                error_message=db_job.error_message,
-                started_on=db_job.started_on,
-                completed_on=db_job.completed_on,
-                model_run_id=db_job.model_run_id,
+            return schemas.FoundationModelRun(
+                uuid=db_run.uuid,
+                id=db_run.id,
+                foundation_model_id=db_run.foundation_model_id,
+                dataset_id=db_run.dataset_id,
+                requested_by_id=db_run.requested_by_id,
+                name=db_run.name,
+                model_name=db_run.model_name,
+                model_version=db_run.model_version,
+                overlap=db_run.overlap,
+                locale=db_run.locale,
+                use_metadata_filter=db_run.use_metadata_filter,
+                custom_species_list=db_run.custom_species_list,
+                status=db_run.status,
+                confidence_threshold=db_run.confidence_threshold,
+                scope=db_run.scope,
+                progress=db_run.progress,
+                total_recordings=db_run.total_recordings,
+                processed_recordings=db_run.processed_recordings,
+                total_clips=db_run.total_clips,
+                total_detections=db_run.total_detections,
+                started_on=db_run.started_on,
+                completed_on=db_run.completed_on,
             )
 
         except Exception as e:
-            logger.error("Failed to fetch pending jobs: %s", e)
+            logger.error("Failed to fetch queued runs: %s", e)
             return None
 
     def _is_timing_enabled(self) -> bool:
@@ -535,72 +453,51 @@ class SpeciesDetectionWorker:
     async def _is_job_cancelled(
         self,
         session: AsyncSession,
-        job: schemas.SpeciesDetectionJob,
+        job: schemas.FoundationModelRun,
     ) -> bool:
-        """Check if the job has been cancelled in the database."""
+        """Check if the run has been cancelled in the database."""
         if job.id is None:
             return False
         # Refresh from DB to get the latest status
-        stmt = select(models.SpeciesDetectionJob.status).where(
-            models.SpeciesDetectionJob.id == job.id
+        stmt = select(models.FoundationModelRun.status).where(
+            models.FoundationModelRun.id == job.id
         )
         result = await session.execute(stmt)
         status = result.scalar_one_or_none()
-        return status == models.SpeciesDetectionJobStatus.CANCELLED
-
-    async def _update_foundation_run_status(
-        self,
-        session: AsyncSession,
-        job: schemas.SpeciesDetectionJob,
-        status: models.FoundationModelRunStatus,
-    ) -> None:
-        """Update the foundation model run status."""
-        if job.id is None:
-            return
-        run_id = self._foundation_run_ids.get(job.id)
-        if run_id is None:
-            return
-        stmt = select(models.FoundationModelRun).where(
-            models.FoundationModelRun.id == run_id
-        )
-        result = await session.execute(stmt)
-        run = result.scalar_one_or_none()
-        if run:
-            run.status = status
+        return status == models.FoundationModelRunStatus.CANCELLED
 
     async def process_job(
         self,
         session: AsyncSession,
-        job: schemas.SpeciesDetectionJob,
+        job: schemas.FoundationModelRun,
     ) -> None:
-        """Process a single species detection job."""
-        logger.info("Processing species detection job %s", job.uuid)
+        """Process a single foundation model run."""
+        logger.info("Processing foundation model run %s", job.uuid)
         self._cancel_requested = False
 
         # Initialize timing stats if debug timing is enabled
         timing_stats: _TimingStats | None = None
         if self._is_timing_enabled():
             timing_stats = _TimingStats(job_start=time.perf_counter())
-            logger.info("[TIMING] Debug timing enabled for job %s", job.uuid)
+            logger.info("[TIMING] Debug timing enabled for run %s", job.uuid)
 
-        # Initialize pending species collection for this job
+        # Initialize pending species collection for this run
         self._pending_species[job.uuid] = set()
         self._species_tag_ids[job.uuid] = {}
 
-        tracked_run = await self._get_foundation_model_run(session, job)
-        if tracked_run is not None and job.id is not None:
-            self._foundation_run_ids[job.id] = tracked_run.id
+        if job.id is not None:
+            self._foundation_run_ids[job.id] = job.id
             self._run_species_stats[job.uuid] = {}
 
         try:
             # Get or create model run
             model_run = await self._get_or_create_model_run(session, job)
 
-            # Mark job as running
+            # Mark run as running
             await self._update_job_status(
                 session,
                 job,
-                status=models.SpeciesDetectionJobStatus.RUNNING,
+                status=models.FoundationModelRunStatus.RUNNING,
                 started_on=datetime.datetime.now(datetime.UTC),
                 model_run_id=model_run.id,
             )
@@ -616,11 +513,11 @@ class SpeciesDetectionWorker:
                 await self._update_job_status(
                     session,
                     job,
-                    status=models.SpeciesDetectionJobStatus.COMPLETED,
+                    status=models.FoundationModelRunStatus.COMPLETED,
                     completed_on=datetime.datetime.now(datetime.UTC),
                 )
                 await session.commit()
-                # Log timing summary even for empty jobs
+                # Log timing summary even for empty runs
                 if timing_stats is not None:
                     timing_stats.log_summary(job.uuid)
                 return
@@ -640,59 +537,196 @@ class SpeciesDetectionWorker:
             # Ensure model is loaded
             engine = self._ensure_model_loaded(job)
 
-            # Process recordings sequentially (birdnet internal pipeline handles batching)
+            # Two-phase batch processing to reduce GPU memory usage:
+            # Phase 1: Generate embeddings for ALL files in one batch
+            # Phase 2: Generate predictions for ALL files in one batch
+            # This reduces TensorFlow initialization from (N files × 2) to just 2 times total
             total_clips = 0
             total_detections = 0
 
-            for i, recording in enumerate(recording_list):
-                # Check for cancellation (from API or internal flag)
-                if self._cancel_requested or await self._is_job_cancelled(session, job):
-                    logger.info("Job %s cancelled by user", job.uuid)
-                    await self._update_job_status(
-                        session,
-                        job,
-                        status=models.SpeciesDetectionJobStatus.CANCELLED,
+            # Collect all valid audio file paths
+            recording_paths: list[tuple[schemas.Recording, Path]] = []
+            for recording in recording_list:
+                audio_path = self._audio_dir / recording.path
+                if audio_path.exists():
+                    recording_paths.append((recording, audio_path))
+                else:
+                    logger.warning(
+                        "Audio file not found for recording %s: %s",
+                        recording.uuid,
+                        audio_path,
                     )
-                    await self._update_foundation_run_status(
-                        session, job, models.FoundationModelRunStatus.CANCELLED
-                    )
-                    await session.commit()
-                    # Log timing summary on cancellation
-                    if timing_stats is not None:
-                        timing_stats.recording_count = i
-                        timing_stats.log_summary(job.uuid)
-                    return
+
+            if not recording_paths:
+                logger.warning("No valid audio files found for run %s", job.uuid)
+                return
+
+            # CRITICAL: Sort recording_paths by file path to match BirdNET's internal sorting.
+            # BirdNET sorts input files alphabetically before processing, so we must ensure
+            # our file_index mapping matches BirdNET's order to avoid mismatched predictions.
+            # See: https://github.com/your-org/echoroo/issues/XXX
+            recording_paths.sort(key=lambda x: str(x[1]))
+            logger.debug(
+                "Sorted %d recordings by file path to match BirdNET processing order",
+                len(recording_paths),
+            )
+
+            # Phase 1: Generate embeddings for all recordings in batch
+            if job.run_embeddings:
+                logger.info(
+                    "Phase 1: Generating embeddings for %d recordings",
+                    len(recording_paths),
+                )
+
+                # Collect file paths for batch processing
+                file_paths = [str(path) for _, path in recording_paths]
 
                 try:
-                    clips_count, detections_count = await self._process_recording_timed(
-                        session,
-                        recording,
-                        model_run,
-                        engine,
-                        job,
-                        timing_stats,
+                    # Run batch encode
+                    embeddings_result = engine._model.encode(
+                        file_paths,
+                        device=self._get_device_setting(),
+                        batch_size=self._gpu_batch_size,
+                        n_feeders=self._feeders,
+                        n_workers=self._workers,
                     )
-                    total_clips += clips_count
-                    total_detections += detections_count
+
+                    # Store embeddings for each recording
+                    for i, (recording, _) in enumerate(recording_paths):
+                        # Check for cancellation
+                        if self._cancel_requested or await self._is_job_cancelled(
+                            session, job
+                        ):
+                            logger.info(
+                                "Run %s cancelled during embeddings storage", job.uuid
+                            )
+                            await self._update_job_status(
+                                session,
+                                job,
+                                status=models.FoundationModelRunStatus.CANCELLED,
+                            )
+                            await session.commit()
+                            if timing_stats is not None:
+                                timing_stats.recording_count = i
+                                timing_stats.log_summary(job.uuid)
+                            return
+
+                        try:
+                            # Store embeddings for this recording
+                            clips_added = await self._store_embeddings_batch(
+                                session,
+                                recording,
+                                model_run,
+                                embeddings_result,
+                                i,
+                                job,
+                            )
+                            total_clips += clips_added
+                        except Exception as e:
+                            logger.error(
+                                "Error storing embeddings for recording %s: %s",
+                                recording.uuid,
+                                e,
+                                exc_info=True,
+                            )
+                            await session.rollback()
+
+                        # Update progress (0-50% for embeddings phase)
+                        progress = (i + 1) / len(recording_paths) * 0.5
+                        await self._update_job_progress(
+                            session,
+                            job,
+                            processed_recordings=i + 1,
+                            total_clips=total_clips,
+                            progress=progress,
+                        )
+                        await session.commit()
 
                 except Exception as e:
                     logger.error(
-                        "Error processing recording %s: %s",
-                        recording.uuid,
-                        e,
+                        "Error during batch embedding generation: %s", e, exc_info=True
+                    )
+                    await session.rollback()
+
+            # Phase 2: Generate predictions for all recordings in batch
+            if job.run_predictions:
+                logger.info(
+                    "Phase 2: Generating predictions for %d recordings",
+                    len(recording_paths),
+                )
+
+                # Collect file paths for batch processing
+                file_paths = [str(path) for _, path in recording_paths]
+
+                try:
+                    # Run batch predict
+                    predictions_result = engine._model.predict(
+                        file_paths,
+                        device=self._get_device_setting(),
+                        batch_size=self._gpu_batch_size,
+                        n_feeders=self._feeders,
+                        n_workers=self._workers,
+                        top_k=10,
+                        default_confidence_threshold=job.confidence_threshold,
                     )
 
-                # Update progress
-                progress = (i + 1) / len(recording_list)
-                await self._update_job_progress(
-                    session,
-                    job,
-                    processed_recordings=i + 1,
-                    total_clips=total_clips,
-                    total_detections=total_detections,
-                    progress=progress,
-                )
-                await session.commit()
+                    # Store predictions for each recording
+                    for i, (recording, _) in enumerate(recording_paths):
+                        # Check for cancellation
+                        if self._cancel_requested or await self._is_job_cancelled(
+                            session, job
+                        ):
+                            logger.info(
+                                "Run %s cancelled during predictions storage", job.uuid
+                            )
+                            await self._update_job_status(
+                                session,
+                                job,
+                                status=models.FoundationModelRunStatus.CANCELLED,
+                            )
+                            await session.commit()
+                            if timing_stats is not None:
+                                timing_stats.recording_count = i
+                                timing_stats.log_summary(job.uuid)
+                            return
+
+                        try:
+                            # Store predictions for this recording
+                            detections = await self._store_predictions_batch(
+                                session,
+                                recording,
+                                model_run,
+                                predictions_result,
+                                i,
+                                job,
+                            )
+                            total_detections += detections
+                        except Exception as e:
+                            logger.error(
+                                "Error storing predictions for recording %s: %s",
+                                recording.uuid,
+                                e,
+                                exc_info=True,
+                            )
+                            await session.rollback()
+
+                        # Update progress (50-100% for predictions phase)
+                        base_progress = 0.5 if job.run_embeddings else 0.0
+                        progress = base_progress + (i + 1) / len(recording_paths) * 0.5
+                        await self._update_job_progress(
+                            session,
+                            job,
+                            processed_recordings=i + 1,
+                            total_detections=total_detections,
+                            progress=progress,
+                        )
+                        await session.commit()
+
+                except Exception as e:
+                    logger.error(
+                        "Error during batch prediction generation: %s", e, exc_info=True
+                    )
+                    await session.rollback()
 
             # Resolve pending species via GBIF in batch
             await self._resolve_pending_species_batch(session, job)
@@ -702,13 +736,13 @@ class SpeciesDetectionWorker:
             await self._update_job_status(
                 session,
                 job,
-                status=models.SpeciesDetectionJobStatus.COMPLETED,
+                status=models.FoundationModelRunStatus.COMPLETED,
                 completed_on=datetime.datetime.now(datetime.UTC),
             )
             await session.commit()
 
             logger.info(
-                "Job %s completed: %d clips, %d detections from %d recordings",
+                "Run %s completed: %d clips, %d detections from %d recordings",
                 job.uuid,
                 total_clips,
                 total_detections,
@@ -720,17 +754,19 @@ class SpeciesDetectionWorker:
                 timing_stats.log_summary(job.uuid)
 
         except Exception as e:
-            logger.exception("Job %s failed: %s", job.uuid, e)
+            logger.exception("Run %s failed: %s", job.uuid, e)
             try:
+                # Rollback any failed transaction before updating status
+                await session.rollback()
                 await self._update_job_status(
                     session,
                     job,
-                    status=models.SpeciesDetectionJobStatus.FAILED,
+                    status=models.FoundationModelRunStatus.FAILED,
                     error_message=str(e),
                 )
                 await session.commit()
             except Exception as commit_error:
-                logger.error("Failed to update job status: %s", commit_error)
+                logger.error("Failed to update run status: %s", commit_error)
             # Log timing summary on failure
             if timing_stats is not None:
                 timing_stats.log_summary(job.uuid)
@@ -744,10 +780,10 @@ class SpeciesDetectionWorker:
     async def _get_or_create_model_run(
         self,
         session: AsyncSession,
-        job: schemas.SpeciesDetectionJob,
+        job: schemas.FoundationModelRun,
     ) -> schemas.ModelRun:
-        """Get existing model run or create a new one for the job."""
-        # Include job UUID in version to ensure uniqueness per job
+        """Get existing model run or create a new one for the foundation run."""
+        # Include run UUID in version to ensure uniqueness per run
         # ModelRun has a unique constraint on (name, version)
         version_with_job = f"{job.model_version}-{job.uuid}"
 
@@ -765,7 +801,7 @@ class SpeciesDetectionWorker:
 
         # Create new model run
         description_parts = [
-            f"Species detection job {job.uuid}",
+            f"Foundation model run {job.uuid}",
             f"threshold={job.confidence_threshold}",
             f"overlap={job.overlap}",
         ]
@@ -786,9 +822,9 @@ class SpeciesDetectionWorker:
     async def _get_filtered_recordings(
         self,
         session: AsyncSession,
-        job: schemas.SpeciesDetectionJob,
+        job: schemas.FoundationModelRun,
     ) -> list[schemas.Recording]:
-        """Get recordings based on job filters."""
+        """Get recordings based on run filters."""
         from sqlalchemy.orm import joinedload
 
         # Get dataset with relationships loaded
@@ -833,8 +869,8 @@ class SpeciesDetectionWorker:
 
         recording_list = list(all_recordings)
 
-        # Apply filters if specified
-        filters = job.recording_filters
+        # Apply filters if specified from scope
+        filters = job.scope
         if filters:
             # Date filters
             date_from = filters.get("date_from")
@@ -889,7 +925,7 @@ class SpeciesDetectionWorker:
 
     def _ensure_model_loaded(
         self,
-        job: schemas.SpeciesDetectionJob,
+        job: schemas.FoundationModelRun,
     ) -> InferenceEngine:
         """Ensure the required model is loaded.
 
@@ -949,7 +985,7 @@ class SpeciesDetectionWorker:
         recording: schemas.Recording,
         model_run: schemas.ModelRun,
         engine: InferenceEngine,
-        job: schemas.SpeciesDetectionJob,
+        job: schemas.FoundationModelRun,
         timing_stats: _TimingStats | None,
     ) -> tuple[int, int]:
         """Process a single recording with optional timing measurement.
@@ -1018,7 +1054,7 @@ class SpeciesDetectionWorker:
         recording: schemas.Recording,
         model_run: schemas.ModelRun,
         engine: InferenceEngine,
-        job: schemas.SpeciesDetectionJob,
+        job: schemas.FoundationModelRun,
     ) -> tuple[int, int]:
         """Process a single recording. Returns (clips_count, detections_count).
 
@@ -1040,7 +1076,7 @@ class SpeciesDetectionWorker:
         recording: schemas.Recording,
         model_run: schemas.ModelRun,
         results: list[InferenceResult],
-        job: schemas.SpeciesDetectionJob,
+        job: schemas.FoundationModelRun,
     ) -> tuple[int, int]:
         """Store inference results in bulk for better performance.
 
@@ -1116,12 +1152,13 @@ class SpeciesDetectionWorker:
             if clip_id is None:
                 continue
 
+            # Pass numpy array directly to pgvector (49x faster than .tolist())
             embeddings_data.append(
                 dict(
                     uuid=uuid4(),
                     clip_id=clip_id,
                     model_run_id=model_run.id,
-                    embedding=result.embedding.tolist(),
+                    embedding=result.embedding,  # numpy array → pgvector handles it
                     created_on=now,
                 )
             )
@@ -1143,17 +1180,72 @@ class SpeciesDetectionWorker:
                 for species_label, _ in result.predictions:
                     all_species_labels.add(species_label)
 
-        # Pre-resolve/create all species tags
+        # Pre-resolve/create all species tags in batch
         species_tag_cache: dict[str, tuple[schemas.Tag, str, str | None, str | None]] = {}
+
+        # Parse all species labels first
+        label_to_parsed: dict[str, tuple[str, str | None]] = {}
         for species_label in all_species_labels:
-            tag, scientific_name, common_name, gbif_taxon_id = (
-                await self._get_or_create_species_tag(
-                    session,
-                    species_label,
-                    job.uuid,
-                )
+            scientific_name, common_name = self._parse_species_label(species_label)
+            label_to_parsed[species_label] = (scientific_name, common_name)
+
+        # Collect all unique (key, value) pairs for batch lookup
+        tag_keys_values: list[tuple[str, str]] = [
+            ("species", scientific_name)
+            for scientific_name, _ in label_to_parsed.values()
+        ]
+
+        # Batch fetch existing tags
+        if tag_keys_values:
+            tag_query = select(models.Tag).where(
+                tuple_(models.Tag.key, models.Tag.value).in_(tag_keys_values)
             )
-            species_tag_cache[species_label] = (tag, scientific_name, common_name, gbif_taxon_id)
+            tag_rows = await session.execute(tag_query)
+            existing_tags = {
+                (tag.key, tag.value): schemas.Tag.model_validate(tag)
+                for tag in tag_rows.scalars().all()
+            }
+        else:
+            existing_tags = {}
+
+        # Create missing tags in batch
+        tags_to_create: list[dict] = []
+        for _species_label, (scientific_name, common_name) in label_to_parsed.items():
+            tag_key = ("species", scientific_name)
+
+            # Collect all species (not just new ones) for batch GBIF resolution at job end
+            # This ensures vernacular names are resolved even for existing tags
+            if not is_non_species_label(scientific_name, common_name):
+                if job.uuid in self._pending_species:
+                    self._pending_species[job.uuid].add(scientific_name)
+
+            if tag_key not in existing_tags:
+                canonical = common_name or scientific_name
+                tags_to_create.append({
+                    "key": "species",
+                    "value": scientific_name,
+                    "canonical_name": canonical,
+                    "created_on": now,
+                })
+
+        # Bulk insert missing tags
+        if tags_to_create:
+            stmt = pg_insert(models.Tag).values(tags_to_create)
+            stmt = stmt.on_conflict_do_nothing(index_elements=["key", "value"])
+            stmt = stmt.returning(models.Tag)
+            result = await session.execute(stmt)
+            await session.flush()
+
+            # Add newly created tags to cache
+            for tag in result.scalars().all():
+                existing_tags[("species", tag.value)] = schemas.Tag.model_validate(tag)
+
+        # Build final cache
+        for species_label, (scientific_name, common_name) in label_to_parsed.items():
+            tag = existing_tags.get(("species", scientific_name))
+            if tag:
+                gbif_taxon_id = None  # Deferred to batch resolution
+                species_tag_cache[species_label] = (tag, scientific_name, common_name, gbif_taxon_id)
 
         # Step 4: Create predictions and prediction tags in bulk
         detections_count = 0
@@ -1271,8 +1363,9 @@ class SpeciesDetectionWorker:
     ) -> list[InferenceResult]:
         """Run inference on an audio file.
 
-        Note: We run inference synchronously since this worker runs in its own
-        asyncio task and BirdNET handles internal parallelism.
+        Note: We run inference in a thread pool to avoid blocking the asyncio
+        event loop, especially for Perch which can take a long time.
+        BirdNET/Perch handles internal parallelism via multiprocessing.
         """
         spec = engine.specification
         overlap_seconds = overlap * spec.segment_duration
@@ -1281,8 +1374,14 @@ class SpeciesDetectionWorker:
 
         start_time = time.time()
 
-        # Run synchronously - the worker is in its own task
-        results = engine.predict_file(audio_path, overlap_seconds)
+        # Run in thread pool to avoid blocking asyncio event loop
+        loop = asyncio.get_running_loop()
+        results = await loop.run_in_executor(
+            None,  # Use default ThreadPoolExecutor
+            engine.predict_file,
+            audio_path,
+            overlap_seconds,
+        )
 
         elapsed = time.time() - start_time
         logger.info("Inference completed in %.2fs, got %d results", elapsed, len(results))
@@ -1295,7 +1394,7 @@ class SpeciesDetectionWorker:
         recording: schemas.Recording,
         model_run: schemas.ModelRun,
         result: InferenceResult,
-        job: schemas.SpeciesDetectionJob,
+        job: schemas.FoundationModelRun,
         timing_stats: _TimingStats | None = None,
     ) -> tuple[int, int]:
         """Store inference result using API-based approach.
@@ -1415,7 +1514,7 @@ class SpeciesDetectionWorker:
         scientific_name, common_name = self._parse_species_label(species_label)
 
         # Skip GBIF resolution for non-species labels (environmental sounds)
-        if _is_non_species_label(scientific_name, common_name):
+        if is_non_species_label(scientific_name, common_name):
             logger.debug(
                 "Skipping GBIF resolution for non-species label: %s",
                 species_label,
@@ -1457,20 +1556,29 @@ class SpeciesDetectionWorker:
 
     async def _resolve_gbif_taxon(
         self,
+        session: AsyncSession,
         scientific_name: str,
         locale: str = "ja",
     ) -> tuple[str | None, str | None, str | None]:
         """Resolve GBIF taxon id and vernacular name for a scientific name.
 
-        Args:
-            scientific_name: The scientific name to resolve.
-            locale: Locale for vernacular name (e.g., "ja", "en").
+        Parameters
+        ----------
+        session : AsyncSession
+            Database session for cache operations.
+        scientific_name : str
+            The scientific name to resolve.
+        locale : str, optional
+            Locale for vernacular name (e.g., "ja", "en"). Default is "ja".
 
-        Returns:
+        Returns
+        -------
+        tuple[str | None, str | None, str | None]
             Tuple of (usage_key, canonical_name, vernacular_name).
         """
         # Delegate to SpeciesResolver
         info: SpeciesInfo = await self._species_resolver.resolve(
+            session,
             scientific_name,
             locale=locale,
         )
@@ -1479,7 +1587,7 @@ class SpeciesDetectionWorker:
     async def _resolve_pending_species_batch(
         self,
         session: AsyncSession,
-        job: schemas.SpeciesDetectionJob,
+        job: schemas.FoundationModelRun,
     ) -> None:
         """Resolve pending species names via GBIF API in batch.
 
@@ -1504,6 +1612,7 @@ class SpeciesDetectionWorker:
 
         # Use SpeciesResolver batch resolution
         results: dict[str, SpeciesInfo] = await self._species_resolver.resolve_batch(
+            session,
             list(pending),
             locale=locale,
         )
@@ -1511,13 +1620,21 @@ class SpeciesDetectionWorker:
         # Update tags with GBIF information
         for scientific_name, info in results.items():
             try:
-                # Update existing tag if GBIF info was found
+                # Update existing tag with GBIF info (including vernacular name)
                 if info.gbif_taxon_id and info.gbif_taxon_id != scientific_name:
+                    # GBIF ID differs from scientific name - update tag value
                     await self._update_species_tag(
                         session,
                         old_value=scientific_name,
                         new_value=info.gbif_taxon_id,
                         canonical_name=info.canonical_name,
+                        vernacular_name=info.vernacular_name,
+                    )
+                else:
+                    # GBIF ID matches scientific name - only update vernacular name if present
+                    await self._update_tag_vernacular_name(
+                        session,
+                        tag_value=scientific_name,
                         vernacular_name=info.vernacular_name,
                     )
 
@@ -1527,6 +1644,8 @@ class SpeciesDetectionWorker:
                     scientific_name,
                     e,
                 )
+                # Rollback the failed transaction before continuing
+                await session.rollback()
 
         # Update species stats with vernacular names
         await self._update_species_stats_with_vernacular(job, locale, results)
@@ -1584,9 +1703,45 @@ class SpeciesDetectionWorker:
 
         await session.flush()
 
+    async def _update_tag_vernacular_name(
+        self,
+        session: AsyncSession,
+        tag_value: str,
+        vernacular_name: str | None,
+    ) -> None:
+        """Update only the vernacular_name of an existing tag.
+
+        This is used when the GBIF taxon ID matches the scientific name,
+        but we still want to update the vernacular name.
+        """
+        if not vernacular_name:
+            return
+
+        # Find the tag with this value
+        stmt = select(models.Tag).where(
+            models.Tag.key == "species",
+            models.Tag.value == tag_value,
+        )
+        result = await session.execute(stmt)
+        tag = result.scalar_one_or_none()
+
+        if tag is None:
+            return
+
+        # Update vernacular name if not already set or if different
+        if not tag.vernacular_name or tag.vernacular_name != vernacular_name:
+            tag.vernacular_name = vernacular_name
+            logger.debug(
+                "Updated vernacular name for tag '%s': %s",
+                tag_value,
+                vernacular_name,
+            )
+
+        await session.flush()
+
     async def _update_species_stats_with_vernacular(
         self,
-        job: schemas.SpeciesDetectionJob,
+        job: schemas.FoundationModelRun,
         locale: str,
         resolved_species: dict[str, SpeciesInfo],
     ) -> None:
@@ -1603,11 +1758,11 @@ class SpeciesDetectionWorker:
             # Look up vernacular name in resolved species results
             info = resolved_species.get(summary.scientific_name)
             if info and info.vernacular_name:
-                summary.common_name_ja = info.vernacular_name
+                summary.vernacular_name = info.vernacular_name
 
     def _record_species_summary(
         self,
-        job: schemas.SpeciesDetectionJob,
+        job: schemas.FoundationModelRun,
         tag: schemas.Tag,
         scientific_name: str,
         common_name: str | None,
@@ -1626,7 +1781,7 @@ class SpeciesDetectionWorker:
                 gbif_taxon_id=gbif_taxon_id or tag.value,
                 annotation_tag_id=tag.id,
                 scientific_name=scientific_name,
-                common_name_ja=common_name,
+                vernacular_name=common_name,
             )
             stats_map[key] = summary
 
@@ -1636,7 +1791,7 @@ class SpeciesDetectionWorker:
     async def _persist_species_summary(
         self,
         session: AsyncSession,
-        job: schemas.SpeciesDetectionJob,
+        job: schemas.FoundationModelRun,
     ) -> None:
         """Write aggregated species stats to foundation model tables."""
         stats_map = self._run_species_stats.get(job.uuid)
@@ -1683,7 +1838,7 @@ class SpeciesDetectionWorker:
                     gbif_taxon_id=summary.gbif_taxon_id,
                     annotation_tag_id=tag_id,
                     scientific_name=summary.scientific_name,
-                    common_name_ja=summary.common_name_ja,
+                    vernacular_name=summary.vernacular_name,
                     detection_count=summary.detections,
                     avg_confidence=avg_conf,
                 )
@@ -1697,132 +1852,54 @@ class SpeciesDetectionWorker:
 
         await session.flush()
 
-    async def _get_foundation_model_run(
-        self,
-        session: AsyncSession,
-        job: schemas.SpeciesDetectionJob,
-    ) -> models.FoundationModelRun | None:
-        """Fetch foundation model run linked to the job."""
-        if job.id is None:
-            return None
-
-        stmt = select(models.FoundationModelRun).where(
-            models.FoundationModelRun.species_detection_job_id == job.id
-        )
-        return await session.scalar(stmt)
-
-    def _get_tracked_run_id(
-        self,
-        job: schemas.SpeciesDetectionJob,
-    ) -> int | None:
-        if job.id is None:
-            return None
-        return self._foundation_run_ids.get(job.id)
-
     async def _load_tracked_run(
         self,
         session: AsyncSession,
-        job: schemas.SpeciesDetectionJob,
+        job: schemas.FoundationModelRun,
     ) -> models.FoundationModelRun | None:
-        run_id = self._get_tracked_run_id(job)
-        if run_id is None:
+        """Load the foundation model run for this job."""
+        if job.id is None:
             return None
         stmt = select(models.FoundationModelRun).where(
-            models.FoundationModelRun.id == run_id,
+            models.FoundationModelRun.id == job.id,
         )
         return await session.scalar(stmt)
-
-    async def _sync_foundation_run_state(
-        self,
-        session: AsyncSession,
-        job: schemas.SpeciesDetectionJob,
-        *,
-        run_status: models.FoundationModelRunStatus | None = None,
-        started_on: datetime.datetime | None = None,
-        completed_on: datetime.datetime | None = None,
-        error_message: str | None = None,
-        model_run_id: int | None = None,
-        total_recordings: int | None = None,
-        processed_recordings: int | None = None,
-        total_clips: int | None = None,
-        total_detections: int | None = None,
-        progress: float | None = None,
-    ) -> None:
-        """Sync job data to foundation model run if linked."""
-        run = await self._load_tracked_run(session, job)
-        if run is None:
-            return
-
-        if run_status is not None:
-            run.status = run_status
-        if started_on is not None:
-            run.started_on = started_on
-        if completed_on is not None:
-            run.completed_on = completed_on
-        if error_message is not None:
-            run.error = {"message": error_message}
-        if model_run_id is not None:
-            run.model_run_id = model_run_id
-        if total_recordings is not None:
-            run.total_recordings = total_recordings
-        if processed_recordings is not None:
-            run.processed_recordings = processed_recordings
-        if total_clips is not None:
-            run.total_clips = total_clips
-        if total_detections is not None:
-            run.total_detections = total_detections
-        if progress is not None:
-            run.progress = progress
-
-        await session.flush()
 
     async def _update_job_status(
         self,
         session: AsyncSession,
-        job: schemas.SpeciesDetectionJob,
+        job: schemas.FoundationModelRun,
         *,
-        status: str | None = None,
+        status: models.FoundationModelRunStatus | None = None,
         started_on: datetime.datetime | None = None,
         completed_on: datetime.datetime | None = None,
         error_message: str | None = None,
         model_run_id: int | None = None,
     ) -> None:
-        """Update job status in database."""
-        stmt = select(models.SpeciesDetectionJob).where(
-            models.SpeciesDetectionJob.uuid == job.uuid
+        """Update run status in database."""
+        stmt = select(models.FoundationModelRun).where(
+            models.FoundationModelRun.uuid == job.uuid
         )
         result = await session.execute(stmt)
-        db_job = result.scalar_one()
+        db_run = result.scalar_one()
 
         if status is not None:
-            db_job.status = status
+            db_run.status = status
         if started_on is not None:
-            db_job.started_on = started_on
+            db_run.started_on = started_on
         if completed_on is not None:
-            db_job.completed_on = completed_on
+            db_run.completed_on = completed_on
         if error_message is not None:
-            db_job.error_message = error_message
+            db_run.error = {"message": error_message}
         if model_run_id is not None:
-            db_job.model_run_id = model_run_id
-
-        status_value = getattr(status, "value", status) if status is not None else None
-        run_status = self._RUN_STATUS_MAP.get(status_value) if status_value else None
-        await self._sync_foundation_run_state(
-            session,
-            job,
-            run_status=run_status,
-            started_on=started_on,
-            completed_on=completed_on,
-            error_message=error_message,
-            model_run_id=model_run_id,
-        )
+            db_run.model_run_id = model_run_id
 
         await session.flush()
 
     async def _update_job_progress(
         self,
         session: AsyncSession,
-        job: schemas.SpeciesDetectionJob,
+        job: schemas.FoundationModelRun,
         *,
         total_recordings: int | None = None,
         processed_recordings: int | None = None,
@@ -1830,33 +1907,23 @@ class SpeciesDetectionWorker:
         total_detections: int | None = None,
         progress: float | None = None,
     ) -> None:
-        """Update job progress in database."""
-        stmt = select(models.SpeciesDetectionJob).where(
-            models.SpeciesDetectionJob.uuid == job.uuid
+        """Update run progress in database."""
+        stmt = select(models.FoundationModelRun).where(
+            models.FoundationModelRun.uuid == job.uuid
         )
         result = await session.execute(stmt)
-        db_job = result.scalar_one()
+        db_run = result.scalar_one()
 
         if total_recordings is not None:
-            db_job.total_recordings = total_recordings
+            db_run.total_recordings = total_recordings
         if processed_recordings is not None:
-            db_job.processed_recordings = processed_recordings
+            db_run.processed_recordings = processed_recordings
         if total_clips is not None:
-            db_job.total_clips = total_clips
+            db_run.total_clips = total_clips
         if total_detections is not None:
-            db_job.total_detections = total_detections
+            db_run.total_detections = total_detections
         if progress is not None:
-            db_job.progress = progress
-
-        await self._sync_foundation_run_state(
-            session,
-            job,
-            total_recordings=total_recordings,
-            processed_recordings=processed_recordings,
-            total_clips=total_clips,
-            total_detections=total_detections,
-            progress=progress,
-        )
+            db_run.progress = progress
 
         await session.flush()
 
@@ -1905,8 +1972,695 @@ class SpeciesDetectionWorker:
             db_clip = result.unique().scalar_one()
             return schemas.Clip.model_validate(db_clip)
 
+    async def _store_embeddings_batch(
+        self,
+        session: AsyncSession,
+        recording: schemas.Recording,
+        model_run: schemas.ModelRun,
+        embeddings_result: Any,
+        file_index: int,
+        job: schemas.FoundationModelRun,
+    ) -> int:
+        """Store embeddings from batch encode result for a specific recording.
+
+        Uses bulk insert for better performance compared to individual inserts.
+
+        Parameters
+        ----------
+        session : AsyncSession
+            Database session.
+        recording : schemas.Recording
+            Recording being processed.
+        model_run : schemas.ModelRun
+            Model run for this job.
+        embeddings_result : Any
+            Result from batch encode() containing embeddings for multiple files.
+        file_index : int
+            Index of this recording in the batch results.
+        job : schemas.FoundationModelRun
+            Foundation model run configuration.
+
+        Returns
+        -------
+        int
+            Number of clips created.
+        """
+        # Extract embeddings for this specific file from batch result
+        if hasattr(embeddings_result, "embeddings"):
+            all_embeddings = embeddings_result.embeddings
+            if hasattr(all_embeddings, "numpy"):
+                all_embeddings = all_embeddings.numpy()
+            all_embeddings = np.asarray(all_embeddings, dtype=np.float32)
+
+            # Get embeddings for this file (batch results are indexed by file)
+            if all_embeddings.ndim == 4:
+                # Shape: (n_files, 1, n_segments, embedding_dim)
+                embeddings = all_embeddings[file_index, 0]
+            elif all_embeddings.ndim == 3:
+                # Shape: (n_files, n_segments, embedding_dim)
+                embeddings = all_embeddings[file_index]
+            else:
+                logger.warning(
+                    "Unexpected embeddings shape %s for recording %s",
+                    all_embeddings.shape,
+                    recording.uuid,
+                )
+                return 0
+        else:
+            logger.warning(
+                "Embeddings result has no 'embeddings' attribute for recording %s",
+                recording.uuid,
+            )
+            return 0
+
+        if embeddings.size == 0:
+            return 0
+
+        # Get segment duration from model specification
+        engine = self._engines[self._get_cache_key(job.model_name)]
+        spec = engine.specification
+        segment_duration = spec.segment_duration
+
+        # Calculate overlap
+        overlap = job.overlap * segment_duration
+        hop_duration = segment_duration - overlap
+
+        # Step 1: Prepare clip data for bulk insert
+        now = datetime.datetime.now(datetime.timezone.utc)
+        clips_data = []
+        for seg_idx in range(len(embeddings)):
+            start_time = seg_idx * hop_duration
+            end_time = start_time + segment_duration
+            clips_data.append(dict(
+                uuid=uuid4(),
+                recording_id=recording.id,
+                start_time=start_time,
+                end_time=end_time,
+                created_on=now,
+            ))
+
+        # Step 2: Bulk insert clips with ON CONFLICT DO NOTHING
+        stmt = pg_insert(models.Clip).values(clips_data)
+        stmt = stmt.on_conflict_do_nothing(
+            index_elements=["recording_id", "start_time", "end_time"]
+        )
+        await session.execute(stmt)
+        await session.flush()
+
+        # Step 3: Fetch clip IDs for all time ranges (including pre-existing ones)
+        time_ranges = [(c["start_time"], c["end_time"]) for c in clips_data]
+        clip_query = select(
+            models.Clip.id,
+            models.Clip.start_time,
+            models.Clip.end_time,
+        ).where(
+            models.Clip.recording_id == recording.id,
+            tuple_(models.Clip.start_time, models.Clip.end_time).in_(time_ranges),
+        )
+        clip_rows = await session.execute(clip_query)
+
+        # Build a mapping from (start_time, end_time) -> clip_id
+        clip_map: dict[tuple[float, float], int] = {
+            (row.start_time, row.end_time): row.id for row in clip_rows
+        }
+
+        # Step 4: Prepare embedding data for bulk insert
+        embeddings_data = []
+        for seg_idx, embedding in enumerate(embeddings):
+            start_time = seg_idx * hop_duration
+            end_time = start_time + segment_duration
+            clip_id = clip_map.get((start_time, end_time))
+            if clip_id is None:
+                continue
+
+            # Pass numpy array directly to pgvector (49x faster than .tolist())
+            embeddings_data.append(dict(
+                uuid=uuid4(),
+                clip_id=clip_id,
+                model_run_id=model_run.id,
+                embedding=embedding,  # numpy array → pgvector handles it
+                created_on=now,
+            ))
+
+        # Step 5: Bulk insert embeddings with ON CONFLICT DO NOTHING
+        if embeddings_data:
+            stmt = pg_insert(models.ClipEmbedding).values(embeddings_data)
+            stmt = stmt.on_conflict_do_nothing(
+                index_elements=["clip_id", "model_run_id"]
+            )
+            await session.execute(stmt)
+            await session.flush()
+
+        return len(clip_map)
+
+    async def _store_embeddings(
+        self,
+        session: AsyncSession,
+        recording: schemas.Recording,
+        model_run: schemas.ModelRun,
+        embeddings_result: Any,
+        job: schemas.FoundationModelRun,
+    ) -> int:
+        """Store embeddings from encode session result.
+
+        Parameters
+        ----------
+        session : AsyncSession
+            Database session.
+        recording : schemas.Recording
+            Recording being processed.
+        model_run : schemas.ModelRun
+            Model run for this job.
+        embeddings_result : Any
+            Result from encode_session.run() containing embeddings.
+        job : schemas.FoundationModelRun
+            Foundation model run configuration.
+
+        Returns
+        -------
+        int
+            Number of clips created.
+        """
+        # Extract embeddings from result
+        if hasattr(embeddings_result, "embeddings"):
+            embeddings = embeddings_result.embeddings
+            if hasattr(embeddings, "numpy"):
+                embeddings = embeddings.numpy()
+            embeddings = np.asarray(embeddings, dtype=np.float32)
+        else:
+            logger.warning(
+                "Embeddings result has no 'embeddings' attribute for recording %s",
+                recording.uuid,
+            )
+            return 0
+
+        # Normalize to (n_segments, embedding_dim)
+        if embeddings.ndim == 3:
+            embeddings = embeddings[0]
+        elif embeddings.ndim == 1:
+            embeddings = embeddings.reshape(1, -1)
+
+        if embeddings.size == 0:
+            return 0
+
+        # Get segment duration from model specification
+        engine = self._engines[self._get_cache_key(job.model_name)]
+        spec = engine.specification
+        segment_duration = spec.segment_duration
+
+        # Calculate overlap
+        overlap = job.overlap * segment_duration
+
+        # Create clips and embeddings
+        clips_created = 0
+
+        for seg_idx, embedding in enumerate(embeddings):
+            # Calculate segment times with overlap
+            hop_duration = segment_duration - overlap
+            start_time = seg_idx * hop_duration
+            end_time = start_time + segment_duration
+
+            # Get or create clip
+            clip = await self._get_or_create_clip(
+                session, recording, start_time, end_time
+            )
+
+            # Store embedding
+            try:
+                await clip_embeddings.create(
+                    session,
+                    clip=clip,
+                    model_run=model_run,
+                    embedding=embedding.tolist(),
+                )
+                clips_created += 1
+            except exceptions.DuplicateObjectError:
+                # Embedding already exists, skip
+                pass
+
+        return clips_created
+
+    async def _store_predictions_batch(
+        self,
+        session: AsyncSession,
+        recording: schemas.Recording,
+        model_run: schemas.ModelRun,
+        predictions_result: Any,
+        file_index: int,
+        job: schemas.FoundationModelRun,
+    ) -> int:
+        """Store predictions from batch predict result for a specific recording.
+
+        Parameters
+        ----------
+        session : AsyncSession
+            Database session.
+        recording : schemas.Recording
+            Recording being processed.
+        model_run : schemas.ModelRun
+            Model run for this job.
+        predictions_result : Any
+            Result from batch predict() containing predictions for multiple files.
+        file_index : int
+            Index of this recording in the batch results.
+        job : schemas.FoundationModelRun
+            Foundation model run configuration.
+
+        Returns
+        -------
+        int
+            Number of detections created.
+        """
+        # Extract predictions for this specific file from batch result
+        if not hasattr(predictions_result, "species_probs"):
+            logger.warning(
+                "Predictions result has no 'species_probs' attribute for recording %s",
+                recording.uuid,
+            )
+            return 0
+
+        all_probs = predictions_result.species_probs
+        all_ids = predictions_result.species_ids
+
+        if all_probs is None or all_probs.size == 0:
+            return 0
+
+        # Get predictions for this file (batch results are indexed by file)
+        if all_probs.ndim == 4:
+            # Shape: (n_files, 1, n_segments, n_species)
+            probs = all_probs[file_index, 0]
+            ids = all_ids[file_index, 0]
+        elif all_probs.ndim == 3:
+            # Shape: (n_files, n_segments, n_species)
+            probs = all_probs[file_index]
+            ids = all_ids[file_index]
+        else:
+            logger.warning(
+                "Unexpected predictions shape %s for recording %s",
+                all_probs.shape,
+                recording.uuid,
+            )
+            return 0
+
+        # Get model specification
+        engine = self._engines[self._get_cache_key(job.model_name)]
+        spec = engine.specification
+        segment_duration = spec.segment_duration
+        species_list = engine._model.species_list
+
+        # Calculate overlap
+        overlap = job.overlap * segment_duration
+        hop_duration = segment_duration - overlap
+
+        # Step 1: Collect all predictions by segment
+        segment_predictions: list[tuple[float, float, list[tuple[str, float]]]] = []
+
+        for seg_idx, (seg_probs, seg_ids) in enumerate(zip(probs, ids, strict=False)):
+            # Calculate segment times
+            start_time = seg_idx * hop_duration
+            end_time = start_time + segment_duration
+
+            # Filter predictions by confidence threshold and top_k
+            top_k = min(10, seg_probs.size)
+            top_indices = np.argsort(seg_probs)[-top_k:][::-1]
+
+            predictions: list[tuple[str, float]] = []
+            for idx in top_indices:
+                conf = float(seg_probs[idx])
+                if conf >= job.confidence_threshold:
+                    actual_idx = int(seg_ids[idx])
+                    species_label = species_list[actual_idx]
+                    predictions.append((species_label, conf))
+
+            if not predictions:
+                continue
+
+            # Apply custom species filter if configured
+            if job.custom_species_list:
+                predictions = [
+                    (species, conf)
+                    for species, conf in predictions
+                    if self._matches_custom_species(species, job.custom_species_list)
+                ]
+
+            if predictions:
+                segment_predictions.append((start_time, end_time, predictions))
+
+        if not segment_predictions:
+            return 0
+
+        # Step 2: Bulk create clips
+        now = datetime.datetime.now(datetime.timezone.utc)
+        clips_data = [
+            dict(
+                uuid=uuid4(),
+                recording_id=recording.id,
+                start_time=start_time,
+                end_time=end_time,
+                created_on=now,
+            )
+            for start_time, end_time, _ in segment_predictions
+        ]
+
+        stmt = pg_insert(models.Clip).values(clips_data)
+        stmt = stmt.on_conflict_do_nothing(
+            index_elements=["recording_id", "start_time", "end_time"]
+        )
+        await session.execute(stmt)
+        await session.flush()
+
+        # Step 3: Fetch clip IDs
+        time_ranges = [(start_time, end_time) for start_time, end_time, _ in segment_predictions]
+        clip_query = select(
+            models.Clip.id,
+            models.Clip.start_time,
+            models.Clip.end_time,
+        ).where(
+            models.Clip.recording_id == recording.id,
+            tuple_(models.Clip.start_time, models.Clip.end_time).in_(time_ranges),
+        )
+        clip_rows = await session.execute(clip_query)
+        clip_map: dict[tuple[float, float], int] = {
+            (row.start_time, row.end_time): row.id for row in clip_rows
+        }
+
+        # Step 4: Prepare species tags in batch
+        all_species_labels: set[str] = set()
+        for _, _, predictions in segment_predictions:
+            for species_label, _ in predictions:
+                all_species_labels.add(species_label)
+
+        # Parse all species labels
+        label_to_parsed: dict[str, tuple[str, str | None]] = {}
+        for species_label in all_species_labels:
+            scientific_name, common_name = self._parse_species_label(species_label)
+            label_to_parsed[species_label] = (scientific_name, common_name)
+
+        # Batch fetch existing tags
+        tag_keys_values: list[tuple[str, str]] = [
+            ("species", scientific_name)
+            for scientific_name, _ in label_to_parsed.values()
+        ]
+
+        if tag_keys_values:
+            tag_query = select(models.Tag).where(
+                tuple_(models.Tag.key, models.Tag.value).in_(tag_keys_values)
+            )
+            tag_rows = await session.execute(tag_query)
+            existing_tags = {
+                (tag.key, tag.value): schemas.Tag.model_validate(tag)
+                for tag in tag_rows.scalars().all()
+            }
+        else:
+            existing_tags = {}
+
+        # Create missing tags in batch
+        tags_to_create: list[dict] = []
+        for species_label, (scientific_name, common_name) in label_to_parsed.items():
+            tag_key = ("species", scientific_name)
+
+            # Collect all species (not just new ones) for batch GBIF resolution at job end
+            # This ensures vernacular names are resolved even for existing tags
+            if not is_non_species_label(scientific_name, common_name):
+                if job.uuid in self._pending_species:
+                    self._pending_species[job.uuid].add(scientific_name)
+
+            if tag_key not in existing_tags:
+                canonical = common_name or scientific_name
+                tags_to_create.append({
+                    "key": "species",
+                    "value": scientific_name,
+                    "canonical_name": canonical,
+                    "created_on": now,
+                })
+
+        if tags_to_create:
+            stmt = pg_insert(models.Tag).values(tags_to_create)
+            stmt = stmt.on_conflict_do_nothing(index_elements=["key", "value"])
+            stmt = stmt.returning(models.Tag)
+            result = await session.execute(stmt)
+            await session.flush()
+
+            for tag in result.scalars().all():
+                existing_tags[("species", tag.value)] = schemas.Tag.model_validate(tag)
+
+        # Build final species cache
+        species_tag_cache: dict[str, tuple[schemas.Tag, str, str | None, str | None]] = {}
+        for species_label, (scientific_name, common_name) in label_to_parsed.items():
+            tag = existing_tags.get(("species", scientific_name))
+            if tag:
+                gbif_taxon_id = None
+                species_tag_cache[species_label] = (tag, scientific_name, common_name, gbif_taxon_id)
+
+        # Step 5: Create predictions and tags in bulk
+        detections_count = 0
+        predictions_to_create: list[dict] = []
+        clip_to_predictions: dict[int, list[tuple[str, float]]] = {}
+
+        for start_time, end_time, predictions in segment_predictions:
+            clip_id = clip_map.get((start_time, end_time))
+            if clip_id is None:
+                continue
+
+            predictions_to_create.append(dict(uuid=uuid4(), clip_id=clip_id, created_on=now))
+            clip_to_predictions[clip_id] = predictions
+
+        # Bulk insert clip predictions
+        if predictions_to_create:
+            stmt = (
+                pg_insert(models.ClipPrediction)
+                .values(predictions_to_create)
+                .returning(models.ClipPrediction.id, models.ClipPrediction.clip_id)
+            )
+            result_rows = await session.execute(stmt)
+            created_predictions = result_rows.fetchall()
+
+            clip_to_prediction_id: dict[int, int] = {
+                row.clip_id: row.id for row in created_predictions
+            }
+
+            # Prepare model run predictions and prediction tags
+            model_run_predictions_to_create: list[dict] = []
+            prediction_tags_to_create: list[dict] = []
+
+            for clip_id, predictions in clip_to_predictions.items():
+                prediction_id = clip_to_prediction_id.get(clip_id)
+                if prediction_id is None:
+                    continue
+
+                model_run_predictions_to_create.append(
+                    dict(model_run_id=model_run.id, clip_prediction_id=prediction_id, created_on=now)
+                )
+
+                for species_label, confidence in predictions:
+                    cached = species_tag_cache.get(species_label)
+                    if cached is None:
+                        continue
+
+                    tag, scientific_name, common_name, gbif_taxon_id = cached
+                    if tag.id is None:
+                        continue
+
+                    prediction_tags_to_create.append(
+                        dict(
+                            clip_prediction_id=prediction_id,
+                            tag_id=tag.id,
+                            score=confidence,
+                            created_on=now,
+                        )
+                    )
+
+                    self._record_species_summary(
+                        job,
+                        tag,
+                        scientific_name,
+                        common_name,
+                        gbif_taxon_id,
+                        confidence,
+                    )
+                    detections_count += 1
+
+            # Bulk insert model run predictions
+            if model_run_predictions_to_create:
+                stmt = pg_insert(models.ModelRunPrediction).values(
+                    model_run_predictions_to_create
+                )
+                stmt = stmt.on_conflict_do_nothing()
+                await session.execute(stmt)
+
+            # Bulk insert prediction tags
+            if prediction_tags_to_create:
+                stmt = pg_insert(models.ClipPredictionTag).values(prediction_tags_to_create)
+                stmt = stmt.on_conflict_do_nothing()
+                await session.execute(stmt)
+
+            await session.flush()
+
+        return detections_count
+
+    async def _store_predictions(
+        self,
+        session: AsyncSession,
+        recording: schemas.Recording,
+        model_run: schemas.ModelRun,
+        predictions_result: Any,
+        job: schemas.FoundationModelRun,
+    ) -> int:
+        """Store predictions from predict session result.
+
+        Parameters
+        ----------
+        session : AsyncSession
+            Database session.
+        recording : schemas.Recording
+            Recording being processed.
+        model_run : schemas.ModelRun
+            Model run for this job.
+        predictions_result : Any
+            Result from predict_session.run() containing predictions.
+        job : schemas.FoundationModelRun
+            Foundation model run configuration.
+
+        Returns
+        -------
+        int
+            Number of detections created.
+        """
+        # Extract predictions from result
+        if not hasattr(predictions_result, "species_probs"):
+            logger.warning(
+                "Predictions result has no 'species_probs' attribute for recording %s",
+                recording.uuid,
+            )
+            return 0
+
+        species_probs = predictions_result.species_probs
+        species_ids = predictions_result.species_ids
+
+        if species_probs is None or species_probs.size == 0:
+            return 0
+
+        # Normalize to (n_segments, n_species)
+        if species_probs.ndim == 3:
+            probs = species_probs[0]
+            ids = species_ids[0]
+        elif species_probs.ndim == 2:
+            probs = species_probs
+            ids = species_ids
+        else:
+            probs = species_probs.reshape(1, -1)
+            ids = species_ids.reshape(1, -1)
+
+        # Get model specification
+        engine = self._engines[self._get_cache_key(job.model_name)]
+        spec = engine.specification
+        segment_duration = spec.segment_duration
+        species_list = engine._model.species_list
+
+        # Calculate overlap
+        overlap = job.overlap * segment_duration
+
+        detections_count = 0
+
+        # Process each segment
+        for seg_idx, (seg_probs, seg_ids) in enumerate(zip(probs, ids, strict=False)):
+            # Calculate segment times
+            hop_duration = segment_duration - overlap
+            start_time = seg_idx * hop_duration
+            end_time = start_time + segment_duration
+
+            # Filter predictions by confidence threshold and top_k
+            top_k = min(10, seg_probs.size)
+            top_indices = np.argsort(seg_probs)[-top_k:][::-1]
+
+            predictions: list[tuple[str, float]] = []
+            for idx in top_indices:
+                conf = float(seg_probs[idx])
+                if conf >= job.confidence_threshold:
+                    actual_idx = int(seg_ids[idx])
+                    species_label = species_list[actual_idx]
+                    predictions.append((species_label, conf))
+
+            if not predictions:
+                continue
+
+            # Apply custom species filter if configured
+            if job.custom_species_list:
+                predictions = [
+                    (species, conf)
+                    for species, conf in predictions
+                    if self._matches_custom_species(species, job.custom_species_list)
+                ]
+
+            if not predictions:
+                continue
+
+            # Get or create clip
+            clip = await self._get_or_create_clip(
+                session, recording, start_time, end_time
+            )
+
+            # Create clip prediction
+            try:
+                clip_pred = await clip_predictions.create(session, clip=clip)
+                # Link to model run
+                await model_runs.add_clip_prediction(session, model_run, clip_pred)
+            except exceptions.DuplicateObjectError:
+                # Prediction already exists, fetch it
+                stmt = select(models.ClipPrediction).where(
+                    models.ClipPrediction.clip_id == clip.id
+                )
+                result = await session.execute(stmt)
+                db_pred = result.scalar_one_or_none()
+                if db_pred:
+                    clip_pred = schemas.ClipPrediction.model_validate(db_pred)
+                else:
+                    continue
+
+            # Add tags for each species prediction
+            for species_label, confidence in predictions:
+                tag, scientific_name, common_name, gbif_taxon_id = (
+                    await self._get_or_create_species_tag(
+                        session,
+                        species_label,
+                        job.uuid,
+                    )
+                )
+
+                try:
+                    clip_pred = await clip_predictions.add_tag(
+                        session,
+                        clip_pred,
+                        tag,
+                        score=confidence,
+                    )
+                except exceptions.DuplicateObjectError:
+                    # Tag already exists on this prediction, skip
+                    pass
+
+                # Record species summary
+                self._record_species_summary(
+                    job,
+                    tag,
+                    scientific_name,
+                    common_name,
+                    gbif_taxon_id,
+                    confidence,
+                )
+                detections_count += 1
+
+        return detections_count
+
+    def _get_cache_key(self, model_name: str) -> str:
+        """Get cache key for a model."""
+        return model_name
+
     def unload_models(self) -> None:
         """Unload all loaded models."""
+        for _model_name, engine in self._engines.items():
+            if hasattr(engine, "close_sessions"):
+                engine.close_sessions()  # type: ignore[attr-defined]
+
         for model_name, loader in self._loaders.items():
             loader.unload()
             logger.info("%s model unloaded", model_name)

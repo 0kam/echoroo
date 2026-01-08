@@ -16,7 +16,6 @@ from echoroo.models.base import Base
 if TYPE_CHECKING:  # pragma: no cover - circular imports
     from echoroo.models.dataset import Dataset
     from echoroo.models.model_run import ModelRun
-    from echoroo.models.species_detection_job import SpeciesDetectionJob
     from echoroo.models.tag import Tag
     from echoroo.models.user import User
 
@@ -123,15 +122,22 @@ class FoundationModelRun(Base):
         default=None,
     )
 
-    species_detection_job_id: orm.Mapped[int | None] = orm.mapped_column(
-        ForeignKey("species_detection_job.id", ondelete="SET NULL"),
-        default=None,
-    )
-
     model_run_id: orm.Mapped[int | None] = orm.mapped_column(
         ForeignKey("model_run.id", ondelete="SET NULL"),
         default=None,
     )
+
+    # Job configuration fields
+    name: orm.Mapped[str | None] = orm.mapped_column(default=None)
+    model_name: orm.Mapped[str] = orm.mapped_column(default="birdnet")
+    model_version: orm.Mapped[str] = orm.mapped_column(default="latest")
+    overlap: orm.Mapped[float] = orm.mapped_column(default=0.0)
+    locale: orm.Mapped[str] = orm.mapped_column(default="ja")
+    use_metadata_filter: orm.Mapped[bool] = orm.mapped_column(default=False)
+    custom_species_list: orm.Mapped[list[str] | None] = orm.mapped_column(JSON, default=None)
+
+    run_embeddings: orm.Mapped[bool] = orm.mapped_column(default=True)
+    run_predictions: orm.Mapped[bool] = orm.mapped_column(default=True)
 
     status: orm.Mapped[FoundationModelRunStatus] = orm.mapped_column(
         Enum(
@@ -182,11 +188,6 @@ class FoundationModelRun(Base):
         repr=False,
     )
 
-    job: orm.Mapped["SpeciesDetectionJob | None"] = orm.relationship(
-        init=False,
-        repr=False,
-    )
-
     model_run: orm.Mapped["ModelRun | None"] = orm.relationship(
         init=False,
         repr=False,
@@ -227,7 +228,7 @@ class FoundationModelRunSpecies(Base):
         default=None,
     )
 
-    common_name_ja: orm.Mapped[str | None] = orm.mapped_column(default=None)
+    vernacular_name: orm.Mapped[str | None] = orm.mapped_column(default=None)
 
     detection_count: orm.Mapped[int] = orm.mapped_column(default=0)
     avg_confidence: orm.Mapped[float] = orm.mapped_column(default=0.0)
