@@ -6,18 +6,19 @@ from typing import Sequence
 from uuid import UUID
 
 import numpy as np
-from sqlalchemy import func, select, text
+from sqlalchemy import delete, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlalchemy.sql import ColumnExpressionArgument
 
 from echoroo import exceptions, models, schemas
 from echoroo.api import common
-from echoroo.api.common import BaseAPI
+from echoroo.api.common import BaseAPI, UserResolutionMixin
 from echoroo.api.ml_projects import can_edit_ml_project, can_view_ml_project
 from echoroo.filters.base import Filter
 from echoroo.ml.active_learning import (
     ActiveLearningConfig,
+    MIN_EMBEDDING_NORM,
     compute_initial_samples,
     run_active_learning_iteration,
 )
@@ -30,6 +31,83 @@ __all__ = [
 logger = logging.getLogger(__name__)
 
 
+async def compute_percentiles_for_session(
+    session: AsyncSession,
+    search_session_id: int,
+) -> dict[int, float]:
+    """Compute percentile ranks for all results in a session.
+
+    Uses the dataset_rank (stored in rank column) to calculate percentile
+    relative to the full dataset, not just the selected samples.
+
+    rank=1 means top 0.x% (most similar to references)
+    Higher rank = lower percentile (less similar)
+
+    Parameters
+    ----------
+    session
+        SQLAlchemy AsyncSession.
+    search_session_id
+        ID of the search session.
+
+    Returns
+    -------
+    dict[int, float]
+        Mapping from result ID to percentile (0-100).
+        Higher percentile = more similar to references.
+    """
+    # Get search session to find ml_project_id
+    search_session_query = select(models.SearchSession.ml_project_id).where(
+        models.SearchSession.id == search_session_id
+    )
+    result = await session.execute(search_session_query)
+    row = result.fetchone()
+    if not row:
+        return {}
+
+    ml_project_id = row[0]
+
+    # Count total clips in the dataset (using the same query as active_learning)
+    count_query = text("""
+        SELECT COUNT(DISTINCT ce.clip_id)
+        FROM clip_embedding ce
+        JOIN clip c ON ce.clip_id = c.id
+        JOIN recording r ON c.recording_id = r.id
+        JOIN dataset_recording dr ON r.id = dr.recording_id
+        JOIN ml_project_dataset_scope mpds ON dr.dataset_id = mpds.dataset_id
+        JOIN foundation_model_run fmr ON mpds.foundation_model_run_id = fmr.id
+        WHERE mpds.ml_project_id = :ml_project_id
+          AND fmr.model_run_id = ce.model_run_id
+    """)
+    result = await session.execute(count_query, {"ml_project_id": ml_project_id})
+    total_clips = result.scalar() or 1  # Avoid division by zero
+
+    # Get all results with their dataset rank
+    query = select(
+        models.SearchResult.id,
+        models.SearchResult.rank,  # This is dataset_rank
+    ).where(
+        models.SearchResult.search_session_id == search_session_id
+    )
+
+    result = await session.execute(query)
+    all_results = [(row[0], row[1]) for row in result.fetchall()]
+
+    if not all_results:
+        return {}
+
+    # Calculate percentile based on dataset rank
+    # rank=1 -> percentile close to 100 (top of dataset)
+    # rank=total_clips -> percentile close to 0 (bottom of dataset)
+    percentiles = {}
+    for result_id, dataset_rank in all_results:
+        # Percentile: (total_clips - rank + 1) / total_clips * 100
+        percentile = (total_clips - dataset_rank + 1) / total_clips * 100
+        percentiles[result_id] = percentile
+
+    return percentiles
+
+
 class SearchSessionAPI(
     BaseAPI[
         UUID,
@@ -37,27 +115,13 @@ class SearchSessionAPI(
         schemas.SearchSession,
         schemas.SearchSessionCreate,
         schemas.SearchSession,
-    ]
+    ],
+    UserResolutionMixin,
 ):
     """API for managing Search Sessions with Active Learning."""
 
     _model = models.SearchSession
     _schema = schemas.SearchSession
-
-    async def _resolve_user(
-        self,
-        session: AsyncSession,
-        user: models.User | schemas.SimpleUser | None,
-    ) -> models.User | None:
-        """Resolve a user schema to a user model."""
-        if user is None:
-            return None
-        if isinstance(user, models.User):
-            return user
-        db_user = await session.get(models.User, user.id)
-        if db_user is None:
-            raise exceptions.NotFoundError(f"User with id {user.id} not found")
-        return db_user
 
     async def _get_ml_project(
         self,
@@ -72,187 +136,16 @@ class SearchSessionAPI(
             )
         return ml_project
 
-    async def _eager_load_relationships(
-        self,
-        session: AsyncSession,
-        db_obj: models.SearchSession,
-    ) -> models.SearchSession:
-        """Eagerly load relationships needed for SearchSession schema validation."""
-        stmt = (
-            select(self._model)
-            .where(self._model.uuid == db_obj.uuid)
-            .options(
-                selectinload(self._model.target_tags).selectinload(
-                    models.SearchSessionTargetTag.tag
-                ),
-                selectinload(self._model.ml_project),
-                selectinload(self._model.created_by),
-                selectinload(self._model.reference_sounds).selectinload(
-                    models.ReferenceSound.ml_project
-                ),
-                selectinload(self._model.reference_sounds).selectinload(
-                    models.ReferenceSound.tag
-                ),
-                selectinload(self._model.reference_sounds).selectinload(
-                    models.ReferenceSound.clip
-                ),
-                selectinload(self._model.reference_sounds).selectinload(
-                    models.ReferenceSound.embeddings
-                ),
-            )
-        )
-        result = await session.execute(stmt)
-        return result.scalar_one()
-
     async def _build_schema(
         self,
         session: AsyncSession,
         db_obj: models.SearchSession,
     ) -> schemas.SearchSession:
-        """Build schema from database object with Active Learning fields."""
-        db_obj = await self._eager_load_relationships(session, db_obj)
+        """Build schema using SchemaBuilder service."""
+        from echoroo.services.search_sessions.schema_builder import SearchSessionSchemaBuilder
 
-        # Get result counts
-        total_results = await session.scalar(
-            select(func.count(models.SearchResult.id)).where(
-                models.SearchResult.search_session_id == db_obj.id
-            )
-        ) or 0
-
-        # Count labeled results (has assigned_tag_id OR is_negative OR is_uncertain OR is_skipped)
-        labeled_count = await session.scalar(
-            select(func.count(models.SearchResult.id))
-            .where(models.SearchResult.search_session_id == db_obj.id)
-            .where(
-                (models.SearchResult.assigned_tag_id.isnot(None))
-                | (models.SearchResult.is_negative == True)
-                | (models.SearchResult.is_uncertain == True)
-                | (models.SearchResult.is_skipped == True)
-            )
-        ) or 0
-
-        negative_count = await session.scalar(
-            select(func.count(models.SearchResult.id))
-            .where(models.SearchResult.search_session_id == db_obj.id)
-            .where(models.SearchResult.is_negative == True)
-        ) or 0
-
-        uncertain_count = await session.scalar(
-            select(func.count(models.SearchResult.id))
-            .where(models.SearchResult.search_session_id == db_obj.id)
-            .where(models.SearchResult.is_uncertain == True)
-        ) or 0
-
-        skipped_count = await session.scalar(
-            select(func.count(models.SearchResult.id))
-            .where(models.SearchResult.search_session_id == db_obj.id)
-            .where(models.SearchResult.is_skipped == True)
-        ) or 0
-
-        # Get tag counts (assigned_tag_id -> count)
-        tag_counts_query = (
-            select(
-                models.SearchResult.assigned_tag_id,
-                func.count(models.SearchResult.id),
-            )
-            .where(models.SearchResult.search_session_id == db_obj.id)
-            .where(models.SearchResult.assigned_tag_id.isnot(None))
-            .group_by(models.SearchResult.assigned_tag_id)
-        )
-        tag_counts_result = await session.execute(tag_counts_query)
-        tag_counts = {row[0]: row[1] for row in tag_counts_result.fetchall()}
-
-        # Build target tags list
-        target_tags = []
-        for tt in db_obj.target_tags:
-            target_tags.append(
-                schemas.SearchSessionTargetTag(
-                    tag_id=tt.tag_id,
-                    tag=schemas.Tag.model_validate(tt.tag),
-                    shortcut_key=tt.shortcut_key,
-                )
-            )
-
-        # Build reference sounds list
-        from echoroo.schemas.reference_sounds import ReferenceSound
-
-        reference_sounds = []
-        if hasattr(db_obj, "reference_sounds") and db_obj.reference_sounds:
-            for ref_sound in db_obj.reference_sounds:
-                # Map source enum
-                source_map = {
-                    models.ReferenceSoundSource.XENO_CANTO: schemas.ReferenceSoundSource.XENO_CANTO,
-                    models.ReferenceSoundSource.CUSTOM_UPLOAD: schemas.ReferenceSoundSource.UPLOAD,
-                    models.ReferenceSoundSource.DATASET_CLIP: schemas.ReferenceSoundSource.CLIP,
-                }
-                source = source_map.get(
-                    ref_sound.source, schemas.ReferenceSoundSource.UPLOAD
-                )
-
-                ref_data = {
-                    "uuid": ref_sound.uuid,
-                    "id": ref_sound.id,
-                    "name": ref_sound.name,
-                    "ml_project_id": ref_sound.ml_project_id,
-                    "ml_project_uuid": (
-                        ref_sound.ml_project.uuid if ref_sound.ml_project else None
-                    ),
-                    "source": source,
-                    "tag_id": ref_sound.tag_id,
-                    "tag": (
-                        schemas.Tag.model_validate(ref_sound.tag)
-                        if ref_sound.tag
-                        else None
-                    ),
-                    "start_time": ref_sound.start_time,
-                    "end_time": ref_sound.end_time,
-                    "duration": ref_sound.end_time - ref_sound.start_time,
-                    "xeno_canto_id": ref_sound.xeno_canto_id,
-                    "clip_id": ref_sound.clip_id,
-                    "clip": (
-                        schemas.Clip.model_validate(ref_sound.clip)
-                        if ref_sound.clip
-                        else None
-                    ),
-                    "audio_path": ref_sound.audio_path,
-                    "embedding_count": len(ref_sound.embeddings) if ref_sound.embeddings else 0,
-                    "is_active": ref_sound.is_active,
-                    "created_by_id": ref_sound.created_by_id,
-                    "created_on": ref_sound.created_on,
-                }
-                reference_sounds.append(ReferenceSound.model_validate(ref_data))
-
-        unlabeled_count = total_results - labeled_count
-
-        data = {
-            "uuid": db_obj.uuid,
-            "id": db_obj.id,
-            "name": db_obj.name,
-            "description": db_obj.description,
-            "ml_project_id": db_obj.ml_project_id,
-            "ml_project_uuid": db_obj.ml_project.uuid if db_obj.ml_project else None,
-            "target_tags": target_tags,
-            "easy_positive_k": db_obj.easy_positive_k,
-            "boundary_n": db_obj.boundary_n,
-            "boundary_m": db_obj.boundary_m,
-            "others_p": db_obj.others_p,
-            "distance_metric": db_obj.distance_metric,
-            "current_iteration": db_obj.current_iteration,
-            "is_search_complete": db_obj.is_search_complete,
-            "total_results": total_results,
-            "labeled_count": labeled_count,
-            "unlabeled_count": unlabeled_count,
-            "negative_count": negative_count,
-            "uncertain_count": uncertain_count,
-            "skipped_count": skipped_count,
-            "tag_counts": tag_counts,
-            "notes": db_obj.description,
-            "reference_sounds": reference_sounds,
-            "created_by_id": db_obj.created_by_id,
-            "created_on": db_obj.created_on,
-        }
-
-        return schemas.SearchSession.model_validate(data)
+        builder = SearchSessionSchemaBuilder(session)
+        return await builder.build_schema(db_obj)
 
     async def get(
         self,
@@ -460,7 +353,6 @@ class SearchSessionAPI(
             self._model,
             self._get_pk_condition(search_session.uuid),
         )
-        db_obj = await self._eager_load_relationships(session, db_obj)
         ml_project = await self._get_ml_project(session, db_obj.ml_project_id)
 
         if not await can_edit_ml_project(session, ml_project, db_user):
@@ -521,7 +413,7 @@ class SearchSessionAPI(
         )
 
         # Compute initial samples
-        samples = await compute_initial_samples(
+        samples, total_clips = await compute_initial_samples(
             session=session,
             search_session_id=db_obj.id,
             ml_project_id=db_obj.ml_project_id,
@@ -531,14 +423,15 @@ class SearchSessionAPI(
         )
 
         # Create search results from samples
-        for rank, sample in enumerate(samples, start=1):
+        # Use dataset_rank (rank in full dataset) for percentile calculation
+        for sample in samples:
             await common.create_object(
                 session,
                 models.SearchResult,
                 search_session_id=db_obj.id,
                 clip_id=sample["clip_id"],
                 similarity=sample["similarity"],
-                rank=rank,
+                rank=sample["dataset_rank"],  # Store dataset rank for percentile
                 sample_type=sample["sample_type"],
                 source_tag_id=sample.get("source_tag_id"),
                 iteration_added=0,
@@ -568,6 +461,7 @@ class SearchSessionAPI(
         uncertainty_high: float = 0.75,
         samples_per_iteration: int = 20,
         selected_tag_ids: list[int] | None = None,
+        classifier_type: str = "logistic_regression",
         user: models.User | schemas.SimpleUser | None = None,
     ) -> schemas.SearchSession:
         """Run one iteration of active learning.
@@ -583,6 +477,8 @@ class SearchSessionAPI(
             Upper bound of uncertainty region (default 0.75).
         samples_per_iteration
             Number of samples to add in this iteration (default 20).
+        classifier_type
+            Classifier type to use for this iteration (default logistic_regression).
         """
         db_user = await self._resolve_user(session, user)
 
@@ -622,6 +518,7 @@ class SearchSessionAPI(
             ml_project_id=db_obj.ml_project_id,
             config=config,
             selected_tag_ids=selected_tag_set,
+            classifier_type=classifier_type,
         )
 
         # Get current max rank
@@ -749,14 +646,42 @@ class SearchSessionAPI(
                 selectinload(models.SearchResult.clip).selectinload(
                     models.Clip.recording
                 ),
-                selectinload(models.SearchResult.assigned_tag),
                 selectinload(models.SearchResult.source_tag),
+                selectinload(models.SearchResult.assigned_tags_rel).selectinload(
+                    models.SearchResultTag.tag
+                ),
             ],
         )
+
+        # Compute percentiles for all results in this session
+        percentiles = await compute_percentiles_for_session(
+            session, search_session_id
+        )
+
+        # Get distance metric for this session
+        distance_metric = search_session.distance_metric
 
         results = []
         for db_obj in db_objs:
             clip_schema = schemas.Clip.model_validate(db_obj.clip)
+
+            # Build multi-label tag data
+            assigned_tag_ids = [rel.tag_id for rel in db_obj.assigned_tags_rel]
+            assigned_tags = [
+                schemas.Tag.model_validate(rel.tag) for rel in db_obj.assigned_tags_rel
+            ]
+
+            # Compute raw_score from similarity
+            # For cosine: raw_score = similarity (already 0-1)
+            # For euclidean: similarity = 1/(1+d), so d = 1/similarity - 1
+            raw_score = db_obj.raw_score
+            if raw_score is None:
+                if distance_metric == "euclidean" and db_obj.similarity > 0:
+                    # Reverse the transformation to get original distance
+                    raw_score = (1.0 / db_obj.similarity) - 1.0
+                else:
+                    # For cosine, raw_score equals similarity
+                    raw_score = db_obj.similarity
 
             data = {
                 "uuid": db_obj.uuid,
@@ -767,12 +692,9 @@ class SearchSessionAPI(
                 "clip": clip_schema,
                 "similarity": db_obj.similarity,
                 "rank": db_obj.rank,
-                "assigned_tag_id": db_obj.assigned_tag_id,
-                "assigned_tag": (
-                    schemas.Tag.model_validate(db_obj.assigned_tag)
-                    if db_obj.assigned_tag
-                    else None
-                ),
+                # Multi-label support
+                "assigned_tag_ids": assigned_tag_ids,
+                "assigned_tags": assigned_tags,
                 "is_negative": db_obj.is_negative,
                 "is_uncertain": db_obj.is_uncertain,
                 "is_skipped": db_obj.is_skipped,
@@ -789,6 +711,10 @@ class SearchSessionAPI(
                 "labeled_by_id": db_obj.labeled_by_id,
                 "notes": db_obj.notes,
                 "created_on": db_obj.created_on,
+                # Score display fields
+                "raw_score": raw_score,
+                "score_percentile": percentiles.get(db_obj.id),
+                "result_distance_metric": distance_metric,
             }
             results.append(schemas.SearchResult.model_validate(data))
 
@@ -829,17 +755,17 @@ class SearchSessionAPI(
                 "You do not have permission to label results in this session"
             )
 
-        # Validate assigned_tag_id if provided
-        if label_data.assigned_tag_id is not None:
-            tag = await session.get(models.Tag, label_data.assigned_tag_id)
+        # Get all tag IDs to assign (multi-label support)
+        tag_ids = label_data.get_tag_ids()
+
+        # Validate all tag IDs
+        for tag_id in tag_ids:
+            tag = await session.get(models.Tag, tag_id)
             if tag is None:
-                raise exceptions.NotFoundError(
-                    f"Tag with id {label_data.assigned_tag_id} not found"
-                )
+                raise exceptions.NotFoundError(f"Tag with id {tag_id} not found")
 
         # Build update data
         update_data = {
-            "assigned_tag_id": label_data.assigned_tag_id,
             "is_negative": label_data.is_negative,
             "is_uncertain": label_data.is_uncertain,
             "is_skipped": label_data.is_skipped,
@@ -857,13 +783,36 @@ class SearchSessionAPI(
             **update_data,
         )
 
+        # Update search_result_tag junction table for multi-label support
+        # Delete existing tag assignments
+        await session.execute(
+            delete(models.SearchResultTag).where(
+                models.SearchResultTag.search_result_id == db_result.id
+            )
+        )
+
+        # Add new tag assignments
+        for tag_id in tag_ids:
+            new_tag_rel = models.SearchResultTag(
+                search_result_id=db_result.id,
+                tag_id=tag_id,
+            )
+            session.add(new_tag_rel)
+
         # Build and return schema
         await session.refresh(
-            db_result, ["clip", "search_session", "assigned_tag", "source_tag"]
+            db_result,
+            ["clip", "search_session", "assigned_tag", "source_tag", "assigned_tags_rel"],
         )
         if db_result.clip:
             await session.refresh(db_result.clip, ["recording"])
         clip_schema = schemas.Clip.model_validate(db_result.clip)
+
+        # Build multi-label tag data
+        assigned_tag_ids = [rel.tag_id for rel in db_result.assigned_tags_rel]
+        assigned_tags = [
+            schemas.Tag.model_validate(rel.tag) for rel in db_result.assigned_tags_rel
+        ]
 
         data = {
             "uuid": db_result.uuid,
@@ -874,12 +823,9 @@ class SearchSessionAPI(
             "clip": clip_schema,
             "similarity": db_result.similarity,
             "rank": db_result.rank,
-            "assigned_tag_id": db_result.assigned_tag_id,
-            "assigned_tag": (
-                schemas.Tag.model_validate(db_result.assigned_tag)
-                if db_result.assigned_tag
-                else None
-            ),
+            # Multi-label support
+            "assigned_tag_ids": assigned_tag_ids,
+            "assigned_tags": assigned_tags,
             "is_negative": db_result.is_negative,
             "is_uncertain": db_result.is_uncertain,
             "is_skipped": db_result.is_skipped,
@@ -963,12 +909,19 @@ class SearchSessionAPI(
             )
         ) or 0
 
-        # Labeled = has any label (tag, negative, uncertain, or skipped)
+        # Labeled = has any label (tag via junction table, negative, uncertain, or skipped)
+        has_tags_subquery = (
+            select(models.SearchResultTag.search_result_id)
+            .where(
+                models.SearchResultTag.search_result_id == models.SearchResult.id
+            )
+            .exists()
+        )
         labeled = await session.scalar(
             select(func.count(models.SearchResult.id))
             .where(models.SearchResult.search_session_id == search_session_id)
             .where(
-                (models.SearchResult.assigned_tag_id.isnot(None))
+                has_tags_subquery
                 | (models.SearchResult.is_negative == True)
                 | (models.SearchResult.is_uncertain == True)
                 | (models.SearchResult.is_skipped == True)
@@ -993,15 +946,18 @@ class SearchSessionAPI(
             .where(models.SearchResult.is_skipped == True)
         ) or 0
 
-        # Get tag counts
+        # Get tag counts from junction table
         tag_counts_query = (
             select(
-                models.SearchResult.assigned_tag_id,
-                func.count(models.SearchResult.id),
+                models.SearchResultTag.tag_id,
+                func.count(func.distinct(models.SearchResultTag.search_result_id)),
+            )
+            .join(
+                models.SearchResult,
+                models.SearchResultTag.search_result_id == models.SearchResult.id,
             )
             .where(models.SearchResult.search_session_id == search_session_id)
-            .where(models.SearchResult.assigned_tag_id.isnot(None))
-            .group_by(models.SearchResult.assigned_tag_id)
+            .group_by(models.SearchResultTag.tag_id)
         )
         tag_counts_result = await session.execute(tag_counts_query)
         tag_counts = {row[0]: row[1] for row in tag_counts_result.fetchall()}
@@ -1076,7 +1032,7 @@ class SearchSessionAPI(
 
         # Create label data with assigned tag
         label_data = schemas.SearchResultLabelData(
-            assigned_tag_id=assigned_tag_id,
+            assigned_tag_ids=[assigned_tag_id],
             is_negative=False,
             is_uncertain=False,
             is_skipped=False,
@@ -1142,8 +1098,7 @@ class SearchSessionAPI(
         schemas.ExportToAnnotationProjectResponse
             Response with the created annotation project details.
         """
-        from echoroo.api.annotation_projects import annotation_projects
-        from echoroo.api.clips import clips
+        from echoroo.services.search_sessions.export import SearchSessionExportService
 
         db_user = await self._resolve_user(session, user)
         if db_user is None:
@@ -1156,8 +1111,12 @@ class SearchSessionAPI(
             session,
             self._model,
             self._get_pk_condition(search_session.uuid),
+            options=[
+                selectinload(self._model.target_tags).selectinload(
+                    models.SearchSessionTargetTag.tag
+                ),
+            ],
         )
-        db_session = await self._eager_load_relationships(session, db_session)
         ml_project = await self._get_ml_project(session, db_session.ml_project_id)
 
         if not await can_edit_ml_project(session, ml_project, db_user):
@@ -1165,110 +1124,21 @@ class SearchSessionAPI(
                 "You do not have permission to export results from this session"
             )
 
-        # Build query for results to export
-        results_query = select(models.SearchResult).where(
-            models.SearchResult.search_session_id == db_session.id
-        )
-
-        if include_labeled:
-            if include_tag_ids:
-                # Filter to specific tags
-                results_query = results_query.where(
-                    models.SearchResult.assigned_tag_id.in_(include_tag_ids)
-                )
-            else:
-                # Include all results with assigned tags
-                results_query = results_query.where(
-                    models.SearchResult.assigned_tag_id.isnot(None)
-                )
-
-        result = await session.execute(results_query)
-        db_results = result.scalars().all()
-
-        if not db_results:
-            raise exceptions.InvalidDataError(
-                "No results found matching the export criteria"
-            )
-
-        # Get the dataset_id from the ML project
-        dataset_id = ml_project.dataset_id
-        if dataset_id is None:
-            # Try to get from dataset scopes
-            if ml_project.dataset_scopes:
-                dataset_id = ml_project.dataset_scopes[0].dataset_id
-            else:
-                raise exceptions.InvalidDataError(
-                    "ML Project has no associated dataset"
-                )
-
-        # Create the annotation project
-        annotation_project = await annotation_projects.create(
-            session,
+        # Create export request data
+        export_data = schemas.ExportToAnnotationProjectRequest(
             name=name,
             description=description,
-            annotation_instructions=(
-                f"Review clips from search session: {db_session.name}. "
-            ),
+            include_labeled=include_labeled,
+            include_tag_ids=include_tag_ids,
+        )
+
+        # Use service for business logic
+        service = SearchSessionExportService(session)
+        return await service.export_to_annotation_project(
+            search_session=db_session,
+            data=export_data,
             user=db_user,
-            dataset_id=dataset_id,
-        )
-
-        # Add target tags to the annotation project
-        for tt in db_session.target_tags:
-            tag_schema = schemas.Tag.model_validate(tt.tag)
-            await annotation_projects.add_tag(
-                session,
-                annotation_project,
-                tag_schema,
-                user=db_user,
-            )
-
-        # Create annotation tasks for each result's clip
-        exported_count = 0
-        for db_result in db_results:
-            try:
-                # Load the clip
-                await session.refresh(db_result, ["clip"])
-
-                # Get the clip schema
-                clip = await clips.get(session, db_result.clip.uuid)
-
-                # Add task to annotation project
-                await annotation_projects.add_task(
-                    session,
-                    annotation_project,
-                    clip,
-                    user=db_user,
-                )
-
-                # Update the search result to track which AP it was exported to
-                await common.update_object(
-                    session,
-                    models.SearchResult,
-                    models.SearchResult.uuid == db_result.uuid,
-                    {"saved_to_annotation_project_id": annotation_project.id},
-                )
-
-                exported_count += 1
-            except Exception as e:
-                logger.warning(
-                    f"Failed to export result {db_result.uuid} "
-                    f"to annotation project: {e}"
-                )
-
-        logger.info(
-            f"Exported {exported_count} results from search session "
-            f"{search_session.uuid} to annotation project {annotation_project.uuid}"
-        )
-
-        return schemas.ExportToAnnotationProjectResponse(
-            annotation_project_uuid=annotation_project.uuid,
-            annotation_project_name=annotation_project.name,
-            exported_count=exported_count,
-            message=(
-                f"Successfully exported {exported_count} clips "
-                f"to annotation project '{name}'"
-            ),
+            ml_project=ml_project,
         )
 
     async def get_annotation_projects(
@@ -1409,6 +1279,66 @@ class SearchSessionAPI(
             distributions.append(tag_dist)
 
         return schemas.ScoreDistributionResponse(distributions=distributions)
+
+    async def finalize(
+        self,
+        session: AsyncSession,
+        search_session: schemas.SearchSession,
+        request: schemas.FinalizeRequest,
+        *,
+        user: models.User | schemas.SimpleUser,
+    ) -> schemas.FinalizeResponse:
+        """Finalize a search session using FinalizationService.
+
+        Delegates to SearchSessionFinalizationService for business logic.
+
+        Parameters
+        ----------
+        session
+            SQLAlchemy AsyncSession.
+        search_session
+            The search session to finalize.
+        request
+            Finalize request with model name, type, and options.
+        user
+            The user performing the finalize.
+
+        Returns
+        -------
+        schemas.FinalizeResponse
+            Response with created model details and counts.
+        """
+        from echoroo.services.search_sessions.finalization import (
+            SearchSessionFinalizationService,
+        )
+
+        db_user = await self._resolve_user(session, user)
+        if db_user is None:
+            raise exceptions.PermissionDeniedError(
+                "Authentication required to finalize sessions"
+            )
+
+        # Get search session model instance
+        db_session = await common.get_object(
+            session,
+            self._model,
+            self._get_pk_condition(search_session.uuid),
+        )
+
+        # Verify access
+        ml_project = await self._get_ml_project(session, db_session.ml_project_id)
+        if not await can_edit_ml_project(session, ml_project, db_user):
+            raise exceptions.PermissionDeniedError(
+                "You do not have permission to finalize this search session"
+            )
+
+        # Use finalization service for business logic
+        service = SearchSessionFinalizationService(session)
+        return await service.finalize(
+            search_session=db_session,
+            data=request,
+            user=db_user,
+        )
 
 
 search_sessions = SearchSessionAPI()

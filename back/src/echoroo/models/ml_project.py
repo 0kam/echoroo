@@ -106,17 +106,6 @@ class MLProject(Base):
     name: orm.Mapped[str] = orm.mapped_column(nullable=False)
     """The name of the ML project."""
 
-    dataset_id: orm.Mapped[int | None] = orm.mapped_column(
-        ForeignKey("dataset.id", ondelete="RESTRICT"),
-        nullable=True,
-    )
-    """The primary dataset from which this ML project derives recordings.
-
-    Note: This field is nullable to support multi-dataset projects.
-    For new projects, use dataset_scopes instead. When dataset_id is set,
-    it represents the primary dataset for backward compatibility.
-    """
-
     project_id: orm.Mapped[str] = orm.mapped_column(
         ForeignKey("project.project_id", ondelete="RESTRICT"),
         nullable=False,
@@ -146,13 +135,6 @@ class MLProject(Base):
     This defines which model (e.g., BirdNET, Perch) is used for
     generating embeddings for similarity search and classification.
     """
-
-    embedding_model_run_id: orm.Mapped[int | None] = orm.mapped_column(
-        ForeignKey("model_run.id", ondelete="SET NULL"),
-        nullable=True,
-        default=None,
-    )
-    """The model run used to generate embeddings for similarity search."""
 
     status: orm.Mapped[MLProjectStatus] = orm.mapped_column(
         sa.Enum(
@@ -191,15 +173,6 @@ class MLProject(Base):
     )
     """Relationship to the creator."""
 
-    dataset: orm.Mapped["Dataset"] = orm.relationship(
-        "Dataset",
-        foreign_keys=[dataset_id],
-        viewonly=True,
-        repr=False,
-        init=False,
-    )
-    """Parent dataset relationship."""
-
     project: orm.Mapped["Project"] = orm.relationship(
         "Project",
         foreign_keys=[project_id],
@@ -208,15 +181,6 @@ class MLProject(Base):
         init=False,
     )
     """Owning project relationship."""
-
-    embedding_model_run: orm.Mapped["ModelRun | None"] = orm.relationship(
-        "ModelRun",
-        foreign_keys=[embedding_model_run_id],
-        viewonly=True,
-        repr=False,
-        init=False,
-    )
-    """The model run used for generating embeddings."""
 
     foundation_model: orm.Mapped["FoundationModel | None"] = orm.relationship(
         "FoundationModel",

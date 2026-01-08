@@ -1,61 +1,53 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import api from "@/app/api";
-import { DateTimePatternBuilder } from "@/lib/components/datetime";
-import { Group, Input } from "@/lib/components/inputs";
+import { Select } from "@/lib/components/inputs";
 import Button from "@/lib/components/ui/Button";
 import Card from "@/lib/components/ui/Card";
 import { DialogOverlay as Dialog } from "@/lib/components/ui/Dialog";
 import Spinner from "@/lib/components/ui/Spinner";
-import type { Dataset, DatetimePatternType } from "@/lib/types";
+import type { Dataset } from "@/lib/types";
+import DatetimeStringSelector from "./DatetimeStringSelector";
+import { generateStrptimePattern, validateDatetimeSelections } from "@/lib/utils/datetime";
 
-export default function DatasetDatetimeParser({
+type DatetimeComponent = "year" | "month" | "day" | "hour" | "minute" | "second";
+
+interface Selection {
+  start: number;
+  end: number;
+  component: DatetimeComponent;
+}
+
+export default function DatasetDatetimeParserNew({
   dataset,
 }: {
   dataset: Dataset;
 }) {
   const [isOpen, setIsOpen] = useState(false);
-  const [patternType, setPatternType] = useState<DatetimePatternType>("strptime");
-  const [pattern, setPattern] = useState("");
-  const [sampleFilename, setSampleFilename] = useState("");
-  const [useVisualBuilder, setUseVisualBuilder] = useState(true);
+  const [selectedFilename, setSelectedFilename] = useState<string | null>(null);
+  const [selections, setSelections] = useState<
+    Partial<Record<DatetimeComponent, Selection>>
+  >({});
+  const [generatedPattern, setGeneratedPattern] = useState<string>("");
 
   const queryClient = useQueryClient();
 
-  // Fetch status
+  // Fetch filename samples
+  const { data: filenameSamples, isLoading: samplesLoading } = useQuery({
+    queryKey: ["filename-samples", dataset.uuid],
+    queryFn: () => api.datasets.getFilenameSamples(dataset.uuid, 20),
+    enabled: isOpen,
+  });
+
+  // Fetch parse status
   const { data: status, isLoading: statusLoading } = useQuery({
     queryKey: ["datetime-parse-status", dataset.uuid],
     queryFn: () => api.datasets.getDatetimeParseStatus(dataset.uuid),
     enabled: isOpen,
   });
-
-  // Fetch sample filenames from the dataset
-  const { data: sampleFilenames } = useQuery({
-    queryKey: ["dataset-filename-samples", dataset.uuid],
-    queryFn: () => api.datasets.getFilenameSamples(dataset.uuid, 1),
-    enabled: isOpen && useVisualBuilder,
-  });
-
-  // Get sample filename from first recording
-  const sampleFilenameFromDataset = useMemo(() => {
-    if (!sampleFilenames || sampleFilenames.length === 0) return null;
-    return sampleFilenames[0];
-  }, [sampleFilenames]);
-
-  // Use the visual builder's filename or manual input
-  const effectiveFilename = sampleFilename || sampleFilenameFromDataset || "";
-
-  // Handle pattern change from visual builder
-  const handlePatternChange = useCallback(
-    (newPattern: string, newPatternType: "strptime" | "regex") => {
-      setPattern(newPattern);
-      setPatternType(newPatternType as DatetimePatternType);
-    },
-    [],
-  );
 
   // Save pattern mutation
   const {
@@ -64,13 +56,12 @@ export default function DatasetDatetimeParser({
     isError: isPatternError,
     error: patternError,
     isSuccess: isPatternSuccess,
-    reset: resetPatternMutation,
   } = useMutation({
     mutationFn: () =>
       api.datasets.setDatetimePattern(dataset.uuid, {
-        pattern_type: patternType,
-        pattern,
-        sample_filename: effectiveFilename || undefined,
+        pattern_type: "strptime",
+        pattern: generatedPattern,
+        sample_filename: selectedFilename || undefined,
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({
@@ -79,7 +70,7 @@ export default function DatasetDatetimeParser({
     },
   });
 
-  // Parse dataset mutation
+  // Parse datetime mutation
   const {
     mutateAsync: parseDataset,
     isPending: isParsing,
@@ -96,31 +87,45 @@ export default function DatasetDatetimeParser({
     },
   });
 
-  const handleSetPattern = useCallback(
-    async (e: React.FormEvent) => {
-      e.preventDefault();
-      if (!pattern.trim()) return;
-      await savePattern();
+  const handleFilenameSelect = useCallback((filename: string) => {
+    setSelectedFilename(filename);
+    setSelections({});
+    setGeneratedPattern("");
+  }, []);
+
+  const handleSelectionsChange = useCallback(
+    (newSelections: Record<DatetimeComponent, Selection>) => {
+      setSelections(newSelections);
+
+      if (
+        selectedFilename &&
+        validateDatetimeSelections(newSelections)
+      ) {
+        const pattern = generateStrptimePattern(selectedFilename, newSelections);
+        setGeneratedPattern(pattern);
+      }
     },
-    [pattern, savePattern],
+    [selectedFilename]
   );
 
+  const handleSavePattern = useCallback(async () => {
+    if (!generatedPattern) return;
+    await savePattern();
+  }, [generatedPattern, savePattern]);
+
   const handleParse = useCallback(async () => {
-    if (!confirm("全てのレコーディングのdatetimeをパースします。実行しますか？")) {
-      return;
-    }
     await parseDataset();
   }, [parseDataset]);
 
-  // Reset when opening dialog
-  const handleOpen = useCallback(() => {
-    setIsOpen(true);
-    resetPatternMutation();
-  }, [resetPatternMutation]);
+  const handleReset = useCallback(() => {
+    setSelectedFilename(null);
+    setSelections({});
+    setGeneratedPattern("");
+  }, []);
 
   return (
     <>
-      <Button mode="text" variant="primary" onClick={handleOpen}>
+      <Button mode="text" variant="primary" onClick={() => setIsOpen(true)}>
         Datetime パース設定
       </Button>
 
@@ -129,7 +134,7 @@ export default function DatasetDatetimeParser({
         onClose={() => setIsOpen(false)}
         title="Datetime パース設定"
       >
-        <div className="flex flex-col gap-6 min-w-[600px]">
+        <div className="flex flex-col gap-6">
           {/* Current Status */}
           <Card>
             <div className="flex flex-col gap-3">
@@ -171,91 +176,114 @@ export default function DatasetDatetimeParser({
             </div>
           </Card>
 
-          {/* Pattern Configuration */}
+          {/* Step 1: Select Filename */}
           <Card>
             <div className="flex flex-col gap-4">
-              <div className="flex items-center justify-between">
-                <h3 className="text-sm font-semibold text-stone-900 dark:text-stone-100">
-                  パターン設定
-                </h3>
-                <button
-                  type="button"
-                  onClick={() => setUseVisualBuilder(!useVisualBuilder)}
-                  className="text-xs text-emerald-600 dark:text-emerald-400 hover:underline"
-                >
-                  {useVisualBuilder ? "手動入力に切り替え" : "ビジュアルビルダーに切り替え"}
-                </button>
-              </div>
-
-              {useVisualBuilder ? (
-                // Visual Pattern Builder
-                effectiveFilename ? (
-                  <DateTimePatternBuilder
-                    filename={effectiveFilename}
-                    onPatternChange={handlePatternChange}
+              <h3 className="text-sm font-semibold text-stone-900 dark:text-stone-100">
+                1. サンプルファイル名を選択
+              </h3>
+              {samplesLoading ? (
+                <div className="flex justify-center py-4">
+                  <Spinner />
+                </div>
+              ) : filenameSamples && filenameSamples.length > 0 ? (
+                <div className="flex flex-col gap-2">
+                  <Select
+                    options={[
+                      {
+                        id: "__placeholder__",
+                        label: "ファイル名を選択してください",
+                        value: "",
+                        disabled: true,
+                      },
+                      ...filenameSamples.map((filename) => ({
+                        id: filename,
+                        label: filename,
+                        value: filename,
+                      })),
+                    ]}
+                    selected={
+                      selectedFilename
+                        ? {
+                            id: selectedFilename,
+                            label: selectedFilename,
+                            value: selectedFilename,
+                          }
+                        : {
+                            id: "__placeholder__",
+                            label: "ファイル名を選択してください",
+                            value: "",
+                            disabled: true,
+                          }
+                    }
+                    onChange={handleFilenameSelect}
                   />
-                ) : (
-                  <div className="py-8 text-center">
-                    <Spinner />
-                    <p className="text-sm text-stone-500 dark:text-stone-400 mt-2">
-                      サンプルファイル名を取得中...
-                    </p>
-                  </div>
-                )
+                </div>
               ) : (
-                // Manual Input
-                <form onSubmit={handleSetPattern} className="flex flex-col gap-4">
-                  <Group label="Pattern" name="pattern">
-                    <Input
-                      value={pattern}
-                      onChange={(e) => setPattern(e.target.value)}
-                      placeholder="%Y%m%d_%H%M%S"
-                      required
-                    />
-                  </Group>
-
-                  <Group label="Sample Filename (optional)" name="sample_filename">
-                    <Input
-                      value={sampleFilename}
-                      onChange={(e) => setSampleFilename(e.target.value)}
-                      placeholder="20240101_120000.wav"
-                    />
-                  </Group>
-                </form>
-              )}
-
-              {/* Save Pattern Button */}
-              <div className="flex justify-end gap-2 pt-2 border-t border-stone-200 dark:border-stone-700">
-                <Button
-                  type="button"
-                  mode="text"
-                  variant="secondary"
-                  onClick={() => setIsOpen(false)}
-                >
-                  キャンセル
-                </Button>
-                <Button
-                  type="button"
-                  variant="primary"
-                  disabled={isSavingPattern || !pattern.trim()}
-                  onClick={() => savePattern()}
-                >
-                  {isSavingPattern ? "設定中..." : "パターンを保存"}
-                </Button>
-              </div>
-
-              {isPatternError && (
-                <p className="text-sm text-red-600 dark:text-red-400">
-                  パターン設定に失敗しました: {patternError?.message}
-                </p>
-              )}
-              {isPatternSuccess && (
-                <p className="text-sm text-emerald-600 dark:text-emerald-400">
-                  パターンを保存しました
+                <p className="text-sm text-stone-500 dark:text-stone-400">
+                  このデータセットにはレコーディングがありません
                 </p>
               )}
             </div>
           </Card>
+
+          {/* Step 2: Select datetime components */}
+          {selectedFilename && (
+            <Card>
+              <div className="flex flex-col gap-4">
+                <h3 className="text-sm font-semibold text-stone-900 dark:text-stone-100">
+                  2. 日時に対応する部分を選択
+                </h3>
+                <DatetimeStringSelector
+                  filename={selectedFilename}
+                  onSelectionsChange={handleSelectionsChange}
+                />
+              </div>
+            </Card>
+          )}
+
+          {/* Step 3: Generated pattern */}
+          {generatedPattern && (
+            <Card>
+              <div className="flex flex-col gap-4">
+                <h3 className="text-sm font-semibold text-stone-900 dark:text-stone-100">
+                  3. 生成されたパターン
+                </h3>
+                <div className="p-3 bg-stone-50 dark:bg-stone-900 rounded border border-stone-300 dark:border-stone-700">
+                  <code className="text-sm font-mono text-stone-900 dark:text-stone-100">
+                    {generatedPattern}
+                  </code>
+                </div>
+                <div className="flex justify-end gap-2">
+                  <Button
+                    mode="text"
+                    variant="secondary"
+                    onClick={handleReset}
+                  >
+                    やり直す
+                  </Button>
+                  <Button
+                    variant="primary"
+                    onClick={handleSavePattern}
+                    disabled={isSavingPattern}
+                  >
+                    {isSavingPattern ? "設定中..." : "パターンを設定"}
+                  </Button>
+                </div>
+                {isPatternError && (
+                  <p className="text-sm text-red-600 dark:text-red-400">
+                    パターン設定に失敗しました:{" "}
+                    {patternError?.message}
+                  </p>
+                )}
+                {isPatternSuccess && (
+                  <p className="text-sm text-emerald-600 dark:text-emerald-400">
+                    パターンを設定しました
+                  </p>
+                )}
+              </div>
+            </Card>
+          )}
 
           {/* Parse Action */}
           <Card>
@@ -265,12 +293,13 @@ export default function DatasetDatetimeParser({
                   パース実行
                 </h3>
                 <p className="text-sm text-stone-500 dark:text-stone-400 mt-1">
-                  保存したパターンで全レコーディングのdatetimeをパースします。
+                  設定したパターンで全レコーディングのdatetimeをパースします。
                 </p>
               </div>
 
               <div className="flex justify-end">
                 <Button
+                  type="button"
                   variant="primary"
                   onClick={handleParse}
                   disabled={isParsing}

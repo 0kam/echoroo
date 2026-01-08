@@ -6,6 +6,7 @@ __all__ = [
     "MissingDatabaseError",
     "InvalidDataError",
     "PermissionDeniedError",
+    "ForbiddenError",
     "DataIntegrityError",
 ]
 
@@ -32,6 +33,10 @@ class InvalidDataError(RuntimeError):
 
 class PermissionDeniedError(RuntimeError):
     """Raised when the acting user is not allowed to perform an action."""
+
+
+class ForbiddenError(RuntimeError):
+    """Raised when the user does not have permission to access a resource."""
 
 
 class DataIntegrityError(RuntimeError):

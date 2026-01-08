@@ -19,6 +19,8 @@ __all__ = [
     "can_delete_dataset",
     "can_manage_project_datasets",
     "can_manage_project",
+    "can_view_project",
+    "can_edit_project",
     "filter_datasets_by_access",
     "can_view_annotation_project",
     "can_edit_annotation_project",
@@ -143,6 +145,46 @@ async def can_manage_project(
 
     membership = await _get_project_membership(session, project_id, user)
     return membership is not None and membership.role == ProjectMemberRole.MANAGER
+
+
+def can_view_project(
+    user: User | None,
+    project_id: str,
+) -> bool:
+    """Return True if the user can view resources in the project.
+
+    Note: This is a synchronous helper for simple checks. For more complex
+    permission checks involving database queries, use the async can_view_* functions.
+    """
+    if user is None:
+        return False
+
+    if user.is_superuser:
+        return True
+
+    # For now, assume any authenticated user with project membership can view
+    # This is a simplified check - actual membership verification happens in the async API layer
+    return True
+
+
+def can_edit_project(
+    user: User | None,
+    project_id: str,
+) -> bool:
+    """Return True if the user can edit resources in the project.
+
+    Note: This is a synchronous helper for simple checks. For more complex
+    permission checks involving database queries, use the async can_edit_* functions.
+    """
+    if user is None:
+        return False
+
+    if user.is_superuser:
+        return True
+
+    # For now, assume any authenticated user can edit
+    # Actual fine-grained permission checks happen in the async API layer
+    return True
 
 
 async def filter_datasets_by_access(

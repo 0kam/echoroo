@@ -6,13 +6,14 @@ import datetime
 from typing import Any, Sequence
 from uuid import UUID
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload, selectinload
 from sqlalchemy.sql import ColumnElement, false as sql_false
 
 from echoroo import exceptions, models, schemas
 from echoroo.api import datasets, common
+from echoroo.api.common import UserResolutionMixin
 from echoroo.api.common.permissions import can_manage_project
 
 __all__ = ["foundation_models"]
@@ -104,23 +105,8 @@ async def filter_runs_by_access(
     return [or_(*conditions)]
 
 
-class FoundationModelAPI:
+class FoundationModelAPI(UserResolutionMixin):
     """Service for managing foundation model runs."""
-
-    async def _resolve_user(
-        self,
-        session: AsyncSession,
-        user: models.User | schemas.SimpleUser | None,
-    ) -> models.User | None:
-        """Resolve a user schema to a user model."""
-        if user is None:
-            return None
-        if isinstance(user, models.User):
-            return user
-        db_user = await session.get(models.User, user.id)
-        if db_user is None:
-            raise exceptions.NotFoundError(f"User with id {user.id} not found")
-        return db_user
 
     async def list_models(
         self,
@@ -376,45 +362,22 @@ class FoundationModelAPI:
 
         threshold = confidence_threshold or model.default_confidence_threshold
 
+        recording_filters = None
         run = models.FoundationModelRun(
             foundation_model_id=model.id,
             dataset_id=dataset_obj.id,
             requested_by_id=user.id,
             confidence_threshold=threshold,
             scope=scope,
+            name=f"{model.display_name} run for {dataset_obj.name}",
+            model_name=model.provider,
+            model_version=model.version,
+            overlap=0.0,
+            locale=locale,
+            use_metadata_filter=False,
+            custom_species_list=None,
         )
         session.add(run)
-        await session.flush()
-
-        recording_filters = None
-        if scope:
-            try:
-                recording_filters = schemas.RecordingFilter.model_validate(scope)
-            except Exception:
-                # Invalid scope format - proceed without recording filters
-                # This is intentional as scope may contain custom data
-                pass
-
-        # Import lazily to avoid circular dependency
-        from echoroo.api import species_detection_jobs
-
-        job = await species_detection_jobs.create(
-            session,
-            schemas.SpeciesDetectionJobCreate(
-                name=f"{model.display_name} run for {dataset_obj.name}",
-                dataset_uuid=dataset_obj.uuid,
-                model_name=model.provider,
-                model_version=model.version,
-                confidence_threshold=threshold,
-                overlap=0.0,
-                use_metadata_filter=False,
-                recording_filters=recording_filters,
-                locale=locale,
-            ),
-            user=user,
-        )
-
-        run.species_detection_job_id = job.id
         await session.flush()
 
         run_schema = await self.get_run_with_relations(session, run.uuid)
@@ -440,26 +403,12 @@ class FoundationModelAPI:
             models.FoundationModelRunStatus.QUEUED,
             models.FoundationModelRunStatus.RUNNING,
         ):
-            raise exceptions.ValidationError(
+            raise exceptions.InvalidDataError(
                 f"Cannot cancel run with status {db_run.status.value}"
             )
 
         db_run.status = models.FoundationModelRunStatus.CANCELLED
         await session.flush()
-
-        # Also cancel the underlying species detection job
-        job_stmt = select(models.SpeciesDetectionJob).where(
-            models.SpeciesDetectionJob.model_run_id == db_run.id,
-            models.SpeciesDetectionJob.status.in_([
-                models.SpeciesDetectionJobStatus.PENDING,
-                models.SpeciesDetectionJobStatus.RUNNING,
-            ]),
-        )
-        result = await session.execute(job_stmt)
-        db_job = result.scalar_one_or_none()
-        if db_job:
-            db_job.status = models.SpeciesDetectionJobStatus.CANCELLED
-            await session.flush()
 
         return await self.get_run_with_relations(session, run.uuid)
 
@@ -495,7 +444,7 @@ class FoundationModelAPI:
         estimated_time_remaining = None
 
         if db_run.started_on and db_run.processed_recordings > 0:
-            elapsed = (datetime.datetime.now(datetime.UTC) - db_run.started_on).total_seconds()
+            elapsed = (datetime.datetime.now(datetime.timezone.utc) - db_run.started_on).total_seconds()
             if elapsed > 0:
                 recordings_per_second = db_run.processed_recordings / elapsed
                 remaining = db_run.total_recordings - db_run.processed_recordings
@@ -568,21 +517,10 @@ class FoundationModelAPI:
 
         db_run = await self.get_run(session, run.uuid)
 
-        # Use model_run_id from FoundationModelRun directly (more reliable)
-        # Fall back to SpeciesDetectionJob.model_run_id if not available
+        # Get model_run_id from FoundationModelRun directly
         model_run_id = db_run.model_run_id
         if model_run_id is None:
-            if db_run.species_detection_job_id is None:
-                return [], 0
-            job = await session.get(models.SpeciesDetectionJob, db_run.species_detection_job_id)
-            if job is None or job.model_run_id is None:
-                return [], 0
-            model_run_id = job.model_run_id
-        else:
-            # Still need job for DetectionReview queries
-            job = None
-            if db_run.species_detection_job_id is not None:
-                job = await session.get(models.SpeciesDetectionJob, db_run.species_detection_job_id)
+            return [], 0
 
         # Get filter application if filter_uuid is provided
         filter_application: models.SpeciesFilterApplication | None = None
@@ -699,10 +637,10 @@ class FoundationModelAPI:
 
         # Pre-fetch all reviews for the predictions (N+1 fix)
         reviews_by_cp_id: dict[int, models.DetectionReview] = {}
-        if cp_ids and job is not None:
+        if cp_ids:
             reviews_query = select(models.DetectionReview).where(
                 models.DetectionReview.clip_prediction_id.in_(cp_ids),
-                models.DetectionReview.species_detection_job_id == job.id,
+                models.DetectionReview.foundation_model_run_id == db_run.id,
             )
             reviews_result = await session.scalars(reviews_query)
             for review in reviews_result.all():
@@ -780,21 +718,10 @@ class FoundationModelAPI:
 
         db_run = await self.get_run(session, run.uuid)
 
-        # Use model_run_id from FoundationModelRun directly (more reliable)
-        # Fall back to SpeciesDetectionJob.model_run_id if not available
+        # Get model_run_id from FoundationModelRun directly
         model_run_id = db_run.model_run_id
-        job: models.SpeciesDetectionJob | None = None
         if model_run_id is None:
-            if db_run.species_detection_job_id is None:
-                return schemas.DetectionSummary()
-            job = await session.get(models.SpeciesDetectionJob, db_run.species_detection_job_id)
-            if job is None or job.model_run_id is None:
-                return schemas.DetectionSummary()
-            model_run_id = job.model_run_id
-        else:
-            # Still need job for review counts
-            if db_run.species_detection_job_id is not None:
-                job = await session.get(models.SpeciesDetectionJob, db_run.species_detection_job_id)
+            return schemas.DetectionSummary()
 
         # Get total detections
         total_query = (
@@ -827,7 +754,10 @@ class FoundationModelAPI:
                 models.ModelRunPrediction,
                 models.ClipPrediction.id == models.ModelRunPrediction.clip_prediction_id,
             )
-            .where(models.ModelRunPrediction.model_run_id == model_run_id)
+            .where(
+                models.ModelRunPrediction.model_run_id == model_run_id,
+                models.Tag.key == "species",
+            )
             .group_by(models.Tag.id, models.Tag.value)
             .order_by(func.count(models.ClipPredictionTag.clip_prediction_id).desc())
         )
@@ -842,34 +772,33 @@ class FoundationModelAPI:
                 average_confidence=float(row[3]) if row[3] else None,
             ))
 
-        # Get review counts (only if job is available)
+        # Get review counts
+        review_counts_query = (
+            select(
+                models.DetectionReview.status,
+                func.count(models.DetectionReview.id),
+            )
+            .where(models.DetectionReview.foundation_model_run_id == db_run.id)
+            .group_by(models.DetectionReview.status)
+        )
+        review_results = await session.execute(review_counts_query)
+
         total_reviewed = 0
         total_confirmed = 0
         total_rejected = 0
         total_uncertain = 0
 
-        if job is not None:
-            review_counts_query = (
-                select(
-                    models.DetectionReview.status,
-                    func.count(models.DetectionReview.id),
-                )
-                .where(models.DetectionReview.species_detection_job_id == job.id)
-                .group_by(models.DetectionReview.status)
-            )
-            review_results = await session.execute(review_counts_query)
-
-            for row in review_results.all():
-                status, count = row
-                if status == "confirmed":
-                    total_confirmed = count
-                    total_reviewed += count
-                elif status == "rejected":
-                    total_rejected = count
-                    total_reviewed += count
-                elif status == "uncertain":
-                    total_uncertain = count
-                    total_reviewed += count
+        for row in review_results.all():
+            status, count = row
+            if status == "confirmed":
+                total_confirmed = count
+                total_reviewed += count
+            elif status == "rejected":
+                total_rejected = count
+                total_reviewed += count
+            elif status == "uncertain":
+                total_uncertain = count
+                total_reviewed += count
 
         total_unreviewed = total_detections - total_reviewed
 
@@ -909,14 +838,6 @@ class FoundationModelAPI:
 
         db_run = await self.get_run(session, run.uuid)
 
-        # Get the species detection job linked to this run
-        if db_run.species_detection_job_id is None:
-            raise exceptions.ValidationError("Run has no associated detection job")
-
-        job = await session.get(models.SpeciesDetectionJob, db_run.species_detection_job_id)
-        if job is None:
-            raise exceptions.ValidationError("Detection job not found")
-
         # Get the clip prediction
         clip_prediction = await session.scalar(
             select(models.ClipPrediction).where(
@@ -932,11 +853,11 @@ class FoundationModelAPI:
         review = await session.scalar(
             select(models.DetectionReview).where(
                 models.DetectionReview.clip_prediction_id == clip_prediction.id,
-                models.DetectionReview.species_detection_job_id == job.id,
+                models.DetectionReview.foundation_model_run_id == db_run.id,
             )
         )
 
-        now = datetime.datetime.now(datetime.UTC)
+        now = datetime.datetime.now(datetime.timezone.utc)
 
         if review:
             # Update existing review
@@ -952,7 +873,7 @@ class FoundationModelAPI:
                 session,
                 models.DetectionReview,
                 clip_prediction_id=clip_prediction.id,
-                species_detection_job_id=job.id,
+                foundation_model_run_id=db_run.id,
                 status=data.status.value,
                 reviewed_by_id=db_user.id,
                 reviewed_on=now,
@@ -963,7 +884,7 @@ class FoundationModelAPI:
             uuid=review.uuid,
             id=review.id,
             clip_prediction_id=review.clip_prediction_id,
-            species_detection_job_id=review.species_detection_job_id,
+            foundation_model_run_id=review.foundation_model_run_id,
             status=schemas.DetectionReviewStatus(review.status),
             reviewed_by_id=review.reviewed_by_id,
             reviewed_on=review.reviewed_on,
@@ -993,15 +914,7 @@ class FoundationModelAPI:
 
         db_run = await self.get_run(session, run.uuid)
 
-        # Get the species detection job linked to this run
-        if db_run.species_detection_job_id is None:
-            raise exceptions.ValidationError("Run has no associated detection job")
-
-        job = await session.get(models.SpeciesDetectionJob, db_run.species_detection_job_id)
-        if job is None:
-            raise exceptions.ValidationError("Detection job not found")
-
-        now = datetime.datetime.now(datetime.UTC)
+        now = datetime.datetime.now(datetime.timezone.utc)
 
         # Batch fetch all clip predictions (N+1 fix)
         predictions_query = select(models.ClipPrediction).where(
@@ -1016,7 +929,7 @@ class FoundationModelAPI:
         if cp_ids:
             reviews_query = select(models.DetectionReview).where(
                 models.DetectionReview.clip_prediction_id.in_(cp_ids),
-                models.DetectionReview.species_detection_job_id == job.id,
+                models.DetectionReview.foundation_model_run_id == db_run.id,
             )
             reviews_result = await session.scalars(reviews_query)
             for review in reviews_result.all():
@@ -1041,7 +954,7 @@ class FoundationModelAPI:
                     session,
                     models.DetectionReview,
                     clip_prediction_id=clip_prediction.id,
-                    species_detection_job_id=job.id,
+                    foundation_model_run_id=db_run.id,
                     status=data.status.value,
                     reviewed_by_id=db_user.id,
                     reviewed_on=now,
@@ -1059,24 +972,172 @@ class FoundationModelAPI:
         session: AsyncSession,
     ) -> schemas.JobQueueStatus:
         """Get status counts for the job queue."""
-        # Query species_detection_job to count by status
+        # Query foundation_model_run to count by status
         stmt = select(
-            models.SpeciesDetectionJob.status,
+            models.FoundationModelRun.status,
             func.count().label("count"),
-        ).group_by(models.SpeciesDetectionJob.status)
+        ).group_by(models.FoundationModelRun.status)
 
         result = await session.execute(stmt)
         rows = result.all()
 
-        # Map status to counts
-        counts = {row.status: row.count for row in rows}
+        # Map status to counts (row[0]=status, row[1]=count)
+        counts: dict[models.FoundationModelRunStatus, int] = {
+            row[0]: int(row[1]) for row in rows
+        }
 
         return schemas.JobQueueStatus(
-            pending=counts.get(models.SpeciesDetectionJobStatus.PENDING, 0),
-            running=counts.get(models.SpeciesDetectionJobStatus.RUNNING, 0),
-            completed=counts.get(models.SpeciesDetectionJobStatus.COMPLETED, 0),
-            failed=counts.get(models.SpeciesDetectionJobStatus.FAILED, 0),
+            pending=counts.get(models.FoundationModelRunStatus.QUEUED, 0),
+            running=counts.get(models.FoundationModelRunStatus.RUNNING, 0),
+            completed=counts.get(models.FoundationModelRunStatus.COMPLETED, 0),
+            failed=counts.get(models.FoundationModelRunStatus.FAILED, 0),
         )
+
+    async def delete_run(
+        self,
+        session: AsyncSession,
+        run: schemas.FoundationModelRun,
+        *,
+        user: models.User | schemas.SimpleUser,
+    ) -> schemas.FoundationModelRun:
+        """Delete a foundation model run and all associated data.
+
+        This method deletes:
+        - ClipPredictions linked via ModelRunPrediction
+        - ClipPredictionTags for those predictions
+        - ModelRunPredictions
+        - ClipEmbeddings linked to the ModelRun
+        - DetectionReviews for the run
+        - FoundationModelRunSpecies
+        - ModelRun itself
+        - FoundationModelRun itself
+
+        Args:
+            session: Database session.
+            run: Foundation model run schema.
+            user: User performing the deletion.
+
+        Returns:
+            The deleted foundation model run schema.
+
+        Raises:
+            PermissionDeniedError: If user lacks permission to delete.
+            InvalidDataError: If run is currently running.
+        """
+        import logging
+
+        logger = logging.getLogger(__name__)
+
+        db_user = await self._resolve_user(session, user)
+
+        if not await can_edit_foundation_model_run(session, run, db_user):
+            raise exceptions.PermissionDeniedError(
+                "You do not have permission to delete this run"
+            )
+
+        db_run = await self.get_run(session, run.uuid)
+
+        # Don't allow deletion of running jobs
+        if db_run.status == models.FoundationModelRunStatus.RUNNING:
+            raise exceptions.InvalidDataError(
+                "Cannot delete a run that is currently running. Please cancel it first."
+            )
+
+        logger.info(f"Deleting foundation model run {db_run.uuid}")
+
+        # Get the run schema for return before deletion
+        run_schema = await self.get_run_with_relations(session, run.uuid)
+
+        # Cascade deletion is handled by database foreign keys and SQLAlchemy relationships:
+        # 1. FoundationModelRunSpecies: cascade="all, delete-orphan" in model
+        # 2. ModelRun relationships will cascade via ondelete="CASCADE" in foreign keys
+        # 3. ClipPredictions, ClipPredictionTags, ClipEmbeddings cascade via database constraints
+
+        # Delete DetectionReviews manually (they reference foundation_model_run_id)
+        if db_run.id:
+            delete_reviews_stmt = models.DetectionReview.__table__.delete().where(
+                models.DetectionReview.foundation_model_run_id == db_run.id
+            )
+            await session.execute(delete_reviews_stmt)
+            logger.info(f"Deleted detection reviews for run {db_run.uuid}")
+
+        # Delete SpeciesFilterApplications and their masks
+        if db_run.id:
+            # First delete the masks
+            delete_masks_stmt = (
+                models.SpeciesFilterMask.__table__.delete()
+                .where(
+                    models.SpeciesFilterMask.species_filter_application_id.in_(
+                        select(models.SpeciesFilterApplication.id).where(
+                            models.SpeciesFilterApplication.foundation_model_run_id == db_run.id
+                        )
+                    )
+                )
+            )
+            await session.execute(delete_masks_stmt)
+
+            # Then delete the applications
+            delete_filters_stmt = (
+                models.SpeciesFilterApplication.__table__.delete()
+                .where(models.SpeciesFilterApplication.foundation_model_run_id == db_run.id)
+            )
+            await session.execute(delete_filters_stmt)
+            logger.info(f"Deleted species filter applications for run {db_run.uuid}")
+
+        # If there's a ModelRun, we need to delete its associated data
+        if db_run.model_run_id:
+            logger.info(f"Deleting ModelRun {db_run.model_run_id} and associated data")
+
+            # Get all ClipPrediction IDs associated with this ModelRun
+            clip_prediction_ids_query = select(models.ModelRunPrediction.clip_prediction_id).where(
+                models.ModelRunPrediction.model_run_id == db_run.model_run_id
+            )
+            clip_prediction_ids_result = await session.execute(clip_prediction_ids_query)
+            clip_prediction_ids = [row[0] for row in clip_prediction_ids_result.all()]
+
+            if clip_prediction_ids:
+                logger.info(f"Deleting {len(clip_prediction_ids)} clip predictions")
+
+                # Delete ClipPredictionTags first
+                delete_tags_stmt = models.ClipPredictionTag.__table__.delete().where(
+                    models.ClipPredictionTag.clip_prediction_id.in_(clip_prediction_ids)
+                )
+                await session.execute(delete_tags_stmt)
+
+                # Delete ModelRunPredictions
+                delete_mrp_stmt = models.ModelRunPrediction.__table__.delete().where(
+                    models.ModelRunPrediction.model_run_id == db_run.model_run_id
+                )
+                await session.execute(delete_mrp_stmt)
+
+                # Delete ClipPredictions
+                delete_cp_stmt = models.ClipPrediction.__table__.delete().where(
+                    models.ClipPrediction.id.in_(clip_prediction_ids)
+                )
+                await session.execute(delete_cp_stmt)
+
+            # Delete ClipEmbeddings associated with the ModelRun
+            delete_embeddings_stmt = models.ClipEmbedding.__table__.delete().where(
+                models.ClipEmbedding.model_run_id == db_run.model_run_id
+            )
+            await session.execute(delete_embeddings_stmt)
+            logger.info(f"Deleted embeddings for ModelRun {db_run.model_run_id}")
+
+            # Delete the ModelRun itself
+            delete_model_run_stmt = models.ModelRun.__table__.delete().where(
+                models.ModelRun.id == db_run.model_run_id
+            )
+            await session.execute(delete_model_run_stmt)
+            logger.info(f"Deleted ModelRun {db_run.model_run_id}")
+
+        # Finally, delete the FoundationModelRun
+        # FoundationModelRunSpecies will be cascade deleted automatically
+        await session.delete(db_run)
+        logger.info(f"Deleted FoundationModelRun {db_run.uuid}")
+
+        await session.flush()
+
+        return run_schema
 
 
 foundation_models = FoundationModelAPI()

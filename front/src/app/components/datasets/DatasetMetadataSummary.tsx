@@ -5,7 +5,7 @@ import Link from "next/link";
 import useActiveUser from "@/app/hooks/api/useActiveUser";
 
 import Card from "@/lib/components/ui/Card";
-import DatasetDatetimeParserNew from "@/lib/components/datasets/DatasetDatetimeParserNew";
+import DatasetDatetimeParser from "@/lib/components/datasets/DatasetDatetimeParser";
 import type { Dataset } from "@/lib/types";
 import { canEditDataset, isProjectMember } from "@/lib/utils/permissions";
 
@@ -105,7 +105,7 @@ export default function DatasetMetadataSummary({
         <h3 className="text-sm font-semibold text-stone-900 dark:text-stone-100">
           メタデータ
         </h3>
-        {canManage && <DatasetDatetimeParserNew dataset={dataset} />}
+        {canManage && <DatasetDatetimeParser dataset={dataset} />}
       </div>
       <MetadataRow
         label="Project"

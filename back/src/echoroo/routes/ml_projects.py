@@ -20,6 +20,7 @@ from echoroo.routes.dependencies import (
     get_optional_current_user_dependency,
 )
 from echoroo.routes.types import Limit, Offset
+from echoroo.services.ml_projects import SearchResultFilterBuilder
 
 __all__ = ["get_ml_projects_router"]
 
@@ -324,6 +325,7 @@ def get_ml_projects_router(settings: EchorooSettings) -> APIRouter:
         """
         import httpx
         from fastapi.responses import Response
+        from echoroo.services.external.xeno_canto import XenoCantoService
 
         # Verify project access
         await api.ml_projects.get(
@@ -332,71 +334,13 @@ def get_ml_projects_router(settings: EchorooSettings) -> APIRouter:
             user=user,
         )
 
-        # Extract numeric ID from XC format
-        xc_num = xeno_canto_id.upper()
-        if xc_num.startswith("XC"):
-            xc_num = xc_num[2:]
-
-        download_url = f"https://xeno-canto.org/{xc_num}/download"
-
         try:
-            # Download full audio from Xeno-Canto
-            async with httpx.AsyncClient(follow_redirects=True, timeout=60.0) as client:
-                response = await client.get(download_url)
-                if response.status_code != 200:
-                    from fastapi import HTTPException
-                    raise HTTPException(
-                        status_code=response.status_code,
-                        detail=f"Failed to download Xeno-Canto recording {xeno_canto_id}",
-                    )
-
-                audio_bytes = response.content
-                content_type = response.headers.get("content-type", "audio/mpeg")
-
-            # If time range is specified, extract the segment
-            if start_time is not None or end_time is not None:
-                import io
-                import soundfile as sf
-                import numpy as np
-
-                # Load full audio
-                with io.BytesIO(audio_bytes) as audio_buffer:
-                    data, samplerate = sf.read(audio_buffer, always_2d=True)
-
-                # Determine time range
-                if start_time is None:
-                    start_time = 0.0
-                if end_time is None:
-                    end_time = len(data) / samplerate
-
-                # Validate time range
-                if start_time < 0:
-                    start_time = 0.0
-                if end_time > len(data) / samplerate:
-                    end_time = len(data) / samplerate
-                if start_time >= end_time:
-                    from fastapi import HTTPException
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"Invalid time range: start_time ({start_time}) must be less than end_time ({end_time})",
-                    )
-
-                # Calculate sample indices
-                start_sample = int(start_time * samplerate)
-                end_sample = int(end_time * samplerate)
-
-                # Clamp to valid range
-                start_sample = max(0, min(start_sample, len(data)))
-                end_sample = max(start_sample, min(end_sample, len(data)))
-
-                # Extract segment
-                segment = data[start_sample:end_sample]
-
-                # Convert back to bytes (WAV format for consistency)
-                output_buffer = io.BytesIO()
-                sf.write(output_buffer, segment, samplerate, format='WAV')
-                audio_bytes = output_buffer.getvalue()
-                content_type = "audio/wav"
+            async with XenoCantoService() as xc_service:
+                audio_bytes, content_type = await xc_service.download_audio(
+                    xeno_canto_id=xeno_canto_id,
+                    start_time=start_time,
+                    end_time=end_time,
+                )
 
             return Response(
                 content=audio_bytes,
@@ -462,6 +406,7 @@ def get_ml_projects_router(settings: EchorooSettings) -> APIRouter:
             Spectrogram image as PNG.
         """
         import httpx
+        from echoroo.services.external.xeno_canto import XenoCantoService
 
         # Verify project access
         await api.ml_projects.get(
@@ -470,35 +415,18 @@ def get_ml_projects_router(settings: EchorooSettings) -> APIRouter:
             user=user,
         )
 
-        # Extract numeric ID from XC format
-        xc_num = xeno_canto_id.upper()
-        if xc_num.startswith("XC"):
-            xc_num = xc_num[2:]
-
-        download_url = f"https://xeno-canto.org/{xc_num}/download"
-
         try:
             # Download audio from Xeno-Canto
-            async with httpx.AsyncClient(follow_redirects=True, timeout=60.0) as client:
-                response = await client.get(download_url)
-                if response.status_code != 200:
-                    from fastapi import HTTPException
-                    raise HTTPException(
-                        status_code=response.status_code,
-                        detail=f"Failed to download Xeno-Canto recording {xeno_canto_id}",
-                    )
+            async with XenoCantoService() as xc_service:
+                audio_bytes, _ = await xc_service.download_audio(xeno_canto_id)
 
-                audio_bytes = response.content
-
-            # If end_time is not specified, we need to get the audio duration
-            # For simplicity, we'll use a large default value or load the full audio
-            if end_time is None:
-                # Load audio to get duration
-                import io
-                import soundfile as sf
-                with io.BytesIO(audio_bytes) as audio_buffer:
-                    info = sf.info(audio_buffer)
-                    end_time = info.duration
+                # If end_time is not specified, get the audio duration
+                if end_time is None:
+                    import io
+                    import soundfile as sf
+                    with io.BytesIO(audio_bytes) as audio_buffer:
+                        info = sf.info(audio_buffer)
+                        end_time = info.duration
 
             # Generate spectrogram from audio bytes
             from echoroo.api import spectrograms
@@ -900,6 +828,7 @@ def get_ml_projects_router(settings: EchorooSettings) -> APIRouter:
             uncertainty_high=request.uncertainty_high,
             samples_per_iteration=request.samples_per_iteration,
             selected_tag_ids=request.selected_tag_ids,
+            classifier_type=request.classifier_type,
             user=user,
         )
         await session.commit()
@@ -915,8 +844,8 @@ def get_ml_projects_router(settings: EchorooSettings) -> APIRouter:
         search_session_uuid: UUID,
         limit: Limit = 10,
         offset: Offset = 0,
-        assigned_tag_id: int | None = Query(
-            default=None, description="Filter by assigned tag ID (frontend sends assigned_tag_id)"
+        assigned_tag_ids: list[int] | None = Query(
+            default=None, description="Filter by assigned tag IDs (multi-label support)"
         ),
         is_negative: bool | None = Query(
             default=None, description="Filter by negative label (frontend sends is_negative)"
@@ -955,45 +884,17 @@ def get_ml_projects_router(settings: EchorooSettings) -> APIRouter:
             user=user,
         )
 
-        # Build filters based on query parameters
-        filters = []
-
-        if is_labeled is not None:
-            if is_labeled:
-                # Labeled = has any label
-                from sqlalchemy import or_
-                filters.append(
-                    or_(
-                        models.SearchResult.assigned_tag_id.isnot(None),
-                        models.SearchResult.is_negative == True,
-                        models.SearchResult.is_uncertain == True,
-                        models.SearchResult.is_skipped == True,
-                    )
-                )
-            else:
-                # Unlabeled = no assigned_tag AND not negative AND not uncertain AND not skipped
-                filters.append(models.SearchResult.assigned_tag_id.is_(None))
-                filters.append(models.SearchResult.is_negative == False)
-                filters.append(models.SearchResult.is_uncertain == False)
-                filters.append(models.SearchResult.is_skipped == False)
-
-        if is_negative is not None:
-            filters.append(models.SearchResult.is_negative == is_negative)
-
-        if is_uncertain is not None:
-            filters.append(models.SearchResult.is_uncertain == is_uncertain)
-
-        if is_skipped is not None:
-            filters.append(models.SearchResult.is_skipped == is_skipped)
-
-        if assigned_tag_id is not None:
-            filters.append(models.SearchResult.assigned_tag_id == assigned_tag_id)
-
-        if sample_type is not None:
-            filters.append(models.SearchResult.sample_type == sample_type)
-
-        if iteration_added is not None:
-            filters.append(models.SearchResult.iteration_added == iteration_added)
+        # Build filters using the filter builder
+        filters = SearchResultFilterBuilder.build_filters(
+            search_session_id=search_session.id,
+            is_labeled=is_labeled,
+            assigned_tag_ids=assigned_tag_ids,
+            is_negative=is_negative,
+            is_uncertain=is_uncertain,
+            is_skipped=is_skipped,
+            sample_type=sample_type,
+            iteration_added=iteration_added,
+        )
 
         import logging
         logger = logging.getLogger(__name__)
@@ -1004,7 +905,7 @@ def get_ml_projects_router(settings: EchorooSettings) -> APIRouter:
             search_session.id,
             limit=limit,
             offset=offset,
-            filters=filters if filters else None,
+            filters=filters or None,
             user=user,
         )
         logger.info(f"Got {len(results)} results, total={total}")
@@ -1772,5 +1673,45 @@ def get_ml_projects_router(settings: EchorooSettings) -> APIRouter:
             search_session_uuid,
             user=user,
         )
+
+    @router.post(
+        "/{ml_project_uuid}/search_sessions/{search_session_uuid}/finalize",
+        response_model=schemas.FinalizeResponse,
+    )
+    async def finalize_search_session(
+        session: Session,
+        ml_project_uuid: UUID,
+        search_session_uuid: UUID,
+        request: schemas.FinalizeRequest,
+        user: models.User = Depends(current_user_dep),
+    ) -> schemas.FinalizeResponse:
+        """Finalize a search session by training and saving a model.
+
+        This endpoint:
+        1. Trains a classifier using all labeled data from the session
+        2. Saves the model to disk and creates a CustomModel record
+        3. Optionally creates an AnnotationProject with labeled clips
+
+        The trained model can then be used for inference on new data.
+        """
+        # Verify project access
+        await api.ml_projects.get(
+            session,
+            ml_project_uuid,
+            user=user,
+        )
+        search_session = await api.search_sessions.get(
+            session,
+            search_session_uuid,
+            user=user,
+        )
+        result = await api.search_sessions.finalize(
+            session,
+            search_session,
+            request,
+            user=user,
+        )
+        await session.commit()
+        return result
 
     return router

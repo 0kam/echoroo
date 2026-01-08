@@ -18,8 +18,6 @@ SearchFilter = base.search_filter(
 
 CreatedOnFilter = base.date_filter(models.MLProject.created_on)
 
-DatasetIdFilter = base.integer_filter(models.MLProject.dataset_id)
-
 StatusFilter = base.string_filter(models.MLProject.status)
 
 
@@ -38,7 +36,6 @@ ProjectFilter = base.create_filter_from_field_and_model(
 MLProjectFilter = base.combine(
     SearchFilter,
     created_on=CreatedOnFilter,
-    dataset_id=DatasetIdFilter,
     status=StatusFilter,
     project_id=ProjectFilter,
 )

@@ -14,6 +14,7 @@ from soundevent import data
 from soundevent.audio import MediaInfo, compute_md5_checksum, get_media_info
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from echoroo import exceptions, models, schemas
 from echoroo.api import common
@@ -279,7 +280,22 @@ class RecordingAPI(
             return_all=True,
         )
 
-        return [schemas.Recording.model_validate(rec) for rec in recordings]
+        # Reload recordings with relationships to avoid MissingGreenlet errors
+        # when converting to Pydantic schemas
+        recording_ids = [rec.id for rec in recordings]
+        stmt = (
+            select(models.Recording)
+            .where(models.Recording.id.in_(recording_ids))
+            .options(
+                selectinload(models.Recording.tags),
+                selectinload(models.Recording.features),
+                selectinload(models.Recording.notes),
+                selectinload(models.Recording.owners),
+            )
+        )
+        result = await session.execute(stmt)
+        loaded_recordings = result.scalars().unique().all()
+        return [schemas.Recording.model_validate(rec) for rec in loaded_recordings]
 
     async def update(
         self,

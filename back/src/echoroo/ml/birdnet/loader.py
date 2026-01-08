@@ -17,7 +17,7 @@ from __future__ import annotations
 import logging
 import os
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 from echoroo.ml.base import ModelLoader, ModelSpecification
 from echoroo.ml.birdnet.constants import (
@@ -59,7 +59,7 @@ class BirdNETLoader(ModelLoader):
         downloads models automatically. Kept for API consistency.
         Default is None.
     device : str, optional
-        Device to use for inference: "GPU" or "CPU".
+        Device to use for inference: "GPU", "CPU", "GPU:0", "GPU:1", etc.
         Default is "GPU".
 
     Examples
@@ -82,7 +82,7 @@ class BirdNETLoader(ModelLoader):
     def __init__(
         self,
         model_dir: Path | None = None,
-        device: Literal["GPU", "CPU"] = "GPU",
+        device: str = "GPU",
     ) -> None:
         """Initialize the BirdNET loader.
 
@@ -91,8 +91,8 @@ class BirdNETLoader(ModelLoader):
         model_dir : Path | None, optional
             Directory containing model files. Not used for BirdNET.
             Default is None.
-        device : Literal["GPU", "CPU"], optional
-            Device to use for inference: "GPU" or "CPU".
+        device : str, optional
+            Device to use for inference: "GPU", "CPU", "GPU:0", "GPU:1", etc.
             Default is "GPU".
         """
         super().__init__(model_dir)
@@ -106,7 +106,7 @@ class BirdNETLoader(ModelLoader):
         Returns
         -------
         str
-            The device ("GPU" or "CPU").
+            The device (e.g., "GPU", "CPU", "GPU:0").
         """
         return self._device
 
@@ -145,6 +145,14 @@ class BirdNETLoader(ModelLoader):
             # Force CPU usage by hiding all GPUs
             os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
             logger.info("BirdNET configured to use CPU (GPU disabled)")
+        elif self._device.startswith("GPU:"):
+            gpu_index = self._device.split(":", 1)[1]
+            os.environ["CUDA_VISIBLE_DEVICES"] = gpu_index
+            logger.info(
+                "BirdNET configured to use device: %s (CUDA_VISIBLE_DEVICES=%s)",
+                self._device,
+                gpu_index,
+            )
         else:
             # Allow GPU usage (default behavior)
             # Remove the environment variable if it was set to -1

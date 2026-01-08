@@ -28,15 +28,57 @@ import Button from "@/lib/components/ui/Button";
 import Card from "@/lib/components/ui/Card";
 import Empty from "@/lib/components/ui/Empty";
 import Loading from "@/lib/components/ui/Loading";
+import { DialogOverlay } from "@/lib/components/ui/Dialog";
 
 import type { MLProjectDatasetScope, MLProjectDatasetScopeCreate } from "@/lib/types";
+
+function DeleteConfirmDialog({
+  isOpen,
+  onClose,
+  onConfirm,
+  datasetName,
+  isDeleting,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  onConfirm: () => void;
+  datasetName: string;
+  isDeleting: boolean;
+}) {
+  return (
+    <DialogOverlay title="Remove Dataset Scope" isOpen={isOpen} onClose={onClose}>
+      <div className="w-[400px] space-y-4">
+        <p className="text-stone-700 dark:text-stone-300">
+          Are you sure you want to remove <strong>{datasetName}</strong> from this ML project?
+        </p>
+        <p className="text-sm text-stone-500 dark:text-stone-400">
+          This will not delete the dataset itself, only remove it from this ML project.
+        </p>
+        <div className="flex justify-end gap-2 pt-4">
+          <Button variant="secondary" onClick={onClose} disabled={isDeleting}>
+            Cancel
+          </Button>
+          <Button
+            variant="danger"
+            onClick={onConfirm}
+            disabled={isDeleting}
+          >
+            {isDeleting ? "Removing..." : "Remove"}
+          </Button>
+        </div>
+      </div>
+    </DialogOverlay>
+  );
+}
 
 function DatasetScopeCard({
   scope,
   onDelete,
+  isDeleting,
 }: {
   scope: MLProjectDatasetScope;
   onDelete: () => void;
+  isDeleting?: boolean;
 }) {
   const { dataset, foundation_model_run: run } = scope;
 
@@ -91,9 +133,9 @@ function DatasetScopeCard({
 
       {/* Actions */}
       <div className="flex items-center justify-end gap-2 mt-4 pt-3 border-t border-stone-200 dark:border-stone-700">
-        <Button variant="danger" mode="text" onClick={onDelete}>
+        <Button variant="danger" mode="text" onClick={onDelete} disabled={isDeleting}>
           <Trash2 className="w-4 h-4 mr-1" />
-          Remove
+          {isDeleting ? "Removing..." : "Remove"}
         </Button>
       </div>
     </Card>
@@ -105,6 +147,7 @@ export default function DatasetsPage() {
   const mlProjectUuid = params.ml_project_uuid as string;
 
   const [showAddDialog, setShowAddDialog] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<{ uuid: string; name: string } | null>(null);
 
   // Fetch dataset scopes
   const { data: scopes, isLoading } = useMLProjectDatasetScopes(mlProjectUuid);
@@ -125,13 +168,23 @@ export default function DatasetsPage() {
   );
 
   const handleDelete = useCallback(
-    (scopeUuid: string) => {
-      if (confirm("Are you sure you want to remove this dataset scope?")) {
-        removeMutation.mutate(scopeUuid);
-      }
+    (scopeUuid: string, datasetName: string) => {
+      console.log("handleDelete called with:", scopeUuid, datasetName);
+      setDeleteTarget({ uuid: scopeUuid, name: datasetName });
     },
-    [removeMutation],
+    [],
   );
+
+  const handleConfirmDelete = useCallback(() => {
+    if (deleteTarget) {
+      console.log("Confirming deletion of:", deleteTarget.uuid);
+      removeMutation.mutate(deleteTarget.uuid, {
+        onSuccess: () => {
+          setDeleteTarget(null);
+        },
+      });
+    }
+  }, [deleteTarget, removeMutation]);
 
   if (isLoading) {
     return <Loading />;
@@ -179,7 +232,8 @@ export default function DatasetsPage() {
             <DatasetScopeCard
               key={scope.uuid}
               scope={scope}
-              onDelete={() => handleDelete(scope.uuid)}
+              onDelete={() => handleDelete(scope.uuid, scope.dataset.name)}
+              isDeleting={removeMutation.isPending}
             />
           ))}
         </div>
@@ -192,6 +246,17 @@ export default function DatasetsPage() {
         onSubmit={handleAdd}
         isSubmitting={addMutation.isPending}
       />
+
+      {/* Delete Confirmation Dialog */}
+      {deleteTarget && (
+        <DeleteConfirmDialog
+          isOpen={!!deleteTarget}
+          onClose={() => setDeleteTarget(null)}
+          onConfirm={handleConfirmDelete}
+          datasetName={deleteTarget.name}
+          isDeleting={removeMutation.isPending}
+        />
+      )}
     </div>
   );
 }

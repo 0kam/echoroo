@@ -70,6 +70,8 @@ export type BulkLabelRequest = z.input<typeof schemas.BulkLabelRequestSchema>;
 
 export type BulkCurateRequest = z.input<typeof schemas.BulkCurateRequestSchema>;
 
+export type ClassifierType = z.infer<typeof schemas.ClassifierTypeSchema>;
+
 export type RunIterationRequest = z.input<
   typeof schemas.RunIterationRequestSchema
 >;
@@ -91,6 +93,10 @@ export type ExportToAPResponse = z.infer<
 export type MLProjectAnnotationProject = z.infer<
   typeof schemas.MLProjectAnnotationProjectSchema
 >;
+
+export type FinalizeRequest = z.input<typeof schemas.FinalizeRequestSchema>;
+
+export type FinalizeResponse = z.infer<typeof schemas.FinalizeResponseSchema>;
 
 // ============================================================================
 // CustomModel Types

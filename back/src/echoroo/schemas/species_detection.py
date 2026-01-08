@@ -14,39 +14,14 @@ from echoroo.schemas.model_runs import ModelRun
 from echoroo.schemas.tags import Tag
 
 __all__ = [
-    "SpeciesDetectionJobStatus",
     "DetectionReviewStatus",
-    "SpeciesDetectionJob",
-    "SpeciesDetectionJobCreate",
-    "SpeciesDetectionJobUpdate",
-    "SpeciesDetectionJobProgress",
     "DetectionResult",
     "DetectionReview",
     "DetectionReviewUpdate",
     "DetectionSummary",
     "SpeciesSummary",
-    "RecordingFilter",
     "ConversionResult",
 ]
-
-
-class SpeciesDetectionJobStatus(str, Enum):
-    """Status of a species detection job."""
-
-    PENDING = "pending"
-    """Job is queued and waiting to start."""
-
-    RUNNING = "running"
-    """Job is currently being processed."""
-
-    COMPLETED = "completed"
-    """Job finished successfully."""
-
-    FAILED = "failed"
-    """Job encountered an error and stopped."""
-
-    CANCELLED = "cancelled"
-    """Job was manually cancelled."""
 
 
 class DetectionReviewStatus(str, Enum):
@@ -63,211 +38,6 @@ class DetectionReviewStatus(str, Enum):
 
     UNCERTAIN = "uncertain"
     """Reviewer is uncertain about the detection."""
-
-
-class RecordingFilter(BaseModel):
-    """Filters for selecting recordings to process."""
-
-    date_from: datetime.date | None = Field(default=None, description="Start date filter")
-    """Include recordings from this date onwards."""
-
-    date_to: datetime.date | None = Field(default=None, description="End date filter")
-    """Include recordings up to this date."""
-
-    h3_indices: list[str] | None = Field(default=None, description="H3 spatial indices")
-    """H3 spatial indices for location filtering."""
-
-    tag_ids: list[int] | None = Field(default=None, description="Tag IDs to filter by")
-    """Only include recordings with these tags."""
-
-    recording_uuids: list[UUID] | None = Field(default=None, description="Specific recording UUIDs")
-    """Specific recordings to process."""
-
-
-class SpeciesDetectionJobCreate(BaseModel):
-    """Schema for creating a species detection job."""
-
-    model_config = {"protected_namespaces": ()}
-
-    name: str = Field(..., min_length=1, max_length=255)
-    """Name of the detection job."""
-
-    dataset_uuid: UUID = Field(..., description="Dataset to process")
-    """Dataset containing the recordings to analyze."""
-
-    model_name: str = Field(..., description="Model to use (birdnet or perch)")
-    """Model name: 'birdnet' or 'perch'."""
-
-    model_version: str = Field(default="latest", description="Model version")
-    """Model version to use."""
-
-    confidence_threshold: float = Field(
-        default=0.5,
-        ge=0.0,
-        le=1.0,
-        description="Minimum confidence for detections",
-    )
-    """Minimum confidence score for detections to be saved."""
-
-    overlap: float = Field(
-        default=0.0,
-        ge=0.0,
-        le=0.9,
-        description="Overlap between analysis windows",
-    )
-    """Overlap between consecutive analysis windows (0.0 to 0.9)."""
-
-    use_metadata_filter: bool = Field(
-        default=False,
-        description="Apply species filters explicitly after the run",
-    )
-    """Whether to apply species filters explicitly after the run."""
-
-    custom_species_list: list[str] | None = Field(
-        default=None,
-        description="Custom list of species to detect",
-    )
-    """Optional list of specific species to detect."""
-
-    recording_filters: RecordingFilter | None = Field(
-        default=None,
-        description="Filters for selecting recordings",
-    )
-    """Optional filters to select which recordings to process."""
-
-    locale: str = Field(
-        default="en_us",
-        max_length=16,
-        description="Locale for species common names (e.g., 'en_us', 'ja')",
-    )
-    """Locale for species common names in model output."""
-
-
-class SpeciesDetectionJobUpdate(BaseModel):
-    """Schema for updating a species detection job."""
-
-    name: str | None = Field(default=None, min_length=1, max_length=255)
-    """Updated name for the job."""
-
-    status: SpeciesDetectionJobStatus | None = Field(default=None)
-    """Updated status (for cancellation)."""
-
-
-class SpeciesDetectionJob(BaseSchema):
-    """Schema for a species detection job returned to the user."""
-
-    model_config = {"protected_namespaces": ()}
-
-    uuid: UUID
-    """UUID of the detection job."""
-
-    id: int = Field(..., exclude=True)
-    """Database ID of the detection job."""
-
-    name: str
-    """Name of the detection job."""
-
-    dataset_id: int = Field(..., exclude=True)
-    """Dataset identifier."""
-
-    dataset: Dataset | None = None
-    """Hydrated dataset information."""
-
-    created_by_id: UUID | None = None
-    """User who created the job."""
-
-    # Model configuration
-    model_name: str
-    """Model used for detection (birdnet or perch)."""
-
-    model_version: str
-    """Version of the model used."""
-
-    confidence_threshold: float
-    """Minimum confidence threshold for detections."""
-
-    overlap: float = 0.0
-    """Overlap between analysis windows."""
-
-    locale: str = "en_us"
-    """Locale for species common names."""
-
-    use_metadata_filter: bool = False
-    """Whether species filtering was requested for explicit post-processing."""
-
-    custom_species_list: list[str] | None = None
-    """Custom species list if specified."""
-
-    recording_filters: dict[str, Any] | None = None
-    """Recording filters applied to the job."""
-
-    # Status tracking
-    status: SpeciesDetectionJobStatus = SpeciesDetectionJobStatus.PENDING
-    """Current job status."""
-
-    progress: float = 0.0
-    """Job progress (0.0 to 1.0)."""
-
-    total_recordings: int = 0
-    """Total number of recordings to process."""
-
-    processed_recordings: int = 0
-    """Number of recordings processed so far."""
-
-    total_clips: int = 0
-    """Total number of clips analyzed."""
-
-    total_detections: int = 0
-    """Total number of species detections found."""
-
-    # Error handling
-    error_message: str | None = None
-    """Error message if job failed."""
-
-    # Timestamps
-    started_on: datetime.datetime | None = None
-    """Timestamp when job started."""
-
-    completed_on: datetime.datetime | None = None
-    """Timestamp when job completed."""
-
-    # Result link
-    model_run_id: int | None = Field(default=None, exclude=True)
-    """Model run containing the predictions."""
-
-    model_run: ModelRun | None = None
-    """Hydrated model run information."""
-
-
-class SpeciesDetectionJobProgress(BaseModel):
-    """Schema for tracking detection job progress."""
-
-    status: SpeciesDetectionJobStatus
-    """Current job status."""
-
-    progress: float = 0.0
-    """Progress percentage (0.0 to 1.0)."""
-
-    total_recordings: int = 0
-    """Total recordings to process."""
-
-    processed_recordings: int = 0
-    """Recordings processed so far."""
-
-    total_clips: int = 0
-    """Total clips analyzed."""
-
-    total_detections: int = 0
-    """Detections found so far."""
-
-    recordings_per_second: float | None = None
-    """Processing speed."""
-
-    estimated_time_remaining_seconds: float | None = None
-    """Estimated time remaining."""
-
-    message: str | None = None
-    """Human-readable status message."""
 
 
 class DetectionResult(BaseSchema):
@@ -326,8 +96,8 @@ class DetectionReview(BaseSchema):
     clip_prediction_id: int = Field(..., exclude=True)
     """Associated clip prediction."""
 
-    species_detection_job_id: int = Field(..., exclude=True)
-    """Associated detection job."""
+    foundation_model_run_id: int = Field(..., exclude=True)
+    """Associated foundation model run."""
 
     status: DetectionReviewStatus = DetectionReviewStatus.UNREVIEWED
     """Review status."""

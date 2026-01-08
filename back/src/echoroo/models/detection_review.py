@@ -19,7 +19,7 @@ from echoroo.models.base import Base
 if TYPE_CHECKING:
     from echoroo.models.clip_annotation import ClipAnnotation
     from echoroo.models.clip_prediction import ClipPrediction
-    from echoroo.models.species_detection_job import SpeciesDetectionJob
+    from echoroo.models.foundation_model import FoundationModelRun
     from echoroo.models.user import User
 
 __all__ = [
@@ -46,10 +46,11 @@ class DetectionReviewStatus(str, enum.Enum):
 
 # PostgreSQL ENUM type for review status
 # Use explicit values to ensure lowercase values are sent to the database
+# create_type=True allows SQLAlchemy to create the type if it doesn't exist
 detection_review_status_enum = PgEnum(
     "unreviewed", "confirmed", "rejected", "uncertain",
     name="detection_review_status",
-    create_type=False,  # Don't create type, already exists from migration
+    create_type=True,  # Create type if it doesn't exist
 )
 
 
@@ -61,7 +62,7 @@ class DetectionReview(Base):
 
     __tablename__ = "detection_review"
     __table_args__ = (
-        UniqueConstraint("clip_prediction_id", "species_detection_job_id"),
+        UniqueConstraint("clip_prediction_id", "foundation_model_run_id"),
     )
 
     id: orm.Mapped[int] = orm.mapped_column(primary_key=True, init=False)
@@ -80,10 +81,10 @@ class DetectionReview(Base):
     )
     """The database id of the clip prediction being reviewed."""
 
-    species_detection_job_id: orm.Mapped[int] = orm.mapped_column(
-        ForeignKey("species_detection_job.id", ondelete="CASCADE"),
+    foundation_model_run_id: orm.Mapped[int] = orm.mapped_column(
+        ForeignKey("foundation_model_run.id", ondelete="CASCADE"),
     )
-    """The database id of the species detection job that created this detection."""
+    """The database id of the foundation model run that created this detection."""
 
     # Review info
     status: orm.Mapped[str] = orm.mapped_column(
@@ -134,12 +135,12 @@ class DetectionReview(Base):
     )
     """The clip prediction being reviewed."""
 
-    species_detection_job: orm.Mapped["SpeciesDetectionJob"] = orm.relationship(
+    foundation_model_run: orm.Mapped["FoundationModelRun"] = orm.relationship(
         init=False,
         repr=False,
         lazy="joined",
     )
-    """The species detection job that created this detection."""
+    """The foundation model run that created this detection."""
 
     reviewed_by: orm.Mapped[Optional["User"]] = orm.relationship(
         init=False,

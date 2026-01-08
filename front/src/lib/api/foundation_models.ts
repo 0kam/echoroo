@@ -16,6 +16,8 @@ const DEFAULT_ENDPOINTS = {
   runs: "/api/v1/foundation_models/runs/",
   run: (uuid: string) => `/api/v1/foundation_models/runs/${uuid}`,
   runCancel: (uuid: string) => `/api/v1/foundation_models/runs/${uuid}/cancel`,
+  runDelete: (runUuid: string) =>
+    `/api/v1/foundation_models/runs/${runUuid}`,
   runProgress: (uuid: string) =>
     `/api/v1/foundation_models/runs/${uuid}/progress`,
   runSpecies: (uuid: string) =>
@@ -233,6 +235,13 @@ export function registerFoundationModelAPI(instance: AxiosInstance) {
     return schemas.ConvertToAnnotationProjectResponseSchema.parse(data);
   }
 
+  /**
+   * Delete a foundation model run and all associated predictions.
+   */
+  async function deleteRun(runUuid: string): Promise<void> {
+    await instance.delete(DEFAULT_ENDPOINTS.runDelete(runUuid));
+  }
+
   return {
     list,
     getQueueStatus,
@@ -241,6 +250,7 @@ export function registerFoundationModelAPI(instance: AxiosInstance) {
     createRun,
     getRun,
     cancelRun,
+    deleteRun,
     getRunProgress,
     getRunSpecies,
     getDetections,

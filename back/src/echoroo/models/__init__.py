@@ -93,6 +93,7 @@ from echoroo.models.reference_sound import (
 from echoroo.models.search_session import (
     IterationScoreDistribution,
     SearchResult,
+    SearchResultTag,
     SearchSession,
     SearchSessionDatasetScope,
     SearchSessionReferenceSound,
@@ -114,10 +115,7 @@ from echoroo.models.sound_event_prediction import (
     SoundEventPrediction,
     SoundEventPredictionTag,
 )
-from echoroo.models.species_detection_job import (
-    SpeciesDetectionJob,
-    SpeciesDetectionJobStatus,
-)
+from echoroo.models.species_cache import SpeciesCache
 from echoroo.models.species_filter import (
     SpeciesFilter,
     SpeciesFilterApplication,
@@ -210,6 +208,7 @@ __all__ = [
     "ReferenceSoundEmbedding",
     "ReferenceSoundSource",
     "SearchResult",
+    "SearchResultTag",
     "SearchSession",
     "SearchSessionDatasetScope",
     "SearchSessionReferenceSound",
@@ -226,8 +225,7 @@ __all__ = [
     "SoundEventFeature",
     "SoundEventPrediction",
     "SoundEventPredictionTag",
-    "SpeciesDetectionJob",
-    "SpeciesDetectionJobStatus",
+    "SpeciesCache",
     "SpeciesFilter",
     "SpeciesFilterApplication",
     "SpeciesFilterApplicationStatus",

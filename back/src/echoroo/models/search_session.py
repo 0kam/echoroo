@@ -18,17 +18,17 @@ sampling metadata and user-assigned labels.
 from __future__ import annotations
 
 import datetime
+import enum
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
 import sqlalchemy as sa
 import sqlalchemy.orm as orm
-from sqlalchemy import ForeignKey, UniqueConstraint
+from sqlalchemy import Enum, ForeignKey, UniqueConstraint
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 
 from echoroo.models.base import Base
 from echoroo.models.tag import Tag
-from echoroo.ml.distance_metrics import DistanceMetric
 
 if TYPE_CHECKING:
     from echoroo.models.annotation_project import AnnotationProject
@@ -38,13 +38,31 @@ if TYPE_CHECKING:
     from echoroo.models.user import User
 
 __all__ = [
+    "SampleType",
     "SearchSession",
     "SearchSessionDatasetScope",
     "SearchSessionReferenceSound",
     "SearchSessionTargetTag",
     "SearchResult",
+    "SearchResultTag",
     "IterationScoreDistribution",
 ]
+
+
+class SampleType(str, enum.Enum):
+    """Sample type for search results.
+
+    Represents how a search result was selected for labeling:
+    - EASY_POSITIVE: Top-k most similar clips to reference sounds
+    - BOUNDARY: Random samples from medium similarity range
+    - OTHERS: Diverse samples using farthest-first selection
+    - ACTIVE_LEARNING: Samples selected by active learning iteration
+    """
+
+    EASY_POSITIVE = "easy_positive"
+    BOUNDARY = "boundary"
+    OTHERS = "others"
+    ACTIVE_LEARNING = "active_learning"
 
 
 class SearchSession(Base):
@@ -388,14 +406,7 @@ class SearchResult(Base):
     )
     """Rank of this result (1 = most similar)."""
 
-    # Labeling fields (replaces enum-based label)
-    assigned_tag_id: orm.Mapped[int | None] = orm.mapped_column(
-        ForeignKey("tag.id", ondelete="SET NULL"),
-        nullable=True,
-        default=None,
-    )
-    """The tag assigned to this result by the user (positive label)."""
-
+    # Labeling fields (multi-label support via search_result_tag table)
     is_negative: orm.Mapped[bool] = orm.mapped_column(
         nullable=False,
         default=False,
@@ -415,11 +426,12 @@ class SearchResult(Base):
     """Whether this result was skipped during labeling."""
 
     # Sampling metadata
-    sample_type: orm.Mapped[str | None] = orm.mapped_column(
+    sample_type: orm.Mapped[SampleType | None] = orm.mapped_column(
+        Enum(SampleType, name="sample_type", values_callable=lambda x: [e.value for e in x]),
         nullable=True,
         default=None,
     )
-    """Type of sample: 'easy_positive', 'boundary', 'others', or 'active_learning'."""
+    """Type of sample: easy_positive, boundary, others, or active_learning."""
 
     iteration_added: orm.Mapped[int | None] = orm.mapped_column(
         nullable=True,
@@ -461,6 +473,12 @@ class SearchResult(Base):
     )
     """Optional notes about this result."""
 
+    raw_score: orm.Mapped[float | None] = orm.mapped_column(
+        nullable=True,
+        default=None,
+    )
+    """Raw score value (cosine: similarity 0-1, euclidean: distance 0-inf)."""
+
     saved_to_annotation_project_id: orm.Mapped[int | None] = orm.mapped_column(
         ForeignKey("annotation_project.id", ondelete="SET NULL"),
         nullable=True,
@@ -484,15 +502,6 @@ class SearchResult(Base):
         repr=False,
     )
     """The matched clip."""
-
-    assigned_tag: orm.Mapped[Tag | None] = orm.relationship(
-        "Tag",
-        foreign_keys=[assigned_tag_id],
-        lazy="joined",
-        init=False,
-        repr=False,
-    )
-    """The assigned tag for this result."""
 
     source_tag: orm.Mapped[Tag | None] = orm.relationship(
         "Tag",
@@ -522,6 +531,75 @@ class SearchResult(Base):
         )
     )
     """The annotation project this result was exported to."""
+
+    # Multi-label support: relationship to assigned tags via junction table
+    assigned_tags_rel: orm.Mapped[list["SearchResultTag"]] = orm.relationship(
+        "SearchResultTag",
+        back_populates="search_result",
+        default_factory=list,
+        cascade="all, delete-orphan",
+        repr=False,
+        init=False,
+    )
+    """Tags assigned to this result (multi-label support)."""
+
+
+class SearchResultTag(Base):
+    """Junction table for many-to-many relationship between SearchResult and Tag.
+
+    This enables multi-label classification where a single search result
+    can be assigned multiple tags (e.g., when a segment contains multiple
+    species vocalizations).
+    """
+
+    __tablename__ = "search_result_tag"
+    __table_args__ = (
+        UniqueConstraint(
+            "search_result_id",
+            "tag_id",
+            name="uq_search_result_tag",
+        ),
+    )
+
+    id: orm.Mapped[int] = orm.mapped_column(primary_key=True, init=False)
+    """The database id of the search result tag entry."""
+
+    search_result_id: orm.Mapped[int] = orm.mapped_column(
+        ForeignKey("search_result.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    """The search result ID."""
+
+    tag_id: orm.Mapped[int] = orm.mapped_column(
+        ForeignKey("tag.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    """The assigned tag ID."""
+
+    created_on: orm.Mapped[datetime.datetime] = orm.mapped_column(
+        sa.DateTime(timezone=True),
+        nullable=False,
+        default=datetime.datetime.now,
+        init=False,
+    )
+    """Timestamp when this tag was assigned."""
+
+    # Relationships
+    search_result: orm.Mapped["SearchResult"] = orm.relationship(
+        "SearchResult",
+        back_populates="assigned_tags_rel",
+        init=False,
+        repr=False,
+    )
+    """The search result this tag is assigned to."""
+
+    tag: orm.Mapped[Tag] = orm.relationship(
+        "Tag",
+        lazy="joined",
+        init=False,
+        repr=False,
+    )
+    """The assigned tag."""
 
 
 class SearchSessionDatasetScope(Base):

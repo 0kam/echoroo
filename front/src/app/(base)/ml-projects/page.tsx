@@ -36,19 +36,23 @@ import type { MLProject, MLProjectStatus, MLProjectCreate } from "@/lib/types";
 
 // Status badge colors - matches backend MLProjectStatus enum
 const STATUS_COLORS: Record<MLProjectStatus, string> = {
-  draft: "bg-stone-200 text-stone-700 dark:bg-stone-700 dark:text-stone-300",
-  active: "bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300",
+  setup: "bg-stone-200 text-stone-700 dark:bg-stone-700 dark:text-stone-300",
+  searching: "bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300",
+  labeling: "bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300",
   training: "bg-purple-100 text-purple-700 dark:bg-purple-900 dark:text-purple-300",
   inference: "bg-cyan-100 text-cyan-700 dark:bg-cyan-900 dark:text-cyan-300",
+  review: "bg-indigo-100 text-indigo-700 dark:bg-indigo-900 dark:text-indigo-300",
   completed: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900 dark:text-emerald-300",
   archived: "bg-stone-300 text-stone-600 dark:bg-stone-600 dark:text-stone-400",
 };
 
 const STATUS_ICONS: Record<MLProjectStatus, React.ReactNode> = {
-  draft: <Clock className="w-4 h-4" />,
-  active: <Search className="w-4 h-4" />,
+  setup: <Clock className="w-4 h-4" />,
+  searching: <Search className="w-4 h-4" />,
+  labeling: <Clock className="w-4 h-4" />,
   training: <Cpu className="w-4 h-4" />,
   inference: <Play className="w-4 h-4" />,
+  review: <Clock className="w-4 h-4" />,
   completed: <CheckCircle className="w-4 h-4" />,
   archived: <Archive className="w-4 h-4" />,
 };

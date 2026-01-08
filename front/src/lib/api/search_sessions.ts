@@ -35,6 +35,7 @@ function buildEndpoints(mlProjectUuid: string, searchSessionUuid?: string) {
     bulkCurate: `${sessionBase}/bulk_curate`,
     exportToAnnotationProject: `${sessionBase}/export_to_annotation_project`,
     scoreDistribution: `${sessionBase}/score_distribution`,
+    finalize: `${sessionBase}/finalize`,
   };
 }
 
@@ -302,6 +303,25 @@ export function registerSearchSessionAPI(
     return schemas.ScoreDistributionResponseSchema.parse(data);
   }
 
+  /**
+   * Finalize a search session by creating a custom model and optionally an annotation project.
+   *
+   * @param mlProjectUuid - The UUID of the ML project
+   * @param sessionUuid - The UUID of the search session
+   * @param data - The finalize request with model details
+   * @returns The finalize response with custom model and annotation project details
+   */
+  async function finalizeSearchSession(
+    mlProjectUuid: string,
+    sessionUuid: string,
+    data: types.FinalizeRequest,
+  ): Promise<types.FinalizeResponse> {
+    const body = schemas.FinalizeRequestSchema.parse(data);
+    const endpoints = buildEndpoints(mlProjectUuid, sessionUuid);
+    const { data: responseData } = await instance.post(endpoints.finalize, body);
+    return schemas.FinalizeResponseSchema.parse(responseData);
+  }
+
   return {
     getMany,
     get,
@@ -316,5 +336,6 @@ export function registerSearchSessionAPI(
     bulkCurate,
     exportToAnnotationProject,
     getScoreDistribution,
+    finalize: finalizeSearchSession,
   } as const;
 }

@@ -84,10 +84,9 @@ services:
       - ECHOROO_LOG_TO_STDOUT=true
       - ECHOROO_LOG_TO_FILE=false
       - ECHOROO_OPEN_ON_STARTUP=false
-      # Reduce batch size to avoid GPU OOM (default 16 is too large for some GPUs)
-      - ECHOROO_ML_GPU_BATCH_SIZE=4
-      # Force CPU mode to use TFLite backend which avoids asyncio deadlocks
-      - ECHOROO_ML_USE_GPU=false
+      # GPU settings - read from .env file
+      - ECHOROO_ML_GPU_BATCH_SIZE=${ECHOROO_ML_GPU_BATCH_SIZE:-16}
+      - ECHOROO_ML_USE_GPU=${ECHOROO_ML_USE_GPU:-true}
       # Enable debug timing for ML inference performance analysis
       - ECHOROO_ML_DEBUG_TIMING=true
     healthcheck:

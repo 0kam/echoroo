@@ -125,6 +125,11 @@ export const SearchResultSchema = z.object({
   labeled_at: z.coerce.date().nullable().optional(),
   labeled_by_id: z.string().uuid().nullable().optional(),
   notes: z.string().nullable().optional(),
+
+  // Score display fields (for percentile and raw value display)
+  raw_score: z.number().nullable().optional(),
+  score_percentile: z.number().min(0).max(100).nullable().optional(),
+  result_distance_metric: DistanceMetricSchema.nullable().optional(),
 });
 
 export type SearchResult = z.infer<typeof SearchResultSchema>;
@@ -179,12 +184,24 @@ export const ScoreDistributionResponseSchema = z.object({
 
 export type ScoreDistributionResponse = z.infer<typeof ScoreDistributionResponseSchema>;
 
+// Classifier type enum for Active Learning
+export const ClassifierTypeSchema = z.enum([
+  "logistic_regression",
+  "svm_linear",
+  "mlp_small",
+  "mlp_medium",
+  "random_forest",
+]);
+
+export type ClassifierType = z.infer<typeof ClassifierTypeSchema>;
+
 // Run iteration request schema with Active Learning parameters
 export const RunIterationRequestSchema = z.object({
   uncertainty_low: z.number().min(0).max(0.5).default(0.25),
   uncertainty_high: z.number().min(0.5).max(1).default(0.75),
   samples_per_iteration: z.number().int().min(5).max(100).default(20),
   selected_tag_ids: z.array(z.number().int()).nullable().optional(),
+  classifier_type: ClassifierTypeSchema.default("logistic_regression"),
 });
 
 export type RunIterationRequest = z.infer<typeof RunIterationRequestSchema>;
@@ -220,3 +237,27 @@ export const MLProjectAnnotationProjectSchema = z.object({
 });
 
 export type MLProjectAnnotationProject = z.infer<typeof MLProjectAnnotationProjectSchema>;
+
+// Finalize search session request schema
+export const FinalizeRequestSchema = z.object({
+  model_name: z.string().min(1, "Model name is required").max(255),
+  model_type: ClassifierTypeSchema,
+  create_annotation_project: z.boolean().default(true),
+  annotation_project_name: z.string().max(255).nullable().optional(),
+  description: z.string().max(2000).optional(),
+});
+
+export type FinalizeRequest = z.infer<typeof FinalizeRequestSchema>;
+
+// Finalize search session response schema
+export const FinalizeResponseSchema = z.object({
+  custom_model_uuid: z.string().uuid(),
+  custom_model_name: z.string(),
+  annotation_project_uuid: z.string().uuid().nullable().optional(),
+  annotation_project_name: z.string().nullable().optional(),
+  positive_count: z.number().int(),
+  negative_count: z.number().int(),
+  message: z.string(),
+});
+
+export type FinalizeResponse = z.infer<typeof FinalizeResponseSchema>;

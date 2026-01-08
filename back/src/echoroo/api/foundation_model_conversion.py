@@ -96,19 +96,9 @@ async def convert_foundation_model_run_to_annotation_project(
     # Get the model_run_id for querying predictions
     model_run_id = db_run.model_run_id
     if model_run_id is None:
-        if db_run.species_detection_job_id is None:
-            raise exceptions.ValidationError(
-                "Foundation model run has no associated predictions"
-            )
-        job = await session.get(
-            models.SpeciesDetectionJob,
-            db_run.species_detection_job_id,
+        raise exceptions.ValidationError(
+            "Foundation model run has no associated predictions"
         )
-        if job is None or job.model_run_id is None:
-            raise exceptions.ValidationError(
-                "Foundation model run has no associated predictions"
-            )
-        model_run_id = job.model_run_id
 
     # Get species filter application if filtering is requested
     filter_application: models.SpeciesFilterApplication | None = None

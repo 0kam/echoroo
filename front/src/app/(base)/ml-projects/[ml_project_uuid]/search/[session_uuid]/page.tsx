@@ -30,6 +30,7 @@ import {
   Square,
   CheckSquare,
   MinusSquare,
+  Save,
 } from "lucide-react";
 
 // Dynamically import Plotly to avoid SSR issues
@@ -45,6 +46,7 @@ import Loading from "@/lib/components/ui/Loading";
 import ProgressBar from "@/lib/components/ui/ProgressBar";
 import Link from "@/lib/components/ui/Link";
 import ExportToAnnotationProjectDialog from "@/app/components/ml_projects/ExportToAnnotationProjectDialog";
+import FinalizeSearchSessionDialog from "@/app/components/ml_projects/FinalizeSearchSessionDialog";
 
 import type {
   SearchSession,
@@ -56,6 +58,7 @@ import type {
   RunIterationRequest,
   ScoreDistributionResponse,
   TagScoreDistribution,
+  ClassifierType,
 } from "@/lib/types";
 
 type LabelFilterType =
@@ -70,7 +73,14 @@ type LabelFilterType =
 function getResultLabelStatus(result: SearchResult): {
   type: "tagged" | "negative" | "uncertain" | "skipped" | "unlabeled";
   tagId?: number;
+  tagIds?: number[];
 } {
+  // Check for multiple tags (future support)
+  const assignedTagIds = (result as any).assigned_tag_ids as number[] | undefined;
+  if (assignedTagIds && assignedTagIds.length > 0) {
+    return { type: "tagged", tagIds: assignedTagIds };
+  }
+  // Fallback to single tag
   if (result.assigned_tag_id) return { type: "tagged", tagId: result.assigned_tag_id };
   if (result.is_negative) return { type: "negative" };
   if (result.is_uncertain) return { type: "uncertain" };
@@ -92,6 +102,46 @@ function generateTagColor(tagId: number): string {
     "#6366f1", // indigo-500
   ];
   return colors[tagId % colors.length];
+}
+
+// Format score display with percentile and raw value
+function formatScoreDisplay(result: SearchResult): {
+  percentileText: string;
+  rawValueText: string;
+  compactText: string;
+} {
+  const percentile = result.score_percentile;
+  const rawScore = result.raw_score;
+  const metric = result.result_distance_metric;
+
+  // Percentile text: "Top X%"
+  const percentileText = percentile != null
+    ? `Top ${(100 - percentile).toFixed(0)}%`
+    : "";
+
+  // Raw value text based on metric
+  let rawValueText = "";
+  if (rawScore != null) {
+    if (metric === "euclidean") {
+      rawValueText = `Euclidean: ${rawScore.toFixed(3)}`;
+    } else {
+      rawValueText = `Cosine: ${rawScore.toFixed(3)}`;
+    }
+  }
+
+  // Compact text for badges: "Top X% (Cos: 0.85)" or "Top X% (Euc: 0.42)"
+  let compactText = "";
+  if (percentile != null && rawScore != null) {
+    const metricShort = metric === "euclidean" ? "Euc" : "Cos";
+    compactText = `Top ${(100 - percentile).toFixed(0)}% (${metricShort}: ${rawScore.toFixed(2)})`;
+  } else if (percentile != null) {
+    compactText = `Top ${(100 - percentile).toFixed(0)}%`;
+  } else {
+    // Fallback to old-style percentage
+    compactText = `${(result.similarity * 100).toFixed(1)}%`;
+  }
+
+  return { percentileText, rawValueText, compactText };
 }
 
 // Label status colors
@@ -148,15 +198,20 @@ function TagLabelButton({
       onClick={onClick}
       disabled={disabled}
       className={`flex items-center gap-2 px-3 py-2 rounded-lg transition-colors border-2 ${
-        active ? "ring-2 ring-offset-2 ring-opacity-50" : "border-transparent hover:border-opacity-50"
+        active
+          ? "ring-2 ring-offset-2 ring-opacity-50 shadow-md"
+          : "border-transparent hover:border-opacity-50"
       } ${disabled ? "opacity-50 cursor-not-allowed" : ""}`}
       style={{
-        backgroundColor: active ? `${color}20` : undefined,
-        borderColor: color,
+        backgroundColor: active ? `${color}40` : `${color}10`,
+        borderColor: active ? color : "transparent",
         color: active ? color : undefined,
       }}
     >
-      <span className="w-3 h-3 rounded-full" style={{ backgroundColor: color }} />
+      <span
+        className={`w-3 h-3 rounded-full ${active ? "ring-2 ring-white" : ""}`}
+        style={{ backgroundColor: color }}
+      />
       <span className="font-medium text-sm truncate max-w-[120px]">
         {shortcut}: {displayName}
       </span>
@@ -308,13 +363,14 @@ function ResultCard({
               const tagName = sourceTag
                 ? sourceTag.tag.vernacular_name || sourceTag.tag.canonical_name || sourceTag.tag.value
                 : `Tag ${result.source_tag_id}`;
+              const { compactText } = formatScoreDisplay(result);
 
               if (result.sample_type === "active_learning" && result.model_score != null) {
                 // AL sample: show tag name with "?" and model score
                 return `${tagName}? ${(result.model_score * 100).toFixed(0)}%`;
               } else {
-                // Initial sample: show tag name and similarity
-                return `${tagName}: ${(result.similarity * 100).toFixed(0)}%`;
+                // Initial sample: show tag name and percentile/raw score
+                return `${tagName}: ${compactText}`;
               }
             })()}
           </span>
@@ -322,7 +378,7 @@ function ResultCard({
         {/* Fallback for samples without source_tag_id (e.g., "others" samples) */}
         {!result.source_tag_id && (
           <span className="absolute top-2 right-2 px-2 py-0.5 text-xs bg-stone-200 dark:bg-stone-700 text-stone-600 dark:text-stone-300 rounded-full">
-            {result.sample_type === "others" ? "Random" : `${(result.similarity * 100).toFixed(1)}%`}
+            {result.sample_type === "others" ? "Random" : formatScoreDisplay(result).compactText}
           </span>
         )}
 
@@ -345,19 +401,48 @@ function ResultCard({
 
       {/* Label badge */}
       <div className="flex items-center justify-between">
-        {labelStatus.type === "tagged" && assignedTag ? (
-          <span
-            className="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium rounded-full"
-            style={{
-              backgroundColor: `${tagColor}20`,
-              color: tagColor,
-            }}
-          >
-            <span className="w-2 h-2 rounded-full" style={{ backgroundColor: tagColor }} />
-            {assignedTag.tag.vernacular_name ||
-              assignedTag.tag.canonical_name ||
-              assignedTag.tag.value}
-          </span>
+        {labelStatus.type === "tagged" ? (
+          <div className="flex items-center gap-1 flex-wrap">
+            {/* Multiple tags support */}
+            {labelStatus.tagIds && labelStatus.tagIds.length > 0 ? (
+              labelStatus.tagIds.map((tagId) => {
+                const tag = targetTags.find((t) => t.tag_id === tagId);
+                const color = generateTagColor(tagId);
+                const displayName = tag
+                  ? tag.tag.vernacular_name || tag.tag.canonical_name || tag.tag.value
+                  : `Tag ${tagId}`;
+                return (
+                  <span
+                    key={tagId}
+                    className="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium rounded-full"
+                    style={{
+                      backgroundColor: `${color}20`,
+                      color: color,
+                    }}
+                  >
+                    <span className="w-2 h-2 rounded-full" style={{ backgroundColor: color }} />
+                    {displayName}
+                  </span>
+                );
+              })
+            ) : (
+              /* Single tag fallback */
+              assignedTag && (
+                <span
+                  className="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium rounded-full"
+                  style={{
+                    backgroundColor: `${tagColor}20`,
+                    color: tagColor,
+                  }}
+                >
+                  <span className="w-2 h-2 rounded-full" style={{ backgroundColor: tagColor }} />
+                  {assignedTag.tag.vernacular_name ||
+                    assignedTag.tag.canonical_name ||
+                    assignedTag.tag.value}
+                </span>
+              )
+            )}
+          </div>
         ) : (
           <span
             className={`inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium rounded-full ${LABEL_STATUS_COLORS[labelStatus.type]}`}
@@ -674,12 +759,16 @@ export default function SearchSessionDetailPage() {
   // Export dialog state
   const [showExportDialog, setShowExportDialog] = useState(false);
 
+  // Finalize dialog state
+  const [showFinalizeDialog, setShowFinalizeDialog] = useState(false);
+
   // Iteration dialog state
   const [showIterationDialog, setShowIterationDialog] = useState(false);
   const [iterationParams, setIterationParams] = useState<RunIterationRequest>({
     uncertainty_low: 0.25,
     uncertainty_high: 0.75,
     samples_per_iteration: 20,
+    classifier_type: "logistic_regression",
   });
   const [selectedTagsForIteration, setSelectedTagsForIteration] = useState<Set<number>>(new Set());
 
@@ -821,6 +910,7 @@ export default function SearchSessionDetailPage() {
               ? {
                   ...r,
                   assigned_tag_id: labelData.assigned_tag_id ?? null,
+                  assigned_tag_ids: (labelData as any).assigned_tag_ids ?? undefined,
                   is_negative: labelData.is_negative ?? false,
                   is_uncertain: labelData.is_uncertain ?? false,
                   is_skipped: labelData.is_skipped ?? false,
@@ -830,19 +920,28 @@ export default function SearchSessionDetailPage() {
         };
       });
 
-      // Move to next result immediately
-      if (selectedIndex < results.length - 1) {
-        setSelectedIndex(selectedIndex + 1);
-        // Trigger auto-play for next result
-        if (autoPlay) {
-          setShouldAutoPlay(true);
-        }
-      } else if (page < numPages - 1) {
-        setPage(page + 1);
-        setSelectedIndex(0);
-        // Trigger auto-play for next result
-        if (autoPlay) {
-          setShouldAutoPlay(true);
+      // Only auto-advance for status labels (negative/uncertain/skipped), not for tag assignments
+      // This allows users to assign multiple tags without auto-navigation
+      const isStatusLabel =
+        labelData.is_negative !== undefined ||
+        labelData.is_uncertain !== undefined ||
+        labelData.is_skipped !== undefined;
+
+      if (isStatusLabel) {
+        // Move to next result immediately
+        if (selectedIndex < results.length - 1) {
+          setSelectedIndex(selectedIndex + 1);
+          // Trigger auto-play for next result
+          if (autoPlay) {
+            setShouldAutoPlay(true);
+          }
+        } else if (page < numPages - 1) {
+          setPage(page + 1);
+          setSelectedIndex(0);
+          // Trigger auto-play for next result
+          if (autoPlay) {
+            setShouldAutoPlay(true);
+          }
         }
       }
 
@@ -912,14 +1011,48 @@ export default function SearchSessionDetailPage() {
     [selectedResult, labelMutation]
   );
 
-  // Handle tag label (keys 1-9)
+  // Handle tag label (keys 1-9) - Toggle mode
   const handleTagLabel = useCallback(
     (shortcutKey: number) => {
+      if (!selectedResult) return;
       const targetTag = targetTags.find((t) => t.shortcut_key === shortcutKey);
       if (!targetTag) return;
-      handleLabel({ assigned_tag_id: targetTag.tag_id });
+
+      // Get current assigned tag IDs (support both single and multiple)
+      const currentTagIds = (selectedResult as any).assigned_tag_ids as number[] | undefined;
+      const currentSingleTag = selectedResult.assigned_tag_id;
+
+      let newTagIds: number[];
+      if (currentTagIds && currentTagIds.length > 0) {
+        // Multiple tags mode: toggle the tag
+        if (currentTagIds.includes(targetTag.tag_id)) {
+          newTagIds = currentTagIds.filter((id) => id !== targetTag.tag_id);
+        } else {
+          newTagIds = [...currentTagIds, targetTag.tag_id];
+        }
+      } else if (currentSingleTag) {
+        // Convert single tag to multiple and toggle
+        if (currentSingleTag === targetTag.tag_id) {
+          newTagIds = []; // Remove the only tag
+        } else {
+          newTagIds = [currentSingleTag, targetTag.tag_id];
+        }
+      } else {
+        // No tags assigned yet
+        newTagIds = [targetTag.tag_id];
+      }
+
+      // Send both assigned_tag_ids and assigned_tag_id for backward compatibility
+      // Backend should accept assigned_tag_ids in the future
+      const labelData: any = {
+        assigned_tag_ids: newTagIds,
+        // For backward compatibility: send single tag if only one is selected
+        assigned_tag_id: newTagIds.length === 1 ? newTagIds[0] : null,
+      };
+
+      handleLabel(labelData);
     },
-    [targetTags, handleLabel]
+    [selectedResult, targetTags, handleLabel]
   );
 
   // Handle navigation
@@ -1128,6 +1261,14 @@ export default function SearchSessionDetailPage() {
             <Button variant="secondary" onClick={() => setShowExportDialog(true)}>
               <Download className="w-4 h-4 mr-2" />
               Export
+            </Button>
+          )}
+
+          {/* Finalize button */}
+          {session.is_search_complete && (
+            <Button variant="primary" onClick={() => setShowFinalizeDialog(true)}>
+              <Save className="w-4 h-4 mr-2" />
+              Finalize & Save
             </Button>
           )}
         </div>
@@ -1410,10 +1551,12 @@ export default function SearchSessionDetailPage() {
                 <Card className="p-4">
                   <h4 className="font-medium mb-4">
                     Result #{selectedResult.rank}
-                    <span className="ml-2 text-sm font-normal text-stone-500">
-                      Similarity: {(selectedResult.similarity * 100).toFixed(1)}%
-                    </span>
                   </h4>
+                  {/* Score display with percentile and raw value */}
+                  <div className="mb-2 text-sm text-stone-600 dark:text-stone-400">
+                    <div className="font-medium">{formatScoreDisplay(selectedResult).percentileText}</div>
+                    <div className="text-xs text-stone-500">{formatScoreDisplay(selectedResult).rawValueText}</div>
+                  </div>
 
                   {/* Spectrogram */}
                   <div className="aspect-[2/1] bg-stone-100 dark:bg-stone-800 rounded-lg mb-4 flex items-center justify-center relative overflow-hidden group">
@@ -1464,24 +1607,53 @@ export default function SearchSessionDetailPage() {
                   {/* Current label */}
                   <div className="mb-4">
                     <span className="text-sm text-stone-500">Current label:</span>
-                    {currentLabelStatus?.type === "tagged" && currentAssignedTag ? (
-                      <span
-                        className="ml-2 inline-flex items-center gap-1 px-2 py-0.5 text-sm font-medium rounded-full"
-                        style={{
-                          backgroundColor: `${generateTagColor(currentAssignedTag.tag_id)}20`,
-                          color: generateTagColor(currentAssignedTag.tag_id),
-                        }}
-                      >
-                        <span
-                          className="w-2 h-2 rounded-full"
-                          style={{
-                            backgroundColor: generateTagColor(currentAssignedTag.tag_id),
-                          }}
-                        />
-                        {currentAssignedTag.tag.vernacular_name ||
-                          currentAssignedTag.tag.canonical_name ||
-                          currentAssignedTag.tag.value}
-                      </span>
+                    {currentLabelStatus?.type === "tagged" ? (
+                      <div className="inline-flex items-center gap-1 ml-2 flex-wrap">
+                        {/* Multiple tags support */}
+                        {currentLabelStatus.tagIds && currentLabelStatus.tagIds.length > 0 ? (
+                          currentLabelStatus.tagIds.map((tagId) => {
+                            const tag = targetTags.find((t) => t.tag_id === tagId);
+                            const color = generateTagColor(tagId);
+                            const displayName = tag
+                              ? tag.tag.vernacular_name || tag.tag.canonical_name || tag.tag.value
+                              : `Tag ${tagId}`;
+                            return (
+                              <span
+                                key={tagId}
+                                className="inline-flex items-center gap-1 px-2 py-0.5 text-sm font-medium rounded-full"
+                                style={{
+                                  backgroundColor: `${color}20`,
+                                  color: color,
+                                }}
+                              >
+                                <span className="w-2 h-2 rounded-full" style={{ backgroundColor: color }} />
+                                {displayName}
+                              </span>
+                            );
+                          })
+                        ) : (
+                          /* Single tag fallback */
+                          currentAssignedTag && (
+                            <span
+                              className="inline-flex items-center gap-1 px-2 py-0.5 text-sm font-medium rounded-full"
+                              style={{
+                                backgroundColor: `${generateTagColor(currentAssignedTag.tag_id)}20`,
+                                color: generateTagColor(currentAssignedTag.tag_id),
+                              }}
+                            >
+                              <span
+                                className="w-2 h-2 rounded-full"
+                                style={{
+                                  backgroundColor: generateTagColor(currentAssignedTag.tag_id),
+                                }}
+                              />
+                              {currentAssignedTag.tag.vernacular_name ||
+                                currentAssignedTag.tag.canonical_name ||
+                                currentAssignedTag.tag.value}
+                            </span>
+                          )
+                        )}
+                      </div>
                     ) : (
                       <span
                         className={`ml-2 inline-flex items-center gap-1 px-2 py-0.5 text-sm font-medium rounded-full ${LABEL_STATUS_COLORS[currentLabelStatus?.type || "unlabeled"]}`}
@@ -1498,20 +1670,27 @@ export default function SearchSessionDetailPage() {
                   {/* Tag label buttons */}
                   {targetTags.length > 0 && (
                     <div className="mb-4">
-                      <div className="text-xs text-stone-500 mb-2">Assign to tag:</div>
+                      <div className="text-xs text-stone-500 mb-2">Assign to tag (toggle):</div>
                       <div className="flex flex-wrap gap-2">
                         {targetTags
                           .filter((t) => t.shortcut_key <= 9)
-                          .map((targetTag) => (
-                            <TagLabelButton
-                              key={targetTag.tag_id}
-                              targetTag={targetTag}
-                              shortcut={String(targetTag.shortcut_key)}
-                              onClick={() => handleTagLabel(targetTag.shortcut_key)}
-                              active={currentLabelStatus?.tagId === targetTag.tag_id}
-                              disabled={labelMutation.isPending}
-                            />
-                          ))}
+                          .map((targetTag) => {
+                            // Check if this tag is currently assigned
+                            const isActive =
+                              (currentLabelStatus?.tagIds &&
+                                currentLabelStatus.tagIds.includes(targetTag.tag_id)) ||
+                              currentLabelStatus?.tagId === targetTag.tag_id;
+                            return (
+                              <TagLabelButton
+                                key={targetTag.tag_id}
+                                targetTag={targetTag}
+                                shortcut={String(targetTag.shortcut_key)}
+                                onClick={() => handleTagLabel(targetTag.shortcut_key)}
+                                active={isActive}
+                                disabled={labelMutation.isPending}
+                              />
+                            );
+                          })}
                       </div>
                     </div>
                   )}
@@ -1591,6 +1770,17 @@ export default function SearchSessionDetailPage() {
         <ExportToAnnotationProjectDialog
           isOpen={showExportDialog}
           onClose={() => setShowExportDialog(false)}
+          mlProjectUuid={mlProjectUuid}
+          searchSession={session}
+          progress={progress}
+        />
+      )}
+
+      {/* Finalize dialog */}
+      {showFinalizeDialog && session && progress && (
+        <FinalizeSearchSessionDialog
+          isOpen={showFinalizeDialog}
+          onClose={() => setShowFinalizeDialog(false)}
           mlProjectUuid={mlProjectUuid}
           searchSession={session}
           progress={progress}
@@ -1682,6 +1872,36 @@ export default function SearchSessionDetailPage() {
             </div>
 
             <div className="space-y-4 border-t border-stone-200 dark:border-stone-700 pt-4">
+              {/* Classifier type selection */}
+              <div>
+                <label className="block text-sm font-medium mb-2">
+                  Classifier Type
+                </label>
+                <select
+                  value={iterationParams.classifier_type}
+                  onChange={(e) =>
+                    setIterationParams((p) => ({
+                      ...p,
+                      classifier_type: e.target.value as ClassifierType,
+                    }))
+                  }
+                  className="w-full px-3 py-2 border border-stone-300 dark:border-stone-600 rounded-lg text-sm dark:bg-stone-800"
+                >
+                  <option value="logistic_regression">Logistic Regression (recommended)</option>
+                  <option value="svm_linear">Linear SVM</option>
+                  <option value="mlp_small">Small Neural Network</option>
+                  <option value="mlp_medium">Medium Neural Network</option>
+                  <option value="random_forest">Random Forest</option>
+                </select>
+                <p className="text-xs text-stone-400 mt-1">
+                  {iterationParams.classifier_type === "logistic_regression" && "Fast linear classifier (recommended)"}
+                  {iterationParams.classifier_type === "svm_linear" && "Linear classifier with margin-based optimization"}
+                  {iterationParams.classifier_type === "mlp_small" && "256-unit hidden layer"}
+                  {iterationParams.classifier_type === "mlp_medium" && "256+128-unit hidden layers"}
+                  {iterationParams.classifier_type === "random_forest" && "Ensemble method, robust to noisy labels"}
+                </p>
+              </div>
+
               {/* Uncertainty range */}
               <div>
                 <label className="block text-sm font-medium mb-2">

@@ -25,7 +25,7 @@ from zipfile import ZIP_DEFLATED, ZIP_STORED, ZipFile, ZipInfo
 
 from echoroo import exceptions, models, schemas
 from echoroo.api import common
-from echoroo.api.common import BaseAPI
+from echoroo.api.common import BaseAPI, UserResolutionMixin
 from echoroo.api.common.permissions import (
     can_delete_dataset,
     can_edit_dataset,
@@ -54,26 +54,11 @@ class DatasetAPI(
         schemas.Dataset,
         schemas.DatasetCreate,
         schemas.DatasetUpdate,
-    ]
+    ],
+    UserResolutionMixin,
 ):
     _model = models.Dataset
     _schema = schemas.Dataset
-
-    async def _resolve_user(
-        self,
-        session: AsyncSession,
-        user: models.User | schemas.SimpleUser | None,
-    ) -> models.User | None:
-        if user is None:
-            return None
-        if isinstance(user, models.User):
-            return user
-        db_user = await session.get(models.User, user.id)
-        if db_user is None:
-            raise exceptions.NotFoundError(
-                f"User with id {user.id} not found"
-            )
-        return db_user
 
     async def _ensure_project_manager(
         self,
@@ -675,6 +660,22 @@ class DatasetAPI(
             ),
         )
 
+        # Reload the objects with the recording relationship eagerly loaded
+        if db_recordings:
+            recording_ids = [x.recording_id for x in db_recordings]
+            db_recordings_with_rel, _ = await common.get_objects(
+                session,
+                models.DatasetRecording,
+                filters=[
+                    models.DatasetRecording.dataset_id == obj.id,
+                    models.DatasetRecording.recording_id.in_(recording_ids),
+                ],
+                options=[selectinload(models.DatasetRecording.recording)],
+                limit=None,
+            )
+        else:
+            db_recordings_with_rel = []
+
         obj = obj.model_copy(
             update=dict(
                 recording_count=obj.recording_count + len(db_recordings)
@@ -682,7 +683,7 @@ class DatasetAPI(
         )
         self._update_cache(obj)
         return [
-            schemas.DatasetRecording.model_validate(x) for x in db_recordings
+            schemas.DatasetRecording.model_validate(x) for x in db_recordings_with_rel
         ]
 
     async def get_recordings(
@@ -1304,6 +1305,7 @@ class DatasetAPI(
         """
         import re
         from datetime import datetime as dt
+        from zoneinfo import ZoneInfo
 
         if user is not None:
             db_user = await self._resolve_user(session, user)
@@ -1367,8 +1369,12 @@ class DatasetAPI(
                     else:
                         raise ValueError("Regex pattern must capture at least 6 groups (Y,M,D,H,M,S)")
 
+                # Add timezone information (assume Japan timezone)
+                # The parsed datetime is treated as local time (JST)
+                jst_dt = parsed_dt.replace(tzinfo=ZoneInfo("Asia/Tokyo"))
+
                 # Update recording
-                rec.datetime = parsed_dt
+                rec.datetime = jst_dt
                 rec.datetime_parse_status = models.DatetimeParseStatus.SUCCESS
                 rec.datetime_parse_error = None
                 success_count += 1

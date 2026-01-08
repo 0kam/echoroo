@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 from echoroo.ml.base import ModelLoader, ModelSpecification
 from echoroo.ml.perch.constants import (
@@ -50,7 +50,7 @@ class PerchLoader(ModelLoader):
         downloads models automatically. Kept for API consistency.
         Default is None.
     device : str, optional
-        Device to use for inference: "GPU" or "CPU".
+        Device to use for inference: "GPU", "CPU", "GPU:0", "GPU:1", etc.
         Default is "GPU".
 
     Examples
@@ -73,7 +73,7 @@ class PerchLoader(ModelLoader):
     def __init__(
         self,
         model_dir: Path | None = None,
-        device: Literal["GPU", "CPU"] = "GPU",
+        device: str = "GPU",
     ) -> None:
         """Initialize the Perch loader.
 
@@ -82,8 +82,8 @@ class PerchLoader(ModelLoader):
         model_dir : Path | None, optional
             Directory containing model files. Not used for Perch.
             Default is None.
-        device : Literal["GPU", "CPU"], optional
-            Device to use for inference: "GPU" or "CPU".
+        device : str, optional
+            Device to use for inference: "GPU", "CPU", "GPU:0", "GPU:1", etc.
             Default is "GPU".
         """
         super().__init__(model_dir)
@@ -97,9 +97,29 @@ class PerchLoader(ModelLoader):
         Returns
         -------
         str
-            The device ("GPU" or "CPU").
+            The device (e.g., "GPU", "CPU", "GPU:0").
         """
         return self._device
+
+    def _configure_device(self) -> None:
+        """Configure TensorFlow to use the specified device."""
+        import os
+
+        if self._device == "CPU":
+            os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
+            logger.info("Perch configured to use CPU (GPU disabled)")
+        elif self._device.startswith("GPU:"):
+            gpu_index = self._device.split(":", 1)[1]
+            os.environ["CUDA_VISIBLE_DEVICES"] = gpu_index
+            logger.info(
+                "Perch configured to use device: %s (CUDA_VISIBLE_DEVICES=%s)",
+                self._device,
+                gpu_index,
+            )
+        else:
+            if os.environ.get("CUDA_VISIBLE_DEVICES") == "-1":
+                del os.environ["CUDA_VISIBLE_DEVICES"]
+            logger.info("Perch configured to use device: %s", self._device)
 
     @property
     def specification(self) -> ModelSpecification:
@@ -143,6 +163,9 @@ class PerchLoader(ModelLoader):
         PerchModelNotFoundError
             If the model cannot be loaded.
         """
+        # Configure device before importing TensorFlow/birdnet
+        self._configure_device()
+
         try:
             import birdnet
         except ImportError as e:
