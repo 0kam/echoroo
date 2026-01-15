@@ -10,11 +10,12 @@ from pydantic import BaseModel, DirectoryPath, Field, model_validator
 from echoroo.schemas.base import BaseSchema
 from echoroo.schemas.metadata import License, Project, Recorder, Site
 from echoroo.schemas.recordings import Recording
-from echoroo.models.dataset import VisibilityLevel
+from echoroo.models.dataset import VisibilityLevel, DatasetStatus
 from echoroo.models.datetime_pattern import DatetimePatternType
 
 __all__ = [
     "VisibilityLevel",
+    "DatasetStatus",
     "Dataset",
     "DatasetRecording",
     "DatasetCreate",
@@ -141,6 +142,21 @@ class Dataset(BaseSchema):
 
     license: License | None = None
     """Hydrated license metadata."""
+
+    status: DatasetStatus = DatasetStatus.COMPLETED
+    """Processing status of the dataset."""
+
+    processing_progress: int = 100
+    """Processing progress (0-100)."""
+
+    processing_error: str | None = None
+    """Error message if processing failed."""
+
+    total_files: int = 0
+    """Total number of audio files discovered."""
+
+    processed_files: int = 0
+    """Number of files successfully processed."""
 
 
 class DatasetUpdate(BaseModel):

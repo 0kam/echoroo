@@ -39,6 +39,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "VisibilityLevel",
+    "DatasetStatus",
     "Dataset",
     "DatasetRecording",
 ]
@@ -49,6 +50,16 @@ class VisibilityLevel(str, Enum):
 
     RESTRICTED = "restricted"
     PUBLIC = "public"
+
+
+class DatasetStatus(str, Enum):
+    """Processing status for dataset creation."""
+
+    PENDING = "pending"
+    SCANNING = "scanning"
+    PROCESSING = "processing"
+    COMPLETED = "completed"
+    FAILED = "failed"
 
 
 class Dataset(Base):
@@ -149,6 +160,46 @@ class Dataset(Base):
         server_default=VisibilityLevel.RESTRICTED.value,
     )
     """Visibility level of the dataset."""
+
+    status: orm.Mapped[DatasetStatus] = orm.mapped_column(
+        sa.Enum(
+            DatasetStatus,
+            name="dataset_status",
+            values_callable=lambda x: [e.value for e in x],
+        ),
+        nullable=False,
+        default=DatasetStatus.COMPLETED,
+        server_default=DatasetStatus.COMPLETED.value,
+    )
+    """Processing status of the dataset."""
+
+    processing_progress: orm.Mapped[int] = orm.mapped_column(
+        nullable=False,
+        default=100,
+        server_default="100",
+    )
+    """Processing progress (0-100)."""
+
+    processing_error: orm.Mapped[str | None] = orm.mapped_column(
+        sa.Text(),
+        nullable=True,
+        default=None,
+    )
+    """Error message if processing failed."""
+
+    total_files: orm.Mapped[int] = orm.mapped_column(
+        nullable=False,
+        default=0,
+        server_default="0",
+    )
+    """Total number of audio files discovered."""
+
+    processed_files: orm.Mapped[int] = orm.mapped_column(
+        nullable=False,
+        default=0,
+        server_default="0",
+    )
+    """Number of files successfully processed."""
 
     created_by: orm.Mapped["User"] = orm.relationship(
         "User",

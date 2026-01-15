@@ -62,12 +62,34 @@ class CustomModelAPI(
             .where(self._model.uuid == db_obj.uuid)
             .options(
                 selectinload(self._model.ml_project),
-                selectinload(self._model.tag),
+                selectinload(self._model.target_tag),
                 selectinload(self._model.created_by),
+                selectinload(self._model.source_search_session),
             )
         )
         result = await session.execute(stmt)
         return result.scalar_one()
+
+    async def _get_annotation_project_for_search_session(
+        self,
+        session: AsyncSession,
+        search_session_id: int,
+    ) -> models.AnnotationProject | None:
+        """Get the annotation project created from a search session."""
+        # Find annotation project by looking at search results
+        stmt = (
+            select(models.AnnotationProject)
+            .join(
+                models.SearchResult,
+                models.SearchResult.saved_to_annotation_project_id
+                == models.AnnotationProject.id,
+            )
+            .where(models.SearchResult.search_session_id == search_session_id)
+            .distinct()
+            .limit(1)
+        )
+        result = await session.execute(stmt)
+        return result.unique().scalar_one_or_none()
 
     async def _build_schema(
         self,
@@ -77,29 +99,24 @@ class CustomModelAPI(
         """Build schema from database object."""
         db_obj = await self._eager_load_relationships(session, db_obj)
 
-        # Map model type enum
+        # Model type mapping (backend enum → API enum)
         model_type_map = {
-            models.CustomModelType.LINEAR: schemas.CustomModelType.LINEAR_CLASSIFIER,
-            models.CustomModelType.MLP: schemas.CustomModelType.MLP,
-            models.CustomModelType.RANDOM_FOREST: schemas.CustomModelType.RANDOM_FOREST,
-            models.CustomModelType.SVM: schemas.CustomModelType.SVM,
-            models.CustomModelType.GRADIENT_BOOSTING: schemas.CustomModelType.GRADIENT_BOOSTING,
+            models.CustomModelType.SELF_TRAINING_SVM: schemas.CustomModelType.SVM,
         }
         model_type = model_type_map.get(
-            db_obj.model_type, schemas.CustomModelType.MLP
+            db_obj.model_type, schemas.CustomModelType.SVM
         )
 
         # Map status enum
         status_map = {
-            models.CustomModelStatus.PENDING: schemas.CustomModelStatus.PENDING,
-            models.CustomModelStatus.PREPARING: schemas.CustomModelStatus.PREPARING,
+            models.CustomModelStatus.DRAFT: schemas.CustomModelStatus.DRAFT,
             models.CustomModelStatus.TRAINING: schemas.CustomModelStatus.TRAINING,
-            models.CustomModelStatus.VALIDATING: schemas.CustomModelStatus.VALIDATING,
-            models.CustomModelStatus.COMPLETED: schemas.CustomModelStatus.COMPLETED,
+            models.CustomModelStatus.TRAINED: schemas.CustomModelStatus.TRAINED,
             models.CustomModelStatus.FAILED: schemas.CustomModelStatus.FAILED,
-            models.CustomModelStatus.CANCELLED: schemas.CustomModelStatus.CANCELLED,
+            models.CustomModelStatus.DEPLOYED: schemas.CustomModelStatus.DEPLOYED,
+            models.CustomModelStatus.ARCHIVED: schemas.CustomModelStatus.ARCHIVED,
         }
-        status = status_map.get(db_obj.status, schemas.CustomModelStatus.PENDING)
+        status = status_map.get(db_obj.status, schemas.CustomModelStatus.DRAFT)
 
         # Build training config
         training_config = schemas.CustomModelTrainingConfig(
@@ -118,7 +135,10 @@ class CustomModelAPI(
 
         # Build metrics if available
         metrics = None
-        if db_obj.status == models.CustomModelStatus.COMPLETED:
+        if db_obj.status in (
+            models.CustomModelStatus.TRAINED,
+            models.CustomModelStatus.DEPLOYED,
+        ):
             metrics = schemas.CustomModelMetrics(
                 accuracy=getattr(db_obj, "accuracy", None),
                 precision=getattr(db_obj, "precision", None),
@@ -126,11 +146,29 @@ class CustomModelAPI(
                 f1_score=getattr(db_obj, "f1_score", None),
                 roc_auc=getattr(db_obj, "roc_auc", None),
                 pr_auc=getattr(db_obj, "pr_auc", None),
-                training_samples=getattr(db_obj, "training_samples", 0),
-                validation_samples=getattr(db_obj, "validation_samples", 0),
-                positive_samples=getattr(db_obj, "positive_samples", 0),
-                negative_samples=getattr(db_obj, "negative_samples", 0),
+                training_samples=getattr(db_obj, "training_samples", None) or 0,
+                validation_samples=getattr(db_obj, "validation_samples", None) or 0,
+                positive_samples=getattr(db_obj, "positive_samples", None) or 0,
+                negative_samples=getattr(db_obj, "negative_samples", None) or 0,
             )
+
+        # Get source search session info
+        source_search_session_uuid = None
+        source_search_session_name = None
+        annotation_project_uuid = None
+        annotation_project_name = None
+
+        if db_obj.source_search_session and db_obj.source_search_session_id:
+            source_search_session_uuid = db_obj.source_search_session.uuid
+            source_search_session_name = db_obj.source_search_session.name
+
+            # Try to find associated annotation project
+            annotation_project = await self._get_annotation_project_for_search_session(
+                session, db_obj.source_search_session_id
+            )
+            if annotation_project:
+                annotation_project_uuid = annotation_project.uuid
+                annotation_project_name = annotation_project.name
 
         data = {
             "uuid": db_obj.uuid,
@@ -139,8 +177,8 @@ class CustomModelAPI(
             "description": db_obj.description,
             "ml_project_id": db_obj.ml_project_id,
             "ml_project_uuid": db_obj.ml_project.uuid if db_obj.ml_project else None,
-            "tag_id": db_obj.tag_id,
-            "tag": schemas.Tag.model_validate(db_obj.tag) if db_obj.tag else None,
+            "tag_id": db_obj.target_tag_id,
+            "tag": schemas.Tag.model_validate(db_obj.target_tag) if db_obj.target_tag else None,
             "model_type": model_type,
             "status": status,
             "training_config": training_config,
@@ -156,6 +194,10 @@ class CustomModelAPI(
             "is_active": getattr(db_obj, "is_active", True),
             "created_by_id": db_obj.created_by_id,
             "created_on": db_obj.created_on,
+            "source_search_session_uuid": source_search_session_uuid,
+            "source_search_session_name": source_search_session_name,
+            "annotation_project_uuid": annotation_project_uuid,
+            "annotation_project_name": annotation_project_name,
         }
 
         return schemas.CustomModel.model_validate(data)
@@ -175,6 +217,10 @@ class CustomModelAPI(
             self._get_pk_condition(pk),
         )
 
+        if db_obj.ml_project_id is None:
+            raise exceptions.InvalidDataError(
+                "Custom model has no associated ML project"
+            )
         ml_project = await self._get_ml_project(session, db_obj.ml_project_id)
         if not await can_view_ml_project(session, ml_project, db_user):
             raise exceptions.NotFoundError(
@@ -290,13 +336,9 @@ class CustomModelAPI(
                 )
             annotation_project_ids.append(ap.id)
 
-        # Map model type
+        # Model type mapping (API enum → backend enum)
         model_type_map = {
-            schemas.CustomModelType.LINEAR_CLASSIFIER: models.CustomModelType.LINEAR,
-            schemas.CustomModelType.MLP: models.CustomModelType.MLP,
-            schemas.CustomModelType.RANDOM_FOREST: models.CustomModelType.RANDOM_FOREST,
-            schemas.CustomModelType.SVM: models.CustomModelType.SVM,
-            schemas.CustomModelType.GRADIENT_BOOSTING: models.CustomModelType.GRADIENT_BOOSTING,
+            schemas.CustomModelType.SVM: models.CustomModelType.SELF_TRAINING_SVM,
         }
 
         db_obj = await common.create_object(
@@ -307,9 +349,9 @@ class CustomModelAPI(
             ml_project_id=ml_project.id,
             tag_id=tag_id,
             model_type=model_type_map.get(
-                training_config.model_type, models.CustomModelType.MLP
+                training_config.model_type, models.CustomModelType.SELF_TRAINING_SVM
             ),
-            status=models.CustomModelStatus.PENDING,
+            status=models.CustomModelStatus.DRAFT,
             created_by_id=db_user.id,
         )
 
@@ -340,6 +382,11 @@ class CustomModelAPI(
             self._model,
             self._get_pk_condition(obj.uuid),
         )
+
+        if db_obj.ml_project_id is None:
+            raise exceptions.InvalidDataError(
+                "Custom model has no associated ML project"
+            )
         ml_project = await self._get_ml_project(session, db_obj.ml_project_id)
 
         if not await can_edit_ml_project(session, ml_project, db_user):
@@ -378,6 +425,11 @@ class CustomModelAPI(
             self._model,
             self._get_pk_condition(obj.uuid),
         )
+
+        if db_obj.ml_project_id is None:
+            raise exceptions.InvalidDataError(
+                "Custom model has no associated ML project"
+            )
         db_ml_project = await self._get_ml_project(session, db_obj.ml_project_id)
 
         if not await can_edit_ml_project(session, db_ml_project, db_user):
@@ -386,20 +438,19 @@ class CustomModelAPI(
             )
 
         if db_obj.status not in [
-            models.CustomModelStatus.PENDING,
+            models.CustomModelStatus.DRAFT,
             models.CustomModelStatus.FAILED,
-            models.CustomModelStatus.CANCELLED,
         ]:
             raise exceptions.InvalidDataError(
                 f"Cannot start training for model in status {db_obj.status.value}"
             )
 
-        # Update status to preparing
+        # Update status to training
         db_obj = await common.update_object(
             session,
             self._model,
             self._get_pk_condition(obj.uuid),
-            {"status": models.CustomModelStatus.PREPARING},
+            status=models.CustomModelStatus.TRAINING,
         )
 
         # TODO: Implement actual training
@@ -432,6 +483,11 @@ class CustomModelAPI(
             self._model,
             self._get_pk_condition(obj.uuid),
         )
+
+        if db_obj.ml_project_id is None:
+            raise exceptions.InvalidDataError(
+                "Custom model has no associated ML project"
+            )
         ml_project = await self._get_ml_project(session, db_obj.ml_project_id)
 
         if not await can_view_ml_project(session, ml_project, db_user):
@@ -441,17 +497,16 @@ class CustomModelAPI(
 
         # Map status
         status_map = {
-            models.CustomModelStatus.PENDING: schemas.CustomModelStatus.PENDING,
-            models.CustomModelStatus.PREPARING: schemas.CustomModelStatus.PREPARING,
+            models.CustomModelStatus.DRAFT: schemas.CustomModelStatus.DRAFT,
             models.CustomModelStatus.TRAINING: schemas.CustomModelStatus.TRAINING,
-            models.CustomModelStatus.VALIDATING: schemas.CustomModelStatus.VALIDATING,
-            models.CustomModelStatus.COMPLETED: schemas.CustomModelStatus.COMPLETED,
+            models.CustomModelStatus.TRAINED: schemas.CustomModelStatus.TRAINED,
+            models.CustomModelStatus.DEPLOYED: schemas.CustomModelStatus.DEPLOYED,
             models.CustomModelStatus.FAILED: schemas.CustomModelStatus.FAILED,
-            models.CustomModelStatus.CANCELLED: schemas.CustomModelStatus.CANCELLED,
+            models.CustomModelStatus.ARCHIVED: schemas.CustomModelStatus.ARCHIVED,
         }
 
         return schemas.TrainingProgress(
-            status=status_map.get(db_obj.status, schemas.CustomModelStatus.PENDING),
+            status=status_map.get(db_obj.status, schemas.CustomModelStatus.DRAFT),
             current_epoch=getattr(db_obj, "current_epoch", 0),
             total_epochs=getattr(db_obj, "total_epochs", 0),
             current_step=0,

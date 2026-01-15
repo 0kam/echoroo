@@ -7,7 +7,7 @@
  * Allows creating new models and starting training.
  */
 import { useCallback, useContext, useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import toast from "react-hot-toast";
 import {
@@ -19,9 +19,7 @@ import {
   Clock,
   Trash2,
   Loader2,
-  BarChart2,
   Target,
-  Percent,
   Layers,
   Archive,
   Rocket,
@@ -67,11 +65,7 @@ const STATUS_ICONS: Record<CustomModelStatus, React.ReactNode> = {
 };
 
 const MODEL_TYPE_LABELS: Record<CustomModelType, string> = {
-  logistic_regression: "Logistic Regression",
-  svm_linear: "Linear SVM",
-  mlp_small: "MLP (Small)",
-  mlp_medium: "MLP (Medium)",
-  random_forest: "Random Forest",
+  svm: "SVM",
 };
 
 function StatusBadge({ status }: { status: CustomModelStatus }) {
@@ -85,23 +79,10 @@ function StatusBadge({ status }: { status: CustomModelStatus }) {
   );
 }
 
-function MetricCard({ label, value, icon }: { label: string; value: string | number | null; icon: React.ReactNode }) {
-  return (
-    <div className="flex items-center gap-2 p-2 bg-stone-50 dark:bg-stone-800 rounded-lg">
-      <div className="text-stone-400">{icon}</div>
-      <div>
-        <p className="text-xs text-stone-500">{label}</p>
-        <p className="text-sm font-medium">
-          {value !== null ? (typeof value === "number" ? `${(value * 100).toFixed(1)}%` : value) : "-"}
-        </p>
-      </div>
-    </div>
-  );
-}
-
 function ModelCard({
   model,
   mlProjectUuid,
+  onClick,
   onTrain,
   onDeploy,
   onArchive,
@@ -109,13 +90,14 @@ function ModelCard({
 }: {
   model: CustomModel;
   mlProjectUuid: string;
+  onClick: () => void;
   onTrain: () => void;
   onDeploy: () => void;
   onArchive: () => void;
   onDelete: () => void;
 }) {
   return (
-    <Card>
+    <Card className="cursor-pointer hover:border-emerald-500/50 transition-colors" onClick={onClick}>
       <div className="flex items-start justify-between mb-3">
         <div>
           <h3 className="text-lg font-semibold text-stone-900 dark:text-stone-100">
@@ -138,41 +120,15 @@ function ModelCard({
         </div>
         <div className="flex items-center gap-2">
           <Target className="w-4 h-4" />
-          <span>Target: {model.target_tag.key}: {model.target_tag.value}</span>
+          <span>Target: {model.tag.key}: {model.tag.value}</span>
         </div>
         <div className="flex items-center gap-2">
           <Layers className="w-4 h-4" />
           <span>
-            Training: {model.training_samples} samples | Validation: {model.validation_samples} samples
+            Training: {model.metrics?.training_samples ?? 0} samples | Validation: {model.metrics?.validation_samples ?? 0} samples
           </span>
         </div>
       </div>
-
-      {/* Metrics (if trained) */}
-      {model.status === "trained" || model.status === "deployed" ? (
-        <div className="grid grid-cols-4 gap-2 mb-4">
-          <MetricCard
-            label="Accuracy"
-            value={model.accuracy}
-            icon={<BarChart2 className="w-4 h-4" />}
-          />
-          <MetricCard
-            label="Precision"
-            value={model.precision}
-            icon={<Target className="w-4 h-4" />}
-          />
-          <MetricCard
-            label="Recall"
-            value={model.recall}
-            icon={<Percent className="w-4 h-4" />}
-          />
-          <MetricCard
-            label="F1 Score"
-            value={model.f1_score}
-            icon={<BarChart2 className="w-4 h-4" />}
-          />
-        </div>
-      ) : null}
 
       {/* Error message (if failed) */}
       {model.status === "failed" && model.error_message && (
@@ -183,36 +139,36 @@ function ModelCard({
 
       {/* Actions */}
       <div className="flex items-center justify-between pt-3 border-t border-stone-200 dark:border-stone-700">
-        <Button variant="danger" mode="text" onClick={onDelete}>
+        <Button variant="danger" mode="text" onClick={(e) => { e.stopPropagation(); onDelete(); }}>
           <Trash2 className="w-4 h-4" />
         </Button>
         <div className="flex items-center gap-2">
           {model.status === "draft" && (
-            <Button variant="primary" onClick={onTrain}>
+            <Button variant="primary" onClick={(e) => { e.stopPropagation(); onTrain(); }}>
               <Play className="w-4 h-4 mr-1" />
               Start Training
             </Button>
           )}
           {model.status === "trained" && (
             <>
-              <Button variant="secondary" onClick={onArchive}>
+              <Button variant="secondary" onClick={(e) => { e.stopPropagation(); onArchive(); }}>
                 <Archive className="w-4 h-4 mr-1" />
                 Archive
               </Button>
-              <Button variant="primary" onClick={onDeploy}>
+              <Button variant="primary" onClick={(e) => { e.stopPropagation(); onDeploy(); }}>
                 <Rocket className="w-4 h-4 mr-1" />
                 Deploy
               </Button>
             </>
           )}
           {model.status === "deployed" && (
-            <Button variant="secondary" onClick={onArchive}>
+            <Button variant="secondary" onClick={(e) => { e.stopPropagation(); onArchive(); }}>
               <Archive className="w-4 h-4 mr-1" />
               Archive
             </Button>
           )}
           {model.status === "failed" && (
-            <Button variant="primary" onClick={onTrain}>
+            <Button variant="primary" onClick={(e) => { e.stopPropagation(); onTrain(); }}>
               <Play className="w-4 h-4 mr-1" />
               Retry Training
             </Button>
@@ -240,7 +196,7 @@ function CreateModelDialog({
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [targetTagId, setTargetTagId] = useState<number | null>(null);
-  const [modelType, setModelType] = useState<CustomModelType>("logistic_regression");
+  const [modelType, setModelType] = useState<CustomModelType>("svm");
   const [sourceType, setSourceType] = useState<TrainingSourceType>("search_session");
   const [selectedSessionIds, setSelectedSessionIds] = useState<string[]>([]);
   const [selectedAnnotationProjectIds, setSelectedAnnotationProjectIds] = useState<string[]>([]);
@@ -293,7 +249,7 @@ function CreateModelDialog({
       setName("");
       setDescription("");
       setTargetTagId(null);
-      setModelType("logistic_regression");
+      setModelType("svm");
       setSourceType("search_session");
       setSelectedSessionIds([]);
       setSelectedAnnotationProjectIds([]);
@@ -320,11 +276,7 @@ function CreateModelDialog({
   };
 
   const modelTypes: { value: CustomModelType; label: string }[] = [
-    { value: "logistic_regression", label: "Logistic Regression (fast, interpretable)" },
-    { value: "svm_linear", label: "Linear SVM (good for small datasets)" },
-    { value: "mlp_small", label: "MLP Small (neural network, balanced)" },
-    { value: "mlp_medium", label: "MLP Medium (neural network, more capacity)" },
-    { value: "random_forest", label: "Random Forest (ensemble, robust)" },
+    { value: "svm", label: "Self-Training SVM (semi-supervised learning)" },
   ];
 
   return (
@@ -539,6 +491,7 @@ function CreateModelDialog({
 
 export default function ModelsPage() {
   const params = useParams();
+  const router = useRouter();
   const mlProjectUuid = params.ml_project_uuid as string;
   const mlProject = useContext(MLProjectContext);
   const queryClient = useQueryClient();
@@ -664,6 +617,7 @@ export default function ModelsPage() {
               key={model.uuid}
               model={model}
               mlProjectUuid={mlProjectUuid}
+              onClick={() => router.push(`/ml-projects/${mlProjectUuid}/models/${model.uuid}`)}
               onTrain={() => trainMutation.mutate(model.uuid)}
               onDeploy={() => deployMutation.mutate(model.uuid)}
               onArchive={() => archiveMutation.mutate(model.uuid)}

@@ -633,26 +633,12 @@ class MLProjectAPI(
         batch_ids = (await session.scalars(batch_ids_query)).all()
 
         total_predictions = 0
-        reviewed_predictions = 0
 
         if batch_ids:
             total_predictions = (
                 await session.scalar(
                     select(func.count(models.InferencePrediction.id)).where(
                         models.InferencePrediction.inference_batch_id.in_(batch_ids)
-                    )
-                )
-            ) or 0
-
-            reviewed_predictions = (
-                await session.scalar(
-                    select(func.count(models.InferencePrediction.id))
-                    .where(
-                        models.InferencePrediction.inference_batch_id.in_(batch_ids)
-                    )
-                    .where(
-                        models.InferencePrediction.review_status
-                        != models.InferencePredictionReviewStatus.UNREVIEWED
                     )
                 )
             ) or 0
@@ -676,7 +662,6 @@ class MLProjectAPI(
             best_model_f1=best_f1,
             total_inference_batches=total_inference_batches or 0,
             total_predictions=total_predictions,
-            reviewed_predictions=reviewed_predictions,
             last_activity=last_activity,
         )
 

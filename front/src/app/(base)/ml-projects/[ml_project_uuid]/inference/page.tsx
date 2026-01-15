@@ -6,8 +6,8 @@
  * Displays a list of inference batches with their status and progress.
  * Allows creating new batches and viewing/reviewing predictions.
  */
-import { useCallback, useContext, useState } from "react";
-import { useParams } from "next/navigation";
+import { useCallback, useContext, useState, useEffect } from "react";
+import { useParams, useSearchParams, useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import toast from "react-hot-toast";
 import {
@@ -19,15 +19,8 @@ import {
   Clock,
   Trash2,
   Loader2,
-  Eye,
-  ChevronRight,
-  ChevronDown,
   Target,
-  Filter,
-  Check,
-  X,
-  HelpCircle,
-  Music,
+  Eye,
 } from "lucide-react";
 
 import api from "@/app/api";
@@ -43,8 +36,6 @@ import type {
   InferenceBatch,
   InferenceBatchCreate,
   InferenceBatchStatus,
-  InferencePrediction,
-  InferencePredictionReviewStatus,
   CustomModel,
 } from "@/lib/types";
 
@@ -67,13 +58,6 @@ const STATUS_ICONS: Record<InferenceBatchStatus, React.ReactNode> = {
   cancelled: <Pause className="w-4 h-4" />,
 };
 
-const REVIEW_STATUS_COLORS: Record<InferencePredictionReviewStatus, string> = {
-  unreviewed: "bg-stone-100 text-stone-600 dark:bg-stone-700 dark:text-stone-400",
-  confirmed: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400",
-  rejected: "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400",
-  uncertain: "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400",
-};
-
 function StatusBadge({ status }: { status: InferenceBatchStatus }) {
   return (
     <span
@@ -85,167 +69,34 @@ function StatusBadge({ status }: { status: InferenceBatchStatus }) {
   );
 }
 
-function PredictionCard({
-  prediction,
-  onReview,
-}: {
-  prediction: InferencePrediction;
-  onReview: (status: InferencePredictionReviewStatus) => void;
-}) {
-  return (
-    <Card className="p-3">
-      {/* Spectrogram placeholder */}
-      <div className="aspect-[2/1] bg-stone-100 dark:bg-stone-800 rounded-lg mb-2 flex items-center justify-center relative">
-        <Music className="w-6 h-6 text-stone-400" />
-        {/* Confidence badge */}
-        <span
-          className={`absolute top-2 right-2 px-2 py-0.5 text-xs rounded-full ${
-            prediction.predicted_positive
-              ? "bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400"
-              : "bg-stone-100 dark:bg-stone-700 text-stone-600 dark:text-stone-400"
-          }`}
-        >
-          {(prediction.confidence * 100).toFixed(1)}%
-        </span>
-      </div>
-
-      {/* Review status */}
-      <div className="flex items-center justify-between mb-2">
-        <span
-          className={`inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium rounded-full ${REVIEW_STATUS_COLORS[prediction.review_status]}`}
-        >
-          {prediction.review_status.charAt(0).toUpperCase() + prediction.review_status.slice(1)}
-        </span>
-        {prediction.predicted_positive && (
-          <span className="text-xs text-emerald-600 dark:text-emerald-400">Positive</span>
-        )}
-      </div>
-
-      {/* Review buttons */}
-      <div className="flex items-center gap-1">
-        <button
-          onClick={() => onReview("confirmed")}
-          className={`flex-1 p-1.5 rounded text-xs ${
-            prediction.review_status === "confirmed"
-              ? "bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700"
-              : "hover:bg-emerald-50 dark:hover:bg-emerald-900/20 text-stone-500"
-          }`}
-          title="Confirm"
-        >
-          <Check className="w-4 h-4 mx-auto" />
-        </button>
-        <button
-          onClick={() => onReview("rejected")}
-          className={`flex-1 p-1.5 rounded text-xs ${
-            prediction.review_status === "rejected"
-              ? "bg-red-100 dark:bg-red-900/30 text-red-700"
-              : "hover:bg-red-50 dark:hover:bg-red-900/20 text-stone-500"
-          }`}
-          title="Reject"
-        >
-          <X className="w-4 h-4 mx-auto" />
-        </button>
-        <button
-          onClick={() => onReview("uncertain")}
-          className={`flex-1 p-1.5 rounded text-xs ${
-            prediction.review_status === "uncertain"
-              ? "bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700"
-              : "hover:bg-yellow-50 dark:hover:bg-yellow-900/20 text-stone-500"
-          }`}
-          title="Uncertain"
-        >
-          <HelpCircle className="w-4 h-4 mx-auto" />
-        </button>
-      </div>
-    </Card>
-  );
-}
-
 function BatchCard({
   batch,
   mlProjectUuid,
   onStart,
   onCancel,
   onDelete,
-  isExpanded,
-  onToggleExpand,
 }: {
   batch: InferenceBatch;
   mlProjectUuid: string;
   onStart: () => void;
   onCancel: () => void;
   onDelete: () => void;
-  isExpanded: boolean;
-  onToggleExpand: () => void;
 }) {
-  const queryClient = useQueryClient();
-  const [reviewFilter, setReviewFilter] = useState<InferencePredictionReviewStatus | "all">("all");
-  const [page, setPage] = useState(0);
-  const pageSize = 12;
-
-  // Fetch predictions when expanded
-  const { data: predictionsData, refetch: refetchPredictions } = useQuery({
-    queryKey: ["ml_project", mlProjectUuid, "inference_batch", batch.uuid, "predictions", reviewFilter, page],
-    queryFn: () =>
-      api.inferenceBatches.getPredictions(mlProjectUuid, batch.uuid, {
-        limit: pageSize,
-        offset: page * pageSize,
-        review_status: reviewFilter === "all" ? undefined : reviewFilter,
-      }),
-    enabled: isExpanded && batch.status === "completed",
-  });
-
-  const predictions = predictionsData?.items || [];
-  const totalPredictions = predictionsData?.total || 0;
-  const numPages = Math.ceil(totalPredictions / pageSize);
-
-  // Review mutation
-  const reviewMutation = useMutation({
-    mutationFn: ({
-      predictionUuid,
-      status,
-    }: {
-      predictionUuid: string;
-      status: InferencePredictionReviewStatus;
-    }) =>
-      api.inferenceBatches.reviewPrediction(mlProjectUuid, batch.uuid, predictionUuid, {
-        review_status: status,
-      }),
-    onSuccess: () => {
-      refetchPredictions();
-    },
-    onError: () => {
-      toast.error("Failed to review prediction");
-    },
-  });
+  const router = useRouter();
 
   return (
     <Card>
       {/* Header */}
-      <div
-        className="flex items-start justify-between cursor-pointer"
-        onClick={onToggleExpand}
-      >
-        <div className="flex items-center gap-2">
-          {batch.status === "completed" && (
-            <button className="text-stone-400 hover:text-stone-600">
-              {isExpanded ? (
-                <ChevronDown className="w-5 h-5" />
-              ) : (
-                <ChevronRight className="w-5 h-5" />
-              )}
-            </button>
+      <div className="flex items-start justify-between">
+        <div>
+          <h3 className="text-lg font-semibold text-stone-900 dark:text-stone-100">
+            {batch.name || `Inference Batch ${batch.uuid.slice(0, 8)}`}
+          </h3>
+          {batch.description && (
+            <p className="text-sm text-stone-500 dark:text-stone-400 mt-1">
+              {batch.description}
+            </p>
           )}
-          <div>
-            <h3 className="text-lg font-semibold text-stone-900 dark:text-stone-100">
-              {batch.name}
-            </h3>
-            {batch.description && (
-              <p className="text-sm text-stone-500 dark:text-stone-400 mt-1">
-                {batch.description}
-              </p>
-            )}
-          </div>
         </div>
         <StatusBadge status={batch.status} />
       </div>
@@ -254,7 +105,7 @@ function BatchCard({
       <div className="mt-3 flex items-center gap-4 text-sm text-stone-600 dark:text-stone-400">
         <div className="flex items-center gap-1">
           <Target className="w-4 h-4" />
-          <span>Model: {batch.custom_model.name}</span>
+          <span>Model: {batch.custom_model?.name || "Unknown"}</span>
         </div>
         <div>
           Threshold: {(batch.confidence_threshold * 100).toFixed(0)}%
@@ -262,21 +113,61 @@ function BatchCard({
       </div>
 
       {/* Progress (for running or completed) */}
-      {(batch.status === "running" || batch.status === "completed") && (
+      {(batch.status === "running" || batch.status === "completed") && batch.total_clips > 0 && (
         <div className="mt-4">
           <div className="flex items-center justify-between text-sm mb-2">
             <span className="text-stone-500">Progress</span>
             <span className="text-stone-700 dark:text-stone-300">
-              {batch.processed_items} / {batch.total_items} ({(batch.progress * 100).toFixed(1)}%)
+              {batch.processed_clips} / {batch.total_clips} (
+              {batch.total_clips > 0
+                ? ((batch.processed_clips / batch.total_clips) * 100).toFixed(1)
+                : "0.0"}%)
             </span>
           </div>
           <ProgressBar
-            total={batch.total_items}
-            complete={batch.processed_items}
+            total={batch.total_clips}
+            segments={[
+              {
+                count: batch.processed_clips,
+                color: "#10b981",
+                label: "Processed",
+              },
+              {
+                count: batch.total_clips - batch.processed_clips,
+                color: "#d1d5db",
+                label: "Pending",
+              },
+            ]}
             className="mb-2"
           />
           <div className="text-sm text-stone-500">
-            {batch.positive_predictions} positive predictions
+            {batch.total_predictions} total predictions
+          </div>
+        </div>
+      )}
+
+      {/* Summary Statistics (for completed batches only) */}
+      {batch.status === "completed" && batch.total_predictions > 0 && (
+        <div className="mt-3 pt-3 border-t border-stone-200 dark:border-stone-700">
+          <div className="grid grid-cols-3 gap-2 text-xs">
+            <div>
+              <div className="text-stone-500 dark:text-stone-400">Positive</div>
+              <div className="font-medium text-emerald-600 dark:text-emerald-400">
+                {batch.positive_predictions_count} ({((batch.positive_predictions_count / batch.total_predictions) * 100).toFixed(1)}%)
+              </div>
+            </div>
+            <div>
+              <div className="text-stone-500 dark:text-stone-400">Negative</div>
+              <div className="font-medium">
+                {batch.negative_predictions_count} ({((batch.negative_predictions_count / batch.total_predictions) * 100).toFixed(1)}%)
+              </div>
+            </div>
+            <div>
+              <div className="text-stone-500 dark:text-stone-400">Avg Conf.</div>
+              <div className="font-medium">
+                {batch.average_confidence ? (batch.average_confidence * 100).toFixed(1) : '-'}%
+              </div>
+            </div>
           </div>
         </div>
       )}
@@ -306,82 +197,17 @@ function BatchCard({
               Cancel
             </Button>
           )}
-        </div>
-      </div>
-
-      {/* Predictions (expanded view) */}
-      {isExpanded && batch.status === "completed" && (
-        <div className="mt-4 pt-4 border-t border-stone-200 dark:border-stone-700">
-          {/* Filter */}
-          <div className="flex items-center gap-4 mb-4">
-            <div className="flex items-center gap-2">
-              <Filter className="w-4 h-4 text-stone-400" />
-              <span className="text-sm text-stone-600 dark:text-stone-400">Filter:</span>
-            </div>
-            <select
-              value={reviewFilter}
-              onChange={(e) => {
-                setReviewFilter(e.target.value as InferencePredictionReviewStatus | "all");
-                setPage(0);
-              }}
-              className="px-3 py-1.5 text-sm border border-stone-300 dark:border-stone-600 rounded-lg bg-white dark:bg-stone-800 text-stone-900 dark:text-stone-100"
+          {batch.status === "completed" && (
+            <Button
+              variant="secondary"
+              onClick={() => router.push(`/ml-projects/${mlProjectUuid}/inference/${batch.uuid}`)}
             >
-              <option value="all">All</option>
-              <option value="unreviewed">Unreviewed</option>
-              <option value="confirmed">Confirmed</option>
-              <option value="rejected">Rejected</option>
-              <option value="uncertain">Uncertain</option>
-            </select>
-            <span className="text-sm text-stone-500">
-              {totalPredictions} predictions
-            </span>
-          </div>
-
-          {/* Predictions grid */}
-          {predictions.length === 0 ? (
-            <div className="text-center py-8 text-stone-500">
-              No predictions found
-            </div>
-          ) : (
-            <>
-              <div className="grid grid-cols-4 gap-3">
-                {predictions.map((prediction) => (
-                  <PredictionCard
-                    key={prediction.uuid}
-                    prediction={prediction}
-                    onReview={(status) =>
-                      reviewMutation.mutate({ predictionUuid: prediction.uuid, status })
-                    }
-                  />
-                ))}
-              </div>
-
-              {/* Pagination */}
-              {numPages > 1 && (
-                <div className="flex items-center justify-between mt-4">
-                  <Button
-                    variant="secondary"
-                    disabled={page === 0}
-                    onClick={() => setPage(page - 1)}
-                  >
-                    Previous
-                  </Button>
-                  <span className="text-sm text-stone-500">
-                    Page {page + 1} of {numPages}
-                  </span>
-                  <Button
-                    variant="secondary"
-                    disabled={page >= numPages - 1}
-                    onClick={() => setPage(page + 1)}
-                  >
-                    Next
-                  </Button>
-                </div>
-              )}
-            </>
+              <Eye className="w-4 h-4 mr-1" />
+              View Details
+            </Button>
           )}
         </div>
-      )}
+      </div>
     </Card>
   );
 }
@@ -391,11 +217,13 @@ function CreateBatchDialog({
   onClose,
   mlProjectUuid,
   onSuccess,
+  preselectedModelUuid,
 }: {
   isOpen: boolean;
   onClose: () => void;
   mlProjectUuid: string;
   onSuccess: () => void;
+  preselectedModelUuid?: string;
 }) {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
@@ -404,12 +232,22 @@ function CreateBatchDialog({
   const [batchSize, setBatchSize] = useState("100");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // Fetch deployed models
+  // Fetch trained and deployed models
   const { data: modelsData } = useQuery({
-    queryKey: ["ml_project", mlProjectUuid, "custom_models", "deployed"],
-    queryFn: () => api.customModels.getMany(mlProjectUuid, { status: "deployed", limit: 100 }),
+    queryKey: ["ml_project", mlProjectUuid, "custom_models"],
+    queryFn: () => api.customModels.getMany(mlProjectUuid, { limit: 100 }),
   });
-  const models = modelsData?.items || [];
+  // Filter to only show trained or deployed models (ready for inference)
+  const models = (modelsData?.items || []).filter(
+    (model) => model.status === "trained" || model.status === "deployed"
+  );
+
+  // Set preselected model when dialog opens
+  useEffect(() => {
+    if (isOpen && preselectedModelUuid) {
+      setCustomModelId(preselectedModelUuid);
+    }
+  }, [isOpen, preselectedModelUuid]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -419,10 +257,10 @@ function CreateBatchDialog({
     try {
       await api.inferenceBatches.create(mlProjectUuid, {
         name,
-        description: description || undefined,
-        custom_model_id: customModelId,
+        custom_model_uuid: customModelId,
         confidence_threshold: parseFloat(confidenceThreshold),
-        batch_size: parseInt(batchSize),
+        include_all_clips: true,
+        description: description || undefined,
       });
       toast.success("Inference batch created");
       setName("");
@@ -488,7 +326,7 @@ function CreateBatchDialog({
               <option value="">Select a model</option>
               {models.map((model) => (
                 <option key={model.uuid} value={model.uuid}>
-                  {model.name} ({model.target_tag.key}: {model.target_tag.value})
+                  {model.name} ({model.tag.key}: {model.tag.value})
                 </option>
               ))}
             </select>
@@ -550,12 +388,20 @@ function CreateBatchDialog({
 
 export default function InferencePage() {
   const params = useParams();
+  const searchParams = useSearchParams();
   const mlProjectUuid = params.ml_project_uuid as string;
   const mlProject = useContext(MLProjectContext);
   const queryClient = useQueryClient();
+  const preselectedModelUuid = searchParams.get("model");
 
   const [showCreateDialog, setShowCreateDialog] = useState(false);
-  const [expandedBatchId, setExpandedBatchId] = useState<string | null>(null);
+
+  // Auto-open create dialog when model is preselected via URL parameter
+  useEffect(() => {
+    if (preselectedModelUuid) {
+      setShowCreateDialog(true);
+    }
+  }, [preselectedModelUuid]);
 
   // Fetch batches
   const { data, isLoading, refetch } = useQuery({
@@ -673,12 +519,6 @@ export default function InferencePage() {
               onStart={() => startMutation.mutate(batch.uuid)}
               onCancel={() => cancelMutation.mutate(batch.uuid)}
               onDelete={() => handleDelete(batch.uuid)}
-              isExpanded={expandedBatchId === batch.uuid}
-              onToggleExpand={() =>
-                setExpandedBatchId(
-                  expandedBatchId === batch.uuid ? null : batch.uuid
-                )
-              }
             />
           ))}
         </div>
@@ -690,6 +530,7 @@ export default function InferencePage() {
         onClose={() => setShowCreateDialog(false)}
         mlProjectUuid={mlProjectUuid}
         onSuccess={handleSuccess}
+        preselectedModelUuid={preselectedModelUuid || undefined}
       />
     </div>
   );

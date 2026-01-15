@@ -32,6 +32,7 @@ from echoroo.models.tag import Tag
 
 if TYPE_CHECKING:
     from echoroo.models.annotation_project import AnnotationProject
+    from echoroo.models.cached_model import CachedModel
     from echoroo.models.clip import Clip
     from echoroo.models.ml_project import MLProject, MLProjectDatasetScope
     from echoroo.models.reference_sound import ReferenceSound
@@ -249,6 +250,17 @@ class SearchSession(Base):
         init=False,
     )
     """Results from this search session."""
+
+    # Cached models for active learning
+    cached_models: orm.Mapped[list["CachedModel"]] = orm.relationship(
+        "CachedModel",
+        back_populates="search_session",
+        default_factory=list,
+        cascade="all, delete-orphan",
+        repr=False,
+        init=False,
+    )
+    """Cached models for active learning iterations."""
 
 
 class SearchSessionTargetTag(Base):
@@ -719,6 +731,20 @@ class IterationScoreDistribution(Base):
         nullable=False,
     )
     """Mean score across all samples at this iteration."""
+
+    training_positive_scores: orm.Mapped[list[float]] = orm.mapped_column(
+        ARRAY(sa.Float),
+        nullable=False,
+        default_factory=list,
+    )
+    """Prediction scores for positive training samples (for histogram overlay)."""
+
+    training_negative_scores: orm.Mapped[list[float]] = orm.mapped_column(
+        ARRAY(sa.Float),
+        nullable=False,
+        default_factory=list,
+    )
+    """Prediction scores for negative training samples (for histogram overlay)."""
 
     created_on: orm.Mapped[datetime.datetime] = orm.mapped_column(
         sa.DateTime(timezone=True),

@@ -7,4 +7,6 @@ export { default as SpectrogramSegmentSelector } from "./SpectrogramSegmentSelec
 
 // Search Session components
 export { default as ExportToAnnotationProjectDialog } from "./ExportToAnnotationProjectDialog";
-export { default as FinalizeSearchSessionDialog } from "./FinalizeSearchSessionDialog";
+
+// Inference Batch components
+export { default as ExportInferenceBatchDialog } from "./ExportInferenceBatchDialog";

@@ -16,6 +16,7 @@ from echoroo.models.annotation_task import (
     AnnotationTask,
 )
 from echoroo.models.base import Base
+from echoroo.models.cached_model import CachedModel
 from echoroo.models.clip import Clip, ClipFeature
 from echoroo.models.clip_annotation import (
     ClipAnnotation,
@@ -33,7 +34,12 @@ from echoroo.models.custom_model import (
     CustomModelType,
     TrainingDataSource,
 )
-from echoroo.models.dataset import Dataset, DatasetRecording, VisibilityLevel
+from echoroo.models.dataset import (
+    Dataset,
+    DatasetRecording,
+    DatasetStatus,
+    VisibilityLevel,
+)
 from echoroo.models.datetime_pattern import (
     DatasetDatetimePattern,
     DatetimePatternType,
@@ -59,7 +65,6 @@ from echoroo.models.inference_batch import (
     InferenceBatchDatasetScope,
     InferenceBatchStatus,
     InferencePrediction,
-    InferencePredictionReviewStatus,
 )
 from echoroo.models.inference_job import InferenceJob, InferenceJobStatus
 from echoroo.models.license import License
@@ -143,6 +148,7 @@ __all__ = [
     "AnnotationStatusBadge",
     "AnnotationTask",
     "Base",
+    "CachedModel",
     "Clip",
     "ClipAnnotation",
     "ClipAnnotationNote",
@@ -162,6 +168,7 @@ __all__ = [
     "Dataset",
     "DatasetDatetimePattern",
     "DatasetRecording",
+    "DatasetStatus",
     "DatetimeParseStatus",
     "DatetimePatternType",
     "DetectionReview",
@@ -184,7 +191,6 @@ __all__ = [
     "InferenceJob",
     "InferenceJobStatus",
     "InferencePrediction",
-    "InferencePredictionReviewStatus",
     "IterationScoreDistribution",
     "License",
     "MLProject",

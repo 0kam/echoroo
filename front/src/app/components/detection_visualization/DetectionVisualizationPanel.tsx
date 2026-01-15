@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 
 import useDetectionTemporalData from "@/app/hooks/api/useDetectionTemporalData";
+import useInferenceBatchTemporalData from "@/app/hooks/api/useInferenceBatchTemporalData";
 import PolarHeatmap from "./PolarHeatmap";
 
 import Loading from "@/lib/components/ui/Loading";
@@ -12,10 +13,13 @@ import Loading from "@/lib/components/ui/Loading";
 // ============================================================================
 
 interface DetectionVisualizationPanelProps {
-  runUuid: string;
+  runUuid?: string;
   filterApplicationUuid?: string;
+  batchUuid?: string;
   /** Maximum number of species to display in grid view */
   maxGridItems?: number;
+  /** Whether to show legend for single species view */
+  showLegend?: boolean;
 }
 
 // ============================================================================
@@ -25,15 +29,24 @@ interface DetectionVisualizationPanelProps {
 export default function DetectionVisualizationPanel({
   runUuid,
   filterApplicationUuid,
+  batchUuid,
   maxGridItems = 12,
+  showLegend = false,
 }: DetectionVisualizationPanelProps) {
   const [showAll, setShowAll] = useState(false);
 
-  // Fetch temporal data
-  const { data, isLoading, isError, error } = useDetectionTemporalData({
-    runUuid,
+  // Fetch temporal data - use either runUuid or batchUuid
+  const runQuery = useDetectionTemporalData({
+    runUuid: runUuid ?? "",
     filterApplicationUuid,
   });
+
+  const batchQuery = useInferenceBatchTemporalData({
+    batchUuid: batchUuid ?? "",
+  });
+
+  // Select the appropriate query based on which UUID was provided
+  const { data, isLoading, isError, error } = runUuid ? runQuery : batchQuery;
 
   // Sort species by total detections
   const sortedSpecies = useMemo(() => {

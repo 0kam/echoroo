@@ -2036,6 +2036,16 @@ class SpeciesDetectionWorker:
         if embeddings.size == 0:
             return 0
 
+        # Check if all embeddings are NaN (corrupted file)
+        # This check prevents creating clips without embeddings, which causes
+        # downstream issues in search and export operations
+        if np.isnan(embeddings).all():
+            logger.error(
+                "All embeddings are NaN for recording %s - skipping (file may be corrupted)",
+                recording.uuid,
+            )
+            return 0
+
         # Get segment duration from model specification
         engine = self._engines[self._get_cache_key(job.model_name)]
         spec = engine.specification
@@ -2086,11 +2096,23 @@ class SpeciesDetectionWorker:
 
         # Step 4: Prepare embedding data for bulk insert
         embeddings_data = []
+        skipped_nan_count = 0
         for seg_idx, embedding in enumerate(embeddings):
             start_time = seg_idx * hop_duration
             end_time = start_time + segment_duration
             clip_id = clip_map.get((start_time, end_time))
             if clip_id is None:
+                continue
+
+            # Check for NaN values in embedding
+            if np.isnan(embedding).any():
+                logger.warning(
+                    "Skipping embedding with NaN values for recording %s, clip at %.2f-%.2fs",
+                    recording.uuid,
+                    start_time,
+                    end_time,
+                )
+                skipped_nan_count += 1
                 continue
 
             # Pass numpy array directly to pgvector (49x faster than .tolist())
@@ -2101,6 +2123,13 @@ class SpeciesDetectionWorker:
                 embedding=embedding,  # numpy array → pgvector handles it
                 created_on=now,
             ))
+
+        if skipped_nan_count > 0:
+            logger.warning(
+                "Skipped %d embeddings with NaN values for recording %s",
+                skipped_nan_count,
+                recording.uuid,
+            )
 
         # Step 5: Bulk insert embeddings with ON CONFLICT DO NOTHING
         if embeddings_data:
@@ -2161,6 +2190,16 @@ class SpeciesDetectionWorker:
             embeddings = embeddings.reshape(1, -1)
 
         if embeddings.size == 0:
+            return 0
+
+        # Check if all embeddings are NaN (corrupted file)
+        # This check prevents creating clips without embeddings, which causes
+        # downstream issues in search and export operations
+        if np.isnan(embeddings).all():
+            logger.error(
+                "All embeddings are NaN for recording %s - skipping (file may be corrupted)",
+                recording.uuid,
+            )
             return 0
 
         # Get segment duration from model specification
@@ -2287,6 +2326,9 @@ class SpeciesDetectionWorker:
             predictions: list[tuple[str, float]] = []
             for idx in top_indices:
                 conf = float(seg_probs[idx])
+                # Skip NaN confidence values
+                if np.isnan(conf):
+                    continue
                 if conf >= job.confidence_threshold:
                     actual_idx = int(seg_ids[idx])
                     species_label = species_list[actual_idx]
@@ -2576,6 +2618,9 @@ class SpeciesDetectionWorker:
             predictions: list[tuple[str, float]] = []
             for idx in top_indices:
                 conf = float(seg_probs[idx])
+                # Skip NaN confidence values
+                if np.isnan(conf):
+                    continue
                 if conf >= job.confidence_threshold:
                     actual_idx = int(seg_ids[idx])
                     species_label = species_list[actual_idx]

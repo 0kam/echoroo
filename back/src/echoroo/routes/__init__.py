@@ -42,8 +42,6 @@ from echoroo.routes.species_filters import (
     get_species_filters_router,
     get_species_filter_applications_router,
 )
-from echoroo.routes.custom_models import get_custom_models_router
-from echoroo.routes.inference_batches import get_inference_batches_router
 from echoroo.routes.detection_visualization import get_detection_visualization_router
 from echoroo.system.settings import Settings
 

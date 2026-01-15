@@ -31,6 +31,10 @@ __all__ = [
     "ScoreDistributionResponse",
     "FinalizeRequest",
     "FinalizeResponse",
+    "TrainModelRequest",
+    "TrainModelResponse",
+    "AddSamplesRequest",
+    "AddSamplesResponse",
 ]
 
 
@@ -174,8 +178,12 @@ class SearchResult(BaseSchema):
     clip: Clip
     """Hydrated clip information."""
 
-    similarity: float = Field(ge=0.0, le=1.0)
-    """Similarity score between the reference and this clip."""
+    similarity: float = Field(ge=-1.0, le=1.0)
+    """Similarity score between the reference and this clip.
+
+    Cosine similarity ranges from -1 to 1, where 1 means identical direction,
+    0 means orthogonal, and -1 means opposite direction.
+    """
 
     rank: int = Field(ge=1)
     """Rank of this result within the session (1 = most similar)."""
@@ -313,9 +321,6 @@ class SearchSession(BaseSchema):
     created_by_id: UUID | None = None
     """User who created the search session."""
 
-    created_on: datetime.datetime | None = None
-    """Timestamp when the session was created."""
-
 
 class SearchProgress(BaseModel):
     """Schema for search session progress tracking."""
@@ -420,6 +425,12 @@ class RunIterationRequest(BaseModel):
     )
     """Type of classifier to use for this iteration."""
 
+    use_unlabeled_data: bool = Field(
+        default=True,
+        description="Use unlabeled data for semi-supervised classifiers (Self-Training, Label Spreading)",
+    )
+    """Whether to use unlabeled embeddings for semi-supervised learning."""
+
 
 class ExportToAnnotationProjectRequest(BaseModel):
     """Schema for exporting search results to an annotation project."""
@@ -495,6 +506,12 @@ class TagScoreDistribution(BaseModel):
     mean_score: float
     """Mean prediction score across all unlabeled samples."""
 
+    training_positive_scores: list[float]
+    """Prediction scores for positive training samples (for histogram overlay)."""
+
+    training_negative_scores: list[float]
+    """Prediction scores for negative training samples (for histogram overlay)."""
+
 
 class ScoreDistributionResponse(BaseModel):
     """Response for score distribution endpoint."""
@@ -515,12 +532,6 @@ class FinalizeRequest(BaseModel):
         description="Name for the saved model",
     )
     """Name for the custom model to be created."""
-
-    model_type: str = Field(
-        default="logistic_regression",
-        description="Classifier type: logistic_regression, svm_linear, mlp_small, mlp_medium, random_forest",
-    )
-    """Type of classifier to train and save."""
 
     create_annotation_project: bool = Field(
         default=True,
@@ -566,3 +577,70 @@ class FinalizeResponse(BaseModel):
 
     message: str
     """Success message with details."""
+
+
+class TrainModelRequest(BaseModel):
+    """Schema for training a model without adding samples."""
+
+    selected_tag_ids: list[int] | None = Field(
+        default=None,
+        description="Tag IDs to include in this training. If None, all tags are included.",
+    )
+    """Optional list of tag IDs to train classifiers for."""
+
+
+class TrainModelResponse(BaseModel):
+    """Response from training a model."""
+
+    score_distributions: list[TagScoreDistribution]
+    """Score distributions for each tag."""
+
+    training_metrics: dict[int, dict]
+    """Training metrics for each tag: {tag_id: {positive_count, negative_count}}."""
+
+    current_iteration: int
+    """Current iteration number (unchanged by train_model)."""
+
+    message: str
+    """Success message."""
+
+
+class AddSamplesRequest(BaseModel):
+    """Schema for adding samples using cached trained model."""
+
+    uncertainty_low: float = Field(
+        default=0.25,
+        ge=0.0,
+        le=0.5,
+        description="Lower bound of uncertainty region (0.0-0.5)",
+    )
+    """Lower threshold for uncertainty region."""
+
+    uncertainty_high: float = Field(
+        default=0.75,
+        ge=0.5,
+        le=1.0,
+        description="Upper bound of uncertainty region (0.5-1.0)",
+    )
+    """Upper threshold for uncertainty region."""
+
+    samples_per_iteration: int = Field(
+        default=20,
+        ge=5,
+        le=100,
+        description="Number of samples to add",
+    )
+    """Number of samples to select from the uncertainty region."""
+
+
+class AddSamplesResponse(BaseModel):
+    """Response from adding samples."""
+
+    added_count: int
+    """Number of samples added."""
+
+    new_iteration: int
+    """New iteration number after adding samples."""
+
+    message: str
+    """Success message."""

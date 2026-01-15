@@ -4,53 +4,38 @@ import toast from "react-hot-toast";
 
 import api from "@/app/api";
 
-import useFilter from "@/lib/hooks/utils/useFilter";
 import usePagedQuery from "@/lib/hooks/utils/usePagedQuery";
 
 import type {
   InferenceBatch,
   InferenceProgress,
   InferencePrediction,
-  InferencePredictionReview,
-  InferencePredictionReviewStatus,
 } from "@/lib/types";
-import type { InferencePredictionFilter } from "@/lib/api/inference_batches";
-
-const emptyPredictionFilter: InferencePredictionFilter = {};
-const _fixed: (keyof InferencePredictionFilter)[] = [];
 
 /**
  * Custom hook for managing a single inference batch.
  *
  * This hook encapsulates the logic for querying an inference batch,
  * starting/canceling inference, getting progress with optional polling,
- * managing predictions with pagination, and reviewing predictions.
+ * and managing predictions with pagination.
  */
 export default function useInferenceBatch({
   mlProjectUuid,
   batchUuid,
   enabled = true,
   predictionPageSize = 20,
-  predictionFilter: initialPredictionFilter = emptyPredictionFilter,
-  predictionFilterFixed = _fixed,
   progressPollingInterval,
   onStart,
   onCancel,
-  onReviewPrediction,
-  onBulkReview,
   onError,
 }: {
   mlProjectUuid: string;
   batchUuid: string;
   enabled?: boolean;
   predictionPageSize?: number;
-  predictionFilter?: InferencePredictionFilter;
-  predictionFilterFixed?: (keyof InferencePredictionFilter)[];
   progressPollingInterval?: number;
   onStart?: (batch: InferenceBatch) => void;
   onCancel?: (batch: InferenceBatch) => void;
-  onReviewPrediction?: (prediction: InferencePrediction) => void;
-  onBulkReview?: (count: number) => void;
   onError?: (error: AxiosError) => void;
 }) {
   const queryClient = useQueryClient();
@@ -70,19 +55,13 @@ export default function useInferenceBatch({
     refetchInterval: progressPollingInterval,
   });
 
-  // Prediction filter
-  const predictionFilter = useFilter<InferencePredictionFilter>({
-    defaults: initialPredictionFilter,
-    fixed: predictionFilterFixed,
-  });
-
   // Predictions with pagination
   const predictions = usePagedQuery({
     name: `inference_batch_${batchUuid}_predictions`,
     queryFn: (params) =>
       api.inferenceBatches.getPredictions(mlProjectUuid, batchUuid, params),
     pageSize: predictionPageSize,
-    filter: predictionFilter.filter,
+    filter: {},
     enabled: enabled && !!mlProjectUuid && !!batchUuid,
   });
 
@@ -118,48 +97,6 @@ export default function useInferenceBatch({
     },
   });
 
-  // Review prediction mutation
-  const reviewPrediction = useMutation({
-    mutationFn: ({
-      predictionUuid,
-      data,
-    }: {
-      predictionUuid: string;
-      data: InferencePredictionReview;
-    }) =>
-      api.inferenceBatches.reviewPrediction(
-        mlProjectUuid,
-        batchUuid,
-        predictionUuid,
-        data,
-      ),
-    onSuccess: (data) => {
-      onReviewPrediction?.(data);
-      predictions.query.refetch();
-    },
-    onError: (error: AxiosError) => {
-      toast.error("Failed to review prediction");
-      onError?.(error);
-    },
-  });
-
-  // Bulk review mutation
-  const bulkReview = useMutation({
-    mutationFn: (data: {
-      prediction_uuids: string[];
-      review_status: InferencePredictionReviewStatus;
-    }) => api.inferenceBatches.bulkReview(mlProjectUuid, batchUuid, data),
-    onSuccess: (data) => {
-      toast.success(`Reviewed ${data.updated_count} predictions`);
-      onBulkReview?.(data.updated_count);
-      predictions.query.refetch();
-    },
-    onError: (error: AxiosError) => {
-      toast.error("Failed to bulk review predictions");
-      onError?.(error);
-    },
-  });
-
   return {
     // Batch data
     batch: batchQuery.data,
@@ -177,14 +114,11 @@ export default function useInferenceBatch({
     predictions: predictions.items,
     predictionsTotal: predictions.total,
     predictionsPagination: predictions.pagination,
-    predictionFilter,
     predictionsLoading: predictions.query.isLoading,
     refetchPredictions: predictions.query.refetch,
 
     // Mutations
     start,
     cancel,
-    reviewPrediction,
-    bulkReview,
   } as const;
 }

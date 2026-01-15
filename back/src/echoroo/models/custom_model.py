@@ -41,6 +41,7 @@ if TYPE_CHECKING:
     from echoroo.models.inference_batch import InferenceBatch
     from echoroo.models.ml_project import MLProject
     from echoroo.models.project import Project
+    from echoroo.models.search_session import SearchSession
     from echoroo.models.user import User
 
 __all__ = [
@@ -56,20 +57,8 @@ __all__ = [
 class CustomModelType(str, enum.Enum):
     """Type of machine learning model."""
 
-    LOGISTIC_REGRESSION = "logistic_regression"
-    """Logistic regression classifier."""
-
-    SVM_LINEAR = "svm_linear"
-    """Support vector machine with linear kernel."""
-
-    MLP_SMALL = "mlp_small"
-    """Multi-layer perceptron with 1 hidden layer (256 units)."""
-
-    MLP_MEDIUM = "mlp_medium"
-    """Multi-layer perceptron with 2 hidden layers (256, 128 units)."""
-
-    RANDOM_FOREST = "random_forest"
-    """Random forest ensemble classifier."""
+    SELF_TRAINING_SVM = "self_training_svm"
+    """Self-training classifier with linear SVM base estimator."""
 
 
 class CustomModelStatus(str, enum.Enum):
@@ -169,6 +158,13 @@ class CustomModel(Base):
         default=None,
     )
     """The ML project this model belongs to (legacy, optional)."""
+
+    source_search_session_id: orm.Mapped[int | None] = orm.mapped_column(
+        ForeignKey("search_session.id", ondelete="SET NULL"),
+        nullable=True,
+        default=None,
+    )
+    """The search session from which this model was trained (if any)."""
 
     # Optional fields (with defaults) after
     description: orm.Mapped[str | None] = orm.mapped_column(
@@ -295,6 +291,15 @@ class CustomModel(Base):
         repr=False,
     )
     """The ML project this model belongs to (legacy)."""
+
+    source_search_session: orm.Mapped["SearchSession | None"] = orm.relationship(
+        "SearchSession",
+        foreign_keys=[source_search_session_id],
+        viewonly=True,
+        init=False,
+        repr=False,
+    )
+    """The search session from which this model was trained."""
 
     target_tag: orm.Mapped[Tag] = orm.relationship(
         "Tag",

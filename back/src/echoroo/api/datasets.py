@@ -5,6 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 import datetime
 from collections import defaultdict
 import io
+import logging
 import os
 import tempfile
 import uuid
@@ -17,11 +18,12 @@ import pandas as pd
 import sqlalchemy as sa
 from soundevent import data
 from soundevent.io.aoef import AOEFObject, to_aeof
-from sqlalchemy import select, tuple_
+from sqlalchemy import select, tuple_, update
 from sqlalchemy.orm import selectinload
 from sqlalchemy.sql import ColumnExpressionArgument
 from sqlalchemy.ext.asyncio import AsyncSession
 from zipfile import ZIP_DEFLATED, ZIP_STORED, ZipFile, ZipInfo
+from fastapi import BackgroundTasks
 
 from echoroo import exceptions, models, schemas
 from echoroo.api import common
@@ -45,6 +47,8 @@ __all__ = [
     "DatasetAPI",
     "datasets",
 ]
+
+logger = logging.getLogger(__name__)
 
 
 class DatasetAPI(
@@ -286,6 +290,62 @@ class DatasetAPI(
             audio_file_count=len(audio_files),
         )
 
+    async def _update_recordings_location(
+        self,
+        session: AsyncSession,
+        dataset_uuid: uuid.UUID,
+        primary_site_id: str,
+    ) -> None:
+        """Update location fields of all recordings in a dataset from its primary site.
+
+        Parameters
+        ----------
+        session
+            The database session to use.
+        dataset_uuid
+            The UUID of the dataset.
+        primary_site_id
+            The ID of the primary site.
+        """
+        # Get the primary site's location information
+        site_stmt = select(models.Site).where(models.Site.site_id == primary_site_id)
+        site_result = await session.execute(site_stmt)
+        site = site_result.scalar_one_or_none()
+
+        if site is None:
+            return
+
+        # Convert H3 index to latitude/longitude
+        lat, lon = h3.cell_to_latlng(site.h3_index)
+
+        # Get the dataset's internal ID
+        dataset_stmt = select(models.Dataset.id).where(
+            models.Dataset.uuid == dataset_uuid
+        )
+        dataset_result = await session.execute(dataset_stmt)
+        dataset_id = dataset_result.scalar_one_or_none()
+
+        if dataset_id is None:
+            return
+
+        # Get all recording IDs for this dataset via the DatasetRecording junction table
+        recording_ids_stmt = select(models.DatasetRecording.recording_id).where(
+            models.DatasetRecording.dataset_id == dataset_id
+        )
+
+        # Update all recordings in this dataset with the site's location
+        update_stmt = (
+            update(models.Recording)
+            .where(models.Recording.id.in_(recording_ids_stmt))
+            .values(
+                latitude=lat,
+                longitude=lon,
+                h3_index=site.h3_index,
+            )
+        )
+        await session.execute(update_stmt)
+        await session.commit()
+
     async def update(
         self,
         session: AsyncSession,
@@ -359,6 +419,18 @@ class DatasetAPI(
             self._get_pk_condition(obj.uuid),
             data,
         )
+
+        # If primary_site_id was updated, propagate location to recordings
+        if (
+            "primary_site_id" in data.model_fields_set
+            and data.primary_site_id is not None
+            and data.primary_site_id != obj.primary_site_id
+        ):
+            await self._update_recordings_location(
+                session,
+                db_obj.uuid,
+                data.primary_site_id,
+            )
 
         # Eagerly load relationships
         db_obj = await self._eager_load_relationships(session, db_obj)
@@ -977,6 +1049,7 @@ class DatasetAPI(
         doi: str | None = None,
         note: str | None = None,
         gain: float | None = None,
+        background_tasks: BackgroundTasks | None = None,
     ) -> schemas.Dataset:
         """Create a dataset.
 
@@ -1062,14 +1135,37 @@ class DatasetAPI(
             gain=gain,
         )
 
+        # Determine initial status based on background_tasks availability
+        initial_status = (
+            models.DatasetStatus.PENDING
+            if background_tasks is not None
+            else models.DatasetStatus.COMPLETED
+        )
+        initial_progress = 0 if background_tasks is not None else 100
+
         obj = await self.create_from_data(
             session,
             data.model_copy(
                 update=dict(audio_dir=data.audio_dir.relative_to(audio_dir))
             ),
             created_by_id=db_user.id,
+            status=initial_status,
+            processing_progress=initial_progress,
         )
 
+        # If background_tasks is provided, schedule background processing
+        if background_tasks is not None:
+            logger.info(f"Scheduling background processing for dataset {obj.id}")
+            background_tasks.add_task(
+                self._process_dataset_files_background,
+                obj.id,
+                dataset_dir,
+                primary_site_id,
+                audio_dir,
+            )
+            return obj
+
+        # Otherwise, process synchronously (original behavior)
         file_list = files.get_audio_files_in_folder(
             dataset_dir,
             relative=False,
@@ -1094,17 +1190,27 @@ class DatasetAPI(
             session, obj, recording_list
         )
 
-        # Inherit H3 index from primary site if available
+        # Inherit H3 index from primary site if available (bulk update)
         if primary_site_id:
             db_dataset = await session.get(models.Dataset, obj.id)
             if db_dataset and db_dataset.primary_site:
                 h3_index = db_dataset.primary_site.h3_index
-                # Update all recordings in this dataset with the site's H3 index
-                for rec in recording_list:
-                    db_rec = await session.get(models.Recording, rec.id)
-                    if db_rec and not db_rec.h3_index:
-                        db_rec.h3_index = h3_index
-                await session.flush()
+                if h3_index:
+                    # Bulk update all recordings without h3_index
+                    stmt = (
+                        update(models.Recording)
+                        .where(
+                            models.Recording.id.in_(
+                                select(models.DatasetRecording.recording_id)
+                                .where(models.DatasetRecording.dataset_id == obj.id)
+                            )
+                        )
+                        .where(models.Recording.h3_index.is_(None))
+                        .values(h3_index=h3_index)
+                    )
+                    await session.execute(stmt)
+                    await session.flush()
+                    logger.info(f"H3 index {h3_index} inherited from primary site")
 
         obj = obj.model_copy(
             update=dict(recording_count=len(dataset_recordigns))
@@ -1218,6 +1324,194 @@ class DatasetAPI(
         )
         return to_aeof(soundevent_dataset, audio_dir=dataset_audio_dir)
 
+    async def _update_dataset_status(
+        self,
+        session: AsyncSession,
+        dataset_id: int,
+        status: models.DatasetStatus,
+        error: str | None = None,
+    ) -> None:
+        """Update dataset processing status."""
+        update_values = {"status": status}
+        if error is not None:
+            update_values["processing_error"] = error
+
+        stmt = (
+            update(models.Dataset)
+            .where(models.Dataset.id == dataset_id)
+            .values(**update_values)
+        )
+        await session.execute(stmt)
+        await session.commit()
+        logger.info(f"Dataset {dataset_id} status updated to {status.value}")
+
+    async def _update_dataset_progress(
+        self,
+        session: AsyncSession,
+        dataset_id: int,
+        progress: int,
+        processed_files: int,
+    ) -> None:
+        """Update dataset processing progress."""
+        stmt = (
+            update(models.Dataset)
+            .where(models.Dataset.id == dataset_id)
+            .values(
+                processing_progress=progress,
+                processed_files=processed_files,
+            )
+        )
+        await session.execute(stmt)
+        await session.commit()
+
+    async def _process_dataset_files_background(
+        self,
+        dataset_id: int,
+        dataset_dir: Path,
+        primary_site_id: str | None,
+        audio_dir: Path,
+    ) -> None:
+        """Background task to process dataset files."""
+        from echoroo.system.database import (
+            create_async_db_engine,
+            get_async_session,
+            get_database_url,
+        )
+
+        # Create database session for background task
+        settings = get_settings()
+        db_url = get_database_url(settings)
+        engine = create_async_db_engine(db_url)
+
+        try:
+            async with get_async_session(engine) as session:
+                try:
+                    # Update status to scanning
+                    await self._update_dataset_status(
+                        session, dataset_id, models.DatasetStatus.SCANNING
+                    )
+                    logger.info(f"Starting dataset scanning for dataset {dataset_id}")
+
+                    # Scan for audio files
+                    file_list = files.get_audio_files_in_folder(
+                        dataset_dir,
+                        relative=False,
+                    )
+                    total_files = len(file_list)
+
+                    if total_files == 0:
+                        await self._update_dataset_status(
+                            session,
+                            dataset_id,
+                            models.DatasetStatus.FAILED,
+                            error="No audio files were found in the selected directory.",
+                        )
+                        return
+
+                    # Update total files and change status to processing
+                    stmt = (
+                        update(models.Dataset)
+                        .where(models.Dataset.id == dataset_id)
+                        .values(
+                            total_files=total_files,
+                            status=models.DatasetStatus.PROCESSING,
+                        )
+                    )
+                    await session.execute(stmt)
+                    await session.commit()
+                    logger.info(f"Found {total_files} files, starting processing")
+
+                    # Process files in batches
+                    BATCH_SIZE = 100
+                    processed_count = 0
+
+                    for i in range(0, total_files, BATCH_SIZE):
+                        batch = file_list[i:i + BATCH_SIZE]
+
+                        # Create recordings for this batch
+                        recording_list = await recordings.create_many(
+                            session,
+                            [dict(path=file) for file in batch],
+                            audio_dir=audio_dir,
+                        )
+
+                        if recording_list:
+                            # Link recordings to dataset
+                            dataset_recordings = []
+                            db_dataset = await session.get(models.Dataset, dataset_id)
+                            if db_dataset:
+                                for recording in recording_list:
+                                    if recording.path.is_relative_to(db_dataset.audio_dir):
+                                        dataset_recordings.append(
+                                            dict(
+                                                dataset_id=dataset_id,
+                                                recording_id=recording.id,
+                                                path=recording.path.relative_to(db_dataset.audio_dir),
+                                            )
+                                        )
+
+                            if dataset_recordings:
+                                await common.create_objects_without_duplicates(
+                                    session,
+                                    models.DatasetRecording,
+                                    dataset_recordings,
+                                    key=lambda x: (x.get("dataset_id"), x.get("recording_id")),
+                                    key_column=tuple_(
+                                        models.DatasetRecording.dataset_id,
+                                        models.DatasetRecording.recording_id,
+                                    ),
+                                )
+
+                        processed_count += len(batch)
+                        progress = int((processed_count / total_files) * 100)
+
+                        # Update progress
+                        await self._update_dataset_progress(
+                            session, dataset_id, progress, processed_count
+                        )
+                        logger.info(
+                            f"Progress: {processed_count}/{total_files} ({progress}%)"
+                        )
+
+                    # Inherit H3 index from primary site if available (bulk update)
+                    if primary_site_id:
+                        db_dataset = await session.get(models.Dataset, dataset_id)
+                        if db_dataset and db_dataset.primary_site:
+                            h3_index = db_dataset.primary_site.h3_index
+                            if h3_index:
+                                # Bulk update all recordings without h3_index
+                                stmt = (
+                                    update(models.Recording)
+                                    .where(
+                                        models.Recording.id.in_(
+                                            select(models.DatasetRecording.recording_id)
+                                            .where(models.DatasetRecording.dataset_id == dataset_id)
+                                        )
+                                    )
+                                    .where(models.Recording.h3_index.is_(None))
+                                    .values(h3_index=h3_index)
+                                )
+                                await session.execute(stmt)
+                                await session.commit()
+                                logger.info(f"H3 index {h3_index} inherited from primary site")
+
+                    # Mark as completed
+                    await self._update_dataset_status(
+                        session, dataset_id, models.DatasetStatus.COMPLETED
+                    )
+                    logger.info(f"Dataset {dataset_id} processing completed successfully")
+
+                except Exception as e:
+                    logger.exception(f"Error processing dataset {dataset_id}")
+                    await self._update_dataset_status(
+                        session,
+                        dataset_id,
+                        models.DatasetStatus.FAILED,
+                        error=str(e),
+                    )
+        finally:
+            # Clean up database engine
+            await engine.dispose()
 
     async def set_datetime_pattern(
         self,
@@ -1915,7 +2209,7 @@ class DatasetAPI(
                 if entry.is_dir():
                     has_nested = True
                     break
-            audio_file_count = len(files.find_audio_files(absolute_path, recursive=True))
+            audio_file_count = len(files.get_audio_files_in_folder(absolute_path, relative=True))
 
         return schemas.DatasetOverviewStats(
             recording_sites=recording_sites,

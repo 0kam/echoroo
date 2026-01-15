@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, status
 
 from echoroo import models, schemas
 from echoroo.api import inference_batches_standalone as api
@@ -106,7 +106,7 @@ def get_inference_batches_router(settings: EchorooSettings) -> APIRouter:
             clip_ids=data.clip_ids,
             include_all_clips=data.include_all_clips,
             exclude_already_labeled=data.exclude_already_labeled,
-            notes=data.notes,
+            description=data.description,
         )
         batch = await api.inference_batches_standalone.create(
             session,
@@ -204,23 +204,17 @@ def get_inference_batches_router(settings: EchorooSettings) -> APIRouter:
         inference_batch_uuid: UUID,
         limit: Limit = 50,
         offset: Offset = 0,
-        review_status: schemas.InferencePredictionReviewStatus | None = Query(
-            default=None,
-            description="Filter by review status",
-        ),
         user: models.User | None = Depends(optional_user_dep),
     ) -> schemas.Page[schemas.InferencePrediction]:
         """Get paginated predictions for an inference batch.
 
         Predictions are sorted by confidence score in descending order.
-        Use the review_status parameter to filter by review state.
         """
         predictions, total = await api.inference_batches_standalone.get_predictions(
             session,
             inference_batch_uuid,
             limit=limit,
             offset=offset,
-            review_status=review_status,
             user=user,
         )
         return schemas.Page(
@@ -229,42 +223,5 @@ def get_inference_batches_router(settings: EchorooSettings) -> APIRouter:
             limit=limit,
             offset=offset,
         )
-
-    @router.post(
-        "/{inference_batch_uuid}/predictions/{prediction_uuid}/review",
-        response_model=schemas.InferencePrediction,
-    )
-    async def review_prediction(
-        session: Session,
-        inference_batch_uuid: UUID,
-        prediction_uuid: UUID,
-        data: schemas.InferencePredictionReview,
-        user: models.User = Depends(current_user_dep),
-    ) -> schemas.InferencePrediction:
-        """Review an inference prediction.
-
-        Updates the review status of a prediction to confirm, reject,
-        or mark as uncertain. Optionally add notes about the review.
-
-        **Review statuses:**
-        - confirmed: Prediction is correct
-        - rejected: Prediction is incorrect
-        - uncertain: Reviewer is unsure
-        """
-        # Verify access to the batch
-        await api.inference_batches_standalone.get(
-            session,
-            inference_batch_uuid,
-            user=user,
-        )
-        updated = await api.inference_batches_standalone.review_prediction(
-            session,
-            prediction_uuid,
-            review_status=data.review_status,
-            notes=data.notes,
-            user=user,
-        )
-        await session.commit()
-        return updated
 
     return router

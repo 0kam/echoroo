@@ -62,6 +62,14 @@ export const DatasetSchema = z.object({
   primary_site: SiteSchema.nullable().optional(),
   primary_recorder: RecorderSchema.nullable().optional(),
   license: LicenseSchema.nullable().optional(),
+  status: z
+    .enum(["pending", "scanning", "processing", "completed", "failed"])
+    .optional()
+    .default("pending"),
+  processing_progress: z.number().min(0).max(100).optional().default(0),
+  processing_error: z.string().nullable().optional(),
+  total_files: z.number().int().nullable().optional(),
+  processed_files: z.number().int().optional().default(0),
 });
 
 export const DatasetCreateSchema = z.object({

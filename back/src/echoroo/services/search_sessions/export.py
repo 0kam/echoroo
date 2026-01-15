@@ -145,7 +145,7 @@ class SearchSessionExportService:
                 results_query = results_query.where(has_any_tags)
 
         result = await self.session.execute(results_query)
-        return list(result.scalars().all())
+        return list(result.unique().scalars().all())
 
     async def _get_dataset_id(self, ml_project: models.MLProject) -> int:
         """Get dataset ID from ML project.
@@ -159,15 +159,18 @@ class SearchSessionExportService:
         Raises:
             InvalidDataError: If no dataset is associated with ML project
         """
-        dataset_id = ml_project.dataset_id
+        # Get from dataset scopes with explicit query
+        result = await self.session.execute(
+            select(models.MLProjectDatasetScope.dataset_id)
+            .where(models.MLProjectDatasetScope.ml_project_id == ml_project.id)
+            .limit(1)
+        )
+        dataset_id = result.scalar_one_or_none()
+
         if dataset_id is None:
-            # Try to get from dataset scopes
-            if ml_project.dataset_scopes:
-                dataset_id = ml_project.dataset_scopes[0].dataset_id
-            else:
-                raise exceptions.InvalidDataError(
-                    "ML Project has no associated dataset"
-                )
+            raise exceptions.InvalidDataError(
+                "ML Project has no associated dataset"
+            )
         return dataset_id
 
     async def _add_target_tags(

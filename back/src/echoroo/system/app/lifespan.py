@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 # Global worker instances
 _species_detection_worker = None
 _species_filter_worker = None
+_inference_batch_worker = None
 
 
 def _configure_multiprocessing(settings: Settings) -> None:
@@ -40,7 +41,7 @@ def _configure_multiprocessing(settings: Settings) -> None:
 @asynccontextmanager
 async def lifespan(settings: Settings, _: FastAPI):
     """Context manager to run startup and shutdown events."""
-    global _species_detection_worker, _species_filter_worker
+    global _species_detection_worker, _species_filter_worker, _inference_batch_worker
 
     _configure_multiprocessing(settings)
     await echoroo_init(settings)
@@ -87,7 +88,38 @@ async def lifespan(settings: Settings, _: FastAPI):
     except Exception as e:
         logger.error("Failed to start species filter worker: %s", e)
 
+    # Start inference batch worker
+    try:
+        from echoroo.ml import InferenceBatchWorker
+        from pathlib import Path
+
+        # Use the audio_dir parent as base directory for models
+        # Models are stored relative to the application data directory
+        model_dir = settings.audio_dir.parent / "models"
+
+        _inference_batch_worker = InferenceBatchWorker(
+            model_dir=model_dir,
+            poll_interval=5.0,
+            batch_size=1000,
+        )
+
+        await _inference_batch_worker.start(session_factory)
+        logger.info("Inference batch worker started")
+
+    except ImportError as e:
+        logger.warning("Inference batch worker not available: %s", e)
+    except Exception as e:
+        logger.error("Failed to start inference batch worker: %s", e)
+
     yield
+
+    # Stop inference batch worker on shutdown
+    if _inference_batch_worker is not None:
+        try:
+            await _inference_batch_worker.stop()
+            logger.info("Inference batch worker stopped")
+        except Exception as e:
+            logger.error("Error stopping inference batch worker: %s", e)
 
     # Stop species filter worker on shutdown
     if _species_filter_worker is not None:

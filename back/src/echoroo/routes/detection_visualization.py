@@ -58,4 +58,32 @@ def get_detection_visualization_router(settings: EchorooSettings) -> APIRouter:
             user=user,
         )
 
+    @router.get(
+        "/temporal_inference/",
+        response_model=DetectionTemporalData,
+    )
+    async def get_temporal_inference_data(
+        session: Session,
+        batch_uuid: UUID = Query(..., description="Inference batch UUID"),
+        locale: str = Query(
+            default="en",
+            description="Locale for common names (e.g., 'en', 'ja')",
+        ),
+        user: models.User | None = Depends(optional_user_dep),
+    ) -> DetectionTemporalData:
+        """Get temporal detection data for inference batch predictions.
+
+        Returns aggregated detection counts by hour (0-23) and date
+        for the target species of the custom model. This data is suitable
+        for rendering polar heatmaps that show detection patterns over time.
+
+        Only includes predictions where predicted_positive is True.
+        """
+        return await detection_visualization.get_temporal_inference_data(
+            session,
+            batch_uuid,
+            locale=locale,
+            user=user,
+        )
+
     return router

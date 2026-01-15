@@ -23,7 +23,6 @@ import {
   Clock,
   CheckCircle,
   Archive,
-  FolderOpen,
 } from "lucide-react";
 
 import api from "@/app/api";
@@ -131,20 +130,11 @@ function MLProjectTabs({ uuid }: { uuid: string }) {
       </li>
       <li>
         <Tab
-          active={selectedLayoutSegment === "annotation-projects"}
-          onClick={() => router.push(`/ml-projects/${uuid}/annotation-projects/`)}
-        >
-          <FolderOpen className="w-4 h-4" />
-          Annotation Projects
-        </Tab>
-      </li>
-      <li>
-        <Tab
           active={selectedLayoutSegment === "training"}
           onClick={() => router.push(`/ml-projects/${uuid}/training/`)}
         >
           <Cpu className="w-4 h-4" />
-          Training
+          Custom Models
         </Tab>
       </li>
       <li>

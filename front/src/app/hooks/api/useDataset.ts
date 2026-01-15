@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { AxiosError } from "axios";
 import api from "@/app/api";
 
@@ -30,6 +30,8 @@ export default function useDataset({
   onDeleteDataset?: (deleted: Dataset) => void;
   onError?: (error: AxiosError) => void;
 }) {
+  const queryClient = useQueryClient();
+
   if (dataset !== undefined && dataset.uuid !== uuid) {
     throw new Error("Dataset uuid does not match");
   }
@@ -46,6 +48,9 @@ export default function useDataset({
   const update = useMutation<DatasetUpdate>({
     mutationFn: api.datasets.update,
     onSuccess: (data) => {
+      // Invalidate related queries to ensure UI consistency
+      queryClient.invalidateQueries({ queryKey: ["dataset", uuid, "stats"] });
+      queryClient.invalidateQueries({ queryKey: ["dataset_recordings"] });
       onUpdateDataset?.(data);
     },
   });

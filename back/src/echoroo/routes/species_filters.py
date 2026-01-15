@@ -149,4 +149,24 @@ def get_species_filter_applications_router(settings: EchorooSettings) -> APIRout
             locale=locale,
         )
 
+    @router.post(
+        "/{filter_uuid}/cancel",
+        response_model=schemas.SpeciesFilterApplication,
+    )
+    async def cancel_application(
+        run_uuid: UUID,
+        filter_uuid: UUID,
+        session: Session,
+        user: models.User = Depends(current_user_dep),
+    ):
+        """Cancel a running or queued species filter application."""
+        result = await species_filters.cancel_application(
+            session,
+            run_uuid,
+            filter_uuid,
+            user=user,
+        )
+        await session.commit()
+        return result
+
     return router

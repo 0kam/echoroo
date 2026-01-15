@@ -16,37 +16,25 @@ export const InferenceBatchStatusSchema = z.enum([
 
 export type InferenceBatchStatus = z.infer<typeof InferenceBatchStatusSchema>;
 
-// Inference prediction review status enum
-export const InferencePredictionReviewStatusSchema = z.enum([
-  "unreviewed",
-  "confirmed",
-  "rejected",
-  "uncertain",
-]);
-
-export type InferencePredictionReviewStatus = z.infer<
-  typeof InferencePredictionReviewStatusSchema
->;
-
 // Main InferenceBatch schema
 export const InferenceBatchSchema = z.object({
   uuid: z.string().uuid(),
-  name: z.string(),
-  description: z.string().nullable(),
-  ml_project_id: z.number().int(),
-  custom_model_id: z.number().int(),
-  custom_model: CustomModelSchema,
-  filter_config: z.record(z.unknown()).nullable(),
-  confidence_threshold: z.number(),
-  batch_size: z.number().int(),
+  name: z.string().nullable(),
+  ml_project_uuid: z.string().uuid(),
+  custom_model: CustomModelSchema.nullable(),
   status: InferenceBatchStatusSchema,
-  progress: z.number(),
-  total_items: z.number().int(),
-  processed_items: z.number().int(),
-  positive_predictions: z.number().int(),
-  started_on: z.coerce.date().nullable(),
-  completed_on: z.coerce.date().nullable(),
+  confidence_threshold: z.number(),
+  total_clips: z.number().int(),
+  processed_clips: z.number().int(),
+  total_predictions: z.number().int(),
+  positive_predictions_count: z.number().int(),
+  negative_predictions_count: z.number().int(),
+  average_confidence: z.number().nullable(),
+  started_at: z.coerce.date().nullable(),
+  completed_at: z.coerce.date().nullable(),
+  duration_seconds: z.number().nullable(),
   error_message: z.string().nullable(),
+  description: z.string().nullable(),
   created_by_id: z.string().uuid(),
   created_on: z.coerce.date(),
 });
@@ -55,12 +43,14 @@ export type InferenceBatch = z.infer<typeof InferenceBatchSchema>;
 
 // Create schema
 export const InferenceBatchCreateSchema = z.object({
-  name: z.string().min(1, "Name is required"),
-  description: z.string().optional(),
-  custom_model_id: z.string().uuid(),
-  filter_config: z.record(z.unknown()).optional(),
+  name: z.string().optional(),
+  custom_model_id: z.number().int().optional(),
+  custom_model_uuid: z.string().uuid().optional(),
   confidence_threshold: z.number().min(0).max(1).optional(),
-  batch_size: z.number().int().min(1).optional(),
+  clip_ids: z.array(z.number().int()).optional(),
+  include_all_clips: z.boolean().optional(),
+  exclude_already_labeled: z.boolean().optional(),
+  description: z.string().optional(),
 });
 
 export type InferenceBatchCreate = z.infer<typeof InferenceBatchCreateSchema>;
@@ -68,28 +58,14 @@ export type InferenceBatchCreate = z.infer<typeof InferenceBatchCreateSchema>;
 // InferencePrediction schema
 export const InferencePredictionSchema = z.object({
   uuid: z.string().uuid(),
-  inference_batch_id: z.number().int(),
-  clip_id: z.number().int(),
+  inference_batch_uuid: z.string().uuid(),
   clip: ClipSchema,
   confidence: z.number(),
   predicted_positive: z.boolean(),
-  review_status: InferencePredictionReviewStatusSchema,
-  reviewed_by_id: z.string().uuid().nullable(),
-  reviewed_on: z.coerce.date().nullable(),
-  notes: z.string().nullable(),
+  created_on: z.coerce.date(),
 });
 
 export type InferencePrediction = z.infer<typeof InferencePredictionSchema>;
-
-// Prediction review schema
-export const InferencePredictionReviewSchema = z.object({
-  review_status: InferencePredictionReviewStatusSchema,
-  notes: z.string().optional(),
-});
-
-export type InferencePredictionReview = z.infer<
-  typeof InferencePredictionReviewSchema
->;
 
 // Inference progress schema
 export const InferenceProgressSchema = z.object({
@@ -101,3 +77,17 @@ export const InferenceProgressSchema = z.object({
 });
 
 export type InferenceProgress = z.infer<typeof InferenceProgressSchema>;
+
+// Convert to annotation project request schema
+export const ConvertToAnnotationProjectRequestSchema = z.object({
+  name: z.string().min(1).max(255),
+  description: z.string().optional(),
+  confidence_threshold: z.number().min(0).max(1).optional(),
+  include_only_positive: z.boolean().optional().default(true),
+});
+
+export type ConvertToAnnotationProjectRequest = z.infer<
+  typeof ConvertToAnnotationProjectRequestSchema
+>;
+
+// Note: ConvertToAnnotationProjectResponse is not needed as the API returns AnnotationProject

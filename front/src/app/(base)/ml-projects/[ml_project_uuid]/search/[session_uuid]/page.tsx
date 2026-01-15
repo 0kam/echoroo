@@ -7,7 +7,7 @@
  * multi-tag labeling functionality with keyboard shortcuts.
  * Supports bulk selection, active learning iterations, and export.
  */
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import dynamic from "next/dynamic";
@@ -31,6 +31,7 @@ import {
   CheckSquare,
   MinusSquare,
   Save,
+  Cpu,
 } from "lucide-react";
 
 // Dynamically import Plotly to avoid SSR issues
@@ -46,7 +47,7 @@ import Loading from "@/lib/components/ui/Loading";
 import ProgressBar from "@/lib/components/ui/ProgressBar";
 import Link from "@/lib/components/ui/Link";
 import ExportToAnnotationProjectDialog from "@/app/components/ml_projects/ExportToAnnotationProjectDialog";
-import FinalizeSearchSessionDialog from "@/app/components/ml_projects/FinalizeSearchSessionDialog";
+import TrainModelDialog from "@/app/components/ml_projects/TrainModelDialog";
 
 import type {
   SearchSession,
@@ -59,6 +60,7 @@ import type {
   ScoreDistributionResponse,
   TagScoreDistribution,
   ClassifierType,
+  Recording,
 } from "@/lib/types";
 
 type LabelFilterType =
@@ -75,12 +77,11 @@ function getResultLabelStatus(result: SearchResult): {
   tagId?: number;
   tagIds?: number[];
 } {
-  // Check for multiple tags (future support)
-  const assignedTagIds = (result as any).assigned_tag_ids as number[] | undefined;
-  if (assignedTagIds && assignedTagIds.length > 0) {
-    return { type: "tagged", tagIds: assignedTagIds };
+  // Check for multiple tags (multi-label support)
+  if (result.assigned_tag_ids && result.assigned_tag_ids.length > 0) {
+    return { type: "tagged", tagIds: result.assigned_tag_ids };
   }
-  // Fallback to single tag
+  // Fallback to single tag (backward compatibility)
   if (result.assigned_tag_id) return { type: "tagged", tagId: result.assigned_tag_id };
   if (result.is_negative) return { type: "negative" };
   if (result.is_uncertain) return { type: "uncertain" };
@@ -270,6 +271,7 @@ function ResultCard({
   isChecked,
   onSelect,
   onCheckToggle,
+  onPlay,
   targetTags,
   showCheckbox,
 }: {
@@ -278,6 +280,7 @@ function ResultCard({
   isChecked: boolean;
   onSelect: () => void;
   onCheckToggle: () => void;
+  onPlay: () => void;
   targetTags: SearchSessionTargetTag[];
   showCheckbox: boolean;
 }) {
@@ -328,17 +331,8 @@ function ResultCard({
         <button
           onClick={(e) => {
             e.stopPropagation();
-            // Select this result first
             onSelect();
-            // Then play audio
-            const audio = new Audio(
-              api.audio.getStreamUrl({
-                recording: result.clip.recording,
-                startTime: result.clip.start_time,
-                endTime: result.clip.end_time,
-              })
-            );
-            audio.play();
+            onPlay();
           }}
           className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-10 h-10 flex items-center justify-center bg-black/50 rounded-full opacity-0 group-hover:opacity-100 transition-opacity hover:bg-black/70"
         >
@@ -570,6 +564,7 @@ function ScoreHistogramChart({
         return (edge + dist.bin_edges[i + 1]) / 2;
       });
 
+      // Add histogram bars for unlabeled data
       traces.push({
         x: binCenters,
         y: dist.bin_counts,
@@ -581,6 +576,48 @@ function ScoreHistogramChart({
         legendgroup: `iter${dist.iteration}`,
         showlegend: tagIndex === 0, // Only show legend for first tag
       });
+
+      // Add scatter trace for training positive scores
+      if (dist.training_positive_scores && dist.training_positive_scores.length > 0) {
+        traces.push({
+          x: dist.training_positive_scores,
+          y: dist.training_positive_scores.map(() => 1), // Position at y=1 for visibility
+          type: "scatter",
+          mode: "markers",
+          name: "Training Positive",
+          marker: {
+            color: "#10b981", // green
+            size: 8,
+            symbol: "circle",
+            line: { color: "white", width: 1 },
+          },
+          xaxis: `x${tagIndex + 1}`,
+          yaxis: `y${tagIndex + 1}`,
+          legendgroup: "training_positive",
+          showlegend: tagIndex === 0 && iterIdx === 0, // Only show once in legend
+        });
+      }
+
+      // Add scatter trace for training negative scores
+      if (dist.training_negative_scores && dist.training_negative_scores.length > 0) {
+        traces.push({
+          x: dist.training_negative_scores,
+          y: dist.training_negative_scores.map(() => 1), // Position at y=1 for visibility
+          type: "scatter",
+          mode: "markers",
+          name: "Training Negative",
+          marker: {
+            color: "#ef4444", // red
+            size: 8,
+            symbol: "circle",
+            line: { color: "white", width: 1 },
+          },
+          xaxis: `x${tagIndex + 1}`,
+          yaxis: `y${tagIndex + 1}`,
+          legendgroup: "training_negative",
+          showlegend: tagIndex === 0 && iterIdx === 0, // Only show once in legend
+        });
+      }
     });
 
     // Add annotation for tag name
@@ -752,6 +789,32 @@ export default function SearchSessionDetailPage() {
   const [autoPlay, setAutoPlay] = useState(true);
   const [shouldAutoPlay, setShouldAutoPlay] = useState(false);
 
+  // Global audio instance ref - ensures only one audio plays at a time
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  // Play audio with automatic stop of previous playback
+  const playAudio = useCallback((recording: Recording, startTime: number, endTime: number) => {
+    // Stop and clean up previous audio
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.src = "";
+      audioRef.current = null;
+    }
+
+    // Create and play new audio
+    const audio = new Audio(
+      api.audio.getStreamUrl({
+        recording,
+        startTime,
+        endTime,
+      })
+    );
+    audioRef.current = audio;
+    audio.play().catch((error) => {
+      console.error("Audio playback failed:", error);
+    });
+  }, []);
+
   // Bulk selection state
   const [selectedResults, setSelectedResults] = useState<Set<string>>(new Set());
   const [showCheckboxes, setShowCheckboxes] = useState(false);
@@ -759,8 +822,8 @@ export default function SearchSessionDetailPage() {
   // Export dialog state
   const [showExportDialog, setShowExportDialog] = useState(false);
 
-  // Finalize dialog state
-  const [showFinalizeDialog, setShowFinalizeDialog] = useState(false);
+  // Train Model dialog state
+  const [showTrainDialog, setShowTrainDialog] = useState(false);
 
   // Iteration dialog state
   const [showIterationDialog, setShowIterationDialog] = useState(false);
@@ -768,7 +831,6 @@ export default function SearchSessionDetailPage() {
     uncertainty_low: 0.25,
     uncertainty_high: 0.75,
     samples_per_iteration: 20,
-    classifier_type: "logistic_regression",
   });
   const [selectedTagsForIteration, setSelectedTagsForIteration] = useState<Set<number>>(new Set());
 
@@ -816,6 +878,9 @@ export default function SearchSessionDetailPage() {
     data: resultsData,
     isLoading: resultsLoading,
     refetch: refetchResults,
+    isFetching: resultsFetching,
+    error: resultsError,
+    isError: resultsIsError,
   } = useQuery({
     queryKey: [
       "ml_project",
@@ -826,14 +891,52 @@ export default function SearchSessionDetailPage() {
       filterParams,
       page,
     ],
-    queryFn: () =>
-      api.searchSessions.getResults(mlProjectUuid, sessionUuid, {
+    queryFn: () => {
+      console.log("[DEBUG] Fetching results with filterParams:", filterParams, "page:", page, "enabled:", !!session?.is_search_complete);
+      return api.searchSessions.getResults(mlProjectUuid, sessionUuid, {
         limit: pageSize,
         offset: page * pageSize,
         ...filterParams,
-      }),
+      });
+    },
     enabled: !!session?.is_search_complete,
+    // Ensure fresh data on every query key change
+    staleTime: 0,
+    // Don't use cached data from previous filter params
+    gcTime: 0,
   });
+
+  // Debug log for results data
+  useEffect(() => {
+    console.log("[DEBUG] Results data updated:", {
+      resultsData,
+      resultsCount: resultsData?.items?.length,
+      total: resultsData?.total,
+      sessionIsComplete: session?.is_search_complete,
+      filterParams,
+      page,
+      resultsLoading,
+      resultsFetching,
+      queryEnabled: !!session?.is_search_complete,
+      isError: resultsIsError,
+      error: resultsError,
+    });
+    if (resultsIsError) {
+      console.error("[DEBUG] Results query error:", resultsError);
+    }
+  }, [resultsData, session?.is_search_complete, filterParams, page, resultsLoading, resultsFetching, resultsIsError, resultsError]);
+
+  // Debug log for session updates
+  useEffect(() => {
+    if (session) {
+      console.log("[DEBUG] Session updated:", {
+        uuid: session.uuid,
+        is_search_complete: session.is_search_complete,
+        current_iteration: session.current_iteration,
+        total_results: session.total_results,
+      });
+    }
+  }, [session]);
 
   // Fetch progress
   const { data: progress, refetch: refetchProgress } = useQuery({
@@ -909,8 +1012,8 @@ export default function SearchSessionDetailPage() {
             r.uuid === resultUuid
               ? {
                   ...r,
+                  assigned_tag_ids: labelData.assigned_tag_ids ?? [],
                   assigned_tag_id: labelData.assigned_tag_id ?? null,
-                  assigned_tag_ids: (labelData as any).assigned_tag_ids ?? undefined,
                   is_negative: labelData.is_negative ?? false,
                   is_uncertain: labelData.is_uncertain ?? false,
                   is_skipped: labelData.is_skipped ?? false,
@@ -955,8 +1058,9 @@ export default function SearchSessionDetailPage() {
       toast.error("Failed to label result");
     },
     onSettled: () => {
-      // Refresh progress in background (don't refetch results)
+      // Refresh both progress and results in background to ensure data consistency
       refetchProgress();
+      refetchResults();
     },
   });
 
@@ -984,17 +1088,29 @@ export default function SearchSessionDetailPage() {
   const runIterationMutation = useMutation({
     mutationFn: (params: RunIterationRequest) =>
       api.searchSessions.runIteration(mlProjectUuid, sessionUuid, params),
-    onSuccess: (data) => {
+    onSuccess: async (data) => {
       const newSamples = data.total_results - (session?.total_results ?? 0);
       toast.success(`Added ${newSamples} new samples`);
       setShowIterationDialog(false);
-      // Set filter to show only the new iteration
-      setIterationFilter(data.current_iteration);
+
+      // Reset filter first to avoid pagination issues
+      setIterationFilter(null);
       setPage(0);
       setSelectedIndex(0);
-      refetchSession();
-      refetchResults();
-      refetchProgress();
+
+      // Update session data to ensure is_search_complete is set
+      await refetchSession();
+      await refetchProgress();
+
+      // Invalidate all cached results queries to ensure they are refetched
+      // Using invalidateQueries instead of removeQueries ensures that active queries
+      // will be automatically refetched with the new data
+      await queryClient.invalidateQueries({
+        queryKey: ["ml_project", mlProjectUuid, "search_session", sessionUuid, "results"],
+      });
+
+      // Explicitly refetch results to ensure UI updates
+      await refetchResults();
     },
     onError: () => {
       toast.error("Failed to run iteration");
@@ -1018,12 +1134,12 @@ export default function SearchSessionDetailPage() {
       const targetTag = targetTags.find((t) => t.shortcut_key === shortcutKey);
       if (!targetTag) return;
 
-      // Get current assigned tag IDs (support both single and multiple)
-      const currentTagIds = (selectedResult as any).assigned_tag_ids as number[] | undefined;
+      // Get current assigned tag IDs (multi-label support)
+      const currentTagIds = selectedResult.assigned_tag_ids || [];
       const currentSingleTag = selectedResult.assigned_tag_id;
 
       let newTagIds: number[];
-      if (currentTagIds && currentTagIds.length > 0) {
+      if (currentTagIds.length > 0) {
         // Multiple tags mode: toggle the tag
         if (currentTagIds.includes(targetTag.tag_id)) {
           newTagIds = currentTagIds.filter((id) => id !== targetTag.tag_id);
@@ -1042,12 +1158,12 @@ export default function SearchSessionDetailPage() {
         newTagIds = [targetTag.tag_id];
       }
 
-      // Send both assigned_tag_ids and assigned_tag_id for backward compatibility
-      // Backend should accept assigned_tag_ids in the future
-      const labelData: any = {
+      // Send assigned_tag_ids (multi-label support)
+      const labelData: SearchResultLabelData = {
         assigned_tag_ids: newTagIds,
-        // For backward compatibility: send single tag if only one is selected
-        assigned_tag_id: newTagIds.length === 1 ? newTagIds[0] : null,
+        is_negative: false,
+        is_uncertain: false,
+        is_skipped: false,
       };
 
       handleLabel(labelData);
@@ -1106,22 +1222,14 @@ export default function SearchSessionDetailPage() {
   // Auto-play audio after labeling
   useEffect(() => {
     if (shouldAutoPlay && selectedResult && autoPlay) {
-      // Play audio for the selected result
-      const audio = new Audio(
-        api.audio.getStreamUrl({
-          recording: selectedResult.clip.recording,
-          startTime: selectedResult.clip.start_time,
-          endTime: selectedResult.clip.end_time,
-        })
+      playAudio(
+        selectedResult.clip.recording,
+        selectedResult.clip.start_time,
+        selectedResult.clip.end_time
       );
-      audio.play().catch((error) => {
-        console.error("Auto-play failed:", error);
-      });
-
-      // Reset the flag
       setShouldAutoPlay(false);
     }
-  }, [selectedResult, shouldAutoPlay, autoPlay]);
+  }, [selectedResult, shouldAutoPlay, autoPlay, playAudio]);
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -1135,16 +1243,11 @@ export default function SearchSessionDetailPage() {
       if (e.key === " ") {
         e.preventDefault(); // Prevent page scroll
         if (selectedResult) {
-          const audio = new Audio(
-            api.audio.getStreamUrl({
-              recording: selectedResult.clip.recording,
-              startTime: selectedResult.clip.start_time,
-              endTime: selectedResult.clip.end_time,
-            })
+          playAudio(
+            selectedResult.clip.recording,
+            selectedResult.clip.start_time,
+            selectedResult.clip.end_time
           );
-          audio.play().catch((error) => {
-            console.error("Failed to play audio:", error);
-          });
         }
         return;
       }
@@ -1240,19 +1343,14 @@ export default function SearchSessionDetailPage() {
           </div>
         </div>
         <div className="flex items-center gap-2">
-          {/* Run Next Iteration button */}
+          {/* Train Model button */}
           {session.is_search_complete && (
             <Button
-              variant="secondary"
-              onClick={() => setShowIterationDialog(true)}
-              disabled={runIterationMutation.isPending}
+              variant="primary"
+              onClick={() => setShowTrainDialog(true)}
             >
-              {runIterationMutation.isPending ? (
-                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-              ) : (
-                <RefreshCw className="w-4 h-4 mr-2" />
-              )}
-              Run Next Iteration
+              <Cpu className="w-4 h-4 mr-2" />
+              Train Model
             </Button>
           )}
 
@@ -1261,14 +1359,6 @@ export default function SearchSessionDetailPage() {
             <Button variant="secondary" onClick={() => setShowExportDialog(true)}>
               <Download className="w-4 h-4 mr-2" />
               Export
-            </Button>
-          )}
-
-          {/* Finalize button */}
-          {session.is_search_complete && (
-            <Button variant="primary" onClick={() => setShowFinalizeDialog(true)}>
-              <Save className="w-4 h-4 mr-2" />
-              Finalize & Save
             </Button>
           )}
         </div>
@@ -1505,6 +1595,7 @@ export default function SearchSessionDetailPage() {
                         isChecked={selectedResults.has(result.uuid)}
                         onSelect={() => setSelectedIndex(index)}
                         onCheckToggle={() => handleCheckToggle(result.uuid)}
+                        onPlay={() => playAudio(result.clip.recording, result.clip.start_time, result.clip.end_time)}
                         targetTags={targetTags}
                         showCheckbox={showCheckboxes}
                       />
@@ -1576,14 +1667,11 @@ export default function SearchSessionDetailPage() {
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
-                        const audio = new Audio(
-                          api.audio.getStreamUrl({
-                            recording: selectedResult.clip.recording,
-                            startTime: selectedResult.clip.start_time,
-                            endTime: selectedResult.clip.end_time,
-                          })
+                        playAudio(
+                          selectedResult.clip.recording,
+                          selectedResult.clip.start_time,
+                          selectedResult.clip.end_time
                         );
-                        audio.play();
                       }}
                       className="absolute inset-0 flex items-center justify-center bg-black/0 hover:bg-black/30 transition-colors"
                     >
@@ -1603,6 +1691,19 @@ export default function SearchSessionDetailPage() {
                       </span>
                     )}
                   </div>
+
+                  {/* Recording datetime */}
+                  {selectedResult.clip.recording.datetime && (
+                    <div className="text-sm text-stone-500 dark:text-stone-400 mb-2">
+                      Recorded: {new Date(selectedResult.clip.recording.datetime).toLocaleString("ja-JP", {
+                        year: "numeric",
+                        month: "2-digit",
+                        day: "2-digit",
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })}
+                    </div>
+                  )}
 
                   {/* Current label */}
                   <div className="mb-4">
@@ -1776,14 +1877,24 @@ export default function SearchSessionDetailPage() {
         />
       )}
 
-      {/* Finalize dialog */}
-      {showFinalizeDialog && session && progress && (
+      {/* TODO: Phase 3 - Finalize and Train Model dialogs */}
+      {/* {showFinalizeDialog && session && progress && (
         <FinalizeSearchSessionDialog
           isOpen={showFinalizeDialog}
           onClose={() => setShowFinalizeDialog(false)}
           mlProjectUuid={mlProjectUuid}
           searchSession={session}
           progress={progress}
+        />
+      )} */}
+
+      {/* TODO: Phase 3 - Train Model dialog (will replace finalize dialog) */}
+      {showTrainDialog && session && (
+        <TrainModelDialog
+          isOpen={showTrainDialog}
+          onClose={() => setShowTrainDialog(false)}
+          mlProjectUuid={mlProjectUuid}
+          searchSession={session}
         />
       )}
 
@@ -1872,36 +1983,6 @@ export default function SearchSessionDetailPage() {
             </div>
 
             <div className="space-y-4 border-t border-stone-200 dark:border-stone-700 pt-4">
-              {/* Classifier type selection */}
-              <div>
-                <label className="block text-sm font-medium mb-2">
-                  Classifier Type
-                </label>
-                <select
-                  value={iterationParams.classifier_type}
-                  onChange={(e) =>
-                    setIterationParams((p) => ({
-                      ...p,
-                      classifier_type: e.target.value as ClassifierType,
-                    }))
-                  }
-                  className="w-full px-3 py-2 border border-stone-300 dark:border-stone-600 rounded-lg text-sm dark:bg-stone-800"
-                >
-                  <option value="logistic_regression">Logistic Regression (recommended)</option>
-                  <option value="svm_linear">Linear SVM</option>
-                  <option value="mlp_small">Small Neural Network</option>
-                  <option value="mlp_medium">Medium Neural Network</option>
-                  <option value="random_forest">Random Forest</option>
-                </select>
-                <p className="text-xs text-stone-400 mt-1">
-                  {iterationParams.classifier_type === "logistic_regression" && "Fast linear classifier (recommended)"}
-                  {iterationParams.classifier_type === "svm_linear" && "Linear classifier with margin-based optimization"}
-                  {iterationParams.classifier_type === "mlp_small" && "256-unit hidden layer"}
-                  {iterationParams.classifier_type === "mlp_medium" && "256+128-unit hidden layers"}
-                  {iterationParams.classifier_type === "random_forest" && "Ensemble method, robust to noisy labels"}
-                </p>
-              </div>
-
               {/* Uncertainty range */}
               <div>
                 <label className="block text-sm font-medium mb-2">

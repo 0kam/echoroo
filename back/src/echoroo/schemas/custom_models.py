@@ -29,45 +29,30 @@ __all__ = [
 class CustomModelType(str, Enum):
     """Type of custom model architecture."""
 
-    LINEAR_CLASSIFIER = "linear_classifier"
-    """Simple linear classifier on top of embeddings."""
-
-    MLP = "mlp"
-    """Multi-layer perceptron classifier."""
-
-    RANDOM_FOREST = "random_forest"
-    """Random forest classifier on embeddings."""
-
     SVM = "svm"
     """Support vector machine classifier."""
-
-    GRADIENT_BOOSTING = "gradient_boosting"
-    """Gradient boosting classifier (XGBoost/LightGBM)."""
 
 
 class CustomModelStatus(str, Enum):
     """Status of a custom model."""
 
-    PENDING = "pending"
-    """Model training has been queued."""
-
-    PREPARING = "preparing"
-    """Preparing training data."""
+    DRAFT = "draft"
+    """Model configuration saved but not trained."""
 
     TRAINING = "training"
     """Model is currently being trained."""
 
-    VALIDATING = "validating"
-    """Model is being validated on held-out data."""
-
-    COMPLETED = "completed"
-    """Training completed successfully."""
+    TRAINED = "trained"
+    """Model training completed successfully."""
 
     FAILED = "failed"
     """Training failed due to an error."""
 
-    CANCELLED = "cancelled"
-    """Training was cancelled by the user."""
+    DEPLOYED = "deployed"
+    """Model is deployed and ready for inference."""
+
+    ARCHIVED = "archived"
+    """Model is archived and no longer active."""
 
 
 class CustomModelTrainingConfig(BaseModel):
@@ -75,7 +60,7 @@ class CustomModelTrainingConfig(BaseModel):
 
     model_config = {"protected_namespaces": ()}
 
-    model_type: CustomModelType = CustomModelType.MLP
+    model_type: CustomModelType = CustomModelType.SVM
     """Type of model architecture to use."""
 
     train_split: float = Field(
@@ -234,22 +219,22 @@ class CustomModel(BaseSchema):
     description: str | None = None
     """Description of the model purpose and training data."""
 
-    ml_project_id: int = Field(..., exclude=True)
+    ml_project_id: int | None = Field(None, exclude=True)
     """ML project that owns this model."""
 
-    ml_project_uuid: UUID
+    ml_project_uuid: UUID | None = None
     """UUID of the owning ML project."""
 
-    tag_id: int = Field(..., exclude=True)
+    tag_id: int | None = None
     """Target tag identifier."""
 
-    tag: Tag
+    tag: Tag | None = None
     """Tag that this model is trained to detect."""
 
     model_type: CustomModelType
     """Type of model architecture."""
 
-    status: CustomModelStatus = CustomModelStatus.PENDING
+    status: CustomModelStatus = CustomModelStatus.DRAFT
     """Current training status."""
 
     training_config: CustomModelTrainingConfig
@@ -281,6 +266,19 @@ class CustomModel(BaseSchema):
 
     created_by_id: UUID
     """User who created the model."""
+
+    # Source information
+    source_search_session_uuid: UUID | None = None
+    """UUID of the search session from which this model was trained."""
+
+    source_search_session_name: str | None = None
+    """Name of the source search session."""
+
+    annotation_project_uuid: UUID | None = None
+    """UUID of the annotation project created from the search session."""
+
+    annotation_project_name: str | None = None
+    """Name of the annotation project."""
 
 
 class TrainingProgress(BaseModel):
@@ -458,7 +456,7 @@ class CustomModelCreateStandalone(BaseModel):
     """Tag that this model is trained to detect."""
 
     model_type: CustomModelType = Field(
-        default=CustomModelType.MLP,
+        default=CustomModelType.SVM,
         description="Type of model architecture to use",
     )
     """Type of model architecture."""
