@@ -9,17 +9,15 @@ from pydantic import BaseModel, Field
 from echoroo.schemas.base import BaseSchema
 from echoroo.schemas.clips import Clip
 from echoroo.schemas.custom_models import CustomModel
-from echoroo.schemas.tags import Tag
 
 __all__ = [
     "InferenceBatchStatus",
-    "InferencePredictionReviewStatus",
     "InferenceBatch",
     "InferenceBatchCreate",
     "InferencePrediction",
-    "InferencePredictionReview",
     "InferenceProgress",
     "InferenceBatchStats",
+    "ConvertToAnnotationProjectRequest",
 ]
 
 
@@ -28,9 +26,6 @@ class InferenceBatchStatus(str, Enum):
 
     PENDING = "pending"
     """Batch is queued for processing."""
-
-    PREPARING = "preparing"
-    """Preparing data for inference."""
 
     RUNNING = "running"
     """Inference is currently running."""
@@ -45,33 +40,23 @@ class InferenceBatchStatus(str, Enum):
     """Inference was cancelled by the user."""
 
 
-class InferencePredictionReviewStatus(str, Enum):
-    """Review status for an inference prediction."""
-
-    UNREVIEWED = "unreviewed"
-    """Prediction has not been reviewed."""
-
-    CONFIRMED = "confirmed"
-    """Prediction has been confirmed as correct."""
-
-    REJECTED = "rejected"
-    """Prediction has been rejected as incorrect."""
-
-    UNCERTAIN = "uncertain"
-    """Reviewer is uncertain about the prediction."""
-
-
 class InferenceBatchCreate(BaseModel):
     """Schema for creating an inference batch."""
 
     name: str | None = Field(default=None, max_length=255)
     """Optional name for the inference batch."""
 
-    custom_model_id: int = Field(
-        ...,
-        description="Custom model to use for inference",
+    custom_model_id: int | None = Field(
+        default=None,
+        description="Custom model ID to use for inference",
     )
-    """Custom model to use for running inference."""
+    """Custom model ID to use for running inference."""
+
+    custom_model_uuid: UUID | None = Field(
+        default=None,
+        description="Custom model UUID to use for inference (alternative to custom_model_id)",
+    )
+    """Custom model UUID to use for running inference."""
 
     confidence_threshold: float = Field(
         default=0.5,
@@ -99,8 +84,8 @@ class InferenceBatchCreate(BaseModel):
     )
     """Whether to skip clips that already have labels from search sessions."""
 
-    notes: str | None = Field(default=None, max_length=2000)
-    """Optional notes about the inference batch."""
+    description: str | None = Field(default=None, max_length=2000)
+    """Optional description of the inference batch."""
 
 
 class InferencePrediction(BaseSchema):
@@ -124,31 +109,11 @@ class InferencePrediction(BaseSchema):
     clip: Clip
     """Hydrated clip information."""
 
-    tag_id: int = Field(..., exclude=True)
-    """Predicted tag identifier."""
-
-    tag: Tag
-    """Predicted tag."""
-
     confidence: float = Field(ge=0.0, le=1.0)
     """Confidence score for the prediction."""
 
-    rank: int = Field(ge=1)
-    """Rank of this prediction within the batch (by confidence)."""
-
-    review_status: InferencePredictionReviewStatus = (
-        InferencePredictionReviewStatus.UNREVIEWED
-    )
-    """Current review status."""
-
-    reviewed_at: datetime.datetime | None = None
-    """Timestamp when the prediction was reviewed."""
-
-    reviewed_by_id: UUID | None = None
-    """User who reviewed the prediction."""
-
-    notes: str | None = None
-    """Optional notes about this prediction."""
+    predicted_positive: bool
+    """Whether the model predicted positive for target sound."""
 
 
 class InferenceBatch(BaseSchema):
@@ -190,17 +155,14 @@ class InferenceBatch(BaseSchema):
     total_predictions: int = 0
     """Total number of predictions generated."""
 
-    reviewed_count: int = 0
-    """Number of predictions that have been reviewed."""
+    positive_predictions_count: int = 0
+    """Number of predictions with positive label."""
 
-    confirmed_count: int = 0
-    """Number of predictions confirmed as correct."""
+    negative_predictions_count: int = 0
+    """Number of predictions with negative label."""
 
-    rejected_count: int = 0
-    """Number of predictions rejected as incorrect."""
-
-    uncertain_count: int = 0
-    """Number of predictions marked as uncertain."""
+    average_confidence: float | None = None
+    """Average confidence score across all predictions (0.0 to 1.0)."""
 
     started_at: datetime.datetime | None = None
     """Timestamp when inference started."""
@@ -214,24 +176,11 @@ class InferenceBatch(BaseSchema):
     error_message: str | None = None
     """Error message if inference failed."""
 
-    notes: str | None = None
-    """Optional notes about the inference batch."""
+    description: str | None = None
+    """Optional description of the inference batch."""
 
     created_by_id: UUID
     """User who created the inference batch."""
-
-
-class InferencePredictionReview(BaseModel):
-    """Schema for reviewing an inference prediction."""
-
-    review_status: InferencePredictionReviewStatus = Field(
-        ...,
-        description="New review status for the prediction",
-    )
-    """New review status to assign."""
-
-    notes: str | None = Field(default=None, max_length=2000)
-    """Optional notes about the review decision."""
 
 
 class InferenceProgress(BaseModel):
@@ -271,24 +220,6 @@ class InferenceBatchStats(BaseModel):
     predictions_by_confidence: dict[str, int] = Field(default_factory=dict)
     """Count of predictions by confidence range (e.g., '0.9-1.0': 150)."""
 
-    reviewed: int = 0
-    """Number of reviewed predictions."""
-
-    unreviewed: int = 0
-    """Number of unreviewed predictions."""
-
-    confirmed: int = 0
-    """Number of confirmed predictions."""
-
-    rejected: int = 0
-    """Number of rejected predictions."""
-
-    uncertain: int = 0
-    """Number of uncertain predictions."""
-
-    precision: float | None = None
-    """Precision based on reviewed predictions."""
-
     confidence_histogram: list[int] = Field(default_factory=list)
     """Histogram of confidence scores (10 buckets, 0.0-1.0)."""
 
@@ -297,3 +228,46 @@ class InferenceBatchStats(BaseModel):
 
     median_confidence: float | None = None
     """Median confidence score."""
+
+
+class ConvertToAnnotationProjectRequest(BaseModel):
+    """Request payload for converting inference batch to annotation project."""
+
+    name: str = Field(..., min_length=1, max_length=255)
+    """Name of the annotation project to create."""
+
+    description: str | None = None
+    """Optional description of the annotation project."""
+
+    confidence_threshold: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description="Override confidence threshold (uses batch threshold if not provided)",
+    )
+    """Optional override for confidence threshold."""
+
+    include_only_positive: bool = Field(
+        default=True,
+        description="Only include predictions where predicted_positive is True",
+    )
+    """Whether to filter to only positive predictions."""
+
+
+class ConvertToAnnotationProjectResponse(BaseModel):
+    """Response from converting inference batch to annotation project."""
+
+    annotation_project_uuid: UUID
+    """UUID of the created annotation project."""
+
+    annotation_project_name: str
+    """Name of the created annotation project."""
+
+    total_tasks_created: int
+    """Total number of annotation tasks created."""
+
+    total_annotations_created: int
+    """Total number of clip annotations created."""
+
+    total_tags_added: int = 1
+    """Total number of species tags added to the project."""

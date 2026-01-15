@@ -16,11 +16,15 @@ The active learning workflow:
 """
 
 import json
+import logging
 from dataclasses import dataclass, field
 from typing import Literal
 
 import numpy as np
+from sklearn.cluster import MiniBatchKMeans
 from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import f1_score
+from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import Normalizer
 from sqlalchemy import text
@@ -28,6 +32,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from echoroo.ml.classifiers import ClassifierType, UnifiedClassifier
 from echoroo.models.search_session import SampleType
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "ActiveLearningConfig",
@@ -461,11 +467,13 @@ async def get_dataset_clip_embeddings(
     session: AsyncSession,
     ml_project_id: int,
     exclude_clip_ids: set[int] | None = None,
+    max_samples: int | None = None,
 ) -> list[tuple[int, np.ndarray]]:
-    """Get all clip embeddings from ML project's dataset scopes.
+    """Get clip embeddings from ML project's dataset scopes.
 
-    Retrieves embeddings for all clips in datasets associated with the
-    ML project through its dataset scopes.
+    Retrieves embeddings for clips in datasets associated with the
+    ML project through its dataset scopes. If max_samples is specified,
+    uses a two-stage query to efficiently fetch a random subset.
 
     Parameters
     ----------
@@ -475,17 +483,26 @@ async def get_dataset_clip_embeddings(
         ID of the ML project.
     exclude_clip_ids
         Optional set of clip IDs to exclude from results.
+    max_samples
+        Maximum number of samples to return. If None, returns all.
+        When specified, performs random sampling at the database level
+        for efficiency.
 
     Returns
     -------
     list[tuple[int, np.ndarray]]
         List of (clip_id, embedding) tuples.
     """
-    # Query to get embeddings from all dataset scopes
-    query = """
-        SELECT DISTINCT ON (ce.clip_id)
-            ce.clip_id,
-            ce.embedding
+    params: dict = {"ml_project_id": ml_project_id}
+
+    if exclude_clip_ids:
+        exclude_clause = " AND ce.clip_id != ALL(:exclude_clip_ids)"
+        params["exclude_clip_ids"] = list(exclude_clip_ids)
+    else:
+        exclude_clause = ""
+
+    # Base query for clip_ids with proper joins
+    base_from_clause = """
         FROM clip_embedding ce
         JOIN clip c ON ce.clip_id = c.id
         JOIN recording r ON c.recording_id = r.id
@@ -497,16 +514,66 @@ async def get_dataset_clip_embeddings(
           AND fmr.model_run_id = ce.model_run_id
     """
 
-    params: dict = {"ml_project_id": ml_project_id}
+    if max_samples is not None:
+        # Two-stage query: first get random clip_ids (lightweight),
+        # then fetch embeddings only for those clips
+        logger.info(f"Using two-stage query with max_samples={max_samples}")
 
-    if exclude_clip_ids:
-        query += " AND ce.clip_id != ALL(:exclude_clip_ids)"
-        params["exclude_clip_ids"] = list(exclude_clip_ids)
+        # Stage 1: Get random clip_ids (no embedding data transferred)
+        # Use subquery to work around PostgreSQL's DISTINCT + ORDER BY RANDOM() limitation
+        clip_id_query = f"""
+            SELECT clip_id FROM (
+                SELECT DISTINCT ce.clip_id
+                {base_from_clause}
+                {exclude_clause}
+            ) AS distinct_clips
+            ORDER BY RANDOM()
+            LIMIT :max_samples
+        """
+        params["max_samples"] = max_samples
 
-    query += " ORDER BY ce.clip_id"
+        result = await session.execute(text(clip_id_query), params)
+        clip_ids = [row.clip_id for row in result.fetchall()]
 
-    result = await session.execute(text(query), params)
-    rows = result.fetchall()
+        if not clip_ids:
+            return []
+
+        logger.info(f"Stage 1: Selected {len(clip_ids)} random clip_ids")
+
+        # Stage 2: Fetch embeddings only for selected clip_ids
+        embedding_query = """
+            SELECT DISTINCT ON (ce.clip_id)
+                ce.clip_id,
+                ce.embedding
+            FROM clip_embedding ce
+            JOIN model_run mr ON ce.model_run_id = mr.id
+            JOIN ml_project_dataset_scope mpds ON mpds.ml_project_id = :ml_project_id
+            JOIN foundation_model_run fmr ON mpds.foundation_model_run_id = fmr.id
+            WHERE ce.clip_id = ANY(:selected_clip_ids)
+              AND fmr.model_run_id = ce.model_run_id
+            ORDER BY ce.clip_id
+        """
+        stage2_params = {
+            "ml_project_id": ml_project_id,
+            "selected_clip_ids": clip_ids,
+        }
+
+        result = await session.execute(text(embedding_query), stage2_params)
+        rows = result.fetchall()
+        logger.info(f"Stage 2: Fetched {len(rows)} embeddings")
+    else:
+        # Original query: fetch all embeddings
+        query = f"""
+            SELECT DISTINCT ON (ce.clip_id)
+                ce.clip_id,
+                ce.embedding
+            {base_from_clause}
+            {exclude_clause}
+            ORDER BY ce.clip_id
+        """
+
+        result = await session.execute(text(query), params)
+        rows = result.fetchall()
 
     # Parse embeddings and filter out invalid (near-zero) ones
     embeddings = []
@@ -730,18 +797,191 @@ async def compute_initial_samples(
     return results, total_clips
 
 
+def perform_c_grid_search(
+    embeddings: np.ndarray,
+    labels: np.ndarray,
+    c_values: list[float] = [0.1, 1.0, 10.0],
+    test_size: float = 0.3,
+    random_state: int = 42,
+) -> tuple[float, dict[float, float]]:
+    """Perform grid search over C parameter for SVM using train/test split.
+
+    Splits labeled data into train/test sets using stratified sampling,
+    trains Self-Training+SVM with different C values, and evaluates
+    using F1 score on the test set.
+
+    Parameters
+    ----------
+    embeddings : np.ndarray
+        Training embeddings (n_samples, embedding_dim)
+    labels : np.ndarray
+        Binary labels (0 or 1)
+    c_values : list[float]
+        C values to try (default: [0.1, 1.0, 10.0])
+    test_size : float
+        Fraction of data to use for testing (default: 0.3)
+    random_state : int
+        Random seed for reproducibility (default: 42)
+
+    Returns
+    -------
+    tuple[float, dict[float, float]]
+        - best_c: The C value with highest F1 score
+        - scores: Dictionary mapping C value to F1 score
+
+    Raises
+    ------
+    ValueError
+        If train/test split results in single-class subset
+    """
+    # Stratified train/test split
+    X_train, X_test, y_train, y_test = train_test_split(
+        embeddings,
+        labels,
+        test_size=test_size,
+        stratify=labels,
+        random_state=random_state,
+    )
+
+    # Check for single-class subsets
+    if len(np.unique(y_train)) < 2 or len(np.unique(y_test)) < 2:
+        raise ValueError(
+            f"Train/test split resulted in single-class subset: "
+            f"train_classes={np.unique(y_train)}, test_classes={np.unique(y_test)}"
+        )
+
+    scores = {}
+    for c in c_values:
+        try:
+            # Train classifier with this C value
+            classifier = UnifiedClassifier(
+                ClassifierType.SELF_TRAINING_SVM,
+                custom_params={"C": c},
+            )
+            classifier.fit(X_train, y_train)
+
+            # Predict on test set
+            y_pred_proba = classifier.predict_proba(X_test)
+            y_pred = (y_pred_proba >= 0.5).astype(int)
+
+            # Calculate F1 score
+            score = f1_score(y_test, y_pred)
+            scores[c] = score
+
+            logger.debug(f"C={c}: F1={score:.4f}")
+        except Exception as e:
+            logger.warning(f"C={c} failed during training: {e}")
+            scores[c] = 0.0
+
+    # Ensure at least one C value succeeded
+    if all(s == 0.0 for s in scores.values()):
+        raise ValueError("All C values failed during grid search")
+
+    # Select best C
+    best_c = max(scores, key=scores.get)
+    return best_c, scores
+
+
+def cluster_unlabeled_embeddings(
+    embeddings: np.ndarray,
+    n_clusters: int = 1000,
+    samples_per_cluster: int = 2,
+    random_state: int = 42,
+) -> np.ndarray:
+    """Cluster unlabeled embeddings using MiniBatchKMeans and keep representative samples.
+
+    Uses MiniBatchKMeans for efficiency with large datasets. For each cluster,
+    selects the k samples closest to the centroid to maintain diversity while
+    reducing dataset size.
+
+    Parameters
+    ----------
+    embeddings : np.ndarray
+        Unlabeled embeddings (n_samples, embedding_dim)
+    n_clusters : int
+        Number of clusters to create (default: 1000)
+    samples_per_cluster : int
+        Number of samples to keep per cluster (default: 2)
+    random_state : int
+        Random seed for reproducibility (default: 42)
+
+    Returns
+    -------
+    np.ndarray
+        Subset of embeddings closest to cluster centroids
+        Shape: (~n_clusters * samples_per_cluster, embedding_dim)
+    """
+    n_samples = len(embeddings)
+
+    # Adjust n_clusters if needed
+    actual_n_clusters = min(n_clusters, n_samples)
+    if actual_n_clusters < n_clusters:
+        logger.warning(
+            f"Adjusting n_clusters from {n_clusters} to {actual_n_clusters} "
+            f"due to limited samples ({n_samples})"
+        )
+
+    # Perform MiniBatchKMeans clustering
+    logger.info(f"Running MiniBatchKMeans with {actual_n_clusters} clusters...")
+    kmeans = MiniBatchKMeans(
+        n_clusters=actual_n_clusters,
+        random_state=random_state,
+        batch_size=1024,
+        n_init=3,
+    )
+    cluster_labels = kmeans.fit_predict(embeddings)
+
+    # For each cluster, find samples closest to centroid
+    selected_indices = []
+    for cluster_id in range(actual_n_clusters):
+        # Get indices of samples in this cluster
+        cluster_mask = cluster_labels == cluster_id
+        cluster_indices = np.where(cluster_mask)[0]
+
+        if len(cluster_indices) == 0:
+            continue
+
+        # Calculate distances to centroid
+        centroid = kmeans.cluster_centers_[cluster_id]
+        cluster_embeddings = embeddings[cluster_indices]
+        distances = np.linalg.norm(cluster_embeddings - centroid, axis=1)
+
+        # Select k closest points
+        k = min(samples_per_cluster, len(cluster_indices))
+        closest_indices = cluster_indices[np.argsort(distances)[:k]]
+        selected_indices.extend(closest_indices)
+
+    logger.info(
+        f"MiniBatchKMeans: {n_samples} samples -> "
+        f"{actual_n_clusters} clusters -> {len(selected_indices)} selected"
+    )
+
+    return embeddings[selected_indices]
+
+
 async def run_active_learning_iteration(
     session: AsyncSession,
     search_session_id: int,
     ml_project_id: int,
     config: ActiveLearningConfig | None = None,
     selected_tag_ids: set[int] | None = None,
-    classifier_type: ClassifierType | str = ClassifierType.LOGISTIC_REGRESSION,
 ) -> tuple[list[dict], dict[int, dict], list[dict]]:
-    """Run one iteration of active learning.
+    """Run one iteration of active learning using Self-Training+SVM with C grid search.
 
-    Trains classifiers on labeled data and selects new samples from
-    the uncertainty region (between uncertainty_low and uncertainty_high).
+    Always uses Self-Training+SVM classifier with automatic C parameter tuning (grid
+    search over [0.1, 1.0, 10.0]) based on F1 score evaluation. Unlabeled embeddings
+    are automatically clustered using MiniBatchKMeans (1000 clusters, 2 samples per
+    cluster) for efficient training.
+
+    The workflow:
+    1. Collect all labeled samples from the search session
+    2. For each target tag with sufficient samples (≥10 per class):
+       a. Perform C parameter grid search using 70/30 train/test split
+       b. Select best C based on F1 score
+       c. Retrain on all labeled data with best C
+    3. Cluster unlabeled embeddings for Self-Training
+    4. Train classifiers with unlabeled data
+    5. Score all unlabeled clips and select samples from uncertainty region
 
     Parameters
     ----------
@@ -757,9 +997,6 @@ async def run_active_learning_iteration(
         Optional set of tag IDs to train classifiers for. If None, all target tags
         are used. If specified, only classifiers for these tags will be trained
         and used for sample selection.
-    classifier_type
-        The type of classifier to use for this iteration. Can be a ClassifierType
-        enum or string. Defaults to LOGISTIC_REGRESSION.
 
     Returns
     -------
@@ -770,9 +1007,6 @@ async def run_active_learning_iteration(
         - score_distributions: list of dicts with tag_id, bin_counts, bin_edges,
           positive_count, negative_count, mean_score
     """
-    # Convert string to enum if needed
-    if isinstance(classifier_type, str):
-        classifier_type = ClassifierType(classifier_type)
     if config is None:
         config = ActiveLearningConfig()
 
@@ -851,6 +1085,41 @@ async def run_active_learning_iteration(
         assigned_tag_ids_list = list(row.assigned_tag_ids) if row.assigned_tag_ids else []
         all_samples.append((embedding, assigned_tag_ids_list, row.is_negative))
 
+    # Collect labeled clip IDs for excluding from unlabeled data
+    labeled_clip_ids = {row.clip_id for row in labeled_rows}
+
+    # Always fetch unlabeled embeddings for Self-Training+SVM
+    logger.info("Fetching unlabeled embeddings for Self-Training+SVM")
+
+    unlabeled_clip_data = await get_dataset_clip_embeddings(
+        session=session,
+        ml_project_id=ml_project_id,
+        exclude_clip_ids=labeled_clip_ids,
+        max_samples=20000,
+    )
+
+    unlabeled_embeddings_array: np.ndarray | None = None
+    if unlabeled_clip_data:
+        unlabeled_embeddings_list = [emb for _, emb in unlabeled_clip_data]
+        unlabeled_embeddings_raw = np.array(unlabeled_embeddings_list)
+
+        # Cluster unlabeled embeddings using MiniBatchKMeans
+        logger.info(
+            f"Clustering {len(unlabeled_embeddings_raw)} unlabeled embeddings "
+            f"into 1000 clusters, keeping 2 samples per cluster"
+        )
+        unlabeled_embeddings_array = cluster_unlabeled_embeddings(
+            unlabeled_embeddings_raw,
+            n_clusters=1000,
+            samples_per_cluster=2,
+        )
+        logger.info(
+            f"Reduced unlabeled embeddings from {len(unlabeled_embeddings_raw)} "
+            f"to {len(unlabeled_embeddings_array)} via clustering"
+        )
+    else:
+        logger.warning("No unlabeled embeddings available")
+
     # Train one classifier per target tag
     # For each tag:
     #   Positive = samples that have this tag in their assigned_tag_ids
@@ -878,19 +1147,155 @@ async def run_active_learning_iteration(
                 labels_list.append(0)
                 negative_count += 1
 
+        # Store metrics regardless of whether we can train
         metrics[tag_id] = {
             "positive_count": positive_count,
             "negative_count": negative_count,
         }
 
+        # Define minimum samples required for grid search
+        MIN_SAMPLES_FOR_GRID_SEARCH = 10  # per class
+
         # Only train if we have both positive and negative samples
-        if positive_count > 0 and negative_count > 0:
+        if (positive_count >= MIN_SAMPLES_FOR_GRID_SEARCH and
+            negative_count >= MIN_SAMPLES_FOR_GRID_SEARCH):
+
             embeddings_array = np.array(embeddings_list)
             labels_array = np.array(labels_list)
 
-            classifier = UnifiedClassifier(classifier_type)
-            classifier.fit(embeddings_array, labels_array)
+            # Log training data statistics
+            logger.info(
+                f"Tag {tag_id} training data: "
+                f"positive={positive_count}, negative={negative_count}, "
+                f"embedding_shape={embeddings_array.shape}, "
+                f"embedding_mean_norm={np.mean([np.linalg.norm(e) for e in embeddings_array]):.4f}"
+            )
+
+            # Compute pairwise distances between positive and negative samples
+            positive_embeddings = embeddings_array[labels_array == 1]
+            negative_embeddings = embeddings_array[labels_array == 0]
+
+            if len(positive_embeddings) > 0 and len(negative_embeddings) > 0:
+                # Compute mean intra-class and inter-class distances
+                pos_centroid = np.mean(positive_embeddings, axis=0)
+                neg_centroid = np.mean(negative_embeddings, axis=0)
+                inter_class_dist = np.linalg.norm(pos_centroid - neg_centroid)
+
+                # Compute cosine similarity between centroids
+                cos_sim = np.dot(pos_centroid, neg_centroid) / (
+                    np.linalg.norm(pos_centroid) * np.linalg.norm(neg_centroid)
+                )
+
+                logger.info(
+                    f"Tag {tag_id} class separation: "
+                    f"inter_class_distance={inter_class_dist:.4f}, "
+                    f"centroid_cosine_similarity={cos_sim:.4f}"
+                )
+
+            # Perform C parameter grid search
+            try:
+                best_c, c_scores = perform_c_grid_search(
+                    embeddings_array,
+                    labels_array,
+                    c_values=[0.1, 1.0, 10.0],
+                    test_size=0.3,
+                )
+                logger.info(
+                    f"Tag {tag_id} grid search results: {c_scores}, selected C={best_c}"
+                )
+            except ValueError as e:
+                logger.warning(
+                    f"Tag {tag_id} grid search failed: {e}. Using default C=1.0"
+                )
+                best_c = 1.0
+
+            # Train classifier with best C on all labeled data
+            classifier = UnifiedClassifier(
+                ClassifierType.SELF_TRAINING_SVM,
+                custom_params={"C": best_c},
+            )
+
+            # Train with unlabeled embeddings
+            if unlabeled_embeddings_array is not None:
+                logger.info(
+                    f"Training Self-Training+SVM for tag {tag_id} with "
+                    f"C={best_c}, {len(unlabeled_embeddings_array)} unlabeled samples"
+                )
+                classifier.fit(
+                    embeddings_array,
+                    labels_array,
+                    unlabeled_embeddings=unlabeled_embeddings_array,
+                )
+            else:
+                logger.info(
+                    f"Training Self-Training+SVM for tag {tag_id} with "
+                    f"C={best_c}, no unlabeled data"
+                )
+                classifier.fit(embeddings_array, labels_array)
+
             classifiers[tag_id] = classifier
+
+        elif positive_count > 0 and negative_count > 0:
+            # Insufficient samples for grid search, but train anyway with default C
+            logger.warning(
+                f"Tag {tag_id} has insufficient samples for grid search "
+                f"(positive={positive_count}, negative={negative_count}). "
+                f"Using default C=1.0 without grid search."
+            )
+
+            embeddings_array = np.array(embeddings_list)
+            labels_array = np.array(labels_list)
+
+            classifier = UnifiedClassifier(
+                ClassifierType.SELF_TRAINING_SVM,
+                custom_params={"C": 1.0},
+            )
+
+            if unlabeled_embeddings_array is not None:
+                classifier.fit(
+                    embeddings_array,
+                    labels_array,
+                    unlabeled_embeddings=unlabeled_embeddings_array,
+                )
+            else:
+                classifier.fit(embeddings_array, labels_array)
+
+            classifiers[tag_id] = classifier
+
+            # Evaluate on training data to check if training was successful
+            train_predictions = classifier.predict_proba(embeddings_array)
+            train_pred_labels = (train_predictions >= 0.5).astype(int)
+            train_accuracy = np.mean(train_pred_labels == labels_array)
+
+            # Compute training prediction statistics
+            pos_train_scores = train_predictions[labels_array == 1]
+            neg_train_scores = train_predictions[labels_array == 0]
+
+            # Filter out NaN and infinite values
+            pos_train_scores = pos_train_scores[np.isfinite(pos_train_scores)]
+            neg_train_scores = neg_train_scores[np.isfinite(neg_train_scores)]
+
+            if len(pos_train_scores) > 0 and len(neg_train_scores) > 0:
+                logger.info(
+                    f"Tag {tag_id} training evaluation: "
+                    f"accuracy={train_accuracy:.4f}, "
+                    f"positive_scores: min={np.min(pos_train_scores):.4f}, "
+                    f"max={np.max(pos_train_scores):.4f}, mean={np.mean(pos_train_scores):.4f}, "
+                    f"negative_scores: min={np.min(neg_train_scores):.4f}, "
+                    f"max={np.max(neg_train_scores):.4f}, mean={np.mean(neg_train_scores):.4f}"
+                )
+            else:
+                logger.warning(
+                    f"Tag {tag_id} training evaluation: "
+                    f"accuracy={train_accuracy:.4f}, "
+                    f"positive_scores: {len(pos_train_scores)} valid samples, "
+                    f"negative_scores: {len(neg_train_scores)} valid samples"
+                )
+
+            # Store training scores in metrics for histogram overlay
+            # Convert to list and ensure no NaN/inf values
+            metrics[tag_id]["training_positive_scores"] = pos_train_scores.tolist()
+            metrics[tag_id]["training_negative_scores"] = neg_train_scores.tolist()
 
     # Get unlabeled clip embeddings
     existing_clip_ids_query = """
@@ -909,38 +1314,110 @@ async def run_active_learning_iteration(
         exclude_clip_ids=existing_clip_ids,
     )
 
-    if not unlabeled_clips:
-        return [], metrics, []
-
-    unlabeled_clip_ids = np.array([uc[0] for uc in unlabeled_clips])
-    unlabeled_embeddings = np.array([uc[1] for uc in unlabeled_clips])
+    logger.info(
+        f"Unlabeled clips: n={len(unlabeled_clips)}, "
+        f"excluded_clips={len(existing_clip_ids)}"
+    )
 
     # Compute model scores for each tag and aggregate
     new_samples: list[dict] = []
     uncertain_candidates: list[tuple[int, float, int]] = []  # (clip_id, score, tag_id)
     score_distributions: list[dict] = []
 
-    for tag_id, classifier in classifiers.items():
-        scores = classifier.predict_proba(unlabeled_embeddings)
+    # Always compute score distributions for visualization, even if no unlabeled clips or no classifiers
+    if unlabeled_clips and classifiers:
+        logger.info(f"Computing scores for {len(unlabeled_clips)} unlabeled clips")
+        unlabeled_clip_ids = np.array([uc[0] for uc in unlabeled_clips])
+        unlabeled_embeddings = np.array([uc[1] for uc in unlabeled_clips])
 
-        # Compute score distribution for this tag
+        # Log unlabeled embeddings statistics
+        unlabeled_mean_norm = np.mean([np.linalg.norm(e) for e in unlabeled_embeddings])
+        logger.info(
+            f"Unlabeled embeddings: shape={unlabeled_embeddings.shape}, "
+            f"mean_norm={unlabeled_mean_norm:.4f}"
+        )
+
+        for tag_id, classifier in classifiers.items():
+            scores = classifier.predict_proba(unlabeled_embeddings)
+
+            # Filter out NaN and infinite values from scores
+            valid_mask = np.isfinite(scores)
+            valid_scores = scores[valid_mask]
+            n_invalid = len(scores) - len(valid_scores)
+
+            if n_invalid > 0:
+                logger.warning(
+                    f"Tag {tag_id}: {n_invalid} invalid (NaN/inf) scores filtered out"
+                )
+
+            # Log score distribution statistics for debugging (use valid scores only)
+            if len(valid_scores) > 0:
+                logger.info(
+                    f"Tag {tag_id} score distribution: "
+                    f"n_samples={len(valid_scores)}, "
+                    f"min={np.min(valid_scores):.4f}, "
+                    f"max={np.max(valid_scores):.4f}, "
+                    f"mean={np.mean(valid_scores):.4f}, "
+                    f"std={np.std(valid_scores):.4f}, "
+                    f"median={np.median(valid_scores):.4f}, "
+                    f"positive_count={metrics[tag_id]['positive_count']}, "
+                    f"negative_count={metrics[tag_id]['negative_count']}"
+                )
+            else:
+                logger.warning(
+                    f"Tag {tag_id}: No valid scores available, "
+                    f"positive_count={metrics[tag_id]['positive_count']}, "
+                    f"negative_count={metrics[tag_id]['negative_count']}"
+                )
+
+            # Compute score distribution for this tag (use valid scores only)
+            bin_edges = np.linspace(0, 1, 21).tolist()  # 20 bins
+            bin_counts, _ = np.histogram(valid_scores, bins=bin_edges)
+
+            # Log histogram bins with counts > 0 for debugging
+            non_zero_bins = [(i, bin_counts[i]) for i in range(len(bin_counts)) if bin_counts[i] > 0]
+            logger.info(
+                f"Tag {tag_id} non-zero bins (bin_index, count): {non_zero_bins}"
+            )
+
+            score_distributions.append({
+                "tag_id": tag_id,
+                "bin_counts": bin_counts.tolist(),
+                "bin_edges": bin_edges,
+                "positive_count": metrics[tag_id]["positive_count"],
+                "negative_count": metrics[tag_id]["negative_count"],
+                "mean_score": float(np.mean(valid_scores)) if len(valid_scores) > 0 else 0.0,
+                "training_positive_scores": metrics[tag_id].get("training_positive_scores", []),
+                "training_negative_scores": metrics[tag_id].get("training_negative_scores", []),
+            })
+
+            # Find samples in uncertainty region (only consider valid scores)
+            valid_indices = np.where(valid_mask)[0]
+            for idx, score in zip(valid_indices, valid_scores):
+                if config.uncertainty_low <= score <= config.uncertainty_high:
+                    clip_id = int(unlabeled_clip_ids[idx])
+                    uncertain_candidates.append((clip_id, float(score), tag_id))
+
+    # Create distributions for tags without classifiers or without unlabeled clips
+    # This ensures all target tags have distribution data for visualization
+    for tag_id in target_tag_ids:
+        # Skip if already added (has classifier and unlabeled data)
+        if any(d["tag_id"] == tag_id for d in score_distributions):
+            continue
+
         bin_edges = np.linspace(0, 1, 21).tolist()  # 20 bins
-        bin_counts, _ = np.histogram(scores, bins=bin_edges)
+        bin_counts = [0] * 20  # Empty bins
 
         score_distributions.append({
             "tag_id": tag_id,
-            "bin_counts": bin_counts.tolist(),
+            "bin_counts": bin_counts,
             "bin_edges": bin_edges,
-            "positive_count": metrics[tag_id]["positive_count"],
-            "negative_count": metrics[tag_id]["negative_count"],
-            "mean_score": float(np.mean(scores)) if len(scores) > 0 else 0.0,
+            "positive_count": metrics.get(tag_id, {}).get("positive_count", 0),
+            "negative_count": metrics.get(tag_id, {}).get("negative_count", 0),
+            "mean_score": 0.0,
+            "training_positive_scores": [],
+            "training_negative_scores": [],
         })
-
-        # Find samples in uncertainty region
-        for i, score in enumerate(scores):
-            if config.uncertainty_low <= score <= config.uncertainty_high:
-                clip_id = int(unlabeled_clip_ids[i])
-                uncertain_candidates.append((clip_id, float(score), tag_id))
 
     # Remove duplicates (same clip might be uncertain for multiple tags)
     seen_clips: set[int] = set()
@@ -950,11 +1427,21 @@ async def run_active_learning_iteration(
             unique_candidates.append((clip_id, score, tag_id))
             seen_clips.add(clip_id)
 
-    # Sort by uncertainty (closest to 0.5 is most uncertain)
-    unique_candidates.sort(key=lambda x: abs(x[1] - 0.5))
+    # Uniform sampling from uncertainty region instead of prioritizing 0.5
+    # This ensures diverse samples across the entire uncertainty range
+    logger.info(
+        f"Selecting {config.samples_per_iteration} samples from "
+        f"{len(unique_candidates)} candidates via uniform sampling"
+    )
 
-    # Select top samples_per_iteration samples
-    for clip_id, score, tag_id in unique_candidates[: config.samples_per_iteration]:
+    # Randomly sample from candidates to get uniform distribution
+    if len(unique_candidates) > config.samples_per_iteration:
+        import random
+        selected_candidates = random.sample(unique_candidates, config.samples_per_iteration)
+    else:
+        selected_candidates = unique_candidates
+
+    for clip_id, score, tag_id in selected_candidates:
         new_samples.append({
             "clip_id": clip_id,
             "model_score": score,

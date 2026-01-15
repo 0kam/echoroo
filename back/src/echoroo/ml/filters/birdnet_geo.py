@@ -74,7 +74,13 @@ class BirdNETGeoFilter(SpeciesFilter):
         self._lock = threading.Lock()
         self._load_failed = False
 
+        # SpeciesResolver for GBIF resolution with DB caching
+        from echoroo.ml.species_resolver import SpeciesResolver
+
+        self._species_resolver = SpeciesResolver()
+
         # GBIF resolution cache: {scientific_name: (taxon_key, canonical_name)}
+        # Note: This is in addition to SpeciesResolver's own caching
         self._gbif_cache: dict[str, tuple[str | None, str | None]] = {}
         # Reverse cache: {taxon_key: scientific_name}
         self._gbif_reverse_cache: dict[str, str] = {}
@@ -201,63 +207,46 @@ class BirdNETGeoFilter(SpeciesFilter):
     ) -> tuple[str | None, str | None]:
         """Resolve GBIF taxon key for a scientific name.
 
-        Uses memory cache first, then falls back to GBIF API.
-        DB cache (SpeciesOccurrenceCache) will be added later.
+        Uses SpeciesResolver which provides three-tier caching:
+        1. SpeciesResolver's memory cache
+        2. Database cache (species_cache table)
+        3. GBIF API as fallback
 
         Parameters
         ----------
         scientific_name : str
             Scientific name to resolve.
         session : AsyncSession
-            Database session (for future DB cache).
+            Database session.
 
         Returns
         -------
         tuple[str | None, str | None]
             (taxon_key, canonical_name) or (None, None) if not found.
         """
-        # Check memory cache first
+        # Check local memory cache first (fastest)
         if scientific_name in self._gbif_cache:
             return self._gbif_cache[scientific_name]
 
-        # TODO: Check DB cache (SpeciesOccurrenceCache) when available
-        # stmt = select(SpeciesOccurrenceCache).where(
-        #     SpeciesOccurrenceCache.scientific_name == scientific_name
-        # )
-        # cached = await session.scalar(stmt)
-        # if cached is not None:
-        #     result = (cached.gbif_taxon_key, cached.canonical_name)
-        #     self._gbif_cache[scientific_name] = result
-        #     return result
-
-        # Query GBIF API (lazy import to avoid circular dependency)
+        # Use SpeciesResolver for DB-cached GBIF resolution
+        # locale="en" is used but vernacular_name is ignored
         try:
-            from echoroo.api import search_gbif_species
-
-            candidates = await search_gbif_species(scientific_name, limit=50)
-            if candidates:
-                candidate = candidates[0]
-                taxon_key = candidate.usage_key
-                canonical = candidate.canonical_name or scientific_name
-            else:
-                taxon_key = None
-                canonical = None
+            info = await self._species_resolver.resolve(
+                session,
+                scientific_name,
+                locale="en",
+            )
+            taxon_key = info.gbif_taxon_id
+            canonical = info.canonical_name
         except Exception as e:
             logger.warning(
-                "GBIF lookup failed for '%s': %s", scientific_name, e
+                "GBIF resolution failed for '%s': %s", scientific_name, e
             )
             taxon_key = None
             canonical = None
 
-        # Cache result
+        # Cache result locally
         self._gbif_cache[scientific_name] = (taxon_key, canonical)
-
-        # TODO: Store in DB cache when available
-        # session.add(SpeciesOccurrenceCache(
-        #     scientific_name=scientific_name,
-        #     gbif_taxon_key=taxon_key,
-        #     canonical_name=canonical,
-        # ))
 
         return taxon_key, canonical
 
@@ -474,6 +463,7 @@ class BirdNETGeoFilter(SpeciesFilter):
         self,
         context: FilterContext,
         taxon_keys: set[str],
+        taxon_key_to_scientific_name: dict[str, str] | None = None,
     ) -> dict[str, float]:
         """Get occurrence probabilities for specific GBIF taxon keys.
 
@@ -488,6 +478,9 @@ class BirdNETGeoFilter(SpeciesFilter):
             Location (latitude, longitude) and time (week).
         taxon_keys : set[str]
             Set of GBIF taxon keys to get probabilities for.
+        taxon_key_to_scientific_name : dict[str, str] | None
+            Optional pre-resolved mapping of taxon_key -> lowercase scientific name.
+            If provided, this cache is used first to avoid GBIF API lookups.
 
         Returns
         -------
@@ -506,20 +499,37 @@ class BirdNETGeoFilter(SpeciesFilter):
 
         # Resolve only the requested taxon keys to scientific names
         result: dict[str, float] = {}
+        cache_hits = 0
+        api_lookups = 0
+
         for taxon_key in taxon_keys:
-            scientific_name = await self.get_scientific_name_for_taxon_key(
-                taxon_key
-            )
+            # Try pre-resolved mapping first (from Tag.canonical_name)
+            scientific_name = None
+            if taxon_key_to_scientific_name:
+                scientific_name = taxon_key_to_scientific_name.get(taxon_key)
+                if scientific_name is not None:
+                    cache_hits += 1
+
+            # Fallback to GBIF API lookup if not in pre-resolved mapping
+            if scientific_name is None:
+                scientific_name = await self.get_scientific_name_for_taxon_key(
+                    taxon_key
+                )
+                api_lookups += 1
+
             if scientific_name is not None and scientific_name in raw_probs:
                 result[taxon_key] = raw_probs[scientific_name]
 
-        logger.debug(
-            "BirdNET geo subset: %d/%d taxon keys found at (%.2f, %.2f) week %d",
+        logger.info(
+            "BirdNET geo subset: %d/%d taxon keys found at (%.2f, %.2f) week %d "
+            "(cache_hits=%d, api_lookups=%d)",
             len(result),
             len(taxon_keys),
             context.latitude,
             context.longitude,
             context.week,
+            cache_hits,
+            api_lookups,
         )
 
         return result

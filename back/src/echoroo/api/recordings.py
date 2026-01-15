@@ -1270,32 +1270,6 @@ def validate_path(
     return path
 
 
-def _extract_bit_depth(path: Path) -> int | None:
-    """Extract bit depth from WAV file header.
-
-    Parameters
-    ----------
-    path : Path
-        Path to the audio file.
-
-    Returns
-    -------
-    int | None
-        Bit depth in bits, or None if it cannot be determined.
-    """
-    try:
-        info = sf.info(str(path))
-        # Extract bit depth from subtype string (e.g., 'PCM_16' -> 16)
-        subtype = info.subtype
-        if subtype and '_' in subtype:
-            bit_str = subtype.split('_')[-1]
-            if bit_str.isdigit():
-                return int(bit_str)
-    except Exception as e:
-        logger.debug(f"Could not extract bit depth from {path}: {e}")
-    return None
-
-
 def _assemble_recording_data(
     data: schemas.RecordingCreate,
     audio_dir: Path,
@@ -1341,7 +1315,7 @@ def _assemble_recording_data(
     duration = info.media_info.duration_s / data.time_expansion
     samplerate = int(info.media_info.samplerate_hz * data.time_expansion)
     channels = info.media_info.channels
-    bit_depth = _extract_bit_depth(data.path)
+    bit_depth = info.bit_depth
 
     return {
         **dict(data),

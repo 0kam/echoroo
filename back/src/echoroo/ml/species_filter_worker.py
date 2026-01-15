@@ -337,8 +337,9 @@ class SpeciesFilterWorker:
             application.total_detections = total_detections
             await session.flush()
 
-            # Check for cancellation
-            if self._cancel_requested:
+            # Check for cancellation (either via flag or database status)
+            await session.refresh(application)
+            if self._cancel_requested or application.status == models.SpeciesFilterApplicationStatus.CANCELLED:
                 logger.info("Application %s cancelled by user", application.uuid)
                 await self._update_application_status(
                     session,
@@ -364,6 +365,9 @@ class SpeciesFilterWorker:
                 ]
             ] = []
             bucket_taxon_keys: dict[tuple[int, int, int], set[str]] = {}
+            # Cache taxon_key -> canonical_name mapping from existing Tags
+            # to avoid GBIF API reverse lookups
+            taxon_key_to_scientific_name: dict[str, str] = {}
 
             for prediction in predictions:
                 # Get recording metadata for filter context
@@ -407,7 +411,15 @@ class SpeciesFilterWorker:
                     if bucket not in bucket_taxon_keys:
                         bucket_taxon_keys[bucket] = set()
                     for pred_tag in tags:
-                        bucket_taxon_keys[bucket].add(pred_tag.tag.value)
+                        taxon_key = pred_tag.tag.value
+                        bucket_taxon_keys[bucket].add(taxon_key)
+
+                        # Cache the canonical_name from Tag to avoid GBIF API lookups
+                        if taxon_key not in taxon_key_to_scientific_name:
+                            # Use lowercase for matching with BirdNET raw probabilities
+                            taxon_key_to_scientific_name[taxon_key] = (
+                                pred_tag.tag.canonical_name.lower()
+                            )
 
             logger.info(
                 "Collected %d predictions with %d unique buckets",
@@ -415,8 +427,9 @@ class SpeciesFilterWorker:
                 len(bucket_taxon_keys),
             )
 
-            # Check for cancellation
-            if self._cancel_requested:
+            # Check for cancellation (either via flag or database status)
+            await session.refresh(application)
+            if self._cancel_requested or application.status == models.SpeciesFilterApplicationStatus.CANCELLED:
                 logger.info("Application %s cancelled by user", application.uuid)
                 await self._update_application_status(
                     session,
@@ -439,8 +452,10 @@ class SpeciesFilterWorker:
             bucket_probs: dict[tuple[int, int, int], dict[str, float]] = {}
 
             for idx, (bucket, taxon_keys) in enumerate(bucket_taxon_keys.items()):
-                # Check for cancellation periodically
-                if self._cancel_requested:
+                # Check for cancellation periodically (either via flag or database status)
+                if idx % 10 == 0:
+                    await session.refresh(application)
+                if self._cancel_requested or application.status == models.SpeciesFilterApplicationStatus.CANCELLED:
                     logger.info("Application %s cancelled by user", application.uuid)
                     await self._update_application_status(
                         session,
@@ -459,9 +474,9 @@ class SpeciesFilterWorker:
                 )
 
                 if use_batch_probs:
-                    # Use efficient batch method
+                    # Use efficient batch method with pre-resolved scientific names
                     probs = await filter_instance.get_probabilities_for_taxon_keys(  # type: ignore[attr-defined]
-                        bucket_context, taxon_keys
+                        bucket_context, taxon_keys, taxon_key_to_scientific_name
                     )
                     bucket_probs[bucket] = probs
                 else:
@@ -540,16 +555,18 @@ class SpeciesFilterWorker:
             processed = 0
 
             for prediction, bucket, tags in prediction_data_list:
-                # Check for cancellation periodically
-                if processed % self._batch_size == 0 and self._cancel_requested:
-                    logger.info("Application %s cancelled by user", application.uuid)
-                    await self._update_application_status(
-                        session,
-                        application,
-                        status=models.SpeciesFilterApplicationStatus.CANCELLED,
-                    )
-                    await session.commit()
-                    return
+                # Check for cancellation periodically (either via flag or database status)
+                if processed % self._batch_size == 0:
+                    await session.refresh(application)
+                    if self._cancel_requested or application.status == models.SpeciesFilterApplicationStatus.CANCELLED:
+                        logger.info("Application %s cancelled by user", application.uuid)
+                        await self._update_application_status(
+                            session,
+                            application,
+                            status=models.SpeciesFilterApplicationStatus.CANCELLED,
+                        )
+                        await session.commit()
+                        return
 
                 for pred_tag in tags:
                     tag = pred_tag.tag

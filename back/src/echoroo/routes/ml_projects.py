@@ -828,7 +828,6 @@ def get_ml_projects_router(settings: EchorooSettings) -> APIRouter:
             uncertainty_high=request.uncertainty_high,
             samples_per_iteration=request.samples_per_iteration,
             selected_tag_ids=request.selected_tag_ids,
-            classifier_type=request.classifier_type,
             user=user,
         )
         await session.commit()
@@ -1031,6 +1030,7 @@ def get_ml_projects_router(settings: EchorooSettings) -> APIRouter:
         ml_project_uuid: UUID,
         limit: Limit = 10,
         offset: Offset = 0,
+        status__eq: models.CustomModelStatus | None = None,
         user: models.User | None = Depends(optional_user_dep),
     ) -> schemas.Page[schemas.CustomModel]:
         """Get all custom models for an ML project."""
@@ -1039,11 +1039,18 @@ def get_ml_projects_router(settings: EchorooSettings) -> APIRouter:
             ml_project_uuid,
             user=user,
         )
+
+        # Build filters
+        filters = []
+        if status__eq is not None:
+            filters.append(models.CustomModel.status == status__eq)
+
         models_list, total = await api.custom_models.get_many(
             session,
             ml_project,
             limit=limit,
             offset=offset,
+            filters=filters if filters else None,
             user=user,
         )
         return schemas.Page(
@@ -1363,16 +1370,30 @@ def get_ml_projects_router(settings: EchorooSettings) -> APIRouter:
             ml_project_uuid,
             user=user,
         )
+
+        # Get custom_model_id from UUID if provided
+        custom_model_id = data.custom_model_id
+        if data.custom_model_uuid is not None:
+            custom_model = await api.custom_models.get(
+                session,
+                data.custom_model_uuid,
+                user=user,
+            )
+            custom_model_id = custom_model.id
+
+        if custom_model_id is None:
+            raise ValueError("Either custom_model_id or custom_model_uuid must be provided")
+
         batch = await api.inference_batches.create(
             session,
             ml_project,
             name=data.name,
-            custom_model_id=data.custom_model_id,
+            custom_model_id=custom_model_id,
             confidence_threshold=data.confidence_threshold,
             clip_ids=data.clip_ids,
             include_all_clips=data.include_all_clips,
             exclude_already_labeled=data.exclude_already_labeled,
-            notes=data.notes,
+            description=data.description,
             user=user,
         )
         await session.commit()
@@ -1473,7 +1494,6 @@ def get_ml_projects_router(settings: EchorooSettings) -> APIRouter:
         inference_batch_uuid: UUID,
         limit: Limit = 10,
         offset: Offset = 0,
-        review_status: schemas.InferencePredictionReviewStatus | None = None,
         user: models.User | None = Depends(optional_user_dep),
     ) -> schemas.Page[schemas.InferencePrediction]:
         """Get paginated predictions for an inference batch."""
@@ -1493,7 +1513,6 @@ def get_ml_projects_router(settings: EchorooSettings) -> APIRouter:
             batch,
             limit=limit,
             offset=offset,
-            review_status=review_status,
             user=user,
         )
         return schemas.Page(
@@ -1504,44 +1523,59 @@ def get_ml_projects_router(settings: EchorooSettings) -> APIRouter:
         )
 
     @router.post(
-        "/{ml_project_uuid}/inference_batches/{inference_batch_uuid}/predictions/{prediction_uuid}/review",
-        response_model=schemas.InferencePrediction,
+        "/{ml_project_uuid}/inference_batches/{inference_batch_uuid}/convert-to-annotation-project",
+        response_model=schemas.AnnotationProject,
+        status_code=status.HTTP_201_CREATED,
     )
-    async def review_prediction(
+    async def convert_inference_batch_to_annotation_project(
         session: Session,
         ml_project_uuid: UUID,
         inference_batch_uuid: UUID,
-        prediction_uuid: UUID,
-        data: schemas.InferencePredictionReview,
+        data: schemas.ConvertToAnnotationProjectRequest,
         user: models.User = Depends(current_user_dep),
-    ) -> schemas.InferencePrediction:
-        """Review an inference prediction."""
+    ) -> schemas.AnnotationProject:
+        """Convert inference batch predictions to annotation project.
+
+        Creates a new annotation project from the inference batch predictions
+        that match the specified criteria (confidence threshold, positive only).
+
+        **Parameters:**
+        - name: Name for the new annotation project
+        - description: Optional description
+        - confidence_threshold: Override batch threshold (optional)
+        - include_only_positive: Only include positive predictions (default: True)
+
+        **Returns:**
+        The created annotation project.
+        """
         # Verify project access
         await api.ml_projects.get(
             session,
             ml_project_uuid,
             user=user,
         )
-        # Verify batch exists
-        await api.inference_batches.get(
+        batch = await api.inference_batches.get(
             session,
             inference_batch_uuid,
             user=user,
         )
-        prediction = await api.inference_batches.get_prediction(
-            session,
-            prediction_uuid,
-            user=user,
+
+        from echoroo.api.inference_batch_conversion import (
+            convert_inference_batch_to_annotation_project as convert_fn,
         )
-        updated = await api.inference_batches.review_prediction(
+
+        annotation_project = await convert_fn(
             session,
-            prediction,
-            review_status=data.review_status,
-            notes=data.notes,
+            batch,
+            name=data.name,
+            description=data.description,
             user=user,
+            confidence_threshold_override=data.confidence_threshold,
+            include_only_positive=data.include_only_positive,
         )
         await session.commit()
-        return updated
+
+        return annotation_project
 
     # =========================================================================
     # Search Session Curation & Export
@@ -1675,6 +1709,123 @@ def get_ml_projects_router(settings: EchorooSettings) -> APIRouter:
         )
 
     @router.post(
+        "/{ml_project_uuid}/search_sessions/{search_session_uuid}/train",
+        response_model=schemas.TrainModelResponse,
+    )
+    async def train_model(
+        session: Session,
+        ml_project_uuid: UUID,
+        search_session_uuid: UUID,
+        request: schemas.TrainModelRequest = schemas.TrainModelRequest(),
+        user: models.User = Depends(current_user_dep),
+    ) -> schemas.TrainModelResponse:
+        """Train model and return score distributions without adding samples.
+
+        This endpoint trains classifiers on labeled data and returns score
+        distributions for visualization. The trained model is cached in Redis
+        for 24 hours. The current_iteration is NOT incremented.
+
+        This is the first step in the new workflow: Train → View Histogram →
+        Decide to either Add Samples or Deploy.
+        """
+        # Verify project access
+        await api.ml_projects.get(
+            session,
+            ml_project_uuid,
+            user=user,
+        )
+        search_session = await api.search_sessions.get(
+            session,
+            search_session_uuid,
+            user=user,
+        )
+        result = await api.search_sessions.train_model(
+            session,
+            search_session,
+            request,
+            user=user,
+        )
+        await session.commit()
+        return result
+
+    @router.post(
+        "/{ml_project_uuid}/search_sessions/{search_session_uuid}/add_samples",
+        response_model=schemas.AddSamplesResponse,
+    )
+    async def add_samples(
+        session: Session,
+        ml_project_uuid: UUID,
+        search_session_uuid: UUID,
+        request: schemas.AddSamplesRequest = schemas.AddSamplesRequest(),
+        user: models.User = Depends(current_user_dep),
+    ) -> schemas.AddSamplesResponse:
+        """Add samples using cached trained model.
+
+        This endpoint retrieves the cached trained model from Redis and uses it
+        to score unlabeled clips. Samples in the uncertainty region are added
+        to the session. The current_iteration IS incremented.
+
+        This should be called after train_model, when the user decides they
+        want to add more samples for labeling.
+        """
+        # Verify project access
+        await api.ml_projects.get(
+            session,
+            ml_project_uuid,
+            user=user,
+        )
+        search_session = await api.search_sessions.get(
+            session,
+            search_session_uuid,
+            user=user,
+        )
+        result = await api.search_sessions.add_samples(
+            session,
+            search_session,
+            request,
+            user=user,
+        )
+        await session.commit()
+        return result
+
+    @router.post(
+        "/{ml_project_uuid}/search_sessions/{search_session_uuid}/deploy",
+        response_model=schemas.FinalizeResponse,
+    )
+    async def deploy_search_session(
+        session: Session,
+        ml_project_uuid: UUID,
+        search_session_uuid: UUID,
+        request: schemas.FinalizeRequest,
+        user: models.User = Depends(current_user_dep),
+    ) -> schemas.FinalizeResponse:
+        """Deploy a search session model (alias for finalize).
+
+        This is an alias for the /finalize endpoint with a more intuitive name.
+        It performs the same operations: trains and saves the final model,
+        and optionally creates an annotation project.
+        """
+        # Verify project access
+        await api.ml_projects.get(
+            session,
+            ml_project_uuid,
+            user=user,
+        )
+        search_session = await api.search_sessions.get(
+            session,
+            search_session_uuid,
+            user=user,
+        )
+        result = await api.search_sessions.finalize(
+            session,
+            search_session,
+            request,
+            user=user,
+        )
+        await session.commit()
+        return result
+
+    @router.post(
         "/{ml_project_uuid}/search_sessions/{search_session_uuid}/finalize",
         response_model=schemas.FinalizeResponse,
     )
@@ -1693,6 +1844,8 @@ def get_ml_projects_router(settings: EchorooSettings) -> APIRouter:
         3. Optionally creates an AnnotationProject with labeled clips
 
         The trained model can then be used for inference on new data.
+
+        Note: The /deploy endpoint is the preferred alias for this operation.
         """
         # Verify project access
         await api.ml_projects.get(

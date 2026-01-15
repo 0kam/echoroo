@@ -622,5 +622,67 @@ class SpeciesFilterAPI(UserResolutionMixin):
             total_excluded=len(excluded_items),
         )
 
+    async def cancel_application(
+        self,
+        session: AsyncSession,
+        run_uuid: UUID,
+        application_uuid: UUID,
+        *,
+        user: models.User | schemas.SimpleUser,
+    ) -> schemas.SpeciesFilterApplication:
+        """Cancel a running or queued species filter application.
+
+        Args:
+            session: Database session.
+            run_uuid: UUID of the foundation model run.
+            application_uuid: UUID of the filter application.
+            user: User initiating the cancellation.
+
+        Returns:
+            The cancelled filter application.
+
+        Raises:
+            NotFoundError: If run or application not found.
+            PermissionDeniedError: If user lacks permission.
+            InvalidDataError: If application cannot be cancelled.
+        """
+        db_user = await self._resolve_user(session, user)
+        if db_user is None:
+            raise exceptions.PermissionDeniedError("Authentication required")
+
+        # Get the foundation model run and check permission
+        run = await foundation_models.get_run_with_relations(session, run_uuid)
+
+        if not await can_edit_foundation_model_run(session, run, db_user):
+            raise exceptions.PermissionDeniedError(
+                "You do not have permission to cancel this filter application"
+            )
+
+        db_run = await foundation_models.get_run(session, run_uuid)
+
+        # Get the filter application
+        stmt = select(models.SpeciesFilterApplication).where(
+            models.SpeciesFilterApplication.uuid == application_uuid,
+            models.SpeciesFilterApplication.foundation_model_run_id == db_run.id,
+        )
+        app = await session.scalar(stmt)
+        if app is None:
+            raise exceptions.NotFoundError("Filter application not found")
+
+        # Check if the application can be cancelled
+        if app.status not in (
+            models.SpeciesFilterApplicationStatus.PENDING,
+            models.SpeciesFilterApplicationStatus.RUNNING,
+        ):
+            raise exceptions.InvalidDataError(
+                f"Cannot cancel application with status {app.status.value}"
+            )
+
+        # Cancel the application
+        app.status = models.SpeciesFilterApplicationStatus.CANCELLED
+        await session.flush()
+
+        return await self.get_application(session, application_uuid)
+
 
 species_filters = SpeciesFilterAPI()

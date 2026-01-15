@@ -209,6 +209,8 @@ from echoroo.schemas.reference_sounds import (
     ReferenceSoundUpdate,
 )
 from echoroo.schemas.search_sessions import (
+    AddSamplesRequest,
+    AddSamplesResponse,
     BulkCurateRequest,
     BulkLabelRequest,
     DistanceMetricType,
@@ -225,6 +227,8 @@ from echoroo.schemas.search_sessions import (
     SearchSessionCreate,
     SearchSessionTargetTag,
     TagScoreDistribution,
+    TrainModelRequest,
+    TrainModelResponse,
 )
 from echoroo.schemas.custom_models import (
     CustomModel,
@@ -247,8 +251,6 @@ from echoroo.schemas.inference_batches import (
     InferenceBatchStats,
     InferenceBatchStatus,
     InferencePrediction,
-    InferencePredictionReview,
-    InferencePredictionReviewStatus,
     InferenceProgress,
 )
 from echoroo.schemas.species_detection import (
@@ -441,6 +443,8 @@ __all__ = [
     "ReferenceSoundSource",
     "ReferenceSoundUpdate",
     # Search Sessions
+    "AddSamplesRequest",
+    "AddSamplesResponse",
     "BulkCurateRequest",
     "BulkLabelRequest",
     "DistanceMetricType",
@@ -457,6 +461,8 @@ __all__ = [
     "SearchSessionCreate",
     "SearchSessionTargetTag",
     "TagScoreDistribution",
+    "TrainModelRequest",
+    "TrainModelResponse",
     # Custom Models
     "CustomModel",
     "CustomModelCreate",
@@ -477,8 +483,6 @@ __all__ = [
     "InferenceBatchStats",
     "InferenceBatchStatus",
     "InferencePrediction",
-    "InferencePredictionReview",
-    "InferencePredictionReviewStatus",
     "InferenceProgress",
     # Species Detection
     "ConversionResult",

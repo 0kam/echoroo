@@ -5,8 +5,8 @@ of the ML Project workflow. It supports multiple dataset scopes for running
 inference across datasets.
 """
 
-import datetime
 import logging
+from datetime import datetime, timezone
 from typing import Sequence
 from uuid import UUID
 
@@ -148,7 +148,10 @@ class InferenceBatchStandaloneAPI(
             select(self._model)
             .where(self._model.uuid == db_obj.uuid)
             .options(
-                selectinload(self._model.custom_model),
+                selectinload(self._model.custom_model).options(
+                    selectinload(models.CustomModel.ml_project),
+                    selectinload(models.CustomModel.target_tag),
+                ),
                 selectinload(self._model.created_by),
                 selectinload(self._model.dataset_scopes).options(
                     selectinload(models.InferenceBatchDatasetScope.dataset),
@@ -184,41 +187,87 @@ class InferenceBatchStandaloneAPI(
             )
         )
 
-        reviewed_count = await session.scalar(
-            select(func.count(models.InferencePrediction.id))
-            .where(models.InferencePrediction.inference_batch_id == db_obj.id)
-            .where(
-                models.InferencePrediction.review_status
-                != models.InferencePredictionReviewStatus.UNREVIEWED
-            )
-        )
+        # Build CustomModel schema if available
+        custom_model_data = None
+        if db_obj.custom_model:
+            cm = db_obj.custom_model
 
-        confirmed_count = await session.scalar(
-            select(func.count(models.InferencePrediction.id))
-            .where(models.InferencePrediction.inference_batch_id == db_obj.id)
-            .where(
-                models.InferencePrediction.review_status
-                == models.InferencePredictionReviewStatus.CONFIRMED
+            # Model type mapping (backend enum → API enum)
+            model_type_map = {
+                models.CustomModelType.SELF_TRAINING_SVM: schemas.CustomModelType.SVM,
+            }
+            model_type = model_type_map.get(
+                cm.model_type, schemas.CustomModelType.SVM
             )
-        )
 
-        rejected_count = await session.scalar(
-            select(func.count(models.InferencePrediction.id))
-            .where(models.InferencePrediction.inference_batch_id == db_obj.id)
-            .where(
-                models.InferencePrediction.review_status
-                == models.InferencePredictionReviewStatus.REJECTED
-            )
-        )
+            # Map status enum
+            cm_status_map = {
+                models.CustomModelStatus.DRAFT: schemas.CustomModelStatus.DRAFT,
+                models.CustomModelStatus.TRAINING: schemas.CustomModelStatus.TRAINING,
+                models.CustomModelStatus.TRAINED: schemas.CustomModelStatus.TRAINED,
+                models.CustomModelStatus.FAILED: schemas.CustomModelStatus.FAILED,
+                models.CustomModelStatus.DEPLOYED: schemas.CustomModelStatus.DEPLOYED,
+                models.CustomModelStatus.ARCHIVED: schemas.CustomModelStatus.ARCHIVED,
+            }
+            cm_status = cm_status_map.get(cm.status, schemas.CustomModelStatus.DRAFT)
 
-        uncertain_count = await session.scalar(
-            select(func.count(models.InferencePrediction.id))
-            .where(models.InferencePrediction.inference_batch_id == db_obj.id)
-            .where(
-                models.InferencePrediction.review_status
-                == models.InferencePredictionReviewStatus.UNCERTAIN
+            # Build training config
+            training_config = schemas.CustomModelTrainingConfig(
+                model_type=model_type,
+                train_split=getattr(cm, "train_split", 0.8),
+                validation_split=getattr(cm, "validation_split", 0.1),
+                learning_rate=getattr(cm, "learning_rate", 0.001),
+                batch_size=getattr(cm, "batch_size", 32),
+                max_epochs=getattr(cm, "max_epochs", 100),
+                early_stopping_patience=getattr(cm, "early_stopping_patience", 10),
+                hidden_layers=getattr(cm, "hidden_layers", None) or [256, 128],
+                dropout_rate=getattr(cm, "dropout_rate", 0.3),
+                class_weight_balanced=getattr(cm, "class_weight_balanced", True),
+                random_seed=getattr(cm, "random_seed", 42),
             )
-        )
+
+            # Build metrics if available
+            metrics = None
+            if cm.status in (
+                models.CustomModelStatus.TRAINED,
+                models.CustomModelStatus.DEPLOYED,
+            ):
+                metrics = schemas.CustomModelMetrics(
+                    accuracy=getattr(cm, "accuracy", None),
+                    precision=getattr(cm, "precision", None),
+                    recall=getattr(cm, "recall", None),
+                    f1_score=getattr(cm, "f1_score", None),
+                    roc_auc=getattr(cm, "roc_auc", None),
+                    pr_auc=getattr(cm, "pr_auc", None),
+                    training_samples=getattr(cm, "training_samples", None) or 0,
+                    validation_samples=getattr(cm, "validation_samples", None) or 0,
+                    positive_samples=getattr(cm, "positive_samples", None) or 0,
+                    negative_samples=getattr(cm, "negative_samples", None) or 0,
+                )
+
+            custom_model_data = schemas.CustomModel(
+                uuid=cm.uuid,
+                id=cm.id,
+                name=cm.name,
+                description=cm.description,
+                ml_project_id=cm.ml_project_id if cm.ml_project_id is not None else None,
+                ml_project_uuid=cm.ml_project.uuid if cm.ml_project else None,
+                tag_id=cm.target_tag_id if cm.target_tag_id is not None else None,
+                tag=schemas.Tag.model_validate(cm.target_tag) if cm.target_tag else None,
+                model_type=model_type,
+                status=cm_status,
+                training_config=training_config,
+                metrics=metrics,
+                model_path=getattr(cm, "model_path", None),
+                training_started_at=getattr(cm, "training_started_at", None),
+                training_completed_at=getattr(cm, "training_completed_at", None),
+                training_duration_seconds=getattr(cm, "training_duration_seconds", None),
+                error_message=getattr(cm, "error_message", None),
+                version=getattr(cm, "version", 1),
+                is_active=getattr(cm, "is_active", True),
+                created_by_id=cm.created_by_id,
+                created_on=cm.created_on,
+            )
 
         # Calculate duration if completed
         duration_seconds = None
@@ -237,21 +286,20 @@ class InferenceBatchStandaloneAPI(
             "ml_project_id": db_obj.ml_project_id or 0,
             "ml_project_uuid": ml_project_uuid,
             "custom_model_id": db_obj.custom_model_id,
-            "custom_model": None,  # Would require building CustomModel schema
+            "custom_model": custom_model_data,
             "status": status,
             "confidence_threshold": db_obj.confidence_threshold,
             "total_clips": db_obj.total_items,
             "processed_clips": db_obj.processed_items,
             "total_predictions": total_predictions or 0,
-            "reviewed_count": reviewed_count or 0,
-            "confirmed_count": confirmed_count or 0,
-            "rejected_count": rejected_count or 0,
-            "uncertain_count": uncertain_count or 0,
+            "positive_predictions_count": db_obj.positive_predictions_count,
+            "negative_predictions_count": db_obj.negative_predictions_count,
+            "average_confidence": db_obj.average_confidence,
             "started_at": db_obj.started_on,
             "completed_at": db_obj.completed_on,
             "duration_seconds": duration_seconds,
             "error_message": db_obj.error_message,
-            "notes": db_obj.description,
+            "description": db_obj.description,
             "created_by_id": db_obj.created_by_id,
             "created_on": db_obj.created_on,
         }
@@ -276,20 +324,6 @@ class InferenceBatchStandaloneAPI(
         result = await session.execute(stmt)
         db_obj = result.scalar_one()
 
-        # Get the target tag from the custom model
-        custom_model = await session.get(
-            models.CustomModel, db_obj.inference_batch.custom_model_id
-        )
-        tag = await session.get(models.Tag, custom_model.target_tag_id)
-
-        # Map review status
-        review_status_map = {
-            models.InferencePredictionReviewStatus.UNREVIEWED: schemas.InferencePredictionReviewStatus.UNREVIEWED,
-            models.InferencePredictionReviewStatus.CONFIRMED: schemas.InferencePredictionReviewStatus.CONFIRMED,
-            models.InferencePredictionReviewStatus.REJECTED: schemas.InferencePredictionReviewStatus.REJECTED,
-            models.InferencePredictionReviewStatus.UNCERTAIN: schemas.InferencePredictionReviewStatus.UNCERTAIN,
-        }
-
         data = {
             "uuid": db_obj.uuid,
             "id": db_obj.id,
@@ -301,17 +335,8 @@ class InferenceBatchStandaloneAPI(
             "clip": (
                 schemas.Clip.model_validate(db_obj.clip) if db_obj.clip else None
             ),
-            "tag_id": tag.id if tag else 0,
-            "tag": schemas.Tag.model_validate(tag) if tag else None,
             "confidence": db_obj.confidence,
-            "rank": 1,  # Would need separate calculation
-            "review_status": review_status_map.get(
-                db_obj.review_status,
-                schemas.InferencePredictionReviewStatus.UNREVIEWED,
-            ),
-            "reviewed_at": db_obj.reviewed_on,
-            "reviewed_by_id": db_obj.reviewed_by_id,
-            "notes": db_obj.notes,
+            "predicted_positive": db_obj.predicted_positive,
             "created_on": db_obj.created_on,
         }
 
@@ -422,7 +447,15 @@ class InferenceBatchStandaloneAPI(
         # Generate name if not provided
         name = data.name
         if not name:
-            name = f"Inference batch - {datetime.datetime.now(datetime.UTC).strftime('%Y-%m-%d %H:%M')}"
+            name = f"Inference batch - {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M')}"
+
+        # Calculate total clips to process
+        # For standalone batches, we'll start with 0 and update when dataset scopes are added
+        # or when inference is run
+        total_clips = 0
+        if data.clip_ids:
+            # Use specific clip IDs if provided
+            total_clips = len(data.clip_ids)
 
         # Create the inference batch
         db_obj = await common.create_object(
@@ -432,9 +465,11 @@ class InferenceBatchStandaloneAPI(
             project_id=project_uuid,
             custom_model_id=data.custom_model_id,
             confidence_threshold=data.confidence_threshold,
-            description=data.notes,
+            description=data.description,
             status=models.InferenceBatchStatus.PENDING,
             created_by_id=db_user.id,
+            total_items=total_clips,
+            processed_items=0,
         )
 
         return await self._build_schema(session, db_obj)
@@ -503,14 +538,38 @@ class InferenceBatchStandaloneAPI(
                 f"Cannot start inference for batch in status {db_obj.status.value}"
             )
 
-        # Update status to running
+        # Calculate total clips to process from dataset scopes
+        total_clips = 0
+        dataset_scope_stmt = select(models.InferenceBatchDatasetScope).where(
+            models.InferenceBatchDatasetScope.inference_batch_id == db_obj.id
+        )
+        dataset_scopes = (await session.scalars(dataset_scope_stmt)).all()
+
+        if dataset_scopes:
+            dataset_ids = [scope.dataset_id for scope in dataset_scopes]
+
+            # Count clips in these datasets
+            clip_count_stmt = (
+                select(func.count(models.Clip.id))
+                .join(models.Recording, models.Clip.recording_id == models.Recording.id)
+                .join(
+                    models.DatasetRecording,
+                    models.Recording.id == models.DatasetRecording.recording_id,
+                )
+                .where(models.DatasetRecording.dataset_id.in_(dataset_ids))
+            )
+
+            total_clips = await session.scalar(clip_count_stmt) or 0
+
+        # Update status to running and set total_items
         db_obj = await common.update_object(
             session,
             self._model,
             self._get_pk_condition(inference_batch_uuid),
             {
                 "status": models.InferenceBatchStatus.RUNNING,
-                "started_on": datetime.datetime.now(datetime.UTC),
+                "started_on": datetime.now(timezone.utc),
+                "total_items": total_clips,
             },
         )
 
@@ -525,6 +584,7 @@ class InferenceBatchStandaloneAPI(
 
         logger.info(
             f"Inference requested for batch {inference_batch_uuid}. "
+            f"Processing {total_clips} clips. "
             "This feature requires ML pipeline integration."
         )
 
@@ -537,7 +597,6 @@ class InferenceBatchStandaloneAPI(
         *,
         limit: int | None = 100,
         offset: int | None = 0,
-        review_status: schemas.InferencePredictionReviewStatus | None = None,
         user: models.User | None = None,
     ) -> tuple[Sequence[schemas.InferencePrediction], int]:
         """Get predictions for an inference batch."""
@@ -559,17 +618,6 @@ class InferenceBatchStandaloneAPI(
             models.InferencePrediction.inference_batch_id == db_obj.id
         ]
 
-        if review_status is not None:
-            status_map = {
-                schemas.InferencePredictionReviewStatus.UNREVIEWED: models.InferencePredictionReviewStatus.UNREVIEWED,
-                schemas.InferencePredictionReviewStatus.CONFIRMED: models.InferencePredictionReviewStatus.CONFIRMED,
-                schemas.InferencePredictionReviewStatus.REJECTED: models.InferencePredictionReviewStatus.REJECTED,
-                schemas.InferencePredictionReviewStatus.UNCERTAIN: models.InferencePredictionReviewStatus.UNCERTAIN,
-            }
-            filters.append(
-                models.InferencePrediction.review_status == status_map[review_status]
-            )
-
         db_predictions, count = await common.get_objects(
             session,
             models.InferencePrediction,
@@ -585,64 +633,6 @@ class InferenceBatchStandaloneAPI(
             results.append(schema_obj)
 
         return results, count
-
-    async def review_prediction(
-        self,
-        session: AsyncSession,
-        prediction_uuid: UUID,
-        *,
-        review_status: schemas.InferencePredictionReviewStatus,
-        notes: str | None = None,
-        user: models.User | schemas.SimpleUser,
-    ) -> schemas.InferencePrediction:
-        """Review an inference prediction."""
-        db_user = await self._resolve_user(session, user)
-        if db_user is None:
-            raise exceptions.PermissionDeniedError(
-                "Authentication required to review predictions"
-            )
-
-        db_pred = await common.get_object(
-            session,
-            models.InferencePrediction,
-            models.InferencePrediction.uuid == prediction_uuid,
-        )
-
-        # Get the batch to check permissions
-        batch = await session.get(models.InferenceBatch, db_pred.inference_batch_id)
-        if batch is None:
-            raise exceptions.NotFoundError(
-                f"Inference prediction with uuid {prediction_uuid} not found"
-            )
-
-        if not await can_edit_inference_batch(session, batch, db_user):
-            raise exceptions.PermissionDeniedError(
-                "You do not have permission to review predictions in this batch"
-            )
-
-        status_map = {
-            schemas.InferencePredictionReviewStatus.UNREVIEWED: models.InferencePredictionReviewStatus.UNREVIEWED,
-            schemas.InferencePredictionReviewStatus.CONFIRMED: models.InferencePredictionReviewStatus.CONFIRMED,
-            schemas.InferencePredictionReviewStatus.REJECTED: models.InferencePredictionReviewStatus.REJECTED,
-            schemas.InferencePredictionReviewStatus.UNCERTAIN: models.InferencePredictionReviewStatus.UNCERTAIN,
-        }
-
-        update_data = {
-            "review_status": status_map[review_status],
-            "reviewed_on": datetime.datetime.now(datetime.UTC),
-            "reviewed_by_id": db_user.id,
-        }
-        if notes is not None:
-            update_data["notes"] = notes
-
-        db_pred = await common.update_object(
-            session,
-            models.InferencePrediction,
-            models.InferencePrediction.uuid == prediction_uuid,
-            update_data,
-        )
-
-        return await self._build_prediction_schema(session, db_pred)
 
 
 inference_batches_standalone = InferenceBatchStandaloneAPI()

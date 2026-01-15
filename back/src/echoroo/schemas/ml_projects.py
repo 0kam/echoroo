@@ -169,9 +169,6 @@ class MLProjectStats(BaseModel):
     total_predictions: int = 0
     """Total number of predictions made."""
 
-    reviewed_predictions: int = 0
-    """Number of predictions that have been reviewed."""
-
     last_activity: datetime.datetime | None = None
     """Timestamp of the last activity in the project."""
 

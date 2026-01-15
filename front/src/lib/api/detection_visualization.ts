@@ -45,6 +45,7 @@ export type DetectionTemporalResponse = z.infer<
 
 const DEFAULT_ENDPOINTS = {
   temporal: "/api/v1/detection_visualization/temporal/",
+  temporalInference: "/api/v1/detection_visualization/temporal_inference/",
 };
 
 // ============================================================================
@@ -73,7 +74,24 @@ export function registerDetectionVisualizationAPI(instance: AxiosInstance) {
     return DetectionTemporalResponseSchema.parse(data);
   }
 
+  /**
+   * Get temporal inference batch data for visualization.
+   * Returns detection counts grouped by date and hour for a specific inference batch.
+   */
+  async function getInferenceBatchTemporal({
+    batchUuid,
+  }: {
+    batchUuid: string;
+  }): Promise<DetectionTemporalResponse> {
+    const params: Record<string, string> = {
+      batch_uuid: batchUuid,
+    };
+    const { data } = await instance.get(DEFAULT_ENDPOINTS.temporalInference, { params });
+    return DetectionTemporalResponseSchema.parse(data);
+  }
+
   return {
     getTemporalData,
+    getInferenceBatchTemporal,
   };
 }

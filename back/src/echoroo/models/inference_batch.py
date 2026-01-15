@@ -43,7 +43,6 @@ __all__ = [
     "InferenceBatchDatasetScope",
     "InferenceBatchStatus",
     "InferencePrediction",
-    "InferencePredictionReviewStatus",
 ]
 
 
@@ -64,22 +63,6 @@ class InferenceBatchStatus(str, enum.Enum):
 
     CANCELLED = "cancelled"
     """Batch was cancelled by user."""
-
-
-class InferencePredictionReviewStatus(str, enum.Enum):
-    """Review status for inference predictions."""
-
-    UNREVIEWED = "unreviewed"
-    """Prediction has not been reviewed."""
-
-    CONFIRMED = "confirmed"
-    """Prediction confirmed as correct."""
-
-    REJECTED = "rejected"
-    """Prediction rejected as incorrect."""
-
-    UNCERTAIN = "uncertain"
-    """Prediction is ambiguous or uncertain."""
 
 
 class InferenceBatch(Base):
@@ -198,6 +181,24 @@ class InferenceBatch(Base):
         default=0,
     )
     """Number of clips predicted as positive."""
+
+    positive_predictions_count: orm.Mapped[int] = orm.mapped_column(
+        nullable=False,
+        default=0,
+    )
+    """Number of predictions with positive label."""
+
+    negative_predictions_count: orm.Mapped[int] = orm.mapped_column(
+        nullable=False,
+        default=0,
+    )
+    """Number of predictions with negative label."""
+
+    average_confidence: orm.Mapped[float | None] = orm.mapped_column(
+        nullable=True,
+        default=None,
+    )
+    """Average confidence score across all predictions (0.0 to 1.0)."""
 
     # Timestamps
     started_on: orm.Mapped[datetime.datetime | None] = orm.mapped_column(
@@ -411,40 +412,6 @@ class InferencePrediction(Base):
     )
     """Whether the model predicted positive for target sound."""
 
-    # Optional fields (with defaults) after
-    review_status: orm.Mapped[InferencePredictionReviewStatus] = orm.mapped_column(
-        sa.Enum(
-            InferencePredictionReviewStatus,
-            name="inference_prediction_review_status",
-            values_callable=lambda x: [e.value for e in x],
-            create_type=False,
-        ),
-        nullable=False,
-        default=InferencePredictionReviewStatus.UNREVIEWED,
-        server_default=InferencePredictionReviewStatus.UNREVIEWED.value,
-    )
-    """Review status for quality control."""
-
-    reviewed_by_id: orm.Mapped[UUID | None] = orm.mapped_column(
-        ForeignKey("user.id"),
-        nullable=True,
-        default=None,
-    )
-    """The user who reviewed this prediction."""
-
-    reviewed_on: orm.Mapped[datetime.datetime | None] = orm.mapped_column(
-        sa.DateTime(timezone=True),
-        nullable=True,
-        default=None,
-    )
-    """Timestamp when this prediction was reviewed."""
-
-    notes: orm.Mapped[str | None] = orm.mapped_column(
-        nullable=True,
-        default=None,
-    )
-    """Optional notes about this prediction."""
-
     # Relationships
     inference_batch: orm.Mapped[InferenceBatch] = orm.relationship(
         "InferenceBatch",
@@ -461,12 +428,3 @@ class InferencePrediction(Base):
         repr=False,
     )
     """The clip this prediction is for."""
-
-    reviewed_by: orm.Mapped["User | None"] = orm.relationship(
-        "User",
-        foreign_keys=[reviewed_by_id],
-        viewonly=True,
-        init=False,
-        repr=False,
-    )
-    """The user who reviewed this prediction."""

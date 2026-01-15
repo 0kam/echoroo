@@ -98,6 +98,18 @@ export type FinalizeRequest = z.input<typeof schemas.FinalizeRequestSchema>;
 
 export type FinalizeResponse = z.infer<typeof schemas.FinalizeResponseSchema>;
 
+export type TrainModelRequest = z.input<typeof schemas.TrainModelRequestSchema>;
+
+export type TrainModelResponse = z.infer<
+  typeof schemas.TrainModelResponseSchema
+>;
+
+export type AddSamplesRequest = z.input<typeof schemas.AddSamplesRequestSchema>;
+
+export type AddSamplesResponse = z.infer<
+  typeof schemas.AddSamplesResponseSchema
+>;
+
 // ============================================================================
 // CustomModel Types
 // ============================================================================
@@ -134,19 +146,15 @@ export type InferenceBatchCreate = z.input<
 // InferencePrediction Types
 // ============================================================================
 
-export type InferencePredictionReviewStatus = z.infer<
-  typeof schemas.InferencePredictionReviewStatusSchema
->;
-
 export type InferencePrediction = z.infer<
   typeof schemas.InferencePredictionSchema
 >;
 
-export type InferencePredictionReview = z.input<
-  typeof schemas.InferencePredictionReviewSchema
->;
-
 export type InferenceProgress = z.infer<typeof schemas.InferenceProgressSchema>;
+
+export type ConvertToAnnotationProjectRequest = z.input<
+  typeof schemas.ConvertToAnnotationProjectRequestSchema
+>;
 
 // ============================================================================
 // MLProject Dataset Scope Types

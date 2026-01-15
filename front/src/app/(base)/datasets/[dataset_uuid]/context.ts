@@ -16,6 +16,11 @@ const DatasetContext = createContext<Dataset>({
   primary_site_id: null,
   primary_recorder_id: null,
   license_id: null,
+  status: "pending",
+  processing_progress: 0,
+  processing_error: null,
+  total_files: null,
+  processed_files: 0,
 });
 
 export default DatasetContext;

@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from echoroo import exceptions, models, schemas
 from echoroo.api import common
+from echoroo.core.model_cache import get_model_cache
 from echoroo.ml.active_learning import MIN_EMBEDDING_NORM
 from echoroo.ml.classifiers import ClassifierType, UnifiedClassifier
 from echoroo.ml.constants import MIN_NEGATIVE_SAMPLES, MIN_POSITIVE_SAMPLES
@@ -104,11 +105,10 @@ class SearchSessionFinalizationService:
         # Validate training data
         self._validate_training_data(pos_count, neg_count)
 
-        # Train classifier
+        # Train classifier (always use Self-Training+SVM)
         classifier = self._train_classifier(
             embeddings=embeddings,
             labels=labels,
-            classifier_type=data.model_type,
         )
 
         # Save model
@@ -118,7 +118,6 @@ class SearchSessionFinalizationService:
             classifier=classifier,
             model_name=data.model_name,
             description=data.description,
-            classifier_type=data.model_type,
             primary_tag_id=primary_tag_id,
             positive_count=pos_count,
             negative_count=neg_count,
@@ -140,6 +139,21 @@ class SearchSessionFinalizationService:
                 )
             )
 
+        # Update ML Project status to INFERENCE after finalization
+        await common.update_object(
+            self.session,
+            models.MLProject,
+            models.MLProject.id == ml_project.id,
+            status=models.MLProjectStatus.INFERENCE,
+        )
+
+        # Clean up all cached models for this session
+        model_cache = get_model_cache(self.session)
+        deleted_count = await model_cache.delete_all_models(search_session.uuid)
+        logger.info(
+            f"Deleted {deleted_count} cached models for session {search_session.uuid}"
+        )
+
         logger.info(
             f"Search session {search_session.uuid} finalized: "
             f"model={custom_model.uuid}, positive={pos_count}, negative={neg_count}"
@@ -153,7 +167,7 @@ class SearchSessionFinalizationService:
             positive_count=pos_count,
             negative_count=neg_count,
             message=(
-                f"Successfully trained {data.model_type} model with "
+                f"Successfully trained Self-Training (SVM) model with "
                 f"{pos_count} positive and {neg_count} negative samples."
             ),
         )
@@ -302,9 +316,10 @@ class SearchSessionFinalizationService:
         self,
         embeddings: np.ndarray,
         labels: np.ndarray,
-        classifier_type: str,
     ) -> UnifiedClassifier:
-        """Train a classifier on the training data.
+        """Train a Self-Training+SVM classifier on the training data.
+
+        Always uses Self-Training+SVM with automatic C parameter tuning.
 
         Parameters
         ----------
@@ -312,21 +327,18 @@ class SearchSessionFinalizationService:
             Training embeddings array of shape (n_samples, embedding_dim).
         labels
             Training labels (0 or 1) of shape (n_samples,).
-        classifier_type
-            Type of classifier to train.
 
         Returns
         -------
         UnifiedClassifier
             Trained classifier instance.
         """
-        logger.info(f"Training {classifier_type} classifier with {len(labels)} samples")
+        logger.info(f"Training Self-Training+SVM classifier with {len(labels)} samples")
 
-        classifier_type_enum = ClassifierType(classifier_type)
-        classifier = UnifiedClassifier(classifier_type_enum)
+        classifier = UnifiedClassifier(ClassifierType.SELF_TRAINING_SVM)
         classifier.fit(embeddings, labels)
 
-        logger.info(f"Classifier '{classifier_type}' training complete")
+        logger.info("Self-Training+SVM classifier training complete")
         return classifier
 
     async def _save_model(
@@ -336,13 +348,14 @@ class SearchSessionFinalizationService:
         classifier: UnifiedClassifier,
         model_name: str,
         description: str | None,
-        classifier_type: str,
         primary_tag_id: int,
         positive_count: int,
         negative_count: int,
         user: models.User,
     ) -> models.CustomModel:
         """Save trained classifier to database and disk.
+
+        Always saves as Self-Training+SVM model type.
 
         Parameters
         ----------
@@ -356,8 +369,6 @@ class SearchSessionFinalizationService:
             Name for the model.
         description
             Optional description.
-        classifier_type
-            Type of classifier.
         primary_tag_id
             Primary tag ID for this model.
         positive_count
@@ -372,16 +383,8 @@ class SearchSessionFinalizationService:
         models.CustomModel
             Saved CustomModel instance.
         """
-        # Map ClassifierType to CustomModelType
-        model_type_map = {
-            ClassifierType.LOGISTIC_REGRESSION: models.CustomModelType.LOGISTIC_REGRESSION,
-            ClassifierType.SVM_LINEAR: models.CustomModelType.SVM_LINEAR,
-            ClassifierType.MLP_SMALL: models.CustomModelType.MLP_SMALL,
-            ClassifierType.MLP_MEDIUM: models.CustomModelType.MLP_MEDIUM,
-            ClassifierType.RANDOM_FOREST: models.CustomModelType.RANDOM_FOREST,
-        }
-        classifier_type_enum = ClassifierType(classifier_type)
-        db_model_type = model_type_map[classifier_type_enum]
+        # Always use Self-Training+SVM model type
+        db_model_type = models.CustomModelType.SELF_TRAINING_SVM
 
         # Create CustomModel record first to get UUID for file path
         custom_model = await common.create_object(
@@ -394,7 +397,8 @@ class SearchSessionFinalizationService:
             created_by_id=user.id,
             ml_project_id=ml_project.id,
             project_id=ml_project.project_id,
-            status=models.CustomModelStatus.TRAINED,
+            source_search_session_id=search_session.id,
+            status=models.CustomModelStatus.DEPLOYED,
             training_samples=positive_count + negative_count,
             training_started_on=datetime.datetime.now(datetime.UTC),
             training_completed_on=datetime.datetime.now(datetime.UTC),

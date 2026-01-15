@@ -4,6 +4,7 @@ import logging
 from dataclasses import dataclass
 from pathlib import Path
 
+import soundfile as sf
 from soundevent.audio import (
     MediaInfo,
     compute_md5_checksum,
@@ -53,6 +54,7 @@ class FileInfo:
     is_audio: bool = False
     hash: str | None = None
     media_info: MediaInfo | None = None
+    bit_depth: int | None = None
 
 
 def get_file_info(path: Path) -> FileInfo:
@@ -92,13 +94,27 @@ def get_file_info(path: Path) -> FileInfo:
     hash = compute_md5_checksum(path)
     logger.debug("done")
 
+    media_info = None
+    bit_depth = None
+
     try:
         logger.debug(f"Getting media info of file: {path}")
         media_info = get_media_info(path)
         logger.debug("done")
+
+        # Extract bit depth using soundfile (called once here)
+        try:
+            sf_info = sf.info(str(path))
+            subtype = sf_info.subtype
+            if subtype and '_' in subtype:
+                bit_str = subtype.split('_')[-1]
+                if bit_str.isdigit():
+                    bit_depth = int(bit_str)
+        except Exception as e:
+            logger.debug(f"Could not extract bit depth from {path}: {e}")
+
     except ValueError:
         logger.warning(f"Could not get media info of file: {path}")
-        media_info = None
 
     logger.debug(f"Finished getting information about file: {path}")
     return FileInfo(
@@ -107,4 +123,5 @@ def get_file_info(path: Path) -> FileInfo:
         is_audio=True,
         hash=hash,
         media_info=media_info,
+        bit_depth=bit_depth,
     )

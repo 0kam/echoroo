@@ -169,16 +169,12 @@ class CustomModelStandaloneAPI(
         """Build schema from database object."""
         db_obj = await self._eager_load_relationships(session, db_obj)
 
-        # Map model type enum
+        # Model type mapping (backend enum → API enum)
         model_type_map = {
-            models.CustomModelType.LOGISTIC_REGRESSION: schemas.CustomModelType.LINEAR_CLASSIFIER,
-            models.CustomModelType.SVM_LINEAR: schemas.CustomModelType.SVM,
-            models.CustomModelType.MLP_SMALL: schemas.CustomModelType.MLP,
-            models.CustomModelType.MLP_MEDIUM: schemas.CustomModelType.MLP,
-            models.CustomModelType.RANDOM_FOREST: schemas.CustomModelType.RANDOM_FOREST,
+            models.CustomModelType.SELF_TRAINING_SVM: schemas.CustomModelType.SVM,
         }
         model_type = model_type_map.get(
-            db_obj.model_type, schemas.CustomModelType.MLP
+            db_obj.model_type, schemas.CustomModelType.SVM
         )
 
         # Map status enum
@@ -452,13 +448,9 @@ class CustomModelStandaloneAPI(
                 "At least one training source must be marked as positive"
             )
 
-        # Map model type
+        # Model type mapping (API enum → backend enum)
         model_type_map = {
-            schemas.CustomModelType.LINEAR_CLASSIFIER: models.CustomModelType.LOGISTIC_REGRESSION,
-            schemas.CustomModelType.MLP: models.CustomModelType.MLP_MEDIUM,
-            schemas.CustomModelType.RANDOM_FOREST: models.CustomModelType.RANDOM_FOREST,
-            schemas.CustomModelType.SVM: models.CustomModelType.SVM_LINEAR,
-            schemas.CustomModelType.GRADIENT_BOOSTING: models.CustomModelType.RANDOM_FOREST,
+            schemas.CustomModelType.SVM: models.CustomModelType.SELF_TRAINING_SVM,
         }
 
         # Store hyperparameters as JSON
@@ -484,7 +476,7 @@ class CustomModelStandaloneAPI(
             project_id=data.project_uuid,
             target_tag_id=target_tag.id,
             model_type=model_type_map.get(
-                data.model_type, models.CustomModelType.MLP_MEDIUM
+                data.model_type, models.CustomModelType.SELF_TRAINING_SVM
             ),
             hyperparameters=hyperparameters,
             status=models.CustomModelStatus.DRAFT,

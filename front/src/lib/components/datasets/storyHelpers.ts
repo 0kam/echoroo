@@ -76,6 +76,11 @@ export function makeDataset(overrides: Partial<Dataset> = {}): Dataset {
     primary_site: site,
     primary_recorder: recorder,
     license,
+    status: "completed",
+    processing_progress: 100,
+    processing_error: null,
+    total_files: 128,
+    processed_files: 128,
   };
 
   return {

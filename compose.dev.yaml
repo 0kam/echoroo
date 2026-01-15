@@ -38,6 +38,24 @@ services:
     networks:
       - echoroo-net
 
+  # Redis for caching trained models during active learning
+  redis:
+    image: redis:7-alpine
+    container_name: echoroo-redis
+    restart: unless-stopped
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - echoroo-net
+
   # Backend API Server (using dev image with GPU-compatible TensorFlow)
   backend:
     build:
@@ -48,6 +66,8 @@ services:
     command: ["python", "-m", "echoroo"]
     depends_on:
       db:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     ports:
       - "${ECHOROO_PORT:-5000}:5000"
@@ -80,6 +100,8 @@ services:
       - ECHOROO_DB_NAME=${POSTGRES_DB:-echoroo}
       - ECHOROO_DB_USERNAME=${POSTGRES_USER:-postgres}
       - ECHOROO_DB_PASSWORD=${POSTGRES_PASSWORD}
+      - ECHOROO_REDIS_HOST=redis
+      - ECHOROO_REDIS_PORT=6379
       - ECHOROO_DEV=true
       - ECHOROO_LOG_TO_STDOUT=true
       - ECHOROO_LOG_TO_FILE=false
@@ -89,6 +111,11 @@ services:
       - ECHOROO_ML_USE_GPU=${ECHOROO_ML_USE_GPU:-true}
       # Enable debug timing for ML inference performance analysis
       - ECHOROO_ML_DEBUG_TIMING=true
+      # CUDA/TensorFlow settings for GPU support
+      - CUDA_VISIBLE_DEVICES=0
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - TF_FORCE_GPU_ALLOW_GROWTH=true
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:5000/docs"]
       interval: 30s
@@ -163,3 +190,5 @@ volumes:
     name: echoroo-dev-data
   ml-models:
     name: echoroo-dev-ml-models
+  redis-data:
+    name: echoroo-dev-redis

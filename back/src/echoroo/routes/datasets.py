@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Body, Depends, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, UploadFile
 from fastapi.responses import Response, StreamingResponse
 from pydantic import DirectoryPath
 from sqlalchemy.exc import IntegrityError
@@ -119,13 +119,15 @@ def get_dataset_router(settings: EchorooSettings) -> APIRouter:
     @router.post(
         "/",
         response_model=schemas.Dataset,
+        status_code=202,
     )
     async def create_dataset(
         session: Session,
         dataset: schemas.DatasetCreate,
+        background_tasks: BackgroundTasks,
         user: models.User = Depends(current_user_dep),
     ):
-        """Create a new dataset."""
+        """Create a new dataset with background processing."""
         created = await api.datasets.create(
             session,
             name=dataset.name,
@@ -140,6 +142,7 @@ def get_dataset_router(settings: EchorooSettings) -> APIRouter:
             doi=dataset.doi,
             note=dataset.note,
             gain=dataset.gain,
+            background_tasks=background_tasks,
         )
         await session.commit()
         return created

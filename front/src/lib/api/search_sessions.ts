@@ -36,6 +36,9 @@ function buildEndpoints(mlProjectUuid: string, searchSessionUuid?: string) {
     exportToAnnotationProject: `${sessionBase}/export_to_annotation_project`,
     scoreDistribution: `${sessionBase}/score_distribution`,
     finalize: `${sessionBase}/finalize`,
+    trainModel: `${sessionBase}/train`,
+    addSamples: `${sessionBase}/add_samples`,
+    deploy: `${sessionBase}/deploy`,
   };
 }
 
@@ -322,6 +325,44 @@ export function registerSearchSessionAPI(
     return schemas.FinalizeResponseSchema.parse(responseData);
   }
 
+  /**
+   * Train model and return score distributions (no sample addition).
+   *
+   * @param mlProjectUuid - The UUID of the ML project
+   * @param sessionUuid - The UUID of the search session
+   * @param data - The train model request
+   * @returns The train model response with score distributions
+   */
+  async function trainModel(
+    mlProjectUuid: string,
+    sessionUuid: string,
+    data?: types.TrainModelRequest,
+  ): Promise<types.TrainModelResponse> {
+    const body = data ? schemas.TrainModelRequestSchema.parse(data) : {};
+    const endpoints = buildEndpoints(mlProjectUuid, sessionUuid);
+    const { data: responseData } = await instance.post(endpoints.trainModel, body);
+    return schemas.TrainModelResponseSchema.parse(responseData);
+  }
+
+  /**
+   * Add samples using cached trained model.
+   *
+   * @param mlProjectUuid - The UUID of the ML project
+   * @param sessionUuid - The UUID of the search session
+   * @param data - The add samples request with uncertainty parameters
+   * @returns The add samples response with added count and new iteration
+   */
+  async function addSamples(
+    mlProjectUuid: string,
+    sessionUuid: string,
+    data: types.AddSamplesRequest,
+  ): Promise<types.AddSamplesResponse> {
+    const body = schemas.AddSamplesRequestSchema.parse(data);
+    const endpoints = buildEndpoints(mlProjectUuid, sessionUuid);
+    const { data: responseData } = await instance.post(endpoints.addSamples, body);
+    return schemas.AddSamplesResponseSchema.parse(responseData);
+  }
+
   return {
     getMany,
     get,
@@ -337,5 +378,7 @@ export function registerSearchSessionAPI(
     exportToAnnotationProject,
     getScoreDistribution,
     finalize: finalizeSearchSession,
+    trainModel,
+    addSamples,
   } as const;
 }

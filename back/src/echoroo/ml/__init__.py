@@ -54,6 +54,7 @@ from echoroo.ml.search import SearchFilter, SimilarityResult, VectorSearch, vect
 if TYPE_CHECKING:
     from echoroo.ml.species_detection_worker import SpeciesDetectionWorker as SpeciesDetectionWorker
     from echoroo.ml.species_filter_worker import SpeciesFilterWorker as SpeciesFilterWorker
+    from echoroo.ml.inference_batch_worker import InferenceBatchWorker as InferenceBatchWorker
     from echoroo.ml.species_resolver import SpeciesInfo as SpeciesInfo
     from echoroo.ml.species_resolver import SpeciesResolver as SpeciesResolver
 
@@ -69,6 +70,9 @@ def __getattr__(name: str):
     if name == "SpeciesFilterWorker":
         from echoroo.ml.species_filter_worker import SpeciesFilterWorker
         return SpeciesFilterWorker
+    if name == "InferenceBatchWorker":
+        from echoroo.ml.inference_batch_worker import InferenceBatchWorker
+        return InferenceBatchWorker
     if name == "SpeciesInfo":
         from echoroo.ml.species_resolver import SpeciesInfo
         return SpeciesInfo
@@ -91,6 +95,7 @@ __all__ = [
     # Workers
     "SpeciesDetectionWorker",
     "SpeciesFilterWorker",
+    "InferenceBatchWorker",
     # Model registry
     "ModelRegistry",
     "ModelInfo",

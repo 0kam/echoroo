@@ -89,7 +89,8 @@ export type SearchSessionCreate = z.infer<typeof SearchSessionCreateSchema>;
 
 // SearchResultLabelData schema - replaces SearchResultLabelUpdate
 export const SearchResultLabelDataSchema = z.object({
-  assigned_tag_id: z.number().int().nullable().optional(),
+  assigned_tag_ids: z.array(z.number().int()).default([]),
+  assigned_tag_id: z.number().int().nullable().optional(), // Deprecated, for backward compatibility
   is_negative: z.boolean().default(false),
   is_uncertain: z.boolean().default(false),
   is_skipped: z.boolean().default(false),
@@ -104,10 +105,13 @@ export const SearchResultSchema = z.object({
   search_session_uuid: z.string().uuid(),
   clip_id: z.number().int().optional(), // Backend excludes this field
   clip: ClipSchema,
-  similarity: z.number().min(0).max(1),
+  similarity: z.number().min(-1).max(1), // Cosine similarity ranges from -1 to 1
   rank: z.number().int().min(1),
 
-  // Active Learning label fields
+  // Active Learning label fields (multi-label support)
+  assigned_tag_ids: z.array(z.number().int()).default([]),
+  assigned_tags: z.array(TagSchema).default([]),
+  // Deprecated single-tag fields (for backward compatibility)
   assigned_tag_id: z.number().int().nullable().optional(),
   assigned_tag: TagSchema.nullable().optional(),
   is_negative: z.boolean().default(false),
@@ -174,6 +178,8 @@ export const TagScoreDistributionSchema = z.object({
   positive_count: z.number().int(),
   negative_count: z.number().int(),
   mean_score: z.number(),
+  training_positive_scores: z.array(z.number()),
+  training_negative_scores: z.array(z.number()),
 });
 
 export type TagScoreDistribution = z.infer<typeof TagScoreDistributionSchema>;
@@ -191,6 +197,9 @@ export const ClassifierTypeSchema = z.enum([
   "mlp_small",
   "mlp_medium",
   "random_forest",
+  "self_training_lr",
+  "self_training_svm",
+  "label_spreading",
 ]);
 
 export type ClassifierType = z.infer<typeof ClassifierTypeSchema>;
@@ -201,7 +210,6 @@ export const RunIterationRequestSchema = z.object({
   uncertainty_high: z.number().min(0.5).max(1).default(0.75),
   samples_per_iteration: z.number().int().min(5).max(100).default(20),
   selected_tag_ids: z.array(z.number().int()).nullable().optional(),
-  classifier_type: ClassifierTypeSchema.default("logistic_regression"),
 });
 
 export type RunIterationRequest = z.infer<typeof RunIterationRequestSchema>;
@@ -241,7 +249,6 @@ export type MLProjectAnnotationProject = z.infer<typeof MLProjectAnnotationProje
 // Finalize search session request schema
 export const FinalizeRequestSchema = z.object({
   model_name: z.string().min(1, "Model name is required").max(255),
-  model_type: ClassifierTypeSchema,
   create_annotation_project: z.boolean().default(true),
   annotation_project_name: z.string().max(255).nullable().optional(),
   description: z.string().max(2000).optional(),
@@ -261,3 +268,40 @@ export const FinalizeResponseSchema = z.object({
 });
 
 export type FinalizeResponse = z.infer<typeof FinalizeResponseSchema>;
+
+// Train model request schema
+export const TrainModelRequestSchema = z.object({
+  selected_tag_ids: z.array(z.number().int()).nullable().optional(),
+});
+
+export type TrainModelRequest = z.infer<typeof TrainModelRequestSchema>;
+
+// Train model response schema
+export const TrainModelResponseSchema = z.object({
+  score_distributions: z.array(TagScoreDistributionSchema),
+  training_metrics: z.record(z.string(), z.object({
+    positive_count: z.number().int(),
+    negative_count: z.number().int(),
+  })),
+  message: z.string(),
+});
+
+export type TrainModelResponse = z.infer<typeof TrainModelResponseSchema>;
+
+// Add samples request schema
+export const AddSamplesRequestSchema = z.object({
+  uncertainty_low: z.number().min(0).max(0.5).default(0.25),
+  uncertainty_high: z.number().min(0.5).max(1).default(0.75),
+  samples_per_iteration: z.number().int().min(5).max(100).default(20),
+});
+
+export type AddSamplesRequest = z.infer<typeof AddSamplesRequestSchema>;
+
+// Add samples response schema
+export const AddSamplesResponseSchema = z.object({
+  added_count: z.number().int(),
+  new_iteration: z.number().int(),
+  message: z.string(),
+});
+
+export type AddSamplesResponse = z.infer<typeof AddSamplesResponseSchema>;

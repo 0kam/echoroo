@@ -11,14 +11,14 @@ export type CustomModelFilter = {
 };
 
 const DEFAULT_ENDPOINTS = {
-  getMany: "/api/v1/ml_projects/detail/custom_models/",
-  get: "/api/v1/ml_projects/detail/custom_models/detail/",
-  create: "/api/v1/ml_projects/detail/custom_models/",
-  delete: "/api/v1/ml_projects/detail/custom_models/detail/",
-  train: "/api/v1/ml_projects/detail/custom_models/detail/train/",
-  status: "/api/v1/ml_projects/detail/custom_models/detail/status/",
-  deploy: "/api/v1/ml_projects/detail/custom_models/detail/deploy/",
-  archive: "/api/v1/ml_projects/detail/custom_models/detail/archive/",
+  getMany: "/api/v1/ml_projects/{ml_project_uuid}/custom_models",
+  get: "/api/v1/ml_projects/{ml_project_uuid}/custom_models/{custom_model_uuid}",
+  create: "/api/v1/ml_projects/{ml_project_uuid}/custom_models",
+  delete: "/api/v1/ml_projects/{ml_project_uuid}/custom_models/{custom_model_uuid}",
+  train: "/api/v1/ml_projects/{ml_project_uuid}/custom_models/{custom_model_uuid}/train",
+  status: "/api/v1/ml_projects/{ml_project_uuid}/custom_models/{custom_model_uuid}/status",
+  deploy: "/api/v1/ml_projects/{ml_project_uuid}/custom_models/{custom_model_uuid}/deploy",
+  archive: "/api/v1/ml_projects/{ml_project_uuid}/custom_models/{custom_model_uuid}/archive",
 };
 
 export function registerCustomModelAPI(
@@ -41,9 +41,9 @@ export function registerCustomModelAPI(
     query: types.GetMany & CustomModelFilter = {},
   ): Promise<types.Page<types.CustomModel>> {
     const params = GetMany(CustomModelFilterSchema).parse(query);
-    const { data } = await instance.get(endpoints.getMany, {
+    const url = endpoints.getMany.replace("{ml_project_uuid}", mlProjectUuid);
+    const { data } = await instance.get(url, {
       params: {
-        ml_project_uuid: mlProjectUuid,
         limit: params.limit,
         offset: params.offset,
         status__eq: params.status,
@@ -63,12 +63,10 @@ export function registerCustomModelAPI(
     mlProjectUuid: string,
     uuid: string,
   ): Promise<types.CustomModel> {
-    const { data } = await instance.get(endpoints.get, {
-      params: {
-        ml_project_uuid: mlProjectUuid,
-        custom_model_uuid: uuid,
-      },
-    });
+    const url = endpoints.get
+      .replace("{ml_project_uuid}", mlProjectUuid)
+      .replace("{custom_model_uuid}", uuid);
+    const { data } = await instance.get(url);
     return schemas.CustomModelSchema.parse(data);
   }
 
@@ -84,9 +82,8 @@ export function registerCustomModelAPI(
     data: types.CustomModelCreate,
   ): Promise<types.CustomModel> {
     const body = schemas.CustomModelCreateSchema.parse(data);
-    const { data: responseData } = await instance.post(endpoints.create, body, {
-      params: { ml_project_uuid: mlProjectUuid },
-    });
+    const url = endpoints.create.replace("{ml_project_uuid}", mlProjectUuid);
+    const { data: responseData } = await instance.post(url, body);
     return schemas.CustomModelSchema.parse(responseData);
   }
 
@@ -101,12 +98,10 @@ export function registerCustomModelAPI(
     mlProjectUuid: string,
     uuid: string,
   ): Promise<types.CustomModel> {
-    const { data } = await instance.delete(endpoints.delete, {
-      params: {
-        ml_project_uuid: mlProjectUuid,
-        custom_model_uuid: uuid,
-      },
-    });
+    const url = endpoints.delete
+      .replace("{ml_project_uuid}", mlProjectUuid)
+      .replace("{custom_model_uuid}", uuid);
+    const { data } = await instance.delete(url);
     return schemas.CustomModelSchema.parse(data);
   }
 
@@ -121,16 +116,10 @@ export function registerCustomModelAPI(
     mlProjectUuid: string,
     modelUuid: string,
   ): Promise<types.CustomModel> {
-    const { data } = await instance.post(
-      endpoints.train,
-      {},
-      {
-        params: {
-          ml_project_uuid: mlProjectUuid,
-          custom_model_uuid: modelUuid,
-        },
-      },
-    );
+    const url = endpoints.train
+      .replace("{ml_project_uuid}", mlProjectUuid)
+      .replace("{custom_model_uuid}", modelUuid);
+    const { data } = await instance.post(url, {});
     return schemas.CustomModelSchema.parse(data);
   }
 
@@ -145,12 +134,10 @@ export function registerCustomModelAPI(
     mlProjectUuid: string,
     modelUuid: string,
   ): Promise<types.TrainingProgress> {
-    const { data } = await instance.get(endpoints.status, {
-      params: {
-        ml_project_uuid: mlProjectUuid,
-        custom_model_uuid: modelUuid,
-      },
-    });
+    const url = endpoints.status
+      .replace("{ml_project_uuid}", mlProjectUuid)
+      .replace("{custom_model_uuid}", modelUuid);
+    const { data } = await instance.get(url);
     return schemas.TrainingProgressSchema.parse(data);
   }
 
@@ -165,16 +152,10 @@ export function registerCustomModelAPI(
     mlProjectUuid: string,
     modelUuid: string,
   ): Promise<types.CustomModel> {
-    const { data } = await instance.post(
-      endpoints.deploy,
-      {},
-      {
-        params: {
-          ml_project_uuid: mlProjectUuid,
-          custom_model_uuid: modelUuid,
-        },
-      },
-    );
+    const url = endpoints.deploy
+      .replace("{ml_project_uuid}", mlProjectUuid)
+      .replace("{custom_model_uuid}", modelUuid);
+    const { data } = await instance.post(url, {});
     return schemas.CustomModelSchema.parse(data);
   }
 
@@ -189,16 +170,10 @@ export function registerCustomModelAPI(
     mlProjectUuid: string,
     modelUuid: string,
   ): Promise<types.CustomModel> {
-    const { data } = await instance.post(
-      endpoints.archive,
-      {},
-      {
-        params: {
-          ml_project_uuid: mlProjectUuid,
-          custom_model_uuid: modelUuid,
-        },
-      },
-    );
+    const url = endpoints.archive
+      .replace("{ml_project_uuid}", mlProjectUuid)
+      .replace("{custom_model_uuid}", modelUuid);
+    const { data } = await instance.post(url, {});
     return schemas.CustomModelSchema.parse(data);
   }
 

@@ -649,7 +649,7 @@ async def update_object(
     session: AsyncSession,
     model: type[A],
     condition: ColumnExpressionArgument,
-    data: BaseModel | None = None,
+    data: BaseModel | dict | None = None,
     **kwargs: Any,
 ) -> A:
     """Update an object based on some condition.
@@ -665,8 +665,8 @@ async def update_object(
     condition : ColumnExpressionArgument
         The condition to use.
 
-    data : BaseModel
-        The data to use for update.
+    data : BaseModel | dict
+        The data to use for update. Can be a Pydantic model or a dictionary.
 
     Returns
     -------
@@ -683,11 +683,14 @@ async def update_object(
     update_with = {}
 
     if data is not None:
-        update_with.update(
-            {
-                **{key: getattr(data, key) for key in data.model_fields_set},
-            }
-        )
+        if isinstance(data, dict):
+            update_with.update(data)
+        else:
+            update_with.update(
+                {
+                    **{key: getattr(data, key) for key in data.model_fields_set},
+                }
+            )
 
     update_with.update(kwargs)
 
