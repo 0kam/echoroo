@@ -1,0 +1,1168 @@
+openapi: 3.1.0
+info:
+  title: Echoroo Administration API
+  description: Authentication, user management, and project management endpoints
+  version: 1.0.0
+  contact:
+    name: Echoroo Team
+
+servers:
+  - url: /api/v1
+    description: API v1
+
+tags:
+  - name: auth
+    description: Authentication endpoints
+  - name: users
+    description: User management
+  - name: projects
+    description: Project management
+  - name: admin
+    description: System administration
+  - name: setup
+    description: Initial setup
+
+paths:
+  # ============================================
+  # Authentication Endpoints
+  # ============================================
+  /auth/register:
+    post:
+      tags: [auth]
+      summary: Register new user
+      description: Create a new user account. Requires CAPTCHA after 3 failed attempts.
+      operationId: registerUser
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserRegisterRequest'
+      responses:
+        '201':
+          description: User created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserResponse'
+        '400':
+          description: Validation error or email already exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Registration disabled or invitation required
+        '429':
+          description: Rate limit exceeded
+
+  /auth/login:
+    post:
+      tags: [auth]
+      summary: User login
+      description: Authenticate user and return tokens
+      operationId: loginUser
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Login successful
+          headers:
+            Set-Cookie:
+              description: Refresh token in HttpOnly cookie
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+        '401':
+          description: Invalid credentials
+        '403':
+          description: Account disabled or email not verified
+        '423':
+          description: Account locked (too many failed attempts)
+        '429':
+          description: Rate limit exceeded
+
+  /auth/logout:
+    post:
+      tags: [auth]
+      summary: User logout
+      description: Invalidate current session
+      operationId: logoutUser
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Logout successful
+        '401':
+          description: Not authenticated
+
+  /auth/refresh:
+    post:
+      tags: [auth]
+      summary: Refresh access token
+      description: Get new access token using refresh token from cookie
+      operationId: refreshToken
+      responses:
+        '200':
+          description: Token refreshed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+        '401':
+          description: Invalid or expired refresh token
+
+  /auth/password-reset/request:
+    post:
+      tags: [auth]
+      summary: Request password reset
+      description: Send password reset email
+      operationId: requestPasswordReset
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PasswordResetRequest'
+      responses:
+        '200':
+          description: Reset email sent (always returns success for security)
+        '429':
+          description: Rate limit exceeded
+
+  /auth/password-reset/confirm:
+    post:
+      tags: [auth]
+      summary: Confirm password reset
+      description: Reset password using token from email
+      operationId: confirmPasswordReset
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PasswordResetConfirm'
+      responses:
+        '200':
+          description: Password reset successful
+        '400':
+          description: Invalid or expired token
+
+  /auth/verify-email:
+    post:
+      tags: [auth]
+      summary: Verify email address
+      description: Verify email using token from registration email
+      operationId: verifyEmail
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EmailVerifyRequest'
+      responses:
+        '200':
+          description: Email verified
+        '400':
+          description: Invalid or expired token
+
+  /auth/verify-captcha:
+    post:
+      tags: [auth]
+      summary: Verify CAPTCHA
+      description: Verify Turnstile CAPTCHA token
+      operationId: verifyCaptcha
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CaptchaVerifyRequest'
+      responses:
+        '200':
+          description: CAPTCHA verified
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CaptchaVerifyResponse'
+        '400':
+          description: Invalid CAPTCHA
+
+  # ============================================
+  # User Management Endpoints
+  # ============================================
+  /users/me:
+    get:
+      tags: [users]
+      summary: Get current user
+      description: Get profile of authenticated user
+      operationId: getCurrentUser
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: User profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserResponse'
+        '401':
+          description: Not authenticated
+
+    patch:
+      tags: [users]
+      summary: Update current user
+      description: Update profile of authenticated user
+      operationId: updateCurrentUser
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserUpdateRequest'
+      responses:
+        '200':
+          description: User updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserResponse'
+        '400':
+          description: Validation error
+        '401':
+          description: Not authenticated
+
+  /users/me/password:
+    put:
+      tags: [users]
+      summary: Change password
+      description: Change password for authenticated user
+      operationId: changePassword
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PasswordChangeRequest'
+      responses:
+        '200':
+          description: Password changed
+        '400':
+          description: Invalid current password or weak new password
+        '401':
+          description: Not authenticated
+
+  /users/me/api-tokens:
+    get:
+      tags: [users]
+      summary: List API tokens
+      description: Get all API tokens for current user
+      operationId: listApiTokens
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Token list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/APITokenResponse'
+        '401':
+          description: Not authenticated
+
+    post:
+      tags: [users]
+      summary: Create API token
+      description: Generate new API token (token value shown only once)
+      operationId: createApiToken
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/APITokenCreateRequest'
+      responses:
+        '201':
+          description: Token created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APITokenCreateResponse'
+        '401':
+          description: Not authenticated
+
+  /users/me/api-tokens/{tokenId}:
+    delete:
+      tags: [users]
+      summary: Revoke API token
+      description: Revoke an API token
+      operationId: revokeApiToken
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: tokenId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Token revoked
+        '401':
+          description: Not authenticated
+        '404':
+          description: Token not found
+
+  # ============================================
+  # Project Management Endpoints
+  # ============================================
+  /projects:
+    get:
+      tags: [projects]
+      summary: List projects
+      description: Get all projects accessible by current user
+      operationId: listProjects
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+            maximum: 100
+      responses:
+        '200':
+          description: Project list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectListResponse'
+        '401':
+          description: Not authenticated
+
+    post:
+      tags: [projects]
+      summary: Create project
+      description: Create a new project
+      operationId: createProject
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProjectCreateRequest'
+      responses:
+        '201':
+          description: Project created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectResponse'
+        '400':
+          description: Validation error
+        '401':
+          description: Not authenticated
+
+  /projects/{projectId}:
+    get:
+      tags: [projects]
+      summary: Get project
+      description: Get project details
+      operationId: getProject
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Project details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectResponse'
+        '401':
+          description: Not authenticated
+        '403':
+          description: Access denied
+        '404':
+          description: Project not found
+
+    patch:
+      tags: [projects]
+      summary: Update project
+      description: Update project settings (admin only)
+      operationId: updateProject
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProjectUpdateRequest'
+      responses:
+        '200':
+          description: Project updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectResponse'
+        '401':
+          description: Not authenticated
+        '403':
+          description: Not project admin
+        '404':
+          description: Project not found
+
+    delete:
+      tags: [projects]
+      summary: Delete project
+      description: Delete project (owner only)
+      operationId: deleteProject
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Project deleted
+        '401':
+          description: Not authenticated
+        '403':
+          description: Not project owner
+        '404':
+          description: Project not found
+
+  /projects/{projectId}/members:
+    get:
+      tags: [projects]
+      summary: List project members
+      description: Get all members of a project
+      operationId: listProjectMembers
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Member list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ProjectMemberResponse'
+        '401':
+          description: Not authenticated
+        '403':
+          description: Access denied
+        '404':
+          description: Project not found
+
+    post:
+      tags: [projects]
+      summary: Add project member
+      description: Invite user to project (admin only)
+      operationId: addProjectMember
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProjectMemberAddRequest'
+      responses:
+        '201':
+          description: Member added or invitation sent
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectMemberResponse'
+        '400':
+          description: User already member
+        '401':
+          description: Not authenticated
+        '403':
+          description: Not project admin
+        '404':
+          description: Project not found
+
+  /projects/{projectId}/members/{userId}:
+    patch:
+      tags: [projects]
+      summary: Update member role
+      description: Change member role (admin only)
+      operationId: updateProjectMemberRole
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProjectMemberUpdateRequest'
+      responses:
+        '200':
+          description: Role updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectMemberResponse'
+        '400':
+          description: Cannot change owner role
+        '401':
+          description: Not authenticated
+        '403':
+          description: Not project admin
+        '404':
+          description: Member not found
+
+    delete:
+      tags: [projects]
+      summary: Remove project member
+      description: Remove member from project (admin only)
+      operationId: removeProjectMember
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Member removed
+        '400':
+          description: Cannot remove owner
+        '401':
+          description: Not authenticated
+        '403':
+          description: Not project admin
+        '404':
+          description: Member not found
+
+  # ============================================
+  # Admin Endpoints
+  # ============================================
+  /admin/users:
+    get:
+      tags: [admin]
+      summary: List all users
+      description: Get paginated list of all users (superuser only)
+      operationId: adminListUsers
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+            maximum: 100
+        - name: search
+          in: query
+          description: Search by email or display name
+          schema:
+            type: string
+        - name: is_active
+          in: query
+          schema:
+            type: boolean
+      responses:
+        '200':
+          description: User list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminUserListResponse'
+        '401':
+          description: Not authenticated
+        '403':
+          description: Not superuser
+
+  /admin/users/{userId}:
+    patch:
+      tags: [admin]
+      summary: Update user
+      description: Update user status (superuser only)
+      operationId: adminUpdateUser
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminUserUpdateRequest'
+      responses:
+        '200':
+          description: User updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserResponse'
+        '400':
+          description: Cannot disable last superuser
+        '401':
+          description: Not authenticated
+        '403':
+          description: Not superuser
+        '404':
+          description: User not found
+
+  /admin/settings:
+    get:
+      tags: [admin]
+      summary: Get system settings
+      description: Get all system settings (superuser only)
+      operationId: getSystemSettings
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Settings
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties:
+                  $ref: '#/components/schemas/SystemSettingResponse'
+        '401':
+          description: Not authenticated
+        '403':
+          description: Not superuser
+
+    patch:
+      tags: [admin]
+      summary: Update system settings
+      description: Update system settings (superuser only)
+      operationId: updateSystemSettings
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SystemSettingsUpdateRequest'
+      responses:
+        '200':
+          description: Settings updated
+        '401':
+          description: Not authenticated
+        '403':
+          description: Not superuser
+
+  # ============================================
+  # Setup Endpoints
+  # ============================================
+  /setup/status:
+    get:
+      tags: [setup]
+      summary: Get setup status
+      description: Check if initial setup is required
+      operationId: getSetupStatus
+      responses:
+        '200':
+          description: Setup status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SetupStatusResponse'
+
+  /setup/initialize:
+    post:
+      tags: [setup]
+      summary: Initial setup
+      description: Create first admin user (only available before setup completion)
+      operationId: initializeSetup
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetupInitializeRequest'
+      responses:
+        '201':
+          description: Setup completed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserResponse'
+        '403':
+          description: Setup already completed
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    # ============================================
+    # Request Schemas
+    # ============================================
+    UserRegisterRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+          maxLength: 255
+        password:
+          type: string
+          minLength: 8
+          description: "Min 8 chars, must contain letters and numbers"
+        display_name:
+          type: string
+          maxLength: 100
+        captcha_token:
+          type: string
+          description: Turnstile CAPTCHA token (required after 3 failed attempts)
+        invitation_token:
+          type: string
+          description: Invitation token (required in invitation-only mode)
+
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+        captcha_token:
+          type: string
+          description: Required after 3 failed attempts
+
+    PasswordResetRequest:
+      type: object
+      required: [email]
+      properties:
+        email:
+          type: string
+          format: email
+
+    PasswordResetConfirm:
+      type: object
+      required: [token, password]
+      properties:
+        token:
+          type: string
+        password:
+          type: string
+          minLength: 8
+
+    EmailVerifyRequest:
+      type: object
+      required: [token]
+      properties:
+        token:
+          type: string
+
+    CaptchaVerifyRequest:
+      type: object
+      required: [token]
+      properties:
+        token:
+          type: string
+
+    UserUpdateRequest:
+      type: object
+      properties:
+        display_name:
+          type: string
+          maxLength: 100
+        organization:
+          type: string
+          maxLength: 200
+
+    PasswordChangeRequest:
+      type: object
+      required: [current_password, new_password]
+      properties:
+        current_password:
+          type: string
+        new_password:
+          type: string
+          minLength: 8
+
+    APITokenCreateRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          maxLength: 100
+        expires_at:
+          type: string
+          format: date-time
+
+    ProjectCreateRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          maxLength: 200
+        description:
+          type: string
+        target_taxa:
+          type: string
+          maxLength: 500
+        visibility:
+          type: string
+          enum: [private, public]
+          default: private
+
+    ProjectUpdateRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          maxLength: 200
+        description:
+          type: string
+        target_taxa:
+          type: string
+          maxLength: 500
+        visibility:
+          type: string
+          enum: [private, public]
+
+    ProjectMemberAddRequest:
+      type: object
+      required: [email, role]
+      properties:
+        email:
+          type: string
+          format: email
+        role:
+          type: string
+          enum: [admin, member, viewer]
+          default: member
+
+    ProjectMemberUpdateRequest:
+      type: object
+      required: [role]
+      properties:
+        role:
+          type: string
+          enum: [admin, member, viewer]
+
+    AdminUserUpdateRequest:
+      type: object
+      properties:
+        is_active:
+          type: boolean
+        is_superuser:
+          type: boolean
+        is_verified:
+          type: boolean
+
+    SystemSettingsUpdateRequest:
+      type: object
+      properties:
+        registration_mode:
+          type: string
+          enum: [open, invitation]
+        allow_registration:
+          type: boolean
+        session_timeout_minutes:
+          type: integer
+          minimum: 5
+          maximum: 1440
+
+    SetupInitializeRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          minLength: 8
+        display_name:
+          type: string
+          maxLength: 100
+
+    # ============================================
+    # Response Schemas
+    # ============================================
+    TokenResponse:
+      type: object
+      properties:
+        access_token:
+          type: string
+        token_type:
+          type: string
+          default: bearer
+        expires_in:
+          type: integer
+          description: Seconds until token expires
+
+    CaptchaVerifyResponse:
+      type: object
+      properties:
+        verified:
+          type: boolean
+        challenge_ts:
+          type: string
+          format: date-time
+
+    UserResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        email:
+          type: string
+        display_name:
+          type: string
+        organization:
+          type: string
+        is_active:
+          type: boolean
+        is_superuser:
+          type: boolean
+        is_verified:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        last_login_at:
+          type: string
+          format: date-time
+
+    APITokenResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        last_used_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+        is_active:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+
+    APITokenCreateResponse:
+      allOf:
+        - $ref: '#/components/schemas/APITokenResponse'
+        - type: object
+          properties:
+            token:
+              type: string
+              description: Plain text token (shown only once)
+
+    ProjectResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        description:
+          type: string
+        target_taxa:
+          type: string
+        visibility:
+          type: string
+          enum: [private, public]
+        owner:
+          $ref: '#/components/schemas/UserResponse'
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    ProjectListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProjectResponse'
+        total:
+          type: integer
+        page:
+          type: integer
+        limit:
+          type: integer
+
+    ProjectMemberResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        user:
+          $ref: '#/components/schemas/UserResponse'
+        role:
+          type: string
+          enum: [admin, member, viewer]
+        joined_at:
+          type: string
+          format: date-time
+
+    AdminUserListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/UserResponse'
+        total:
+          type: integer
+        page:
+          type: integer
+        limit:
+          type: integer
+
+    SystemSettingResponse:
+      type: object
+      properties:
+        key:
+          type: string
+        value:
+          oneOf:
+            - type: string
+            - type: number
+            - type: boolean
+            - type: object
+        value_type:
+          type: string
+          enum: [string, number, boolean, json]
+        description:
+          type: string
+        updated_at:
+          type: string
+          format: date-time
+
+    SetupStatusResponse:
+      type: object
+      properties:
+        setup_required:
+          type: boolean
+        setup_completed:
+          type: boolean
+
+    ErrorResponse:
+      type: object
+      properties:
+        detail:
+          type: string
+        code:
+          type: string
+        errors:
+          type: array
+          items:
+            type: object
+            properties:
+              field:
+                type: string
+              message:
+                type: string

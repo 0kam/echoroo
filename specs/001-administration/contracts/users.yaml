@@ -1,0 +1,390 @@
+openapi: 3.1.0
+info:
+  title: Echoroo Users API
+  version: 1.0.0
+  description: User management endpoints
+
+paths:
+  /api/v1/users:
+    get:
+      operationId: listUsers
+      summary: List users
+      description: Get paginated list of users (superuser only)
+      tags: [Users]
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+            minimum: 1
+        - name: per_page
+          in: query
+          schema:
+            type: integer
+            default: 20
+            minimum: 1
+            maximum: 100
+        - name: search
+          in: query
+          schema:
+            type: string
+          description: Search by email or display name
+        - name: is_active
+          in: query
+          schema:
+            type: boolean
+      responses:
+        '200':
+          description: List of users
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/users/{user_id}:
+    get:
+      operationId: getUser
+      summary: Get user details
+      description: Get user by ID (superuser only)
+      tags: [Users]
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: user_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: User details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserDetailResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    patch:
+      operationId: updateUser
+      summary: Update user
+      description: Update user by ID (superuser only)
+      tags: [Users]
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: user_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserUpdateRequest'
+      responses:
+        '200':
+          description: User updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserDetailResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    delete:
+      operationId: deleteUser
+      summary: Delete user
+      description: Deactivate user account (superuser only)
+      tags: [Users]
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: user_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: User deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/users/{user_id}/force-logout:
+    post:
+      operationId: forceLogout
+      summary: Force logout user
+      description: Invalidate all sessions for user (superuser only)
+      tags: [Users]
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: user_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Sessions invalidated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/profile:
+    get:
+      operationId: getProfile
+      summary: Get own profile
+      description: Get current user's profile
+      tags: [Profile]
+      security:
+        - cookieAuth: []
+      responses:
+        '200':
+          description: Profile details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserDetailResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+    patch:
+      operationId: updateProfile
+      summary: Update own profile
+      description: Update current user's profile
+      tags: [Profile]
+      security:
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProfileUpdateRequest'
+      responses:
+        '200':
+          description: Profile updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserDetailResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/profile/password:
+    put:
+      operationId: changePassword
+      summary: Change password
+      description: Change current user's password
+      tags: [Profile]
+      security:
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PasswordChangeRequest'
+      responses:
+        '200':
+          description: Password changed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+        '400':
+          description: Invalid current password
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+components:
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: access_token
+
+  responses:
+    Unauthorized:
+      description: Not authenticated
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Forbidden:
+      description: Insufficient permissions
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+  schemas:
+    UserListResponse:
+      type: object
+      required: [items, total, page, per_page, pages]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/UserSummary'
+        total:
+          type: integer
+        page:
+          type: integer
+        per_page:
+          type: integer
+        pages:
+          type: integer
+
+    UserSummary:
+      type: object
+      required: [id, email, is_active, is_superuser, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        email:
+          type: string
+          format: email
+        display_name:
+          type: string
+          nullable: true
+        organization:
+          type: string
+          nullable: true
+        is_active:
+          type: boolean
+        is_superuser:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+
+    UserDetailResponse:
+      type: object
+      required: [id, email, is_active, is_superuser, is_verified, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        email:
+          type: string
+          format: email
+        display_name:
+          type: string
+          nullable: true
+        organization:
+          type: string
+          nullable: true
+        is_active:
+          type: boolean
+        is_superuser:
+          type: boolean
+        is_verified:
+          type: boolean
+        last_login_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        project_count:
+          type: integer
+          description: Number of projects user is member of
+
+    UserUpdateRequest:
+      type: object
+      properties:
+        display_name:
+          type: string
+          maxLength: 100
+        organization:
+          type: string
+          maxLength: 200
+        is_active:
+          type: boolean
+        is_superuser:
+          type: boolean
+
+    ProfileUpdateRequest:
+      type: object
+      properties:
+        display_name:
+          type: string
+          maxLength: 100
+        organization:
+          type: string
+          maxLength: 200
+
+    PasswordChangeRequest:
+      type: object
+      required: [current_password, new_password]
+      properties:
+        current_password:
+          type: string
+        new_password:
+          type: string
+          minLength: 8
+          maxLength: 128
+
+    MessageResponse:
+      type: object
+      required: [message]
+      properties:
+        message:
+          type: string
+
+    ErrorResponse:
+      type: object
+      required: [detail]
+      properties:
+        detail:
+          type: string

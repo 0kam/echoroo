@@ -1,0 +1,308 @@
+openapi: 3.1.0
+info:
+  title: Echoroo Authentication API
+  version: 1.0.0
+  description: Authentication endpoints for user login, logout, and token management
+
+paths:
+  /api/v1/auth/login:
+    post:
+      operationId: login
+      summary: User login
+      description: Authenticate user with email and password
+      tags: [Authentication]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+          headers:
+            Set-Cookie:
+              description: JWT access token cookie
+              schema:
+                type: string
+        '401':
+          description: Invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '429':
+          description: Rate limit exceeded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/auth/logout:
+    post:
+      operationId: logout
+      summary: User logout
+      description: Invalidate current session
+      tags: [Authentication]
+      security:
+        - cookieAuth: []
+      responses:
+        '200':
+          description: Logout successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+
+  /api/v1/auth/refresh:
+    post:
+      operationId: refreshToken
+      summary: Refresh access token
+      description: Get new access token using refresh token
+      tags: [Authentication]
+      security:
+        - cookieAuth: []
+      responses:
+        '200':
+          description: Token refreshed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+          headers:
+            Set-Cookie:
+              description: New JWT access token cookie
+              schema:
+                type: string
+        '401':
+          description: Invalid or expired refresh token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/auth/register:
+    post:
+      operationId: register
+      summary: User registration
+      description: Create new user account
+      tags: [Authentication]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+      responses:
+        '201':
+          description: Registration successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserResponse'
+        '400':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Registration disabled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Email already exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/auth/password-reset/request:
+    post:
+      operationId: requestPasswordReset
+      summary: Request password reset
+      description: Send password reset email
+      tags: [Authentication]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PasswordResetRequest'
+      responses:
+        '200':
+          description: Reset email sent (always returns success for security)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+
+  /api/v1/auth/password-reset/confirm:
+    post:
+      operationId: confirmPasswordReset
+      summary: Confirm password reset
+      description: Set new password using reset token
+      tags: [Authentication]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PasswordResetConfirm'
+      responses:
+        '200':
+          description: Password reset successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+        '400':
+          description: Invalid or expired token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/auth/me:
+    get:
+      operationId: getCurrentUser
+      summary: Get current user
+      description: Get authenticated user's profile
+      tags: [Authentication]
+      security:
+        - cookieAuth: []
+      responses:
+        '200':
+          description: Current user profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserResponse'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+components:
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: access_token
+
+  schemas:
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+          maxLength: 255
+        password:
+          type: string
+          minLength: 8
+          maxLength: 128
+
+    LoginResponse:
+      type: object
+      required: [user]
+      properties:
+        user:
+          $ref: '#/components/schemas/UserResponse'
+
+    RegisterRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+          maxLength: 255
+        password:
+          type: string
+          minLength: 8
+          maxLength: 128
+        display_name:
+          type: string
+          maxLength: 100
+        organization:
+          type: string
+          maxLength: 200
+        invitation_token:
+          type: string
+          description: Required when registration_mode is 'invitation'
+
+    PasswordResetRequest:
+      type: object
+      required: [email]
+      properties:
+        email:
+          type: string
+          format: email
+
+    PasswordResetConfirm:
+      type: object
+      required: [token, new_password]
+      properties:
+        token:
+          type: string
+        new_password:
+          type: string
+          minLength: 8
+          maxLength: 128
+
+    UserResponse:
+      type: object
+      required: [id, email, is_active, is_superuser, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        email:
+          type: string
+          format: email
+        display_name:
+          type: string
+          nullable: true
+        organization:
+          type: string
+          nullable: true
+        is_active:
+          type: boolean
+        is_superuser:
+          type: boolean
+        is_verified:
+          type: boolean
+        last_login_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    MessageResponse:
+      type: object
+      required: [message]
+      properties:
+        message:
+          type: string
+
+    ErrorResponse:
+      type: object
+      required: [detail]
+      properties:
+        detail:
+          type: string

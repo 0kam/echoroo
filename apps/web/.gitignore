@@ -1,0 +1,32 @@
+# Dependencies
+node_modules
+
+# Build outputs
+.svelte-kit
+build
+dist
+
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# Testing
+coverage
+playwright-report
+test-results
+
+# Editor
+.vscode/*
+!.vscode/extensions.json
+.idea
+*.sublime-project
+*.sublime-workspace
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*

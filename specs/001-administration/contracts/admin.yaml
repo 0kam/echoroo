@@ -1,0 +1,585 @@
+openapi: 3.1.0
+info:
+  title: Echoroo Admin API
+  version: 1.0.0
+  description: System administration endpoints (superuser only)
+
+paths:
+  /api/v1/admin/settings:
+    get:
+      operationId: listSettings
+      summary: List system settings
+      description: Get all system settings
+      tags: [Admin Settings]
+      security:
+        - cookieAuth: []
+      responses:
+        '200':
+          description: List of settings
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SettingsListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/admin/settings/{key}:
+    get:
+      operationId: getSetting
+      summary: Get setting
+      description: Get setting by key
+      tags: [Admin Settings]
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: key
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Setting value
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SettingResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    put:
+      operationId: updateSetting
+      summary: Update setting
+      description: Update setting value
+      tags: [Admin Settings]
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: key
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateSettingRequest'
+      responses:
+        '200':
+          description: Setting updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SettingResponse'
+        '400':
+          description: Invalid value
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/admin/recorders:
+    get:
+      operationId: listRecorders
+      summary: List recorders
+      description: Get all recorder types
+      tags: [Recorders]
+      security:
+        - cookieAuth: []
+      responses:
+        '200':
+          description: List of recorders
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecorderListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+    post:
+      operationId: createRecorder
+      summary: Create recorder
+      description: Add new recorder type
+      tags: [Recorders]
+      security:
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateRecorderRequest'
+      responses:
+        '201':
+          description: Recorder created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecorderResponse'
+        '400':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          description: Recorder ID already exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/admin/recorders/{recorder_id}:
+    get:
+      operationId: getRecorder
+      summary: Get recorder
+      description: Get recorder by ID
+      tags: [Recorders]
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: recorder_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Recorder details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecorderResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    patch:
+      operationId: updateRecorder
+      summary: Update recorder
+      description: Update recorder info
+      tags: [Recorders]
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: recorder_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateRecorderRequest'
+      responses:
+        '200':
+          description: Recorder updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecorderResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    delete:
+      operationId: deleteRecorder
+      summary: Delete recorder
+      description: Delete recorder type
+      tags: [Recorders]
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: recorder_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Recorder deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/admin/licenses:
+    get:
+      operationId: listLicenses
+      summary: List licenses
+      description: Get all license types
+      tags: [Licenses]
+      security:
+        - cookieAuth: []
+      responses:
+        '200':
+          description: List of licenses
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LicenseListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+    post:
+      operationId: createLicense
+      summary: Create license
+      description: Add new license type
+      tags: [Licenses]
+      security:
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateLicenseRequest'
+      responses:
+        '201':
+          description: License created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LicenseResponse'
+        '400':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          description: License ID already exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/admin/licenses/{license_id}:
+    get:
+      operationId: getLicense
+      summary: Get license
+      description: Get license by ID
+      tags: [Licenses]
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: license_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: License details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LicenseResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    patch:
+      operationId: updateLicense
+      summary: Update license
+      description: Update license info
+      tags: [Licenses]
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: license_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateLicenseRequest'
+      responses:
+        '200':
+          description: License updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LicenseResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    delete:
+      operationId: deleteLicense
+      summary: Delete license
+      description: Delete license type
+      tags: [Licenses]
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: license_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: License deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+components:
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: access_token
+
+  responses:
+    Unauthorized:
+      description: Not authenticated
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Forbidden:
+      description: Insufficient permissions (superuser required)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+  schemas:
+    SettingsListResponse:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/SettingResponse'
+
+    SettingResponse:
+      type: object
+      required: [key, value, value_type]
+      properties:
+        key:
+          type: string
+        value:
+          oneOf:
+            - type: string
+            - type: number
+            - type: boolean
+            - type: object
+        value_type:
+          type: string
+          enum: [string, number, boolean, json]
+        description:
+          type: string
+          nullable: true
+        updated_at:
+          type: string
+          format: date-time
+        updated_by:
+          type: string
+          format: uuid
+          nullable: true
+
+    UpdateSettingRequest:
+      type: object
+      required: [value]
+      properties:
+        value:
+          oneOf:
+            - type: string
+            - type: number
+            - type: boolean
+            - type: object
+
+    RecorderListResponse:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/RecorderResponse'
+
+    RecorderResponse:
+      type: object
+      required: [id, manufacturer, recorder_name, created_at]
+      properties:
+        id:
+          type: string
+        manufacturer:
+          type: string
+        recorder_name:
+          type: string
+        version:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    CreateRecorderRequest:
+      type: object
+      required: [id, manufacturer, recorder_name]
+      properties:
+        id:
+          type: string
+          maxLength: 50
+          pattern: '^[a-z0-9_-]+$'
+        manufacturer:
+          type: string
+          maxLength: 100
+        recorder_name:
+          type: string
+          maxLength: 100
+        version:
+          type: string
+          maxLength: 50
+
+    UpdateRecorderRequest:
+      type: object
+      properties:
+        manufacturer:
+          type: string
+          maxLength: 100
+        recorder_name:
+          type: string
+          maxLength: 100
+        version:
+          type: string
+          maxLength: 50
+
+    LicenseListResponse:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/LicenseResponse'
+
+    LicenseResponse:
+      type: object
+      required: [id, name, short_name, created_at]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        short_name:
+          type: string
+        url:
+          type: string
+          nullable: true
+        description:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    CreateLicenseRequest:
+      type: object
+      required: [id, name, short_name]
+      properties:
+        id:
+          type: string
+          maxLength: 50
+          pattern: '^[A-Z0-9-]+$'
+        name:
+          type: string
+          maxLength: 200
+        short_name:
+          type: string
+          maxLength: 50
+        url:
+          type: string
+          format: uri
+          maxLength: 500
+        description:
+          type: string
+
+    UpdateLicenseRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          maxLength: 200
+        short_name:
+          type: string
+          maxLength: 50
+        url:
+          type: string
+          format: uri
+          maxLength: 500
+        description:
+          type: string
+
+    ErrorResponse:
+      type: object
+      required: [detail]
+      properties:
+        detail:
+          type: string
