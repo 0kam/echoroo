@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from sqlalchemy import DateTime, ForeignKey, Index, String, Text, UniqueConstraint
+from sqlalchemy import DateTime, Enum, ForeignKey, Index, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -54,6 +54,12 @@ class Project(UUIDMixin, TimestampMixin, Base):
         doc="Target taxonomic groups (comma-separated)",
     )
     visibility: Mapped[ProjectVisibility] = mapped_column(
+        Enum(
+            ProjectVisibility,
+            name="projectvisibility",
+            create_type=False,
+            values_callable=lambda x: [e.value for e in x],
+        ),
         default=ProjectVisibility.PRIVATE,
         nullable=False,
         index=True,
@@ -120,6 +126,12 @@ class ProjectMember(UUIDMixin, Base):
         doc="Project ID",
     )
     role: Mapped[ProjectRole] = mapped_column(
+        Enum(
+            ProjectRole,
+            name="projectrole",
+            create_type=False,
+            values_callable=lambda x: [e.value for e in x],
+        ),
         default=ProjectRole.MEMBER,
         nullable=False,
         doc="Member role in project",
@@ -201,6 +213,12 @@ class ProjectInvitation(UUIDMixin, Base):
         doc="Invitee email address",
     )
     role: Mapped[ProjectRole] = mapped_column(
+        Enum(
+            ProjectRole,
+            name="projectrole",
+            create_type=False,
+            values_callable=lambda x: [e.value for e in x],
+        ),
         default=ProjectRole.MEMBER,
         nullable=False,
         doc="Role to assign on acceptance",

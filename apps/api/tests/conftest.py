@@ -1,15 +1,16 @@
 """Pytest configuration and fixtures."""
 
-import asyncio
-from collections.abc import AsyncGenerator, Generator
-from typing import Any
+from collections.abc import AsyncGenerator
 
 import pytest
 import sqlalchemy as sa
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import event
-from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
 from sqlalchemy.pool import NullPool
 
 from echoroo.core.database import get_db
@@ -20,53 +21,48 @@ from echoroo.models.base import Base
 TEST_DATABASE_URL = "postgresql+asyncpg://echoroo:echoroo@localhost:5432/echoroo_test"
 
 
-@pytest.fixture(scope="function")
-def event_loop() -> Generator[asyncio.AbstractEventLoop, None, None]:
-    """Create event loop for async tests.
+async def setup_test_database(engine: AsyncEngine) -> None:
+    """Set up test database schema and enum types."""
+    # Check if tables exist
+    async with engine.connect() as conn:
+        result = await conn.execute(
+            sa.text(
+                "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'users')"
+            )
+        )
+        tables_exist = result.scalar()
 
-    Yields:
-        Event loop instance
-    """
-    loop = asyncio.get_event_loop_policy().new_event_loop()
-    yield loop
-    loop.close()
+    if tables_exist:
+        return
 
-
-@pytest.fixture(scope="function")
-async def engine() -> AsyncGenerator[AsyncEngine, None]:
-    """Create test database engine.
-
-    Yields:
-        AsyncEngine instance for test database
-    """
-    engine = create_async_engine(
-        TEST_DATABASE_URL,
-        echo=False,
-        poolclass=NullPool,
-    )
-
-    # Create all tables and enum types
     async with engine.begin() as conn:
-        # Create enum types first
+        # Fully reset schema
+        await conn.execute(sa.text("DROP SCHEMA IF EXISTS public CASCADE"))
+        await conn.execute(sa.text("CREATE SCHEMA public"))
+
+        # Create enum types first (must match SQLAlchemy enum names)
+        await conn.execute(
+            sa.text("CREATE TYPE projectvisibility AS ENUM ('private', 'public')")
+        )
+        await conn.execute(
+            sa.text("CREATE TYPE projectrole AS ENUM ('admin', 'member', 'viewer')")
+        )
         await conn.execute(
             sa.text(
-                "DO $$ BEGIN "
-                "CREATE TYPE project_visibility AS ENUM ('private', 'public'); "
-                "EXCEPTION WHEN duplicate_object THEN null; END $$;"
+                "CREATE TYPE setting_type AS ENUM ('string', 'number', 'boolean', 'json')"
+            )
+        )
+        await conn.execute(
+            sa.text("CREATE TYPE datasetvisibility AS ENUM ('private', 'public')")
+        )
+        await conn.execute(
+            sa.text(
+                "CREATE TYPE datasetstatus AS ENUM ('pending', 'scanning', 'processing', 'completed', 'failed')"
             )
         )
         await conn.execute(
             sa.text(
-                "DO $$ BEGIN "
-                "CREATE TYPE project_role AS ENUM ('admin', 'member', 'viewer'); "
-                "EXCEPTION WHEN duplicate_object THEN null; END $$;"
-            )
-        )
-        await conn.execute(
-            sa.text(
-                "DO $$ BEGIN "
-                "CREATE TYPE setting_type AS ENUM ('string', 'number', 'boolean', 'json'); "
-                "EXCEPTION WHEN duplicate_object THEN null; END $$;"
+                "CREATE TYPE datetimeparsestatus AS ENUM ('pending', 'success', 'failed')"
             )
         )
         # Create all tables
@@ -87,51 +83,62 @@ async def engine() -> AsyncGenerator[AsyncEngine, None]:
             )
         )
 
-    yield engine
 
-    # Drop all tables
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
-        # Drop enum types
-        await conn.execute(sa.text("DROP TYPE IF EXISTS setting_type CASCADE"))
-        await conn.execute(sa.text("DROP TYPE IF EXISTS project_role CASCADE"))
-        await conn.execute(sa.text("DROP TYPE IF EXISTS project_visibility CASCADE"))
-
-    await engine.dispose()
+async def cleanup_test_data(session: AsyncSession) -> None:
+    """Clean up test data from all tables."""
+    # Delete in correct order (foreign key dependencies)
+    await session.execute(sa.text("DELETE FROM clips"))
+    await session.execute(sa.text("DELETE FROM recordings"))
+    await session.execute(sa.text("DELETE FROM datasets"))
+    await session.execute(sa.text("DELETE FROM sites"))
+    await session.execute(sa.text("DELETE FROM project_invitations"))
+    await session.execute(sa.text("DELETE FROM project_members"))
+    await session.execute(sa.text("DELETE FROM projects"))
+    await session.execute(sa.text("DELETE FROM api_tokens"))
+    await session.execute(sa.text("DELETE FROM login_attempts"))
+    # Clear licenses and recorders
+    await session.execute(sa.text("DELETE FROM licenses"))
+    await session.execute(sa.text("DELETE FROM recorders"))
+    # Clear system_settings references to users before deleting users
+    await session.execute(sa.text("UPDATE system_settings SET updated_by_id = NULL"))
+    await session.execute(sa.text("DELETE FROM users"))
+    # Reset setup_completed for setup tests
+    await session.execute(
+        sa.text("UPDATE system_settings SET value = 'false' WHERE key = 'setup_completed'")
+    )
+    await session.commit()
 
 
 @pytest.fixture
-async def db_session(engine: AsyncEngine) -> AsyncGenerator[AsyncSession, None]:
-    """Create test database session with transaction rollback.
+async def db_session() -> AsyncGenerator[AsyncSession, None]:
+    """Create test database session.
 
-    Each test gets a fresh session that rolls back all changes.
-
-    Args:
-        engine: Test database engine
+    Each test gets a fresh session with clean data.
 
     Yields:
         AsyncSession instance
     """
-    connection = await engine.connect()
-    transaction = await connection.begin()
-
-    # Create session bound to the connection
-    async_session_maker = sessionmaker(
-        connection, class_=AsyncSession, expire_on_commit=False
+    engine = create_async_engine(
+        TEST_DATABASE_URL,
+        echo=False,
+        poolclass=NullPool,
     )
-    session = async_session_maker()
 
-    # Disable commit to force rollback
-    @event.listens_for(session.sync_session, "after_transaction_end")
-    def restart_savepoint(session: Any, transaction: Any) -> None:
-        if transaction.nested and not transaction._parent.nested:
-            session.begin_nested()
+    # Ensure database is set up
+    await setup_test_database(engine)
 
-    yield session
+    session_maker = async_sessionmaker(
+        engine,
+        class_=AsyncSession,
+        expire_on_commit=False,
+    )
 
-    await session.close()
-    await transaction.rollback()
-    await connection.close()
+    async with session_maker() as session:
+        # Clean up any leftover data from previous tests
+        await cleanup_test_data(session)
+        yield session
+
+    await engine.dispose()
 
 
 @pytest.fixture
@@ -139,16 +146,29 @@ async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
     """Create test HTTP client with database session override.
 
     Args:
-        db_session: Test database session
+        db_session: Test database session (ensures DB is set up)
 
     Yields:
         AsyncClient instance
     """
     app = create_app()
 
+    engine = create_async_engine(
+        TEST_DATABASE_URL,
+        echo=False,
+        poolclass=NullPool,
+    )
+
+    session_maker = async_sessionmaker(
+        engine,
+        class_=AsyncSession,
+        expire_on_commit=False,
+    )
+
     # Override get_db dependency
     async def override_get_db() -> AsyncGenerator[AsyncSession, None]:
-        yield db_session
+        async with session_maker() as session:
+            yield session
 
     app.dependency_overrides[get_db] = override_get_db
 
@@ -158,6 +178,7 @@ async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
         yield test_client
 
     app.dependency_overrides.clear()
+    await engine.dispose()
 
 
 @pytest.fixture

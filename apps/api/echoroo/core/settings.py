@@ -88,6 +88,16 @@ class Settings(BaseSettings):
     API_TOKEN_PREFIX: str = "ecr_"
     API_TOKEN_LENGTH: int = 32
 
+    # Audio Files
+    AUDIO_ROOT: str = Field(
+        default="/data/audio",
+        description="Root directory for audio files",
+    )
+    AUDIO_CACHE_DIR: str | None = Field(
+        default=None,
+        description="Directory for caching spectrograms (optional)",
+    )
+
 
 @lru_cache
 def get_settings() -> Settings:

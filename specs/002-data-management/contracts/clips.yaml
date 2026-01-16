@@ -1,0 +1,542 @@
+openapi: 3.1.0
+info:
+  title: Echoroo Clips API
+  version: 1.0.0
+  description: API for managing audio clips (time segments within recordings)
+
+paths:
+  /api/v1/recordings/{recording_id}/clips:
+    get:
+      summary: List clips for a recording
+      operationId: listClips
+      tags: [Clips]
+      parameters:
+        - name: recording_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+            minimum: 1
+        - name: page_size
+          in: query
+          schema:
+            type: integer
+            default: 50
+            minimum: 1
+            maximum: 200
+        - name: sort_by
+          in: query
+          schema:
+            type: string
+            enum: [start_time, created_at]
+            default: start_time
+        - name: sort_order
+          in: query
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: asc
+      responses:
+        '200':
+          description: Paginated list of clips
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedClipResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    post:
+      summary: Create a new clip
+      operationId: createClip
+      tags: [Clips]
+      parameters:
+        - name: recording_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClipCreate'
+      responses:
+        '201':
+          description: Clip created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Clip'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Clip with same time range already exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /api/v1/recordings/{recording_id}/clips/generate:
+    post:
+      summary: Auto-generate clips with specified length and overlap
+      operationId: generateClips
+      tags: [Clips]
+      parameters:
+        - name: recording_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClipGenerateRequest'
+      responses:
+        '201':
+          description: Clips generated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClipGenerateResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/clips/{clip_id}:
+    get:
+      summary: Get a clip by ID
+      operationId: getClip
+      tags: [Clips]
+      parameters:
+        - name: clip_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Clip details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClipDetail'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    patch:
+      summary: Update a clip
+      operationId: updateClip
+      tags: [Clips]
+      parameters:
+        - name: clip_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClipUpdate'
+      responses:
+        '200':
+          description: Clip updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Clip'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    delete:
+      summary: Delete a clip
+      operationId: deleteClip
+      tags: [Clips]
+      parameters:
+        - name: clip_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Clip deleted successfully
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/clips/{clip_id}/audio:
+    get:
+      summary: Stream clip audio
+      operationId: streamClipAudio
+      tags: [Clips]
+      parameters:
+        - name: clip_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: speed
+          in: query
+          description: Playback speed multiplier
+          schema:
+            type: number
+            format: double
+            minimum: 0.1
+            maximum: 3.0
+            default: 1.0
+      responses:
+        '200':
+          description: Clip audio
+          content:
+            audio/wav:
+              schema:
+                type: string
+                format: binary
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/clips/{clip_id}/spectrogram:
+    get:
+      summary: Generate spectrogram for clip
+      operationId: getClipSpectrogram
+      tags: [Clips]
+      parameters:
+        - name: clip_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: n_fft
+          in: query
+          schema:
+            type: integer
+            minimum: 128
+            maximum: 8192
+            default: 2048
+        - name: hop_length
+          in: query
+          schema:
+            type: integer
+            minimum: 64
+            maximum: 4096
+            default: 512
+        - name: freq_min
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+        - name: freq_max
+          in: query
+          schema:
+            type: integer
+        - name: colormap
+          in: query
+          schema:
+            type: string
+            enum: [gray, viridis, magma, inferno, plasma, cividis, cool, cubehelix, twilight]
+            default: viridis
+        - name: pcen
+          in: query
+          schema:
+            type: boolean
+            default: false
+        - name: channel
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+        - name: width
+          in: query
+          schema:
+            type: integer
+            minimum: 100
+            maximum: 4096
+            default: 800
+        - name: height
+          in: query
+          schema:
+            type: integer
+            minimum: 100
+            maximum: 2048
+            default: 300
+      responses:
+        '200':
+          description: Spectrogram image
+          content:
+            image/png:
+              schema:
+                type: string
+                format: binary
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/clips/{clip_id}/download:
+    get:
+      summary: Download clip as WAV file
+      operationId: downloadClip
+      tags: [Clips]
+      parameters:
+        - name: clip_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: WAV file download
+          headers:
+            Content-Disposition:
+              schema:
+                type: string
+                example: attachment; filename="clip.wav"
+          content:
+            audio/wav:
+              schema:
+                type: string
+                format: binary
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+components:
+  schemas:
+    Clip:
+      type: object
+      required: [id, recording_id, start_time, end_time, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        recording_id:
+          type: string
+          format: uuid
+        start_time:
+          type: number
+          format: double
+          description: Start time in seconds
+        end_time:
+          type: number
+          format: double
+          description: End time in seconds
+        note:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    ClipDetail:
+      allOf:
+        - $ref: '#/components/schemas/Clip'
+        - type: object
+          properties:
+            duration:
+              type: number
+              format: double
+              description: Clip duration in seconds
+            recording:
+              $ref: '#/components/schemas/RecordingSummary'
+
+    ClipCreate:
+      type: object
+      required: [start_time, end_time]
+      properties:
+        start_time:
+          type: number
+          format: double
+          minimum: 0
+          description: Start time in seconds
+        end_time:
+          type: number
+          format: double
+          description: End time in seconds
+        note:
+          type: string
+          nullable: true
+
+    ClipUpdate:
+      type: object
+      properties:
+        start_time:
+          type: number
+          format: double
+          minimum: 0
+        end_time:
+          type: number
+          format: double
+        note:
+          type: string
+          nullable: true
+
+    ClipGenerateRequest:
+      type: object
+      required: [clip_length]
+      properties:
+        clip_length:
+          type: number
+          format: double
+          minimum: 0.1
+          maximum: 300
+          description: Length of each clip in seconds
+        overlap:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 0.99
+          default: 0
+          description: Overlap ratio between consecutive clips (0-0.99)
+        start_time:
+          type: number
+          format: double
+          minimum: 0
+          default: 0
+          description: Start time for clip generation
+        end_time:
+          type: number
+          format: double
+          description: End time for clip generation (defaults to recording duration)
+
+    ClipGenerateResponse:
+      type: object
+      required: [clips_created, clips]
+      properties:
+        clips_created:
+          type: integer
+          description: Number of clips created
+        clips:
+          type: array
+          items:
+            $ref: '#/components/schemas/Clip'
+
+    RecordingSummary:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        filename:
+          type: string
+        duration:
+          type: number
+          format: double
+        samplerate:
+          type: integer
+        time_expansion:
+          type: number
+          format: double
+
+    PaginatedClipResponse:
+      type: object
+      required: [items, total, page, page_size, pages]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Clip'
+        total:
+          type: integer
+        page:
+          type: integer
+        page_size:
+          type: integer
+        pages:
+          type: integer
+
+    Error:
+      type: object
+      required: [detail]
+      properties:
+        detail:
+          type: string
+        code:
+          type: string
+
+  responses:
+    BadRequest:
+      description: Invalid request parameters
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Unauthorized:
+      description: Authentication required
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Forbidden:
+      description: Insufficient permissions
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
