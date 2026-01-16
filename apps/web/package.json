@@ -18,13 +18,17 @@
   "dependencies": {
     "@sveltejs/kit": "^2.15.0",
     "@tanstack/svelte-query": "^5.67.0",
-    "svelte": "^5.15.0"
+    "h3-js": "^4.1.0",
+    "mapbox-gl": "^3.8.0",
+    "svelte": "^5.15.0",
+    "wavesurfer.js": "^7.8.0"
   },
   "devDependencies": {
     "@eslint/js": "^9.18.0",
     "@playwright/test": "^1.49.1",
     "@sveltejs/adapter-node": "^5.2.12",
     "@sveltejs/vite-plugin-svelte": "^5.0.4",
+    "@types/mapbox-gl": "^3.4.0",
     "@types/node": "^22.10.6",
     "@typescript-eslint/eslint-plugin": "^8.20.0",
     "@typescript-eslint/parser": "^8.20.0",

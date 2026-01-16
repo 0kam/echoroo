@@ -1,0 +1,683 @@
+openapi: 3.1.0
+info:
+  title: Echoroo Recordings API
+  version: 1.0.0
+  description: API for managing audio recordings
+
+paths:
+  /api/v1/projects/{project_id}/datasets/{dataset_id}/recordings:
+    get:
+      summary: List recordings for a dataset
+      operationId: listRecordings
+      tags: [Recordings]
+      parameters:
+        - name: project_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: dataset_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+            minimum: 1
+        - name: page_size
+          in: query
+          schema:
+            type: integer
+            default: 20
+            minimum: 1
+            maximum: 100
+        - name: search
+          in: query
+          description: Search by filename
+          schema:
+            type: string
+        - name: datetime_from
+          in: query
+          description: Filter by minimum datetime
+          schema:
+            type: string
+            format: date-time
+        - name: datetime_to
+          in: query
+          description: Filter by maximum datetime
+          schema:
+            type: string
+            format: date-time
+        - name: samplerate
+          in: query
+          description: Filter by sample rate
+          schema:
+            type: integer
+        - name: sort_by
+          in: query
+          schema:
+            type: string
+            enum: [datetime, filename, duration, created_at]
+            default: datetime
+        - name: sort_order
+          in: query
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: desc
+      responses:
+        '200':
+          description: Paginated list of recordings
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedRecordingResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/projects/{project_id}/recordings:
+    get:
+      summary: Search recordings across all datasets in a project
+      operationId: searchRecordings
+      tags: [Recordings]
+      parameters:
+        - name: project_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+            minimum: 1
+        - name: page_size
+          in: query
+          schema:
+            type: integer
+            default: 20
+            minimum: 1
+            maximum: 100
+        - name: search
+          in: query
+          description: Search by filename
+          schema:
+            type: string
+        - name: site_id
+          in: query
+          description: Filter by site
+          schema:
+            type: string
+            format: uuid
+        - name: dataset_id
+          in: query
+          description: Filter by dataset
+          schema:
+            type: string
+            format: uuid
+        - name: datetime_from
+          in: query
+          description: Filter by minimum datetime
+          schema:
+            type: string
+            format: date-time
+        - name: datetime_to
+          in: query
+          description: Filter by maximum datetime
+          schema:
+            type: string
+            format: date-time
+        - name: tags
+          in: query
+          description: Filter by tags (key:value format)
+          schema:
+            type: array
+            items:
+              type: string
+      responses:
+        '200':
+          description: Paginated list of recordings
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedRecordingResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/recordings/{recording_id}:
+    get:
+      summary: Get a recording by ID
+      operationId: getRecording
+      tags: [Recordings]
+      parameters:
+        - name: recording_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Recording details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecordingDetail'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    patch:
+      summary: Update a recording
+      operationId: updateRecording
+      tags: [Recordings]
+      parameters:
+        - name: recording_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecordingUpdate'
+      responses:
+        '200':
+          description: Recording updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Recording'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    delete:
+      summary: Delete a recording and all clips
+      operationId: deleteRecording
+      tags: [Recordings]
+      parameters:
+        - name: recording_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Recording deleted successfully
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/recordings/{recording_id}/audio:
+    get:
+      summary: Stream audio file
+      operationId: streamAudio
+      tags: [Recordings]
+      parameters:
+        - name: recording_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: Range
+          in: header
+          description: HTTP Range header for partial content
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Full audio file
+          headers:
+            Accept-Ranges:
+              schema:
+                type: string
+                example: bytes
+            Content-Length:
+              schema:
+                type: integer
+          content:
+            audio/wav:
+              schema:
+                type: string
+                format: binary
+            audio/flac:
+              schema:
+                type: string
+                format: binary
+            audio/mpeg:
+              schema:
+                type: string
+                format: binary
+        '206':
+          description: Partial content
+          headers:
+            Accept-Ranges:
+              schema:
+                type: string
+                example: bytes
+            Content-Range:
+              schema:
+                type: string
+                example: bytes 0-1023/10240
+            Content-Length:
+              schema:
+                type: integer
+          content:
+            audio/*:
+              schema:
+                type: string
+                format: binary
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '416':
+          description: Range not satisfiable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /api/v1/recordings/{recording_id}/audio/playback:
+    get:
+      summary: Get resampled audio for browser playback
+      operationId: getPlaybackAudio
+      tags: [Recordings]
+      description: Returns audio resampled to 48kHz for browser compatibility, with optional speed adjustment
+      parameters:
+        - name: recording_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: speed
+          in: query
+          description: Playback speed multiplier
+          schema:
+            type: number
+            format: double
+            minimum: 0.1
+            maximum: 3.0
+            default: 1.0
+        - name: start
+          in: query
+          description: Start time in seconds
+          schema:
+            type: number
+            format: double
+            minimum: 0
+        - name: end
+          in: query
+          description: End time in seconds
+          schema:
+            type: number
+            format: double
+        - name: Range
+          in: header
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Resampled audio for playback
+          content:
+            audio/wav:
+              schema:
+                type: string
+                format: binary
+        '206':
+          description: Partial content
+          content:
+            audio/wav:
+              schema:
+                type: string
+                format: binary
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/recordings/{recording_id}/spectrogram:
+    get:
+      summary: Generate spectrogram image
+      operationId: getSpectrogram
+      tags: [Recordings]
+      parameters:
+        - name: recording_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: start
+          in: query
+          description: Start time in seconds
+          schema:
+            type: number
+            format: double
+            minimum: 0
+            default: 0
+        - name: end
+          in: query
+          description: End time in seconds (defaults to recording duration)
+          schema:
+            type: number
+            format: double
+        - name: n_fft
+          in: query
+          description: FFT window size
+          schema:
+            type: integer
+            minimum: 128
+            maximum: 8192
+            default: 2048
+        - name: hop_length
+          in: query
+          description: Hop length between windows
+          schema:
+            type: integer
+            minimum: 64
+            maximum: 4096
+            default: 512
+        - name: freq_min
+          in: query
+          description: Minimum frequency in Hz
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+        - name: freq_max
+          in: query
+          description: Maximum frequency in Hz (defaults to Nyquist)
+          schema:
+            type: integer
+        - name: colormap
+          in: query
+          description: Color map name
+          schema:
+            type: string
+            enum: [gray, viridis, magma, inferno, plasma, cividis, cool, cubehelix, twilight]
+            default: viridis
+        - name: pcen
+          in: query
+          description: Apply PCEN normalization
+          schema:
+            type: boolean
+            default: false
+        - name: channel
+          in: query
+          description: Audio channel to visualize (0-indexed)
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+        - name: width
+          in: query
+          description: Output image width in pixels
+          schema:
+            type: integer
+            minimum: 100
+            maximum: 4096
+            default: 1200
+        - name: height
+          in: query
+          description: Output image height in pixels
+          schema:
+            type: integer
+            minimum: 100
+            maximum: 2048
+            default: 400
+      responses:
+        '200':
+          description: Spectrogram image
+          content:
+            image/png:
+              schema:
+                type: string
+                format: binary
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/recordings/{recording_id}/download:
+    get:
+      summary: Download recording as WAV file
+      operationId: downloadRecording
+      tags: [Recordings]
+      parameters:
+        - name: recording_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: start
+          in: query
+          description: Start time in seconds (for partial download)
+          schema:
+            type: number
+            format: double
+            minimum: 0
+        - name: end
+          in: query
+          description: End time in seconds (for partial download)
+          schema:
+            type: number
+            format: double
+      responses:
+        '200':
+          description: WAV file download
+          headers:
+            Content-Disposition:
+              schema:
+                type: string
+                example: attachment; filename="recording.wav"
+          content:
+            audio/wav:
+              schema:
+                type: string
+                format: binary
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+components:
+  schemas:
+    DatetimeParseStatus:
+      type: string
+      enum: [pending, success, failed]
+
+    Recording:
+      type: object
+      required: [id, dataset_id, filename, path, hash, duration, samplerate, channels, time_expansion, datetime_parse_status, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        dataset_id:
+          type: string
+          format: uuid
+        filename:
+          type: string
+        path:
+          type: string
+        hash:
+          type: string
+        duration:
+          type: number
+          format: double
+          description: Duration in seconds
+        samplerate:
+          type: integer
+          description: Sample rate in Hz
+        channels:
+          type: integer
+        bit_depth:
+          type: integer
+          nullable: true
+        datetime:
+          type: string
+          format: date-time
+          nullable: true
+        datetime_parse_status:
+          $ref: '#/components/schemas/DatetimeParseStatus'
+        datetime_parse_error:
+          type: string
+          nullable: true
+        time_expansion:
+          type: number
+          format: double
+        note:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    RecordingDetail:
+      allOf:
+        - $ref: '#/components/schemas/Recording'
+        - type: object
+          properties:
+            dataset:
+              $ref: '#/components/schemas/DatasetSummary'
+            site:
+              $ref: '#/components/schemas/SiteSummary'
+            clip_count:
+              type: integer
+            effective_duration:
+              type: number
+              format: double
+              description: Duration with time expansion applied
+            is_ultrasonic:
+              type: boolean
+              description: True if samplerate > 48000
+
+    RecordingUpdate:
+      type: object
+      properties:
+        time_expansion:
+          type: number
+          format: double
+          minimum: 0.1
+          maximum: 100.0
+        note:
+          type: string
+          nullable: true
+
+    DatasetSummary:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+
+    SiteSummary:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        h3_index:
+          type: string
+
+    PaginatedRecordingResponse:
+      type: object
+      required: [items, total, page, page_size, pages]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Recording'
+        total:
+          type: integer
+        page:
+          type: integer
+        page_size:
+          type: integer
+        pages:
+          type: integer
+
+    Error:
+      type: object
+      required: [detail]
+      properties:
+        detail:
+          type: string
+        code:
+          type: string
+
+  responses:
+    BadRequest:
+      description: Invalid request parameters
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Unauthorized:
+      description: Authentication required
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Forbidden:
+      description: Insufficient permissions
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'

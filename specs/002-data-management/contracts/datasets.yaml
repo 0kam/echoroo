@@ -1,0 +1,751 @@
+openapi: 3.1.0
+info:
+  title: Echoroo Datasets API
+  version: 1.0.0
+  description: API for managing audio datasets
+
+paths:
+  /api/v1/projects/{project_id}/datasets:
+    get:
+      summary: List datasets for a project
+      operationId: listDatasets
+      tags: [Datasets]
+      parameters:
+        - name: project_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: site_id
+          in: query
+          description: Filter by site
+          schema:
+            type: string
+            format: uuid
+        - name: status
+          in: query
+          description: Filter by import status
+          schema:
+            $ref: '#/components/schemas/DatasetStatus'
+        - name: visibility
+          in: query
+          description: Filter by visibility
+          schema:
+            $ref: '#/components/schemas/DatasetVisibility'
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+            minimum: 1
+        - name: page_size
+          in: query
+          schema:
+            type: integer
+            default: 20
+            minimum: 1
+            maximum: 100
+        - name: search
+          in: query
+          description: Search by name or description
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Paginated list of datasets
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedDatasetResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    post:
+      summary: Create a new dataset
+      operationId: createDataset
+      tags: [Datasets]
+      parameters:
+        - name: project_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DatasetCreate'
+      responses:
+        '201':
+          description: Dataset created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Dataset'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          description: Dataset with same name already exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /api/v1/projects/{project_id}/datasets/{dataset_id}:
+    get:
+      summary: Get a dataset by ID
+      operationId: getDataset
+      tags: [Datasets]
+      parameters:
+        - name: project_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: dataset_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Dataset details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DatasetDetail'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    patch:
+      summary: Update a dataset
+      operationId: updateDataset
+      tags: [Datasets]
+      parameters:
+        - name: project_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: dataset_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DatasetUpdate'
+      responses:
+        '200':
+          description: Dataset updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Dataset'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    delete:
+      summary: Delete a dataset and all recordings
+      operationId: deleteDataset
+      tags: [Datasets]
+      parameters:
+        - name: project_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: dataset_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Dataset deleted successfully
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/projects/{project_id}/datasets/{dataset_id}/import:
+    post:
+      summary: Start or resume dataset import
+      operationId: importDataset
+      tags: [Datasets]
+      parameters:
+        - name: project_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: dataset_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                datetime_pattern:
+                  type: string
+                  description: Regex pattern for datetime extraction
+                datetime_format:
+                  type: string
+                  description: strftime format string
+      responses:
+        '202':
+          description: Import started
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImportStatus'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Import already in progress
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /api/v1/projects/{project_id}/datasets/{dataset_id}/rescan:
+    post:
+      summary: Rescan dataset directory for new files
+      operationId: rescanDataset
+      tags: [Datasets]
+      parameters:
+        - name: project_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: dataset_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '202':
+          description: Rescan started
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImportStatus'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Import or rescan already in progress
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /api/v1/projects/{project_id}/datasets/{dataset_id}/statistics:
+    get:
+      summary: Get detailed dataset statistics
+      operationId: getDatasetStatistics
+      tags: [Datasets]
+      parameters:
+        - name: project_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: dataset_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Dataset statistics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DatasetStatistics'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/projects/{project_id}/datasets/{dataset_id}/export:
+    post:
+      summary: Export dataset in CamtrapDP format
+      operationId: exportDataset
+      tags: [Datasets]
+      parameters:
+        - name: project_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: dataset_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                include_audio:
+                  type: boolean
+                  default: false
+                  description: Include audio files in export
+      responses:
+        '200':
+          description: ZIP file download
+          content:
+            application/zip:
+              schema:
+                type: string
+                format: binary
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/directories:
+    get:
+      summary: List available directories for import
+      operationId: listDirectories
+      tags: [Datasets, Utilities]
+      parameters:
+        - name: path
+          in: query
+          description: Base path to list (defaults to configured audio root)
+          schema:
+            type: string
+      responses:
+        '200':
+          description: List of directories
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DirectoryList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '400':
+          description: Invalid path
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+components:
+  schemas:
+    DatasetStatus:
+      type: string
+      enum: [pending, scanning, processing, completed, failed]
+
+    DatasetVisibility:
+      type: string
+      enum: [private, public]
+
+    Dataset:
+      type: object
+      required: [id, site_id, project_id, name, audio_dir, visibility, status, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        site_id:
+          type: string
+          format: uuid
+        project_id:
+          type: string
+          format: uuid
+        recorder_id:
+          type: string
+          nullable: true
+        license_id:
+          type: string
+          nullable: true
+        created_by_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        description:
+          type: string
+          nullable: true
+        audio_dir:
+          type: string
+        visibility:
+          $ref: '#/components/schemas/DatasetVisibility'
+        status:
+          $ref: '#/components/schemas/DatasetStatus'
+        doi:
+          type: string
+          nullable: true
+        gain:
+          type: number
+          format: double
+          nullable: true
+        note:
+          type: string
+          nullable: true
+        total_files:
+          type: integer
+        processed_files:
+          type: integer
+        processing_error:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    DatasetDetail:
+      allOf:
+        - $ref: '#/components/schemas/Dataset'
+        - type: object
+          properties:
+            site:
+              $ref: '#/components/schemas/SiteSummary'
+            recorder:
+              $ref: '#/components/schemas/RecorderSummary'
+            license:
+              $ref: '#/components/schemas/LicenseSummary'
+            created_by:
+              $ref: '#/components/schemas/UserSummary'
+            recording_count:
+              type: integer
+            total_duration:
+              type: number
+              format: double
+              description: Total duration in seconds
+            start_date:
+              type: string
+              format: date-time
+              nullable: true
+            end_date:
+              type: string
+              format: date-time
+              nullable: true
+
+    DatasetCreate:
+      type: object
+      required: [site_id, name, audio_dir]
+      properties:
+        site_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+        description:
+          type: string
+        audio_dir:
+          type: string
+          description: Relative path to audio directory
+        visibility:
+          $ref: '#/components/schemas/DatasetVisibility'
+          default: private
+        recorder_id:
+          type: string
+          nullable: true
+        license_id:
+          type: string
+          nullable: true
+        doi:
+          type: string
+          nullable: true
+        gain:
+          type: number
+          format: double
+          nullable: true
+        note:
+          type: string
+          nullable: true
+        datetime_pattern:
+          type: string
+          description: Regex pattern for datetime extraction
+        datetime_format:
+          type: string
+          description: strftime format string
+
+    DatasetUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+        description:
+          type: string
+          nullable: true
+        visibility:
+          $ref: '#/components/schemas/DatasetVisibility'
+        recorder_id:
+          type: string
+          nullable: true
+        license_id:
+          type: string
+          nullable: true
+        doi:
+          type: string
+          nullable: true
+        gain:
+          type: number
+          format: double
+          nullable: true
+        note:
+          type: string
+          nullable: true
+        datetime_pattern:
+          type: string
+        datetime_format:
+          type: string
+
+    ImportStatus:
+      type: object
+      required: [status, total_files, processed_files]
+      properties:
+        status:
+          $ref: '#/components/schemas/DatasetStatus'
+        total_files:
+          type: integer
+        processed_files:
+          type: integer
+        progress_percent:
+          type: number
+          format: double
+        error:
+          type: string
+          nullable: true
+
+    DatasetStatistics:
+      type: object
+      required: [recording_count, total_duration]
+      properties:
+        recording_count:
+          type: integer
+        total_duration:
+          type: number
+          format: double
+        date_range:
+          type: object
+          nullable: true
+          properties:
+            start:
+              type: string
+              format: date-time
+            end:
+              type: string
+              format: date-time
+        samplerate_distribution:
+          type: object
+          additionalProperties:
+            type: integer
+          description: Map of samplerate to count
+        format_distribution:
+          type: object
+          additionalProperties:
+            type: integer
+          description: Map of file extension to count
+        recordings_by_date:
+          type: array
+          items:
+            type: object
+            properties:
+              date:
+                type: string
+                format: date
+              count:
+                type: integer
+              duration:
+                type: number
+        recordings_by_hour:
+          type: array
+          items:
+            type: object
+            properties:
+              hour:
+                type: integer
+                minimum: 0
+                maximum: 23
+              count:
+                type: integer
+
+    DirectoryList:
+      type: object
+      required: [path, directories]
+      properties:
+        path:
+          type: string
+        directories:
+          type: array
+          items:
+            type: object
+            properties:
+              name:
+                type: string
+              path:
+                type: string
+              audio_file_count:
+                type: integer
+              formats:
+                type: array
+                items:
+                  type: string
+
+    SiteSummary:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        h3_index:
+          type: string
+
+    RecorderSummary:
+      type: object
+      properties:
+        id:
+          type: string
+        manufacturer:
+          type: string
+        recorder_name:
+          type: string
+
+    LicenseSummary:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        short_name:
+          type: string
+
+    UserSummary:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        username:
+          type: string
+        display_name:
+          type: string
+
+    PaginatedDatasetResponse:
+      type: object
+      required: [items, total, page, page_size, pages]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Dataset'
+        total:
+          type: integer
+        page:
+          type: integer
+        page_size:
+          type: integer
+        pages:
+          type: integer
+
+    Error:
+      type: object
+      required: [detail]
+      properties:
+        detail:
+          type: string
+        code:
+          type: string
+
+  responses:
+    BadRequest:
+      description: Invalid request parameters
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Unauthorized:
+      description: Authentication required
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Forbidden:
+      description: Insufficient permissions
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'

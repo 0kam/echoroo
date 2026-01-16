@@ -158,7 +158,7 @@ class TokenService:
 
         # Update last_used_at
         api_token.last_used_at = datetime.now(UTC)
-        await self.db.flush()
+        await self.db.commit()
 
         # Load the user
         user_result = await self.db.execute(

@@ -1,0 +1,457 @@
+openapi: 3.1.0
+info:
+  title: Echoroo Sites API
+  version: 1.0.0
+  description: API for managing geographic sites using Uber H3 hexagonal cells
+
+paths:
+  /api/v1/projects/{project_id}/sites:
+    get:
+      summary: List sites for a project
+      operationId: listSites
+      tags: [Sites]
+      parameters:
+        - name: project_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+            minimum: 1
+        - name: page_size
+          in: query
+          schema:
+            type: integer
+            default: 20
+            minimum: 1
+            maximum: 100
+        - name: search
+          in: query
+          description: Search by site name
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Paginated list of sites
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedSiteResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    post:
+      summary: Create a new site
+      operationId: createSite
+      tags: [Sites]
+      parameters:
+        - name: project_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SiteCreate'
+      responses:
+        '201':
+          description: Site created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Site'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          description: Site with same name or H3 index already exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /api/v1/projects/{project_id}/sites/{site_id}:
+    get:
+      summary: Get a site by ID
+      operationId: getSite
+      tags: [Sites]
+      parameters:
+        - name: project_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: site_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Site details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SiteDetail'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    patch:
+      summary: Update a site
+      operationId: updateSite
+      tags: [Sites]
+      parameters:
+        - name: project_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: site_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SiteUpdate'
+      responses:
+        '200':
+          description: Site updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Site'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Site with same name or H3 index already exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+    delete:
+      summary: Delete a site
+      operationId: deleteSite
+      tags: [Sites]
+      parameters:
+        - name: project_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: site_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Site deleted successfully
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Site has associated datasets
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteConflictError'
+
+  /api/v1/h3/validate:
+    post:
+      summary: Validate H3 index
+      operationId: validateH3Index
+      tags: [Sites, Utilities]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [h3_index]
+              properties:
+                h3_index:
+                  type: string
+                  description: H3 cell index to validate
+      responses:
+        '200':
+          description: H3 index validation result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/H3ValidationResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /api/v1/h3/from-coordinates:
+    post:
+      summary: Get H3 index from coordinates
+      operationId: getH3FromCoordinates
+      tags: [Sites, Utilities]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [latitude, longitude, resolution]
+              properties:
+                latitude:
+                  type: number
+                  format: double
+                  minimum: -90
+                  maximum: 90
+                longitude:
+                  type: number
+                  format: double
+                  minimum: -180
+                  maximum: 180
+                resolution:
+                  type: integer
+                  minimum: 5
+                  maximum: 15
+      responses:
+        '200':
+          description: H3 index for coordinates
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/H3FromCoordinatesResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+components:
+  schemas:
+    Site:
+      type: object
+      required: [id, project_id, name, h3_index, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        project_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          maxLength: 200
+        h3_index:
+          type: string
+          description: Uber H3 cell index
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    SiteDetail:
+      allOf:
+        - $ref: '#/components/schemas/Site'
+        - type: object
+          properties:
+            dataset_count:
+              type: integer
+              description: Number of datasets at this site
+            recording_count:
+              type: integer
+              description: Total recordings across all datasets
+            total_duration:
+              type: number
+              format: double
+              description: Total duration of all recordings in seconds
+            latitude:
+              type: number
+              format: double
+              description: Centroid latitude (from H3)
+            longitude:
+              type: number
+              format: double
+              description: Centroid longitude (from H3)
+            coordinate_uncertainty:
+              type: number
+              format: double
+              description: Coordinate uncertainty in meters (from H3 cell size)
+            boundary:
+              type: array
+              description: H3 cell boundary as [lat, lng] pairs
+              items:
+                type: array
+                items:
+                  type: number
+                minItems: 2
+                maxItems: 2
+
+    SiteCreate:
+      type: object
+      required: [name, h3_index]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+        h3_index:
+          type: string
+          description: Valid H3 cell index (resolution 5-15)
+
+    SiteUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+        h3_index:
+          type: string
+          description: Valid H3 cell index (resolution 5-15)
+
+    PaginatedSiteResponse:
+      type: object
+      required: [items, total, page, page_size, pages]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Site'
+        total:
+          type: integer
+        page:
+          type: integer
+        page_size:
+          type: integer
+        pages:
+          type: integer
+
+    H3ValidationResult:
+      type: object
+      required: [valid]
+      properties:
+        valid:
+          type: boolean
+        resolution:
+          type: integer
+          description: H3 resolution (if valid)
+        latitude:
+          type: number
+          format: double
+          description: Centroid latitude (if valid)
+        longitude:
+          type: number
+          format: double
+          description: Centroid longitude (if valid)
+        error:
+          type: string
+          description: Error message (if invalid)
+
+    H3FromCoordinatesResult:
+      type: object
+      required: [h3_index, resolution, latitude, longitude]
+      properties:
+        h3_index:
+          type: string
+        resolution:
+          type: integer
+        latitude:
+          type: number
+          format: double
+          description: Centroid latitude of H3 cell
+        longitude:
+          type: number
+          format: double
+          description: Centroid longitude of H3 cell
+        boundary:
+          type: array
+          description: H3 cell boundary as [lat, lng] pairs
+          items:
+            type: array
+            items:
+              type: number
+            minItems: 2
+            maxItems: 2
+
+    DeleteConflictError:
+      type: object
+      required: [detail, code, affected_count]
+      properties:
+        detail:
+          type: string
+        code:
+          type: string
+          enum: [SITE_HAS_DATASETS]
+        affected_count:
+          type: integer
+          description: Number of datasets that would be affected
+
+    Error:
+      type: object
+      required: [detail]
+      properties:
+        detail:
+          type: string
+        code:
+          type: string
+
+  responses:
+    BadRequest:
+      description: Invalid request parameters
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Unauthorized:
+      description: Authentication required
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Forbidden:
+      description: Insufficient permissions
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'

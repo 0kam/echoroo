@@ -25,3 +25,28 @@ class SettingType(str, Enum):
     NUMBER = "number"
     BOOLEAN = "boolean"
     JSON = "json"
+
+
+class DatasetVisibility(str, Enum):
+    """Dataset visibility levels."""
+
+    PRIVATE = "private"  # Only owner can access
+    PUBLIC = "public"  # All authenticated users can view
+
+
+class DatasetStatus(str, Enum):
+    """Dataset import status."""
+
+    PENDING = "pending"  # Created, not yet scanning
+    SCANNING = "scanning"  # Discovering audio files
+    PROCESSING = "processing"  # Importing recordings
+    COMPLETED = "completed"  # Import finished successfully
+    FAILED = "failed"  # Import failed with error
+
+
+class DatetimeParseStatus(str, Enum):
+    """Recording datetime parse status."""
+
+    PENDING = "pending"  # Not yet attempted
+    SUCCESS = "success"  # Parsed successfully
+    FAILED = "failed"  # Parse failed

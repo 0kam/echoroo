@@ -4,7 +4,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from echoroo.core.jwt import create_access_token
-from echoroo.models.enums import ProjectRole
+from echoroo.models.enums import ProjectRole, ProjectVisibility
 from echoroo.models.project import Project, ProjectMember
 from echoroo.models.user import User
 
@@ -176,7 +176,7 @@ async def test_project(db_session: AsyncSession, test_user: User) -> Project:
         name="Test Project",
         description="A test project",
         target_taxa="Passeriformes",
-        visibility="private",
+        visibility=ProjectVisibility.PRIVATE,
         owner_id=test_user.id,
     )
     db_session.add(project)

@@ -6,6 +6,7 @@
   import { onMount } from 'svelte';
   import { browser } from '$app/environment';
   import type { Snippet } from 'svelte';
+  import ToastContainer from '$lib/components/ui/ToastContainer.svelte';
 
   interface Props {
     children: Snippet;
@@ -44,6 +45,8 @@
 </script>
 
 <QueryClientProvider client={queryClient}>
+  <ToastContainer />
+
   {#if errorMessage}
     <div class="fixed right-4 top-4 z-50 rounded-lg bg-red-500 p-4 text-white shadow-lg">
       <div class="flex items-start gap-2">

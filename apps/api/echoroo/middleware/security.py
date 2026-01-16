@@ -24,6 +24,7 @@ from typing import Literal
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
+from starlette.types import ASGIApp
 
 
 @dataclass
@@ -128,7 +129,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 
     def __init__(
         self,
-        app: Callable[[Request], Awaitable[Response]],
+        app: ASGIApp,
         config: SecurityHeadersConfig | None = None,
     ) -> None:
         """Initialize security headers middleware."""
