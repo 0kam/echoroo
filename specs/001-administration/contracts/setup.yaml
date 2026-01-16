@@ -1,0 +1,155 @@
+openapi: 3.1.0
+info:
+  title: Echoroo Setup API
+  version: 1.0.0
+  description: Initial setup wizard endpoints
+
+paths:
+  /api/v1/setup/status:
+    get:
+      operationId: getSetupStatus
+      summary: Get setup status
+      description: Check if initial setup has been completed
+      tags: [Setup]
+      responses:
+        '200':
+          description: Setup status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SetupStatusResponse'
+
+  /api/v1/setup/complete:
+    post:
+      operationId: completeSetup
+      summary: Complete initial setup
+      description: Create superuser and mark setup as complete
+      tags: [Setup]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CompleteSetupRequest'
+      responses:
+        '201':
+          description: Setup completed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SetupCompleteResponse'
+          headers:
+            Set-Cookie:
+              description: JWT access token cookie
+              schema:
+                type: string
+        '400':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Setup already completed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/health:
+    get:
+      operationId: healthCheck
+      summary: Health check
+      description: Check API server health
+      tags: [System]
+      responses:
+        '200':
+          description: API is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+
+components:
+  schemas:
+    SetupStatusResponse:
+      type: object
+      required: [setup_completed]
+      properties:
+        setup_completed:
+          type: boolean
+          description: Whether initial setup has been completed
+
+    CompleteSetupRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+          maxLength: 255
+        password:
+          type: string
+          minLength: 8
+          maxLength: 128
+        display_name:
+          type: string
+          maxLength: 100
+        organization:
+          type: string
+          maxLength: 200
+
+    SetupCompleteResponse:
+      type: object
+      required: [user, message]
+      properties:
+        user:
+          $ref: '#/components/schemas/UserResponse'
+        message:
+          type: string
+
+    UserResponse:
+      type: object
+      required: [id, email, is_active, is_superuser, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        email:
+          type: string
+          format: email
+        display_name:
+          type: string
+          nullable: true
+        organization:
+          type: string
+          nullable: true
+        is_active:
+          type: boolean
+        is_superuser:
+          type: boolean
+        is_verified:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+
+    HealthResponse:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [healthy]
+        version:
+          type: string
+        database:
+          type: string
+          enum: [connected, disconnected]
+
+    ErrorResponse:
+      type: object
+      required: [detail]
+      properties:
+        detail:
+          type: string
