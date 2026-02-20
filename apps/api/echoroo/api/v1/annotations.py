@@ -108,7 +108,7 @@ async def add_clip_tag(
 
 
 @router.delete(
-    "/projects/{project_id}/clip-annotations/{clip_annotation_id}/tags",
+    "/projects/{project_id}/clip-annotations/{clip_annotation_id}/tags/{tag_id}",
     response_model=ClipAnnotationDetailResponse,
     summary="Remove tag from clip annotation",
     description="Remove a tag from a clip annotation",
@@ -116,7 +116,7 @@ async def add_clip_tag(
 async def remove_clip_tag(
     project_id: UUID,
     clip_annotation_id: UUID,
-    request: AddTagRequest,
+    tag_id: UUID,
     current_user: CurrentUser,
     service: AnnotationServiceDep,
 ) -> ClipAnnotationDetailResponse:
@@ -125,7 +125,7 @@ async def remove_clip_tag(
     Args:
         project_id: Parent project's UUID
         clip_annotation_id: ClipAnnotation's UUID
-        request: Tag removal request with tag_id
+        tag_id: Tag's UUID to remove
         current_user: Current authenticated user
         service: Annotation service instance
 
@@ -136,7 +136,7 @@ async def remove_clip_tag(
         401: Not authenticated
         404: Clip annotation not found
     """
-    await service.remove_clip_tag(clip_annotation_id, request.tag_id)
+    await service.remove_clip_tag(clip_annotation_id, tag_id)
     # Return updated clip annotation
     updated = await service.clip_annotation_repo.get_by_id(clip_annotation_id)
     if updated is None:
@@ -305,7 +305,7 @@ async def add_sound_event_tag(
 
 
 @router.delete(
-    "/projects/{project_id}/sound-events/{sound_event_id}/tags",
+    "/projects/{project_id}/sound-events/{sound_event_id}/tags/{tag_id}",
     status_code=status.HTTP_200_OK,
     summary="Remove tag from sound event annotation",
     description="Remove a tag from a sound event annotation",
@@ -313,7 +313,7 @@ async def add_sound_event_tag(
 async def remove_sound_event_tag(
     project_id: UUID,
     sound_event_id: UUID,
-    request: AddTagRequest,
+    tag_id: UUID,
     current_user: CurrentUser,
     service: AnnotationServiceDep,
 ) -> dict[str, object]:
@@ -322,7 +322,7 @@ async def remove_sound_event_tag(
     Args:
         project_id: Parent project's UUID
         sound_event_id: SoundEventAnnotation's UUID
-        request: Tag removal request with tag_id
+        tag_id: Tag's UUID to remove
         current_user: Current authenticated user
         service: Annotation service instance
 
@@ -333,7 +333,7 @@ async def remove_sound_event_tag(
         401: Not authenticated
         404: Sound event annotation not found
     """
-    await service.remove_sound_event_tag(sound_event_id, request.tag_id)
+    await service.remove_sound_event_tag(sound_event_id, tag_id)
     return dict()
 
 

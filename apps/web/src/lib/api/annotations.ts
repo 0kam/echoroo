@@ -58,14 +58,11 @@ export async function removeClipTag(
   clipAnnotationId: string,
   tagId: string
 ): Promise<void> {
-  const body: AddTagRequest = { tag_id: tagId };
   const response = await fetchWithErrorHandling(
-    `${API_BASE}/projects/${projectId}/clip-annotations/${clipAnnotationId}/tags`,
+    `${API_BASE}/projects/${projectId}/clip-annotations/${clipAnnotationId}/tags/${tagId}`,
     {
       method: 'DELETE',
-      headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
-      body: JSON.stringify(body),
     }
   );
   if (response.ok) {
@@ -177,14 +174,11 @@ export async function removeSoundEventTag(
   soundEventId: string,
   tagId: string
 ): Promise<void> {
-  const body: AddTagRequest = { tag_id: tagId };
   const response = await fetchWithErrorHandling(
-    `${API_BASE}/projects/${projectId}/sound-events/${soundEventId}/tags`,
+    `${API_BASE}/projects/${projectId}/sound-events/${soundEventId}/tags/${tagId}`,
     {
       method: 'DELETE',
-      headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
-      body: JSON.stringify(body),
     }
   );
   if (response.ok) {

@@ -50,9 +50,8 @@ dmypy.json
 .env
 .env.local
 
-# Alembic
-alembic/versions/*.py
-!alembic/versions/.gitkeep
+# Alembic (auto-generated pycache only)
+alembic/versions/__pycache__/
 
 # Logs
 *.log
