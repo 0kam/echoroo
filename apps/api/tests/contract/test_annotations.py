@@ -356,9 +356,8 @@ class TestRemoveClipTagEndpoint:
 
         # Then remove it
         response = await client.delete(
-            f"/api/v1/projects/{test_project_id}/clip-annotations/{test_clip_annotation.id}/tags",
-            content=json.dumps({"tag_id": str(test_tag.id)}),
-            headers={**auth_headers, "Content-Type": "application/json"},
+            f"/api/v1/projects/{test_project_id}/clip-annotations/{test_clip_annotation.id}/tags/{test_tag.id}",
+            headers=auth_headers,
         )
 
         assert response.status_code == 200
@@ -375,9 +374,7 @@ class TestRemoveClipTagEndpoint:
     ) -> None:
         """Test DELETE requires authentication."""
         response = await client.delete(
-            f"/api/v1/projects/{test_project_id}/clip-annotations/{test_clip_annotation.id}/tags",
-            content=json.dumps({"tag_id": str(test_tag.id)}),
-            headers={"Content-Type": "application/json"},
+            f"/api/v1/projects/{test_project_id}/clip-annotations/{test_clip_annotation.id}/tags/{test_tag.id}",
         )
 
         assert response.status_code == 401
@@ -604,9 +601,8 @@ class TestRemoveSoundEventTagEndpoint:
 
         # Then remove it
         response = await client.delete(
-            f"/api/v1/projects/{test_project_id}/sound-events/{test_sound_event.id}/tags",
-            content=json.dumps({"tag_id": str(test_tag.id)}),
-            headers={**auth_headers, "Content-Type": "application/json"},
+            f"/api/v1/projects/{test_project_id}/sound-events/{test_sound_event.id}/tags/{test_tag.id}",
+            headers=auth_headers,
         )
 
         assert response.status_code == 200
@@ -620,9 +616,7 @@ class TestRemoveSoundEventTagEndpoint:
     ) -> None:
         """Test DELETE requires authentication."""
         response = await client.delete(
-            f"/api/v1/projects/{test_project_id}/sound-events/{test_sound_event.id}/tags",
-            content=json.dumps({"tag_id": str(test_tag.id)}),
-            headers={"Content-Type": "application/json"},
+            f"/api/v1/projects/{test_project_id}/sound-events/{test_sound_event.id}/tags/{test_tag.id}",
         )
 
         assert response.status_code == 401
