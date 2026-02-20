@@ -97,6 +97,8 @@ module = [
     "mutagen.*",
     "scipy.*",
     "matplotlib.*",
+    "h3",
+    "h3.*",
 ]
 ignore_missing_imports = true
 

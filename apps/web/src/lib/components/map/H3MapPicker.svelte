@@ -1,6 +1,5 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
-  // @ts-expect-error - h3-js doesn't have TypeScript declarations
   import { cellToBoundary, latLngToCell, isValidCell, getResolution, cellToLatLng } from 'h3-js';
 
   export let h3Index: string = '';
@@ -18,7 +17,6 @@
 
   onMount(async () => {
     // Dynamically import mapbox-gl to avoid SSR issues
-    // @ts-expect-error - mapbox-gl types not available for dynamic import
     const mapboxglModule = await import('mapbox-gl');
     const mapboxgl = mapboxglModule.default;
     await import('mapbox-gl/dist/mapbox-gl.css');
@@ -94,8 +92,11 @@
     if (!map) return;
 
     const boundary = cellToBoundary(h3Cell, true);
-    const coordinates = boundary.map(([lat, lng]: [number, number]) => [lng, lat]);
-    coordinates.push(coordinates[0]); // Close the polygon
+    const coordinates: number[][] = boundary.map(([lat, lng]: [number, number]) => [lng, lat]);
+    const firstCoord = coordinates[0];
+    if (firstCoord) {
+      coordinates.push(firstCoord); // Close the polygon
+    }
 
     const geojson = {
       type: 'FeatureCollection' as const,

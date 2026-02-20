@@ -57,6 +57,7 @@
   }
 
   // projectId is reserved for future use (e.g., fetching datasets/tags for the picker)
+  $: void projectId;
 </script>
 
 <form class="annotation-project-form" on:submit|preventDefault={handleSubmit}>

@@ -24,7 +24,7 @@ class TagRepository:
         self.db = db
 
     async def get_by_id(self, tag_id: UUID) -> Tag | None:
-        """Get tag by ID with project relationship loaded.
+        """Get tag by ID with project and children relationships loaded.
 
         Args:
             tag_id: Tag's UUID
@@ -33,7 +33,10 @@ class TagRepository:
             Tag instance or None if not found
         """
         result = await self.db.execute(
-            select(Tag).where(Tag.id == tag_id).options(selectinload(Tag.project))
+            select(Tag).where(Tag.id == tag_id).options(
+                selectinload(Tag.project),
+                selectinload(Tag.children),
+            )
         )
         return result.scalar_one_or_none()
 

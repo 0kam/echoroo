@@ -6,6 +6,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from echoroo.models.annotation_project import AnnotationProject
 from echoroo.models.annotation_task import AnnotationTask
 from echoroo.models.enums import AnnotationTaskStatus
 
@@ -36,7 +37,7 @@ class AnnotationTaskRepository:
             .options(
                 selectinload(AnnotationTask.clip),
                 selectinload(AnnotationTask.clip_annotation),
-                selectinload(AnnotationTask.annotation_project),
+                selectinload(AnnotationTask.annotation_project).selectinload(AnnotationProject.tags),
             )
         )
         return result.scalar_one_or_none()
@@ -94,7 +95,7 @@ class AnnotationTaskRepository:
             .options(
                 selectinload(AnnotationTask.clip),
                 selectinload(AnnotationTask.clip_annotation),
-                selectinload(AnnotationTask.annotation_project),
+                selectinload(AnnotationTask.annotation_project).selectinload(AnnotationProject.tags),
             )
         )
 
@@ -140,7 +141,7 @@ class AnnotationTaskRepository:
             .options(
                 selectinload(AnnotationTask.clip),
                 selectinload(AnnotationTask.clip_annotation),
-                selectinload(AnnotationTask.annotation_project),
+                selectinload(AnnotationTask.annotation_project).selectinload(AnnotationProject.tags),
             )
             # Prefer tasks assigned to the user (assigned_to_id = user_id sorts before NULL)
             .order_by(
