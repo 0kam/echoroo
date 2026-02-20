@@ -1,0 +1,357 @@
+openapi: 3.0.3
+info:
+  title: Echoroo Annotation - Annotation Tasks API
+  version: 1.0.0
+
+paths:
+  /api/v1/projects/{project_id}/annotation-projects/{annotation_project_id}/tasks:
+    get:
+      summary: List annotation tasks
+      operationId: listAnnotationTasks
+      tags: [annotation-tasks]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - $ref: '#/components/parameters/AnnotationProjectId'
+        - name: status
+          in: query
+          schema:
+            $ref: '#/components/schemas/AnnotationTaskStatus'
+        - name: assigned_to_id
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: page_size
+          in: query
+          schema:
+            type: integer
+            default: 50
+        - name: sort_by
+          in: query
+          schema:
+            type: string
+            enum: [priority, created_at, status]
+            default: priority
+        - name: sort_order
+          in: query
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: desc
+      responses:
+        '200':
+          description: Task list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AnnotationTaskListResponse'
+
+  /api/v1/projects/{project_id}/annotation-projects/{annotation_project_id}/tasks/{task_id}:
+    get:
+      summary: Get annotation task details
+      operationId: getAnnotationTask
+      tags: [annotation-tasks]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - $ref: '#/components/parameters/AnnotationProjectId'
+        - $ref: '#/components/parameters/TaskId'
+      responses:
+        '200':
+          description: Task details with clip and annotation data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AnnotationTaskDetailResponse'
+
+    patch:
+      summary: Update annotation task (assign, change status)
+      operationId: updateAnnotationTask
+      tags: [annotation-tasks]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - $ref: '#/components/parameters/AnnotationProjectId'
+        - $ref: '#/components/parameters/TaskId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AnnotationTaskUpdate'
+      responses:
+        '200':
+          description: Task updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AnnotationTaskDetailResponse'
+
+  /api/v1/projects/{project_id}/annotation-projects/{annotation_project_id}/tasks/{task_id}/complete:
+    post:
+      summary: Mark task as completed
+      operationId: completeAnnotationTask
+      tags: [annotation-tasks]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - $ref: '#/components/parameters/AnnotationProjectId'
+        - $ref: '#/components/parameters/TaskId'
+      responses:
+        '200':
+          description: Task completed, returns next task
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskCompletionResponse'
+
+  /api/v1/projects/{project_id}/annotation-projects/{annotation_project_id}/tasks/next:
+    get:
+      summary: Get next available task for current user
+      operationId: getNextTask
+      tags: [annotation-tasks]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - $ref: '#/components/parameters/AnnotationProjectId'
+      responses:
+        '200':
+          description: Next task to work on
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AnnotationTaskDetailResponse'
+        '204':
+          description: No more tasks available
+
+components:
+  parameters:
+    ProjectId:
+      name: project_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    AnnotationProjectId:
+      name: annotation_project_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    TaskId:
+      name: task_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+  schemas:
+    AnnotationTaskStatus:
+      type: string
+      enum: [pending, in_progress, completed, review_pending]
+
+    AnnotationTaskUpdate:
+      type: object
+      properties:
+        assigned_to_id:
+          type: string
+          format: uuid
+        status:
+          $ref: '#/components/schemas/AnnotationTaskStatus'
+        priority:
+          type: integer
+          minimum: 0
+          maximum: 100
+
+    AnnotationTaskResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        annotation_project_id:
+          type: string
+          format: uuid
+        clip_id:
+          type: string
+          format: uuid
+        assigned_to_id:
+          type: string
+          format: uuid
+        status:
+          $ref: '#/components/schemas/AnnotationTaskStatus'
+        priority:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    AnnotationTaskDetailResponse:
+      allOf:
+        - $ref: '#/components/schemas/AnnotationTaskResponse'
+        - type: object
+          properties:
+            clip:
+              type: object
+              properties:
+                id:
+                  type: string
+                  format: uuid
+                recording_id:
+                  type: string
+                  format: uuid
+                start_time:
+                  type: number
+                end_time:
+                  type: number
+                recording:
+                  type: object
+                  properties:
+                    id:
+                      type: string
+                      format: uuid
+                    filename:
+                      type: string
+                    samplerate:
+                      type: integer
+                    duration:
+                      type: number
+            clip_annotation:
+              $ref: '#/components/schemas/ClipAnnotationResponse'
+            annotation_project:
+              type: object
+              properties:
+                id:
+                  type: string
+                  format: uuid
+                name:
+                  type: string
+                instructions:
+                  type: string
+                tags:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      id:
+                        type: string
+                        format: uuid
+                      name:
+                        type: string
+                      category:
+                        type: string
+
+    ClipAnnotationResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        review_status:
+          type: string
+          enum: [unreviewed, approved, rejected]
+        tags:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+                format: uuid
+              name:
+                type: string
+        sound_events:
+          type: array
+          items:
+            $ref: '#/components/schemas/SoundEventAnnotationResponse'
+        notes:
+          type: array
+          items:
+            $ref: '#/components/schemas/NoteResponse'
+
+    SoundEventAnnotationResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        geometry:
+          type: object
+          properties:
+            type:
+              type: string
+              enum: [BoundingBox, TimeInterval]
+            coordinates:
+              type: array
+              items:
+                type: number
+        source:
+          type: string
+          enum: [human, model]
+        confidence:
+          type: number
+        tags:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+                format: uuid
+              name:
+                type: string
+        created_by_id:
+          type: string
+          format: uuid
+        created_at:
+          type: string
+          format: date-time
+
+    NoteResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        content:
+          type: string
+        is_review:
+          type: boolean
+        created_by_id:
+          type: string
+          format: uuid
+        created_at:
+          type: string
+          format: date-time
+
+    TaskCompletionResponse:
+      type: object
+      properties:
+        completed_task_id:
+          type: string
+          format: uuid
+        next_task:
+          $ref: '#/components/schemas/AnnotationTaskDetailResponse'
+
+    AnnotationTaskListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/AnnotationTaskResponse'
+        total:
+          type: integer
+        page:
+          type: integer
+        page_size:
+          type: integer
+        pages:
+          type: integer

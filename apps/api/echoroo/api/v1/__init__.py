@@ -2,7 +2,22 @@
 
 from fastapi import APIRouter
 
-from echoroo.api.v1 import admin, auth, clips, datasets, h3, projects, recordings, setup, sites, users
+from echoroo.api.v1 import (
+    admin,
+    annotation_projects,
+    annotation_tasks,
+    annotations,
+    auth,
+    clips,
+    datasets,
+    h3,
+    projects,
+    recordings,
+    setup,
+    sites,
+    tags,
+    users,
+)
 
 # Create main API router with /api/v1 prefix
 api_router = APIRouter(prefix="/api/v1")
@@ -17,4 +32,8 @@ api_router.include_router(datasets.router)
 api_router.include_router(recordings.router)
 api_router.include_router(clips.router)
 api_router.include_router(h3.router)
+api_router.include_router(tags.router)
+api_router.include_router(annotation_projects.router)
+api_router.include_router(annotation_tasks.router)
+api_router.include_router(annotations.router)
 api_router.include_router(admin.router)

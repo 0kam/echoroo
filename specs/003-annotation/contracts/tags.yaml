@@ -1,0 +1,293 @@
+openapi: 3.0.3
+info:
+  title: Echoroo Annotation - Tags API
+  version: 1.0.0
+
+paths:
+  /api/v1/projects/{project_id}/tags:
+    get:
+      summary: List tags for project
+      operationId: listTags
+      tags: [tags]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - name: category
+          in: query
+          schema:
+            $ref: '#/components/schemas/TagCategory'
+        - name: search
+          in: query
+          schema:
+            type: string
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: page_size
+          in: query
+          schema:
+            type: integer
+            default: 50
+      responses:
+        '200':
+          description: Tag list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TagListResponse'
+
+    post:
+      summary: Create a tag
+      operationId: createTag
+      tags: [tags]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TagCreate'
+      responses:
+        '201':
+          description: Tag created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TagResponse'
+
+  /api/v1/projects/{project_id}/tags/{tag_id}:
+    get:
+      summary: Get tag details
+      operationId: getTag
+      tags: [tags]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - $ref: '#/components/parameters/TagId'
+      responses:
+        '200':
+          description: Tag details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TagDetailResponse'
+
+    patch:
+      summary: Update a tag
+      operationId: updateTag
+      tags: [tags]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - $ref: '#/components/parameters/TagId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TagUpdate'
+      responses:
+        '200':
+          description: Tag updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TagResponse'
+
+    delete:
+      summary: Delete a tag
+      operationId: deleteTag
+      tags: [tags]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - $ref: '#/components/parameters/TagId'
+      responses:
+        '204':
+          description: Tag deleted
+
+  /api/v1/projects/{project_id}/tags/gbif-suggest:
+    get:
+      summary: Search GBIF for species suggestions
+      operationId: gbifSuggest
+      tags: [tags]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 10
+      responses:
+        '200':
+          description: GBIF species suggestions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/GBIFSuggestion'
+
+  /api/v1/projects/{project_id}/tags/statistics:
+    get:
+      summary: Get tag usage statistics
+      operationId: getTagStatistics
+      tags: [tags]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      responses:
+        '200':
+          description: Tag statistics
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/TagStatistic'
+
+components:
+  parameters:
+    ProjectId:
+      name: project_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    TagId:
+      name: tag_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+  schemas:
+    TagCategory:
+      type: string
+      enum: [species, sound_type, quality]
+
+    TagCreate:
+      type: object
+      required: [name, category]
+      properties:
+        name:
+          type: string
+          maxLength: 200
+        category:
+          $ref: '#/components/schemas/TagCategory'
+        parent_id:
+          type: string
+          format: uuid
+        gbif_taxon_key:
+          type: integer
+        scientific_name:
+          type: string
+          maxLength: 300
+        common_name:
+          type: string
+          maxLength: 300
+
+    TagUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+          maxLength: 200
+        parent_id:
+          type: string
+          format: uuid
+        common_name:
+          type: string
+          maxLength: 300
+
+    TagResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        project_id:
+          type: string
+          format: uuid
+        parent_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        category:
+          $ref: '#/components/schemas/TagCategory'
+        gbif_taxon_key:
+          type: integer
+        scientific_name:
+          type: string
+        common_name:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    TagDetailResponse:
+      allOf:
+        - $ref: '#/components/schemas/TagResponse'
+        - type: object
+          properties:
+            children:
+              type: array
+              items:
+                $ref: '#/components/schemas/TagResponse'
+            usage_count:
+              type: integer
+
+    TagListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/TagResponse'
+        total:
+          type: integer
+        page:
+          type: integer
+        page_size:
+          type: integer
+        pages:
+          type: integer
+
+    GBIFSuggestion:
+      type: object
+      properties:
+        key:
+          type: integer
+        canonical_name:
+          type: string
+        scientific_name:
+          type: string
+        rank:
+          type: string
+        kingdom:
+          type: string
+        phylum:
+          type: string
+        class_name:
+          type: string
+        order:
+          type: string
+        family:
+          type: string
+
+    TagStatistic:
+      type: object
+      properties:
+        tag:
+          $ref: '#/components/schemas/TagResponse'
+        usage_count:
+          type: integer

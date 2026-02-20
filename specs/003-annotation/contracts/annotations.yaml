@@ -1,0 +1,447 @@
+openapi: 3.0.3
+info:
+  title: Echoroo Annotation - Clip & Sound Event Annotations API
+  version: 1.0.0
+
+paths:
+  /api/v1/projects/{project_id}/annotation-tasks/{task_id}/clip-annotation:
+    get:
+      summary: Get or create clip annotation for a task
+      operationId: getClipAnnotation
+      tags: [annotations]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - $ref: '#/components/parameters/TaskId'
+      responses:
+        '200':
+          description: Clip annotation details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClipAnnotationDetailResponse'
+
+  /api/v1/projects/{project_id}/clip-annotations/{clip_annotation_id}/tags:
+    post:
+      summary: Add tag to clip annotation
+      operationId: addClipAnnotationTag
+      tags: [annotations]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - $ref: '#/components/parameters/ClipAnnotationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [tag_id]
+              properties:
+                tag_id:
+                  type: string
+                  format: uuid
+      responses:
+        '200':
+          description: Tag added
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClipAnnotationDetailResponse'
+
+    delete:
+      summary: Remove tag from clip annotation
+      operationId: removeClipAnnotationTag
+      tags: [annotations]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - $ref: '#/components/parameters/ClipAnnotationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [tag_id]
+              properties:
+                tag_id:
+                  type: string
+                  format: uuid
+      responses:
+        '200':
+          description: Tag removed
+
+  /api/v1/projects/{project_id}/clip-annotations/{clip_annotation_id}/sound-events:
+    get:
+      summary: List sound event annotations for a clip annotation
+      operationId: listSoundEventAnnotations
+      tags: [annotations]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - $ref: '#/components/parameters/ClipAnnotationId'
+      responses:
+        '200':
+          description: Sound event list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SoundEventAnnotationResponse'
+
+    post:
+      summary: Create a sound event annotation
+      operationId: createSoundEventAnnotation
+      tags: [annotations]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - $ref: '#/components/parameters/ClipAnnotationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SoundEventAnnotationCreate'
+      responses:
+        '201':
+          description: Sound event created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SoundEventAnnotationResponse'
+
+  /api/v1/projects/{project_id}/sound-events/{sound_event_id}:
+    patch:
+      summary: Update a sound event annotation
+      operationId: updateSoundEventAnnotation
+      tags: [annotations]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - $ref: '#/components/parameters/SoundEventId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SoundEventAnnotationUpdate'
+      responses:
+        '200':
+          description: Sound event updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SoundEventAnnotationResponse'
+
+    delete:
+      summary: Delete a sound event annotation
+      operationId: deleteSoundEventAnnotation
+      tags: [annotations]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - $ref: '#/components/parameters/SoundEventId'
+      responses:
+        '204':
+          description: Sound event deleted
+
+  /api/v1/projects/{project_id}/sound-events/{sound_event_id}/tags:
+    post:
+      summary: Add tag to sound event
+      operationId: addSoundEventTag
+      tags: [annotations]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - $ref: '#/components/parameters/SoundEventId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [tag_id]
+              properties:
+                tag_id:
+                  type: string
+                  format: uuid
+      responses:
+        '200':
+          description: Tag added
+
+    delete:
+      summary: Remove tag from sound event
+      operationId: removeSoundEventTag
+      tags: [annotations]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - $ref: '#/components/parameters/SoundEventId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [tag_id]
+              properties:
+                tag_id:
+                  type: string
+                  format: uuid
+      responses:
+        '200':
+          description: Tag removed
+
+  /api/v1/projects/{project_id}/clip-annotations/{clip_annotation_id}/notes:
+    post:
+      summary: Add note to clip annotation
+      operationId: addClipAnnotationNote
+      tags: [annotations]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - $ref: '#/components/parameters/ClipAnnotationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NoteCreate'
+      responses:
+        '201':
+          description: Note added
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NoteResponse'
+
+  /api/v1/projects/{project_id}/clip-annotations/{clip_annotation_id}/review:
+    post:
+      summary: Review a clip annotation (approve/reject)
+      operationId: reviewClipAnnotation
+      tags: [annotations]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - $ref: '#/components/parameters/ClipAnnotationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReviewRequest'
+      responses:
+        '200':
+          description: Review submitted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClipAnnotationDetailResponse'
+
+components:
+  parameters:
+    ProjectId:
+      name: project_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    TaskId:
+      name: task_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    ClipAnnotationId:
+      name: clip_annotation_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    SoundEventId:
+      name: sound_event_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+  schemas:
+    SoundEventAnnotationCreate:
+      type: object
+      required: [geometry]
+      properties:
+        geometry:
+          type: object
+          required: [type, coordinates]
+          properties:
+            type:
+              type: string
+              enum: [BoundingBox, TimeInterval]
+            coordinates:
+              type: array
+              items:
+                type: number
+              description: |
+                BoundingBox: [time_start, freq_low, time_end, freq_high]
+                TimeInterval: [start_time, end_time]
+        tag_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+        confidence:
+          type: number
+          minimum: 0.0
+          maximum: 1.0
+        source:
+          type: string
+          enum: [human, model]
+          default: human
+
+    SoundEventAnnotationUpdate:
+      type: object
+      properties:
+        geometry:
+          type: object
+          properties:
+            type:
+              type: string
+              enum: [BoundingBox, TimeInterval]
+            coordinates:
+              type: array
+              items:
+                type: number
+        confidence:
+          type: number
+          minimum: 0.0
+          maximum: 1.0
+
+    SoundEventAnnotationResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        clip_annotation_id:
+          type: string
+          format: uuid
+        geometry:
+          type: object
+          properties:
+            type:
+              type: string
+            coordinates:
+              type: array
+              items:
+                type: number
+        source:
+          type: string
+        confidence:
+          type: number
+        tags:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+                format: uuid
+              name:
+                type: string
+              category:
+                type: string
+        created_by_id:
+          type: string
+          format: uuid
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    ClipAnnotationDetailResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        task_id:
+          type: string
+          format: uuid
+        clip_id:
+          type: string
+          format: uuid
+        review_status:
+          type: string
+          enum: [unreviewed, approved, rejected]
+        reviewed_by_id:
+          type: string
+          format: uuid
+        reviewed_at:
+          type: string
+          format: date-time
+        tags:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+                format: uuid
+              name:
+                type: string
+              category:
+                type: string
+        sound_events:
+          type: array
+          items:
+            $ref: '#/components/schemas/SoundEventAnnotationResponse'
+        notes:
+          type: array
+          items:
+            $ref: '#/components/schemas/NoteResponse'
+        created_by_id:
+          type: string
+          format: uuid
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    NoteCreate:
+      type: object
+      required: [content]
+      properties:
+        content:
+          type: string
+          maxLength: 5000
+        is_review:
+          type: boolean
+          default: false
+
+    NoteResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        content:
+          type: string
+        is_review:
+          type: boolean
+        created_by_id:
+          type: string
+          format: uuid
+        created_at:
+          type: string
+          format: date-time
+
+    ReviewRequest:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [approved, rejected]
+        comment:
+          type: string
+          maxLength: 5000

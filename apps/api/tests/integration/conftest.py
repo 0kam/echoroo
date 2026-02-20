@@ -17,6 +17,19 @@ from echoroo.models.user import User
 
 
 @pytest.fixture
+def test_project_id(test_project: Project) -> str:
+    """Get test project ID as string.
+
+    Args:
+        test_project: Test project
+
+    Returns:
+        Project UUID as string
+    """
+    return str(test_project.id)
+
+
+@pytest.fixture
 async def test_user(db_session: AsyncSession) -> User:
     """Create a test user for integration tests.
 
