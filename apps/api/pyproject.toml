@@ -76,6 +76,7 @@ known-first-party = ["echoroo"]
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]  # unused imports in __init__.py
 "tests/**/*.py" = ["ARG001", "ARG002"]  # unused arguments are common in pytest fixtures for dependency injection
+"echoroo/api/**/*.py" = ["ARG001"]  # FastAPI router functions use unused args for Depends injection (auth, path params)
 
 [tool.mypy]
 python_version = "3.11"
@@ -125,4 +126,10 @@ exclude_lines = [
     "if TYPE_CHECKING:",
     "class .*\\bProtocol\\):",
     "@(abc\\.)?abstractmethod",
+]
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28.1",
+    "mypy>=1.19.1",
 ]

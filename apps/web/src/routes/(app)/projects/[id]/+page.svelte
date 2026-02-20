@@ -285,6 +285,38 @@
           </div>
         {/if}
 
+        <!-- Quick Navigation -->
+        <div class="mb-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <a
+            href="/projects/{projectId}/datasets"
+            class="rounded-lg bg-white p-4 shadow transition hover:shadow-md"
+          >
+            <h3 class="text-sm font-semibold text-gray-900">Datasets</h3>
+            <p class="mt-1 text-xs text-gray-500">Manage audio datasets</p>
+          </a>
+          <a
+            href="/projects/{projectId}/recordings"
+            class="rounded-lg bg-white p-4 shadow transition hover:shadow-md"
+          >
+            <h3 class="text-sm font-semibold text-gray-900">Recordings</h3>
+            <p class="mt-1 text-xs text-gray-500">Browse audio recordings</p>
+          </a>
+          <a
+            href="/projects/{projectId}/sites"
+            class="rounded-lg bg-white p-4 shadow transition hover:shadow-md"
+          >
+            <h3 class="text-sm font-semibold text-gray-900">Sites</h3>
+            <p class="mt-1 text-xs text-gray-500">Manage monitoring sites</p>
+          </a>
+          <a
+            href="/projects/{projectId}/annotations"
+            class="rounded-lg bg-white p-4 shadow transition hover:shadow-md"
+          >
+            <h3 class="text-sm font-semibold text-gray-900">Annotations</h3>
+            <p class="mt-1 text-xs text-gray-500">Annotate audio events</p>
+          </a>
+        </div>
+
         <!-- Placeholder for future content -->
         <div class="rounded-lg border-2 border-dashed border-gray-300 p-12 text-center">
           <svg

@@ -1,0 +1,177 @@
+"""Tag repository for database operations."""
+
+from uuid import UUID
+
+from sqlalchemy import delete, func, or_, select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
+
+from echoroo.models.clip_annotation import clip_annotation_tags
+from echoroo.models.enums import TagCategory
+from echoroo.models.sound_event_annotation import sound_event_annotation_tags
+from echoroo.models.tag import Tag
+
+
+class TagRepository:
+    """Repository for Tag entity operations."""
+
+    def __init__(self, db: AsyncSession) -> None:
+        """Initialize repository with database session.
+
+        Args:
+            db: SQLAlchemy async session
+        """
+        self.db = db
+
+    async def get_by_id(self, tag_id: UUID) -> Tag | None:
+        """Get tag by ID with project relationship loaded.
+
+        Args:
+            tag_id: Tag's UUID
+
+        Returns:
+            Tag instance or None if not found
+        """
+        result = await self.db.execute(
+            select(Tag).where(Tag.id == tag_id).options(selectinload(Tag.project))
+        )
+        return result.scalar_one_or_none()
+
+    async def list_by_project(
+        self,
+        project_id: UUID,
+        category: TagCategory | None = None,
+        search: str | None = None,
+        page: int = 1,
+        page_size: int = 50,
+    ) -> tuple[list[Tag], int]:
+        """List tags for a project with optional filtering and pagination.
+
+        Args:
+            project_id: Project's UUID
+            category: Optional tag category filter
+            search: Optional search string to filter by name, scientific_name, or common_name
+            page: Page number (1-indexed)
+            page_size: Items per page
+
+        Returns:
+            Tuple of (list of tags, total count)
+        """
+        # Build base filter conditions
+        conditions = [Tag.project_id == project_id]
+        if category is not None:
+            conditions.append(Tag.category == category)
+        if search is not None:
+            search_pattern = f"%{search}%"
+            conditions.append(
+                or_(
+                    Tag.name.ilike(search_pattern),
+                    Tag.scientific_name.ilike(search_pattern),
+                    Tag.common_name.ilike(search_pattern),
+                )
+            )
+
+        # Get total count
+        count_result = await self.db.execute(
+            select(func.count()).select_from(Tag).where(*conditions)
+        )
+        total: int = count_result.scalar_one()
+
+        # Build paginated query
+        offset = (page - 1) * page_size
+        result = await self.db.execute(
+            select(Tag)
+            .where(*conditions)
+            .options(selectinload(Tag.project))
+            .order_by(Tag.category.asc(), Tag.name.asc())
+            .offset(offset)
+            .limit(page_size)
+        )
+        tags = list(result.scalars().all())
+
+        return tags, total
+
+    async def create(self, tag: Tag) -> Tag:
+        """Create a new tag.
+
+        Args:
+            tag: Tag instance to create
+
+        Returns:
+            Created tag instance
+        """
+        self.db.add(tag)
+        await self.db.flush()
+        await self.db.refresh(tag, ["project"])
+        return tag
+
+    async def update(self, tag: Tag) -> Tag:
+        """Update an existing tag.
+
+        Args:
+            tag: Tag instance to update
+
+        Returns:
+            Updated tag instance
+        """
+        await self.db.flush()
+        await self.db.refresh(tag, ["project"])
+        return tag
+
+    async def delete(self, tag_id: UUID) -> None:
+        """Delete a tag by ID.
+
+        Args:
+            tag_id: Tag's UUID
+        """
+        await self.db.execute(delete(Tag).where(Tag.id == tag_id))
+        await self.db.flush()
+
+    async def get_statistics(self, project_id: UUID) -> list[tuple[Tag, int]]:
+        """Get tags with their usage counts across clip and sound event annotations.
+
+        Counts usage from both clip_annotation_tags and sound_event_annotation_tags
+        association tables and returns the combined total per tag.
+
+        Args:
+            project_id: Project's UUID
+
+        Returns:
+            List of (Tag, usage_count) tuples ordered by usage_count descending
+        """
+        # Count from clip_annotation_tags
+        clip_tag_count_subq = (
+            select(
+                clip_annotation_tags.c.tag_id,
+                func.count().label("cnt"),
+            )
+            .group_by(clip_annotation_tags.c.tag_id)
+            .subquery("clip_tag_counts")
+        )
+
+        # Count from sound_event_annotation_tags
+        sea_tag_count_subq = (
+            select(
+                sound_event_annotation_tags.c.tag_id,
+                func.count().label("cnt"),
+            )
+            .group_by(sound_event_annotation_tags.c.tag_id)
+            .subquery("sea_tag_counts")
+        )
+
+        # Combine counts using COALESCE to handle tags with zero usage
+        combined_count = (
+            func.coalesce(clip_tag_count_subq.c.cnt, 0)
+            + func.coalesce(sea_tag_count_subq.c.cnt, 0)
+        ).label("usage_count")
+
+        result = await self.db.execute(
+            select(Tag, combined_count)
+            .outerjoin(clip_tag_count_subq, clip_tag_count_subq.c.tag_id == Tag.id)
+            .outerjoin(sea_tag_count_subq, sea_tag_count_subq.c.tag_id == Tag.id)
+            .where(Tag.project_id == project_id)
+            .options(selectinload(Tag.project))
+            .order_by(combined_count.desc(), Tag.name.asc())
+        )
+
+        return [(row.Tag, row.usage_count) for row in result.all()]

@@ -557,6 +557,12 @@ dev = [
     { name = "types-pyyaml" },
 ]
 
+[package.dev-dependencies]
+dev = [
+    { name = "httpx" },
+    { name = "mypy" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "alembic", specifier = ">=1.14.0" },
@@ -591,6 +597,12 @@ requires-dist = [
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.32.0" },
 ]
 provides-extras = ["dev"]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "httpx", specifier = ">=0.28.1" },
+    { name = "mypy", specifier = ">=1.19.1" },
+]
 
 [[package]]
 name = "email-validator"

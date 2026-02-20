@@ -65,6 +65,26 @@ async def setup_test_database(engine: AsyncEngine) -> None:
                 "CREATE TYPE datetimeparsestatus AS ENUM ('pending', 'success', 'failed')"
             )
         )
+        await conn.execute(
+            sa.text("CREATE TYPE tagcategory AS ENUM ('species', 'sound_type', 'quality')")
+        )
+        await conn.execute(
+            sa.text("CREATE TYPE annotationprojectvisibility AS ENUM ('private', 'public')")
+        )
+        await conn.execute(
+            sa.text(
+                "CREATE TYPE annotationtaskstatus AS ENUM ('pending', 'in_progress', 'review_pending', 'completed')"
+            )
+        )
+        await conn.execute(
+            sa.text("CREATE TYPE reviewstatus AS ENUM ('unreviewed', 'approved', 'rejected')")
+        )
+        await conn.execute(
+            sa.text("CREATE TYPE annotationsource AS ENUM ('human', 'model')")
+        )
+        await conn.execute(
+            sa.text("CREATE TYPE geometrytype AS ENUM ('BoundingBox', 'TimeInterval')")
+        )
         # Create all tables
         await conn.run_sync(Base.metadata.create_all)
 
@@ -87,6 +107,17 @@ async def setup_test_database(engine: AsyncEngine) -> None:
 async def cleanup_test_data(session: AsyncSession) -> None:
     """Clean up test data from all tables."""
     # Delete in correct order (foreign key dependencies)
+    # Annotation-related tables must be cleaned before clips/recordings/datasets
+    await session.execute(sa.text("DELETE FROM sound_event_annotation_tags"))
+    await session.execute(sa.text("DELETE FROM clip_annotation_tags"))
+    await session.execute(sa.text("DELETE FROM annotation_project_tags"))
+    await session.execute(sa.text("DELETE FROM annotation_project_datasets"))
+    await session.execute(sa.text("DELETE FROM notes"))
+    await session.execute(sa.text("DELETE FROM sound_event_annotations"))
+    await session.execute(sa.text("DELETE FROM clip_annotations"))
+    await session.execute(sa.text("DELETE FROM annotation_tasks"))
+    await session.execute(sa.text("DELETE FROM annotation_projects"))
+    await session.execute(sa.text("DELETE FROM tags"))
     await session.execute(sa.text("DELETE FROM clips"))
     await session.execute(sa.text("DELETE FROM recordings"))
     await session.execute(sa.text("DELETE FROM datasets"))
@@ -168,7 +199,14 @@ async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
     # Override get_db dependency
     async def override_get_db() -> AsyncGenerator[AsyncSession, None]:
         async with session_maker() as session:
-            yield session
+            try:
+                yield session
+                await session.commit()
+            except Exception:
+                await session.rollback()
+                raise
+            finally:
+                await session.close()
 
     app.dependency_overrides[get_db] = override_get_db
 

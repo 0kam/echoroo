@@ -50,3 +50,49 @@ class DatetimeParseStatus(str, Enum):
     PENDING = "pending"  # Not yet attempted
     SUCCESS = "success"  # Parsed successfully
     FAILED = "failed"  # Parse failed
+
+
+class TagCategory(str, Enum):
+    """Tag classification categories."""
+
+    SPECIES = "species"
+    SOUND_TYPE = "sound_type"
+    QUALITY = "quality"
+
+
+class AnnotationProjectVisibility(str, Enum):
+    """Annotation project visibility levels."""
+
+    PRIVATE = "private"
+    PUBLIC = "public"
+
+
+class AnnotationTaskStatus(str, Enum):
+    """Annotation task workflow status."""
+
+    PENDING = "pending"
+    IN_PROGRESS = "in_progress"
+    COMPLETED = "completed"
+    REVIEW_PENDING = "review_pending"
+
+
+class ReviewStatus(str, Enum):
+    """Clip annotation review status."""
+
+    UNREVIEWED = "unreviewed"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+
+
+class AnnotationSource(str, Enum):
+    """Source of annotation (human annotator or ML model)."""
+
+    HUMAN = "human"
+    MODEL = "model"
+
+
+class GeometryType(str, Enum):
+    """Sound event geometry types."""
+
+    BOUNDING_BOX = "BoundingBox"
+    TIME_INTERVAL = "TimeInterval"

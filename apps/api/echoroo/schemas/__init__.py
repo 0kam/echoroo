@@ -1,5 +1,37 @@
 """Pydantic schemas for request/response validation."""
 
+from echoroo.schemas.annotation import (
+    AddTagRequest,
+    ClipAnnotationDetailResponse,
+    GeometrySchema,
+    ReviewRequest,
+    SoundEventAnnotationCreate,
+    SoundEventAnnotationResponse,
+    SoundEventAnnotationUpdate,
+    TagSummary as AnnotationTagSummary,
+)
+from echoroo.schemas.annotation_project import (
+    AnnotationProgress,
+    AnnotationProjectCreate,
+    AnnotationProjectDetailResponse,
+    AnnotationProjectListResponse,
+    AnnotationProjectResponse,
+    AnnotationProjectUpdate,
+    DatasetSummary,
+    TagSummary,
+    TaskGenerationResponse,
+)
+from echoroo.schemas.annotation_task import (
+    AnnotationProjectSummary,
+    AnnotationTaskDetailResponse,
+    AnnotationTaskListResponse,
+    AnnotationTaskResponse,
+    AnnotationTaskUpdate,
+    ClipDetailForTask,
+    ClipSummary,
+    RecordingSummaryForTask,
+    TaskCompletionResponse,
+)
 from echoroo.schemas.clip import (
     ClipCreate,
     ClipDetailResponse,
@@ -27,8 +59,9 @@ from echoroo.schemas.dataset import (
     SiteSummary,
     UserSummary,
 )
+from echoroo.schemas.note import NoteCreate, NoteResponse
 from echoroo.schemas.recording import (
-    DatasetSummary,
+    DatasetSummary as RecordingDatasetSummary,
     PlaybackParams,
     RecordingDetailResponse,
     RecordingListResponse,
@@ -47,6 +80,15 @@ from echoroo.schemas.site import (
     SiteListResponse,
     SiteResponse,
     SiteUpdate,
+)
+from echoroo.schemas.tag import (
+    GBIFSuggestion,
+    TagCreate,
+    TagDetailResponse,
+    TagListResponse,
+    TagResponse,
+    TagStatistic,
+    TagUpdate,
 )
 
 __all__ = [
@@ -76,7 +118,7 @@ __all__ = [
     "SiteSummary",
     "UserSummary",
     # Recording schemas
-    "DatasetSummary",
+    "RecordingDatasetSummary",
     "PlaybackParams",
     "RecordingDetailResponse",
     "RecordingListResponse",
@@ -94,4 +136,44 @@ __all__ = [
     "SiteListResponse",
     "SiteResponse",
     "SiteUpdate",
+    # Tag schemas
+    "GBIFSuggestion",
+    "TagCreate",
+    "TagDetailResponse",
+    "TagListResponse",
+    "TagResponse",
+    "TagStatistic",
+    "TagUpdate",
+    # Annotation project schemas
+    "AnnotationProgress",
+    "AnnotationProjectCreate",
+    "AnnotationProjectDetailResponse",
+    "AnnotationProjectListResponse",
+    "AnnotationProjectResponse",
+    "AnnotationProjectUpdate",
+    "DatasetSummary",
+    "TagSummary",
+    "TaskGenerationResponse",
+    # Annotation task schemas
+    "AnnotationProjectSummary",
+    "AnnotationTaskDetailResponse",
+    "AnnotationTaskListResponse",
+    "AnnotationTaskResponse",
+    "AnnotationTaskUpdate",
+    "ClipDetailForTask",
+    "ClipSummary",
+    "RecordingSummaryForTask",
+    "TaskCompletionResponse",
+    # Annotation schemas
+    "AddTagRequest",
+    "AnnotationTagSummary",
+    "ClipAnnotationDetailResponse",
+    "GeometrySchema",
+    "ReviewRequest",
+    "SoundEventAnnotationCreate",
+    "SoundEventAnnotationResponse",
+    "SoundEventAnnotationUpdate",
+    # Note schemas
+    "NoteCreate",
+    "NoteResponse",
 ]
