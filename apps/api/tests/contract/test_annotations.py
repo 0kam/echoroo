@@ -3,6 +3,7 @@
 Tests verify that endpoints conform to the annotation specification.
 """
 
+import json
 from typing import TYPE_CHECKING
 
 import pytest
@@ -356,8 +357,8 @@ class TestRemoveClipTagEndpoint:
         # Then remove it
         response = await client.delete(
             f"/api/v1/projects/{test_project_id}/clip-annotations/{test_clip_annotation.id}/tags",
-            headers=auth_headers,
-            json={"tag_id": str(test_tag.id)},
+            content=json.dumps({"tag_id": str(test_tag.id)}),
+            headers={**auth_headers, "Content-Type": "application/json"},
         )
 
         assert response.status_code == 200
@@ -375,7 +376,8 @@ class TestRemoveClipTagEndpoint:
         """Test DELETE requires authentication."""
         response = await client.delete(
             f"/api/v1/projects/{test_project_id}/clip-annotations/{test_clip_annotation.id}/tags",
-            json={"tag_id": str(test_tag.id)},
+            content=json.dumps({"tag_id": str(test_tag.id)}),
+            headers={"Content-Type": "application/json"},
         )
 
         assert response.status_code == 401
@@ -603,8 +605,8 @@ class TestRemoveSoundEventTagEndpoint:
         # Then remove it
         response = await client.delete(
             f"/api/v1/projects/{test_project_id}/sound-events/{test_sound_event.id}/tags",
-            headers=auth_headers,
-            json={"tag_id": str(test_tag.id)},
+            content=json.dumps({"tag_id": str(test_tag.id)}),
+            headers={**auth_headers, "Content-Type": "application/json"},
         )
 
         assert response.status_code == 200
@@ -619,7 +621,8 @@ class TestRemoveSoundEventTagEndpoint:
         """Test DELETE requires authentication."""
         response = await client.delete(
             f"/api/v1/projects/{test_project_id}/sound-events/{test_sound_event.id}/tags",
-            json={"tag_id": str(test_tag.id)},
+            content=json.dumps({"tag_id": str(test_tag.id)}),
+            headers={"Content-Type": "application/json"},
         )
 
         assert response.status_code == 401
