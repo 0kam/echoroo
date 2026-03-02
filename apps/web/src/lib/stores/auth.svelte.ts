@@ -71,7 +71,7 @@ function createAuthStore() {
       state.isLoading = true;
       try {
         // Try to get current user from backend
-        const user = await apiClient.get<User>('/api/auth/me');
+        const user = await apiClient.get<User>('/api/v1/users/me');
         state.user = user;
         state.isAuthenticated = true;
       } catch {
@@ -91,7 +91,7 @@ function createAuthStore() {
       state.isLoading = true;
       try {
         const response = await apiClient.post<LoginResponse>(
-          '/api/auth/login',
+          '/api/v1/auth/login',
           credentials
         );
 
@@ -117,7 +117,7 @@ function createAuthStore() {
       state.isLoading = true;
       try {
         // Call logout endpoint to clear refresh token cookie
-        await apiClient.post('/api/auth/logout');
+        await apiClient.post('/api/v1/auth/logout');
       } catch (error) {
         // Continue with logout even if API call fails
         console.error('Logout API call failed:', error);
@@ -136,7 +136,7 @@ function createAuthStore() {
     async refresh(): Promise<void> {
       try {
         const response = await apiClient.post<LoginResponse>(
-          '/api/auth/refresh'
+          '/api/v1/auth/refresh'
         );
 
         // Store new access token

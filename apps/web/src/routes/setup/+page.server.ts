@@ -5,17 +5,18 @@
 
 import type { PageServerLoad } from './$types';
 import { redirect } from '@sveltejs/kit';
-import { ApiClient } from '$lib/api/client';
+
+function getServerApiUrl(): string {
+  return process.env.ECHOROO_API_URL || 'http://localhost:8002';
+}
 
 export const load: PageServerLoad = async () => {
-  const apiClient = new ApiClient();
-
   try {
-    // Check setup status from backend
-    const setupStatus = await apiClient.get<{
-      setup_required: boolean;
-      setup_completed: boolean;
-    }>('/api/setup/status');
+    const response = await fetch(`${getServerApiUrl()}/api/v1/setup/status`);
+    if (!response.ok) {
+      throw new Error(`API returned ${response.status}`);
+    }
+    const setupStatus = await response.json();
 
     // If setup is already completed, redirect to login
     if (setupStatus.setup_completed) {
@@ -27,7 +28,7 @@ export const load: PageServerLoad = async () => {
     };
   } catch (error) {
     // If error is a redirect, rethrow it
-    if (error instanceof Response && error.status === 303) {
+    if (error && typeof error === 'object' && 'status' in error && error.status === 303) {
       throw error;
     }
 

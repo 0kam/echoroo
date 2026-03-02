@@ -18,7 +18,7 @@ export type { SetupStatusResponse, SetupInitializeRequest };
  * @returns Setup status indicating if setup is required/completed
  */
 export async function getSetupStatus(): Promise<SetupStatusResponse> {
-  return apiClient.get<SetupStatusResponse>('/api/setup/status');
+  return apiClient.get<SetupStatusResponse>('/api/v1/setup/status');
 }
 
 /**
@@ -27,5 +27,5 @@ export async function getSetupStatus(): Promise<SetupStatusResponse> {
  * @returns Created admin user
  */
 export async function initializeSetup(data: SetupInitializeRequest): Promise<User> {
-  return apiClient.post<User>('/api/setup/initialize', data);
+  return apiClient.post<User>('/api/v1/setup/initialize', data);
 }

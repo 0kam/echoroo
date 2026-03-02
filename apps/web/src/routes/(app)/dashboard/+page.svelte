@@ -24,13 +24,34 @@
   <header class="bg-white shadow">
     <div class="mx-auto flex max-w-7xl items-center justify-between px-4 py-6 sm:px-6 lg:px-8">
       <h1 class="text-3xl font-bold text-gray-900">Dashboard</h1>
-      <button
-        type="button"
-        onclick={handleLogout}
-        class="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
-      >
-        Logout
-      </button>
+      <div class="flex items-center gap-4">
+        {#if authStore.user?.is_superuser}
+          <a
+            href="/admin/users"
+            class="rounded-md border border-purple-300 bg-purple-50 px-4 py-2 text-sm font-medium text-purple-700 hover:bg-purple-100 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2"
+          >
+            Admin Panel
+          </a>
+        {/if}
+        <a
+          href="/profile"
+          class="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+        >
+          Profile
+        </a>
+        <button
+          type="button"
+          onclick={handleLogout}
+          class="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+        >
+          Logout
+        </button>
+        {#if authStore.user}
+          <span class="text-sm text-gray-600">
+            {authStore.user.display_name || authStore.user.email}
+          </span>
+        {/if}
+      </div>
     </div>
   </header>
 
