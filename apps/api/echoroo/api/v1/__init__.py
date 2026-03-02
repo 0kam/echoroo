@@ -9,7 +9,10 @@ from echoroo.api.v1 import (
     annotations,
     auth,
     clips,
+    confirmed_regions,
     datasets,
+    detection_runs,
+    detections,
     h3,
     projects,
     recordings,
@@ -37,3 +40,7 @@ api_router.include_router(annotation_projects.router)
 api_router.include_router(annotation_tasks.router)
 api_router.include_router(annotations.router)
 api_router.include_router(admin.router)
+# Detection review routers (003-detection-review)
+api_router.include_router(detections.router)
+api_router.include_router(confirmed_regions.router)
+api_router.include_router(detection_runs.router)
