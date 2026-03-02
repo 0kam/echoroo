@@ -85,6 +85,18 @@ async def setup_test_database(engine: AsyncEngine) -> None:
         await conn.execute(
             sa.text("CREATE TYPE geometrytype AS ENUM ('BoundingBox', 'TimeInterval')")
         )
+        # Detection review enums (003-detection-review)
+        await conn.execute(
+            sa.text("CREATE TYPE detectionsource AS ENUM ('birdnet', 'perch_search', 'human')")
+        )
+        await conn.execute(
+            sa.text("CREATE TYPE detectionstatus AS ENUM ('unreviewed', 'confirmed', 'rejected')")
+        )
+        await conn.execute(
+            sa.text(
+                "CREATE TYPE detectionrunstatus AS ENUM ('pending', 'running', 'completed', 'failed')"
+            )
+        )
         # Create all tables
         await conn.run_sync(Base.metadata.create_all)
 
@@ -117,6 +129,10 @@ async def cleanup_test_data(session: AsyncSession) -> None:
     await session.execute(sa.text("DELETE FROM clip_annotations"))
     await session.execute(sa.text("DELETE FROM annotation_tasks"))
     await session.execute(sa.text("DELETE FROM annotation_projects"))
+    # Detection review tables (003-detection-review)
+    await session.execute(sa.text("DELETE FROM confirmed_regions"))
+    await session.execute(sa.text("DELETE FROM annotations"))
+    await session.execute(sa.text("DELETE FROM detection_runs"))
     await session.execute(sa.text("DELETE FROM tags"))
     await session.execute(sa.text("DELETE FROM clips"))
     await session.execute(sa.text("DELETE FROM recordings"))

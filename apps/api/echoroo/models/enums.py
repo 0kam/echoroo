@@ -96,3 +96,28 @@ class GeometryType(str, Enum):
 
     BOUNDING_BOX = "BoundingBox"
     TIME_INTERVAL = "TimeInterval"
+
+
+class DetectionSource(str, Enum):
+    """Source of detection (ML model or human reviewer)."""
+
+    BIRDNET = "birdnet"
+    PERCH_SEARCH = "perch_search"
+    HUMAN = "human"
+
+
+class DetectionStatus(str, Enum):
+    """Detection review status."""
+
+    UNREVIEWED = "unreviewed"
+    CONFIRMED = "confirmed"
+    REJECTED = "rejected"
+
+
+class DetectionRunStatus(str, Enum):
+    """Detection run execution status."""
+
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"

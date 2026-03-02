@@ -1,5 +1,6 @@
 """Database models."""
 
+from echoroo.models.annotation import Annotation
 from echoroo.models.annotation_project import (
     AnnotationProject,
     annotation_project_datasets,
@@ -9,7 +10,9 @@ from echoroo.models.annotation_task import AnnotationTask
 from echoroo.models.base import Base, TimestampMixin, UUIDMixin
 from echoroo.models.clip import Clip
 from echoroo.models.clip_annotation import ClipAnnotation, clip_annotation_tags
+from echoroo.models.confirmed_region import ConfirmedRegion
 from echoroo.models.dataset import Dataset
+from echoroo.models.detection_run import DetectionRun
 from echoroo.models.enums import (
     AnnotationProjectVisibility,
     AnnotationSource,
@@ -17,6 +20,9 @@ from echoroo.models.enums import (
     DatasetStatus,
     DatasetVisibility,
     DatetimeParseStatus,
+    DetectionRunStatus,
+    DetectionSource,
+    DetectionStatus,
     GeometryType,
     ProjectRole,
     ProjectVisibility,
@@ -54,13 +60,17 @@ __all__ = [
     "APIToken",
     "LoginAttempt",
     "User",
-    # Annotation models
+    # Annotation models (existing)
     "AnnotationProject",
     "AnnotationTask",
     "ClipAnnotation",
     "SoundEventAnnotation",
     "Note",
     "Tag",
+    # Detection review models (003-detection-review)
+    "Annotation",
+    "ConfirmedRegion",
+    "DetectionRun",
     # Association tables
     "annotation_project_datasets",
     "annotation_project_tags",
@@ -80,4 +90,8 @@ __all__ = [
     "GeometryType",
     "ReviewStatus",
     "TagCategory",
+    # Enums (detection review)
+    "DetectionSource",
+    "DetectionStatus",
+    "DetectionRunStatus",
 ]

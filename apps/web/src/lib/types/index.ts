@@ -118,6 +118,9 @@ export type {
   Clip,
 } from './data';
 
+// Re-export detection review types
+export * from './detection';
+
 // Annotation-scoped DatasetSummary (used in annotation contexts)
 // Both data.ts and annotation.ts define DatasetSummary with the same shape
 // We re-export from data.ts as it's the primary source
