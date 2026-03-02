@@ -17,19 +17,18 @@ export class ApiError extends Error {
 }
 
 /**
- * Get API URL from environment or default
+ * Get API URL from environment or default.
+ * In browser, use empty string so requests go through the vite proxy
+ * (avoids CORS issues when accessing from different hosts).
+ * On server-side, use the backend URL directly.
  */
 function getApiUrl(): string {
-  // Try to get from window (browser environment)
   if (typeof window !== 'undefined') {
-    return (
-      (window as any).__PUBLIC_API_URL__ ||
-      import.meta.env.PUBLIC_API_URL ||
-      'http://localhost:8000'
-    );
+    // Browser: use relative URLs so requests go through vite proxy
+    return '';
   }
-  // Server-side or build-time
-  return import.meta.env.PUBLIC_API_URL || 'http://localhost:8000';
+  // Server-side: call backend directly
+  return import.meta.env.PUBLIC_API_URL || 'http://localhost:8002';
 }
 
 export class ApiClient {
@@ -66,7 +65,7 @@ export class ApiClient {
 
     this.refreshPromise = (async () => {
       try {
-        const response = await fetch(`${this.baseUrl}/api/auth/refresh`, {
+        const response = await fetch(`${this.baseUrl}/api/v1/auth/refresh`, {
           method: 'POST',
           credentials: 'include', // Send refresh token cookie
           headers: {

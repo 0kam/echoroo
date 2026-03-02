@@ -1,7 +1,127 @@
 /**
  * TypeScript type definitions for Echoroo API
- * Auto-generated from OpenAPI specification
+ *
+ * This file serves as the canonical re-export hub.
+ * Domain-specific types are defined in their own modules:
+ *   - data.ts: Data management entities (sites, datasets, recordings, clips)
+ *   - annotation.ts: Annotation feature entities (tags, annotations, tasks)
+ *
+ * Administration and auth types are defined directly in this file
+ * since they are foundational and used across the application.
  */
+
+// ============================================
+// Re-export domain types
+// ============================================
+
+// Re-export annotation types (canonical for Tag, TagCategory, AnnotationSource, Geometry, etc.)
+export type {
+  TagCategory,
+  AnnotationProjectVisibility,
+  AnnotationTaskStatus,
+  ReviewStatus,
+  AnnotationSource,
+  GeometryType,
+  Tag,
+  TagDetail,
+  TagCreate,
+  TagUpdate,
+  TagListResponse,
+  GBIFSuggestion,
+  TagStatistic,
+  AnnotationProgress,
+  TagSummary,
+  AnnotationProject,
+  AnnotationProjectDetail,
+  AnnotationProjectCreate,
+  AnnotationProjectUpdate,
+  AnnotationProjectListResponse,
+  TaskGenerationResponse,
+  RecordingSummaryForTask,
+  ClipDetailForTask,
+  AnnotationProjectSummary,
+  AnnotationTask,
+  AnnotationTaskUpdate,
+  AnnotationTaskDetail,
+  AnnotationTaskListResponse,
+  TaskCompletionResponse,
+  Geometry,
+  SoundEventAnnotation,
+  SoundEventAnnotationCreate,
+  SoundEventAnnotationUpdate,
+  ClipAnnotationDetail,
+  Note,
+  NoteCreate,
+  ReviewRequest,
+  AddTagRequest,
+  AnnotationTaskListParams,
+  TagListParams,
+  AnnotationProjectListParams,
+  ExportFormat,
+} from './annotation';
+
+// Re-export data management types
+export type {
+  DatasetVisibility,
+  DatasetStatus,
+  DatetimeParseStatus,
+  Site,
+  SiteDetail,
+  SiteCreate,
+  SiteUpdate,
+  SiteListResponse,
+  H3ValidationRequest,
+  H3ValidationResponse,
+  H3FromCoordinatesRequest,
+  H3FromCoordinatesResponse,
+  RecorderSummary,
+  LicenseSummary,
+  UserSummary,
+  SiteSummary,
+  DatasetDetail,
+  DatasetCreate,
+  DatasetUpdate,
+  DatasetListResponse,
+  ImportRequest,
+  ImportStatusResponse,
+  DateRangeStats,
+  RecordingsByDate,
+  RecordingsByHour,
+  DatasetStatistics,
+  DirectoryInfo,
+  DirectoryListResponse,
+  ExportRequest,
+  RecordingDetail,
+  RecordingUpdate,
+  RecordingListResponse,
+  SpectrogramParams,
+  PlaybackParams,
+  RecordingSummaryForClip,
+  ClipDetail,
+  ClipCreate,
+  ClipUpdate,
+  ClipListResponse,
+  ClipGenerateRequest,
+  ClipGenerateResponse,
+  SiteListParams,
+  DatasetListParams,
+  RecordingListParams,
+  RecordingSearchParams,
+  ClipListParams,
+} from './data';
+
+// Re-export data types that have the same name but richer definitions
+// NOTE: Dataset, Recording, Clip from data.ts are the canonical versions
+export type {
+  Dataset,
+  Recording,
+  Clip,
+} from './data';
+
+// Annotation-scoped DatasetSummary (used in annotation contexts)
+// Both data.ts and annotation.ts define DatasetSummary with the same shape
+// We re-export from data.ts as it's the primary source
+export type { DatasetSummary } from './data';
 
 // ============================================
 // Common Types
@@ -360,8 +480,7 @@ export interface SetupInitializeRequest {
 }
 
 // ============================================
-// Legacy Types (for backwards compatibility)
-// TODO: Migrate existing code to use new types above
+// Legacy Type Aliases (for backwards compatibility)
 // ============================================
 
 /**
@@ -398,101 +517,6 @@ export type UpdateMemberRoleRequest = ProjectMemberUpdateRequest;
  * @deprecated Use SetupStatusResponse instead
  */
 export type SetupStatus = SetupStatusResponse;
-
-// ============================================
-// Additional Application Types
-// ============================================
-
-/**
- * Recording entity
- * Note: This is not in the Administration API spec but used in the app
- */
-export interface Recording {
-  id: string;
-  filename: string;
-  path: string;
-  duration: number;
-  sample_rate: number;
-  channels: number;
-  datetime?: string;
-  site_id?: string;
-  metadata: Record<string, unknown>;
-  created_at: string;
-}
-
-/**
- * Clip entity
- * Note: This is not in the Administration API spec but used in the app
- */
-export interface Clip {
-  id: string;
-  recording_id: string;
-  start_time: number;
-  end_time: number;
-  embedding?: number[];
-  created_at: string;
-}
-
-/**
- * Tag category enum
- */
-export type TagCategory = 'SPECIES' | 'SOUND_TYPE' | 'QUALITY';
-
-/**
- * Tag entity
- * Note: This is not in the Administration API spec but used in the app
- */
-export interface Tag {
-  id: string;
-  name: string;
-  category: TagCategory;
-  parent_id?: string;
-  created_at: string;
-}
-
-/**
- * Annotation source enum
- */
-export type AnnotationSource = 'HUMAN' | 'MODEL';
-
-/**
- * Annotation geometry type enum
- */
-export type AnnotationGeometryType = 'BoundingBox' | 'TimeInterval' | 'Point';
-
-/**
- * Annotation geometry
- */
-export interface AnnotationGeometry {
-  type: AnnotationGeometryType;
-  coordinates: number[];
-}
-
-/**
- * Annotation entity
- * Note: This is not in the Administration API spec but used in the app
- */
-export interface Annotation {
-  id: string;
-  clip_id: string;
-  tag_id: string;
-  geometry: AnnotationGeometry;
-  confidence?: number;
-  source: AnnotationSource;
-  created_by: string;
-  created_at: string;
-}
-
-/**
- * Dataset entity
- * Note: This is not in the Administration API spec but used in the app
- */
-export interface Dataset {
-  id: string;
-  name: string;
-  project_id: string;
-  created_at: string;
-}
 
 // ============================================
 // License Types
@@ -582,4 +606,37 @@ export interface RecorderListResponse {
   total: number;
   page: number;
   limit: number;
+}
+
+// ============================================
+// Legacy Annotation Types (deprecated)
+// Use the canonical types from annotation.ts via the re-exports above
+// ============================================
+
+/**
+ * @deprecated Use GeometryType from annotation.ts instead
+ */
+export type AnnotationGeometryType = 'BoundingBox' | 'TimeInterval' | 'Point';
+
+/**
+ * @deprecated Use Geometry from annotation.ts instead
+ */
+export interface AnnotationGeometry {
+  type: AnnotationGeometryType;
+  coordinates: number[];
+}
+
+/**
+ * @deprecated Use SoundEventAnnotation from annotation.ts instead.
+ * This flat annotation type is kept for backwards compatibility only.
+ */
+export interface Annotation {
+  id: string;
+  clip_id: string;
+  tag_id: string;
+  geometry: AnnotationGeometry;
+  confidence?: number;
+  source: 'human' | 'model';
+  created_by: string;
+  created_at: string;
 }

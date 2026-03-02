@@ -1,17 +1,8 @@
 /**
- * TypeScript type definitions for the Annotation feature
+ * TypeScript type definitions for the Annotation feature.
  *
- * NOTE: The following types in index.ts conflict with types defined here
- * and will need to be updated in a follow-up task:
- *   - TagCategory: index.ts uses uppercase values ('SPECIES' | 'SOUND_TYPE' | 'QUALITY')
- *                  but this file uses lowercase ('species' | 'sound_type' | 'quality')
- *   - Tag:         index.ts is missing project_id, gbif_taxon_key, scientific_name,
- *                  common_name, updated_at fields
- *   - AnnotationSource: index.ts uses uppercase ('HUMAN' | 'MODEL')
- *                       but this file uses lowercase ('human' | 'model')
- *   - Annotation:  index.ts uses a flat tag_id field; this file uses a richer
- *                  SoundEventAnnotation structure with embedded tags array
- *   - AnnotationGeometry / AnnotationGeometryType: superseded by Geometry / GeometryType here
+ * These are the canonical type definitions for all annotation-related entities.
+ * They are re-exported from the main types index ($lib/types).
  */
 
 // ============================================

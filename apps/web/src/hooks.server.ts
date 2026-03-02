@@ -5,7 +5,6 @@
 
 import type { Handle } from '@sveltejs/kit';
 import { redirect } from '@sveltejs/kit';
-import { ApiClient } from '$lib/api/client';
 
 // Define protected routes that require authentication
 const PROTECTED_ROUTES = [
@@ -14,6 +13,8 @@ const PROTECTED_ROUTES = [
   '/annotations',
   '/projects',
   '/admin',
+  '/profile',
+  '/settings',
 ];
 
 // Define auth routes that should redirect authenticated users
@@ -40,6 +41,15 @@ function isAuthRoute(pathname: string): boolean {
 }
 
 /**
+ * Get backend API URL for server-side requests.
+ * In Docker, ECHOROO_API_URL points to the backend service (e.g., http://backend:8000).
+ * For local development outside Docker, defaults to http://localhost:8002.
+ */
+function getServerApiUrl(): string {
+  return process.env.ECHOROO_API_URL || 'http://localhost:8002';
+}
+
+/**
  * Check setup status from backend
  */
 async function checkSetupStatus(): Promise<{
@@ -47,12 +57,11 @@ async function checkSetupStatus(): Promise<{
   setup_completed: boolean;
 }> {
   try {
-    const apiClient = new ApiClient();
-    const status = await apiClient.get<{
-      setup_required: boolean;
-      setup_completed: boolean;
-    }>('/api/setup/status');
-    return status;
+    const response = await fetch(`${getServerApiUrl()}/api/v1/setup/status`);
+    if (!response.ok) {
+      throw new Error(`API returned ${response.status}`);
+    }
+    return await response.json();
   } catch {
     // If API is not available or returns error, assume setup is not required
     // This prevents infinite redirect loops during development

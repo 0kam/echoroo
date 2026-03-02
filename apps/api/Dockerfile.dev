@@ -1,0 +1,36 @@
+# ============================================
+# Echoroo API - Development Image
+# FastAPI with hot reload via uvicorn
+# ============================================
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    libsndfile1 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install uv for fast dependency management
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+
+# Copy dependency files
+COPY pyproject.toml uv.lock ./
+
+# Install dependencies
+RUN uv sync --frozen --no-dev --no-install-project
+
+# Copy source code
+COPY . .
+
+# Install the project itself
+RUN uv sync --frozen --no-install-project
+
+# Create data directories
+RUN mkdir -p /data/audio /data/cache
+
+EXPOSE 8000
+
+# Run with hot reload for development
+CMD ["uv", "run", "uvicorn", "echoroo.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload", "--reload-dir", "/app/echoroo"]

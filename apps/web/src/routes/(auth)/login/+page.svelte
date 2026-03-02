@@ -82,8 +82,18 @@
         captcha_token: captchaToken || undefined,
       });
 
-      // Update auth store
-      authStore.setUser(response.user);
+      // Set access token and user data from login response
+      const { apiClient } = await import('$lib/api/client');
+      apiClient.setAccessToken(response.access_token);
+
+      // Use user from login response if available, otherwise fetch
+      if (response.user) {
+        authStore.setUser(response.user);
+      } else {
+        const { getCurrentUser } = await import('$lib/api/auth');
+        const user = await getCurrentUser();
+        authStore.setUser(user);
+      }
 
       // Reset failed attempts
       failedAttempts = 0;

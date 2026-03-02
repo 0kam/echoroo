@@ -1,0 +1,132 @@
+# Echoroo Rebuild - Development Docker Compose
+# PostgreSQL + Redis + FastAPI Backend + SvelteKit Frontend
+#
+# Usage:
+#   ./scripts/docker.sh dev        # Start development environment
+#   ./scripts/docker.sh dev logs   # View logs
+#   ./scripts/docker.sh dev stop   # Stop
+
+services:
+  # PostgreSQL Database with pgvector
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: echoroo-db
+    restart: unless-stopped
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - db-data:/var/lib/postgresql/data
+      - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql:ro
+    environment:
+      - POSTGRES_DB=${POSTGRES_DB:-echoroo}
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - echoroo-net
+
+  # Redis for rate limiting and caching
+  redis:
+    image: redis:7-alpine
+    container_name: echoroo-redis
+    restart: unless-stopped
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - echoroo-net
+
+  # Backend FastAPI Server
+  backend:
+    build:
+      context: apps/api
+      dockerfile: Dockerfile.dev
+    container_name: echoroo-backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "${ECHOROO_API_PORT:-8002}:8000"
+    volumes:
+      # Mount source code for hot reload
+      - ./apps/api/echoroo:/app/echoroo:ro
+      - ./apps/api/alembic:/app/alembic:ro
+      - ./apps/api/alembic.ini:/app/alembic.ini:ro
+      # Audio files directory (read-only)
+      - ${ECHOROO_AUDIO_DIR:-/tmp/echoroo-audio}:/data/audio:ro
+      # Persistent data
+      - backend-data:/data
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-echoroo}
+      - REDIS_URL=redis://redis:6379/0
+      - APP_URL=http://localhost:${ECHOROO_FRONTEND_PORT:-5173}
+      - DEBUG=true
+      - ENVIRONMENT=development
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-dev-secret-key-change-in-production}
+      - ALLOWED_ORIGINS=["http://localhost:${ECHOROO_FRONTEND_PORT:-5173}","http://localhost:3000","http://frontend:5173"]
+      - AUDIO_ROOT=/data/audio
+      - TURNSTILE_SECRET_KEY=${TURNSTILE_SECRET_KEY:-1x0000000000000000000000000000000AA}
+      - TURNSTILE_SITE_KEY=${TURNSTILE_SITE_KEY:-1x00000000000000000000AA}
+      - RESEND_API_KEY=${RESEND_API_KEY:-}
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - echoroo-net
+
+  # Frontend SvelteKit Server
+  frontend:
+    build:
+      context: apps/web
+      dockerfile: Dockerfile.dev
+    container_name: echoroo-frontend
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "${ECHOROO_FRONTEND_PORT:-5173}:5173"
+    volumes:
+      # Mount source for hot reload
+      - ./apps/web/src:/app/src:ro
+      - ./apps/web/static:/app/static:ro
+      - ./apps/web/vite.config.ts:/app/vite.config.ts:ro
+      - ./apps/web/svelte.config.js:/app/svelte.config.js:ro
+      - ./apps/web/tailwind.config.js:/app/tailwind.config.js:ro
+      - ./apps/web/postcss.config.js:/app/postcss.config.js:ro
+      - ./apps/web/tsconfig.json:/app/tsconfig.json:ro
+    environment:
+      - ECHOROO_API_URL=http://backend:8000
+      - PUBLIC_API_URL=http://localhost:${ECHOROO_API_PORT:-8002}
+      - PUBLIC_TURNSTILE_SITE_KEY=${TURNSTILE_SITE_KEY:-1x00000000000000000000AA}
+    networks:
+      - echoroo-net
+
+networks:
+  echoroo-net:
+    name: echoroo-dev
+
+volumes:
+  db-data:
+    name: echoroo-dev-db
+  backend-data:
+    name: echoroo-dev-data
+  redis-data:
+    name: echoroo-dev-redis
