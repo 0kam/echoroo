@@ -20,8 +20,7 @@
     TagSummary,
     Tag,
   } from '$lib/types/annotation';
-  import SpectrogramViewer from '$lib/components/audio/SpectrogramViewer.svelte';
-  import AudioPlayer from '$lib/components/audio/AudioPlayer.svelte';
+  import ClipSpectrogramPlayer from '$lib/components/audio/ClipSpectrogramPlayer.svelte';
   import AnnotationCanvas from '$lib/components/annotation/AnnotationCanvas.svelte';
   import AnnotationList from '$lib/components/annotation/AnnotationList.svelte';
   import TagSelector from '$lib/components/annotation/TagSelector.svelte';
@@ -361,13 +360,12 @@
         <!-- Spectrogram with annotation canvas overlay -->
         <div class="spectrogram-wrapper" style="height: {spectrogramHeight}px;">
           {#if recording}
-            <SpectrogramViewer
+            <ClipSpectrogramPlayer
               {projectId}
-              recordingId={recording.id}
-              duration={recording.duration}
-              params={{ start: task.clip.start_time, end: task.clip.end_time }}
-              {currentTime}
-              {isPlaying}
+              {recording}
+              clipStart={task.clip.start_time}
+              clipEnd={task.clip.end_time}
+              onTimeUpdate={(t) => (currentTime = t)}
             />
           {:else}
             <div class="spectrogram-placeholder">
@@ -391,19 +389,6 @@
             />
           </div>
         </div>
-
-        <!-- Audio Player -->
-        {#if recording}
-          <div class="player-wrapper">
-            <AudioPlayer
-              {projectId}
-              recordingId={recording.id}
-              duration={clipDuration}
-              bind:currentTime
-              onTimeUpdate={(t) => (currentTime = t)}
-            />
-          </div>
-        {/if}
       </div>
 
       <!-- Right Sidebar -->

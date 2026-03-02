@@ -1,47 +1,68 @@
 <script lang="ts">
-  import { createQuery } from '@tanstack/svelte-query';
-  import { listRecordings } from '$lib/api/recordings';
+  import { createQuery, createMutation, useQueryClient } from '@tanstack/svelte-query';
+  import { listRecordings, deleteRecording } from '$lib/api/recordings';
   import type { Recording } from '$lib/types/data';
+  import DeleteConfirmDialog from '$lib/components/ui/DeleteConfirmDialog.svelte';
 
-  export let projectId: string;
-  export let datasetId: string | undefined = undefined;
-  export let siteId: string | undefined = undefined;
-  export let onSelect: ((recordingId: string) => void) | undefined = undefined;
+  interface Props {
+    projectId: string;
+    datasetId?: string;
+    siteId?: string;
+    onSelect?: (recordingId: string) => void;
+  }
 
-  let page = 1;
-  let search = '';
-  let sortBy = 'datetime';
-  let sortOrder = 'desc';
-  let datetimeFrom = '';
-  let datetimeTo = '';
+  let { projectId, datasetId, siteId, onSelect }: Props = $props();
+
+  const queryClient = useQueryClient();
+
+  let page = $state(1);
+  let search = $state('');
+  let sortBy = $state('datetime');
+  let sortOrder = $state('desc');
+  let datetimeFrom = $state('');
+  let datetimeTo = $state('');
   const pageSize = 20;
 
-  $: recordingsQuery = createQuery({
-    queryKey: [
-      'recordings',
-      projectId,
-      datasetId,
-      siteId,
-      page,
-      search,
-      sortBy,
-      sortOrder,
-      datetimeFrom,
-      datetimeTo,
-    ],
-    queryFn: () =>
-      listRecordings({
+  let recordingToDelete = $state<Recording | null>(null);
+  let showDeleteDialog = $state(false);
+
+  const recordingsQuery = $derived(
+    createQuery({
+      queryKey: [
+        'recordings',
         projectId,
         datasetId,
         siteId,
         page,
-        pageSize,
-        search: search || undefined,
+        search,
         sortBy,
         sortOrder,
-        datetimeFrom: datetimeFrom || undefined,
-        datetimeTo: datetimeTo || undefined,
-      }),
+        datetimeFrom,
+        datetimeTo,
+      ],
+      queryFn: () =>
+        listRecordings({
+          projectId,
+          datasetId,
+          siteId,
+          page,
+          pageSize,
+          search: search || undefined,
+          sortBy,
+          sortOrder,
+          datetimeFrom: datetimeFrom || undefined,
+          datetimeTo: datetimeTo || undefined,
+        }),
+    })
+  );
+
+  const deleteMutation = createMutation({
+    mutationFn: (recordingId: string) => deleteRecording(projectId, recordingId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['recordings', projectId] });
+      recordingToDelete = null;
+      showDeleteDialog = false;
+    },
   });
 
   function formatDuration(seconds: number): string {
@@ -60,9 +81,33 @@
   }
 
   function handleRowClick(recording: Recording) {
-    if (onSelect) {
-      onSelect(recording.id);
+    onSelect?.(recording.id);
+  }
+
+  function handleDeleteClick(recording: Recording) {
+    recordingToDelete = recording;
+    showDeleteDialog = true;
+  }
+
+  function confirmDelete() {
+    if (recordingToDelete) {
+      $deleteMutation.mutate(recordingToDelete.id);
     }
+  }
+
+  function cancelDelete() {
+    showDeleteDialog = false;
+    recordingToDelete = null;
+  }
+
+  function handleSort(column: string) {
+    if (sortBy === column) {
+      sortOrder = sortOrder === 'asc' ? 'desc' : 'asc';
+    } else {
+      sortBy = column;
+      sortOrder = 'asc';
+    }
+    page = 1;
   }
 
   function nextPage() {
@@ -76,36 +121,44 @@
       page--;
     }
   }
+
+  function handleSearchInput() {
+    page = 1;
+  }
 </script>
 
-<div class="recording-list">
+<div class="w-full">
   <!-- Search and filters -->
-  <div class="filters">
+  <div class="mb-4 flex flex-wrap gap-3">
     <input
       type="text"
       placeholder="Search recordings..."
       bind:value={search}
-      class="search-input"
+      oninput={handleSearchInput}
+      class="min-w-[200px] flex-1 rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
     />
 
-    <div class="date-filters">
+    <div class="flex gap-2">
       <input
         type="datetime-local"
-        placeholder="From"
         bind:value={datetimeFrom}
-        class="date-input"
+        oninput={handleSearchInput}
+        title="From date"
+        class="rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
       />
-      <input type="datetime-local" placeholder="To" bind:value={datetimeTo} class="date-input" />
+      <input
+        type="datetime-local"
+        bind:value={datetimeTo}
+        oninput={handleSearchInput}
+        title="To date"
+        class="rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
+      />
     </div>
 
-    <select bind:value={sortBy} class="filter-select">
-      <option value="datetime">Date/Time</option>
-      <option value="filename">Filename</option>
-      <option value="duration">Duration</option>
-      <option value="created_at">Created</option>
-    </select>
-
-    <select bind:value={sortOrder} class="filter-select">
+    <select
+      bind:value={sortOrder}
+      class="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
+    >
       <option value="desc">Descending</option>
       <option value="asc">Ascending</option>
     </select>
@@ -113,53 +166,118 @@
 
   <!-- Loading and error states -->
   {#if $recordingsQuery.isLoading}
-    <div class="loading-state">
-      <p>Loading recordings...</p>
+    <div class="flex items-center justify-center rounded-lg bg-gray-50 py-12">
+      <svg class="mr-3 h-5 w-5 animate-spin text-blue-600" fill="none" viewBox="0 0 24 24">
+        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+      </svg>
+      <span class="text-sm text-gray-600">Loading recordings...</span>
     </div>
   {:else if $recordingsQuery.error}
-    <div class="error-state">
-      <p>Error: {$recordingsQuery.error.message}</p>
+    <div class="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700">
+      Error: {$recordingsQuery.error.message}
     </div>
   {:else if $recordingsQuery.data}
     {@const recordings = $recordingsQuery.data.items}
 
     {#if recordings.length === 0}
-      <div class="empty-state">
-        <p>No recordings found.</p>
+      <div class="rounded-lg bg-gray-50 py-12 text-center">
+        <svg class="mx-auto mb-3 h-10 w-10 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+        </svg>
+        <p class="text-sm text-gray-500">No recordings found.</p>
       </div>
     {:else}
       <!-- Recordings table -->
-      <div class="table-container">
-        <table class="recordings-table">
-          <thead>
+      <div class="overflow-x-auto rounded-lg border border-gray-200 bg-white">
+        <table class="w-full border-collapse">
+          <thead class="border-b border-gray-200 bg-gray-50">
             <tr>
-              <th>Filename</th>
-              <th>Date/Time</th>
-              <th>Duration</th>
-              <th>Sample Rate</th>
-              <th>Channels</th>
-              <th>Status</th>
+              <th
+                class="cursor-pointer px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500 hover:bg-gray-100"
+                onclick={() => handleSort('filename')}
+              >
+                <span class="flex items-center gap-1">
+                  Filename
+                  {#if sortBy === 'filename'}
+                    <svg class="h-3 w-3 {sortOrder === 'desc' ? 'rotate-180' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7" />
+                    </svg>
+                  {/if}
+                </span>
+              </th>
+              <th
+                class="cursor-pointer px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500 hover:bg-gray-100"
+                onclick={() => handleSort('datetime')}
+              >
+                <span class="flex items-center gap-1">
+                  Date/Time
+                  {#if sortBy === 'datetime'}
+                    <svg class="h-3 w-3 {sortOrder === 'desc' ? 'rotate-180' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7" />
+                    </svg>
+                  {/if}
+                </span>
+              </th>
+              <th
+                class="cursor-pointer px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500 hover:bg-gray-100"
+                onclick={() => handleSort('duration')}
+              >
+                <span class="flex items-center gap-1">
+                  Duration
+                  {#if sortBy === 'duration'}
+                    <svg class="h-3 w-3 {sortOrder === 'desc' ? 'rotate-180' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7" />
+                    </svg>
+                  {/if}
+                </span>
+              </th>
+              <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">
+                Sample Rate
+              </th>
+              <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">
+                Ch
+              </th>
+              <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">
+                Status
+              </th>
+              <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">
+                Actions
+              </th>
             </tr>
           </thead>
           <tbody>
             {#each recordings as recording (recording.id)}
-              <!-- svelte-ignore a11y_click_events_have_key_events -->
-              <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-              <tr class="recording-row" on:click={() => handleRowClick(recording)}>
-                <td class="filename">{recording.filename}</td>
-                <td>{formatDatetime(recording.datetime)}</td>
-                <td>{formatDuration(recording.duration)}</td>
-                <td>{formatSamplerate(recording.samplerate)}</td>
-                <td>{recording.channels}</td>
-                <td>
+              <tr
+                class="border-b border-gray-100 transition-colors last:border-b-0 hover:bg-gray-50 {onSelect ? 'cursor-pointer' : ''}"
+                onclick={() => onSelect && handleRowClick(recording)}
+              >
+                <td class="px-4 py-3">
+                  <span class="font-mono text-sm font-medium text-gray-900">{recording.filename}</span>
+                </td>
+                <td class="px-4 py-3 text-sm text-gray-600">{formatDatetime(recording.datetime)}</td>
+                <td class="px-4 py-3 text-sm text-gray-600">{formatDuration(recording.duration)}</td>
+                <td class="px-4 py-3 text-sm text-gray-600">{formatSamplerate(recording.samplerate)}</td>
+                <td class="px-4 py-3 text-sm text-gray-600">{recording.channels}</td>
+                <td class="px-4 py-3">
                   <span
-                    class="status-badge"
-                    class:status-success={recording.datetime_parse_status === 'success'}
-                    class:status-pending={recording.datetime_parse_status === 'pending'}
-                    class:status-failed={recording.datetime_parse_status === 'failed'}
+                    class="inline-flex items-center rounded px-2 py-0.5 text-xs font-medium capitalize
+                      {recording.datetime_parse_status === 'success' ? 'bg-green-100 text-green-800' : ''}
+                      {recording.datetime_parse_status === 'pending' ? 'bg-yellow-100 text-yellow-800' : ''}
+                      {recording.datetime_parse_status === 'failed' ? 'bg-red-100 text-red-800' : ''}"
                   >
                     {recording.datetime_parse_status}
                   </span>
+                </td>
+                <td class="px-4 py-3">
+                  <button
+                    class="rounded border border-red-200 bg-white px-2 py-1 text-xs font-medium text-red-600 transition-colors hover:bg-red-50 hover:border-red-300"
+                    onclick={(e) => { e.stopPropagation(); handleDeleteClick(recording); }}
+                    disabled={$deleteMutation.isPending}
+                    aria-label="Delete recording"
+                  >
+                    Delete
+                  </button>
                 </td>
               </tr>
             {/each}
@@ -168,18 +286,22 @@
       </div>
 
       <!-- Pagination -->
-      <div class="pagination">
-        <button on:click={prevPage} disabled={page <= 1} class="pagination-btn">
+      <div class="mt-4 flex items-center justify-between py-2">
+        <button
+          onclick={prevPage}
+          disabled={page <= 1}
+          class="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+        >
           Previous
         </button>
-        <span class="pagination-info">
+        <span class="text-sm text-gray-500">
           Page {$recordingsQuery.data.page} of {$recordingsQuery.data.pages}
           ({$recordingsQuery.data.total} total)
         </span>
         <button
-          on:click={nextPage}
+          onclick={nextPage}
           disabled={page >= $recordingsQuery.data.pages}
-          class="pagination-btn"
+          class="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
         >
           Next
         </button>
@@ -188,187 +310,14 @@
   {/if}
 </div>
 
-<style>
-  .recording-list {
-    width: 100%;
-  }
-
-  .filters {
-    display: flex;
-    gap: 0.75rem;
-    margin-bottom: 1rem;
-    flex-wrap: wrap;
-  }
-
-  .search-input {
-    flex: 1;
-    min-width: 200px;
-    padding: 0.625rem 0.75rem;
-    border: 1px solid #d1d5db;
-    border-radius: 0.375rem;
-    font-size: 0.875rem;
-  }
-
-  .search-input:focus {
-    outline: none;
-    border-color: #3b82f6;
-    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
-  }
-
-  .date-filters {
-    display: flex;
-    gap: 0.5rem;
-  }
-
-  .date-input {
-    padding: 0.625rem 0.75rem;
-    border: 1px solid #d1d5db;
-    border-radius: 0.375rem;
-    font-size: 0.875rem;
-  }
-
-  .date-input:focus {
-    outline: none;
-    border-color: #3b82f6;
-    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
-  }
-
-  .filter-select {
-    padding: 0.625rem 0.75rem;
-    border: 1px solid #d1d5db;
-    border-radius: 0.375rem;
-    font-size: 0.875rem;
-    background: white;
-    cursor: pointer;
-  }
-
-  .filter-select:focus {
-    outline: none;
-    border-color: #3b82f6;
-    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
-  }
-
-  .loading-state,
-  .error-state,
-  .empty-state {
-    padding: 2rem;
-    text-align: center;
-    background: #f9fafb;
-    border-radius: 0.5rem;
-  }
-
-  .error-state {
-    background: #fee2e2;
-    color: #991b1b;
-  }
-
-  .table-container {
-    overflow-x: auto;
-    background: white;
-    border: 1px solid #e5e7eb;
-    border-radius: 0.5rem;
-  }
-
-  .recordings-table {
-    width: 100%;
-    border-collapse: collapse;
-  }
-
-  .recordings-table thead {
-    background: #f9fafb;
-    border-bottom: 1px solid #e5e7eb;
-  }
-
-  .recordings-table th {
-    padding: 0.75rem 1rem;
-    text-align: left;
-    font-size: 0.75rem;
-    font-weight: 600;
-    color: #6b7280;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-  }
-
-  .recording-row {
-    border-bottom: 1px solid #e5e7eb;
-    cursor: pointer;
-    transition: background-color 0.15s ease;
-  }
-
-  .recording-row:hover {
-    background: #f9fafb;
-  }
-
-  .recording-row:last-child {
-    border-bottom: none;
-  }
-
-  .recordings-table td {
-    padding: 0.875rem 1rem;
-    font-size: 0.875rem;
-    color: #374151;
-  }
-
-  .filename {
-    font-family: monospace;
-    font-weight: 500;
-    color: #111827;
-  }
-
-  .status-badge {
-    display: inline-block;
-    padding: 0.25rem 0.625rem;
-    border-radius: 0.25rem;
-    font-size: 0.75rem;
-    font-weight: 500;
-    text-transform: capitalize;
-  }
-
-  .status-success {
-    background: #d1fae5;
-    color: #065f46;
-  }
-
-  .status-pending {
-    background: #fef3c7;
-    color: #92400e;
-  }
-
-  .status-failed {
-    background: #fee2e2;
-    color: #991b1b;
-  }
-
-  .pagination {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-top: 1rem;
-    padding: 1rem 0;
-  }
-
-  .pagination-btn {
-    padding: 0.5rem 1rem;
-    font-size: 0.875rem;
-    background: white;
-    border: 1px solid #d1d5db;
-    border-radius: 0.375rem;
-    cursor: pointer;
-    transition: all 0.15s ease;
-  }
-
-  .pagination-btn:hover:not(:disabled) {
-    background: #f9fafb;
-    border-color: #3b82f6;
-  }
-
-  .pagination-btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .pagination-info {
-    font-size: 0.875rem;
-    color: #6b7280;
-  }
-</style>
+<!-- Delete confirmation dialog -->
+<DeleteConfirmDialog
+  isOpen={showDeleteDialog}
+  title="Delete Recording"
+  message={recordingToDelete ? `Are you sure you want to delete "${recordingToDelete.filename}"? This will also delete all associated clips.` : ''}
+  warnings={['All associated clips and annotations']}
+  confirmText="Delete Recording"
+  isDeleting={$deleteMutation.isPending}
+  onConfirm={confirmDelete}
+  onCancel={cancelDelete}
+/>

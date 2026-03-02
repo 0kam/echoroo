@@ -1,15 +1,31 @@
 <script lang="ts">
-  import { createEventDispatcher } from 'svelte';
+  interface Props {
+    value?: string;
+    placeholder?: string;
+    disabled?: boolean;
+    maxLength?: number;
+    onSave?: (note: string) => void;
+    onCancel?: () => void;
+  }
 
-  export let value: string = '';
-  export let placeholder: string = 'Add a note...';
-  export let disabled: boolean = false;
-  export let maxLength: number = 2000;
+  let {
+    value = '',
+    placeholder = 'Add a note...',
+    disabled = false,
+    maxLength = 2000,
+    onSave,
+    onCancel,
+  }: Props = $props();
 
-  const dispatch = createEventDispatcher<{ save: string; cancel: void }>();
+  let isEditing = $state(false);
+  let editValue = $state('');
 
-  let isEditing = false;
-  let editValue = value;
+  // Keep editValue in sync when not editing
+  $effect(() => {
+    if (!isEditing) {
+      editValue = value;
+    }
+  });
 
   function startEdit() {
     if (disabled) return;
@@ -18,14 +34,14 @@
   }
 
   function save() {
-    dispatch('save', editValue);
+    onSave?.(editValue);
     isEditing = false;
   }
 
   function cancel() {
     editValue = value;
     isEditing = false;
-    dispatch('cancel');
+    onCancel?.();
   }
 
   function handleKeydown(event: KeyboardEvent) {
@@ -35,30 +51,35 @@
       save();
     }
   }
-
-  // Update editValue when value prop changes
-  $: if (!isEditing) editValue = value;
 </script>
 
-<div class="note-editor">
+<div class="w-full">
   {#if isEditing}
-    <div class="edit-mode">
+    <div class="flex flex-col gap-2">
       <textarea
         bind:value={editValue}
         {placeholder}
         {disabled}
         maxlength={maxLength}
         rows="3"
-        class="note-textarea"
+        class="w-full resize-none rounded-lg border border-blue-500 px-3 py-2 font-inherit text-sm leading-relaxed focus:outline-none focus:ring-2 focus:ring-blue-200"
         onkeydown={handleKeydown}
       ></textarea>
-      <div class="edit-footer">
-        <span class="char-count">{editValue.length}/{maxLength}</span>
-        <div class="edit-actions">
-          <button type="button" onclick={cancel} class="btn-cancel">
+      <div class="flex items-center justify-between">
+        <span class="text-xs text-gray-400">{editValue.length}/{maxLength}</span>
+        <div class="flex gap-2">
+          <button
+            type="button"
+            onclick={cancel}
+            class="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50"
+          >
             Cancel
           </button>
-          <button type="button" onclick={save} class="btn-save">
+          <button
+            type="button"
+            onclick={save}
+            class="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-blue-700"
+          >
             Save
           </button>
         </div>
@@ -69,146 +90,18 @@
       type="button"
       onclick={startEdit}
       {disabled}
-      class="view-mode"
-      class:has-value={!!value}
-      class:disabled
+      class="relative flex min-h-[60px] w-full flex-col rounded-lg border border-gray-200 bg-white p-3 text-left transition-all hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60 {value ? '' : ''}"
     >
       {#if value}
-        <p class="note-content">{value}</p>
+        <p class="m-0 whitespace-pre-wrap break-words text-sm leading-relaxed text-gray-700">{value}</p>
       {:else}
-        <p class="placeholder">{placeholder}</p>
+        <p class="m-0 text-sm italic text-gray-400">{placeholder}</p>
       {/if}
-      <span class="edit-hint">Click to edit</span>
+      {#if !disabled}
+        <span class="absolute bottom-2 right-2 text-[11px] text-gray-300 opacity-0 transition-opacity group-hover:opacity-100">
+          Click to edit
+        </span>
+      {/if}
     </button>
   {/if}
 </div>
-
-<style>
-  .note-editor {
-    width: 100%;
-  }
-
-  .edit-mode {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-  }
-
-  .note-textarea {
-    width: 100%;
-    padding: 0.75rem;
-    border: 1px solid #3b82f6;
-    border-radius: 0.5rem;
-    resize: none;
-    font-family: inherit;
-    font-size: 0.875rem;
-    line-height: 1.5;
-    box-sizing: border-box;
-  }
-
-  .note-textarea:focus {
-    outline: none;
-    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
-  }
-
-  .edit-footer {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-  }
-
-  .char-count {
-    font-size: 0.75rem;
-    color: #6b7280;
-  }
-
-  .edit-actions {
-    display: flex;
-    gap: 0.5rem;
-  }
-
-  .btn-cancel,
-  .btn-save {
-    padding: 0.375rem 0.75rem;
-    font-size: 0.813rem;
-    font-weight: 500;
-    border-radius: 0.375rem;
-    cursor: pointer;
-    transition: all 0.15s ease;
-  }
-
-  .btn-cancel {
-    background: white;
-    color: #374151;
-    border: 1px solid #d1d5db;
-  }
-
-  .btn-cancel:hover {
-    background: #f9fafb;
-  }
-
-  .btn-save {
-    background: #3b82f6;
-    color: white;
-    border: none;
-  }
-
-  .btn-save:hover {
-    background: #2563eb;
-  }
-
-  .view-mode {
-    width: 100%;
-    padding: 0.75rem;
-    border: 1px solid #e5e7eb;
-    border-radius: 0.5rem;
-    background: white;
-    text-align: left;
-    cursor: pointer;
-    transition: all 0.15s ease;
-    min-height: 60px;
-    display: flex;
-    flex-direction: column;
-    position: relative;
-  }
-
-  .view-mode:hover:not(.disabled) {
-    background: #f9fafb;
-    border-color: #d1d5db;
-  }
-
-  .view-mode.disabled {
-    cursor: not-allowed;
-    opacity: 0.6;
-  }
-
-  .note-content {
-    margin: 0;
-    font-size: 0.875rem;
-    color: #374151;
-    line-height: 1.5;
-    white-space: pre-wrap;
-    word-break: break-word;
-  }
-
-  .placeholder {
-    margin: 0;
-    font-size: 0.875rem;
-    color: #9ca3af;
-    font-style: italic;
-  }
-
-  .edit-hint {
-    position: absolute;
-    bottom: 0.5rem;
-    right: 0.5rem;
-    font-size: 0.688rem;
-    color: #9ca3af;
-    opacity: 0;
-    transition: opacity 0.15s ease;
-  }
-
-  .view-mode:hover:not(.disabled) .edit-hint {
-    opacity: 1;
-  }
-</style>

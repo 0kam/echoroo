@@ -2,17 +2,27 @@
   import type { Site, SiteCreate } from '$lib/types/data';
   import H3MapPicker from '$lib/components/map/H3MapPicker.svelte';
 
-  export let site: Site | null = null;
-  export let onSubmit: (data: SiteCreate) => Promise<void>;
-  export let onCancel: () => void = () => {};
+  interface Props {
+    site?: Site | null;
+    onSubmit: (data: SiteCreate) => Promise<void>;
+    onCancel?: () => void;
+  }
 
-  let name = site?.name ?? '';
-  let h3Index = site?.h3_index ?? '';
-  let resolution = 9;
-  let isSubmitting = false;
-  let error = '';
+  let { site = null, onSubmit, onCancel = () => {} }: Props = $props();
 
-  function handleMapSelect(index: string, center: [number, number]) {
+  let name = $state('');
+  let h3Index = $state('');
+  let resolution = $state(9);
+
+  // Initialize form fields from site prop once on mount
+  $effect(() => {
+    name = site?.name ?? '';
+    h3Index = site?.h3_index ?? '';
+  });
+  let isSubmitting = $state(false);
+  let error = $state('');
+
+  function handleMapSelect(index: string, _center: [number, number]) {
     h3Index = index;
   }
 
@@ -39,9 +49,9 @@
   }
 </script>
 
-<form class="site-form" on:submit|preventDefault={handleSubmit}>
-  <div class="form-group">
-    <label for="name">Site Name *</label>
+<form class="flex flex-col gap-6" onsubmit={(e) => { e.preventDefault(); handleSubmit(); }}>
+  <div class="flex flex-col gap-2">
+    <label for="name" class="text-sm font-medium text-gray-700">Site Name *</label>
     <input
       type="text"
       id="name"
@@ -49,134 +59,50 @@
       placeholder="Enter site name"
       maxlength="200"
       required
+      class="rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
     />
   </div>
 
-  <div class="form-group">
-    <label>Location *</label>
-    <p class="help-text">Click on the map to select an H3 hexagon for this site.</p>
-    <H3MapPicker h3Index={h3Index} {resolution} onSelect={handleMapSelect} />
+  <div class="flex flex-col gap-2">
+    <span class="text-sm font-medium text-gray-700">Location *</span>
+    <p class="m-0 text-xs text-gray-500">Click on the map to select an H3 hexagon for this site.</p>
+    <H3MapPicker {h3Index} {resolution} onSelect={handleMapSelect} />
   </div>
 
   {#if h3Index}
-    <div class="form-group">
-      <label>Selected H3 Index</label>
-      <input type="text" value={h3Index} readonly class="readonly" />
+    <div class="flex flex-col gap-2">
+      <label for="h3-index-display" class="text-sm font-medium text-gray-700">Selected H3 Index</label>
+      <input
+        id="h3-index-display"
+        type="text"
+        value={h3Index}
+        readonly
+        class="rounded-md border border-gray-200 bg-gray-50 px-3 py-2 font-mono text-sm text-gray-600"
+      />
     </div>
   {/if}
 
   {#if error}
-    <div class="error-message">{error}</div>
+    <div class="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-600">
+      {error}
+    </div>
   {/if}
 
-  <div class="form-actions">
-    <button type="button" class="btn-secondary" on:click={onCancel} disabled={isSubmitting}>
+  <div class="flex justify-end gap-3 border-t border-gray-200 pt-4">
+    <button
+      type="button"
+      onclick={onCancel}
+      disabled={isSubmitting}
+      class="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+    >
       Cancel
     </button>
-    <button type="submit" class="btn-primary" disabled={isSubmitting || !name || !h3Index}>
-      {#if isSubmitting}
-        Saving...
-      {:else}
-        {site ? 'Update Site' : 'Create Site'}
-      {/if}
+    <button
+      type="submit"
+      disabled={isSubmitting || !name || !h3Index}
+      class="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+    >
+      {isSubmitting ? 'Saving...' : site ? 'Update Site' : 'Create Site'}
     </button>
   </div>
 </form>
-
-<style>
-  .site-form {
-    display: flex;
-    flex-direction: column;
-    gap: 1.5rem;
-  }
-
-  .form-group {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-  }
-
-  .form-group label {
-    font-weight: 500;
-    font-size: 0.875rem;
-    color: #374151;
-  }
-
-  .help-text {
-    font-size: 0.75rem;
-    color: #6b7280;
-    margin: 0;
-  }
-
-  input[type='text'] {
-    padding: 0.625rem 0.75rem;
-    border: 1px solid #d1d5db;
-    border-radius: 0.375rem;
-    font-size: 0.875rem;
-    transition: border-color 0.15s ease;
-  }
-
-  input[type='text']:focus {
-    outline: none;
-    border-color: #3b82f6;
-    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
-  }
-
-  input.readonly {
-    background: #f9fafb;
-    color: #6b7280;
-    font-family: monospace;
-  }
-
-  .error-message {
-    padding: 0.75rem;
-    background: #fef2f2;
-    border: 1px solid #fecaca;
-    border-radius: 0.375rem;
-    color: #dc2626;
-    font-size: 0.875rem;
-  }
-
-  .form-actions {
-    display: flex;
-    justify-content: flex-end;
-    gap: 0.75rem;
-    padding-top: 1rem;
-    border-top: 1px solid #e5e7eb;
-  }
-
-  .btn-primary,
-  .btn-secondary {
-    padding: 0.625rem 1.25rem;
-    font-size: 0.875rem;
-    font-weight: 500;
-    border-radius: 0.375rem;
-    cursor: pointer;
-    transition: all 0.15s ease;
-  }
-
-  .btn-primary {
-    background: #3b82f6;
-    color: white;
-    border: none;
-  }
-
-  .btn-primary:hover:not(:disabled) {
-    background: #2563eb;
-  }
-
-  .btn-primary:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .btn-secondary {
-    background: white;
-    color: #374151;
-    border: 1px solid #d1d5db;
-  }
-
-  .btn-secondary:hover:not(:disabled) {
-    background: #f9fafb;
-  }
-</style>

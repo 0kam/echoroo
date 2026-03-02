@@ -6,36 +6,56 @@
   import VisibilitySelector from './VisibilitySelector.svelte';
   import type { DatasetCreate, DatasetDetail, DatasetUpdate, DatasetVisibility } from '$lib/types/data';
 
-  export let projectId: string;
-  export let dataset: DatasetDetail | null = null;
-  export let onSubmit: (data: DatasetCreate | DatasetUpdate) => Promise<void>;
-  export let onCancel: () => void = () => {};
+  interface Props {
+    projectId: string;
+    dataset?: DatasetDetail | null;
+    onSubmit: (data: DatasetCreate | DatasetUpdate) => Promise<void>;
+    onCancel?: () => void;
+  }
 
-  const isEdit = !!dataset;
+  let { projectId, dataset = null, onSubmit, onCancel = () => {} }: Props = $props();
 
-  // Form fields
-  let name = dataset?.name ?? '';
-  let description = dataset?.description ?? '';
-  let audioDir = dataset?.audio_dir ?? '';
-  let visibility: DatasetVisibility = dataset?.visibility ?? 'private';
-  let siteId = dataset?.site_id ?? '';
-  let recorderId = dataset?.recorder_id ?? '';
-  let licenseId = dataset?.license_id ?? '';
-  let doi = dataset?.doi ?? '';
-  let gain = dataset?.gain?.toString() ?? '';
-  let note = dataset?.note ?? '';
-  let datetimePattern = '';
-  let datetimeFormat = '';
+  const isEdit = $derived(!!dataset);
 
-  let showDirectoryBrowser = false;
-  let isSubmitting = false;
-  let error = '';
+  // Form fields (initialized from dataset prop)
+  let name = $state('');
+  let description = $state('');
+  let audioDir = $state('');
+  let visibility = $state<DatasetVisibility>('private');
+  let siteId = $state('');
+  let recorderId = $state('');
+  let licenseId = $state('');
+  let doi = $state('');
+  let gain = $state('');
+  let note = $state('');
+  let datetimePattern = $state('');
+  let datetimeFormat = $state('');
+
+  // Initialize form fields from dataset prop once on mount
+  $effect(() => {
+    name = dataset?.name ?? '';
+    description = dataset?.description ?? '';
+    audioDir = dataset?.audio_dir ?? '';
+    visibility = dataset?.visibility ?? 'private';
+    siteId = dataset?.site_id ?? '';
+    recorderId = dataset?.recorder_id ?? '';
+    licenseId = dataset?.license_id ?? '';
+    doi = dataset?.doi ?? '';
+    gain = dataset?.gain?.toString() ?? '';
+    note = dataset?.note ?? '';
+  });
+
+  let showDirectoryBrowser = $state(false);
+  let isSubmitting = $state(false);
+  let error = $state('');
 
   // Fetch sites for dropdown
-  const sitesQuery = createQuery({
-    queryKey: ['sites', projectId],
-    queryFn: () => fetchSites(projectId, { page_size: 100 }),
-  });
+  const sitesQuery = $derived(
+    createQuery({
+      queryKey: ['sites', projectId],
+      queryFn: () => fetchSites(projectId, { page_size: 100 }),
+    })
+  );
 
   function handleDirectorySelect(path: string) {
     audioDir = path;
@@ -52,7 +72,7 @@
       error = 'Audio directory is required';
       return;
     }
-    if (!siteId) {
+    if (!isEdit && !siteId) {
       error = 'Site is required';
       return;
     }
@@ -100,56 +120,63 @@
   }
 </script>
 
-<form class="dataset-form" on:submit|preventDefault={handleSubmit}>
-  <div class="form-row">
-    <div class="form-group full-width">
-      <label for="name">Name *</label>
-      <input
-        id="name"
-        type="text"
-        bind:value={name}
-        placeholder="Enter dataset name"
-        maxlength="200"
-        required
-      />
-    </div>
+<form class="flex flex-col gap-5" onsubmit={(e) => { e.preventDefault(); handleSubmit(); }}>
+  <!-- Name -->
+  <div class="flex flex-col gap-1.5">
+    <label for="name" class="text-sm font-medium text-gray-700">Name *</label>
+    <input
+      id="name"
+      type="text"
+      bind:value={name}
+      placeholder="Enter dataset name"
+      maxlength="200"
+      required
+      class="rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+    />
   </div>
 
-  <div class="form-row">
-    <div class="form-group full-width">
-      <label for="description">Description</label>
-      <textarea
-        id="description"
-        bind:value={description}
-        placeholder="Describe this dataset"
-        rows="3"
-      ></textarea>
-    </div>
+  <!-- Description -->
+  <div class="flex flex-col gap-1.5">
+    <label for="description" class="text-sm font-medium text-gray-700">Description</label>
+    <textarea
+      id="description"
+      bind:value={description}
+      placeholder="Describe this dataset"
+      rows="3"
+      class="resize-y rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+    ></textarea>
   </div>
 
-  <div class="form-row">
-    <div class="form-group">
-      <label for="site">Site *</label>
+  <!-- Site + Visibility row -->
+  <div class="grid grid-cols-2 gap-4">
+    <div class="flex flex-col gap-1.5">
+      <label for="site" class="text-sm font-medium text-gray-700">Site *</label>
       {#if $sitesQuery.isLoading}
-        <select id="site" disabled>
+        <select id="site" disabled class="rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-sm">
           <option>Loading sites...</option>
         </select>
       {:else if $sitesQuery.isError}
-        <div class="field-error">Error loading sites</div>
+        <div class="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-600">Error loading sites</div>
       {:else if $sitesQuery.data}
-        <select id="site" bind:value={siteId} required disabled={isEdit}>
+        <select
+          id="site"
+          bind:value={siteId}
+          required={!isEdit}
+          disabled={isEdit}
+          class="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm focus:border-blue-500 focus:outline-none disabled:bg-gray-50 disabled:text-gray-500"
+        >
           <option value="">Select a site</option>
           {#each $sitesQuery.data.items as site}
             <option value={site.id}>{site.name}</option>
           {/each}
         </select>
         {#if isEdit}
-          <p class="help-text">Site cannot be changed after creation</p>
+          <p class="text-xs text-gray-400">Site cannot be changed after creation</p>
         {/if}
       {/if}
     </div>
 
-    <div class="form-group">
+    <div class="flex flex-col gap-1.5">
       <VisibilitySelector
         value={visibility}
         onChange={(v) => (visibility = v)}
@@ -157,348 +184,171 @@
     </div>
   </div>
 
-  <div class="form-row">
-    <div class="form-group full-width">
-      <label for="audio-dir">Audio Directory *</label>
-      <div class="directory-input-group">
-        <input
-          id="audio-dir"
-          type="text"
-          bind:value={audioDir}
-          placeholder="/path/to/audio/files"
-          required
-          readonly={isEdit}
-        />
-        {#if !isEdit}
-          <button type="button" class="browse-btn" on:click={() => (showDirectoryBrowser = !showDirectoryBrowser)}>
-            Browse
-          </button>
-        {/if}
-      </div>
-      {#if isEdit}
-        <p class="help-text">Directory cannot be changed after creation</p>
+  <!-- Audio Directory -->
+  <div class="flex flex-col gap-1.5">
+    <label for="audio-dir" class="text-sm font-medium text-gray-700">Audio Directory *</label>
+    <div class="flex gap-2">
+      <input
+        id="audio-dir"
+        type="text"
+        bind:value={audioDir}
+        placeholder="/path/to/audio/files"
+        required
+        readonly={isEdit}
+        class="flex-1 rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none read-only:bg-gray-50 read-only:text-gray-500"
+      />
+      {#if !isEdit}
+        <button
+          type="button"
+          onclick={() => (showDirectoryBrowser = !showDirectoryBrowser)}
+          class="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50"
+        >
+          Browse
+        </button>
       {/if}
     </div>
+    {#if isEdit}
+      <p class="text-xs text-gray-400">Directory cannot be changed after creation</p>
+    {/if}
   </div>
 
+  <!-- Directory Browser -->
   {#if showDirectoryBrowser && !isEdit}
-    <div class="form-row">
-      <div class="form-group full-width">
-        <DirectoryBrowser selectedPath={audioDir} onSelect={handleDirectorySelect} />
-      </div>
-    </div>
+    <DirectoryBrowser selectedPath={audioDir} onSelect={handleDirectorySelect} />
   {/if}
 
   <!-- Advanced options -->
-  <details class="advanced-section">
-    <summary>Advanced Options</summary>
+  <details class="rounded-md border border-gray-200 bg-gray-50 p-4">
+    <summary class="cursor-pointer select-none text-sm font-medium text-gray-700 hover:text-blue-600">
+      Advanced Options
+    </summary>
 
-    <div class="advanced-content">
-      <div class="form-row">
-        <div class="form-group">
-          <label for="recorder">Recorder</label>
+    <div class="mt-4 flex flex-col gap-4">
+      <div class="grid grid-cols-2 gap-4">
+        <div class="flex flex-col gap-1.5">
+          <label for="recorder" class="text-sm font-medium text-gray-700">Recorder</label>
           <input
             id="recorder"
             type="text"
             bind:value={recorderId}
             placeholder="Recorder ID (optional)"
+            class="rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
           />
-          <p class="help-text">ID of the recording device used</p>
+          <p class="text-xs text-gray-400">ID of the recording device used</p>
         </div>
 
-        <div class="form-group">
-          <label for="license">License</label>
+        <div class="flex flex-col gap-1.5">
+          <label for="license" class="text-sm font-medium text-gray-700">License</label>
           <input
             id="license"
             type="text"
             bind:value={licenseId}
             placeholder="License ID (optional)"
+            class="rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
           />
-          <p class="help-text">Data license identifier</p>
+          <p class="text-xs text-gray-400">Data license identifier</p>
         </div>
       </div>
 
-      <div class="form-row">
-        <div class="form-group">
-          <label for="doi">DOI</label>
-          <input id="doi" type="text" bind:value={doi} placeholder="10.xxxx/xxxxx (optional)" />
+      <div class="grid grid-cols-2 gap-4">
+        <div class="flex flex-col gap-1.5">
+          <label for="doi" class="text-sm font-medium text-gray-700">DOI</label>
+          <input
+            id="doi"
+            type="text"
+            bind:value={doi}
+            placeholder="10.xxxx/xxxxx (optional)"
+            class="rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
+          />
         </div>
 
-        <div class="form-group">
-          <label for="gain">Gain (dB)</label>
+        <div class="flex flex-col gap-1.5">
+          <label for="gain" class="text-sm font-medium text-gray-700">Gain (dB)</label>
           <input
             id="gain"
             type="number"
             step="0.1"
             bind:value={gain}
             placeholder="0.0"
+            class="rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
           />
         </div>
       </div>
 
-      <div class="form-row">
-        <div class="form-group full-width">
-          <label for="note">Note</label>
-          <textarea id="note" bind:value={note} placeholder="Additional notes" rows="2"></textarea>
-        </div>
+      <div class="flex flex-col gap-1.5">
+        <label for="note" class="text-sm font-medium text-gray-700">Note</label>
+        <textarea
+          id="note"
+          bind:value={note}
+          placeholder="Additional notes"
+          rows="2"
+          class="resize-y rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
+        ></textarea>
       </div>
 
       <!-- Datetime extraction -->
-      <div class="datetime-section">
-        <h4>Datetime Extraction (Optional)</h4>
-        <p class="section-help">
+      <div class="border-t border-gray-200 pt-4">
+        <h4 class="mb-1 text-sm font-semibold text-gray-700">Datetime Extraction (Optional)</h4>
+        <p class="mb-3 text-xs text-gray-500">
           Configure how to extract recording datetime from filenames. If not provided, file modification time will be used.
         </p>
 
-        <div class="form-row">
-          <div class="form-group">
-            <label for="datetime-pattern">Regex Pattern</label>
+        <div class="grid grid-cols-2 gap-4">
+          <div class="flex flex-col gap-1.5">
+            <label for="datetime-pattern" class="text-sm font-medium text-gray-700">Regex Pattern</label>
             <input
               id="datetime-pattern"
               type="text"
               bind:value={datetimePattern}
               placeholder="e.g., (\d{8}_\d{6})"
-              class="monospace"
+              class="rounded-md border border-gray-300 px-3 py-2 font-mono text-sm focus:border-blue-500 focus:outline-none"
             />
-            <p class="help-text">Regular expression to extract datetime from filename</p>
+            <p class="text-xs text-gray-400">Regular expression to extract datetime from filename</p>
           </div>
 
-          <div class="form-group">
-            <label for="datetime-format">Datetime Format</label>
+          <div class="flex flex-col gap-1.5">
+            <label for="datetime-format" class="text-sm font-medium text-gray-700">Datetime Format</label>
             <input
               id="datetime-format"
               type="text"
               bind:value={datetimeFormat}
               placeholder="e.g., %Y%m%d_%H%M%S"
-              class="monospace"
+              class="rounded-md border border-gray-300 px-3 py-2 font-mono text-sm focus:border-blue-500 focus:outline-none"
             />
-            <p class="help-text">Python strptime format for parsing</p>
+            <p class="text-xs text-gray-400">Python strptime format for parsing</p>
           </div>
         </div>
 
         {#if datetimePattern || datetimeFormat}
-          <DatetimePatternTester pattern={datetimePattern} format={datetimeFormat} />
+          <div class="mt-3">
+            <DatetimePatternTester pattern={datetimePattern} format={datetimeFormat} />
+          </div>
         {/if}
       </div>
     </div>
   </details>
 
   {#if error}
-    <div class="error-message">{error}</div>
+    <div class="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-600">
+      {error}
+    </div>
   {/if}
 
-  <div class="form-actions">
-    <button type="button" class="btn-secondary" on:click={onCancel} disabled={isSubmitting}>
+  <div class="flex justify-end gap-3 border-t border-gray-200 pt-4">
+    <button
+      type="button"
+      onclick={onCancel}
+      disabled={isSubmitting}
+      class="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+    >
       Cancel
     </button>
-    <button type="submit" class="btn-primary" disabled={isSubmitting || !name || !audioDir || !siteId}>
-      {#if isSubmitting}
-        Saving...
-      {:else}
-        {isEdit ? 'Update Dataset' : 'Create Dataset'}
-      {/if}
+    <button
+      type="submit"
+      disabled={isSubmitting || !name || !audioDir || (!isEdit && !siteId)}
+      class="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+    >
+      {isSubmitting ? 'Saving...' : isEdit ? 'Update Dataset' : 'Create Dataset'}
     </button>
   </div>
 </form>
-
-<style>
-  .dataset-form {
-    display: flex;
-    flex-direction: column;
-    gap: 1.25rem;
-  }
-
-  .form-row {
-    display: grid;
-    grid-template-columns: repeat(2, 1fr);
-    gap: 1rem;
-  }
-
-  .form-group {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-  }
-
-  .form-group.full-width {
-    grid-column: 1 / -1;
-  }
-
-  .form-group label {
-    font-weight: 500;
-    font-size: 0.875rem;
-    color: #374151;
-  }
-
-  input[type='text'],
-  input[type='number'],
-  select,
-  textarea {
-    padding: 0.625rem 0.75rem;
-    border: 1px solid #d1d5db;
-    border-radius: 0.375rem;
-    font-size: 0.875rem;
-    transition: border-color 0.15s ease;
-  }
-
-  input[type='text']:focus,
-  input[type='number']:focus,
-  select:focus,
-  textarea:focus {
-    outline: none;
-    border-color: #3b82f6;
-    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
-  }
-
-  input:read-only,
-  select:disabled {
-    background: #f9fafb;
-    color: #6b7280;
-    cursor: not-allowed;
-  }
-
-  textarea {
-    resize: vertical;
-    font-family: inherit;
-  }
-
-  .monospace {
-    font-family: monospace;
-  }
-
-  .help-text {
-    font-size: 0.75rem;
-    color: #6b7280;
-    margin: 0;
-  }
-
-  .field-error {
-    padding: 0.5rem;
-    background: #fef2f2;
-    border: 1px solid #fecaca;
-    border-radius: 0.375rem;
-    color: #dc2626;
-    font-size: 0.875rem;
-  }
-
-  .directory-input-group {
-    display: flex;
-    gap: 0.5rem;
-  }
-
-  .directory-input-group input {
-    flex: 1;
-  }
-
-  .browse-btn {
-    padding: 0.625rem 1rem;
-    background: white;
-    border: 1px solid #d1d5db;
-    border-radius: 0.375rem;
-    font-size: 0.875rem;
-    font-weight: 500;
-    cursor: pointer;
-    transition: all 0.15s ease;
-  }
-
-  .browse-btn:hover {
-    background: #f9fafb;
-    border-color: #3b82f6;
-  }
-
-  .advanced-section {
-    border: 1px solid #e5e7eb;
-    border-radius: 0.375rem;
-    padding: 1rem;
-    background: #f9fafb;
-  }
-
-  .advanced-section summary {
-    cursor: pointer;
-    font-weight: 500;
-    color: #374151;
-    user-select: none;
-  }
-
-  .advanced-section summary:hover {
-    color: #3b82f6;
-  }
-
-  .advanced-content {
-    margin-top: 1rem;
-    display: flex;
-    flex-direction: column;
-    gap: 1rem;
-  }
-
-  .datetime-section {
-    margin-top: 1rem;
-    padding-top: 1rem;
-    border-top: 1px solid #e5e7eb;
-  }
-
-  .datetime-section h4 {
-    margin: 0 0 0.5rem 0;
-    font-size: 0.875rem;
-    font-weight: 600;
-    color: #374151;
-  }
-
-  .section-help {
-    margin: 0 0 1rem 0;
-    font-size: 0.75rem;
-    color: #6b7280;
-  }
-
-  .error-message {
-    padding: 0.75rem;
-    background: #fef2f2;
-    border: 1px solid #fecaca;
-    border-radius: 0.375rem;
-    color: #dc2626;
-    font-size: 0.875rem;
-  }
-
-  .form-actions {
-    display: flex;
-    justify-content: flex-end;
-    gap: 0.75rem;
-    padding-top: 1rem;
-    border-top: 1px solid #e5e7eb;
-  }
-
-  .btn-primary,
-  .btn-secondary {
-    padding: 0.625rem 1.25rem;
-    font-size: 0.875rem;
-    font-weight: 500;
-    border-radius: 0.375rem;
-    cursor: pointer;
-    transition: all 0.15s ease;
-  }
-
-  .btn-primary {
-    background: #3b82f6;
-    color: white;
-    border: none;
-  }
-
-  .btn-primary:hover:not(:disabled) {
-    background: #2563eb;
-  }
-
-  .btn-primary:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .btn-secondary {
-    background: white;
-    color: #374151;
-    border: 1px solid #d1d5db;
-  }
-
-  .btn-secondary:hover:not(:disabled) {
-    background: #f9fafb;
-  }
-</style>

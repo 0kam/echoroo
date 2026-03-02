@@ -10,8 +10,7 @@
     ClipAnnotationDetail,
   } from '$lib/types/annotation';
   import ReviewPanel from '$lib/components/annotation/ReviewPanel.svelte';
-  import SpectrogramViewer from '$lib/components/audio/SpectrogramViewer.svelte';
-  import AudioPlayer from '$lib/components/audio/AudioPlayer.svelte';
+  import ClipSpectrogramPlayer from '$lib/components/audio/ClipSpectrogramPlayer.svelte';
 
   const queryClient = useQueryClient();
 
@@ -336,23 +335,11 @@
                       </div>
 
                       <div class="spectrogram-wrapper">
-                        <SpectrogramViewer
+                        <ClipSpectrogramPlayer
                           {projectId}
-                          recordingId={taskDetail.clip.recording_id}
-                          duration={taskDetail.clip.recording.duration}
-                          params={{
-                            start: taskDetail.clip.start_time,
-                            end: taskDetail.clip.end_time,
-                          }}
-                        />
-                      </div>
-
-                      <div class="audio-wrapper">
-                        <AudioPlayer
-                          {projectId}
-                          recordingId={taskDetail.clip.recording_id}
-                          duration={taskDetail.clip.end_time -
-                            taskDetail.clip.start_time}
+                          recording={taskDetail.clip.recording}
+                          clipStart={taskDetail.clip.start_time}
+                          clipEnd={taskDetail.clip.end_time}
                         />
                       </div>
                     </div>

@@ -2,28 +2,40 @@
   import { createQuery, createMutation, useQueryClient } from '@tanstack/svelte-query';
   import { listClips, deleteClip, getClipSpectrogramUrl } from '$lib/api/clips';
   import type { Clip } from '$lib/types/data';
+  import DeleteConfirmDialog from '$lib/components/ui/DeleteConfirmDialog.svelte';
 
-  export let projectId: string;
-  export let recordingId: string;
-  export let onSelect: ((clipId: string) => void) | undefined = undefined;
-  export let onEdit: ((clip: Clip) => void) | undefined = undefined;
+  interface Props {
+    projectId: string;
+    recordingId: string;
+    onSelect?: (clipId: string) => void;
+    onEdit?: (clip: Clip) => void;
+  }
 
-  let page = 1;
-  let pageSize = 20;
-  let sortBy = 'start_time';
-  let sortOrder = 'asc';
+  let { projectId, recordingId, onSelect, onEdit }: Props = $props();
 
-  $: clipsQuery = createQuery({
-    queryKey: ['clips', projectId, recordingId, page, sortBy, sortOrder],
-    queryFn: () => listClips({ projectId, recordingId, page, pageSize, sortBy, sortOrder }),
-  });
+  let page = $state(1);
+  const pageSize = 20;
+  let sortBy = $state('start_time');
+  let sortOrder = $state('asc');
+  let clipToDelete = $state<Clip | null>(null);
+  let showDeleteDialog = $state(false);
 
   const queryClient = useQueryClient();
+
+  const clipsQuery = $derived(
+    createQuery({
+      queryKey: ['clips', projectId, recordingId, page, sortBy, sortOrder],
+      queryFn: () => listClips({ projectId, recordingId, page, pageSize, sortBy, sortOrder }),
+    })
+  );
+
   const deleteMut = createMutation({
     mutationFn: (clipId: string) => deleteClip(projectId, recordingId, clipId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['clips', projectId, recordingId] });
       queryClient.invalidateQueries({ queryKey: ['recording', projectId, recordingId] });
+      clipToDelete = null;
+      showDeleteDialog = false;
     },
   });
 
@@ -33,10 +45,20 @@
     return `${mins}:${secs.padStart(5, '0')}`;
   }
 
-  function handleDelete(clip: Clip) {
-    if (confirm(`Delete clip ${formatTime(clip.start_time)} - ${formatTime(clip.end_time)}?`)) {
-      $deleteMut.mutate(clip.id);
+  function handleDeleteClick(clip: Clip) {
+    clipToDelete = clip;
+    showDeleteDialog = true;
+  }
+
+  function confirmDelete() {
+    if (clipToDelete) {
+      $deleteMut.mutate(clipToDelete.id);
     }
+  }
+
+  function cancelDelete() {
+    showDeleteDialog = false;
+    clipToDelete = null;
   }
 
   function handleSort(newSortBy: string) {
@@ -61,115 +83,128 @@
   }
 </script>
 
-<div class="clip-list">
-  <div class="header">
-    <h3 class="title">Clips</h3>
+<div class="w-full">
+  <div class="mb-4 flex items-center justify-between">
+    <h3 class="m-0 text-lg font-semibold text-gray-900">Clips</h3>
     {#if $clipsQuery.data}
-      <span class="count">{$clipsQuery.data.total} total</span>
+      <span class="text-sm font-medium text-gray-500">{$clipsQuery.data.total} total</span>
     {/if}
   </div>
 
   {#if $clipsQuery.isLoading}
-    <div class="loading-state">
-      <div class="spinner"></div>
-      <p>Loading clips...</p>
+    <div class="flex flex-col items-center justify-center gap-3 py-12">
+      <svg class="h-8 w-8 animate-spin text-blue-600" fill="none" viewBox="0 0 24 24">
+        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+      </svg>
+      <p class="text-sm text-gray-500">Loading clips...</p>
     </div>
   {:else if $clipsQuery.error}
-    <div class="error-state">
-      <svg class="error-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+    <div class="flex flex-col items-center gap-2 rounded-lg bg-red-50 py-8">
+      <svg class="h-10 w-10 text-red-400" viewBox="0 0 24 24" fill="none" stroke="currentColor">
         <circle cx="12" cy="12" r="10" stroke-width="2" />
         <line x1="12" y1="8" x2="12" y2="12" stroke-width="2" />
         <line x1="12" y1="16" x2="12.01" y2="16" stroke-width="2" />
       </svg>
-      <p>Error: {$clipsQuery.error.message}</p>
+      <p class="text-sm text-red-600">Error: {$clipsQuery.error.message}</p>
     </div>
   {:else if $clipsQuery.data && $clipsQuery.data.items.length === 0}
-    <div class="empty-state">
-      <svg class="empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+    <div class="flex flex-col items-center gap-2 rounded-lg bg-gray-50 py-12">
+      <svg class="h-10 w-10 text-gray-400" viewBox="0 0 24 24" fill="none" stroke="currentColor">
         <path d="M9 11l3 3L22 4" stroke-width="2" />
         <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" stroke-width="2" />
       </svg>
-      <p>No clips found</p>
-      <p class="hint">Create clips manually or use auto-generation above</p>
+      <p class="text-sm text-gray-500">No clips found</p>
+      <p class="text-xs text-gray-400">Create clips manually or use auto-generation</p>
     </div>
   {:else if $clipsQuery.data}
-    <div class="table-container">
-      <table class="clips-table">
-        <thead>
+    <div class="overflow-x-auto rounded-lg border border-gray-200">
+      <table class="w-full border-collapse bg-white">
+        <thead class="border-b border-gray-200 bg-gray-50">
           <tr>
-            <th class="col-preview">Preview</th>
-            <th class="col-time sortable" on:click={() => handleSort('start_time')} on:keydown={(e) => e.key === 'Enter' && handleSort('start_time')} role="button" tabindex="0">
-              Time Range
-              {#if sortBy === 'start_time'}
-                <svg class="sort-icon" class:desc={sortOrder === 'desc'} viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                  <polyline points="18 15 12 9 6 15" stroke-width="2" />
-                </svg>
-              {/if}
+            <th class="w-44 px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">
+              Preview
             </th>
-            <th class="col-duration">Duration</th>
-            <th class="col-note">Note</th>
-            <th class="col-actions">Actions</th>
+            <th
+              class="w-52 cursor-pointer select-none px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500 hover:bg-gray-100"
+              onclick={() => handleSort('start_time')}
+            >
+              <span class="flex items-center gap-1">
+                Time Range
+                {#if sortBy === 'start_time'}
+                  <svg class="h-3 w-3 {sortOrder === 'desc' ? 'rotate-180' : ''}" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                    <polyline points="18 15 12 9 6 15" stroke-width="2" />
+                  </svg>
+                {/if}
+              </span>
+            </th>
+            <th class="w-24 px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">
+              Duration
+            </th>
+            <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">
+              Note
+            </th>
+            <th class="w-28 px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">
+              Actions
+            </th>
           </tr>
         </thead>
         <tbody>
           {#each $clipsQuery.data.items as clip (clip.id)}
             <tr
-              class="clip-row"
-              class:clickable={onSelect}
-              on:click={() => onSelect?.(clip.id)}
-              on:keydown={(e) => e.key === 'Enter' && onSelect?.(clip.id)}
+              class="border-b border-gray-100 transition-colors last:border-b-0 hover:bg-gray-50 {onSelect ? 'cursor-pointer' : ''}"
+              onclick={() => onSelect?.(clip.id)}
               role={onSelect ? 'button' : undefined}
               tabindex={onSelect ? 0 : undefined}
+              onkeydown={(e) => e.key === 'Enter' && onSelect?.(clip.id)}
             >
-              <td class="cell-preview">
+              <td class="p-2">
                 <img
-                  src={getClipSpectrogramUrl(projectId, recordingId, clip.id, {
-                    width: 160,
-                    height: 60,
-                  })}
+                  src={getClipSpectrogramUrl(projectId, recordingId, clip.id, { width: 160, height: 60 })}
                   alt="Clip preview"
-                  class="thumbnail"
+                  class="block h-16 w-40 rounded bg-gray-900 object-cover"
                 />
               </td>
-              <td class="cell-time">
-                <span class="time-range">{formatTime(clip.start_time)} - {formatTime(clip.end_time)}</span>
+              <td class="px-4 py-3">
+                <span class="font-mono text-sm font-medium text-gray-900">
+                  {formatTime(clip.start_time)} - {formatTime(clip.end_time)}
+                </span>
               </td>
-              <td class="cell-duration">
-                <span class="duration">{(clip.end_time - clip.start_time).toFixed(2)}s</span>
+              <td class="px-4 py-3">
+                <span class="font-mono text-sm text-gray-500">
+                  {(clip.end_time - clip.start_time).toFixed(2)}s
+                </span>
               </td>
-              <td class="cell-note">
+              <td class="px-4 py-3">
                 {#if clip.note}
-                  <span class="note">{clip.note}</span>
+                  <span class="text-sm leading-relaxed text-gray-700">{clip.note}</span>
                 {:else}
-                  <span class="no-note">-</span>
+                  <span class="text-sm text-gray-400">-</span>
                 {/if}
               </td>
-              <td class="cell-actions">
-                <div class="action-buttons">
+              <td class="px-4 py-3">
+                <div class="flex gap-2">
                   {#if onEdit}
                     <button
-                      on:click|stopPropagation={() => onEdit?.(clip)}
-                      class="btn-action btn-edit"
+                      onclick={(e) => { e.stopPropagation(); onEdit?.(clip); }}
+                      class="rounded border border-gray-200 p-1.5 transition-colors hover:bg-gray-100"
                       title="Edit clip"
                     >
-                      <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                      <svg class="h-4 w-4 text-gray-500" viewBox="0 0 24 24" fill="none" stroke="currentColor">
                         <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" stroke-width="2" />
                         <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" stroke-width="2" />
                       </svg>
                     </button>
                   {/if}
                   <button
-                    on:click|stopPropagation={() => handleDelete(clip)}
-                    class="btn-action btn-delete"
+                    onclick={(e) => { e.stopPropagation(); handleDeleteClick(clip); }}
+                    class="rounded border border-gray-200 p-1.5 transition-colors hover:border-red-200 hover:bg-red-50"
                     title="Delete clip"
                     disabled={$deleteMut.isPending}
                   >
-                    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                    <svg class="h-4 w-4 text-gray-500 hover:text-red-500" viewBox="0 0 24 24" fill="none" stroke="currentColor">
                       <polyline points="3 6 5 6 21 6" stroke-width="2" />
-                      <path
-                        d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"
-                        stroke-width="2"
-                      />
+                      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" stroke-width="2" />
                     </svg>
                   </button>
                 </div>
@@ -182,21 +217,29 @@
 
     <!-- Pagination -->
     {#if $clipsQuery.data.pages > 1}
-      <div class="pagination">
-        <button on:click={prevPage} disabled={page === 1} class="btn-page">
-          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+      <div class="mt-4 flex items-center justify-between py-2">
+        <button
+          onclick={prevPage}
+          disabled={page === 1}
+          class="flex items-center gap-1 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
             <polyline points="15 18 9 12 15 6" stroke-width="2" />
           </svg>
           Previous
         </button>
 
-        <span class="page-info">
+        <span class="text-sm font-medium text-gray-500">
           Page {page} of {$clipsQuery.data.pages}
         </span>
 
-        <button on:click={nextPage} disabled={page >= $clipsQuery.data.pages} class="btn-page">
+        <button
+          onclick={nextPage}
+          disabled={page >= $clipsQuery.data.pages}
+          class="flex items-center gap-1 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+        >
           Next
-          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+          <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
             <polyline points="9 18 15 12 9 6" stroke-width="2" />
           </svg>
         </button>
@@ -205,295 +248,14 @@
   {/if}
 </div>
 
-<style>
-  .clip-list {
-    width: 100%;
-  }
-
-  .header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 1rem;
-  }
-
-  .title {
-    margin: 0;
-    font-size: 1.125rem;
-    font-weight: 600;
-    color: #111827;
-  }
-
-  .count {
-    font-size: 0.875rem;
-    color: #6b7280;
-    font-weight: 500;
-  }
-
-  .loading-state,
-  .error-state,
-  .empty-state {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    padding: 3rem 1rem;
-    gap: 1rem;
-  }
-
-  .spinner {
-    width: 40px;
-    height: 40px;
-    border: 4px solid #e5e7eb;
-    border-top-color: #3b82f6;
-    border-radius: 50%;
-    animation: spin 1s linear infinite;
-  }
-
-  @keyframes spin {
-    to {
-      transform: rotate(360deg);
-    }
-  }
-
-  .loading-state p,
-  .error-state p,
-  .empty-state p {
-    margin: 0;
-    color: #6b7280;
-    font-size: 0.875rem;
-  }
-
-  .error-state {
-    background: #fee2e2;
-    border-radius: 0.5rem;
-    color: #991b1b;
-  }
-
-  .error-icon,
-  .empty-icon {
-    width: 48px;
-    height: 48px;
-    color: #9ca3af;
-  }
-
-  .error-state .error-icon {
-    color: #991b1b;
-  }
-
-  .empty-state .hint {
-    font-size: 0.813rem;
-    color: #9ca3af;
-  }
-
-  .table-container {
-    overflow-x: auto;
-    border: 1px solid #e5e7eb;
-    border-radius: 0.5rem;
-  }
-
-  .clips-table {
-    width: 100%;
-    border-collapse: collapse;
-    background: white;
-  }
-
-  thead {
-    background: #f9fafb;
-    border-bottom: 1px solid #e5e7eb;
-  }
-
-  th {
-    padding: 0.75rem 1rem;
-    text-align: left;
-    font-size: 0.75rem;
-    font-weight: 600;
-    color: #6b7280;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-  }
-
-  th.sortable {
-    cursor: pointer;
-    user-select: none;
-    transition: background 0.15s ease;
-  }
-
-  th.sortable:hover {
-    background: #f3f4f6;
-  }
-
-  .sort-icon {
-    display: inline-block;
-    width: 14px;
-    height: 14px;
-    margin-left: 0.25rem;
-    vertical-align: middle;
-    transition: transform 0.2s ease;
-  }
-
-  .sort-icon.desc {
-    transform: rotate(180deg);
-  }
-
-  .col-preview {
-    width: 180px;
-  }
-
-  .col-time {
-    width: 220px;
-  }
-
-  .col-duration {
-    width: 100px;
-  }
-
-  .col-note {
-    min-width: 200px;
-  }
-
-  .col-actions {
-    width: 120px;
-  }
-
-  .clip-row {
-    border-bottom: 1px solid #e5e7eb;
-    transition: background 0.15s ease;
-  }
-
-  .clip-row:last-child {
-    border-bottom: none;
-  }
-
-  .clip-row:hover {
-    background: #f9fafb;
-  }
-
-  .clip-row.clickable {
-    cursor: pointer;
-  }
-
-  td {
-    padding: 0.75rem 1rem;
-    font-size: 0.875rem;
-  }
-
-  .cell-preview {
-    padding: 0.5rem;
-  }
-
-  .thumbnail {
-    display: block;
-    width: 160px;
-    height: 60px;
-    border-radius: 0.25rem;
-    object-fit: cover;
-    background: #1f2937;
-  }
-
-  .time-range {
-    font-family: monospace;
-    color: #111827;
-    font-weight: 500;
-  }
-
-  .duration {
-    font-family: monospace;
-    color: #6b7280;
-  }
-
-  .note {
-    color: #374151;
-    line-height: 1.4;
-  }
-
-  .no-note {
-    color: #9ca3af;
-  }
-
-  .action-buttons {
-    display: flex;
-    gap: 0.5rem;
-  }
-
-  .btn-action {
-    padding: 0.375rem;
-    background: none;
-    border: 1px solid #d1d5db;
-    border-radius: 0.25rem;
-    cursor: pointer;
-    transition: all 0.15s ease;
-  }
-
-  .btn-action:hover:not(:disabled) {
-    background: #f3f4f6;
-  }
-
-  .btn-action:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .btn-action .icon {
-    width: 16px;
-    height: 16px;
-    color: #6b7280;
-  }
-
-  .btn-edit:hover:not(:disabled) .icon {
-    color: #3b82f6;
-  }
-
-  .btn-delete:hover:not(:disabled) {
-    background: #fee2e2;
-    border-color: #fecaca;
-  }
-
-  .btn-delete:hover:not(:disabled) .icon {
-    color: #dc2626;
-  }
-
-  .pagination {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-top: 1rem;
-    padding: 0.75rem 0;
-  }
-
-  .page-info {
-    font-size: 0.875rem;
-    color: #6b7280;
-    font-weight: 500;
-  }
-
-  .btn-page {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    padding: 0.5rem 0.75rem;
-    font-size: 0.875rem;
-    font-weight: 500;
-    background: white;
-    color: #374151;
-    border: 1px solid #d1d5db;
-    border-radius: 0.375rem;
-    cursor: pointer;
-    transition: all 0.15s ease;
-  }
-
-  .btn-page:hover:not(:disabled) {
-    background: #f9fafb;
-    border-color: #3b82f6;
-  }
-
-  .btn-page:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .btn-page .icon {
-    width: 16px;
-    height: 16px;
-  }
-</style>
+<!-- Delete confirmation -->
+<DeleteConfirmDialog
+  isOpen={showDeleteDialog}
+  title="Delete Clip"
+  message={clipToDelete ? `Delete clip ${formatTime(clipToDelete.start_time)} - ${formatTime(clipToDelete.end_time)}?` : ''}
+  warnings={['All associated annotations']}
+  confirmText="Delete Clip"
+  isDeleting={$deleteMut.isPending}
+  onConfirm={confirmDelete}
+  onCancel={cancelDelete}
+/>

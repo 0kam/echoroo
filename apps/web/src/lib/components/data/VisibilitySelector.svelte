@@ -1,9 +1,13 @@
 <script lang="ts">
   import type { DatasetVisibility } from '$lib/types/data';
 
-  export let value: DatasetVisibility = 'private';
-  export let onChange: (visibility: DatasetVisibility) => void;
-  export let disabled: boolean = false;
+  interface Props {
+    value?: DatasetVisibility;
+    onChange: (visibility: DatasetVisibility) => void;
+    disabled?: boolean;
+  }
+
+  let { value = 'private', onChange, disabled = false }: Props = $props();
 
   interface VisibilityOption {
     value: DatasetVisibility;
@@ -34,118 +38,51 @@
   }
 </script>
 
-<div class="visibility-selector">
-  <label class="selector-label">Visibility</label>
-  <div class="options-grid">
+<div class="flex flex-col gap-2">
+  <span class="text-sm font-medium text-gray-700">Visibility</span>
+  <div class="grid grid-cols-2 gap-3">
     {#each options as option}
       <button
         type="button"
         onclick={() => handleClick(option.value)}
         {disabled}
-        class="option-button"
-        class:selected={value === option.value}
-        class:disabled
+        class="rounded-lg border-2 p-3.5 text-left transition-all
+          {value === option.value
+            ? 'border-blue-500 bg-blue-50'
+            : 'border-gray-200 bg-white hover:border-gray-300 hover:bg-gray-50'}
+          {disabled ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'}"
       >
-        <div class="option-header">
+        <div class="mb-1.5 flex items-center gap-2">
           {#if option.icon === 'lock'}
-            <svg class="option-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+            <svg
+              class="h-4.5 w-4.5 {value === option.value ? 'text-blue-500' : 'text-gray-500'}"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+            >
               <rect x="3" y="11" width="18" height="11" rx="2" ry="2" stroke-width="2" />
               <path d="M7 11V7a5 5 0 0 1 10 0v4" stroke-width="2" />
             </svg>
           {:else if option.icon === 'globe'}
-            <svg class="option-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+            <svg
+              class="h-4.5 w-4.5 {value === option.value ? 'text-blue-500' : 'text-gray-500'}"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+            >
               <circle cx="12" cy="12" r="10" stroke-width="2" />
               <line x1="2" y1="12" x2="22" y2="12" stroke-width="2" />
               <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" stroke-width="2" />
             </svg>
           {/if}
-          <span class="option-label">{option.label}</span>
+          <span class="text-sm font-semibold {value === option.value ? 'text-blue-700' : 'text-gray-900'}">
+            {option.label}
+          </span>
         </div>
-        <p class="option-description">{option.description}</p>
+        <p class="m-0 text-xs leading-snug {value === option.value ? 'text-blue-500' : 'text-gray-500'}">
+          {option.description}
+        </p>
       </button>
     {/each}
   </div>
 </div>
-
-<style>
-  .visibility-selector {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-  }
-
-  .selector-label {
-    font-size: 0.875rem;
-    font-weight: 500;
-    color: #374151;
-  }
-
-  .options-grid {
-    display: grid;
-    grid-template-columns: repeat(2, 1fr);
-    gap: 0.75rem;
-  }
-
-  .option-button {
-    padding: 0.875rem;
-    background: white;
-    border: 2px solid #e5e7eb;
-    border-radius: 0.5rem;
-    text-align: left;
-    cursor: pointer;
-    transition: all 0.15s ease;
-  }
-
-  .option-button:hover:not(.disabled) {
-    border-color: #d1d5db;
-    background: #fafafa;
-  }
-
-  .option-button.selected {
-    border-color: #3b82f6;
-    background: #eff6ff;
-  }
-
-  .option-button.disabled {
-    opacity: 0.6;
-    cursor: not-allowed;
-  }
-
-  .option-header {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    margin-bottom: 0.375rem;
-  }
-
-  .option-icon {
-    width: 1.125rem;
-    height: 1.125rem;
-    color: #6b7280;
-  }
-
-  .option-button.selected .option-icon {
-    color: #3b82f6;
-  }
-
-  .option-label {
-    font-size: 0.875rem;
-    font-weight: 600;
-    color: #111827;
-  }
-
-  .option-button.selected .option-label {
-    color: #1d4ed8;
-  }
-
-  .option-description {
-    margin: 0;
-    font-size: 0.75rem;
-    color: #6b7280;
-    line-height: 1.4;
-  }
-
-  .option-button.selected .option-description {
-    color: #3b82f6;
-  }
-</style>

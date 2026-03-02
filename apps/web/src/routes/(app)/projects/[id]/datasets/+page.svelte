@@ -10,31 +10,33 @@
 
   const queryClient = useQueryClient();
 
-  $: projectId = $page.params.id as string;
+  const projectId = $derived($page.params.id as string);
 
-  let showCreateForm = false;
-  let datasetToDelete: Dataset | null = null;
-  let showDeleteDialog = false;
-  let deleteWarningItems: string[] = [];
+  let showCreateForm = $state(false);
+  let datasetToDelete = $state<Dataset | null>(null);
+  let showDeleteDialog = $state(false);
+  let deleteWarningItems = $state<string[]>([]);
 
   // Filter states
-  let currentPage = 1;
-  let search = '';
-  let statusFilter: DatasetStatus | '' = '';
-  let visibilityFilter: DatasetVisibility | '' = '';
+  let currentPage = $state(1);
+  let search = $state('');
+  let statusFilter = $state<DatasetStatus | ''>('');
+  let visibilityFilter = $state<DatasetVisibility | ''>('');
 
   // Query for datasets
-  $: datasetsQuery = createQuery({
-    queryKey: ['datasets', projectId, currentPage, search, statusFilter, visibilityFilter],
-    queryFn: () =>
-      fetchDatasets(projectId, {
-        page: currentPage,
-        page_size: 20,
-        search: search || undefined,
-        status: statusFilter || undefined,
-        visibility: visibilityFilter || undefined,
-      }),
-  });
+  const datasetsQuery = $derived(
+    createQuery({
+      queryKey: ['datasets', projectId, currentPage, search, statusFilter, visibilityFilter],
+      queryFn: () =>
+        fetchDatasets(projectId, {
+          page: currentPage,
+          page_size: 20,
+          search: search || undefined,
+          status: statusFilter || undefined,
+          visibility: visibilityFilter || undefined,
+        }),
+    })
+  );
 
   // Mutation for creating a dataset
   const datasetCreateMutation = createMutation({
@@ -61,7 +63,6 @@
   async function handleDeleteClick(dataset: Dataset) {
     datasetToDelete = dataset;
 
-    // Fetch dataset details to get recording and clip counts
     try {
       const datasetDetail = await fetchDataset(projectId, dataset.id);
       const warnings: string[] = [];
@@ -69,11 +70,7 @@
       const recordingCount = datasetDetail.processed_files || 0;
       if (recordingCount > 0) {
         warnings.push(`${recordingCount} recording${recordingCount > 1 ? 's' : ''}`);
-      }
-
-      // Note: clip count is not directly available, but we can mention clips will be deleted
-      if (recordingCount > 0) {
-        warnings.push('All associated clips');
+        warnings.push('All associated clips and annotations');
       }
 
       if (warnings.length === 0) {
@@ -81,12 +78,11 @@
       }
 
       deleteWarningItems = warnings;
-      showDeleteDialog = true;
-    } catch (error) {
-      // If we can't fetch details, show generic warning
+    } catch {
       deleteWarningItems = ['All associated recordings and clips'];
-      showDeleteDialog = true;
     }
+
+    showDeleteDialog = true;
   }
 
   async function confirmDelete() {
@@ -108,7 +104,7 @@
   }
 
   function handleFilterChange() {
-    currentPage = 1; // Reset to first page when filters change
+    currentPage = 1;
   }
 </script>
 
@@ -116,22 +112,46 @@
   <title>Datasets | Project</title>
 </svelte:head>
 
-<div class="datasets-page">
-  <header class="page-header">
+<div class="mx-auto max-w-6xl px-6 py-8">
+  <header class="mb-6 flex items-start justify-between">
     <div>
-      <h1>Datasets</h1>
-      <p>Manage collections of audio recordings</p>
+      <nav class="mb-2 flex items-center gap-2 text-sm text-gray-500">
+        <a href="/projects/{projectId}" class="hover:text-gray-900">Project</a>
+        <span>/</span>
+        <span class="font-medium text-gray-900">Datasets</span>
+      </nav>
+      <h1 class="text-2xl font-bold text-gray-900">Datasets</h1>
+      <p class="mt-1 text-sm text-gray-500">Manage collections of audio recordings</p>
     </div>
     {#if !showCreateForm}
-      <button class="btn-primary" on:click={() => (showCreateForm = true)}>
-        + New Dataset
+      <button
+        onclick={() => (showCreateForm = true)}
+        class="flex items-center gap-2 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700"
+      >
+        <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+          <line x1="12" y1="5" x2="12" y2="19" stroke-width="2" />
+          <line x1="5" y1="12" x2="19" y2="12" stroke-width="2" />
+        </svg>
+        New Dataset
       </button>
     {/if}
   </header>
 
   {#if showCreateForm}
-    <div class="create-form-container">
-      <h2>Create New Dataset</h2>
+    <div class="mb-6 rounded-lg border border-gray-200 bg-white p-6">
+      <div class="mb-4 flex items-center justify-between">
+        <h2 class="text-lg font-semibold text-gray-900">Create New Dataset</h2>
+        <button
+          onclick={() => (showCreateForm = false)}
+          class="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+          aria-label="Close"
+        >
+          <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+            <line x1="18" y1="6" x2="6" y2="18" stroke-width="2" />
+            <line x1="6" y1="6" x2="18" y2="18" stroke-width="2" />
+          </svg>
+        </button>
+      </div>
       <DatasetForm
         {projectId}
         dataset={null}
@@ -139,15 +159,25 @@
         onCancel={() => (showCreateForm = false)}
       />
       {#if $datasetCreateMutation.isError}
-        <div class="form-error">
+        <div class="mt-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-600">
           {$datasetCreateMutation.error?.message || 'Failed to create dataset'}
         </div>
       {/if}
     </div>
-  {:else if $datasetsQuery.isLoading}
-    <div class="loading">Loading datasets...</div>
+  {/if}
+
+  {#if $datasetsQuery.isLoading}
+    <div class="flex items-center justify-center py-12 text-sm text-gray-500">
+      <svg class="mr-2 h-5 w-5 animate-spin text-blue-600" fill="none" viewBox="0 0 24 24">
+        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+      </svg>
+      Loading datasets...
+    </div>
   {:else if $datasetsQuery.isError}
-    <div class="error">Error loading datasets: {$datasetsQuery.error?.message}</div>
+    <div class="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
+      Error loading datasets: {$datasetsQuery.error?.message}
+    </div>
   {:else if $datasetsQuery.data}
     <DatasetList
       datasets={$datasetsQuery.data.items}
@@ -161,23 +191,21 @@
 
     <!-- Pagination -->
     {#if $datasetsQuery.data.pages > 1}
-      <div class="pagination">
+      <div class="mt-4 flex items-center justify-center gap-4">
         <button
-          class="page-btn"
-          on:click={() => (currentPage = Math.max(1, currentPage - 1))}
+          onclick={() => (currentPage = Math.max(1, currentPage - 1))}
           disabled={currentPage === 1}
+          class="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
         >
           Previous
         </button>
-
-        <span class="page-info">
+        <span class="text-sm text-gray-500">
           Page {currentPage} of {$datasetsQuery.data.pages}
         </span>
-
         <button
-          class="page-btn"
-          on:click={() => (currentPage = Math.min($datasetsQuery.data.pages, currentPage + 1))}
+          onclick={() => (currentPage = Math.min($datasetsQuery.data!.pages, currentPage + 1))}
           disabled={currentPage === $datasetsQuery.data.pages}
+          class="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
         >
           Next
         </button>
@@ -185,142 +213,22 @@
     {/if}
 
     {#if $datasetsQuery.data.total > 0}
-      <div class="pagination-info">
+      <p class="mt-3 text-center text-sm text-gray-400">
         Showing {$datasetsQuery.data.items.length} of {$datasetsQuery.data.total} datasets
-      </div>
+      </p>
     {/if}
   {/if}
-
-  <!-- Delete Confirmation Dialog -->
-  <ConfirmDialog
-    isOpen={showDeleteDialog}
-    title="Delete Dataset"
-    message={datasetToDelete ? `Are you sure you want to delete "${datasetToDelete.name}"? This action cannot be undone.` : ''}
-    confirmText="Delete Dataset"
-    cancelText="Cancel"
-    confirmButtonClass="btn-danger"
-    onConfirm={confirmDelete}
-    onCancel={cancelDelete}
-    warningItems={deleteWarningItems}
-  />
 </div>
 
-<style>
-  .datasets-page {
-    max-width: 1200px;
-    margin: 0 auto;
-    padding: 2rem;
-  }
-
-  .page-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    margin-bottom: 2rem;
-  }
-
-  .page-header h1 {
-    margin: 0 0 0.25rem 0;
-    font-size: 1.5rem;
-    font-weight: 600;
-  }
-
-  .page-header p {
-    margin: 0;
-    color: #6b7280;
-  }
-
-  .create-form-container {
-    background: white;
-    padding: 1.5rem;
-    border-radius: 0.5rem;
-    border: 1px solid #e5e7eb;
-    margin-bottom: 2rem;
-  }
-
-  .create-form-container h2 {
-    margin: 0 0 1.5rem 0;
-    font-size: 1.125rem;
-    font-weight: 600;
-  }
-
-  .form-error {
-    margin-top: 1rem;
-    padding: 0.75rem;
-    background: #fef2f2;
-    border: 1px solid #fecaca;
-    border-radius: 0.375rem;
-    color: #dc2626;
-    font-size: 0.875rem;
-  }
-
-  .loading,
-  .error {
-    padding: 2rem;
-    text-align: center;
-    border-radius: 0.5rem;
-  }
-
-  .loading {
-    background: #f3f4f6;
-    color: #6b7280;
-  }
-
-  .error {
-    background: #fef2f2;
-    color: #dc2626;
-  }
-
-  .pagination {
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    gap: 1rem;
-    margin-top: 1.5rem;
-  }
-
-  .page-btn {
-    padding: 0.5rem 1rem;
-    background: white;
-    border: 1px solid #d1d5db;
-    border-radius: 0.375rem;
-    font-size: 0.875rem;
-    cursor: pointer;
-  }
-
-  .page-btn:hover:not(:disabled) {
-    background: #f9fafb;
-  }
-
-  .page-btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .page-info {
-    font-size: 0.875rem;
-    color: #6b7280;
-  }
-
-  .pagination-info {
-    margin-top: 1rem;
-    text-align: center;
-    font-size: 0.875rem;
-    color: #6b7280;
-  }
-
-  .btn-primary {
-    padding: 0.625rem 1rem;
-    background: #3b82f6;
-    color: white;
-    border: none;
-    border-radius: 0.375rem;
-    font-size: 0.875rem;
-    font-weight: 500;
-    cursor: pointer;
-  }
-
-  .btn-primary:hover {
-    background: #2563eb;
-  }
-</style>
+<!-- Delete Confirmation Dialog -->
+<ConfirmDialog
+  isOpen={showDeleteDialog}
+  title="Delete Dataset"
+  message={datasetToDelete ? `Are you sure you want to delete "${datasetToDelete.name}"? This action cannot be undone.` : ''}
+  confirmText="Delete Dataset"
+  cancelText="Cancel"
+  isDanger={true}
+  onConfirm={confirmDelete}
+  onCancel={cancelDelete}
+  warningItems={deleteWarningItems}
+/>
