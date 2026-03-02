@@ -8,46 +8,33 @@
   import ConfirmDialog from '$lib/components/ui/ConfirmDialog.svelte';
   import { goto } from '$app/navigation';
 
-  // Extract and validate projectId from route params
-  $: projectId = $page.params.id;
-
-  // Early return if projectId is undefined
-  $: if (!projectId) {
-    throw new Error('Project ID is required');
-  }
+  const projectId = $derived($page.params.id as string);
 
   const queryClient = useQueryClient();
 
-  let showCreateForm = false;
-  let siteToDelete: Site | null = null;
-  let showDeleteDialog = false;
-  let deleteWarningItems: string[] = [];
+  let showCreateForm = $state(false);
+  let siteToDelete = $state<Site | null>(null);
+  let showDeleteDialog = $state(false);
+  let deleteWarningItems = $state<string[]>([]);
 
-  // Query for sites
-  $: sitesQuery = createQuery({
-    queryKey: ['sites', projectId],
-    queryFn: () => fetchSites(projectId!),
-    enabled: !!projectId,
-  });
+  const sitesQuery = $derived(
+    createQuery({
+      queryKey: ['sites', projectId],
+      queryFn: () => fetchSites(projectId),
+      enabled: !!projectId,
+    })
+  );
 
-  // Mutation for creating a site
   const siteCreateMutation = createMutation({
-    mutationFn: (data: SiteCreate) => {
-      if (!projectId) throw new Error('Project ID is required');
-      return createSite(projectId, data);
-    },
+    mutationFn: (data: SiteCreate) => createSite(projectId, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['sites', projectId] });
       showCreateForm = false;
     },
   });
 
-  // Mutation for deleting a site
   const deleteMutation = createMutation({
-    mutationFn: (siteId: string) => {
-      if (!projectId) throw new Error('Project ID is required');
-      return deleteSite(projectId, siteId);
-    },
+    mutationFn: (siteId: string) => deleteSite(projectId, siteId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['sites', projectId] });
       siteToDelete = null;
@@ -55,16 +42,12 @@
   });
 
   function handleSiteSelect(site: Site) {
-    if (!projectId) return;
     goto(`/projects/${projectId}/sites/${site.id}`);
   }
 
   async function handleDeleteClick(site: Site) {
-    if (!projectId) return;
-
     siteToDelete = site;
 
-    // Fetch site details to get dataset and recording counts
     try {
       const siteDetail = await fetchSite(projectId, site.id);
       const warnings: string[] = [];
@@ -82,12 +65,11 @@
       }
 
       deleteWarningItems = warnings;
-      showDeleteDialog = true;
-    } catch (error) {
-      // If we can't fetch details, show generic warning
+    } catch {
       deleteWarningItems = ['All associated datasets and recordings'];
-      showDeleteDialog = true;
     }
+
+    showDeleteDialog = true;
   }
 
   async function confirmDelete() {
@@ -113,31 +95,65 @@
   <title>Sites | Project</title>
 </svelte:head>
 
-<div class="sites-page">
-  <header class="page-header">
+<div class="mx-auto max-w-4xl px-6 py-8">
+  <header class="mb-6 flex items-start justify-between">
     <div>
-      <h1>Sites</h1>
-      <p>Manage geographic locations for your recordings</p>
+      <nav class="mb-2 flex items-center gap-2 text-sm text-gray-500">
+        <a href="/projects/{projectId}" class="hover:text-gray-900">Project</a>
+        <span>/</span>
+        <span class="font-medium text-gray-900">Sites</span>
+      </nav>
+      <h1 class="text-2xl font-bold text-gray-900">Sites</h1>
+      <p class="mt-1 text-sm text-gray-500">Manage geographic locations for your recordings</p>
     </div>
     {#if !showCreateForm}
-      <button class="btn-primary" on:click={() => (showCreateForm = true)}>
-        + New Site
+      <button
+        onclick={() => (showCreateForm = true)}
+        class="flex items-center gap-2 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700"
+      >
+        <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+          <line x1="12" y1="5" x2="12" y2="19" stroke-width="2" />
+          <line x1="5" y1="12" x2="19" y2="12" stroke-width="2" />
+        </svg>
+        New Site
       </button>
     {/if}
   </header>
 
   {#if showCreateForm}
-    <div class="create-form-container">
-      <h2>Create New Site</h2>
-      <SiteForm
-        onSubmit={handleCreateSubmit}
-        onCancel={() => (showCreateForm = false)}
-      />
+    <div class="mb-6 rounded-lg border border-gray-200 bg-white p-6">
+      <div class="mb-4 flex items-center justify-between">
+        <h2 class="text-lg font-semibold text-gray-900">Create New Site</h2>
+        <button
+          onclick={() => (showCreateForm = false)}
+          class="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+          aria-label="Close"
+        >
+          <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+            <line x1="18" y1="6" x2="6" y2="18" stroke-width="2" />
+            <line x1="6" y1="6" x2="18" y2="18" stroke-width="2" />
+          </svg>
+        </button>
+      </div>
+      <SiteForm onSubmit={handleCreateSubmit} onCancel={() => (showCreateForm = false)} />
+      {#if $siteCreateMutation.isError}
+        <div class="mt-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-600">
+          {$siteCreateMutation.error?.message || 'Failed to create site'}
+        </div>
+      {/if}
     </div>
   {:else if $sitesQuery.isLoading}
-    <div class="loading">Loading sites...</div>
+    <div class="flex items-center justify-center py-12 text-sm text-gray-500">
+      <svg class="mr-2 h-5 w-5 animate-spin text-blue-600" fill="none" viewBox="0 0 24 24">
+        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+      </svg>
+      Loading sites...
+    </div>
   {:else if $sitesQuery.isError}
-    <div class="error">Error loading sites: {$sitesQuery.error?.message}</div>
+    <div class="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
+      Error loading sites: {$sitesQuery.error?.message}
+    </div>
   {:else if $sitesQuery.data}
     <SiteList
       sites={$sitesQuery.data.items}
@@ -146,101 +162,22 @@
     />
 
     {#if $sitesQuery.data.total > 0}
-      <div class="pagination-info">
+      <p class="mt-3 text-center text-sm text-gray-400">
         Showing {$sitesQuery.data.items.length} of {$sitesQuery.data.total} sites
-      </div>
+      </p>
     {/if}
   {/if}
-
-  <!-- Delete Confirmation Dialog -->
-  <ConfirmDialog
-    isOpen={showDeleteDialog}
-    title="Delete Site"
-    message={siteToDelete ? `Are you sure you want to delete "${siteToDelete.name}"? This action cannot be undone.` : ''}
-    confirmText="Delete Site"
-    cancelText="Cancel"
-    confirmButtonClass="btn-danger"
-    onConfirm={confirmDelete}
-    onCancel={cancelDelete}
-    warningItems={deleteWarningItems}
-  />
 </div>
 
-<style>
-  .sites-page {
-    max-width: 1200px;
-    margin: 0 auto;
-    padding: 2rem;
-  }
-
-  .page-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    margin-bottom: 2rem;
-  }
-
-  .page-header h1 {
-    margin: 0 0 0.25rem 0;
-    font-size: 1.5rem;
-    font-weight: 600;
-  }
-
-  .page-header p {
-    margin: 0;
-    color: #6b7280;
-  }
-
-  .create-form-container {
-    background: white;
-    padding: 1.5rem;
-    border-radius: 0.5rem;
-    border: 1px solid #e5e7eb;
-    margin-bottom: 2rem;
-  }
-
-  .create-form-container h2 {
-    margin: 0 0 1.5rem 0;
-    font-size: 1.125rem;
-    font-weight: 600;
-  }
-
-  .loading,
-  .error {
-    padding: 2rem;
-    text-align: center;
-    border-radius: 0.5rem;
-  }
-
-  .loading {
-    background: #f3f4f6;
-    color: #6b7280;
-  }
-
-  .error {
-    background: #fef2f2;
-    color: #dc2626;
-  }
-
-  .pagination-info {
-    margin-top: 1rem;
-    text-align: center;
-    font-size: 0.875rem;
-    color: #6b7280;
-  }
-
-  .btn-primary {
-    padding: 0.625rem 1rem;
-    background: #3b82f6;
-    color: white;
-    border: none;
-    border-radius: 0.375rem;
-    font-size: 0.875rem;
-    font-weight: 500;
-    cursor: pointer;
-  }
-
-  .btn-primary:hover {
-    background: #2563eb;
-  }
-</style>
+<!-- Delete Confirmation Dialog -->
+<ConfirmDialog
+  isOpen={showDeleteDialog}
+  title="Delete Site"
+  message={siteToDelete ? `Are you sure you want to delete "${siteToDelete.name}"? This action cannot be undone.` : ''}
+  confirmText="Delete Site"
+  cancelText="Cancel"
+  isDanger={true}
+  onConfirm={confirmDelete}
+  onCancel={cancelDelete}
+  warningItems={deleteWarningItems}
+/>

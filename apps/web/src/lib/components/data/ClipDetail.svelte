@@ -4,14 +4,18 @@
   import NoteEditor from '$lib/components/data/NoteEditor.svelte';
   import { createMutation, useQueryClient } from '@tanstack/svelte-query';
 
-  export let projectId: string;
-  export let recordingId: string;
-  export let clip: ClipDetail;
+  interface Props {
+    projectId: string;
+    recordingId: string;
+    clip: ClipDetail;
+  }
+
+  let { projectId, recordingId, clip = $bindable() }: Props = $props();
 
   const queryClient = useQueryClient();
 
-  let audioElement: HTMLAudioElement;
-  let isPlaying = false;
+  let audioElement = $state<HTMLAudioElement | undefined>(undefined);
+  let isPlaying = $state(false);
 
   // Note update mutation
   const noteMutation = createMutation({
@@ -35,62 +39,56 @@
     } else {
       audioElement?.play();
     }
-    isPlaying = !isPlaying;
   }
 
-  function handleAudioEnded() {
-    isPlaying = false;
-  }
-
-  function handleAudioPause() {
-    isPlaying = false;
-  }
-
-  function handleAudioPlay() {
-    isPlaying = true;
-  }
-
-  function handleNoteSave(event: CustomEvent<string>) {
-    $noteMutation.mutate(event.detail);
+  function handleNoteSave(newNote: string) {
+    $noteMutation.mutate(newNote);
   }
 </script>
 
-<div class="clip-detail">
+<div class="overflow-hidden rounded-lg border border-gray-200 bg-white">
   <!-- Spectrogram -->
-  <div class="spectrogram-container">
+  <div class="w-full bg-gray-900">
     <img
       src={getClipSpectrogramUrl(projectId, recordingId, clip.id, { width: 600, height: 200 })}
       alt="Clip spectrogram"
-      class="spectrogram"
+      class="block h-auto w-full"
     />
   </div>
 
   <!-- Controls -->
-  <div class="controls">
-    <div class="time-info">
-      <span class="label">Time range:</span>
-      <span class="time-value">{formatTime(clip.start_time)} - {formatTime(clip.end_time)}</span>
-      <span class="duration">({clip.duration.toFixed(2)}s)</span>
+  <div class="flex flex-wrap items-center justify-between gap-4 p-4">
+    <div class="flex items-center gap-2 text-sm">
+      <span class="font-medium text-gray-500">Time range:</span>
+      <span class="font-mono font-semibold text-gray-900">{formatTime(clip.start_time)} - {formatTime(clip.end_time)}</span>
+      <span class="text-xs text-gray-500">({clip.duration.toFixed(2)}s)</span>
     </div>
 
-    <div class="actions">
-      <button on:click={togglePlay} class="btn-play">
+    <div class="flex gap-3">
+      <button
+        onclick={togglePlay}
+        class="flex items-center gap-2 rounded-md border border-blue-600 bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700"
+      >
         {#if isPlaying}
-          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-            <rect x="6" y="4" width="4" height="16" fill="currentColor" />
-            <rect x="14" y="4" width="4" height="16" fill="currentColor" />
+          <svg class="h-4 w-4" viewBox="0 0 24 24" fill="currentColor">
+            <rect x="6" y="4" width="4" height="16" />
+            <rect x="14" y="4" width="4" height="16" />
           </svg>
           Pause
         {:else}
-          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-            <polygon points="5 3 19 12 5 21 5 3" fill="currentColor" />
+          <svg class="h-4 w-4" viewBox="0 0 24 24" fill="currentColor">
+            <polygon points="5 3 19 12 5 21 5 3" />
           </svg>
           Play
         {/if}
       </button>
 
-      <a href={getClipDownloadUrl(projectId, recordingId, clip.id)} download class="btn-download">
-        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+      <a
+        href={getClipDownloadUrl(projectId, recordingId, clip.id)}
+        download
+        class="flex items-center gap-2 rounded-md border border-gray-300 bg-gray-100 px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-200 no-underline"
+      >
+        <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
           <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" stroke-width="2" />
           <polyline points="7 10 12 15 17 10" stroke-width="2" />
           <line x1="12" y1="15" x2="12" y2="3" stroke-width="2" />
@@ -101,15 +99,15 @@
   </div>
 
   <!-- Notes -->
-  <div class="note-section">
+  <div class="border-t border-gray-200 bg-gray-50 p-4">
     <NoteEditor
       value={clip.note ?? ''}
       placeholder="Add a note about this clip..."
       disabled={$noteMutation.isPending}
-      on:save={handleNoteSave}
+      onSave={handleNoteSave}
     />
     {#if $noteMutation.isError}
-      <p class="error-text">Failed to save note: {$noteMutation.error?.message}</p>
+      <p class="mt-2 text-xs text-red-600">Failed to save note: {$noteMutation.error?.message}</p>
     {/if}
   </div>
 
@@ -117,120 +115,10 @@
   <audio
     bind:this={audioElement}
     src={getClipAudioUrl(projectId, recordingId, clip.id)}
-    on:ended={handleAudioEnded}
-    on:pause={handleAudioPause}
-    on:play={handleAudioPlay}
+    onended={() => { isPlaying = false; }}
+    onpause={() => { isPlaying = false; }}
+    onplay={() => { isPlaying = true; }}
     preload="none"
-    style="display: none;"
+    class="hidden"
   ></audio>
 </div>
-
-<style>
-  .clip-detail {
-    border: 1px solid #e5e7eb;
-    border-radius: 0.5rem;
-    overflow: hidden;
-    background: white;
-  }
-
-  .spectrogram-container {
-    width: 100%;
-    background: #1f2937;
-  }
-
-  .spectrogram {
-    width: 100%;
-    height: auto;
-    display: block;
-  }
-
-  .controls {
-    padding: 1rem;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 1rem;
-    flex-wrap: wrap;
-  }
-
-  .time-info {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    font-size: 0.875rem;
-  }
-
-  .label {
-    color: #6b7280;
-    font-weight: 500;
-  }
-
-  .time-value {
-    font-family: monospace;
-    color: #111827;
-    font-weight: 600;
-  }
-
-  .duration {
-    color: #6b7280;
-    font-size: 0.813rem;
-  }
-
-  .actions {
-    display: flex;
-    gap: 0.75rem;
-  }
-
-  .btn-play,
-  .btn-download {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    padding: 0.5rem 1rem;
-    font-size: 0.875rem;
-    font-weight: 500;
-    border-radius: 0.375rem;
-    cursor: pointer;
-    transition: all 0.15s ease;
-    text-decoration: none;
-  }
-
-  .btn-play {
-    background: #3b82f6;
-    color: white;
-    border: 1px solid #3b82f6;
-  }
-
-  .btn-play:hover {
-    background: #2563eb;
-    border-color: #2563eb;
-  }
-
-  .btn-download {
-    background: #f3f4f6;
-    color: #374151;
-    border: 1px solid #d1d5db;
-  }
-
-  .btn-download:hover {
-    background: #e5e7eb;
-    border-color: #9ca3af;
-  }
-
-  .icon {
-    width: 16px;
-    height: 16px;
-  }
-
-  .note-section {
-    padding: 1rem;
-    background: #f9fafb;
-    border-top: 1px solid #e5e7eb;
-  }
-
-  .error-text {
-    margin: 0.5rem 0 0;
-    font-size: 0.813rem;
-    color: #dc2626;
-  }
-</style>

@@ -172,7 +172,7 @@
       : ''}
     confirmText="Delete Annotation Project"
     cancelText="Cancel"
-    confirmButtonClass="btn-danger"
+    isDanger={true}
     onConfirm={confirmDelete}
     onCancel={cancelDelete}
     warningItems={['All associated annotation tasks', 'All clip annotations and sound events']}

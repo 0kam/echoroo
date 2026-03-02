@@ -556,7 +556,7 @@
       : ''}
     confirmText="Delete Tag"
     cancelText="Cancel"
-    confirmButtonClass="btn-danger"
+    isDanger={true}
     warningItems={['All annotations using this tag']}
     onConfirm={confirmDelete}
     onCancel={cancelDelete}

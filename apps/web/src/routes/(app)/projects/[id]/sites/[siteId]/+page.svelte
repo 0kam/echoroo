@@ -3,37 +3,37 @@
   import { goto } from '$app/navigation';
   import { createQuery, createMutation, useQueryClient } from '@tanstack/svelte-query';
   import { fetchSite, updateSite, deleteSite } from '$lib/api/sites';
-  import type { SiteUpdate } from '$lib/types/data';
+  import { fetchDatasets } from '$lib/api/datasets';
+  import type { SiteCreate } from '$lib/types/data';
   import SiteForm from '$lib/components/data/SiteForm.svelte';
   import DeleteConfirmDialog from '$lib/components/ui/DeleteConfirmDialog.svelte';
 
-  // Extract and validate route params
-  $: projectId = $page.params.id;
-  $: siteId = $page.params.siteId;
-
-  // Early return if required params are undefined
-  $: if (!projectId || !siteId) {
-    throw new Error('Project ID and Site ID are required');
-  }
+  const projectId = $derived($page.params.id as string);
+  const siteId = $derived($page.params.siteId as string);
 
   const queryClient = useQueryClient();
 
-  let isEditing = false;
-  let showDeleteConfirm = false;
+  let isEditing = $state(false);
+  let showDeleteConfirm = $state(false);
 
-  // Query for site details
-  $: siteQuery = createQuery({
-    queryKey: ['site', projectId, siteId],
-    queryFn: () => fetchSite(projectId!, siteId!),
-    enabled: !!projectId && !!siteId,
-  });
+  const siteQuery = $derived(
+    createQuery({
+      queryKey: ['site', projectId, siteId],
+      queryFn: () => fetchSite(projectId, siteId),
+      enabled: !!projectId && !!siteId,
+    })
+  );
 
-  // Update mutation
+  const datasetsQuery = $derived(
+    createQuery({
+      queryKey: ['datasets', projectId, 'site', siteId],
+      queryFn: () => fetchDatasets(projectId, { site_id: siteId, page_size: 10 }),
+      enabled: !!projectId && !!siteId,
+    })
+  );
+
   const updateMutation = createMutation({
-    mutationFn: (data: SiteUpdate) => {
-      if (!projectId || !siteId) throw new Error('Project ID and Site ID are required');
-      return updateSite(projectId, siteId, data);
-    },
+    mutationFn: (data: SiteCreate) => updateSite(projectId, siteId, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['site', projectId, siteId] });
       queryClient.invalidateQueries({ queryKey: ['sites', projectId] });
@@ -41,19 +41,15 @@
     },
   });
 
-  // Delete mutation
   const deleteMutation = createMutation({
-    mutationFn: () => {
-      if (!projectId || !siteId) throw new Error('Project ID and Site ID are required');
-      return deleteSite(projectId, siteId);
-    },
+    mutationFn: () => deleteSite(projectId, siteId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['sites', projectId] });
-      if (projectId) goto(`/projects/${projectId}/sites`);
+      goto(`/projects/${projectId}/sites`);
     },
   });
 
-  async function handleUpdateSubmit(data: { name: string; h3_index: string }) {
+  async function handleUpdateSubmit(data: SiteCreate) {
     await $updateMutation.mutateAsync(data);
   }
 
@@ -69,34 +65,59 @@
     return `${mins}m`;
   }
 
-  $: deleteWarnings = $siteQuery.data
-    ? [
-        `${$siteQuery.data.dataset_count} dataset(s)`,
-        `${$siteQuery.data.recording_count} recording(s)`,
-        `${formatDuration($siteQuery.data.total_duration)} of audio data`,
-      ]
-    : [];
+  const deleteWarnings = $derived(
+    $siteQuery.data
+      ? [
+          `${$siteQuery.data.dataset_count} dataset(s)`,
+          `${$siteQuery.data.recording_count} recording(s)`,
+          `${formatDuration($siteQuery.data.total_duration)} of audio data`,
+        ]
+      : []
+  );
 </script>
 
 <svelte:head>
   <title>{$siteQuery.data?.name ?? 'Site'} | Project</title>
 </svelte:head>
 
-<div class="site-detail-page">
-  <nav class="breadcrumb">
-    <a href="/projects/{projectId}/sites">Sites</a>
+<div class="mx-auto max-w-4xl space-y-6 px-6 py-8">
+  <!-- Breadcrumb -->
+  <nav class="flex items-center gap-2 text-sm text-gray-500">
+    <a href="/projects/{projectId}" class="hover:text-gray-900">Project</a>
     <span>/</span>
-    <span>{$siteQuery.data?.name ?? 'Loading...'}</span>
+    <a href="/projects/{projectId}/sites" class="hover:text-gray-900">Sites</a>
+    <span>/</span>
+    <span class="font-medium text-gray-900">{$siteQuery.data?.name ?? 'Loading...'}</span>
   </nav>
 
   {#if $siteQuery.isLoading}
-    <div class="loading">Loading site details...</div>
+    <div class="flex items-center justify-center py-12 text-sm text-gray-500">
+      <svg class="mr-2 h-5 w-5 animate-spin text-blue-600" fill="none" viewBox="0 0 24 24">
+        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+      </svg>
+      Loading site details...
+    </div>
   {:else if $siteQuery.isError}
-    <div class="error">Error: {$siteQuery.error?.message}</div>
+    <div class="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
+      Error: {$siteQuery.error?.message}
+    </div>
   {:else if $siteQuery.data}
     {#if isEditing}
-      <div class="edit-container">
-        <h2>Edit Site</h2>
+      <div class="rounded-lg border border-gray-200 bg-white p-6">
+        <div class="mb-4 flex items-center justify-between">
+          <h2 class="text-lg font-semibold text-gray-900">Edit Site</h2>
+          <button
+            onclick={() => (isEditing = false)}
+            class="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+            aria-label="Cancel"
+          >
+            <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+              <line x1="18" y1="6" x2="6" y2="18" stroke-width="2" />
+              <line x1="6" y1="6" x2="18" y2="18" stroke-width="2" />
+            </svg>
+          </button>
+        </div>
         <SiteForm
           site={$siteQuery.data}
           onSubmit={handleUpdateSubmit}
@@ -104,221 +125,116 @@
         />
       </div>
     {:else}
-      <header class="page-header">
+      <!-- Site header -->
+      <div class="flex items-start justify-between">
         <div>
-          <h1>{$siteQuery.data.name}</h1>
-          <code class="h3-index">{$siteQuery.data.h3_index}</code>
+          <h1 class="text-2xl font-bold text-gray-900">{$siteQuery.data.name}</h1>
+          <code class="mt-1 inline-block rounded bg-gray-100 px-2 py-0.5 font-mono text-xs text-gray-500">
+            {$siteQuery.data.h3_index}
+          </code>
+          {#if $siteQuery.data.latitude !== null && $siteQuery.data.longitude !== null}
+            <p class="mt-1 text-sm text-gray-500">
+              {$siteQuery.data.latitude?.toFixed(6)}, {$siteQuery.data.longitude?.toFixed(6)}
+            </p>
+          {/if}
         </div>
-        <div class="actions">
-          <button class="btn-secondary" on:click={() => (isEditing = true)}>
+        <div class="flex gap-2">
+          <button
+            onclick={() => (isEditing = true)}
+            class="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50"
+          >
             Edit
           </button>
           <button
-            class="btn-danger"
-            on:click={() => (showDeleteConfirm = true)}
+            onclick={() => (showDeleteConfirm = true)}
+            class="rounded-md border border-red-200 bg-white px-3 py-2 text-sm font-medium text-red-600 transition-colors hover:bg-red-50"
           >
             Delete
           </button>
         </div>
-      </header>
+      </div>
 
-      <div class="stats-grid">
-        <div class="stat-card">
-          <span class="stat-value">{$siteQuery.data.dataset_count}</span>
-          <span class="stat-label">Datasets</span>
+      <!-- Stats -->
+      <div class="grid grid-cols-3 gap-4">
+        <div class="rounded-lg border border-gray-200 bg-white p-5 text-center">
+          <div class="text-2xl font-semibold text-gray-900">{$siteQuery.data.dataset_count}</div>
+          <div class="mt-1 text-sm text-gray-500">Datasets</div>
         </div>
-        <div class="stat-card">
-          <span class="stat-value">{$siteQuery.data.recording_count}</span>
-          <span class="stat-label">Recordings</span>
+        <div class="rounded-lg border border-gray-200 bg-white p-5 text-center">
+          <div class="text-2xl font-semibold text-gray-900">{$siteQuery.data.recording_count}</div>
+          <div class="mt-1 text-sm text-gray-500">Recordings</div>
         </div>
-        <div class="stat-card">
-          <span class="stat-value">{formatDuration($siteQuery.data.total_duration)}</span>
-          <span class="stat-label">Total Duration</span>
+        <div class="rounded-lg border border-gray-200 bg-white p-5 text-center">
+          <div class="text-2xl font-semibold text-gray-900">{formatDuration($siteQuery.data.total_duration)}</div>
+          <div class="mt-1 text-sm text-gray-500">Total Duration</div>
         </div>
       </div>
 
-      <section class="section">
-        <h2>Datasets at this Site</h2>
-        <p class="coming-soon">Dataset list coming soon...</p>
-        <a href="/projects/{projectId}/datasets?site_id={siteId}" class="btn-link">
-          View all datasets →
-        </a>
+      <!-- Datasets at this site -->
+      <section class="rounded-lg border border-gray-200 bg-white p-6">
+        <div class="mb-4 flex items-center justify-between">
+          <h2 class="text-base font-semibold text-gray-900">Datasets at this Site</h2>
+          <a
+            href="/projects/{projectId}/datasets?site_id={siteId}"
+            class="text-sm font-medium text-blue-600 no-underline hover:underline"
+          >
+            View all datasets
+          </a>
+        </div>
+
+        {#if $datasetsQuery.isLoading}
+          <div class="py-4 text-center text-sm text-gray-400">Loading datasets...</div>
+        {:else if $datasetsQuery.data && $datasetsQuery.data.items.length > 0}
+          <ul class="flex flex-col gap-2 p-0 list-none">
+            {#each $datasetsQuery.data.items as dataset}
+              <li>
+                <a
+                  href="/projects/{projectId}/datasets/{dataset.id}"
+                  class="flex items-center justify-between rounded-md border border-gray-100 p-3 no-underline transition-colors hover:bg-gray-50"
+                >
+                  <span class="text-sm font-medium text-gray-900">{dataset.name}</span>
+                  <span class="text-xs text-gray-400">{dataset.processed_files} files</span>
+                </a>
+              </li>
+            {/each}
+          </ul>
+          {#if $datasetsQuery.data.total > $datasetsQuery.data.items.length}
+            <p class="mt-2 text-xs text-gray-400">
+              Showing {$datasetsQuery.data.items.length} of {$datasetsQuery.data.total} datasets
+            </p>
+          {/if}
+        {:else}
+          <p class="py-4 text-center text-sm text-gray-400">No datasets found at this site.</p>
+        {/if}
       </section>
+
+      <!-- Recordings quick link -->
+      <div class="flex items-center justify-between rounded-lg border border-gray-200 bg-white p-5">
+        <div>
+          <h3 class="mb-0.5 text-base font-semibold text-gray-900">Recordings</h3>
+          <p class="text-sm text-gray-500">Browse recordings from this site</p>
+        </div>
+        <a
+          href="/projects/{projectId}/recordings?site={siteId}"
+          class="flex items-center gap-2 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white no-underline transition-colors hover:bg-blue-700"
+        >
+          View Recordings
+          <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
+          </svg>
+        </a>
+      </div>
     {/if}
   {/if}
-
-  <DeleteConfirmDialog
-    isOpen={showDeleteConfirm}
-    title="Delete Site"
-    message={`Are you sure you want to delete "${$siteQuery.data?.name ?? 'this site'}"? This action cannot be undone.`}
-    warnings={deleteWarnings}
-    confirmText="Delete Site"
-    isDeleting={$deleteMutation.isPending}
-    onConfirm={handleDeleteConfirm}
-    onCancel={() => (showDeleteConfirm = false)}
-  />
 </div>
 
-<style>
-  .site-detail-page {
-    max-width: 1200px;
-    margin: 0 auto;
-    padding: 2rem;
-  }
-
-  .breadcrumb {
-    display: flex;
-    gap: 0.5rem;
-    font-size: 0.875rem;
-    margin-bottom: 1.5rem;
-  }
-
-  .breadcrumb a {
-    color: #3b82f6;
-    text-decoration: none;
-  }
-
-  .breadcrumb a:hover {
-    text-decoration: underline;
-  }
-
-  .breadcrumb span {
-    color: #9ca3af;
-  }
-
-  .page-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    margin-bottom: 2rem;
-  }
-
-  .page-header h1 {
-    margin: 0 0 0.5rem 0;
-    font-size: 1.5rem;
-    font-weight: 600;
-  }
-
-  .h3-index {
-    font-size: 0.875rem;
-    background: #f3f4f6;
-    padding: 0.25rem 0.5rem;
-    border-radius: 0.25rem;
-    color: #6b7280;
-  }
-
-  .actions {
-    display: flex;
-    gap: 0.75rem;
-  }
-
-  .edit-container {
-    background: white;
-    padding: 1.5rem;
-    border-radius: 0.5rem;
-    border: 1px solid #e5e7eb;
-  }
-
-  .edit-container h2 {
-    margin: 0 0 1.5rem 0;
-    font-size: 1.125rem;
-  }
-
-  .stats-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-    gap: 1rem;
-    margin-bottom: 2rem;
-  }
-
-  .stat-card {
-    background: white;
-    padding: 1.5rem;
-    border-radius: 0.5rem;
-    border: 1px solid #e5e7eb;
-    text-align: center;
-  }
-
-  .stat-value {
-    display: block;
-    font-size: 2rem;
-    font-weight: 600;
-    color: #111827;
-  }
-
-  .stat-label {
-    font-size: 0.875rem;
-    color: #6b7280;
-  }
-
-  .section {
-    background: white;
-    padding: 1.5rem;
-    border-radius: 0.5rem;
-    border: 1px solid #e5e7eb;
-  }
-
-  .section h2 {
-    margin: 0 0 1rem 0;
-    font-size: 1.125rem;
-    font-weight: 600;
-  }
-
-  .coming-soon {
-    color: #9ca3af;
-    font-style: italic;
-  }
-
-  .btn-link {
-    display: inline-block;
-    margin-top: 1rem;
-    color: #3b82f6;
-    text-decoration: none;
-  }
-
-  .btn-link:hover {
-    text-decoration: underline;
-  }
-
-  .loading,
-  .error {
-    padding: 2rem;
-    text-align: center;
-    border-radius: 0.5rem;
-  }
-
-  .loading {
-    background: #f3f4f6;
-    color: #6b7280;
-  }
-
-  .error {
-    background: #fef2f2;
-    color: #dc2626;
-  }
-
-  .btn-secondary,
-  .btn-danger {
-    padding: 0.5rem 1rem;
-    font-size: 0.875rem;
-    border-radius: 0.375rem;
-    cursor: pointer;
-  }
-
-  .btn-secondary {
-    background: white;
-    color: #374151;
-    border: 1px solid #d1d5db;
-  }
-
-  .btn-danger {
-    background: #dc2626;
-    color: white;
-    border: none;
-  }
-
-  .btn-danger:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-</style>
+<DeleteConfirmDialog
+  isOpen={showDeleteConfirm}
+  title="Delete Site"
+  message={`Are you sure you want to delete "${$siteQuery.data?.name ?? 'this site'}"? This action cannot be undone.`}
+  warnings={deleteWarnings}
+  confirmText="Delete Site"
+  isDeleting={$deleteMutation.isPending}
+  onConfirm={handleDeleteConfirm}
+  onCancel={() => (showDeleteConfirm = false)}
+/>

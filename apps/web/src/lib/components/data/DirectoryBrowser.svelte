@@ -2,16 +2,22 @@
   import { createQuery } from '@tanstack/svelte-query';
   import { fetchDirectories } from '$lib/api/datasets';
 
-  export let onSelect: (path: string) => void;
-  export let selectedPath: string = '';
+  interface Props {
+    onSelect: (path: string) => void;
+    selectedPath?: string;
+  }
 
-  let currentPath = '';
-  let pathHistory: string[] = [];
+  let { onSelect, selectedPath = '' }: Props = $props();
 
-  $: directoriesQuery = createQuery({
-    queryKey: ['directories', currentPath],
-    queryFn: () => fetchDirectories(currentPath || undefined),
-  });
+  let currentPath = $state('');
+  let pathHistory = $state<string[]>([]);
+
+  const directoriesQuery = $derived(
+    createQuery({
+      queryKey: ['directories', currentPath],
+      queryFn: () => fetchDirectories(currentPath || undefined),
+    })
+  );
 
   function navigateTo(path: string) {
     if (currentPath) {
@@ -39,10 +45,7 @@
     onSelect(path);
   }
 
-  function getBreadcrumbs(): string[] {
-    if (!currentPath) return [];
-    return currentPath.split('/').filter((p) => p);
-  }
+  const breadcrumbs = $derived(currentPath ? currentPath.split('/').filter((p) => p) : []);
 
   function navigateToBreadcrumb(index: number) {
     const parts = currentPath.split('/').filter((p) => p);
@@ -52,60 +55,91 @@
   }
 </script>
 
-<div class="directory-browser">
+<div class="overflow-hidden rounded-lg border border-gray-200">
   <!-- Breadcrumb navigation -->
-  <div class="breadcrumb">
-    <button class="breadcrumb-item" on:click={goToRoot}>
-      <span class="home-icon">🏠</span>
+  <div class="flex items-center overflow-x-auto whitespace-nowrap border-b border-gray-200 bg-gray-50 px-3 py-2">
+    <button
+      onclick={goToRoot}
+      class="flex items-center gap-1 rounded px-2 py-1 text-sm text-blue-600 hover:underline"
+    >
+      <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
+      </svg>
       Root
     </button>
-    {#each getBreadcrumbs() as crumb, index}
-      <span class="separator">/</span>
-      <button class="breadcrumb-item" on:click={() => navigateToBreadcrumb(index)}>
+    {#each breadcrumbs as crumb, index}
+      <span class="mx-1 text-gray-400">/</span>
+      <button
+        onclick={() => navigateToBreadcrumb(index)}
+        class="rounded px-2 py-1 text-sm text-blue-600 hover:underline"
+      >
         {crumb}
       </button>
     {/each}
   </div>
 
   <!-- Navigation controls -->
-  <div class="controls">
-    <button class="control-btn" on:click={goBack} disabled={pathHistory.length === 0}>
-      ← Back
+  <div class="flex items-center justify-between border-b border-gray-200 bg-white px-3 py-2">
+    <button
+      onclick={goBack}
+      disabled={pathHistory.length === 0}
+      class="rounded-md border border-gray-300 px-3 py-1.5 text-sm font-medium transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+    >
+      Back
     </button>
-    <div class="current-path">
-      <span class="path-label">Current path:</span>
-      <code>{$directoriesQuery.data?.path || '/'}</code>
+    <div class="text-sm text-gray-500">
+      Current path:
+      <code class="ml-1 rounded bg-gray-100 px-1.5 py-0.5 font-mono text-xs">{$directoriesQuery.data?.path || '/'}</code>
     </div>
   </div>
 
   <!-- Directory list -->
-  <div class="directory-list">
+  <div class="max-h-96 overflow-y-auto">
     {#if $directoriesQuery.isLoading}
-      <div class="loading">Loading directories...</div>
+      <div class="flex items-center justify-center py-8 text-sm text-gray-500">
+        <svg class="mr-2 h-4 w-4 animate-spin text-blue-600" fill="none" viewBox="0 0 24 24">
+          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+        </svg>
+        Loading directories...
+      </div>
     {:else if $directoriesQuery.isError}
-      <div class="error">Error: {$directoriesQuery.error?.message}</div>
+      <div class="py-6 text-center text-sm text-red-600">
+        Error: {$directoriesQuery.error?.message}
+      </div>
     {:else if $directoriesQuery.data}
       {#if $directoriesQuery.data.directories.length === 0}
-        <div class="empty">No subdirectories found</div>
+        <div class="py-8 text-center text-sm text-gray-400">No subdirectories found</div>
       {:else}
-        <ul>
+        <ul class="m-0 list-none p-0">
           {#each $directoriesQuery.data.directories as dir}
-            <li class="directory-item" class:selected={selectedPath === dir.path}>
-              <button class="directory-name" on:click={() => navigateTo(dir.path)}>
-                <span class="folder-icon">📁</span>
-                <span class="name">{dir.name}</span>
+            <li
+              class="flex items-center justify-between border-b border-gray-100 px-3 py-2.5 transition-colors last:border-b-0 hover:bg-gray-50
+                {selectedPath === dir.path ? 'bg-blue-50' : ''}"
+            >
+              <button
+                onclick={() => navigateTo(dir.path)}
+                class="flex items-center gap-2 border-0 bg-transparent p-0 text-left"
+              >
+                <svg class="h-5 w-5 flex-shrink-0 text-yellow-500" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M10 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z" />
+                </svg>
+                <span class="text-sm font-medium text-gray-800 hover:text-blue-600">{dir.name}</span>
               </button>
 
-              <div class="directory-info">
+              <div class="ml-3 flex items-center gap-2">
                 {#if dir.audio_file_count > 0}
-                  <span class="file-count">
-                    {dir.audio_file_count} audio file{dir.audio_file_count !== 1 ? 's' : ''}
+                  <span class="text-xs text-gray-400">
+                    {dir.audio_file_count} file{dir.audio_file_count !== 1 ? 's' : ''}
+                    {#if dir.formats.length > 0}
+                      ({dir.formats.join(', ')})
+                    {/if}
                   </span>
-                  {#if dir.formats.length > 0}
-                    <span class="formats">({dir.formats.join(', ')})</span>
-                  {/if}
                 {/if}
-                <button class="select-btn" on:click={() => selectDirectory(dir.path)}>
+                <button
+                  onclick={() => selectDirectory(dir.path)}
+                  class="rounded bg-blue-600 px-2.5 py-1 text-xs font-medium text-white transition-colors hover:bg-blue-700"
+                >
                   Select
                 </button>
               </div>
@@ -118,209 +152,9 @@
 
   <!-- Selected path display -->
   {#if selectedPath}
-    <div class="selected-info">
-      <span class="selected-label">Selected:</span>
-      <code>{selectedPath}</code>
+    <div class="border-t border-green-200 bg-green-50 px-3 py-2 text-sm">
+      <span class="font-medium text-green-800">Selected:</span>
+      <code class="ml-2 rounded bg-white px-1.5 py-0.5 font-mono text-xs text-green-800">{selectedPath}</code>
     </div>
   {/if}
 </div>
-
-<style>
-  .directory-browser {
-    border: 1px solid #e5e7eb;
-    border-radius: 0.5rem;
-    overflow: hidden;
-  }
-
-  .breadcrumb {
-    display: flex;
-    align-items: center;
-    padding: 0.75rem;
-    background: #f9fafb;
-    border-bottom: 1px solid #e5e7eb;
-    overflow-x: auto;
-    white-space: nowrap;
-  }
-
-  .breadcrumb-item {
-    padding: 0.25rem 0.5rem;
-    background: none;
-    border: none;
-    color: #3b82f6;
-    font-size: 0.875rem;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    gap: 0.25rem;
-  }
-
-  .breadcrumb-item:hover {
-    text-decoration: underline;
-  }
-
-  .home-icon {
-    font-size: 1rem;
-  }
-
-  .separator {
-    margin: 0 0.25rem;
-    color: #9ca3af;
-  }
-
-  .controls {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 0.75rem;
-    background: white;
-    border-bottom: 1px solid #e5e7eb;
-  }
-
-  .control-btn {
-    padding: 0.375rem 0.75rem;
-    background: white;
-    border: 1px solid #d1d5db;
-    border-radius: 0.375rem;
-    font-size: 0.875rem;
-    cursor: pointer;
-  }
-
-  .control-btn:hover:not(:disabled) {
-    background: #f9fafb;
-  }
-
-  .control-btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .current-path {
-    font-size: 0.875rem;
-  }
-
-  .path-label {
-    color: #6b7280;
-    margin-right: 0.5rem;
-  }
-
-  .current-path code {
-    background: #f3f4f6;
-    padding: 0.25rem 0.5rem;
-    border-radius: 0.25rem;
-    font-family: monospace;
-  }
-
-  .directory-list {
-    max-height: 400px;
-    overflow-y: auto;
-  }
-
-  .loading,
-  .error,
-  .empty {
-    padding: 2rem;
-    text-align: center;
-    color: #6b7280;
-  }
-
-  .error {
-    color: #dc2626;
-  }
-
-  ul {
-    list-style: none;
-    padding: 0;
-    margin: 0;
-  }
-
-  .directory-item {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 0.75rem;
-    border-bottom: 1px solid #e5e7eb;
-    transition: background 0.15s ease;
-  }
-
-  .directory-item:hover {
-    background: #f9fafb;
-  }
-
-  .directory-item.selected {
-    background: #eff6ff;
-  }
-
-  .directory-name {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    background: none;
-    border: none;
-    padding: 0;
-    cursor: pointer;
-    font-size: 0.875rem;
-    color: #111827;
-  }
-
-  .directory-name:hover .name {
-    color: #3b82f6;
-  }
-
-  .folder-icon {
-    font-size: 1.25rem;
-  }
-
-  .name {
-    font-weight: 500;
-  }
-
-  .directory-info {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    font-size: 0.75rem;
-  }
-
-  .file-count {
-    color: #6b7280;
-  }
-
-  .formats {
-    color: #9ca3af;
-  }
-
-  .select-btn {
-    padding: 0.25rem 0.625rem;
-    background: #3b82f6;
-    color: white;
-    border: none;
-    border-radius: 0.25rem;
-    font-size: 0.75rem;
-    cursor: pointer;
-  }
-
-  .select-btn:hover {
-    background: #2563eb;
-  }
-
-  .selected-info {
-    padding: 0.75rem;
-    background: #f0fdf4;
-    border-top: 1px solid #bbf7d0;
-    font-size: 0.875rem;
-  }
-
-  .selected-label {
-    font-weight: 500;
-    color: #065f46;
-    margin-right: 0.5rem;
-  }
-
-  .selected-info code {
-    background: white;
-    padding: 0.25rem 0.5rem;
-    border-radius: 0.25rem;
-    font-family: monospace;
-    color: #065f46;
-  }
-</style>
