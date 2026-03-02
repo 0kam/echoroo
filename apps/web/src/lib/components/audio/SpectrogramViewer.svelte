@@ -1,106 +1,671 @@
 <script lang="ts">
+  import { onMount, onDestroy } from 'svelte';
   import { getSpectrogramUrl } from '$lib/api/recordings';
-  import type { SpectrogramParams } from '$lib/types/data';
+  import type { SpectrogramWindow, SpectrogramPosition, SpectrogramChunk, InteractionMode } from '$lib/types/audio';
+  import { SPECTROGRAM_CHUNK_DURATION, SPECTROGRAM_CHUNK_BUFFER } from '$lib/types/audio';
+  import {
+    intersectWindows,
+    intersectIntervals,
+    scaleInterval,
+    pixelsToPosition,
+    timeToPixel,
+    adjustWindowToBounds,
+    shiftWindow,
+    expandWindow,
+    centerWindowOn,
+    zoomWindowToPosition,
+    getViewportPosition,
+    calculateChunkIntervals,
+  } from '$lib/utils/viewport';
+  import type { RecordingDetail } from '$lib/types/data';
+  import type { SpectrogramSettings } from '$lib/types/audio';
 
-  export let projectId: string;
-  export let recordingId: string;
-  export let duration: number;
-  export let params: SpectrogramParams = {};
-  export let onTimeClick: ((time: number) => void) | undefined = undefined;
-  export let currentTime: number = 0;
-  export let isPlaying: boolean = false;
+  interface Props {
+    recording: RecordingDetail;
+    projectId: string;
+    spectrogramSettings: SpectrogramSettings;
+    viewport: SpectrogramWindow;
+    bounds: SpectrogramWindow;
+    currentTime: number;
+    interactionMode: InteractionMode;
+    onViewportChange?: (viewport: SpectrogramWindow) => void;
+    onViewportSave?: () => void;
+    onSeek?: (time: number) => void;
+    onModeChange?: (mode: InteractionMode) => void;
+  }
 
-  let containerWidth = 1200;
-  let imageLoaded = false;
-  let imageError = false;
-  let containerElement: HTMLDivElement;
-  let imageElement: HTMLImageElement;
+  let {
+    recording,
+    projectId,
+    spectrogramSettings,
+    viewport,
+    bounds,
+    currentTime,
+    interactionMode,
+    onViewportChange,
+    onViewportSave,
+    onSeek,
+    onModeChange,
+  }: Props = $props();
 
-  $: spectrogramUrl = getSpectrogramUrl(projectId, recordingId, {
-    ...params,
-    width: containerWidth,
+  // Canvas references
+  let canvas: HTMLCanvasElement | undefined = $state();
+  let containerEl: HTMLDivElement | undefined = $state();
+
+  // Canvas dimensions
+  let canvasWidth = $state(0);
+  let canvasHeight = $state(spectrogramSettings.height);
+
+  // Mouse cursor state
+  let mousePos: SpectrogramPosition | null = $state(null);
+
+  // Drag/interaction state
+  let isDragging = $state(false);
+  let dragStart: { x: number; y: number; time: number; freq: number } | null = $state(null);
+  let zoomBox: { start: SpectrogramPosition; end: SpectrogramPosition } | null = $state(null);
+
+  // Spectrogram chunk state
+  let chunks = $state<SpectrogramChunk[]>([]);
+  let chunkImages: HTMLImageElement[] = [];
+
+  // Animation frame handle
+  let animFrameId: number | null = null;
+
+  // Build spectrogram chunk images when recording or settings change
+  $effect(() => {
+    rebuildChunks();
   });
 
-  // Auto-scroll spectrogram during playback to keep playhead visible
-  $: if (isPlaying && imageLoaded && containerElement && imageElement) {
-    const progress = currentTime / duration;
-    const imageWidth = imageElement.clientWidth;
-    const containerWidth = containerElement.clientWidth;
-    const playheadPosition = imageWidth * progress;
-    const scrollPosition = containerElement.scrollLeft;
-    const viewportEnd = scrollPosition + containerWidth;
+  // Redraw canvas on every render-relevant state change
+  $effect(() => {
+    // Read reactive dependencies
+    const _vp = viewport;
+    const _ct = currentTime;
+    const _mp = mousePos;
+    const _zb = zoomBox;
+    const _chunks = chunks;
+    const _mode = interactionMode;
+    requestRedraw();
+  });
 
-    // Scroll if playhead is outside visible viewport or near edges
-    const margin = containerWidth * 0.2; // 20% margin
-    if (playheadPosition < scrollPosition + margin || playheadPosition > viewportEnd - margin) {
-      // Center the playhead in the viewport
-      const targetScroll = playheadPosition - containerWidth / 2;
-      containerElement.scrollTo({
-        left: Math.max(0, targetScroll),
-        behavior: 'smooth'
+  // Resize canvas to match container
+  $effect(() => {
+    if (!canvas) return;
+    canvas.width = canvasWidth;
+    canvas.height = spectrogramSettings.height;
+    canvasHeight = spectrogramSettings.height;
+    requestRedraw();
+  });
+
+  function rebuildChunks() {
+    // Cancel previous chunk images
+    chunkImages.forEach((img) => {
+      img.onload = null;
+      img.onerror = null;
+    });
+
+    const effectiveSamplerate = recording.samplerate;
+    const duration = recording.duration;
+
+    const intervals = calculateChunkIntervals(
+      duration,
+      spectrogramSettings.window_size,
+      spectrogramSettings.overlap,
+      SPECTROGRAM_CHUNK_DURATION,
+      SPECTROGRAM_CHUNK_BUFFER
+    );
+
+    chunks = intervals.map(({ index, interval, buffer }) => ({
+      index,
+      interval,
+      buffer,
+      isLoading: false,
+      isReady: false,
+      isError: false,
+    }));
+
+    chunkImages = intervals.map(({ index, buffer }) => {
+      const img = new Image();
+      img.loading = 'lazy';
+
+      // Build spectrogram URL for this chunk
+      const n_fft = Math.round(spectrogramSettings.window_size * effectiveSamplerate);
+      const hop_length = Math.round(n_fft * (1 - spectrogramSettings.overlap));
+      const freq_max = effectiveSamplerate / 2;
+
+      img.src = getSpectrogramUrl(projectId, recording.id, {
+        start: Math.max(0, buffer.min),
+        end: Math.min(duration, buffer.max),
+        n_fft,
+        hop_length,
+        freq_min: 0,
+        freq_max,
+        colormap: spectrogramSettings.cmap,
+        pcen: spectrogramSettings.pcen,
+        channel: 0,
+        width: 1200,
+        height: spectrogramSettings.height,
       });
+
+      img.onload = () => {
+        chunks = chunks.map((c) =>
+          c.index === index ? { ...c, isReady: true, isLoading: false, isError: false } : c
+        );
+        requestRedraw();
+      };
+
+      img.onerror = () => {
+        chunks = chunks.map((c) =>
+          c.index === index ? { ...c, isError: true, isLoading: false, isReady: false } : c
+        );
+        requestRedraw();
+      };
+
+      return img;
+    });
+  }
+
+  function requestRedraw() {
+    if (animFrameId !== null) return;
+    animFrameId = requestAnimationFrame(drawAll);
+  }
+
+  function drawAll() {
+    animFrameId = null;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    ctx.clearRect(0, 0, canvasWidth, canvasHeight);
+    drawSpectrogram(ctx);
+    drawPlayCursor(ctx);
+    drawMouseCrosshair(ctx);
+    drawZoomBox(ctx);
+    drawTimeAxis(ctx);
+    drawFreqAxis(ctx);
+  }
+
+  function drawSpectrogram(ctx: CanvasRenderingContext2D) {
+    const effectiveSamplerate = recording.samplerate;
+    const maxFreq = effectiveSamplerate / 2;
+    const fullFreq: SpectrogramWindow = { time: viewport.time, freq: { min: 0, max: maxFreq } };
+
+    chunks.forEach((chunk, idx) => {
+      const img = chunkImages[idx];
+      if (!img) return;
+
+      const overlap = intersectIntervals(chunk.interval, viewport.time);
+      if (!overlap) return;
+
+      const imageBounds: SpectrogramWindow = {
+        time: chunk.interval,
+        freq: { min: 0, max: maxFreq },
+      };
+
+      const bufferBounds: SpectrogramWindow = {
+        time: chunk.buffer,
+        freq: { min: 0, max: maxFreq },
+      };
+
+      if (chunk.isLoading) {
+        // Draw loading placeholder
+        const pos = getViewportPosition({
+          width: canvasWidth,
+          height: canvasHeight,
+          viewport: { time: chunk.interval, freq: viewport.freq },
+          bounds: viewport,
+        });
+        ctx.fillStyle = '#d6d3d1';
+        ctx.fillRect(pos.left, pos.top, pos.width, pos.height);
+        return;
+      }
+
+      if (chunk.isError) {
+        // Draw error placeholder
+        const pos = getViewportPosition({
+          width: canvasWidth,
+          height: canvasHeight,
+          viewport: { time: chunk.interval, freq: viewport.freq },
+          bounds: viewport,
+        });
+        ctx.fillStyle = '#fecaca';
+        ctx.fillRect(pos.left, pos.top, pos.width, pos.height);
+        return;
+      }
+
+      if (!chunk.isReady || !img.complete) {
+        // Trigger lazy load for nearby chunks
+        const scaled = scaleInterval(viewport.time, 4);
+        const near = intersectIntervals(chunk.interval, scaled);
+        if (near && !chunk.isLoading) {
+          chunks = chunks.map((c) =>
+            c.index === chunk.index ? { ...c, isLoading: true } : c
+          );
+          img.loading = 'eager';
+        }
+        return;
+      }
+
+      // Draw image onto canvas
+      const intersection = intersectWindows(viewport, imageBounds);
+      if (!intersection) return;
+
+      const srcPos = getViewportPosition({
+        width: img.width,
+        height: img.height,
+        viewport: intersection,
+        bounds: bufferBounds,
+      });
+
+      const dstPos = getViewportPosition({
+        width: canvasWidth,
+        height: canvasHeight,
+        viewport: intersection,
+        bounds: viewport,
+      });
+
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+      ctx.globalAlpha = 1;
+      ctx.drawImage(
+        img,
+        srcPos.left,
+        srcPos.top,
+        srcPos.width + 1,
+        srcPos.height,
+        dstPos.left,
+        dstPos.top,
+        dstPos.width + 1,
+        dstPos.height
+      );
+    });
+  }
+
+  function drawPlayCursor(ctx: CanvasRenderingContext2D) {
+    if (currentTime < viewport.time.min || currentTime > viewport.time.max) return;
+    const x = timeToPixel(currentTime, canvasWidth, viewport);
+    ctx.globalAlpha = 1;
+    ctx.strokeStyle = '#ef4444'; // red-500
+    ctx.lineWidth = 2;
+    ctx.setLineDash([]);
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, canvasHeight);
+    ctx.stroke();
+  }
+
+  function drawMouseCrosshair(ctx: CanvasRenderingContext2D) {
+    if (!mousePos) return;
+    const x = timeToPixel(mousePos.time, canvasWidth, viewport);
+    const y = canvasHeight - ((mousePos.freq - viewport.freq.min) / (viewport.freq.max - viewport.freq.min)) * canvasHeight;
+
+    ctx.globalAlpha = 0.6;
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4, 4]);
+
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, canvasHeight);
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(canvasWidth, y);
+    ctx.stroke();
+
+    ctx.setLineDash([]);
+    ctx.globalAlpha = 1;
+  }
+
+  function drawZoomBox(ctx: CanvasRenderingContext2D) {
+    if (!zoomBox || !zoomBox.start || !zoomBox.end) return;
+
+    const { start, end } = zoomBox;
+    const timeSorted = [start.time, end.time].toSorted((a, b) => a - b);
+    const freqSorted = [start.freq, end.freq].toSorted((a, b) => a - b);
+
+    const boxWindow: SpectrogramWindow = {
+      time: { min: timeSorted[0] ?? 0, max: timeSorted[1] ?? 0 },
+      freq: { min: freqSorted[0] ?? 0, max: freqSorted[1] ?? 0 },
+    };
+
+    const isValid =
+      boxWindow.time.max > boxWindow.time.min &&
+      boxWindow.freq.max > boxWindow.freq.min;
+
+    const pos = getViewportPosition({
+      width: canvasWidth,
+      height: canvasHeight,
+      viewport: boxWindow,
+      bounds: viewport,
+    });
+
+    ctx.globalAlpha = 0.3;
+    ctx.fillStyle = isValid ? '#facc15' : '#ef4444'; // yellow or red
+    ctx.fillRect(pos.left, pos.top, pos.width, pos.height);
+    ctx.globalAlpha = 1;
+    ctx.strokeStyle = isValid ? '#facc15' : '#ef4444';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4, 4]);
+    ctx.strokeRect(pos.left, pos.top, pos.width, pos.height);
+    ctx.setLineDash([]);
+  }
+
+  function drawTimeAxis(ctx: CanvasRenderingContext2D) {
+    const { min, max } = viewport.time;
+    const range = max - min;
+    if (range <= 0) return;
+
+    const valPerPixel = range / canvasWidth;
+    let digits = Math.floor(Math.log10(valPerPixel * 50)) + 1;
+    let step = Math.pow(10, digits);
+    if (range / step <= 3) {
+      step /= 2;
+      digits -= 1;
+    }
+    const minorStep = step / 5;
+
+    ctx.globalAlpha = 0.8;
+    ctx.strokeStyle = 'rgba(255,255,255,0.6)';
+    ctx.fillStyle = 'rgba(255,255,255,0.9)';
+    ctx.font = '10px system-ui';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+
+    // Minor ticks
+    const minorStart = Math.ceil(min / minorStep);
+    const minorCount = Math.floor((max - min) / minorStep) + 1;
+    for (let i = 0; i < minorCount; i++) {
+      const t = (minorStart + i) * minorStep;
+      const x = (canvasWidth * (t - min)) / range;
+      ctx.lineWidth = 0.5;
+      ctx.beginPath();
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, 5);
+      ctx.stroke();
+    }
+
+    // Major ticks with labels
+    const majorStart = Math.ceil(min / step);
+    const majorCount = Math.floor((max - min) / step) + 1;
+    for (let i = 0; i < majorCount; i++) {
+      const t = (majorStart + i) * step;
+      const x = (canvasWidth * (t - min)) / range;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, 10);
+      ctx.stroke();
+
+      const label = formatAxisNum(t, digits);
+      ctx.fillText(label, x + 2, 10);
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  function drawFreqAxis(ctx: CanvasRenderingContext2D) {
+    const { min, max } = viewport.freq;
+    const range = max - min;
+    if (range <= 0) return;
+
+    const valPerPixel = range / canvasHeight;
+    let digits = Math.floor(Math.log10(valPerPixel * 50)) + 1;
+    let step = Math.pow(10, digits);
+    if (range / step <= 3) {
+      step /= 2;
+      digits -= 1;
+    }
+    const minorStep = step / 5;
+
+    ctx.globalAlpha = 0.8;
+    ctx.strokeStyle = 'rgba(255,255,255,0.6)';
+    ctx.fillStyle = 'rgba(255,255,255,0.9)';
+    ctx.font = '10px system-ui';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'bottom';
+
+    // Minor ticks
+    const minorStart = Math.ceil(min / minorStep);
+    const minorCount = Math.floor((max - min) / minorStep) + 1;
+    for (let i = 0; i < minorCount; i++) {
+      const f = (minorStart + i) * minorStep;
+      const y = (canvasHeight * (max - f)) / range;
+      ctx.lineWidth = 0.5;
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(5, y);
+      ctx.stroke();
+    }
+
+    // Major ticks with labels
+    const majorStart = Math.ceil(min / step);
+    const majorCount = Math.floor((max - min) / step) + 1;
+    for (let i = 0; i < majorCount; i++) {
+      const f = (majorStart + i) * step;
+      const y = (canvasHeight * (max - f)) / range;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(10, y);
+      ctx.stroke();
+
+      const label = formatAxisNum(f / 1000, digits - 3) + 'k';
+      ctx.fillText(label, 12, y);
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  function formatAxisNum(value: number, digits: number): string {
+    const numDigits = Math.floor(Math.log10(Math.max(Math.abs(value), 1e-10))) + 1;
+    const precision = numDigits - Math.min(digits, 0);
+    if (precision <= 0 || !isFinite(value)) return value.toFixed(2);
+    return value.toPrecision(Math.max(precision, 1));
+  }
+
+  // ============================================
+  // Event Handlers
+  // ============================================
+
+  function getCanvasPos(e: MouseEvent): { x: number; y: number } {
+    if (!canvas) return { x: 0, y: 0 };
+    const rect = canvas.getBoundingClientRect();
+    return {
+      x: e.clientX - rect.left,
+      y: e.clientY - rect.top,
+    };
+  }
+
+  function handleMouseMove(e: MouseEvent) {
+    const { x, y } = getCanvasPos(e);
+    mousePos = pixelsToPosition(x, y, canvasWidth, canvasHeight, viewport);
+
+    if (isDragging && dragStart && interactionMode === 'panning') {
+      // Pan the viewport
+      const dx = x - dragStart.x;
+      const dy = y - dragStart.y;
+      const timeDelta = -(dx / canvasWidth) * (viewport.time.max - viewport.time.min);
+      const freqDelta = (dy / canvasHeight) * (viewport.freq.max - viewport.freq.min);
+
+      const newViewport = adjustWindowToBounds(
+        shiftWindow(viewport, { time: timeDelta, freq: freqDelta }),
+        bounds
+      );
+      onViewportChange?.(newViewport);
+
+      // Reset drag origin to current so delta is incremental
+      dragStart = { x, y, time: mousePos.time, freq: mousePos.freq };
+    } else if (isDragging && dragStart && interactionMode === 'zooming') {
+      zoomBox = {
+        start: { time: dragStart.time, freq: dragStart.freq },
+        end: mousePos,
+      };
     }
   }
 
-  function handleImageClick(event: MouseEvent) {
-    if (!onTimeClick) return;
-    const img = event.target as HTMLImageElement;
-    const rect = img.getBoundingClientRect();
-    const x = event.clientX - rect.left;
-    const time = (x / rect.width) * duration;
-    onTimeClick(time);
+  function handleMouseDown(e: MouseEvent) {
+    if (e.button !== 0) return;
+    const { x, y } = getCanvasPos(e);
+    const pos = pixelsToPosition(x, y, canvasWidth, canvasHeight, viewport);
+    isDragging = true;
+    dragStart = { x, y, time: pos.time, freq: pos.freq };
+
+    if (interactionMode === 'panning') {
+      onViewportSave?.();
+    } else if (interactionMode === 'zooming') {
+      zoomBox = { start: pos, end: pos };
+    }
   }
 
-  function handleImageLoad() {
-    imageLoaded = true;
-    imageError = false;
+  function handleMouseUp(e: MouseEvent) {
+    if (!isDragging) return;
+
+    if (interactionMode === 'zooming' && zoomBox) {
+      const { start, end } = zoomBox;
+      const timeSorted = [start.time, end.time].toSorted((a, b) => a - b);
+      const freqSorted = [start.freq, end.freq].toSorted((a, b) => a - b);
+
+      const t0 = timeSorted[0] ?? 0;
+      const t1 = timeSorted[1] ?? 0;
+      const f0 = freqSorted[0] ?? 0;
+      const f1 = freqSorted[1] ?? 0;
+      if (t1 > t0 && f1 > f0) {
+        const zoomedWindow: SpectrogramWindow = {
+          time: { min: t0, max: t1 },
+          freq: { min: f0, max: f1 },
+        };
+        onViewportSave?.();
+        onViewportChange?.(adjustWindowToBounds(zoomedWindow, bounds));
+        // After zoom, switch to panning mode
+        onModeChange?.('panning');
+      }
+    }
+
+    isDragging = false;
+    dragStart = null;
+    zoomBox = null;
   }
 
-  function handleImageError() {
-    imageError = true;
-    imageLoaded = false;
+  function handleMouseLeave() {
+    mousePos = null;
+    if (isDragging) {
+      isDragging = false;
+      dragStart = null;
+      zoomBox = null;
+    }
   }
+
+  function handleDoubleClick(e: MouseEvent) {
+    const { x, y } = getCanvasPos(e);
+    const pos = pixelsToPosition(x, y, canvasWidth, canvasHeight, viewport);
+    onSeek?.(pos.time);
+  }
+
+  function handleWheel(e: WheelEvent) {
+    e.preventDefault();
+    const { x, y } = getCanvasPos(e);
+    const pos = pixelsToPosition(x, y, canvasWidth, canvasHeight, viewport);
+
+    const timeFrac = (viewport.time.max - viewport.time.min) * 0.05;
+    const freqFrac = (viewport.freq.max - viewport.freq.min) * 0.05;
+
+    const deltaX = e.deltaX;
+    const deltaY = e.deltaY;
+
+    let newViewport: SpectrogramWindow;
+
+    if (e.altKey) {
+      // Zoom toward cursor position
+      const factor = 1 + 4 * timeFrac * (e.shiftKey ? deltaX : deltaY) / (canvasWidth * timeFrac);
+      newViewport = adjustWindowToBounds(
+        zoomWindowToPosition(viewport, pos, Math.max(0.1, factor)),
+        bounds
+      );
+    } else if (e.ctrlKey) {
+      // Expand/contract viewport
+      newViewport = adjustWindowToBounds(
+        expandWindow(viewport, {
+          time: timeFrac * (e.shiftKey ? deltaX : deltaY) * 0.1,
+          freq: freqFrac * (e.shiftKey ? deltaY : deltaX) * 0.1,
+        }),
+        bounds
+      );
+    } else {
+      // Scroll time/frequency
+      newViewport = adjustWindowToBounds(
+        shiftWindow(viewport, {
+          time: timeFrac * (e.shiftKey ? deltaY : deltaX) * 0.1,
+          freq: -freqFrac * (e.shiftKey ? deltaX : deltaY) * 0.1,
+        }),
+        bounds
+      );
+    }
+
+    onViewportChange?.(newViewport);
+  }
+
+  function handleKeyDown(e: KeyboardEvent) {
+    // Only handle if canvas is focused
+    if (document.activeElement !== canvas && document.activeElement !== containerEl) return;
+
+    switch (e.key.toLowerCase()) {
+      case 'x':
+        onModeChange?.('panning');
+        break;
+      case 'z':
+        onModeChange?.('zooming');
+        break;
+      case 'b':
+        // Back is handled by parent
+        break;
+    }
+  }
+
+  onMount(() => {
+    rebuildChunks();
+  });
+
+  onDestroy(() => {
+    if (animFrameId !== null) cancelAnimationFrame(animFrameId);
+    chunkImages.forEach((img) => {
+      img.onload = null;
+      img.onerror = null;
+    });
+  });
 </script>
 
-<div class="spectrogram-container" bind:this={containerElement} bind:clientWidth={containerWidth}>
-  {#if !imageLoaded && !imageError}
-    <div class="loading-state">
-      <div class="spinner"></div>
-      <span>Loading spectrogram...</span>
-    </div>
-  {/if}
+<svelte:window onkeydown={handleKeyDown} />
 
-  <!-- svelte-ignore a11y_click_events_have_key_events -->
-  <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-  <img
-    bind:this={imageElement}
-    src={spectrogramUrl}
-    alt="Spectrogram"
-    class="spectrogram-image"
-    class:hidden={!imageLoaded}
-    on:load={handleImageLoad}
-    on:error={handleImageError}
-    on:click={handleImageClick}
-    role="button"
-    tabindex={onTimeClick ? 0 : -1}
-  />
+<div
+  bind:this={containerEl}
+  class="spectrogram-container"
+  style="height: {spectrogramSettings.height}px;"
+  bind:clientWidth={canvasWidth}
+>
+  <canvas
+    bind:this={canvas}
+    width={canvasWidth}
+    height={spectrogramSettings.height}
+    class="spectrogram-canvas"
+    class:cursor-crosshair={interactionMode === 'idle'}
+    class:cursor-grab={interactionMode === 'panning' && !isDragging}
+    class:cursor-grabbing={interactionMode === 'panning' && isDragging}
+    class:cursor-crosshair-zoom={interactionMode === 'zooming'}
+    tabindex="0"
+    role="img"
+    aria-label="Spectrogram visualization"
+    onmousemove={handleMouseMove}
+    onmousedown={handleMouseDown}
+    onmouseup={handleMouseUp}
+    onmouseleave={handleMouseLeave}
+    ondblclick={handleDoubleClick}
+    onwheel={handleWheel}
+  ></canvas>
 
-  {#if imageError}
-    <div class="error-state">
-      <svg class="error-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-        <circle cx="12" cy="12" r="10" stroke-width="2" />
-        <line x1="12" y1="8" x2="12" y2="12" stroke-width="2" />
-        <line x1="12" y1="16" x2="12.01" y2="16" stroke-width="2" />
-      </svg>
-      <span>Failed to load spectrogram</span>
-    </div>
-  {/if}
-
-  <!-- Time axis labels -->
-  {#if imageLoaded}
-    <div class="time-axis">
-      <span>0:00</span>
-      <span>{Math.floor(duration / 60)}:{(Math.floor(duration % 60)).toString().padStart(2, '0')}</span>
+  {#if mousePos}
+    <div class="cursor-info">
+      <span>{mousePos.time.toFixed(3)}s</span>
+      <span>{(mousePos.freq / 1000).toFixed(1)} kHz</span>
     </div>
   {/if}
 </div>
@@ -109,80 +674,52 @@
   .spectrogram-container {
     position: relative;
     width: 100%;
-    min-height: 400px;
-    background: #f9fafb;
-    border-radius: 0.5rem;
-    overflow-x: auto;
-    overflow-y: hidden;
+    background: #1c1917;
+    border-radius: 0.375rem;
+    overflow: hidden;
   }
 
-  .loading-state {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    height: 400px;
-    gap: 1rem;
-  }
-
-  .loading-state span {
-    color: #6b7280;
-    font-size: 0.875rem;
-  }
-
-  .spinner {
-    width: 40px;
-    height: 40px;
-    border: 4px solid #e5e7eb;
-    border-top-color: #3b82f6;
-    border-radius: 50%;
-    animation: spin 1s linear infinite;
-  }
-
-  @keyframes spin {
-    to {
-      transform: rotate(360deg);
-    }
-  }
-
-  .spectrogram-image {
-    width: 100%;
+  .spectrogram-canvas {
     display: block;
+    width: 100%;
+    height: 100%;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+
+  .spectrogram-canvas:focus {
+    outline: 2px solid #10b981;
+    outline-offset: -2px;
+  }
+
+  .cursor-crosshair {
     cursor: crosshair;
   }
 
-  .spectrogram-image.hidden {
-    display: none;
+  .cursor-grab {
+    cursor: grab;
   }
 
-  .error-state {
+  .cursor-grabbing {
+    cursor: grabbing;
+  }
+
+  .cursor-crosshair-zoom {
+    cursor: crosshair;
+  }
+
+  .cursor-info {
+    position: absolute;
+    bottom: 0.5rem;
+    right: 0.5rem;
     display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    height: 400px;
-    gap: 1rem;
-    background: #fee2e2;
-    color: #991b1b;
-  }
-
-  .error-icon {
-    width: 48px;
-    height: 48px;
-  }
-
-  .error-state span {
-    font-size: 0.875rem;
-  }
-
-  .time-axis {
-    display: flex;
-    justify-content: space-between;
-    padding: 0.5rem 0.75rem;
-    background: #f9fafb;
-    border-top: 1px solid #e5e7eb;
+    gap: 0.5rem;
+    padding: 0.25rem 0.5rem;
+    background: rgba(0, 0, 0, 0.6);
+    color: rgba(255, 255, 255, 0.9);
     font-size: 0.75rem;
-    color: #6b7280;
     font-family: monospace;
+    border-radius: 0.25rem;
+    pointer-events: none;
   }
 </style>

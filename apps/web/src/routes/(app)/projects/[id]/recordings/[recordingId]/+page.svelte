@@ -1,59 +1,190 @@
 <script lang="ts">
   import { page } from '$app/stores';
   import { createQuery, createMutation, useQueryClient } from '@tanstack/svelte-query';
-  import { getRecording, updateRecording, deleteRecording } from '$lib/api/recordings';
+  import { getRecording, updateRecording, deleteRecording, getDownloadUrl } from '$lib/api/recordings';
   import { goto } from '$app/navigation';
-  import RecordingDetail from '$lib/components/data/RecordingDetail.svelte';
-  import ClipCreator from '$lib/components/audio/ClipCreator.svelte';
-  import ClipList from '$lib/components/data/ClipList.svelte';
-  import AutoClipGenerator from '$lib/components/data/AutoClipGenerator.svelte';
+  import AudioPlayer from '$lib/components/audio/AudioPlayer.svelte';
+  import SpectrogramViewer from '$lib/components/audio/SpectrogramViewer.svelte';
+  import SpectrogramSettings from '$lib/components/audio/SpectrogramSettings.svelte';
+  import AudioFilterSettings from '$lib/components/audio/AudioFilterSettings.svelte';
+  import PlaybackSpeedControl from '$lib/components/audio/PlaybackSpeedControl.svelte';
+  import ViewportBar from '$lib/components/audio/ViewportBar.svelte';
+  import ViewportToolbar from '$lib/components/audio/ViewportToolbar.svelte';
+  import ScaleControls from '$lib/components/audio/ScaleControls.svelte';
 
-  $: projectId = $page.params.id as string;
-  $: recordingId = $page.params.recordingId as string;
+  import {
+    DEFAULT_SPECTROGRAM_SETTINGS,
+    DEFAULT_AUDIO_SETTINGS,
+    getSpeedOptions,
+    type SpectrogramSettings as SpectrogramSettingsType,
+    type AudioSettings,
+    type SpectrogramWindow,
+    type InteractionMode,
+  } from '$lib/types/audio';
+  import {
+    getInitialViewingWindow,
+    adjustWindowToBounds,
+    centerWindowOn,
+  } from '$lib/utils/viewport';
 
-  $: recordingQuery = createQuery({
-    queryKey: ['recording', projectId, recordingId],
-    queryFn: () => getRecording(projectId, recordingId),
-    enabled: !!projectId && !!recordingId,
+  // Route params
+  let projectId = $derived($page.params.id as string);
+  let recordingId = $derived($page.params.recordingId as string);
+
+  // Recording query
+  let recordingQuery = $derived(
+    createQuery({
+      queryKey: ['recording', projectId, recordingId],
+      queryFn: () => getRecording(projectId, recordingId),
+      enabled: !!projectId && !!recordingId,
+    })
+  );
+
+  // Spectrogram settings state
+  let spectrogramSettings = $state<SpectrogramSettingsType>({ ...DEFAULT_SPECTROGRAM_SETTINGS });
+  let audioSettings = $state<AudioSettings>({ ...DEFAULT_AUDIO_SETTINGS });
+
+  // Interaction mode
+  let interactionMode = $state<InteractionMode>('panning');
+
+  // Viewport state
+  let viewport = $state<SpectrogramWindow>({
+    time: { min: 0, max: 20 },
+    freq: { min: 0, max: 24000 },
   });
 
-  let showEditModal = false;
-  let editNote = '';
-  let editTimeExpansion = 1.0;
-  let activeTab: 'overview' | 'clips' = 'overview';
+  // Viewport history stack for back navigation
+  let viewportHistory: SpectrogramWindow[] = [];
+
+  // Bounds derived from recording
+  let bounds = $derived.by((): SpectrogramWindow => {
+    const rec = $recordingQuery.data;
+    if (!rec) return { time: { min: 0, max: 60 }, freq: { min: 0, max: 24000 } };
+    return {
+      time: { min: 0, max: rec.duration },
+      freq: { min: 0, max: rec.samplerate / 2 },
+    };
+  });
+
+  // Initialize viewport when recording loads
+  $effect(() => {
+    const rec = $recordingQuery.data;
+    if (!rec) return;
+
+    viewport = getInitialViewingWindow({
+      startTime: 0,
+      endTime: rec.duration,
+      samplerate: rec.samplerate,
+    });
+
+    // Also adjust audio settings
+    audioSettings = { ...audioSettings, samplerate: rec.samplerate };
+  });
+
+  // Current audio time
+  let currentTime = $state(0);
+
+  // Speed options computed from recording sample rate
+  let speedOptions = $derived.by(() => {
+    const rec = $recordingQuery.data;
+    if (!rec) return getSpeedOptions(48000);
+    return getSpeedOptions(rec.samplerate);
+  });
+
+  // UI state
+  let showSettings = $state(false);
+  let showFilters = $state(false);
+  let showEditModal = $state(false);
+  let editNote = $state('');
+  let editTimeExpansion = $state(1.0);
 
   const queryClient = useQueryClient();
 
-  $: updateMut = createMutation({
-    mutationFn: (data: { note?: string; time_expansion?: number }) =>
-      updateRecording(projectId, recordingId, data),
-    onSuccess: () => {
-      showEditModal = false;
-      queryClient.invalidateQueries({ queryKey: ['recording', projectId, recordingId] });
-    },
-  });
+  let updateMut = $derived(
+    createMutation({
+      mutationFn: (data: { note?: string; time_expansion?: number }) =>
+        updateRecording(projectId, recordingId, data),
+      onSuccess: () => {
+        showEditModal = false;
+        queryClient.invalidateQueries({ queryKey: ['recording', projectId, recordingId] });
+      },
+    })
+  );
 
-  $: deleteMut = createMutation({
-    mutationFn: () => deleteRecording(projectId, recordingId),
-    onSuccess: () => {
-      goto(`/projects/${projectId}/recordings`);
-    },
-  });
+  let deleteMut = $derived(
+    createMutation({
+      mutationFn: () => deleteRecording(projectId, recordingId),
+      onSuccess: () => {
+        goto(`/projects/${projectId}/recordings`);
+      },
+    })
+  );
 
-  function openEditModal() {
-    if ($recordingQuery.data) {
-      editNote = $recordingQuery.data.note ?? '';
-      editTimeExpansion = $recordingQuery.data.time_expansion;
-      showEditModal = true;
+  // Viewport management
+  function handleViewportChange(newViewport: SpectrogramWindow) {
+    viewport = newViewport;
+  }
+
+  function handleViewportSave() {
+    viewportHistory = [...viewportHistory, { ...viewport }];
+  }
+
+  function handleViewportBack() {
+    if (viewportHistory.length > 0) {
+      const prev = viewportHistory[viewportHistory.length - 1] as SpectrogramWindow;
+      viewportHistory = viewportHistory.slice(0, -1);
+      viewport = prev;
     }
   }
 
-  function closeEditModal() {
-    showEditModal = false;
+  function handleViewportReset() {
+    const rec = $recordingQuery.data;
+    if (!rec) return;
+    viewportHistory = [];
+    viewport = getInitialViewingWindow({
+      startTime: 0,
+      endTime: rec.duration,
+      samplerate: rec.samplerate,
+    });
   }
 
-  function handleSubmit(event: Event) {
-    event.preventDefault();
+  function handleSeek(time: number) {
+    currentTime = time;
+    viewport = adjustWindowToBounds(
+      centerWindowOn(viewport, { time }),
+      bounds
+    );
+  }
+
+  function handleTimeUpdate(time: number) {
+    currentTime = time;
+  }
+
+  function handleKeyDown(e: KeyboardEvent) {
+    switch (e.key.toLowerCase()) {
+      case 'x':
+        interactionMode = 'panning';
+        break;
+      case 'z':
+        interactionMode = 'zooming';
+        break;
+      case 'b':
+        handleViewportBack();
+        break;
+    }
+  }
+
+  // Edit modal
+  function openEditModal() {
+    const rec = $recordingQuery.data;
+    if (!rec) return;
+    editNote = rec.note ?? '';
+    editTimeExpansion = rec.time_expansion;
+    showEditModal = true;
+  }
+
+  function handleEditSubmit(e: Event) {
+    e.preventDefault();
     $updateMut.mutate({ note: editNote, time_expansion: editTimeExpansion });
   }
 
@@ -62,133 +193,287 @@
       $deleteMut.mutate();
     }
   }
+
+  function formatDuration(seconds: number): string {
+    const mins = Math.floor(seconds / 60);
+    const secs = Math.floor(seconds % 60);
+    const ms = Math.round((seconds % 1) * 10);
+    return `${mins}:${secs.toString().padStart(2, '0')}.${ms}`;
+  }
+
+  function formatFileSize(bytes: number): string {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1048576) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / 1048576).toFixed(1)} MB`;
+  }
+
+  function formatSamplerate(hz: number): string {
+    if (hz >= 1000) return `${(hz / 1000).toFixed(1)} kHz`;
+    return `${hz} Hz`;
+  }
 </script>
 
-<div class="recording-page">
+<svelte:window onkeydown={handleKeyDown} />
+
+<div class="page">
   {#if $recordingQuery.isLoading}
-    <div class="loading-state">
-      <div class="spinner"></div>
-      <p>Loading recording...</p>
+    <div class="flex flex-col items-center justify-center py-20 gap-4">
+      <div class="w-10 h-10 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin"></div>
+      <p class="text-stone-500 text-sm">Loading recording...</p>
     </div>
+
   {:else if $recordingQuery.error}
-    <div class="error-state">
-      <svg class="error-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-        <circle cx="12" cy="12" r="10" stroke-width="2" />
-        <line x1="12" y1="8" x2="12" y2="12" stroke-width="2" />
-        <line x1="12" y1="16" x2="12.01" y2="16" stroke-width="2" />
+    <div class="flex flex-col items-center justify-center py-20 gap-4 bg-red-50 rounded-lg">
+      <svg class="w-12 h-12 text-red-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <circle cx="12" cy="12" r="10" />
+        <line x1="12" y1="8" x2="12" y2="12" />
+        <line x1="12" y1="16" x2="12.01" y2="16" />
       </svg>
-      <p>Error: {$recordingQuery.error.message}</p>
+      <p class="text-red-600">Error: {$recordingQuery.error.message}</p>
     </div>
+
   {:else if $recordingQuery.data}
     {@const recording = $recordingQuery.data}
 
     <!-- Breadcrumb -->
-    <nav class="breadcrumb">
-      <a href="/projects/{projectId}/recordings" class="breadcrumb-link">Recordings</a>
-      <span class="breadcrumb-separator">/</span>
-      <span class="breadcrumb-current">{recording.filename}</span>
+    <nav class="flex items-center gap-2 text-sm mb-4 text-stone-500">
+      <a href="/projects/{projectId}/recordings" class="text-emerald-600 hover:underline">
+        Recordings
+      </a>
+      <span>/</span>
+      <span class="truncate text-stone-600 dark:text-stone-300 font-medium">
+        {recording.filename}
+      </span>
     </nav>
 
-    <!-- Actions -->
-    <div class="action-bar">
-      <button on:click={openEditModal} class="action-button action-edit">
-        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-          <path
-            d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"
-            stroke-width="2"
-          />
-          <path
-            d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"
-            stroke-width="2"
-          />
-        </svg>
-        Edit
-      </button>
-      <button on:click={handleDelete} class="action-button action-delete">
-        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-          <polyline points="3 6 5 6 21 6" stroke-width="2" />
-          <path
-            d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"
-            stroke-width="2"
-          />
-        </svg>
-        Delete
-      </button>
-    </div>
-
-    <!-- Tabs -->
-    <div class="tabs">
-      <button
-        class="tab"
-        class:active={activeTab === 'overview'}
-        on:click={() => (activeTab = 'overview')}
-      >
-        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-          <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" stroke-width="2" />
-          <polyline points="9 22 9 12 15 12 15 22" stroke-width="2" />
-        </svg>
-        Overview
-      </button>
-      <button
-        class="tab"
-        class:active={activeTab === 'clips'}
-        on:click={() => (activeTab = 'clips')}
-      >
-        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-          <path d="M9 11l3 3L22 4" stroke-width="2" />
-          <path
-            d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"
-            stroke-width="2"
-          />
-        </svg>
-        Clips
-        <span class="badge">{recording.clip_count}</span>
-      </button>
-    </div>
-
-    <!-- Tab content -->
-    {#if activeTab === 'overview'}
-      <div class="tab-content">
-        <RecordingDetail {projectId} {recording} />
+    <!-- Recording metadata row -->
+    <div class="metadata-bar">
+      <div class="metadata-chips">
+        <span class="chip">
+          <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10" />
+            <polyline points="12 6 12 12 16 14" />
+          </svg>
+          {formatDuration(recording.duration)}
+        </span>
+        <span class="chip">
+          <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M9 18V5l12-2v13" />
+            <circle cx="6" cy="18" r="3" />
+            <circle cx="18" cy="16" r="3" />
+          </svg>
+          {formatSamplerate(recording.samplerate)}
+        </span>
+        <span class="chip">
+          Ch {recording.channels}
+        </span>
+        {#if recording.bit_depth}
+          <span class="chip">{recording.bit_depth}-bit</span>
+        {/if}
+        {#if recording.is_ultrasonic}
+          <span class="chip chip-warning">Ultrasonic</span>
+        {/if}
+        {#if recording.datetime}
+          <span class="chip">
+            <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+              <line x1="16" y1="2" x2="16" y2="6" />
+              <line x1="8" y1="2" x2="8" y2="6" />
+              <line x1="3" y1="10" x2="21" y2="10" />
+            </svg>
+            {new Date(recording.datetime).toLocaleString()}
+          </span>
+        {/if}
       </div>
-    {:else if activeTab === 'clips'}
-      <div class="tab-content clips-tab">
-        <!-- Clip Creator -->
-        <div class="section">
-          <ClipCreator
-            {projectId}
-            {recordingId}
-            duration={recording.duration}
-            currentTime={0}
+
+      <!-- Action buttons -->
+      <div class="flex gap-2">
+        <a
+          href={getDownloadUrl(projectId, recordingId)}
+          download={recording.filename}
+          class="action-btn"
+          title="Download original file"
+        >
+          <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+            <polyline points="7 10 12 15 17 10" />
+            <line x1="12" y1="15" x2="12" y2="3" />
+          </svg>
+          Download
+        </a>
+        <button type="button" class="action-btn" onclick={openEditModal}>
+          <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+          </svg>
+          Edit
+        </button>
+        <button type="button" class="action-btn action-btn-danger" onclick={handleDelete}>
+          <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="3 6 5 6 21 6" />
+            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+          </svg>
+          Delete
+        </button>
+      </div>
+    </div>
+
+    <!-- Main viewer area -->
+    <div class="viewer-area">
+      <!-- Toolbar row -->
+      <div class="toolbar-row">
+        <ViewportToolbar
+          mode={interactionMode}
+          onReset={handleViewportReset}
+          onBack={handleViewportBack}
+          onPan={() => (interactionMode = 'panning')}
+          onZoom={() => (interactionMode = 'zooming')}
+        />
+
+        <div class="flex items-center gap-4 ml-auto">
+          <!-- Scale controls -->
+          <ScaleControls
+            settings={spectrogramSettings}
+            onChange={(s) => (spectrogramSettings = s)}
+          />
+
+          <!-- Settings toggle -->
+          <button
+            type="button"
+            class="action-btn {showSettings ? 'action-btn-active' : ''}"
+            onclick={() => (showSettings = !showSettings)}
+            title="Spectrogram settings"
+          >
+            <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="3" />
+              <path d="M19.07 4.93l-1.41 1.41M6.34 17.66l-1.41 1.41M2 12h2M20 12h2M6.34 6.34L4.93 4.93M17.66 17.66l1.41 1.41M12 2v2M12 20v2" />
+            </svg>
+            Settings
+          </button>
+
+          <!-- Filter toggle -->
+          <button
+            type="button"
+            class="action-btn {showFilters ? 'action-btn-active' : ''}"
+            onclick={() => (showFilters = !showFilters)}
+            title="Audio filter settings"
+          >
+            <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
+            </svg>
+            Filters
+          </button>
+        </div>
+      </div>
+
+      <!-- Audio Player row -->
+      <div class="player-row">
+        <AudioPlayer
+          {projectId}
+          {recordingId}
+          duration={recording.duration}
+          speed={audioSettings.speed}
+          {speedOptions}
+          {viewport}
+          {bounds}
+          onViewportChange={handleViewportChange}
+          onTimeUpdate={handleTimeUpdate}
+          onSeek={handleSeek}
+        />
+
+        <PlaybackSpeedControl
+          speed={audioSettings.speed}
+          samplerate={recording.samplerate}
+          onChange={(s) => (audioSettings = { ...audioSettings, speed: s })}
+        />
+      </div>
+
+      <!-- Settings panels (collapsible) -->
+      {#if showSettings}
+        <div class="settings-row">
+          <SpectrogramSettings
+            settings={spectrogramSettings}
+            onChange={(s) => (spectrogramSettings = s)}
           />
         </div>
+      {/if}
 
-        <!-- Auto Clip Generator -->
-        <div class="section">
-          <AutoClipGenerator {projectId} {recordingId} duration={recording.duration} />
+      {#if showFilters}
+        <div class="settings-row">
+          <AudioFilterSettings
+            settings={audioSettings}
+            samplerate={recording.samplerate}
+            onChange={(s) => (audioSettings = s)}
+          />
         </div>
+      {/if}
 
-        <!-- Clip List -->
-        <div class="section">
-          <ClipList {projectId} {recordingId} />
-        </div>
+      <!-- Spectrogram Canvas -->
+      <SpectrogramViewer
+        {recording}
+        {projectId}
+        spectrogramSettings={spectrogramSettings}
+        {viewport}
+        {bounds}
+        {currentTime}
+        {interactionMode}
+        onViewportChange={handleViewportChange}
+        onViewportSave={handleViewportSave}
+        onSeek={handleSeek}
+        onModeChange={(m) => (interactionMode = m)}
+      />
+
+      <!-- Viewport bar -->
+      <ViewportBar
+        {viewport}
+        {bounds}
+        onViewportChange={handleViewportChange}
+        onViewportSave={handleViewportSave}
+      />
+
+      <!-- Keyboard shortcut hints -->
+      <div class="shortcut-hints">
+        <span><kbd>X</kbd> Pan</span>
+        <span><kbd>Z</kbd> Zoom</span>
+        <span><kbd>B</kbd> Back</span>
+        <span><kbd>Space</kbd> Play/Pause</span>
+        <span><kbd>Scroll</kbd> Navigate</span>
+        <span><kbd>Ctrl+Scroll</kbd> Expand</span>
+        <span><kbd>Alt+Scroll</kbd> Zoom</span>
+        <span><kbd>DblClick</kbd> Seek</span>
+      </div>
+    </div>
+
+    <!-- Notes section -->
+    {#if recording.note}
+      <div class="notes-section">
+        <h4 class="notes-title">Notes</h4>
+        <p class="notes-content">{recording.note}</p>
       </div>
     {/if}
   {/if}
 
   <!-- Edit Modal -->
   {#if showEditModal}
-    <!-- svelte-ignore a11y_click_events_have_key_events -->
     <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <div class="modal-overlay" on:click={closeEditModal}>
+    <!-- svelte-ignore a11y_click_events_have_key_events -->
+    <div
+      class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
+      onclick={() => (showEditModal = false)}
+    >
       <!-- svelte-ignore a11y_click_events_have_key_events -->
       <!-- svelte-ignore a11y_no_static_element_interactions -->
-      <div class="modal-content" on:click|stopPropagation>
-        <h3 class="modal-title">Edit Recording</h3>
-        <form on:submit={handleSubmit}>
-          <div class="form-fields">
-            <div class="form-field">
-              <label for="time-expansion" class="form-label">Time Expansion</label>
+      <div
+        class="bg-white dark:bg-stone-800 rounded-lg shadow-xl p-6 w-full max-w-md"
+        onclick={(e) => e.stopPropagation()}
+      >
+        <h3 class="text-lg font-semibold text-stone-800 dark:text-stone-100 mb-4">Edit Recording</h3>
+        <form onsubmit={handleEditSubmit}>
+          <div class="space-y-4 mb-6">
+            <div>
+              <label for="time-expansion" class="block text-sm font-medium text-stone-700 dark:text-stone-300 mb-1">
+                Time Expansion
+              </label>
               <input
                 id="time-expansion"
                 type="number"
@@ -196,23 +481,34 @@
                 min="0.1"
                 max="100"
                 bind:value={editTimeExpansion}
-                class="form-input"
+                class="w-full px-3 py-2 border border-stone-300 dark:border-stone-600 rounded-md text-sm bg-white dark:bg-stone-700 focus:outline-none focus:ring-2 focus:ring-emerald-500"
               />
-              <p class="form-hint">Playback speed adjustment for ultrasonic recordings</p>
+              <p class="mt-1 text-xs text-stone-500">Playback speed adjustment for ultrasonic recordings</p>
             </div>
-            <div class="form-field">
-              <label for="note" class="form-label">Notes</label>
-              <textarea id="note" bind:value={editNote} rows="3" class="form-textarea"></textarea>
+            <div>
+              <label for="note" class="block text-sm font-medium text-stone-700 dark:text-stone-300 mb-1">
+                Notes
+              </label>
+              <textarea
+                id="note"
+                bind:value={editNote}
+                rows="3"
+                class="w-full px-3 py-2 border border-stone-300 dark:border-stone-600 rounded-md text-sm bg-white dark:bg-stone-700 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+              ></textarea>
             </div>
           </div>
-          <div class="modal-actions">
-            <button type="button" on:click={closeEditModal} class="modal-button modal-cancel">
+          <div class="flex justify-end gap-3">
+            <button
+              type="button"
+              onclick={() => (showEditModal = false)}
+              class="px-4 py-2 text-sm font-medium border border-stone-300 rounded-md hover:bg-stone-50 dark:border-stone-600 dark:hover:bg-stone-700"
+            >
               Cancel
             </button>
             <button
               type="submit"
-              class="modal-button modal-submit"
               disabled={$updateMut.isPending}
+              class="px-4 py-2 text-sm font-medium bg-emerald-600 text-white rounded-md hover:bg-emerald-700 disabled:opacity-60 disabled:cursor-not-allowed"
             >
               {$updateMut.isPending ? 'Saving...' : 'Save'}
             </button>
@@ -224,198 +520,147 @@
 </div>
 
 <style>
-  .recording-page {
-    padding: 2rem;
+  .page {
+    padding: 1.5rem;
     max-width: 1600px;
     margin: 0 auto;
-  }
-
-  .loading-state {
     display: flex;
     flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    padding: 4rem;
     gap: 1rem;
   }
 
-  .loading-state p {
-    color: #6b7280;
-    font-size: 0.875rem;
-  }
-
-  .spinner {
-    width: 48px;
-    height: 48px;
-    border: 4px solid #e5e7eb;
-    border-top-color: #3b82f6;
-    border-radius: 50%;
-    animation: spin 1s linear infinite;
-  }
-
-  @keyframes spin {
-    to {
-      transform: rotate(360deg);
-    }
-  }
-
-  .error-state {
+  .metadata-bar {
     display: flex;
-    flex-direction: column;
     align-items: center;
-    justify-content: center;
-    padding: 4rem;
+    justify-content: space-between;
     gap: 1rem;
-    background: #fee2e2;
-    border-radius: 0.5rem;
-    color: #991b1b;
+    flex-wrap: wrap;
   }
 
-  .error-icon {
-    width: 48px;
-    height: 48px;
-  }
-
-  .breadcrumb {
-    margin-bottom: 1.5rem;
-    font-size: 0.875rem;
+  .metadata-chips {
     display: flex;
-    align-items: center;
+    flex-wrap: wrap;
     gap: 0.5rem;
-  }
-
-  .breadcrumb-link {
-    color: #3b82f6;
-    text-decoration: none;
-    transition: color 0.15s ease;
-  }
-
-  .breadcrumb-link:hover {
-    color: #2563eb;
-    text-decoration: underline;
-  }
-
-  .breadcrumb-separator {
-    color: #9ca3af;
-  }
-
-  .breadcrumb-current {
-    color: #6b7280;
-  }
-
-  .action-bar {
-    display: flex;
-    justify-content: flex-end;
-    gap: 0.75rem;
-    margin-bottom: 2rem;
-  }
-
-  .action-button {
-    display: flex;
     align-items: center;
-    gap: 0.5rem;
-    padding: 0.625rem 1rem;
-    font-size: 0.875rem;
+  }
+
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.25rem 0.625rem;
+    background: #f3f4f6;
+    color: #374151;
+    border-radius: 9999px;
+    font-size: 0.8125rem;
     font-weight: 500;
+    white-space: nowrap;
+  }
+
+  :global(.dark) .chip {
+    background: #3f3f46;
+    color: #d4d4d8;
+  }
+
+  .chip-warning {
+    background: #fef3c7;
+    color: #92400e;
+  }
+
+  :global(.dark) .chip-warning {
+    background: #451a03;
+    color: #fcd34d;
+  }
+
+  .action-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    padding: 0.5rem 0.875rem;
+    font-size: 0.8125rem;
+    font-weight: 500;
+    border: 1px solid #d1d5db;
     border-radius: 0.375rem;
-    border: 1px solid;
-    cursor: pointer;
-    transition: all 0.15s ease;
-  }
-
-  .action-button .icon {
-    width: 18px;
-    height: 18px;
-  }
-
-  .action-edit {
     background: white;
     color: #374151;
-    border-color: #d1d5db;
+    cursor: pointer;
+    text-decoration: none;
+    transition: all 0.15s ease;
+    white-space: nowrap;
   }
 
-  .action-edit:hover {
-    background: #f9fafb;
-    border-color: #3b82f6;
+  :global(.dark) .action-btn {
+    background: #3f3f46;
+    border-color: #52525b;
+    color: #d4d4d8;
   }
 
-  .action-delete {
-    background: #fee2e2;
-    color: #991b1b;
-    border-color: #fecaca;
+  .action-btn:hover {
+    background: #f3f4f6;
+    border-color: #9ca3af;
   }
 
-  .action-delete:hover {
+  :global(.dark) .action-btn:hover {
+    background: #52525b;
+  }
+
+  .action-btn-active {
+    background: #ecfdf5;
+    border-color: #10b981;
+    color: #059669;
+  }
+
+  :global(.dark) .action-btn-active {
+    background: #064e3b;
+    border-color: #10b981;
+    color: #34d399;
+  }
+
+  .action-btn-danger {
     background: #fef2f2;
+    border-color: #fecaca;
+    color: #991b1b;
+  }
+
+  :global(.dark) .action-btn-danger {
+    background: #450a0a;
+    border-color: #7f1d1d;
+    color: #fca5a5;
+  }
+
+  .action-btn-danger:hover {
+    background: #fee2e2;
     border-color: #f87171;
   }
 
-  .tabs {
+  .viewer-area {
     display: flex;
+    flex-direction: column;
     gap: 0.5rem;
-    border-bottom: 2px solid #e5e7eb;
-    margin-bottom: 2rem;
   }
 
-  .tab {
+  .toolbar-row {
     display: flex;
     align-items: center;
-    gap: 0.5rem;
-    padding: 0.75rem 1.25rem;
-    background: none;
-    border: none;
-    border-bottom: 2px solid transparent;
-    color: #6b7280;
-    font-size: 0.875rem;
-    font-weight: 500;
-    cursor: pointer;
-    transition: all 0.15s ease;
-    margin-bottom: -2px;
+    gap: 0.75rem;
+    flex-wrap: wrap;
   }
 
-  .tab .icon {
-    width: 18px;
-    height: 18px;
-  }
-
-  .tab:hover {
-    color: #374151;
-    background: #f9fafb;
-  }
-
-  .tab.active {
-    color: #3b82f6;
-    border-bottom-color: #3b82f6;
-  }
-
-  .badge {
-    display: inline-flex;
+  .player-row {
+    display: flex;
     align-items: center;
-    justify-content: center;
-    min-width: 1.25rem;
-    height: 1.25rem;
-    padding: 0 0.375rem;
-    background: #e5e7eb;
-    color: #374151;
-    font-size: 0.75rem;
-    font-weight: 600;
-    border-radius: 0.75rem;
-    line-height: 1;
+    gap: 1rem;
+    flex-wrap: wrap;
   }
 
-  .tab.active .badge {
-    background: #dbeafe;
-    color: #1e40af;
+  .settings-row {
+    animation: slideIn 0.15s ease;
   }
 
-  .tab-content {
-    animation: fadeIn 0.2s ease;
-  }
-
-  @keyframes fadeIn {
+  @keyframes slideIn {
     from {
       opacity: 0;
-      transform: translateY(0.5rem);
+      transform: translateY(-0.5rem);
     }
     to {
       opacity: 1;
@@ -423,122 +668,63 @@
     }
   }
 
-  .clips-tab {
+  .shortcut-hints {
     display: flex;
-    flex-direction: column;
-    gap: 2rem;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    padding: 0.5rem 0;
+    font-size: 0.75rem;
+    color: #9ca3af;
   }
 
-  .section {
-    width: 100%;
-  }
-
-  .modal-overlay {
-    position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.5);
+  .shortcut-hints span {
     display: flex;
     align-items: center;
-    justify-content: center;
-    z-index: 50;
-    padding: 1rem;
+    gap: 0.25rem;
   }
 
-  .modal-content {
-    background: white;
-    padding: 1.5rem;
-    border-radius: 0.5rem;
-    max-width: 500px;
-    width: 100%;
-    box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1);
-  }
-
-  .modal-title {
-    margin: 0 0 1.5rem 0;
-    font-size: 1.25rem;
-    font-weight: 600;
-    color: #111827;
-  }
-
-  .form-fields {
-    display: flex;
-    flex-direction: column;
-    gap: 1.25rem;
-  }
-
-  .form-field {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-  }
-
-  .form-label {
-    font-size: 0.875rem;
-    font-weight: 500;
-    color: #374151;
-  }
-
-  .form-input,
-  .form-textarea {
-    width: 100%;
-    padding: 0.625rem 0.75rem;
+  :global(.shortcut-hints kbd) {
+    padding: 0.1rem 0.35rem;
     border: 1px solid #d1d5db;
-    border-radius: 0.375rem;
-    font-size: 0.875rem;
-  }
-
-  .form-input:focus,
-  .form-textarea:focus {
-    outline: none;
-    border-color: #3b82f6;
-    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
-  }
-
-  .form-hint {
-    margin: 0;
-    font-size: 0.75rem;
-    color: #6b7280;
-  }
-
-  .modal-actions {
-    display: flex;
-    justify-content: flex-end;
-    gap: 0.75rem;
-    margin-top: 1.5rem;
-  }
-
-  .modal-button {
-    padding: 0.625rem 1rem;
-    font-size: 0.875rem;
-    font-weight: 500;
-    border-radius: 0.375rem;
-    cursor: pointer;
-    transition: all 0.15s ease;
-  }
-
-  .modal-cancel {
-    background: white;
-    color: #374151;
-    border: 1px solid #d1d5db;
-  }
-
-  .modal-cancel:hover {
+    border-bottom-width: 2px;
+    border-radius: 0.25rem;
+    font-family: monospace;
+    font-size: 0.7rem;
     background: #f9fafb;
+    color: #374151;
   }
 
-  .modal-submit {
-    background: #3b82f6;
-    color: white;
-    border: 1px solid #3b82f6;
+  .notes-section {
+    padding: 1rem;
+    background: #f9fafb;
+    border: 1px solid #e5e7eb;
+    border-radius: 0.5rem;
   }
 
-  .modal-submit:hover:not(:disabled) {
-    background: #2563eb;
-    border-color: #2563eb;
+  :global(.dark) .notes-section {
+    background: #27272a;
+    border-color: #3f3f46;
   }
 
-  .modal-submit:disabled {
-    opacity: 0.6;
-    cursor: not-allowed;
+  .notes-title {
+    margin: 0 0 0.5rem 0;
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: #374151;
+  }
+
+  :global(.dark) .notes-title {
+    color: #d4d4d8;
+  }
+
+  .notes-content {
+    margin: 0;
+    font-size: 0.875rem;
+    color: #6b7280;
+    white-space: pre-wrap;
+  }
+
+  :global(.dark) .notes-content {
+    color: #a1a1aa;
   }
 </style>

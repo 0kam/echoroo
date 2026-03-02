@@ -1,91 +1,101 @@
 <script lang="ts">
-  export let speed: number = 1.0;
-  export let isUltrasonic: boolean = false;
-  export let onChange: (speed: number) => void;
+  import { getSpeedOptions, type SpeedOption } from '$lib/types/audio';
 
-  const normalSpeeds = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0];
-  const ultrasonicSpeeds = [0.1, 0.2, 0.5, 1.0, 2.0, 5.0, 10.0];
+  interface Props {
+    speed: number;
+    samplerate: number;
+    onChange: (speed: number) => void;
+  }
 
-  $: availableSpeeds = isUltrasonic ? ultrasonicSpeeds : normalSpeeds;
+  let { speed, samplerate, onChange }: Props = $props();
 
-  function handleChange(event: Event) {
-    const target = event.target as HTMLSelectElement;
-    onChange(parseFloat(target.value));
+  let availableOptions = $derived(getSpeedOptions(samplerate));
+
+  function handleSelect(option: SpeedOption) {
+    onChange(option.value);
   }
 </script>
 
 <div class="speed-control">
-  <label for="speed-select" class="label">Playback Speed:</label>
-  <select id="speed-select" value={speed} on:change={handleChange} class="speed-select">
-    {#each availableSpeeds as s}
-      <option value={s}>{s}x</option>
+  <span class="speed-label">Speed</span>
+  <div class="speed-buttons">
+    {#each availableOptions as option}
+      <button
+        type="button"
+        class="speed-btn {speed === option.value ? 'speed-btn-active' : 'speed-btn-inactive'}"
+        onclick={() => handleSelect(option)}
+      >
+        {option.label}
+      </button>
     {/each}
-  </select>
-  {#if isUltrasonic}
-    <span class="ultrasonic-badge">
-      <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-        <path d="M12 2v20M2 12h20" stroke-width="2" />
-        <path d="M12 7c2.76 0 5 2.24 5 5s-2.24 5-5 5-5-2.24-5-5 2.24-5 5-5z" stroke-width="2" />
-      </svg>
-      Ultrasonic
-    </span>
-  {/if}
+  </div>
 </div>
 
 <style>
   .speed-control {
     display: flex;
     align-items: center;
-    gap: 0.5rem;
-    padding: 0.75rem 1rem;
-    background: white;
-    border: 1px solid #e5e7eb;
-    border-radius: 0.375rem;
+    gap: 0.75rem;
+    flex-wrap: wrap;
   }
 
-  .label {
+  .speed-label {
     font-size: 0.875rem;
     font-weight: 500;
-    color: #374151;
-    white-space: nowrap;
+    color: #6b7280;
+    flex-shrink: 0;
   }
 
-  .speed-select {
-    padding: 0.5rem 0.75rem;
-    border: 1px solid #d1d5db;
+  :global(.dark) .speed-label {
+    color: #a1a1aa;
+  }
+
+  .speed-buttons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.375rem;
+  }
+
+  .speed-btn {
+    padding: 0.25rem 0.625rem;
     border-radius: 0.375rem;
-    font-size: 0.875rem;
-    background: white;
+    font-size: 0.8125rem;
+    font-weight: 500;
+    font-family: monospace;
     cursor: pointer;
+    border: 1px solid;
     transition: all 0.15s ease;
   }
 
-  .speed-select:hover {
-    border-color: #3b82f6;
+  .speed-btn-inactive {
+    background: white;
+    border-color: #d1d5db;
+    color: #374151;
   }
 
-  .speed-select:focus {
-    outline: none;
-    border-color: #3b82f6;
-    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+  :global(.dark) .speed-btn-inactive {
+    background: #3f3f46;
+    border-color: #52525b;
+    color: #d4d4d8;
   }
 
-  .ultrasonic-badge {
-    display: flex;
-    align-items: center;
-    gap: 0.25rem;
-    padding: 0.25rem 0.5rem;
-    background: #fef3c7;
-    color: #92400e;
-    border-radius: 0.25rem;
-    font-size: 0.75rem;
-    font-weight: 500;
-    white-space: nowrap;
+  .speed-btn-inactive:hover {
+    border-color: #10b981;
+    color: #10b981;
   }
 
-  .icon {
-    width: 14px;
-    height: 14px;
-    color: #f59e0b;
+  .speed-btn-active {
+    background: #10b981;
+    border-color: #059669;
+    color: white;
+  }
+
+  .speed-btn-active:hover {
+    background: #059669;
+  }
+
+  .speed-btn:focus-visible {
+    outline: 2px solid #10b981;
+    outline-offset: 1px;
   }
 </style>
