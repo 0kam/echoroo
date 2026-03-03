@@ -153,9 +153,10 @@ class AnnotationProjectService:
         Returns:
             Created annotation project with detail response
         """
+        from sqlalchemy import select
+
         from echoroo.models.dataset import Dataset
         from echoroo.models.tag import Tag
-        from sqlalchemy import select
 
         annotation_project = AnnotationProject(
             project_id=project_id,
@@ -237,9 +238,10 @@ class AnnotationProjectService:
         Raises:
             HTTPException: 404 if annotation project not found
         """
+        from sqlalchemy import select
+
         from echoroo.models.dataset import Dataset
         from echoroo.models.tag import Tag
-        from sqlalchemy import select
 
         annotation_project = await self.annotation_project_repo.get_by_id(annotation_project_id)
         if not annotation_project:

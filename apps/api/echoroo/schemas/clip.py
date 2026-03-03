@@ -28,7 +28,7 @@ class ClipCreate(BaseModel):
     note: str | None = Field(None, description="User notes")
 
     @model_validator(mode="after")
-    def validate_time_range(self) -> "ClipCreate":
+    def validate_time_range(self) -> ClipCreate:
         """Validate that end_time > start_time."""
         if self.end_time <= self.start_time:
             raise ValueError("end_time must be greater than start_time")
@@ -43,11 +43,10 @@ class ClipUpdate(BaseModel):
     note: str | None = Field(None, description="User notes")
 
     @model_validator(mode="after")
-    def validate_time_range(self) -> "ClipUpdate":
+    def validate_time_range(self) -> ClipUpdate:
         """Validate time range if both provided."""
-        if self.start_time is not None and self.end_time is not None:
-            if self.end_time <= self.start_time:
-                raise ValueError("end_time must be greater than start_time")
+        if self.start_time is not None and self.end_time is not None and self.end_time <= self.start_time:
+            raise ValueError("end_time must be greater than start_time")
         return self
 
 

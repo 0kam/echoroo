@@ -75,7 +75,7 @@ class DetectionService:
         if page_size < 1 or page_size > 200:
             page_size = 50
 
-        annotations, total = await self.annotation_repo.list(
+        annotations, total = await self.annotation_repo.list_annotations(
             project_id=project_id,
             tag_id=tag_id,
             status=status,

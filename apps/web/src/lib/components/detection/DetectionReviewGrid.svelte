@@ -258,26 +258,66 @@
 
   <!-- Loading / error state -->
   {#if $detectionsQuery.isLoading}
-    <div class="flex items-center justify-center py-12">
-      <svg class="h-6 w-6 animate-spin text-stone-400" viewBox="0 0 24 24" fill="none">
-        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
-      </svg>
-      <span class="ml-2 text-sm text-stone-500">Loading detections...</span>
+    <!-- Skeleton cards matching the 3-column grid layout -->
+    <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+      {#each { length: 6 } as _}
+        <div class="animate-pulse overflow-hidden rounded-lg border border-stone-200 bg-white shadow-sm">
+          <!-- Spectrogram area placeholder -->
+          <div class="h-[120px] bg-stone-200"></div>
+          <!-- Card body placeholder -->
+          <div class="flex flex-col gap-2 p-2.5">
+            <!-- Name + confidence badge row -->
+            <div class="flex items-center justify-between gap-2">
+              <div class="h-4 w-2/3 rounded bg-stone-200"></div>
+              <div class="h-5 w-10 shrink-0 rounded bg-stone-100"></div>
+            </div>
+            <!-- Recording name line -->
+            <div class="h-3 w-4/5 rounded bg-stone-100"></div>
+            <!-- Time range line -->
+            <div class="h-3 w-1/2 rounded bg-stone-100"></div>
+            <!-- Source badge placeholder -->
+            <div class="h-5 w-16 rounded bg-stone-100"></div>
+          </div>
+        </div>
+      {/each}
     </div>
   {:else if $detectionsQuery.isError}
-    <div class="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
-      Failed to load detections: {$detectionsQuery.error?.message ?? 'Unknown error'}
+    <!-- Error state with retry button -->
+    <div class="rounded-lg border border-red-200 bg-red-50 px-4 py-6 text-center">
+      <svg class="mx-auto mb-2 h-8 w-8 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+      </svg>
+      <p class="text-sm font-medium text-red-700">Failed to load detections</p>
+      <p class="mt-1 text-xs text-red-500">
+        {$detectionsQuery.error?.message ?? 'An unexpected error occurred'}
+      </p>
+      <button
+        type="button"
+        on:click={() => $detectionsQuery.refetch()}
+        class="mt-3 rounded-md bg-red-100 px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-200"
+      >
+        Retry
+      </button>
     </div>
   {:else if detections.length === 0}
     <div class="flex flex-col items-center justify-center rounded-lg border-2 border-dashed border-stone-200 py-16 text-center">
-      <svg class="mb-3 h-12 w-12 text-stone-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-      </svg>
-      <p class="text-sm font-medium text-stone-500">No detections found</p>
-      <p class="mt-1 text-xs text-stone-400">
-        {statusFilter ? `No ${statusFilter} detections for this filter.` : 'No detections match the current filters.'}
-      </p>
+      {#if statusFilter}
+        <!-- Filtered empty state: no results for the active status filter -->
+        <svg class="mb-3 h-12 w-12 text-stone-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2a1 1 0 01-.293.707L13 13.414V19a1 1 0 01-.553.894l-4 2A1 1 0 017 21v-7.586L3.293 6.707A1 1 0 013 6V4z" />
+        </svg>
+        <p class="text-sm font-medium text-stone-500">No {statusFilter} detections</p>
+        <p class="mt-1 text-xs text-stone-400">
+          There are no detections with status "{statusFilter}" for the current filters.
+        </p>
+      {:else}
+        <!-- Truly empty: no detections at all -->
+        <svg class="mb-3 h-12 w-12 text-stone-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+        </svg>
+        <p class="text-sm font-medium text-stone-500">No detections found</p>
+        <p class="mt-1 text-xs text-stone-400">No detections match the current filters.</p>
+      {/if}
     </div>
   {:else}
     <!-- Detection grid: responsive 1-3 columns -->

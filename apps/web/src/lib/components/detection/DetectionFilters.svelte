@@ -110,7 +110,7 @@
   <!-- Confidence range -->
   <div class="min-w-48 flex-1">
     <div class="mb-1 flex items-center justify-between">
-      <label class="text-xs font-medium text-gray-700">Confidence</label>
+      <span class="text-xs font-medium text-gray-700">Confidence</span>
       <span class="text-xs text-gray-500">{confidenceMin}% – {confidenceMax}%</span>
     </div>
     <div class="flex items-center gap-2">

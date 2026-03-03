@@ -5,9 +5,9 @@ from __future__ import annotations
 from uuid import UUID
 
 from sqlalchemy import Integer, delete, func, select
-from sqlalchemy.sql.expression import cast
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
+from sqlalchemy.sql.expression import cast
 
 from echoroo.models.annotation import Annotation
 from echoroo.models.enums import DetectionStatus
@@ -46,7 +46,7 @@ class AnnotationRepository:
         )
         return result.scalar_one_or_none()
 
-    async def list(
+    async def list_annotations(
         self,
         project_id: UUID,
         tag_id: UUID | None = None,
@@ -144,7 +144,7 @@ class AnnotationRepository:
         self,
         project_id: UUID,
         dataset_id: UUID | None = None,
-    ) -> list[dict]:
+    ) -> list[dict[str, object]]:
         """Get species detection summary grouped by tag.
 
         Returns count, average confidence, and status breakdown per species tag.

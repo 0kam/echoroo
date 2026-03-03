@@ -10,6 +10,17 @@
   import { ApiError } from '$lib/api/client';
   import type { Project, ProjectMember } from '$lib/types';
 
+  // Predefined taxa options
+  const TARGET_TAXA_OPTIONS = [
+    { value: 'Birds', label: 'Birds' },
+    { value: 'Anurans', label: 'Anurans' },
+    { value: 'Insects', label: 'Insects' },
+    { value: 'Bats', label: 'Bats' },
+    { value: 'Land mammals', label: 'Land mammals' },
+    { value: 'Fishes', label: 'Fishes' },
+    { value: 'Cetaceans', label: 'Cetaceans' },
+  ];
+
   // Get project ID from URL
   const projectId = $derived($page.params.id!);
 
@@ -18,8 +29,22 @@
   let members = $state<ProjectMember[]>([]);
   let name = $state('');
   let description = $state('');
-  let targetTaxa = $state('');
+  let selectedTaxa = $state<string[]>([]);
   let visibility = $state<'private' | 'public'>('private');
+
+  // Derived comma-separated string for API
+  const targetTaxa = $derived(selectedTaxa.join(', '));
+
+  /**
+   * Toggle a taxon selection
+   */
+  function toggleTaxon(value: string) {
+    if (selectedTaxa.includes(value)) {
+      selectedTaxa = selectedTaxa.filter((t) => t !== value);
+    } else {
+      selectedTaxa = [...selectedTaxa, value];
+    }
+  }
 
   let isLoading = $state(true);
   let isSaving = $state(false);
@@ -64,7 +89,14 @@
       // Initialize form fields
       name = projectData.name;
       description = projectData.description || '';
-      targetTaxa = projectData.target_taxa || '';
+      // Parse comma-separated taxa string into array of selected values
+      const rawTaxa = projectData.target_taxa || '';
+      selectedTaxa = rawTaxa
+        ? rawTaxa
+            .split(',')
+            .map((t) => t.trim())
+            .filter((t) => TARGET_TAXA_OPTIONS.some((opt) => opt.value === t))
+        : [];
       visibility = projectData.visibility;
     } catch (err) {
       if (err instanceof ApiError) {
@@ -101,11 +133,6 @@
       return false;
     }
 
-    if (targetTaxa && targetTaxa.length > 500) {
-      error = 'Target taxa must be less than 500 characters';
-      return false;
-    }
-
     return true;
   }
 
@@ -132,7 +159,7 @@
       const updated = await projectsApi.update(projectId, {
         name: name.trim(),
         description: description.trim() || undefined,
-        target_taxa: targetTaxa.trim() || undefined,
+        target_taxa: targetTaxa || undefined,
         visibility,
       });
 
@@ -316,18 +343,37 @@
 
           <!-- Target Taxa -->
           <div>
-            <label for="targetTaxa" class="block text-sm font-medium text-gray-700">
+            <span class="block text-sm font-medium text-gray-700" id="target-taxa-label">
               Target Taxa
-            </label>
-            <input
-              id="targetTaxa"
-              name="targetTaxa"
-              type="text"
-              bind:value={targetTaxa}
-              disabled={isSaving}
-              class="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-gray-900 placeholder-gray-400 focus:border-blue-500 focus:outline-none focus:ring-blue-500 disabled:bg-gray-100 disabled:cursor-not-allowed sm:text-sm"
-              placeholder="e.g., Passeriformes, Aves"
-            />
+            </span>
+            <div
+              class="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3"
+              role="group"
+              aria-labelledby="target-taxa-label"
+            >
+              {#each TARGET_TAXA_OPTIONS as option (option.value)}
+                <label
+                  class="flex cursor-pointer items-center gap-2 rounded-md border px-3 py-2 text-sm transition-colors
+                    {selectedTaxa.includes(option.value)
+                    ? 'border-blue-500 bg-blue-50 text-blue-700'
+                    : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-50'}
+                    {isSaving ? 'cursor-not-allowed opacity-50' : ''}"
+                >
+                  <input
+                    type="checkbox"
+                    value={option.value}
+                    checked={selectedTaxa.includes(option.value)}
+                    disabled={isSaving}
+                    onchange={() => toggleTaxon(option.value)}
+                    class="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                  />
+                  {option.label}
+                </label>
+              {/each}
+            </div>
+            <p class="mt-1 text-xs text-gray-500">
+              Select the taxonomic groups you're focusing on (optional)
+            </p>
           </div>
 
           <!-- Visibility -->

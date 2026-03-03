@@ -2,6 +2,8 @@
  * API error handling utilities.
  */
 
+import { apiClient } from './client';
+
 export class ApiError extends Error {
   constructor(
     message: string,
@@ -54,17 +56,61 @@ export async function handleApiResponse<T>(response: Response): Promise<T> {
 }
 
 /**
+ * Build request options with authentication headers injected.
+ * Merges the Authorization header from apiClient with any existing headers.
+ */
+function buildAuthOptions(options?: RequestInit): RequestInit {
+  const token = apiClient.getAccessToken();
+  if (!token) {
+    return {
+      ...options,
+      credentials: 'include' as RequestCredentials,
+      signal: AbortSignal.timeout(30000),
+    };
+  }
+
+  const existingHeaders = options?.headers
+    ? Object.fromEntries(new Headers(options.headers).entries())
+    : {};
+
+  return {
+    ...options,
+    credentials: 'include' as RequestCredentials,
+    signal: AbortSignal.timeout(30000),
+    headers: {
+      ...existingHeaders,
+      Authorization: `Bearer ${token}`,
+    },
+  };
+}
+
+/**
  * Handle network errors and timeouts.
+ * Automatically injects the auth token from apiClient and retries once on 401.
  */
 export async function fetchWithErrorHandling(
   url: string,
   options?: RequestInit
 ): Promise<Response> {
   try {
-    const response = await fetch(url, {
-      ...options,
-      signal: AbortSignal.timeout(30000), // 30 second timeout
-    });
+    const authOptions = buildAuthOptions(options);
+    let response = await fetch(url, authOptions);
+
+    // On 401, attempt a token refresh and retry once
+    if (response.status === 401) {
+      try {
+        await apiClient.refreshToken();
+
+        // Retry with the new token
+        const retryOptions = buildAuthOptions(options);
+        response = await fetch(url, retryOptions);
+      } catch {
+        // Refresh failed; return the original 401 response so callers
+        // can handle it through their normal error path.
+        return response;
+      }
+    }
+
     return response;
   } catch (error) {
     if (error instanceof Error) {

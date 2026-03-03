@@ -6,8 +6,8 @@ from uuid import UUID
 import httpx
 from fastapi import HTTPException, status
 
-from echoroo.models.tag import Tag
 from echoroo.models.enums import TagCategory
+from echoroo.models.tag import Tag
 from echoroo.repositories.tag import TagRepository
 from echoroo.schemas.tag import (
     GBIFSuggestion,

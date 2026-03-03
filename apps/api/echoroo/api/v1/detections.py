@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import io
 from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, status
+from fastapi.responses import StreamingResponse
 
 from echoroo.core.database import DbSession
 from echoroo.middleware.auth import CurrentUser
@@ -22,6 +24,7 @@ from echoroo.schemas.detection import (
     SpeciesSummaryResponse,
 )
 from echoroo.services.detection import DetectionService
+from echoroo.services.detection_export import DetectionExportService
 
 router = APIRouter(prefix="/projects/{project_id}/detections", tags=["detections"])
 
@@ -128,6 +131,94 @@ async def get_species_summary(
     return await service.get_species_summary(
         project_id=project_id,
         dataset_id=dataset_id,
+    )
+
+
+@router.get(
+    "/export/csv",
+    summary="Export detections as CSV",
+    description="Export detection annotations as CSV with optional filters",
+)
+async def export_csv(
+    project_id: UUID,
+    current_user: CurrentUser,
+    db: DbSession,
+    status: DetectionStatus | None = None,
+    tag_id: UUID | None = None,
+    dataset_id: UUID | None = None,
+) -> StreamingResponse:
+    """Export detections as a CSV file.
+
+    NOTE: This route must appear before /{detection_id} to avoid routing conflicts.
+
+    Args:
+        project_id: Project's UUID
+        current_user: Current authenticated user
+        db: Database session
+        status: Optional detection status filter
+        tag_id: Optional tag UUID filter
+        dataset_id: Optional dataset UUID filter
+
+    Returns:
+        StreamingResponse with CSV content (text/csv)
+
+    Raises:
+        401: Not authenticated
+    """
+    service = DetectionExportService(db)
+    csv_content = await service.export_csv(
+        project_id=project_id,
+        status=status,
+        tag_id=tag_id,
+        dataset_id=dataset_id,
+    )
+    return StreamingResponse(
+        io.BytesIO(csv_content.encode("utf-8")),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=detections.csv"},
+    )
+
+
+@router.get(
+    "/export/ml-dataset",
+    summary="Export ML training dataset",
+    description="Export confirmed detections as a ZIP-archived ML training dataset",
+)
+async def export_ml_dataset(
+    project_id: UUID,
+    current_user: CurrentUser,
+    db: DbSession,
+    dataset_id: UUID | None = None,
+) -> StreamingResponse:
+    """Export confirmed detections as a ZIP ML training dataset.
+
+    The archive contains annotations.csv, metadata.json, and README.txt.
+    Positive entries are confirmed annotations; negative entries are confirmed
+    regions with no overlapping confirmed annotation.
+
+    NOTE: This route must appear before /{detection_id} to avoid routing conflicts.
+
+    Args:
+        project_id: Project's UUID
+        current_user: Current authenticated user
+        db: Database session
+        dataset_id: Optional dataset UUID filter
+
+    Returns:
+        StreamingResponse with ZIP content (application/zip)
+
+    Raises:
+        401: Not authenticated
+    """
+    service = DetectionExportService(db)
+    zip_content = await service.export_ml_dataset(
+        project_id=project_id,
+        dataset_id=dataset_id,
+    )
+    return StreamingResponse(
+        io.BytesIO(zip_content),
+        media_type="application/zip",
+        headers={"Content-Disposition": "attachment; filename=ml-dataset.zip"},
     )
 
 

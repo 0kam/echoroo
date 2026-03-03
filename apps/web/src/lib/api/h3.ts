@@ -7,6 +7,7 @@ import type {
   H3FromCoordinatesResponse,
   H3ValidationResponse,
 } from '$lib/types/data';
+import { fetchWithErrorHandling, handleApiResponse } from './errors';
 
 const API_BASE = '/api/v1';
 
@@ -14,18 +15,13 @@ const API_BASE = '/api/v1';
  * Validate an H3 index.
  */
 export async function validateH3Index(h3Index: string): Promise<H3ValidationResponse> {
-  const response = await fetch(`${API_BASE}/h3/validate`, {
+  const response = await fetchWithErrorHandling(`${API_BASE}/h3/validate`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    credentials: 'include',
     body: JSON.stringify({ h3_index: h3Index }),
   });
 
-  if (!response.ok) {
-    throw new Error('Failed to validate H3 index');
-  }
-
-  return response.json();
+  return handleApiResponse<H3ValidationResponse>(response);
 }
 
 /**
@@ -38,17 +34,11 @@ export async function getH3FromCoordinates(
 ): Promise<H3FromCoordinatesResponse> {
   const request: H3FromCoordinatesRequest = { latitude, longitude, resolution };
 
-  const response = await fetch(`${API_BASE}/h3/from-coordinates`, {
+  const response = await fetchWithErrorHandling(`${API_BASE}/h3/from-coordinates`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    credentials: 'include',
     body: JSON.stringify(request),
   });
 
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ detail: 'Failed to get H3 index' }));
-    throw new Error(error.detail || 'Failed to get H3 index');
-  }
-
-  return response.json();
+  return handleApiResponse<H3FromCoordinatesResponse>(response);
 }

@@ -55,6 +55,15 @@ export class ApiClient {
   }
 
   /**
+   * Public method to trigger a token refresh.
+   * Used by fetchWithErrorHandling in errors.ts to retry on 401.
+   * Deduplicates concurrent refresh attempts via the shared refreshPromise.
+   */
+  async refreshToken(): Promise<void> {
+    return this.refreshAccessToken();
+  }
+
+  /**
    * Refresh access token using refresh token from cookie
    */
   private async refreshAccessToken(): Promise<void> {

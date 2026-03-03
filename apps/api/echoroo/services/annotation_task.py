@@ -9,6 +9,7 @@ from echoroo.models.annotation_task import AnnotationTask
 from echoroo.models.enums import AnnotationTaskStatus
 from echoroo.repositories.annotation_project import AnnotationProjectRepository
 from echoroo.repositories.annotation_task import AnnotationTaskRepository
+from echoroo.schemas.annotation_project import TagSummary
 from echoroo.schemas.annotation_task import (
     AnnotationProjectSummary,
     AnnotationTaskDetailResponse,
@@ -19,7 +20,6 @@ from echoroo.schemas.annotation_task import (
     RecordingSummaryForTask,
     TaskCompletionResponse,
 )
-from echoroo.schemas.annotation_project import TagSummary
 
 
 class AnnotationTaskService:

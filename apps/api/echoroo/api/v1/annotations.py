@@ -301,7 +301,7 @@ async def add_sound_event_tag(
         404: Sound event annotation not found
     """
     await service.add_sound_event_tag(sound_event_id, request.tag_id)
-    return dict()
+    return {}
 
 
 @router.delete(
@@ -334,7 +334,7 @@ async def remove_sound_event_tag(
         404: Sound event annotation not found
     """
     await service.remove_sound_event_tag(sound_event_id, tag_id)
-    return dict()
+    return {}
 
 
 @router.post(
