@@ -16,7 +16,7 @@ class DetectionRunCreate(BaseModel):
     dataset_id: UUID | None = Field(None, description="Optional dataset ID to scope the run")
     model_name: str = Field(..., min_length=1, max_length=100, description="Name of the detection model")
     model_version: str = Field(..., min_length=1, max_length=50, description="Version of the detection model")
-    parameters: dict | None = Field(None, description="Optional model parameters")
+    parameters: dict[str, object] | None = Field(None, description="Optional model parameters")
 
 
 class DetectionRunUpdate(BaseModel):
@@ -35,7 +35,7 @@ class DetectionRunResponse(BaseModel):
     dataset_id: UUID | None
     model_name: str
     model_version: str
-    parameters: dict | None
+    parameters: dict[str, object] | None
     status: DetectionRunStatus
     annotation_count: int
     started_at: datetime | None

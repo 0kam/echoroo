@@ -4,8 +4,8 @@ import csv
 import io
 import json
 import zipfile
+from collections.abc import AsyncGenerator
 from pathlib import Path
-from typing import AsyncGenerator
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession

@@ -1,6 +1,6 @@
 """Annotation service for business logic."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import UUID
 
 from fastapi import HTTPException, status
@@ -62,8 +62,9 @@ class AnnotationService:
         Raises:
             HTTPException: 404 if the referenced task does not exist
         """
-        from echoroo.models.annotation_task import AnnotationTask
         from sqlalchemy import select
+
+        from echoroo.models.annotation_task import AnnotationTask
 
         # Verify task exists and retrieve clip_id
         task_result = await self.clip_annotation_repo.db.execute(
@@ -316,8 +317,9 @@ class AnnotationService:
         Raises:
             HTTPException: 404 if any referenced task does not exist
         """
-        from echoroo.models.annotation_task import AnnotationTask
         from sqlalchemy import select
+
+        from echoroo.models.annotation_task import AnnotationTask
 
         clip_annotations: list[ClipAnnotationDetailResponse] = []
 
@@ -431,15 +433,15 @@ class AnnotationService:
 
         try:
             review_status = ReviewStatus(status_value)
-        except ValueError:
+        except ValueError as exc:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=f"Invalid review status: {status_value}. Must be 'approved' or 'rejected'",
-            )
+            ) from exc
 
         clip_annotation.review_status = review_status
         clip_annotation.reviewed_by_id = reviewer_id
-        clip_annotation.reviewed_at = datetime.now(timezone.utc)
+        clip_annotation.reviewed_at = datetime.now(UTC)
 
         updated = await self.clip_annotation_repo.update_review(clip_annotation)
 

@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from sqlalchemy import Column, DateTime, Enum, ForeignKey, Index, Table, UniqueConstraint
+from sqlalchemy import Column, DateTime, Enum, ForeignKey, Index, Table
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 

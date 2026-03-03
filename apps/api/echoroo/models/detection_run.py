@@ -61,7 +61,7 @@ class DetectionRun(UUIDMixin, TimestampMixin, Base):
         nullable=False,
         doc="Version of the detection model",
     )
-    parameters: Mapped[dict | None] = mapped_column(
+    parameters: Mapped[dict[str, object] | None] = mapped_column(
         JSONB,
         nullable=True,
         doc="Optional model parameters as JSON",

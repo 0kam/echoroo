@@ -13,7 +13,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from echoroo.models.annotation_project import AnnotationProject
 from echoroo.models.annotation_task import AnnotationTask
 from echoroo.models.clip import Clip
-from echoroo.models.clip_annotation import ClipAnnotation
 from echoroo.models.dataset import Dataset
 from echoroo.models.enums import (
     AnnotationProjectVisibility,
@@ -21,7 +20,6 @@ from echoroo.models.enums import (
     DatasetStatus,
     DatasetVisibility,
     DatetimeParseStatus,
-    ReviewStatus,
     TagCategory,
 )
 from echoroo.models.project import Project
@@ -29,7 +27,6 @@ from echoroo.models.recording import Recording
 from echoroo.models.site import Site
 from echoroo.models.tag import Tag
 from echoroo.models.user import User
-
 
 # ---------------------------------------------------------------------------
 # Fixtures

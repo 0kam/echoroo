@@ -3,11 +3,16 @@
 Tests verify that endpoints conform to the data management specification.
 """
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from echoroo.models.site import Site
+if TYPE_CHECKING:
+    from echoroo.models.project import ProjectMember
 
 
 @pytest.mark.asyncio
@@ -186,7 +191,7 @@ class TestSiteEndpoints:
         client: AsyncClient,
         auth_headers_member: dict[str, str],
         test_project_id: str,
-        test_member: "ProjectMember",  # noqa: F821
+        test_member: ProjectMember,  # noqa: F821
     ) -> None:
         """Test POST /api/v1/projects/{project_id}/sites requires admin role."""
         site_data = {
@@ -328,7 +333,7 @@ class TestSiteEndpoints:
         client: AsyncClient,
         auth_headers_member: dict[str, str],
         test_project_id: str,
-        test_member: "ProjectMember",  # noqa: F821
+        test_member: ProjectMember,  # noqa: F821
         db_session: AsyncSession,
     ) -> None:
         """Test PATCH /api/v1/projects/{project_id}/sites/{site_id} requires admin role."""
@@ -399,7 +404,7 @@ class TestSiteEndpoints:
         client: AsyncClient,
         auth_headers_member: dict[str, str],
         test_project_id: str,
-        test_member: "ProjectMember",  # noqa: F821
+        test_member: ProjectMember,  # noqa: F821
     ) -> None:
         """Test DELETE /api/v1/projects/{project_id}/sites/{site_id} requires admin role."""
         fake_id = "00000000-0000-0000-0000-000000000000"

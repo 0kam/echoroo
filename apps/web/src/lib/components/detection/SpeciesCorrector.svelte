@@ -88,12 +88,15 @@
         on:blur={handleInputBlur}
         on:keydown={handleKeydown}
         autocomplete="off"
+        role="combobox"
         aria-label="Search for replacement species"
         aria-expanded={isOpen}
+        aria-controls="species-listbox"
       />
 
       {#if isOpen && (filteredTags.length > 0 || $tagsQuery.isLoading)}
         <div
+          id="species-listbox"
           class="absolute left-0 top-full z-50 mt-1 max-h-48 w-56 overflow-y-auto rounded-md border border-stone-200 bg-white shadow-lg"
           role="listbox"
           aria-label="Species suggestions"

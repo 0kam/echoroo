@@ -1,13 +1,31 @@
 <script lang="ts">
   /**
-   * Project detail layout with sidebar navigation
+   * Project detail layout with sidebar navigation.
+   * Rendered inside the (app) layout which provides the top header.
    */
 
   import { page } from '$app/stores';
+  import { createQuery } from '@tanstack/svelte-query';
+  import { projectsApi } from '$lib/api/projects';
 
-  $: projectId = $page.params.id;
+  interface Props {
+    children: import('svelte').Snippet;
+  }
 
-  // Navigation items for the project sidebar
+  let { children }: Props = $props();
+
+  const projectId = $derived($page.params.id);
+
+  // Fetch project data to display name in the sidebar header
+  const projectQuery = $derived(
+    createQuery({
+      queryKey: ['project', projectId],
+      queryFn: () => projectsApi.get(projectId as string),
+      enabled: !!projectId,
+    })
+  );
+
+  // Navigation items for the project sidebar (5 items)
   const navItems = [
     {
       name: 'Overview',
@@ -15,24 +33,9 @@
       icon: 'M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6',
     },
     {
-      name: 'Datasets',
-      hrefSuffix: '/datasets',
-      icon: 'M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4',
-    },
-    {
-      name: 'Recordings',
-      hrefSuffix: '/recordings',
-      icon: 'M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z',
-    },
-    {
-      name: 'Sites',
-      hrefSuffix: '/sites',
-      icon: 'M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z M15 11a3 3 0 11-6 0 3 3 0 016 0z',
-    },
-    {
-      name: 'Annotations',
-      hrefSuffix: '/annotations',
-      icon: 'M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z',
+      name: 'Sites & Data',
+      hrefSuffix: '/data',
+      icon: 'M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4',
     },
     {
       name: 'Detections',
@@ -40,9 +43,9 @@
       icon: 'M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3',
     },
     {
-      name: 'Members',
-      hrefSuffix: '/members',
-      icon: 'M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z',
+      name: 'Reports',
+      hrefSuffix: '/reports',
+      icon: 'M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z',
     },
     {
       name: 'Settings',
@@ -64,7 +67,7 @@
   }
 </script>
 
-<div class="flex h-screen bg-gray-50">
+<div class="flex flex-1 overflow-hidden bg-gray-50">
   <!-- Sidebar -->
   <aside class="w-56 flex-shrink-0 border-r border-gray-200 bg-white">
     <!-- Back link -->
@@ -90,6 +93,19 @@
       </a>
     </div>
 
+    <!-- Project name -->
+    <div class="border-b border-gray-200 px-4 py-3">
+      {#if $projectQuery.isLoading}
+        <div class="h-4 w-32 animate-pulse rounded bg-gray-200"></div>
+      {:else if $projectQuery.data}
+        <p class="truncate text-xs font-semibold text-gray-900" title={$projectQuery.data.name}>
+          {$projectQuery.data.name}
+        </p>
+      {:else}
+        <p class="text-xs text-gray-400">Project</p>
+      {/if}
+    </div>
+
     <!-- Navigation -->
     <nav class="flex-1 space-y-0.5 p-3">
       {#each navItems as item}
@@ -112,6 +128,6 @@
 
   <!-- Main Content -->
   <main class="flex-1 overflow-auto">
-    <slot />
+    {@render children()}
   </main>
 </div>

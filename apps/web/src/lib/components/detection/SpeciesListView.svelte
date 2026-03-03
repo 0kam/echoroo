@@ -10,11 +10,13 @@
   import type { DetectionFilters } from '$lib/types/detection';
   import SpeciesListItem from './SpeciesListItem.svelte';
   import DetectionFiltersComponent from './DetectionFilters.svelte';
+  import DetectionExportDialog from './DetectionExportDialog.svelte';
 
   export let projectId: string;
 
   let filters: DetectionFilters = {};
   let searchText: string = '';
+  let isExportDialogOpen: boolean = false;
 
   $: speciesSummaryQuery = createQuery({
     queryKey: ['species-summary', projectId, searchText],
@@ -58,13 +60,21 @@
   function handleSearchChange(event: Event) {
     searchText = (event.target as HTMLInputElement).value;
   }
+
+  function openExportDialog() {
+    isExportDialogOpen = true;
+  }
+
+  function closeExportDialog() {
+    isExportDialogOpen = false;
+  }
 </script>
 
 <div class="space-y-4">
   <!-- Filter bar -->
   <DetectionFiltersComponent {filters} onFilterChange={handleFilterChangeWithSearch} />
 
-  <!-- Header with total count -->
+  <!-- Header with total count and export button -->
   <div class="flex items-center justify-between">
     <div class="text-sm text-gray-600">
       {#if $speciesSummaryQuery.isLoading}
@@ -78,13 +88,52 @@
         {/if}
       {/if}
     </div>
+
+    <!-- Export button -->
+    <button
+      type="button"
+      on:click={openExportDialog}
+      class="flex items-center gap-1.5 rounded-md border border-gray-200 bg-white px-3 py-1.5 text-sm font-medium text-gray-600 hover:bg-gray-50 hover:border-gray-300 transition-colors"
+      aria-label="Export detections"
+    >
+      <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+      </svg>
+      Export
+    </button>
   </div>
 
   <!-- Content -->
   {#if $speciesSummaryQuery.isLoading}
     <div class="space-y-2">
       {#each { length: 5 } as _}
-        <div class="h-16 animate-pulse rounded-lg bg-gray-100"></div>
+        <!-- Skeleton mimicking SpeciesListItem structure -->
+        <div class="animate-pulse rounded-lg border border-gray-100 bg-white p-3">
+          <!-- Top row: species name + scientific name placeholder + right-side stats -->
+          <div class="flex items-start justify-between gap-3">
+            <div class="min-w-0 flex-1">
+              <!-- Common name placeholder -->
+              <div class="h-4 w-2/5 rounded bg-gray-200"></div>
+              <!-- Scientific name placeholder -->
+              <div class="mt-1.5 h-3 w-1/3 rounded bg-gray-100"></div>
+            </div>
+            <!-- Right-side stats placeholders -->
+            <div class="flex shrink-0 items-center gap-2">
+              <div class="h-5 w-10 rounded bg-green-100"></div>
+              <div class="h-5 w-10 rounded bg-red-100"></div>
+              <div class="h-5 w-10 rounded bg-gray-100"></div>
+            </div>
+          </div>
+          <!-- Progress bar placeholder -->
+          <div class="mt-2.5 h-1.5 w-full rounded-full bg-gray-100">
+            <div class="h-1.5 w-1/3 rounded-full bg-gray-200"></div>
+          </div>
+          <!-- Counts row placeholder -->
+          <div class="mt-2 flex items-center gap-3">
+            <div class="h-3 w-20 rounded bg-gray-100"></div>
+            <div class="h-3 w-16 rounded bg-gray-100"></div>
+          </div>
+        </div>
       {/each}
     </div>
   {:else if $speciesSummaryQuery.isError}
@@ -121,3 +170,11 @@
     </div>
   {/if}
 </div>
+
+<!-- Export dialog -->
+<DetectionExportDialog
+  {projectId}
+  isOpen={isExportDialogOpen}
+  initialFormat="csv"
+  onClose={closeExportDialog}
+/>

@@ -631,4 +631,4 @@ async def export_dataset(
             headers={"Content-Disposition": f'attachment; filename="{filename}"'},
         )
     except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+        raise HTTPException(status_code=404, detail=str(e)) from e

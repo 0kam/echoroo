@@ -1,8 +1,6 @@
 """Fixtures for integration tests."""
 
-import tempfile
 from pathlib import Path
-from uuid import UUID
 
 import numpy as np
 import pytest

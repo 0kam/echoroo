@@ -26,6 +26,9 @@ dependencies = [
     "numpy>=1.26.0",
     "scipy>=1.11.0",
     "matplotlib>=3.8.0",
+    "torch>=2.3.0",
+    "torchaudio>=2.3.0",
+    "Pillow>=10.0.0",
 ]
 
 [project.optional-dependencies]
@@ -99,6 +102,12 @@ module = [
     "matplotlib.*",
     "h3",
     "h3.*",
+    "torch",
+    "torch.*",
+    "torchaudio",
+    "torchaudio.*",
+    "PIL",
+    "PIL.*",
 ]
 ignore_missing_imports = true
 

@@ -8,6 +8,8 @@ from echoroo.schemas.annotation import (
     SoundEventAnnotationCreate,
     SoundEventAnnotationResponse,
     SoundEventAnnotationUpdate,
+)
+from echoroo.schemas.annotation import (
     TagSummary as AnnotationTagSummary,
 )
 from echoroo.schemas.annotation_project import (
@@ -62,6 +64,8 @@ from echoroo.schemas.dataset import (
 from echoroo.schemas.note import NoteCreate, NoteResponse
 from echoroo.schemas.recording import (
     DatasetSummary as RecordingDatasetSummary,
+)
+from echoroo.schemas.recording import (
     PlaybackParams,
     RecordingDetailResponse,
     RecordingListResponse,
