@@ -46,6 +46,7 @@ class DetectionRunRepository:
         project_id: UUID,
         page: int = 1,
         page_size: int = 50,
+        dataset_id: UUID | None = None,
     ) -> tuple[list[DetectionRun], int]:
         """List detection runs for a project with pagination.
 
@@ -53,11 +54,14 @@ class DetectionRunRepository:
             project_id: Project's UUID
             page: Page number (1-indexed)
             page_size: Items per page
+            dataset_id: Optional filter by dataset UUID
 
         Returns:
             Tuple of (list of detection runs, total count)
         """
         conditions = [DetectionRun.project_id == project_id]
+        if dataset_id is not None:
+            conditions.append(DetectionRun.dataset_id == dataset_id)
 
         count_result = await self.db.execute(
             select(func.count()).select_from(DetectionRun).where(*conditions)

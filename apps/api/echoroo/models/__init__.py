@@ -13,6 +13,7 @@ from echoroo.models.clip_annotation import ClipAnnotation, clip_annotation_tags
 from echoroo.models.confirmed_region import ConfirmedRegion
 from echoroo.models.dataset import Dataset
 from echoroo.models.detection_run import DetectionRun
+from echoroo.models.embedding import Embedding
 from echoroo.models.enums import (
     AnnotationProjectVisibility,
     AnnotationSource,
@@ -74,6 +75,8 @@ __all__ = [
     "Annotation",
     "ConfirmedRegion",
     "DetectionRun",
+    # ML embedding models
+    "Embedding",
     # Upload models
     "UploadSession",
     "UploadFile",

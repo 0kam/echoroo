@@ -126,7 +126,7 @@ services:
     build:
       context: ./apps/api
       dockerfile: Dockerfile.dev
-    command: uv run celery -A echoroo.workers.celery_app worker -l info -c 2
+    command: uv run celery -A echoroo.workers.celery_app worker -l info --pool=solo
     environment:
       - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-echoroo}
       - REDIS_URL=redis://redis:6379/0
@@ -136,9 +136,12 @@ services:
       - S3_ACCESS_KEY=echoroo
       - S3_SECRET_KEY=echoroo-dev
       - S3_BUCKET=echoroo
+      - AUDIO_ROOT=/data/audio
     volumes:
       - ./apps/api:/app
       - backend-data:/data
+      - ${ECHOROO_AUDIO_DIR:-/tmp/echoroo-audio}:/data/audio:ro
+      - ml-models-data:/data/ml_models
     depends_on:
       db:
         condition: service_healthy
@@ -208,3 +211,5 @@ volumes:
     name: echoroo-dev-redis
   localstack-data:
     name: echoroo-dev-localstack
+  ml-models-data:
+    name: echoroo-dev-ml-models

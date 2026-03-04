@@ -23,7 +23,13 @@ from uuid import UUID, uuid4
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from echoroo.core.s3 import delete_objects_by_prefix, get_object_stream, get_s3_client, move_object, verify_object_exists
+from echoroo.core.s3 import (
+    delete_objects_by_prefix,
+    get_object_stream,
+    get_s3_client,
+    move_object,
+    verify_object_exists,
+)
 from echoroo.core.settings import get_settings
 from echoroo.models.enums import DatetimeParseStatus, UploadFileStatus, UploadSessionStatus
 from echoroo.models.recording import Recording
@@ -59,6 +65,11 @@ def _get_session_factory() -> async_sessionmaker[AsyncSession]:
     Each Celery task calls ``asyncio.run()`` which creates a new event loop.
     Reusing a cached engine across loops causes "Future attached to a different
     loop" errors, so we create a fresh engine every time.
+
+    TODO: expose the engine so callers can dispose it in a finally block after
+    the task completes (same pattern as ml_tasks._get_engine_and_session_factory).
+    Currently the engine is leaked to GC, which is acceptable for short-lived
+    tasks but should be cleaned up for consistency.
     """
     settings = get_settings()
     engine = create_async_engine(settings.DATABASE_URL, echo=False, pool_pre_ping=True)
@@ -554,6 +565,17 @@ async def _run_import(
             imported_count,
             failed_count,
         )
+
+        # Trigger BirdNET detection after successful import
+        try:
+            from echoroo.workers.ml_tasks import run_birdnet_detection
+
+            run_birdnet_detection.delay(str(dataset_id), str(project_id))
+            logger.info("Triggered BirdNET detection for dataset %s", dataset_id)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Failed to trigger BirdNET detection: %s", e)
+            # Import itself should still succeed even if ML trigger fails
+
         return {
             "session_id": session_id,
             "imported_files": imported_count,

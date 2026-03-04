@@ -130,6 +130,48 @@ class TagRepository:
         await self.db.execute(delete(Tag).where(Tag.id == tag_id))
         await self.db.flush()
 
+    async def get_or_create_species(
+        self,
+        project_id: UUID,
+        scientific_name: str,
+        common_name: str,
+    ) -> Tag:
+        """Get an existing species tag by scientific name or create a new one.
+
+        Queries by project_id and scientific_name. Creates a new tag with
+        category=SPECIES when no match is found.
+
+        Args:
+            project_id: Project UUID to scope the lookup.
+            scientific_name: Scientific species name (e.g. "Turdus merula").
+            common_name: Common species name (e.g. "Eurasian Blackbird").
+
+        Returns:
+            Existing or newly created Tag instance.
+        """
+        result = await self.db.execute(
+            select(Tag)
+            .where(Tag.project_id == project_id)
+            .where(Tag.scientific_name == scientific_name)
+            .where(Tag.category == TagCategory.SPECIES)
+            .options(selectinload(Tag.project))
+        )
+        existing = result.scalar_one_or_none()
+        if existing is not None:
+            return existing
+
+        tag = Tag(
+            project_id=project_id,
+            name=scientific_name,
+            category=TagCategory.SPECIES,
+            scientific_name=scientific_name,
+            common_name=common_name,
+        )
+        self.db.add(tag)
+        await self.db.flush()
+        await self.db.refresh(tag, ["project"])
+        return tag
+
     async def get_statistics(self, project_id: UUID) -> list[tuple[Tag, int]]:
         """Get tags with their usage counts across clip and sound event annotations.
 

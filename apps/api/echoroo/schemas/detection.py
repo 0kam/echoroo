@@ -97,14 +97,22 @@ class SpeciesSummaryResponse(BaseModel):
 
 
 class ConfirmRequest(BaseModel):
-    """Request schema for confirming a detection."""
+    """Request schema for confirming a detection.
 
-    start_time: float = Field(..., ge=0.0, description="Confirmed start time in seconds")
-    end_time: float = Field(..., gt=0.0, description="Confirmed end time in seconds")
+    Both fields are optional. When omitted, the annotation's existing
+    start_time / end_time are preserved (quick-confirm without time adjustment).
+    """
+
+    start_time: float | None = Field(None, ge=0.0, description="Confirmed start time in seconds")
+    end_time: float | None = Field(None, gt=0.0, description="Confirmed end time in seconds")
 
     @model_validator(mode="after")
     def validate_time_range(self) -> ConfirmRequest:
-        if self.end_time <= self.start_time:
+        if (
+            self.start_time is not None
+            and self.end_time is not None
+            and self.end_time <= self.start_time
+        ):
             raise ValueError("end_time must be greater than start_time")
         return self
 
