@@ -35,6 +35,7 @@
   let datasetToDelete = $state<Dataset | null>(null);
   let showDatasetDeleteDialog = $state(false);
   let datasetDeleteWarningItems = $state<string[]>([]);
+  let datasetDeleteError = $state<string | null>(null);
   let datasetCurrentPage = $state(1);
   let datasetSearch = $state('');
   let datasetStatusFilter = $state<DatasetStatus | ''>('');
@@ -82,9 +83,10 @@
 
   const datasetCreateMutation = createMutation({
     mutationFn: (data: DatasetCreate) => createDataset(projectId, data),
-    onSuccess: () => {
+    onSuccess: (created) => {
       queryClient.invalidateQueries({ queryKey: ['datasets', projectId] });
       showDatasetCreateForm = false;
+      goto(`/projects/${projectId}/datasets/${created.id}`);
     },
   });
 
@@ -93,6 +95,11 @@
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['datasets', projectId] });
       datasetToDelete = null;
+      showDatasetDeleteDialog = false;
+      datasetDeleteError = null;
+    },
+    onError: (error: Error) => {
+      datasetDeleteError = error.message || 'Failed to delete dataset';
     },
   });
 
@@ -147,6 +154,7 @@
 
   async function handleDatasetDeleteClick(dataset: Dataset) {
     datasetToDelete = dataset;
+    datasetDeleteError = null;
     try {
       const datasetDetail = await fetchDataset(projectId, dataset.id);
       const warnings: string[] = [];
@@ -167,9 +175,14 @@
 
   async function confirmDatasetDelete() {
     if (datasetToDelete) {
-      await $datasetDeleteMutation.mutateAsync(datasetToDelete.id);
-      showDatasetDeleteDialog = false;
-      datasetToDelete = null;
+      datasetDeleteError = null;
+      try {
+        await $datasetDeleteMutation.mutateAsync(datasetToDelete.id);
+        // onSuccess handles closing the dialog and clearing state
+      } catch {
+        // Error is displayed via datasetDeleteError set in onError handler
+        // Keep the dialog open so the user can see the error
+      }
     }
   }
 
@@ -177,6 +190,7 @@
     showDatasetDeleteDialog = false;
     datasetToDelete = null;
     datasetDeleteWarningItems = [];
+    datasetDeleteError = null;
   }
 
   async function handleDatasetCreateSubmit(data: DatasetCreate | DatasetUpdate) {
@@ -440,4 +454,5 @@
   onConfirm={confirmDatasetDelete}
   onCancel={cancelDatasetDelete}
   warningItems={datasetDeleteWarningItems}
+  errorMessage={datasetDeleteError}
 />

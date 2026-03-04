@@ -29,6 +29,8 @@ from echoroo.models.enums import (
     ReviewStatus,
     SettingType,
     TagCategory,
+    UploadFileStatus,
+    UploadSessionStatus,
 )
 from echoroo.models.license import License
 from echoroo.models.note import Note
@@ -39,6 +41,7 @@ from echoroo.models.site import Site
 from echoroo.models.sound_event_annotation import SoundEventAnnotation, sound_event_annotation_tags
 from echoroo.models.system import SystemSetting
 from echoroo.models.tag import Tag
+from echoroo.models.upload import UploadFile, UploadSession
 from echoroo.models.user import APIToken, LoginAttempt, User
 
 __all__ = [
@@ -71,6 +74,9 @@ __all__ = [
     "Annotation",
     "ConfirmedRegion",
     "DetectionRun",
+    # Upload models
+    "UploadSession",
+    "UploadFile",
     # Association tables
     "annotation_project_datasets",
     "annotation_project_tags",
@@ -94,4 +100,7 @@ __all__ = [
     "DetectionSource",
     "DetectionStatus",
     "DetectionRunStatus",
+    # Enums (upload)
+    "UploadSessionStatus",
+    "UploadFileStatus",
 ]

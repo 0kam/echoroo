@@ -7,7 +7,9 @@
   import DatasetForm from '$lib/components/data/DatasetForm.svelte';
   import DatasetStatistics from '$lib/components/data/DatasetStatistics.svelte';
   import ImportProgress from '$lib/components/data/ImportProgress.svelte';
+  import FileUpload from '$lib/components/data/FileUpload.svelte';
   import ExportDialog from '$lib/components/data/ExportDialog.svelte';
+  import RecordingList from '$lib/components/data/RecordingList.svelte';
   import DeleteConfirmDialog from '$lib/components/ui/DeleteConfirmDialog.svelte';
 
   const queryClient = useQueryClient();
@@ -172,11 +174,6 @@
           <span class="text-sm text-gray-900 capitalize">{dataset.visibility}</span>
         </div>
 
-        <div class="col-span-2 flex flex-col gap-1 sm:col-span-3">
-          <span class="text-xs font-medium uppercase tracking-wider text-gray-400">Audio Directory</span>
-          <code class="inline-block rounded bg-gray-100 px-2 py-1 font-mono text-xs text-gray-700">{dataset.audio_dir}</code>
-        </div>
-
         {#if dataset.recorder}
           <div class="flex flex-col gap-1">
             <span class="text-xs font-medium uppercase tracking-wider text-gray-400">Recorder</span>
@@ -228,28 +225,39 @@
       {/if}
     </div>
 
-    <!-- Import Progress -->
-    <ImportProgress {projectId} {datasetId} currentStatus={dataset.status} />
+    <!-- Import Progress (not shown when pending - FileUpload handles the full flow) -->
+    {#if dataset.status !== 'pending'}
+      <ImportProgress {projectId} {datasetId} currentStatus={dataset.status} />
+    {/if}
+
+    <!-- File Upload (available when dataset is pending or completed) -->
+    {#if dataset.status === 'pending' || dataset.status === 'completed'}
+      <FileUpload
+        {projectId}
+        {datasetId}
+        onComplete={() => {
+          queryClient.invalidateQueries({ queryKey: ['dataset', projectId, datasetId] });
+        }}
+      />
+    {/if}
 
     <!-- Statistics (only if completed) -->
     {#if dataset.status === 'completed'}
       <DatasetStatistics {projectId} {datasetId} />
+    {/if}
 
-      <!-- Link to recordings -->
-      <div class="flex items-center justify-between rounded-lg border border-gray-200 bg-white p-5">
-        <div>
-          <h3 class="mb-0.5 text-base font-semibold text-gray-900">Recordings</h3>
-          <p class="text-sm text-gray-500">View and manage {dataset.recording_count} recording(s) in this dataset</p>
+    <!-- Recordings list (show when recordings exist) -->
+    {#if dataset.recording_count > 0}
+      <div class="rounded-lg border border-gray-200 bg-white p-6">
+        <div class="mb-4">
+          <h3 class="text-base font-semibold text-gray-900">Recordings</h3>
+          <p class="mt-0.5 text-sm text-gray-500">{dataset.recording_count} recording(s) in this dataset</p>
         </div>
-        <a
-          href="/projects/{projectId}/recordings?dataset={datasetId}"
-          class="flex items-center gap-2 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white no-underline transition-colors hover:bg-blue-700"
-        >
-          View Recordings
-          <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
-          </svg>
-        </a>
+        <RecordingList
+          {projectId}
+          {datasetId}
+          onSelect={(recordingId) => goto(`/projects/${projectId}/recordings/${recordingId}`)}
+        />
       </div>
     {/if}
   {/if}

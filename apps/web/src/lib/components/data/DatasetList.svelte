@@ -127,10 +127,6 @@
 
             <div class="mb-1 flex flex-wrap gap-4">
               <span class="text-xs text-gray-500">
-                <span class="font-medium">Path:</span>
-                <code class="ml-1 rounded bg-gray-100 px-1 py-0.5 font-mono text-xs">{dataset.audio_dir}</code>
-              </span>
-              <span class="text-xs text-gray-500">
                 <span class="font-medium">Files:</span> {dataset.processed_files} / {dataset.total_files}
               </span>
             </div>

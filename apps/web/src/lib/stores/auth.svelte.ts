@@ -4,6 +4,7 @@
 
 import type { User } from '$lib/types';
 import { apiClient } from '$lib/api/client';
+import { goto } from '$app/navigation';
 
 interface AuthState {
   user: User | null;
@@ -65,20 +66,35 @@ function createAuthStore() {
     },
 
     /**
-     * Initialize auth state by checking current session
+     * Initialize auth state by checking current session.
+     * If the session is invalid (e.g., expired/revoked refresh token),
+     * clears the client state and redirects to the login page.
      */
     async initialize(): Promise<void> {
       state.isLoading = true;
       try {
-        // Try to get current user from backend
+        // Try to get current user; this will attempt a token refresh internally
+        // if the access token is missing or expired.
         const user = await apiClient.get<User>('/api/v1/users/me');
         state.user = user;
         state.isAuthenticated = true;
-      } catch {
-        // Not authenticated or session expired
+      } catch (error) {
+        // Clear client-side session state
         state.user = null;
         state.isAuthenticated = false;
         apiClient.setAccessToken(null);
+
+        // If the error is a 401 (unauthorized), the refresh token is also invalid.
+        // Redirect to login so the user can re-authenticate.
+        const isUnauthorized =
+          error instanceof Error &&
+          'status' in error &&
+          (error as { status: number }).status === 401;
+
+        if (isUnauthorized) {
+          // Use replace to avoid adding login to the back-navigation stack
+          await goto('/login', { replaceState: true });
+        }
       } finally {
         state.isLoading = false;
       }
@@ -157,3 +173,16 @@ function createAuthStore() {
 }
 
 export const authStore = createAuthStore();
+
+// Wire up the apiClient refresh failure callback so that when a background
+// request fails to refresh (e.g., mid-session expiry), the auth store is
+// cleared and the user is redirected to login.
+apiClient.onRefreshFailed = () => {
+  authStore.clearUser();
+  goto('/login', { replaceState: true }).catch(() => {
+    // If SvelteKit navigation is not available (e.g., during SSR), fall back to hard redirect
+    if (typeof window !== 'undefined') {
+      window.location.href = '/login';
+    }
+  });
+};

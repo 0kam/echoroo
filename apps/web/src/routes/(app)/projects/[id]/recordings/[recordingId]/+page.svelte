@@ -1,5 +1,6 @@
 <script lang="ts">
   import { page } from '$app/stores';
+  import { browser } from '$app/environment';
   import { createQuery, createMutation, useQueryClient } from '@tanstack/svelte-query';
   import { getRecording, updateRecording, deleteRecording, getDownloadUrl } from '$lib/api/recordings';
   import { goto } from '$app/navigation';
@@ -26,17 +27,18 @@
     adjustWindowToBounds,
     centerWindowOn,
   } from '$lib/utils/viewport';
+  import { untrack } from 'svelte';
 
   // Route params
   let projectId = $derived($page.params.id as string);
   let recordingId = $derived($page.params.recordingId as string);
 
-  // Recording query
+  // Recording query - only fetch on client side to avoid SSR fetch issues
   let recordingQuery = $derived(
     createQuery({
       queryKey: ['recording', projectId, recordingId],
       queryFn: () => getRecording(projectId, recordingId),
-      enabled: !!projectId && !!recordingId,
+      enabled: browser && !!projectId && !!recordingId,
     })
   );
 
@@ -77,8 +79,52 @@
       samplerate: rec.samplerate,
     });
 
-    // Also adjust audio settings
-    audioSettings = { ...audioSettings, samplerate: rec.samplerate };
+    // Update samplerate directly to avoid read-write loop
+    // (spreading audioSettings inside $effect would track it as a dependency,
+    // causing an infinite reactive loop since each spread creates a new object)
+    audioSettings.samplerate = rec.samplerate;
+  });
+
+  // Track previous scale values to compute relative zoom on change.
+  let prevTimeScale = $state(spectrogramSettings.time_scale);
+  let prevFreqScale = $state(spectrogramSettings.freq_scale);
+
+  // When time_scale or freq_scale changes, zoom the viewport relative to
+  // its current size (not relative to the full recording bounds).
+  $effect(() => {
+    const timeScale = spectrogramSettings.time_scale;
+    const freqScale = spectrogramSettings.freq_scale;
+
+    const currentViewport = untrack(() => viewport);
+    const currentBounds = untrack(() => bounds);
+    const oldTimeScale = untrack(() => prevTimeScale);
+    const oldFreqScale = untrack(() => prevFreqScale);
+
+    // Skip if nothing changed (e.g. initial run)
+    if (timeScale === oldTimeScale && freqScale === oldFreqScale) return;
+
+    const currentDuration = currentViewport.time.max - currentViewport.time.min;
+    const currentBandwidth = currentViewport.freq.max - currentViewport.freq.min;
+
+    // Ratio: if scale went from 1x to 2x, shrink viewport to 1/2
+    const newDuration = currentDuration * (oldTimeScale / timeScale);
+    const newBandwidth = currentBandwidth * (oldFreqScale / freqScale);
+
+    const timeCenter = (currentViewport.time.min + currentViewport.time.max) / 2;
+    const freqCenter = (currentViewport.freq.min + currentViewport.freq.max) / 2;
+
+    const proposed: SpectrogramWindow = {
+      time: { min: timeCenter - newDuration / 2, max: timeCenter + newDuration / 2 },
+      freq: { min: freqCenter - newBandwidth / 2, max: freqCenter + newBandwidth / 2 },
+    };
+
+    viewport = adjustWindowToBounds(proposed, currentBounds);
+
+    // Update previous values (inside untrack to avoid re-triggering)
+    untrack(() => {
+      prevTimeScale = timeScale;
+      prevFreqScale = freqScale;
+    });
   });
 
   // Current audio time
@@ -100,25 +146,21 @@
 
   const queryClient = useQueryClient();
 
-  let updateMut = $derived(
-    createMutation({
-      mutationFn: (data: { note?: string; time_expansion?: number }) =>
-        updateRecording(projectId, recordingId, data),
-      onSuccess: () => {
-        showEditModal = false;
-        queryClient.invalidateQueries({ queryKey: ['recording', projectId, recordingId] });
-      },
-    })
-  );
+  const updateMut = createMutation({
+    mutationFn: (data: { note?: string; time_expansion?: number }) =>
+      updateRecording(projectId, recordingId, data),
+    onSuccess: () => {
+      showEditModal = false;
+      queryClient.invalidateQueries({ queryKey: ['recording', projectId, recordingId] });
+    },
+  });
 
-  let deleteMut = $derived(
-    createMutation({
-      mutationFn: () => deleteRecording(projectId, recordingId),
-      onSuccess: () => {
-        goto(`/projects/${projectId}/recordings`);
-      },
-    })
-  );
+  const deleteMut = createMutation({
+    mutationFn: () => deleteRecording(projectId, recordingId),
+    onSuccess: () => {
+      goto(`/projects/${projectId}/recordings`);
+    },
+  });
 
   // Viewport management
   function handleViewportChange(newViewport: SpectrogramWindow) {
@@ -376,6 +418,7 @@
           {speedOptions}
           {viewport}
           {bounds}
+          seekTo={currentTime}
           onViewportChange={handleViewportChange}
           onTimeUpdate={handleTimeUpdate}
           onSeek={handleSeek}

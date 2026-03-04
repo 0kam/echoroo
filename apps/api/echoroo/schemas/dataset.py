@@ -56,14 +56,13 @@ class DatasetCreate(BaseModel):
     site_id: UUID = Field(..., description="Parent site ID (required)")
     name: str = Field(..., min_length=1, max_length=200, description="Dataset name")
     description: str | None = Field(None, description="Dataset description")
-    audio_dir: str = Field(..., description="Relative path to audio directory")
     visibility: DatasetVisibility = Field(default=DatasetVisibility.PRIVATE, description="Dataset visibility")
     recorder_id: str | None = Field(None, description="Recording device ID")
     license_id: str | None = Field(None, description="Content license ID")
     doi: str | None = Field(None, description="Digital Object Identifier")
     gain: float | None = Field(None, ge=-100, le=100, description="Recording gain in dB")
     note: str | None = Field(None, description="Internal notes")
-    datetime_pattern: str | None = Field(None, description="Regex pattern for datetime extraction")
+    datetime_pattern: str | None = Field(None, max_length=200, description="Regex pattern for datetime extraction")
     datetime_format: str | None = Field(None, description="strftime format string")
 
 
@@ -78,7 +77,7 @@ class DatasetUpdate(BaseModel):
     doi: str | None = Field(None, description="Digital Object Identifier")
     gain: float | None = Field(None, ge=-100, le=100, description="Recording gain in dB")
     note: str | None = Field(None, description="Internal notes")
-    datetime_pattern: str | None = Field(None, description="Regex pattern for datetime extraction")
+    datetime_pattern: str | None = Field(None, max_length=200, description="Regex pattern for datetime extraction")
     datetime_format: str | None = Field(None, description="strftime format string")
 
 
@@ -93,7 +92,6 @@ class DatasetResponse(BaseModel):
     created_by_id: UUID
     name: str
     description: str | None
-    audio_dir: str
     visibility: DatasetVisibility
     status: DatasetStatus
     doi: str | None
@@ -132,9 +130,18 @@ class DatasetListResponse(BaseModel):
 
 
 class ImportRequest(BaseModel):
-    """Dataset import request."""
+    """Import request for upload-session based import."""
 
-    datetime_pattern: str | None = Field(None, description="Regex pattern for datetime extraction")
+    source: str | None = Field(
+        None,
+        description=(
+            "Import source URI. Must be an 'upload-session://<session_id>' URI "
+            "referencing a validated upload session. "
+            "If omitted, the most recent validated upload session for the dataset is used."
+        ),
+        examples=["upload-session://550e8400-e29b-41d4-a716-446655440000"],
+    )
+    datetime_pattern: str | None = Field(None, max_length=200, description="Regex pattern for datetime extraction")
     datetime_format: str | None = Field(None, description="strftime format string")
 
 
@@ -180,22 +187,6 @@ class DatasetStatisticsResponse(BaseModel):
     format_distribution: dict[str, int] = {}
     recordings_by_date: list[RecordingsByDate] = []
     recordings_by_hour: list[RecordingsByHour] = []
-
-
-class DirectoryInfo(BaseModel):
-    """Directory information for import."""
-
-    name: str
-    path: str
-    audio_file_count: int
-    formats: list[str]
-
-
-class DirectoryListResponse(BaseModel):
-    """Directory listing response."""
-
-    path: str
-    directories: list[DirectoryInfo]
 
 
 class ExportRequest(BaseModel):

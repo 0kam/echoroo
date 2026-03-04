@@ -1,150 +1,185 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
-  import { cellToBoundary, latLngToCell, isValidCell, getResolution, cellToLatLng } from 'h3-js';
+  import { cellToBoundary, latLngToCell, isValidCell, cellToLatLng } from 'h3-js';
+  import 'maplibre-gl/dist/maplibre-gl.css';
 
-  export let h3Index: string = '';
-  export let resolution: number = 9;
-  export let onSelect: (h3Index: string, center: [number, number]) => void = () => {};
+  interface Props {
+    h3Index?: string;
+    resolution?: number;
+    onSelect?: (h3Index: string, center: [number, number]) => void;
+    /** When true, disables click-to-select and hides resolution/selection controls */
+    readonly?: boolean;
+  }
+
+  let { h3Index = '', resolution = $bindable(9), onSelect = () => {}, readonly = false }: Props = $props();
 
   let mapContainer: HTMLDivElement;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let map: any = null;
-  let selectedH3: string | null = h3Index || null;
 
-  // Default center (Tokyo)
+  let map: maplibregl.Map | null = null;
+  let mapLoaded = false;
+
+  let selectedH3 = $state<string | null>(h3Index || null);
+  let hoverH3 = $state<string | null>(null);
+
   const defaultCenter: [number, number] = [139.6917, 35.6895];
   const defaultZoom = 10;
 
-  onMount(async () => {
-    // Dynamically import mapbox-gl to avoid SSR issues
-    const mapboxglModule = await import('mapbox-gl');
-    const mapboxgl = mapboxglModule.default;
-    await import('mapbox-gl/dist/mapbox-gl.css');
+  function h3ToGeoJSON(h3Cell: string): GeoJSON.FeatureCollection {
+    const boundary = cellToBoundary(h3Cell, true);
+    const coordinates = boundary.map((c) => [c[0], c[1]]);
+    return {
+      type: 'FeatureCollection',
+      features: [
+        {
+          type: 'Feature',
+          properties: {},
+          geometry: {
+            type: 'Polygon',
+            coordinates: [coordinates],
+          },
+        },
+      ],
+    };
+  }
 
-    // Use public style (no token required for basic maps)
-    map = new mapboxgl.Map({
+  const emptyGeoJSON: GeoJSON.FeatureCollection = {
+    type: 'FeatureCollection',
+    features: [],
+  };
+
+  function updateSelectedHex(h3Cell: string) {
+    if (!map || !mapLoaded) return;
+    const source = map.getSource('h3-selected') as maplibregl.GeoJSONSource | undefined;
+    if (source) {
+      source.setData(h3ToGeoJSON(h3Cell));
+    }
+  }
+
+  function updateHoverHex(h3Cell: string | null) {
+    if (!map || !mapLoaded) return;
+    const source = map.getSource('h3-hover') as maplibregl.GeoJSONSource | undefined;
+    if (source) {
+      source.setData(h3Cell ? h3ToGeoJSON(h3Cell) : emptyGeoJSON);
+    }
+  }
+
+  onMount(async () => {
+    const maplibregl = await import('maplibre-gl');
+
+    map = new maplibregl.Map({
       container: mapContainer,
-      style: 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json',
+      style: 'https://tiles.openfreemap.org/styles/liberty',
       center: defaultCenter,
       zoom: defaultZoom,
     });
 
-    map.addControl(new mapboxgl.NavigationControl(), 'top-right');
+    map.addControl(new maplibregl.NavigationControl(), 'top-right');
 
     map.on('load', () => {
-      // Add source for H3 hexagons
-      map!.addSource('h3-hexagons', {
-        type: 'geojson',
-        data: {
-          type: 'FeatureCollection',
-          features: [],
-        },
-      });
+      mapLoaded = true;
 
-      // Add fill layer
+      map!.addSource('h3-hover', { type: 'geojson', data: emptyGeoJSON });
       map!.addLayer({
-        id: 'h3-hexagons-fill',
+        id: 'h3-hover-fill',
         type: 'fill',
-        source: 'h3-hexagons',
-        paint: {
-          'fill-color': '#3b82f6',
-          'fill-opacity': 0.4,
-        },
+        source: 'h3-hover',
+        paint: { 'fill-color': '#93c5fd', 'fill-opacity': 0.3 },
       });
-
-      // Add outline layer
       map!.addLayer({
-        id: 'h3-hexagons-outline',
+        id: 'h3-hover-outline',
         type: 'line',
-        source: 'h3-hexagons',
-        paint: {
-          'line-color': '#1d4ed8',
-          'line-width': 2,
-        },
+        source: 'h3-hover',
+        paint: { 'line-color': '#3b82f6', 'line-width': 2 },
       });
 
-      // Show initial selection if provided
+      map!.addSource('h3-selected', { type: 'geojson', data: emptyGeoJSON });
+      map!.addLayer({
+        id: 'h3-selected-fill',
+        type: 'fill',
+        source: 'h3-selected',
+        paint: { 'fill-color': '#ef4444', 'fill-opacity': 0.5 },
+      });
+      map!.addLayer({
+        id: 'h3-selected-outline',
+        type: 'line',
+        source: 'h3-selected',
+        paint: { 'line-color': '#dc2626', 'line-width': 3 },
+      });
+
       if (h3Index && isValidCell(h3Index)) {
-        showHexagon(h3Index);
+        selectedH3 = h3Index;
+        updateSelectedHex(h3Index);
         const [lat, lng] = cellToLatLng(h3Index);
         map!.setCenter([lng, lat]);
       }
     });
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    map.on('click', (e: any) => {
-      const { lat, lng } = e.lngLat;
-      const h3Cell = latLngToCell(lat, lng, resolution);
-      selectedH3 = h3Cell;
-      showHexagon(h3Cell);
-      onSelect(h3Cell, [lat, lng]);
-    });
+    if (!readonly) {
+      map.on('mousemove', (e: maplibregl.MapMouseEvent) => {
+        const { lat, lng } = e.lngLat;
+        const h3Cell = latLngToCell(lat, lng, resolution);
+        if (h3Cell !== hoverH3) {
+          hoverH3 = h3Cell;
+          updateHoverHex(h3Cell);
+        }
+      });
+
+      map.on('mouseleave', () => {
+        hoverH3 = null;
+        updateHoverHex(null);
+      });
+
+      map.on('click', (e: maplibregl.MapMouseEvent) => {
+        const { lat, lng } = e.lngLat;
+        const h3Cell = latLngToCell(lat, lng, resolution);
+        selectedH3 = h3Cell;
+        updateSelectedHex(h3Cell);
+        onSelect(h3Cell, [lat, lng]);
+      });
+    }
   });
 
   onDestroy(() => {
     if (map) {
       map.remove();
       map = null;
+      mapLoaded = false;
     }
   });
 
-  function showHexagon(h3Cell: string) {
-    if (!map) return;
-
-    const boundary = cellToBoundary(h3Cell, true);
-    const coordinates: number[][] = boundary.map(([lat, lng]: [number, number]) => [lng, lat]);
-    const firstCoord = coordinates[0];
-    if (firstCoord) {
-      coordinates.push(firstCoord); // Close the polygon
+  $effect(() => {
+    if (readonly) return;
+    const currentResolution = resolution;
+    const current = selectedH3;
+    if (mapLoaded && current) {
+      const [lat, lng] = cellToLatLng(current);
+      const newH3 = latLngToCell(lat, lng, currentResolution);
+      if (newH3 !== current) {
+        selectedH3 = newH3;
+        updateSelectedHex(newH3);
+        onSelect(newH3, [lat, lng]);
+      }
     }
-
-    const geojson = {
-      type: 'FeatureCollection' as const,
-      features: [
-        {
-          type: 'Feature' as const,
-          properties: { h3Index: h3Cell },
-          geometry: {
-            type: 'Polygon' as const,
-            coordinates: [coordinates],
-          },
-        },
-      ],
-    };
-
-    const source = map.getSource('h3-hexagons');
-    if (source) {
-      source.setData(geojson);
-    }
-  }
-
-  // Update hexagon when resolution changes
-  $: if (map && selectedH3) {
-    const [lat, lng] = cellToLatLng(selectedH3);
-    const newH3 = latLngToCell(lat, lng, resolution);
-    if (newH3 !== selectedH3) {
-      selectedH3 = newH3;
-      showHexagon(newH3);
-      onSelect(newH3, [lat, lng]);
-    }
-  }
+  });
 </script>
 
 <div class="h3-map-picker">
   <div bind:this={mapContainer} class="map-container"></div>
 
-  <div class="controls">
-    <label>
-      Resolution:
-      <input type="range" bind:value={resolution} min="5" max="15" step="1" />
-      <span>{resolution}</span>
-    </label>
-  </div>
-
-  {#if selectedH3}
-    <div class="selection-info">
-      <p><strong>Selected H3:</strong> <code>{selectedH3}</code></p>
+  {#if !readonly}
+    <div class="controls">
+      <label>
+        Resolution:
+        <input type="range" bind:value={resolution} min="5" max="15" step="1" />
+        <span>{resolution}</span>
+      </label>
     </div>
+
+    {#if selectedH3}
+      <div class="selection-info">
+        <p><strong>Selected H3:</strong> <code>{selectedH3}</code></p>
+      </div>
+    {/if}
   {/if}
 </div>
 

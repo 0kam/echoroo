@@ -46,16 +46,16 @@
         type="button"
         onclick={() => handleClick(option.value)}
         {disabled}
-        class="rounded-lg border-2 p-3.5 text-left transition-all
+        class="rounded-md border p-2.5 text-left transition-all
           {value === option.value
             ? 'border-blue-500 bg-blue-50'
             : 'border-gray-200 bg-white hover:border-gray-300 hover:bg-gray-50'}
           {disabled ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'}"
       >
-        <div class="mb-1.5 flex items-center gap-2">
+        <div class="mb-1 flex items-center gap-1.5">
           {#if option.icon === 'lock'}
             <svg
-              class="h-4.5 w-4.5 {value === option.value ? 'text-blue-500' : 'text-gray-500'}"
+              class="h-3.5 w-3.5 {value === option.value ? 'text-blue-500' : 'text-gray-500'}"
               viewBox="0 0 24 24"
               fill="none"
               stroke="currentColor"
@@ -65,7 +65,7 @@
             </svg>
           {:else if option.icon === 'globe'}
             <svg
-              class="h-4.5 w-4.5 {value === option.value ? 'text-blue-500' : 'text-gray-500'}"
+              class="h-3.5 w-3.5 {value === option.value ? 'text-blue-500' : 'text-gray-500'}"
               viewBox="0 0 24 24"
               fill="none"
               stroke="currentColor"

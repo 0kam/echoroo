@@ -18,6 +18,12 @@ from echoroo.core.exceptions import (
 from echoroo.core.redis import close_redis_connection, get_redis_connection
 from echoroo.core.settings import get_settings
 from echoroo.middleware.rate_limit import close_rate_limiter, init_rate_limiter
+from echoroo.middleware.security import (
+    SecurityHeadersMiddleware,
+    get_development_cors_config,
+    get_production_cors_config,
+    get_security_config_for_environment,
+)
 
 settings = get_settings()
 
@@ -65,13 +71,19 @@ def create_app() -> FastAPI:
     # from echoroo.middleware.logging import RequestLoggingMiddleware
     # app.add_middleware(RequestLoggingMiddleware)
 
-    # CORS middleware
+    # Security headers middleware
+    security_config = get_security_config_for_environment(settings.ENVIRONMENT)
+    app.add_middleware(SecurityHeadersMiddleware, config=security_config)
+
+    # CORS middleware - use environment-specific configuration
+    if settings.ENVIRONMENT in ("production", "staging"):
+        cors_config = get_production_cors_config(settings.ALLOWED_ORIGINS)
+    else:
+        cors_config = get_development_cors_config(settings.ALLOWED_ORIGINS)
+
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=settings.ALLOWED_ORIGINS,
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
+        **cors_config,
     )
 
     # Exception handlers

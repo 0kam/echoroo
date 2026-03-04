@@ -121,3 +121,25 @@ class DetectionRunStatus(str, Enum):
     RUNNING = "running"
     COMPLETED = "completed"
     FAILED = "failed"
+
+
+class UploadSessionStatus(str, Enum):
+    """Upload session lifecycle states."""
+
+    ISSUED = "issued"        # Presigned URLs generated, waiting for upload
+    UPLOADED = "uploaded"    # Server verified files exist in S3
+    VALIDATING = "validating"  # Worker running ffprobe validation
+    VALIDATED = "validated"  # All files validated (some may be invalid)
+    IMPORTING = "importing"  # Creating recording records
+    IMPORTED = "imported"    # All recordings created
+    FAILED = "failed"        # Error at any stage
+
+
+class UploadFileStatus(str, Enum):
+    """Individual file status within an upload session."""
+
+    PENDING = "pending"    # Presigned URL issued, not yet uploaded
+    UPLOADED = "uploaded"  # Verified in S3
+    VALID = "valid"        # Passed ffprobe validation
+    INVALID = "invalid"    # Failed validation
+    IMPORTED = "imported"  # Recording record created

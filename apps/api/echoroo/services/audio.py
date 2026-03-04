@@ -22,7 +22,6 @@ from __future__ import annotations
 import hashlib
 import io
 import math
-import os
 import struct
 from dataclasses import dataclass
 from pathlib import Path
@@ -375,17 +374,27 @@ class AudioService:
         "twilight",
     ]
 
-    def __init__(self, audio_root: str, cache_dir: str | None = None) -> None:
+    def __init__(
+        self,
+        audio_root: str,
+        cache_dir: str | None = None,
+        s3_audio_cache_dir: str | None = None,
+    ) -> None:
         """Initialize AudioService.
 
         Args:
             audio_root: Root directory for audio files.
             cache_dir: Optional directory for caching spectrograms.
+            s3_audio_cache_dir: Optional directory to cache files downloaded
+                from S3. Falls back to /tmp/echoroo-s3-audio when not set.
         """
         self.audio_root = Path(audio_root)
         self.cache_dir = Path(cache_dir) if cache_dir else None
+        self.s3_audio_cache = Path(s3_audio_cache_dir) if s3_audio_cache_dir else None
         if self.cache_dir:
             self.cache_dir.mkdir(parents=True, exist_ok=True)
+        if self.s3_audio_cache:
+            self.s3_audio_cache.mkdir(parents=True, exist_ok=True)
 
     # ------------------------------------------------------------------
     # Path helpers
@@ -394,13 +403,97 @@ class AudioService:
     def get_absolute_path(self, relative_path: str) -> Path:
         """Get absolute path from relative path.
 
+        Checks the primary audio_root first. If the file does not exist there,
+        also checks the S3 audio cache directory (when configured). Returns the
+        primary path if the file is found in neither location so that callers
+        can still surface a meaningful missing-file error.
+
         Args:
             relative_path: Path relative to audio_root.
 
         Returns:
-            Absolute path to the file.
+            Absolute path to the file (may not exist if file is in S3 only).
+
+        Raises:
+            ValueError: If a path traversal attempt is detected.
         """
-        return self.audio_root / relative_path
+        result = self.audio_root / relative_path
+        resolved = result.resolve()
+        if not resolved.is_relative_to(self.audio_root.resolve()):
+            raise ValueError(f"Path traversal detected: {relative_path}")
+
+        if result.exists():
+            return result
+
+        # Check the S3 audio cache as a secondary location
+        if self.s3_audio_cache:
+            cached = self.s3_audio_cache / relative_path
+            # Guard against path traversal in the cache directory as well
+            if cached.resolve().is_relative_to(self.s3_audio_cache.resolve()) and cached.exists():
+                return cached
+
+        # Return the primary path so callers can report a consistent error
+        return result
+
+    def ensure_file_local(self, relative_path: str) -> Path:
+        """Ensure audio file is available locally, downloading from S3 if needed.
+
+        Checks the primary audio_root first, then the S3 audio cache. If not
+        found in either location, downloads the file from S3 to the cache.
+
+        Args:
+            relative_path: Path relative to audio_root (also used as S3 key).
+
+        Returns:
+            Local path to the audio file.
+
+        Raises:
+            FileNotFoundError: If the file cannot be found or downloaded.
+            ValueError: If a path traversal attempt is detected.
+        """
+        # Guard against path traversal in the primary root
+        primary = self.audio_root / relative_path
+        if not primary.resolve().is_relative_to(self.audio_root.resolve()):
+            raise ValueError(f"Path traversal detected: {relative_path}")
+
+        if primary.exists():
+            return primary
+
+        # Determine cache base directory
+        cache_base = self.s3_audio_cache or Path("/tmp/echoroo-s3-audio")
+        cached = cache_base / relative_path
+
+        # Guard against path traversal in the cache directory
+        if not cached.resolve().is_relative_to(cache_base.resolve()):
+            raise ValueError(f"Path traversal detected in cache path: {relative_path}")
+
+        if cached.exists():
+            return cached
+
+        # Download from S3 to local cache
+        from echoroo.core.s3 import get_s3_client
+        from echoroo.core.settings import get_settings as _get_settings
+
+        _settings = _get_settings()
+        client = get_s3_client()
+
+        cached.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            response = client.get_object(Bucket=_settings.S3_BUCKET, Key=relative_path)
+            with open(cached, "wb") as f:
+                body = response["Body"]
+                while True:
+                    chunk = body.read(65536)
+                    if not chunk:
+                        break
+                    f.write(chunk)
+            return cached
+        except Exception as exc:
+            # Clean up any partial download before propagating the error
+            cached.unlink(missing_ok=True)
+            raise FileNotFoundError(
+                f"Audio file not found locally or in S3: {relative_path}"
+            ) from exc
 
     def is_supported_format(self, filename: str) -> bool:
         """Check if file format is supported.
@@ -775,6 +868,82 @@ class AudioService:
         return buf.getvalue()
 
     # ------------------------------------------------------------------
+    # Compressed audio cache for browser playback
+    # ------------------------------------------------------------------
+
+    COMPRESSED_CACHE_DIR = Path("/data/audio_compressed")
+
+    def get_compressed_for_playback(self, recording_path: str) -> Path:
+        """Return a compressed OGG/Vorbis version of the audio file, creating it if needed.
+
+        Uses ffmpeg to encode the source WAV to OGG Vorbis at quality 4 (~128 kbps).
+        The output is cached under COMPRESSED_CACHE_DIR keyed by the SHA-256 hash of
+        the source file path so that repeated requests incur no I/O overhead.
+
+        Args:
+            recording_path: Path relative to audio_root (also the S3 key).
+
+        Returns:
+            Path to the local OGG file ready for streaming.
+
+        Raises:
+            FileNotFoundError: If the source audio file cannot be resolved locally.
+            RuntimeError: If ffmpeg encoding fails.
+        """
+        import logging
+        import subprocess
+
+        logger = logging.getLogger(__name__)
+
+        # Ensure the source file is available locally (download from S3 if needed)
+        source_path = self.ensure_file_local(recording_path)
+
+        # Build a stable cache key from the source path
+        path_hash = hashlib.sha256(recording_path.encode()).hexdigest()[:16]
+        cache_path = self.COMPRESSED_CACHE_DIR / f"{path_hash}.ogg"
+
+        if cache_path.exists():
+            logger.debug("Compressed cache hit: %s -> %s", recording_path, cache_path)
+            return cache_path
+
+        # Create cache directory on first use
+        self.COMPRESSED_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+        logger.info("Encoding compressed audio: %s -> %s", source_path, cache_path)
+
+        tmp_path = cache_path.with_suffix(".tmp.ogg")
+        try:
+            result = subprocess.run(
+                [
+                    "ffmpeg",
+                    "-y",  # overwrite output without prompting
+                    "-i", str(source_path),
+                    "-c:a", "libvorbis",
+                    "-q:a", "4",  # quality 4 ≈ 128 kbps VBR
+                    "-vn",  # no video stream
+                    "-f", "ogg",  # explicit output format so ffmpeg does not rely on extension
+                    str(tmp_path),
+                ],
+                capture_output=True,
+                timeout=300,  # 5-minute ceiling for very long files
+            )
+            if result.returncode != 0:
+                raise RuntimeError(
+                    f"ffmpeg failed (exit {result.returncode}): "
+                    f"{result.stderr.decode(errors='replace')[-500:]}"
+                )
+            tmp_path.rename(cache_path)
+            logger.info(
+                "Compressed audio ready: %s (%.1f MB)",
+                cache_path,
+                cache_path.stat().st_size / 1_048_576,
+            )
+            return cache_path
+        except Exception:
+            tmp_path.unlink(missing_ok=True)
+            raise
+
+    # ------------------------------------------------------------------
     # HTTP Range streaming helper
     # ------------------------------------------------------------------
 
@@ -950,71 +1119,4 @@ class AudioService:
 
         return audio_bytes, actual_start, actual_end, total_filesize
 
-    # ------------------------------------------------------------------
-    # Directory scanning
-    # ------------------------------------------------------------------
-
-    def scan_directory(self, relative_dir: str) -> list[str]:
-        """Scan a directory recursively for supported audio files.
-
-        Args:
-            relative_dir: Directory path relative to audio_root.
-
-        Returns:
-            Sorted list of relative paths to audio files.
-        """
-        dir_path = self.get_absolute_path(relative_dir)
-        audio_files: list[str] = []
-
-        if not dir_path.exists() or not dir_path.is_dir():
-            return audio_files
-
-        for root, _, files in os.walk(dir_path):
-            for filename in files:
-                if self.is_supported_format(filename):
-                    abs_path = Path(root) / filename
-                    rel_path = abs_path.relative_to(self.audio_root)
-                    audio_files.append(str(rel_path))
-
-        return sorted(audio_files)
-
-    def list_directories(
-        self, relative_path: str = ""
-    ) -> list[dict[str, str | int | list[str]]]:
-        """List subdirectories with audio file count and format info.
-
-        Args:
-            relative_path: Path relative to audio_root (empty = root).
-
-        Returns:
-            List of directory info dicts.
-        """
-        dir_path = self.audio_root / relative_path if relative_path else self.audio_root
-        directories: list[dict[str, str | int | list[str]]] = []
-
-        if not dir_path.exists() or not dir_path.is_dir():
-            return directories
-
-        for item in sorted(dir_path.iterdir()):
-            if item.is_dir():
-                audio_count = 0
-                formats: set[str] = set()
-                for _, _, files in os.walk(item):
-                    for f in files:
-                        ext = Path(f).suffix.lower()
-                        if ext in self.SUPPORTED_FORMATS:
-                            audio_count += 1
-                            formats.add(ext.lstrip("."))
-
-                rel_path = item.relative_to(self.audio_root)
-                directories.append(
-                    {
-                        "name": item.name,
-                        "path": str(rel_path),
-                        "audio_file_count": audio_count,
-                        "formats": sorted(formats),
-                    }
-                )
-
-        return directories
 

@@ -2,11 +2,16 @@
 
 from typing import Annotated
 
-from fastapi import APIRouter, Cookie, Request, Response, status
+from fastapi import APIRouter, Cookie, Depends, Request, Response, status
 
 from echoroo.core.database import DbSession
 from echoroo.core.settings import get_settings
 from echoroo.middleware.auth import CurrentUser
+from echoroo.middleware.rate_limit import (
+    login_rate_limiter,
+    password_reset_rate_limiter,
+    register_rate_limiter,
+)
 from echoroo.schemas.auth import (
     EmailVerifyRequest,
     LoginRequest,
@@ -34,6 +39,7 @@ async def register(
     request: UserRegisterRequest,
     http_request: Request,
     db: DbSession,
+    _rate_limit: None = Depends(register_rate_limiter()),
 ) -> UserResponse:
     """Register a new user account.
 
@@ -69,6 +75,7 @@ async def login(
     response: Response,
     http_request: Request,
     db: DbSession,
+    _rate_limit: None = Depends(login_rate_limiter()),
 ) -> TokenResponse:
     """Authenticate user and generate tokens.
 
@@ -101,6 +108,7 @@ async def login(
         secure=settings.ENVIRONMENT == "production",
         samesite="lax",
         max_age=settings.JWT_REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60,
+        path="/",
     )
 
     return token_response
@@ -133,8 +141,14 @@ async def logout(
     auth_service = AuthService(db)
     await auth_service.logout(current_user.id)
 
-    # Clear refresh token cookie
-    response.delete_cookie(key="refresh_token")
+    # Clear refresh token cookie with matching security attributes
+    response.delete_cookie(
+        key="refresh_token",
+        path="/",
+        httponly=True,
+        secure=settings.ENVIRONMENT == "production",
+        samesite="lax",
+    )
 
     return LogoutResponse()
 
@@ -149,6 +163,7 @@ async def refresh(
     response: Response,
     db: DbSession,
     refresh_token: Annotated[str | None, Cookie()] = None,
+    _rate_limit: None = Depends(login_rate_limiter()),
 ) -> TokenResponse:
     """Refresh access token using refresh token.
 
@@ -182,6 +197,7 @@ async def refresh(
         secure=settings.ENVIRONMENT == "production",
         samesite="lax",
         max_age=settings.JWT_REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60,
+        path="/",
     )
 
     return token_response
@@ -196,6 +212,7 @@ async def refresh(
 async def request_password_reset(
     request: PasswordResetRequest,
     db: DbSession,
+    _rate_limit: None = Depends(password_reset_rate_limiter()),
 ) -> dict[str, str]:
     """Request password reset email.
 
