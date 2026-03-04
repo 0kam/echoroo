@@ -5,6 +5,7 @@ from __future__ import annotations
 from uuid import UUID
 
 from sqlalchemy import Integer, delete, func, select
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlalchemy.sql.expression import cast
@@ -272,3 +273,18 @@ class AnnotationRepository:
         """
         await self.db.execute(delete(Annotation).where(Annotation.id == annotation_id))
         await self.db.flush()
+
+    async def delete_by_detection_run(self, detection_run_id: UUID) -> int:
+        """Delete all annotations belonging to a detection run.
+
+        Args:
+            detection_run_id: DetectionRun's UUID
+
+        Returns:
+            Number of deleted annotations
+        """
+        cursor: CursorResult[tuple[()]] = await self.db.execute(  # type: ignore[assignment]
+            delete(Annotation).where(Annotation.detection_run_id == detection_run_id)
+        )
+        await self.db.flush()
+        return cursor.rowcount

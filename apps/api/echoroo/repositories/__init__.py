@@ -5,6 +5,7 @@ from echoroo.repositories.annotation_task import AnnotationTaskRepository
 from echoroo.repositories.clip import ClipRepository
 from echoroo.repositories.clip_annotation import ClipAnnotationRepository
 from echoroo.repositories.dataset import DatasetRepository
+from echoroo.repositories.embedding import EmbeddingRepository
 from echoroo.repositories.license import LicenseRepository
 from echoroo.repositories.note import NoteRepository
 from echoroo.repositories.project import ProjectRepository
@@ -23,6 +24,7 @@ __all__ = [
     "ClipAnnotationRepository",
     "ClipRepository",
     "DatasetRepository",
+    "EmbeddingRepository",
     "LicenseRepository",
     "NoteRepository",
     "ProjectRepository",

@@ -80,17 +80,27 @@ export async function fetchDetections(
 
 /**
  * Confirm (accept) a detection as a valid occurrence.
+ *
+ * When `timeRange` is provided, the confirmed detection's start/end times
+ * are updated to match.  When omitted the backend preserves the original
+ * times (quick-confirm).
  */
 export async function confirmDetection(
   projectId: string,
-  detectionId: string
+  detectionId: string,
+  timeRange?: { start_time: number; end_time: number }
 ): Promise<Detection> {
+  const options: RequestInit = {
+    method: 'POST',
+    credentials: 'include',
+  };
+  if (timeRange) {
+    options.headers = { 'Content-Type': 'application/json' };
+    options.body = JSON.stringify(timeRange);
+  }
   const response = await fetchWithErrorHandling(
     `${API_BASE}/projects/${projectId}/detections/${detectionId}/confirm`,
-    {
-      method: 'POST',
-      credentials: 'include',
-    }
+    options
   );
   return handleApiResponse<Detection>(response);
 }

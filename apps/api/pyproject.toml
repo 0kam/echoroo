@@ -31,6 +31,9 @@ dependencies = [
     "Pillow>=10.0.0",
     "boto3>=1.35.0",
     "celery[redis]>=5.4.0",
+    "birdnet>=0.2.0",
+    "tensorflow==2.20.0",
+    "pgvector>=0.3.0",
 ]
 
 [project.optional-dependencies]
@@ -116,6 +119,10 @@ module = [
     "botocore.*",
     "celery",
     "celery.*",
+    "birdnet",
+    "birdnet.*",
+    "pgvector",
+    "pgvector.*",
 ]
 ignore_missing_imports = true
 

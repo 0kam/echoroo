@@ -33,6 +33,7 @@ app.conf.include = [
     "echoroo.workers.upload_tasks",
     "echoroo.workers.import_task",
     "echoroo.workers.annotation_tasks",
+    "echoroo.workers.ml_tasks",
 ]
 
 # Periodic tasks (beat schedule)

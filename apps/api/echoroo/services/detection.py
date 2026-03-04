@@ -190,18 +190,20 @@ class DetectionService:
     async def confirm(
         self,
         detection_id: UUID,
-        request: ConfirmRequest,
         user_id: UUID,
+        request: ConfirmRequest | None = None,
     ) -> DetectionResponse:
         """Confirm a detection annotation and create a confirmed region.
 
         Sets status to confirmed, records the reviewer, and creates a
-        ConfirmedRegion for the confirmed time range.
+        ConfirmedRegion for the confirmed time range. When *request* is
+        ``None`` or its fields are ``None``, the annotation's existing
+        start_time / end_time are preserved (quick-confirm).
 
         Args:
             detection_id: Annotation's UUID
-            request: Confirm request with time range
             user_id: ID of the user confirming the detection
+            request: Optional confirm request with adjusted time range
 
         Returns:
             Updated detection response
@@ -216,19 +218,31 @@ class DetectionService:
                 detail="Detection not found",
             )
 
+        # Use provided times or fall back to the annotation's existing values
+        start_time = (
+            request.start_time
+            if request is not None and request.start_time is not None
+            else annotation.start_time
+        )
+        end_time = (
+            request.end_time
+            if request is not None and request.end_time is not None
+            else annotation.end_time
+        )
+
         annotation.status = DetectionStatus.CONFIRMED
         annotation.reviewed_by_id = user_id
         annotation.reviewed_at = datetime.now(UTC)
-        annotation.start_time = request.start_time
-        annotation.end_time = request.end_time
+        annotation.start_time = start_time
+        annotation.end_time = end_time
 
         updated = await self.annotation_repo.update(annotation)
 
         # Create a confirmed region for the confirmed time range
         confirmed_region = ConfirmedRegion(
             recording_id=annotation.recording_id,
-            start_time=request.start_time,
-            end_time=request.end_time,
+            start_time=start_time,
+            end_time=end_time,
             reviewed_by_id=user_id,
         )
         await self.confirmed_region_repo.create(confirmed_region)

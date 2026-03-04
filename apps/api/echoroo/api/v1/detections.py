@@ -296,10 +296,10 @@ async def create_detection(
 async def confirm_detection(
     project_id: UUID,
     detection_id: UUID,
-    request: ConfirmRequest,
     current_user: CurrentUser,
     service: DetectionServiceDep,
     db: DbSession,
+    request: ConfirmRequest | None = None,
 ) -> DetectionResponse:
     """Confirm a detection annotation.
 
@@ -323,8 +323,8 @@ async def confirm_detection(
     """
     detection = await service.confirm(
         detection_id=detection_id,
-        request=request,
         user_id=current_user.id,
+        request=request,
     )
     await db.commit()
     return detection
@@ -339,10 +339,10 @@ async def confirm_detection(
 async def reject_detection(
     project_id: UUID,
     detection_id: UUID,
-    request: RejectRequest,
     current_user: CurrentUser,
     service: DetectionServiceDep,
     db: DbSession,
+    request: RejectRequest | None = None,  # noqa: ARG001
 ) -> DetectionResponse:
     """Reject a detection annotation.
 

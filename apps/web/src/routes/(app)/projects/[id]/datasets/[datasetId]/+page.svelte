@@ -11,6 +11,7 @@
   import ExportDialog from '$lib/components/data/ExportDialog.svelte';
   import RecordingList from '$lib/components/data/RecordingList.svelte';
   import DeleteConfirmDialog from '$lib/components/ui/DeleteConfirmDialog.svelte';
+  import BirdnetStatus from '$lib/components/data/BirdnetStatus.svelte';
 
   const queryClient = useQueryClient();
 
@@ -239,6 +240,11 @@
           queryClient.invalidateQueries({ queryKey: ['dataset', projectId, datasetId] });
         }}
       />
+    {/if}
+
+    <!-- BirdNET ML Detection Status (only if dataset import is complete) -->
+    {#if dataset.status === 'completed'}
+      <BirdnetStatus {projectId} {datasetId} />
     {/if}
 
     <!-- Statistics (only if completed) -->
