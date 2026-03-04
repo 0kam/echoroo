@@ -121,7 +121,6 @@ export interface Dataset {
   created_by_id: string;
   name: string;
   description: string | null;
-  audio_dir: string;
   visibility: DatasetVisibility;
   status: DatasetStatus;
   doi: string | null;
@@ -149,7 +148,6 @@ export interface DatasetCreate {
   site_id: string;
   name: string;
   description?: string | null;
-  audio_dir: string;
   visibility?: DatasetVisibility;
   recorder_id?: string | null;
   license_id?: string | null;
@@ -182,6 +180,7 @@ export interface DatasetListResponse {
 }
 
 export interface ImportRequest {
+  source?: string | null;
   datetime_pattern?: string | null;
   datetime_format?: string | null;
 }
@@ -220,20 +219,82 @@ export interface DatasetStatistics {
   recordings_by_hour: RecordingsByHour[];
 }
 
-export interface DirectoryInfo {
-  name: string;
-  path: string;
-  audio_file_count: number;
-  formats: string[];
-}
-
-export interface DirectoryListResponse {
-  path: string;
-  directories: DirectoryInfo[];
-}
-
 export interface ExportRequest {
   include_audio?: boolean;
+}
+
+// ============================================
+// Upload Session Types
+// ============================================
+
+export type UploadSessionStatus =
+  | 'issued'
+  | 'uploaded'
+  | 'validating'
+  | 'validated'
+  | 'importing'
+  | 'imported'
+  | 'failed';
+
+export type UploadFileStatus = 'pending' | 'uploaded' | 'valid' | 'invalid' | 'imported';
+
+export interface UploadFileRequest {
+  filename: string;
+  size: number;
+  checksum_sha256: string;
+}
+
+export interface CreateUploadSessionRequest {
+  files: UploadFileRequest[];
+}
+
+export interface UploadFilePresignedResponse {
+  file_id: string;
+  original_filename: string;
+  upload_url: string;
+}
+
+export interface CreateUploadSessionResponse {
+  session_id: string;
+  status: string;
+  expires_at: string;
+  total_files: number;
+  total_bytes: number;
+  files: UploadFilePresignedResponse[];
+}
+
+export interface CompleteUploadResponse {
+  session_id: string;
+  status: string;
+  verified_files: number;
+  missing_files: number;
+  mismatched_files: number;
+}
+
+export interface UploadFileStatusResponse {
+  file_id: string;
+  original_filename: string;
+  status: UploadFileStatus;
+  file_size: number;
+  duration: number | null;
+  samplerate: number | null;
+  channels: number | null;
+  validation_error: string | null;
+  recording_id: string | null;
+}
+
+export interface UploadSessionStatusResponse {
+  session_id: string;
+  status: UploadSessionStatus;
+  total_files: number;
+  total_bytes: number;
+  validated_files: number;
+  imported_files: number;
+  progress_percent: number;
+  error: string | null;
+  files: UploadFileStatusResponse[];
+  created_at: string;
+  updated_at: string;
 }
 
 // ============================================

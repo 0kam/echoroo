@@ -10,7 +10,6 @@ import type {
   DatasetListResponse,
   DatasetStatistics,
   DatasetUpdate,
-  DirectoryListResponse,
   ImportRequest,
   ImportStatusResponse,
 } from '$lib/types/data';
@@ -163,13 +162,3 @@ export async function fetchDatasetStatistics(
   return handleApiResponse<DatasetStatistics>(response);
 }
 
-/**
- * List directories available for dataset creation.
- */
-export async function fetchDirectories(path?: string): Promise<DirectoryListResponse> {
-  const searchParams = path ? new URLSearchParams({ path }) : '';
-  const url = `${API_BASE}/datasets/directories${searchParams ? '?' + searchParams : ''}`;
-
-  const response = await fetchWithErrorHandling(url, { credentials: 'include' });
-  return handleApiResponse<DirectoryListResponse>(response);
-}

@@ -123,6 +123,7 @@
       {speedOptions}
       {viewport}
       {bounds}
+      seekTo={currentTime}
       onViewportChange={handleViewportChange}
       onTimeUpdate={handleTimeUpdate}
       onSeek={handleSeek}

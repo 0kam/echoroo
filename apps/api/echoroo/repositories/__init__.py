@@ -14,6 +14,7 @@ from echoroo.repositories.site import SiteRepository
 from echoroo.repositories.sound_event_annotation import SoundEventAnnotationRepository
 from echoroo.repositories.system import SystemSettingRepository
 from echoroo.repositories.tag import TagRepository
+from echoroo.repositories.upload import UploadFileRepository, UploadSessionRepository
 from echoroo.repositories.user import UserRepository
 
 __all__ = [
@@ -31,5 +32,7 @@ __all__ = [
     "SoundEventAnnotationRepository",
     "SystemSettingRepository",
     "TagRepository",
+    "UploadFileRepository",
+    "UploadSessionRepository",
     "UserRepository",
 ]

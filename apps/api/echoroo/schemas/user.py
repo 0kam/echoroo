@@ -34,9 +34,9 @@ class UserUpdateRequest(BaseModel):
 class PasswordChangeRequest(BaseModel):
     """Password change request schema."""
 
-    current_password: str = Field(..., description="Current password")
+    current_password: str = Field(..., max_length=128, description="Current password (max 128 chars)")
     new_password: str = Field(
-        ..., min_length=8, description="New password (min 8 chars)"
+        ..., min_length=8, max_length=128, description="New password (min 8 chars, max 128 chars)"
     )
 
     @field_validator("new_password")

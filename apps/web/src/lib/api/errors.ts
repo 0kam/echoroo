@@ -21,6 +21,10 @@ export class ApiError extends Error {
  */
 export async function handleApiResponse<T>(response: Response): Promise<T> {
   if (response.ok) {
+    // 204 No Content has no body to parse
+    if (response.status === 204) {
+      return undefined as T;
+    }
     return response.json();
   }
 
@@ -65,7 +69,8 @@ function buildAuthOptions(options?: RequestInit): RequestInit {
     return {
       ...options,
       credentials: 'include' as RequestCredentials,
-      signal: AbortSignal.timeout(30000),
+      // Preserve the caller's signal if provided; fall back to a 30s timeout
+      signal: options?.signal ?? AbortSignal.timeout(30000),
     };
   }
 
@@ -76,7 +81,8 @@ function buildAuthOptions(options?: RequestInit): RequestInit {
   return {
     ...options,
     credentials: 'include' as RequestCredentials,
-    signal: AbortSignal.timeout(30000),
+    // Preserve the caller's signal if provided; fall back to a 30s timeout
+    signal: options?.signal ?? AbortSignal.timeout(30000),
     headers: {
       ...existingHeaders,
       Authorization: `Bearer ${token}`,

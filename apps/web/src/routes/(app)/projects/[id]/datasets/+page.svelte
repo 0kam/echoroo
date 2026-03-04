@@ -16,6 +16,7 @@
   let datasetToDelete = $state<Dataset | null>(null);
   let showDeleteDialog = $state(false);
   let deleteWarningItems = $state<string[]>([]);
+  let deleteError = $state<string | null>(null);
 
   // Filter states
   let currentPage = $state(1);
@@ -41,9 +42,10 @@
   // Mutation for creating a dataset
   const datasetCreateMutation = createMutation({
     mutationFn: (data: DatasetCreate) => createDataset(projectId, data),
-    onSuccess: () => {
+    onSuccess: (created) => {
       queryClient.invalidateQueries({ queryKey: ['datasets', projectId] });
       showCreateForm = false;
+      goto(`/projects/${projectId}/datasets/${created.id}`);
     },
   });
 
@@ -53,6 +55,11 @@
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['datasets', projectId] });
       datasetToDelete = null;
+      showDeleteDialog = false;
+      deleteError = null;
+    },
+    onError: (error: Error) => {
+      deleteError = error.message || 'Failed to delete dataset';
     },
   });
 
@@ -62,6 +69,7 @@
 
   async function handleDeleteClick(dataset: Dataset) {
     datasetToDelete = dataset;
+    deleteError = null;
 
     try {
       const datasetDetail = await fetchDataset(projectId, dataset.id);
@@ -87,9 +95,14 @@
 
   async function confirmDelete() {
     if (datasetToDelete) {
-      await $deleteMutation.mutateAsync(datasetToDelete.id);
-      showDeleteDialog = false;
-      datasetToDelete = null;
+      deleteError = null;
+      try {
+        await $deleteMutation.mutateAsync(datasetToDelete.id);
+        // onSuccess handles closing the dialog and clearing state
+      } catch {
+        // Error is displayed via deleteError set in onError handler
+        // Keep the dialog open so the user can see the error
+      }
     }
   }
 
@@ -97,6 +110,7 @@
     showDeleteDialog = false;
     datasetToDelete = null;
     deleteWarningItems = [];
+    deleteError = null;
   }
 
   async function handleCreateSubmit(data: DatasetCreate | DatasetUpdate) {
@@ -231,4 +245,5 @@
   onConfirm={confirmDelete}
   onCancel={cancelDelete}
   warningItems={deleteWarningItems}
+  errorMessage={deleteError}
 />

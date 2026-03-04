@@ -1,7 +1,7 @@
 <script lang="ts">
   import { createQuery } from '@tanstack/svelte-query';
   import { fetchSites } from '$lib/api/sites';
-  import DirectoryBrowser from './DirectoryBrowser.svelte';
+  import { fetchRecorders } from '$lib/api/recorders';
   import DatetimePatternTester from './DatetimePatternTester.svelte';
   import VisibilitySelector from './VisibilitySelector.svelte';
   import type { DatasetCreate, DatasetDetail, DatasetUpdate, DatasetVisibility } from '$lib/types/data';
@@ -20,7 +20,6 @@
   // Form fields (initialized from dataset prop)
   let name = $state('');
   let description = $state('');
-  let audioDir = $state('');
   let visibility = $state<DatasetVisibility>('private');
   let siteId = $state('');
   let recorderId = $state('');
@@ -35,7 +34,6 @@
   $effect(() => {
     name = dataset?.name ?? '';
     description = dataset?.description ?? '';
-    audioDir = dataset?.audio_dir ?? '';
     visibility = dataset?.visibility ?? 'private';
     siteId = dataset?.site_id ?? '';
     recorderId = dataset?.recorder_id ?? '';
@@ -45,7 +43,6 @@
     note = dataset?.note ?? '';
   });
 
-  let showDirectoryBrowser = $state(false);
   let isSubmitting = $state(false);
   let error = $state('');
 
@@ -57,19 +54,18 @@
     })
   );
 
-  function handleDirectorySelect(path: string) {
-    audioDir = path;
-    showDirectoryBrowser = false;
-  }
+  // Fetch recorders for dropdown
+  const recordersQuery = $derived(
+    createQuery({
+      queryKey: ['recorders'],
+      queryFn: () => fetchRecorders({ limit: 100 }),
+    })
+  );
 
   async function handleSubmit() {
     // Validation
     if (!name.trim()) {
       error = 'Name is required';
-      return;
-    }
-    if (!audioDir.trim()) {
-      error = 'Audio directory is required';
       return;
     }
     if (!isEdit && !siteId) {
@@ -100,7 +96,6 @@
           site_id: siteId,
           name: name.trim(),
           description: description.trim() || null,
-          audio_dir: audioDir.trim(),
           visibility,
           recorder_id: recorderId || null,
           license_id: licenseId || null,
@@ -184,41 +179,8 @@
     </div>
   </div>
 
-  <!-- Audio Directory -->
-  <div class="flex flex-col gap-1.5">
-    <label for="audio-dir" class="text-sm font-medium text-gray-700">Audio Directory *</label>
-    <div class="flex gap-2">
-      <input
-        id="audio-dir"
-        type="text"
-        bind:value={audioDir}
-        placeholder="/path/to/audio/files"
-        required
-        readonly={isEdit}
-        class="flex-1 rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none read-only:bg-gray-50 read-only:text-gray-500"
-      />
-      {#if !isEdit}
-        <button
-          type="button"
-          onclick={() => (showDirectoryBrowser = !showDirectoryBrowser)}
-          class="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50"
-        >
-          Browse
-        </button>
-      {/if}
-    </div>
-    {#if isEdit}
-      <p class="text-xs text-gray-400">Directory cannot be changed after creation</p>
-    {/if}
-  </div>
-
-  <!-- Directory Browser -->
-  {#if showDirectoryBrowser && !isEdit}
-    <DirectoryBrowser selectedPath={audioDir} onSelect={handleDirectorySelect} />
-  {/if}
-
   <!-- Advanced options -->
-  <details class="rounded-md border border-gray-200 bg-gray-50 p-4">
+  <details open class="rounded-md border border-gray-200 bg-gray-50 p-4">
     <summary class="cursor-pointer select-none text-sm font-medium text-gray-700 hover:text-blue-600">
       Advanced Options
     </summary>
@@ -227,14 +189,25 @@
       <div class="grid grid-cols-2 gap-4">
         <div class="flex flex-col gap-1.5">
           <label for="recorder" class="text-sm font-medium text-gray-700">Recorder</label>
-          <input
-            id="recorder"
-            type="text"
-            bind:value={recorderId}
-            placeholder="Recorder ID (optional)"
-            class="rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
-          />
-          <p class="text-xs text-gray-400">ID of the recording device used</p>
+          {#if $recordersQuery.isLoading}
+            <select id="recorder" disabled class="rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-sm">
+              <option>Loading recorders...</option>
+            </select>
+          {:else if $recordersQuery.isError}
+            <div class="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-600">Error loading recorders</div>
+          {:else if $recordersQuery.data}
+            <select
+              id="recorder"
+              bind:value={recorderId}
+              class="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
+            >
+              <option value="">No recorder</option>
+              {#each $recordersQuery.data.items as recorder}
+                <option value={recorder.id}>{recorder.manufacturer} {recorder.recorder_name}</option>
+              {/each}
+            </select>
+          {/if}
+          <p class="text-xs text-gray-400">Recording device used for this dataset</p>
         </div>
 
         <div class="flex flex-col gap-1.5">
@@ -286,45 +259,47 @@
         ></textarea>
       </div>
 
-      <!-- Datetime extraction -->
-      <div class="border-t border-gray-200 pt-4">
-        <h4 class="mb-1 text-sm font-semibold text-gray-700">Datetime Extraction (Optional)</h4>
-        <p class="mb-3 text-xs text-gray-500">
-          Configure how to extract recording datetime from filenames. If not provided, file modification time will be used.
-        </p>
+      <!-- Datetime extraction (edit mode only) -->
+      {#if isEdit}
+        <div class="border-t border-gray-200 pt-4">
+          <h4 class="mb-1 text-sm font-semibold text-gray-700">Datetime Extraction (Optional)</h4>
+          <p class="mb-3 text-xs text-gray-500">
+            Configure how to extract recording datetime from filenames. If not provided, file modification time will be used.
+          </p>
 
-        <div class="grid grid-cols-2 gap-4">
-          <div class="flex flex-col gap-1.5">
-            <label for="datetime-pattern" class="text-sm font-medium text-gray-700">Regex Pattern</label>
-            <input
-              id="datetime-pattern"
-              type="text"
-              bind:value={datetimePattern}
-              placeholder="e.g., (\d{8}_\d{6})"
-              class="rounded-md border border-gray-300 px-3 py-2 font-mono text-sm focus:border-blue-500 focus:outline-none"
-            />
-            <p class="text-xs text-gray-400">Regular expression to extract datetime from filename</p>
+          <div class="grid grid-cols-2 gap-4">
+            <div class="flex flex-col gap-1.5">
+              <label for="datetime-pattern" class="text-sm font-medium text-gray-700">Regex Pattern</label>
+              <input
+                id="datetime-pattern"
+                type="text"
+                bind:value={datetimePattern}
+                placeholder="e.g., (\d{8}_\d{6})"
+                class="rounded-md border border-gray-300 px-3 py-2 font-mono text-sm focus:border-blue-500 focus:outline-none"
+              />
+              <p class="text-xs text-gray-400">Regular expression to extract datetime from filename</p>
+            </div>
+
+            <div class="flex flex-col gap-1.5">
+              <label for="datetime-format" class="text-sm font-medium text-gray-700">Datetime Format</label>
+              <input
+                id="datetime-format"
+                type="text"
+                bind:value={datetimeFormat}
+                placeholder="e.g., %Y%m%d_%H%M%S"
+                class="rounded-md border border-gray-300 px-3 py-2 font-mono text-sm focus:border-blue-500 focus:outline-none"
+              />
+              <p class="text-xs text-gray-400">Python strptime format for parsing</p>
+            </div>
           </div>
 
-          <div class="flex flex-col gap-1.5">
-            <label for="datetime-format" class="text-sm font-medium text-gray-700">Datetime Format</label>
-            <input
-              id="datetime-format"
-              type="text"
-              bind:value={datetimeFormat}
-              placeholder="e.g., %Y%m%d_%H%M%S"
-              class="rounded-md border border-gray-300 px-3 py-2 font-mono text-sm focus:border-blue-500 focus:outline-none"
-            />
-            <p class="text-xs text-gray-400">Python strptime format for parsing</p>
-          </div>
+          {#if datetimePattern || datetimeFormat}
+            <div class="mt-3">
+              <DatetimePatternTester pattern={datetimePattern} format={datetimeFormat} />
+            </div>
+          {/if}
         </div>
-
-        {#if datetimePattern || datetimeFormat}
-          <div class="mt-3">
-            <DatetimePatternTester pattern={datetimePattern} format={datetimeFormat} />
-          </div>
-        {/if}
-      </div>
+      {/if}
     </div>
   </details>
 
@@ -345,7 +320,7 @@
     </button>
     <button
       type="submit"
-      disabled={isSubmitting || !name || !audioDir || (!isEdit && !siteId)}
+      disabled={isSubmitting || !name || (!isEdit && !siteId)}
       class="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
     >
       {isSubmitting ? 'Saving...' : isEdit ? 'Update Dataset' : 'Create Dataset'}

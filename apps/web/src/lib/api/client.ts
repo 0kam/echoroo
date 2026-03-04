@@ -64,6 +64,12 @@ export class ApiClient {
   }
 
   /**
+   * Callback invoked when token refresh fails with a 401.
+   * Set externally by the auth store to handle session cleanup and redirect.
+   */
+  onRefreshFailed: (() => void) | null = null;
+
+  /**
    * Refresh access token using refresh token from cookie
    */
   private async refreshAccessToken(): Promise<void> {
@@ -80,9 +86,17 @@ export class ApiClient {
           headers: {
             'Content-Type': 'application/json',
           },
+          signal: AbortSignal.timeout(10000),
         });
 
         if (!response.ok) {
+          if (response.status === 401) {
+            // Refresh token is invalid or expired - notify the auth layer
+            this.accessToken = null;
+            if (this.onRefreshFailed) {
+              this.onRefreshFailed();
+            }
+          }
           throw new ApiError('Token refresh failed', response.status);
         }
 

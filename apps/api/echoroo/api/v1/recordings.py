@@ -1,16 +1,19 @@
 """Recordings API endpoints."""
 
+import asyncio
 from collections.abc import Generator
 from datetime import datetime
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Response, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response, status
 from fastapi.responses import StreamingResponse
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from echoroo.core.database import DbSession
 from echoroo.core.settings import get_settings
-from echoroo.middleware.auth import CurrentUser
+from echoroo.middleware.auth import API_TOKEN_PREFIX, CurrentUser
+from echoroo.models.user import User
 from echoroo.repositories.project import ProjectRepository
 from echoroo.schemas.recording import (
     RecordingDetailResponse,
@@ -19,20 +22,97 @@ from echoroo.schemas.recording import (
     RecordingUpdate,
 )
 from echoroo.services.audio import AudioService
+from echoroo.services.auth import AuthService
 from echoroo.services.recording import RecordingService
+from echoroo.services.token import TokenService
 
 router = APIRouter(prefix="/projects/{project_id}/recordings", tags=["recordings"])
 
 settings = get_settings()
+
+_bearer_scheme = HTTPBearer(auto_error=False)
+
+
+async def get_current_user_flexible(
+    request: Request,
+    db: DbSession,
+    token: Annotated[str | None, Query(description="JWT access token (for audio/img src URLs)")] = None,
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer_scheme)] = None,
+) -> User:
+    """Authenticate via Authorization header or ?token query parameter.
+
+    This dependency is used exclusively for audio streaming and spectrogram
+    endpoints so that the browser can set ``<audio src=url>`` and
+    ``<img src=url>`` directly without custom fetch logic. Standard endpoints
+    must continue to use the header-only ``CurrentUser`` dependency.
+
+    Priority:
+        1. Query parameter ``?token=<jwt>``  (allows native browser media elements)
+        2. ``Authorization: Bearer <jwt>`` header  (standard behaviour)
+
+    Security note:
+        The token will appear in server access logs when passed as a query
+        parameter. This is acceptable for scoped media streaming URLs.
+
+    Args:
+        request: Incoming HTTP request (unused directly, kept for tracing).
+        db: Database session.
+        token: Optional JWT access token supplied as a query parameter.
+        credentials: Optional HTTP Bearer credentials from the Authorization header.
+
+    Returns:
+        Authenticated User instance.
+
+    Raises:
+        HTTPException 401: No valid credentials supplied.
+        HTTPException 401: Token is invalid or expired.
+        HTTPException 403: User account is disabled.
+    """
+    # Resolve the raw token string from either source
+    raw_token: str | None = None
+    if token is not None:
+        raw_token = token
+    elif credentials is not None:
+        raw_token = credentials.credentials
+
+    if raw_token is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    # Dispatch to the appropriate authentication back-end
+    if raw_token.startswith(API_TOKEN_PREFIX):
+        token_service = TokenService(db)
+        user = await token_service.authenticate_by_token(raw_token)
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid or expired API token",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        return user
+
+    auth_service = AuthService(db)
+    return await auth_service.get_current_user(raw_token)
+
+
+# Annotated type alias for the flexible auth dependency (media endpoints only)
+FlexibleCurrentUser = Annotated[User, Depends(get_current_user_flexible)]
 
 
 def get_audio_service() -> AudioService:
     """Get AudioService instance.
 
     Returns:
-        AudioService instance
+        AudioService instance configured with S3 audio cache support.
     """
-    return AudioService(settings.AUDIO_ROOT, settings.AUDIO_CACHE_DIR)
+    return AudioService(
+        settings.AUDIO_ROOT,
+        settings.AUDIO_CACHE_DIR,
+        s3_audio_cache_dir="/data/s3_audio_cache",
+    )
 
 
 def get_recording_service(
@@ -320,13 +400,14 @@ async def delete_recording(
     description=(
         "Stream audio for playback with full HTTP Range request support. "
         "Speed and time_expansion are applied via WAV header manipulation "
-        "(zero-cost, no resampling). Supports clip trimming via start/end params."
+        "(zero-cost, no resampling). Supports clip trimming via start/end params. "
+        "Accepts auth via Authorization header or ?token query parameter."
     ),
 )
 async def stream_audio(
     project_id: UUID,
     recording_id: UUID,
-    current_user: CurrentUser,
+    current_user: FlexibleCurrentUser,
     service: RecordingServiceDep,
     speed: float = 1.0,
     time_expansion: float | None = None,
@@ -383,9 +464,11 @@ async def stream_audio(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Audio service not configured",
         )
+    assert service.audio_service is not None  # narrowing for Pyright
 
-    file_path = service.audio_service.get_absolute_path(recording.path)
-    if not file_path.exists():
+    try:
+        local_file_path = service.audio_service.ensure_file_local(recording.path)
+    except FileNotFoundError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Audio file not found")
 
     # Use the recording's stored time_expansion when the caller does not override it
@@ -393,7 +476,122 @@ async def stream_audio(
         time_expansion if time_expansion is not None else recording.time_expansion
     )
 
-    # Parse the HTTP Range header: "bytes=N-M" or "bytes=N-"
+    # Determine whether we can stream the raw file bytes without decoding
+    is_passthrough = (
+        speed == 1.0
+        and effective_time_expansion == 1.0
+        and start is None
+        and end is None
+        and target_samplerate is None
+    )
+
+    # For passthrough mode, serve the compressed OGG version to reduce transfer size
+    # (83 MB WAV -> ~3-5 MB OGG over SSH). The compressed file is created on first
+    # access and cached on disk for subsequent requests.
+    if is_passthrough:
+        import logging
+
+        _logger = logging.getLogger(__name__)
+        try:
+            compressed_path = service.audio_service.get_compressed_for_playback(recording.path)
+        except Exception as exc:
+            _logger.warning(
+                "OGG compression failed for %s, falling back to raw WAV: %s",
+                recording.path,
+                exc,
+            )
+            compressed_path = None
+
+        if compressed_path is not None:
+            ogg_size = compressed_path.stat().st_size
+
+            if range is None:
+                # No Range header: stream the full compressed file
+                def _iter_ogg() -> Generator[bytes, None, None]:
+                    with open(compressed_path, "rb") as f:
+                        while chunk := f.read(65536):
+                            yield chunk
+
+                return StreamingResponse(
+                    _iter_ogg(),
+                    status_code=status.HTTP_200_OK,
+                    media_type="audio/ogg",
+                    headers={
+                        "Accept-Ranges": "bytes",
+                        "Content-Length": str(ogg_size),
+                    },
+                )
+
+            # Range request: serve the requested byte slice of the OGG file
+            range_value = range.replace("bytes=", "")
+            parts = range_value.split("-")
+            req_start = int(parts[0]) if parts[0] else 0
+            req_end = int(parts[1]) if len(parts) > 1 and parts[1] else ogg_size - 1
+
+            req_start = max(0, min(req_start, ogg_size - 1))
+            req_end = max(req_start, min(req_end, ogg_size - 1))
+            chunk_size = req_end - req_start + 1
+
+            with open(compressed_path, "rb") as f:
+                f.seek(req_start)
+                chunk = f.read(chunk_size)
+
+            return Response(
+                content=chunk,
+                status_code=status.HTTP_206_PARTIAL_CONTENT,
+                media_type="audio/ogg",
+                headers={
+                    "Accept-Ranges": "bytes",
+                    "Content-Length": str(chunk_size),
+                    "Content-Range": f"bytes {req_start}-{req_end}/{ogg_size}",
+                },
+            )
+
+        # Fallback: serve raw WAV when compression is unavailable
+        file_size = local_file_path.stat().st_size
+
+        if range is None:
+            def _iter_file() -> Generator[bytes, None, None]:
+                with open(local_file_path, "rb") as f:
+                    while chunk := f.read(65536):
+                        yield chunk
+
+            return StreamingResponse(
+                _iter_file(),
+                status_code=status.HTTP_200_OK,
+                media_type="audio/wav",
+                headers={
+                    "Accept-Ranges": "bytes",
+                    "Content-Length": str(file_size),
+                },
+            )
+
+        range_value = range.replace("bytes=", "")
+        parts = range_value.split("-")
+        req_start = int(parts[0]) if parts[0] else 0
+        req_end = int(parts[1]) if len(parts) > 1 and parts[1] else file_size - 1
+
+        req_start = max(0, min(req_start, file_size - 1))
+        req_end = max(req_start, min(req_end, file_size - 1))
+        chunk_size = req_end - req_start + 1
+
+        with open(local_file_path, "rb") as f:
+            f.seek(req_start)
+            chunk = f.read(chunk_size)
+
+        return Response(
+            content=chunk,
+            status_code=status.HTTP_206_PARTIAL_CONTENT,
+            media_type="audio/wav",
+            headers={
+                "Accept-Ranges": "bytes",
+                "Content-Length": str(chunk_size),
+                "Content-Range": f"bytes {req_start}-{req_end}/{file_size}",
+            },
+        )
+
+    # Non-passthrough path (speed change, trimming, resampling):
+    # load_clip_bytes() decodes and re-encodes as needed.
     byte_start = 0
     if range is not None:
         range_value = range.replace("bytes=", "")
@@ -412,23 +610,15 @@ async def stream_audio(
         )
     )
 
+    range_end = actual_end - 1
     common_headers = {
         "Accept-Ranges": "bytes",
         "Content-Length": str(len(audio_bytes)),
+        "Content-Range": f"bytes {actual_start}-{range_end}/{total_size}",
     }
 
-    if range is None:
-        # No Range header: return 200 OK with the full first chunk
-        return Response(
-            content=audio_bytes,
-            status_code=status.HTTP_200_OK,
-            media_type="audio/wav",
-            headers=common_headers,
-        )
-
-    # Range header present: return 206 Partial Content
-    range_end = actual_end - 1
-    common_headers["Content-Range"] = f"bytes {actual_start}-{range_end}/{total_size}"
+    # Always return 206 Partial Content so the browser knows the total file
+    # size and can issue subsequent Range requests for the remaining data.
     return Response(
         content=audio_bytes,
         status_code=status.HTTP_206_PARTIAL_CONTENT,
@@ -479,13 +669,14 @@ async def stream_audio_legacy(
         "Stream audio for browser playback with HTTP Range support. "
         "Ultrasonic recordings are automatically slowed down for audible playback "
         "by adjusting the WAV header sample rate (zero-cost, no resampling). "
-        "Delegates to the /audio endpoint internally."
+        "Delegates to the /audio endpoint internally. "
+        "Accepts auth via Authorization header or ?token query parameter."
     ),
 )
 async def get_playback_audio(
     project_id: UUID,
     recording_id: UUID,
-    current_user: CurrentUser,
+    current_user: FlexibleCurrentUser,
     service: RecordingServiceDep,
     speed: float = 1.0,
     start: float | None = None,
@@ -527,9 +718,23 @@ async def get_playback_audio(
     # For ultrasonic recordings adjust speed so audio is audible in a browser.
     # This is handled transparently by encoding a reduced samplerate in the WAV
     # header — no actual resampling is performed.
+    #
+    # The header samplerate formula in load_clip_bytes is:
+    #   header_sr = output_sr * speed * time_expansion
+    #
+    # For ultrasonic playback we want a low header rate (e.g. ~48 kHz) so the
+    # browser plays the high-samplerate PCM slowly, making the audio audible.
+    # We achieve this by setting speed to 1/time_expansion (which cancels out
+    # the time_expansion multiplication), effectively giving header_sr ≈ output_sr.
+    # For full-spectrum recordings (time_expansion=1), we target ~48 kHz.
     effective_speed = speed
+    effective_te = recording.time_expansion
     if service.is_ultrasonic(recording) and speed == 1.0:
-        effective_speed = recording.time_expansion if recording.time_expansion > 1 else 10.0
+        # Target a browser-friendly samplerate for the WAV header
+        target_browser_rate = 48000
+        # header_sr = samplerate * effective_speed * effective_te = target_browser_rate
+        # => effective_speed = target_browser_rate / (samplerate * effective_te)
+        effective_speed = target_browser_rate / (recording.samplerate * effective_te)
 
     return await stream_audio(
         project_id=project_id,
@@ -537,7 +742,7 @@ async def get_playback_audio(
         current_user=current_user,
         service=service,
         speed=effective_speed,
-        time_expansion=recording.time_expansion,
+        time_expansion=effective_te,
         start=start,
         end=end,
         target_samplerate=None,
@@ -549,12 +754,15 @@ async def get_playback_audio(
 @router.get(
     "/{recording_id}/spectrogram",
     summary="Generate spectrogram",
-    description="Generate spectrogram image for visualization",
+    description=(
+        "Generate spectrogram image for visualization. "
+        "Accepts auth via Authorization header or ?token query parameter."
+    ),
 )
 async def get_spectrogram(
     project_id: UUID,
     recording_id: UUID,
-    current_user: CurrentUser,
+    current_user: FlexibleCurrentUser,
     service: RecordingServiceDep,
     start: float = 0,
     end: float | None = None,
@@ -604,21 +812,30 @@ async def get_spectrogram(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Audio service not configured"
         )
+    assert service.audio_service is not None  # narrowing for Pyright
 
     try:
-        png_bytes = service.audio_service.generate_spectrogram(
-            recording.path,
-            start=start,
-            end=end,
-            n_fft=n_fft,
-            hop_length=hop_length,
-            freq_min=freq_min,
-            freq_max=freq_max,
-            colormap=colormap,
-            pcen=pcen,
-            channel=channel,
-            width=width,
-            height=height,
+        await asyncio.to_thread(service.audio_service.ensure_file_local, recording.path)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Audio file not found") from exc
+
+    audio_svc = service.audio_service
+    try:
+        png_bytes = await asyncio.to_thread(
+            lambda: audio_svc.generate_spectrogram(
+                recording.path,
+                start=start,
+                end=end,
+                n_fft=n_fft,
+                hop_length=hop_length,
+                freq_min=freq_min,
+                freq_max=freq_max,
+                colormap=colormap,
+                pcen=pcen,
+                channel=channel,
+                width=width,
+                height=height,
+            )
         )
         return Response(content=png_bytes, media_type="image/png")
     except Exception as e:
@@ -662,8 +879,9 @@ async def download_recording(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Audio service not configured"
         )
 
-    file_path = service.audio_service.get_absolute_path(recording.path)
-    if not file_path.exists():
+    try:
+        file_path = service.audio_service.ensure_file_local(recording.path)
+    except FileNotFoundError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Audio file not found")
 
     def iter_file() -> Generator[bytes, None, None]:

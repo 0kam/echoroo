@@ -1,6 +1,7 @@
 <script lang="ts">
-  import { onMount, onDestroy } from 'svelte';
+  import { onDestroy, untrack } from 'svelte';
   import { getPlaybackUrl } from '$lib/api/recordings';
+  import { apiClient } from '$lib/api/client';
   import type { SpeedOption } from '$lib/types/audio';
   import type { SpectrogramWindow } from '$lib/types/audio';
   import {
@@ -16,6 +17,8 @@
     speedOptions: SpeedOption[];
     viewport: SpectrogramWindow;
     bounds: SpectrogramWindow;
+    /** When this value changes, the audio element will seek to this time (seconds). */
+    seekTo?: number;
     onViewportChange?: (viewport: SpectrogramWindow) => void;
     onTimeUpdate?: (time: number) => void;
     onSeek?: (time: number) => void;
@@ -29,6 +32,7 @@
     speedOptions,
     viewport,
     bounds,
+    seekTo,
     onViewportChange,
     onTimeUpdate,
     onSeek,
@@ -46,20 +50,79 @@
   let lockPlay = false;
   let animFrameId: number | null = null;
 
+  let audioLoadError = $state(false);
+
+  // Track whether we have already attempted a token refresh for the current
+  // audio element error, so we never enter an infinite retry loop.
+  let hasRetriedAfterRefresh = false;
+
   // Speed dropdown state
   let showSpeedMenu = $state(false);
 
-  let audioUrl = $derived(getPlaybackUrl(projectId, recordingId, { speed }));
+  // Build the playback URL with the current access token as a query parameter.
+  // This allows the browser's native <audio> element to stream the audio
+  // directly (including HTTP Range requests for seeking) without requiring
+  // a custom fetch wrapper.
+  function buildAudioSrc(pid: string, rid: string): string {
+    const token = apiClient.getAccessToken();
+    // Build the base URL without speed — speed is applied via audioEl.playbackRate
+    const fullUrl = getPlaybackUrl(pid, rid);
+    const parsed = new URL(fullUrl);
+    // Use only the path + existing query string so it works through the Vite proxy
+    const pathWithQuery = parsed.pathname + parsed.search;
+    if (token) {
+      const sep = pathWithQuery.includes('?') ? '&' : '?';
+      return `${pathWithQuery}${sep}token=${encodeURIComponent(token)}`;
+    }
+    return pathWithQuery;
+  }
 
-  // When URL changes (speed change), reload audio
+  // When projectId or recordingId changes, update the audio element source.
+  // Keep the current playback position and playing state if possible.
   $effect(() => {
-    if (!audioEl) return;
-    const wasPlaying = isPlaying;
-    const savedTime = currentTime;
-    audioEl.src = audioUrl;
+    const _projectId = projectId;
+    const _recordingId = recordingId;
+
+    if (!_projectId || !_recordingId || !audioEl) return;
+
+    // Keep this effect scoped to source identity only.
+    // `currentTime` and `isPlaying` are read untracked so time updates during
+    // playback do not re-run this effect and reset audio src repeatedly.
+    const savedTime = untrack(() => currentTime);
+    const wasPlaying = untrack(() => isPlaying);
+
+    audioLoadError = false;
+    // Reset the retry flag whenever we load a new recording
+    hasRetriedAfterRefresh = false;
+
+    // Set src directly — the browser handles Range requests and buffering
+    audioEl.src = buildAudioSrc(_projectId, _recordingId);
     audioEl.currentTime = savedTime;
+
     if (wasPlaying) {
       audioEl.play().catch(() => {});
+    }
+  });
+
+  // Sync playbackRate whenever the speed prop changes.
+  // This avoids re-fetching the entire audio file just to change speed.
+  $effect(() => {
+    if (!audioEl) return;
+    audioEl.playbackRate = speed;
+  });
+
+  // When the parent requests a seek (e.g., after a spectrogram click), apply it
+  // to the audio element.  The threshold of 0.05 s prevents this from firing on
+  // every time-update tick during normal playback.
+  $effect(() => {
+    if (seekTo === undefined || !audioEl) return;
+    if (Math.abs(audioEl.currentTime - seekTo) > 0.05) {
+      audioEl.currentTime = seekTo;
+      // Keep local state in sync so the progress bar reflects the new position
+      // immediately, even before the next animation frame fires.
+      untrack(() => {
+        currentTime = seekTo as number;
+      });
     }
   });
 
@@ -184,6 +247,45 @@
     stopTimeTracking();
   }
 
+  async function onAudioError() {
+    // When the audio element fails, the MediaError code is available on
+    // audioEl.error.  Code 4 (MEDIA_ERR_SRC_NOT_SUPPORTED) is what browsers
+    // surface for HTTP-level errors such as 401 Unauthorized.
+    //
+    // Attempt a token refresh exactly once.  If the refresh succeeds we
+    // rebuild the src with the new token and resume from where we left off.
+    // If the refresh fails (or we already retried once), fall through to the
+    // visible error state.
+    const mediaErrCode = audioEl?.error?.code ?? 0;
+    const likelyAuthError = mediaErrCode === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED ||
+                            mediaErrCode === MediaError.MEDIA_ERR_NETWORK;
+
+    if (likelyAuthError && !hasRetriedAfterRefresh) {
+      hasRetriedAfterRefresh = true;
+      try {
+        await apiClient.refreshToken();
+        // Rebuild the src with the freshly-obtained token
+        if (audioEl && projectId && recordingId) {
+          const savedTime = audioEl.currentTime;
+          const wasPlaying = isPlaying;
+          audioEl.src = buildAudioSrc(projectId, recordingId);
+          audioEl.currentTime = savedTime;
+          if (wasPlaying) {
+            audioEl.play().catch(() => {});
+          }
+        }
+        // Do NOT set audioLoadError — give the retry a chance to succeed
+        return;
+      } catch {
+        // Refresh failed; fall through to show the error state
+      }
+    }
+
+    audioLoadError = true;
+    isPlaying = false;
+    stopTimeTracking();
+  }
+
   // Expose seek for external control (parent can call this)
   export function seek(time: number) {
     currentTime = time;
@@ -218,6 +320,12 @@
 
   onDestroy(() => {
     stopTimeTracking();
+    // Clear audio source to stop any in-progress network requests
+    if (audioEl) {
+      audioEl.pause();
+      audioEl.src = '';
+      audioEl.load();
+    }
   });
 </script>
 
@@ -359,14 +467,15 @@
     />
   </div>
 
-  <!-- Hidden audio element -->
+  <!-- Hidden audio element: src is set reactively via $effect above -->
+  <!-- preload="auto" tells the browser to buffer ahead, preventing stuttered playback -->
   <audio
     bind:this={audioEl}
-    src={audioUrl}
     preload="auto"
     onplay={onAudioPlay}
     onpause={onAudioPause}
     onended={onAudioEnded}
+    onerror={onAudioError}
   ></audio>
 </div>
 

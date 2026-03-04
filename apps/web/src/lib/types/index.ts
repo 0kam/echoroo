@@ -88,8 +88,6 @@ export type {
   RecordingsByDate,
   RecordingsByHour,
   DatasetStatistics,
-  DirectoryInfo,
-  DirectoryListResponse,
   ExportRequest,
   RecordingDetail,
   RecordingUpdate,

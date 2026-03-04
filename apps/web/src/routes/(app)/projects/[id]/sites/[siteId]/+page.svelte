@@ -7,6 +7,7 @@
   import type { SiteCreate } from '$lib/types/data';
   import SiteForm from '$lib/components/data/SiteForm.svelte';
   import DeleteConfirmDialog from '$lib/components/ui/DeleteConfirmDialog.svelte';
+  import H3MapPicker from '$lib/components/map/H3MapPicker.svelte';
 
   const projectId = $derived($page.params.id as string);
   const siteId = $derived($page.params.siteId as string);
@@ -153,6 +154,14 @@
           </button>
         </div>
       </div>
+
+      <!-- Location map -->
+      {#if $siteQuery.data.h3_index}
+        <div class="rounded-lg border border-gray-200 bg-white p-4">
+          <h2 class="mb-3 text-sm font-semibold text-gray-700">Location</h2>
+          <H3MapPicker h3Index={$siteQuery.data.h3_index} readonly={true} />
+        </div>
+      {/if}
 
       <!-- Stats -->
       <div class="grid grid-cols-3 gap-4">

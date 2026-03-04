@@ -10,13 +10,12 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from echoroo.models.dataset import Dataset
-from echoroo.models.enums import DatasetStatus, DatasetVisibility, DatetimeParseStatus
+from echoroo.models.enums import DatasetStatus, DatasetVisibility
 from echoroo.models.recording import Recording
 from echoroo.repositories.dataset import DatasetRepository
 from echoroo.repositories.project import ProjectRepository
 from echoroo.repositories.recording import RecordingRepository
 from echoroo.repositories.site import SiteRepository
-from echoroo.services.audio import AudioService
 
 
 class DateRangeDict(TypedDict, total=False):
@@ -58,7 +57,6 @@ class DatasetService:
         site_repo: SiteRepository,
         project_repo: ProjectRepository,
         recording_repo: RecordingRepository,
-        audio_service: AudioService | None = None,
     ) -> None:
         """Initialize service with repositories.
 
@@ -67,13 +65,11 @@ class DatasetService:
             site_repo: Site repository instance
             project_repo: Project repository instance
             recording_repo: Recording repository instance
-            audio_service: Audio service instance (optional)
         """
         self.dataset_repo = dataset_repo
         self.site_repo = site_repo
         self.project_repo = project_repo
         self.recording_repo = recording_repo
-        self.audio_service = audio_service
 
     async def get_by_id(
         self, user_id: UUID, project_id: UUID, dataset_id: UUID
@@ -164,7 +160,6 @@ class DatasetService:
         project_id: UUID,
         site_id: UUID,
         name: str,
-        audio_dir: str,
         description: str | None = None,
         visibility: DatasetVisibility = DatasetVisibility.PRIVATE,
         recorder_id: str | None = None,
@@ -182,7 +177,6 @@ class DatasetService:
             project_id: Project's UUID
             site_id: Site's UUID
             name: Dataset name
-            audio_dir: Relative path to audio directory
             description: Dataset description
             visibility: Dataset visibility
             recorder_id: Recorder ID
@@ -230,7 +224,6 @@ class DatasetService:
             created_by_id=user_id,
             name=name,
             description=description,
-            audio_dir=audio_dir,
             visibility=visibility,
             status=DatasetStatus.PENDING,
             recorder_id=recorder_id,
@@ -362,263 +355,6 @@ class DatasetService:
 
         await self.dataset_repo.delete(dataset_id)
 
-    async def start_import(
-        self,
-        db: AsyncSession,
-        dataset_id: UUID,
-        datetime_pattern: str | None = None,
-        datetime_format: str | None = None,
-    ) -> bool:
-        """Start importing recordings from audio_dir.
-
-        Args:
-            db: Database session
-            dataset_id: Dataset's UUID
-            datetime_pattern: Override regex pattern for datetime extraction
-            datetime_format: Override strftime format string
-
-        Returns:
-            True if import started successfully, False otherwise
-        """
-        if not self.audio_service:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Audio service not configured",
-            )
-
-        # Get dataset
-        dataset = await self.dataset_repo.get_by_id(dataset_id)
-        if not dataset:
-            return False
-
-        try:
-            # Update status to SCANNING
-            await self.dataset_repo.update_import_status(
-                dataset_id, DatasetStatus.SCANNING
-            )
-            await db.commit()
-
-            # Use provided patterns or dataset defaults
-            pattern = datetime_pattern or dataset.datetime_pattern
-            format_str = datetime_format or dataset.datetime_format
-
-            # Scan directory using audio_service
-            audio_files = self.audio_service.scan_directory(dataset.audio_dir)
-            total_files = len(audio_files)
-
-            # Update total files and set status to PROCESSING
-            await self.dataset_repo.update_import_status(
-                dataset_id, DatasetStatus.PROCESSING, total_files=total_files
-            )
-            await db.commit()
-
-            # Process each audio file
-            recordings_to_create: list[Recording] = []
-            processed_count = 0
-
-            for file_path in audio_files:
-                try:
-                    # Check if already imported (by path)
-                    existing = await self.recording_repo.get_by_dataset_and_path(
-                        dataset_id, file_path
-                    )
-                    if existing:
-                        processed_count += 1
-                        continue
-
-                    # Extract metadata
-                    metadata = self.audio_service.extract_metadata(file_path)
-
-                    # Parse datetime from filename
-                    parsed_datetime, parse_error = self.parse_datetime_from_filename(
-                        metadata.filename, pattern, format_str
-                    )
-
-                    # Determine parse status
-                    if parsed_datetime:
-                        parse_status = DatetimeParseStatus.SUCCESS
-                    elif pattern and format_str:
-                        parse_status = DatetimeParseStatus.FAILED
-                    else:
-                        parse_status = DatetimeParseStatus.PENDING
-
-                    # Create recording
-                    recording = Recording(
-                        dataset_id=dataset_id,
-                        filename=metadata.filename,
-                        path=metadata.path,
-                        hash=metadata.hash,
-                        duration=metadata.duration,
-                        samplerate=metadata.samplerate,
-                        channels=metadata.channels,
-                        bit_depth=metadata.bit_depth,
-                        datetime=parsed_datetime,
-                        datetime_parse_status=parse_status,
-                        datetime_parse_error=parse_error,
-                    )
-
-                    recordings_to_create.append(recording)
-                    processed_count += 1
-
-                    # Batch insert every 100 recordings
-                    if len(recordings_to_create) >= 100:
-                        await self.recording_repo.create_many(recordings_to_create)
-                        await self.dataset_repo.update_import_status(
-                            dataset_id,
-                            DatasetStatus.PROCESSING,
-                            processed_files=processed_count,
-                        )
-                        await db.commit()
-                        recordings_to_create.clear()
-
-                except Exception as e:
-                    # Log error but continue processing
-                    print(f"Error processing {file_path}: {e}")
-                    processed_count += 1
-                    continue
-
-            # Insert remaining recordings
-            if recordings_to_create:
-                await self.recording_repo.create_many(recordings_to_create)
-
-            # Update status to COMPLETED
-            await self.dataset_repo.update_import_status(
-                dataset_id,
-                DatasetStatus.COMPLETED,
-                processed_files=processed_count,
-            )
-            await db.commit()
-
-            return True
-
-        except Exception as e:
-            # Update status to FAILED
-            await self.dataset_repo.update_import_status(
-                dataset_id, DatasetStatus.FAILED, error=str(e)
-            )
-            await db.commit()
-            return False
-
-    async def rescan(self, db: AsyncSession, dataset_id: UUID) -> bool:
-        """Rescan directory for new files.
-
-        Args:
-            db: Database session
-            dataset_id: Dataset's UUID
-
-        Returns:
-            True if rescan completed successfully, False otherwise
-        """
-        if not self.audio_service:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Audio service not configured",
-            )
-
-        # Get dataset
-        dataset = await self.dataset_repo.get_by_id(dataset_id)
-        if not dataset:
-            return False
-
-        try:
-            # Update status to SCANNING
-            await self.dataset_repo.update_import_status(
-                dataset_id, DatasetStatus.SCANNING
-            )
-            await db.commit()
-
-            # Scan directory
-            audio_files = self.audio_service.scan_directory(dataset.audio_dir)
-            total_files = len(audio_files)
-
-            # Update total files
-            await self.dataset_repo.update_import_status(
-                dataset_id, DatasetStatus.PROCESSING, total_files=total_files
-            )
-            await db.commit()
-
-            # Process only new files (not already in database)
-            recordings_to_create: list[Recording] = []
-            new_count = 0
-
-            for file_path in audio_files:
-                try:
-                    # Check if already imported
-                    existing = await self.recording_repo.get_by_dataset_and_path(
-                        dataset_id, file_path
-                    )
-                    if existing:
-                        continue
-
-                    # Extract metadata
-                    metadata = self.audio_service.extract_metadata(file_path)
-
-                    # Parse datetime from filename
-                    parsed_datetime, parse_error = self.parse_datetime_from_filename(
-                        metadata.filename,
-                        dataset.datetime_pattern,
-                        dataset.datetime_format,
-                    )
-
-                    # Determine parse status
-                    if parsed_datetime:
-                        parse_status = DatetimeParseStatus.SUCCESS
-                    elif dataset.datetime_pattern and dataset.datetime_format:
-                        parse_status = DatetimeParseStatus.FAILED
-                    else:
-                        parse_status = DatetimeParseStatus.PENDING
-
-                    # Create recording
-                    recording = Recording(
-                        dataset_id=dataset_id,
-                        filename=metadata.filename,
-                        path=metadata.path,
-                        hash=metadata.hash,
-                        duration=metadata.duration,
-                        samplerate=metadata.samplerate,
-                        channels=metadata.channels,
-                        bit_depth=metadata.bit_depth,
-                        datetime=parsed_datetime,
-                        datetime_parse_status=parse_status,
-                        datetime_parse_error=parse_error,
-                    )
-
-                    recordings_to_create.append(recording)
-                    new_count += 1
-
-                    # Batch insert every 100 recordings
-                    if len(recordings_to_create) >= 100:
-                        await self.recording_repo.create_many(recordings_to_create)
-                        await db.commit()
-                        recordings_to_create.clear()
-
-                except Exception as e:
-                    print(f"Error processing {file_path}: {e}")
-                    continue
-
-            # Insert remaining recordings
-            if recordings_to_create:
-                await self.recording_repo.create_many(recordings_to_create)
-
-            # Update status to COMPLETED
-            current_count = await self.recording_repo.count_by_dataset(dataset_id)
-            await self.dataset_repo.update_import_status(
-                dataset_id,
-                DatasetStatus.COMPLETED,
-                processed_files=current_count,
-            )
-            await db.commit()
-
-            return True
-
-        except Exception as e:
-            # Update status to FAILED
-            await self.dataset_repo.update_import_status(
-                dataset_id, DatasetStatus.FAILED, error=str(e)
-            )
-            await db.commit()
-            return False
-
     def get_import_status(self, dataset: Dataset) -> dict[str, DatasetStatus | int | float | str | None]:
         """Get import progress status.
 
@@ -655,6 +391,10 @@ class DatasetService:
         """
         if not pattern or not format_str:
             return None, None
+
+        # Guard against excessively long patterns (ReDoS mitigation)
+        if len(pattern) > 200:
+            return None, "Regex pattern too long (max 200 characters)"
 
         try:
             match = re.search(pattern, filename)

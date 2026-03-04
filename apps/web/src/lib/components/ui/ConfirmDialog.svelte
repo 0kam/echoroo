@@ -9,6 +9,7 @@
     onConfirm: () => void | Promise<void>;
     onCancel?: () => void;
     warningItems?: string[];
+    errorMessage?: string | null;
   }
 
   let {
@@ -21,6 +22,7 @@
     onConfirm,
     onCancel = () => {},
     warningItems = [],
+    errorMessage = null,
   }: Props = $props();
 
   let isProcessing = $state(false);
@@ -94,6 +96,12 @@
                 <li class="mb-1">{item}</li>
               {/each}
             </ul>
+          </div>
+        {/if}
+
+        {#if errorMessage}
+          <div class="mt-3 rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">
+            {errorMessage}
           </div>
         {/if}
       </div>
