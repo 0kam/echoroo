@@ -23,8 +23,12 @@ from echoroo.models.enums import DetectionRunStatus, DetectionSource, DetectionS
 from echoroo.models.recording import Recording
 from echoroo.repositories.annotation import AnnotationRepository
 from echoroo.repositories.detection_run import DetectionRunRepository
+from echoroo.repositories.system import SystemSettingRepository
 from echoroo.repositories.tag import TagRepository
+from echoroo.repositories.taxon import TaxonRepository
 from echoroo.services.audio import AudioService
+from echoroo.services.gbif import NON_SPECIES_LABELS
+from echoroo.services.h3_utils import h3_to_center
 from echoroo.workers.celery_app import app
 
 logger = logging.getLogger(__name__)
@@ -95,6 +99,21 @@ async def _run_birdnet_detection(
 
     try:
         # ------------------------------------------------------------------
+        # Step 0: Load BirdNET settings from system configuration
+        # ------------------------------------------------------------------
+        async with session_factory() as db:
+            setting_repo = SystemSettingRepository(db)
+            birdnet_settings = await setting_repo.get_birdnet_settings()
+
+        species_filter: str = str(birdnet_settings["species_filter"])
+        min_conf: float = float(birdnet_settings["min_conf"])  # type: ignore[arg-type]
+        logger.info(
+            "BirdNET settings loaded: species_filter=%s, min_conf=%.2f",
+            species_filter,
+            min_conf,
+        )
+
+        # ------------------------------------------------------------------
         # Step 1: Create or reuse DetectionRun record
         # ------------------------------------------------------------------
         async with session_factory() as db:
@@ -118,7 +137,7 @@ async def _run_birdnet_detection(
                     dataset_id=dataset_uuid,
                     model_name="birdnet",
                     model_version=birdnet_version,
-                    parameters={"min_conf": 0.25},
+                    parameters={"min_conf": min_conf, "species_filter": species_filter},
                     status=DetectionRunStatus.PENDING,
                 )
                 await run_repo.create(detection_run)
@@ -168,6 +187,48 @@ async def _run_birdnet_detection(
         )
         wrapper = BirdNETWrapper.get_instance()
 
+        # ------------------------------------------------------------------
+        # Step 4b: Compute geo species list (once per dataset if enabled)
+        # ------------------------------------------------------------------
+        custom_species_list: list[str] | None = None
+        if species_filter == "birdnet_geo" and recordings:
+            # Retrieve site h3_index from the first recording's dataset.site
+            # (Recording.dataset is lazy="joined", Dataset.site is lazy="joined")
+            first_recording = recordings[0]
+            site = getattr(getattr(first_recording, "dataset", None), "site", None)
+            h3_index: str | None = getattr(site, "h3_index", None)
+
+            # Find first recording with a valid datetime for week calculation
+            week: int | None = None
+            for rec in recordings:
+                if rec.datetime is not None:
+                    week = rec.datetime.isocalendar()[1]
+                    break
+
+            if h3_index is not None and week is not None:
+                try:
+                    lat, lon = h3_to_center(h3_index)
+                    custom_species_list = wrapper.get_species_for_location(lat, lon, week)
+                    logger.info(
+                        "BirdNET geo filter: lat=%.4f, lon=%.4f, week=%d → %d species",
+                        lat,
+                        lon,
+                        week,
+                        len(custom_species_list),
+                    )
+                except Exception as geo_exc:  # noqa: BLE001
+                    logger.warning(
+                        "BirdNET geo filter failed (skipping filter): %s", geo_exc
+                    )
+                    custom_species_list = None
+            else:
+                logger.info(
+                    "BirdNET geo filter requested but site h3_index=%s or week=%s unavailable; "
+                    "skipping geo filter",
+                    h3_index,
+                    week,
+                )
+
         total_annotations = 0
         recordings_processed = 0
         recordings_failed = 0
@@ -199,18 +260,31 @@ async def _run_birdnet_detection(
                 # abort the whole task (wrapper no longer swallows them).
                 detections = wrapper.analyze_file(
                     file_path=local_path,
-                    min_conf=0.25,
+                    min_conf=min_conf,
+                    custom_species_list=custom_species_list,
                 )
 
                 if detections:
                     # Resolve or create species tags and build Annotation objects
                     async with session_factory() as db:
                         tag_repo = TagRepository(db)
+                        taxon_repo = TaxonRepository(db)
                         for detection in detections:
+                            # Determine if this label represents a non-biological sound
+                            is_non_bio = detection.common_name in NON_SPECIES_LABELS
+
+                            # Get or create the global taxon record first
+                            taxon = await taxon_repo.get_or_create_by_scientific_name(
+                                scientific_name=detection.scientific_name,
+                                common_name=detection.common_name,
+                                is_non_biological=is_non_bio,
+                            )
+
                             tag = await tag_repo.get_or_create_species(
                                 project_id=project_uuid,
                                 scientific_name=detection.scientific_name,
                                 common_name=detection.common_name,
+                                taxon_id=taxon.id,
                             )
                             await db.commit()
 
