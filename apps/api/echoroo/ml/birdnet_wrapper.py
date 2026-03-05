@@ -68,6 +68,7 @@ class BirdNETWrapper:
 
     _instance: BirdNETWrapper | None = None
     _model: Any = None
+    _geo_model: Any = None
 
     @classmethod
     def get_instance(cls, device: str | None = None) -> BirdNETWrapper:
@@ -115,7 +116,7 @@ class BirdNETWrapper:
             logger.info("BirdNET configured to use device: %s", self._device)
 
     def load(self) -> None:
-        """Load the BirdNET model."""
+        """Load the BirdNET acoustic model."""
         if self._model is not None:
             return
 
@@ -133,6 +134,76 @@ class BirdNETWrapper:
         self._model = birdnet.load("acoustic", BIRDNET_VERSION, backend)  # type: ignore[call-overload]
         self._species_list = list(self._model.species_list)
         logger.info("BirdNET loaded. %d species available.", len(self._species_list))
+
+    def load_geo_model(self) -> None:
+        """Load the BirdNET geo model (lazy, called on first use).
+
+        The geo model uses the same version and backend as the acoustic model.
+        It is used to predict species occurrence probability for a given
+        location and week of year.
+        """
+        if self._geo_model is not None:
+            return
+
+        import birdnet
+
+        # Geo model only supports the TFLite (tf) backend
+        backend = "tf"
+        logger.info(
+            "Loading BirdNET geo model %s with backend=%s",
+            BIRDNET_VERSION,
+            backend,
+        )
+        self._geo_model = birdnet.load("geo", BIRDNET_VERSION, backend)  # type: ignore[call-overload]
+        logger.info("BirdNET geo model loaded.")
+
+    def get_species_for_location(
+        self,
+        lat: float,
+        lon: float,
+        week: int,
+        min_species_conf: float = 0.03,
+    ) -> list[str]:
+        """Get species list filtered by location and season using geo model.
+
+        Args:
+            lat: Latitude of the recording location.
+            lon: Longitude of the recording location.
+            week: Week of year (1-48) corresponding to the recording date.
+            min_species_conf: Minimum confidence threshold for including a
+                species in the returned list (default 0.03).
+
+        Returns:
+            List of species strings in "Scientific Name_Common Name" format,
+            filtered to those with confidence >= min_species_conf.
+        """
+        if self._geo_model is None:
+            self.load_geo_model()
+
+        logger.info(
+            "Running BirdNET geo model for lat=%.4f, lon=%.4f, week=%d",
+            lat,
+            lon,
+            week,
+        )
+        result = self._geo_model.predict(
+            lat,
+            lon,
+            week=week,
+            min_confidence=min_species_conf,
+        )
+        # to_set() returns a set of "Scientific_Common" strings that passed
+        # the min_confidence filter applied inside predict()
+        species_set: set[str] = result.to_set()
+        species_list = list(species_set)
+        logger.info(
+            "BirdNET geo model returned %d species for location (lat=%.4f, lon=%.4f, week=%d)",
+            len(species_list),
+            lat,
+            lon,
+            week,
+        )
+        return species_list
 
     def _build_infer_kwargs(self) -> dict[str, Any]:
         """Build kwargs for birdnet encode/predict calls.
@@ -211,6 +282,7 @@ class BirdNETWrapper:
         file_path: str | Path,
         min_conf: float = 0.25,
         top_k: int = 10,
+        custom_species_list: list[str] | None = None,
     ) -> list[BirdNETDetection]:
         """Analyze an audio file and return detections above threshold.
 
@@ -224,6 +296,11 @@ class BirdNETWrapper:
             file_path: Path to the audio file to analyze.
             min_conf: Minimum confidence threshold (default 0.25).
             top_k: Maximum number of top predictions per segment (default 10).
+            custom_species_list: Optional list of species strings in
+                "Scientific Name_Common Name" format to restrict detection to.
+                When provided (e.g. from get_species_for_location()), only
+                species in this list are considered. When None, all species
+                in the acoustic model are considered.
 
         Returns:
             List of BirdNETDetection results.
@@ -243,11 +320,17 @@ class BirdNETWrapper:
 
         infer_kwargs = self._build_infer_kwargs()
 
+        predict_kwargs: dict[str, Any] = {
+            "top_k": top_k,
+            "default_confidence_threshold": min_conf,
+            **infer_kwargs,
+        }
+        if custom_species_list is not None:
+            predict_kwargs["custom_species_list"] = custom_species_list
+
         predictions_result = self._model.predict(
             str(file_path),
-            top_k=top_k,
-            default_confidence_threshold=min_conf,
-            **infer_kwargs,
+            **predict_kwargs,
         )
 
         predictions_by_segment = self._collect_predictions_by_segment(

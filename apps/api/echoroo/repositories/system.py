@@ -89,3 +89,25 @@ class SystemSettingRepository:
             value_type="boolean",
             description="Whether initial setup has been completed",
         )
+
+    async def get_birdnet_settings(self) -> dict[str, object]:
+        """Get BirdNET detection settings with defaults.
+
+        Returns:
+            Dictionary with species_filter and min_conf settings,
+            falling back to defaults if not configured.
+        """
+        species_filter_setting = await self.get_setting("birdnet_species_filter")
+        min_conf_setting = await self.get_setting("birdnet_min_conf")
+
+        species_filter: str = (
+            species_filter_setting.value if species_filter_setting else "none"
+        )
+        min_conf: float = (
+            float(min_conf_setting.value) if min_conf_setting else 0.25
+        )
+
+        return {
+            "species_filter": species_filter,
+            "min_conf": min_conf,
+        }

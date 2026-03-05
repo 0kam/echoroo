@@ -119,6 +119,15 @@ export type {
 // Re-export detection review types
 export * from './detection';
 
+// Re-export global taxon types
+export type {
+  VernacularName,
+  Taxon,
+  TaxonDetail,
+  TaxonListResponse,
+  TaxonSearchResult,
+} from './taxon';
+
 // Annotation-scoped DatasetSummary (used in annotation contexts)
 // Both data.ts and annotation.ts define DatasetSummary with the same shape
 // We re-export from data.ts as it's the primary source
@@ -451,12 +460,19 @@ export interface SystemSetting {
 export type SystemSettingResponse = SystemSetting;
 
 /**
+ * BirdNET species filter mode
+ */
+export type BirdnetSpeciesFilter = 'none' | 'birdnet_geo';
+
+/**
  * System settings update request
  */
 export interface SystemSettingsUpdateRequest {
   registration_mode?: 'open' | 'invitation';
   allow_registration?: boolean;
   session_timeout_minutes?: number;
+  birdnet_species_filter?: BirdnetSpeciesFilter;
+  birdnet_min_conf?: number;
 }
 
 // ============================================
