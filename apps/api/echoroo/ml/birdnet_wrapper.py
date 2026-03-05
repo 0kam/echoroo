@@ -20,20 +20,23 @@ SEGMENT_DURATION = 3.0
 
 
 def _detect_device() -> str:
-    """Detect whether a CUDA-capable GPU is available.
+    """Detect whether a TensorFlow-accessible GPU is available.
 
-    Used by BirdNETWrapper.__init__ and get_instance when device is None.
+    Uses TensorFlow's device enumeration rather than PyTorch/CUDA to reflect
+    the actual runtime used by BirdNET (TensorFlow backend).
 
     Returns:
-        "GPU" if a CUDA GPU is available, "CPU" otherwise.
+        "GPU" if TensorFlow can access at least one GPU, "CPU" otherwise.
     """
     try:
-        import torch
+        import tensorflow as tf  # type: ignore[import-untyped]
 
-        if torch.cuda.is_available():
+        gpus = tf.config.list_physical_devices("GPU")
+        if gpus:
+            logger.info("TensorFlow GPU detected: %s", [g.name for g in gpus])
             return "GPU"
-    except ImportError:
-        pass
+    except Exception as exc:
+        logger.debug("TensorFlow GPU detection failed: %s", exc)
     return "CPU"
 
 
@@ -123,7 +126,10 @@ class BirdNETWrapper:
         self._configure_device()
         import birdnet
 
-        # Use TFLite backend for CPU (avoids asyncio deadlocks), protobuf for GPU
+        # Use TFLite ("tf") backend for CPU to avoid asyncio deadlocks.
+        # Use protobuf ("pb") backend for GPU: TFLite does not support GPU
+        # acceleration, while the protobuf backend runs on TensorFlow and can
+        # use GPU devices detected via tf.config.list_physical_devices("GPU").
         backend = "tf" if self._device == "CPU" else "pb"
         logger.info(
             "Loading BirdNET %s with backend=%s, device=%s",

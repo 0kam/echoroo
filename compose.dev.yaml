@@ -127,6 +127,13 @@ services:
       context: ./apps/api
       dockerfile: Dockerfile.dev
     command: uv run celery -A echoroo.workers.celery_app worker -l info --pool=solo
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
     environment:
       - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-echoroo}
       - REDIS_URL=redis://redis:6379/0
@@ -137,6 +144,8 @@ services:
       - S3_SECRET_KEY=echoroo-dev
       - S3_BUCKET=echoroo
       - AUDIO_ROOT=/data/audio
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
     volumes:
       - ./apps/api:/app
       - backend-data:/data
