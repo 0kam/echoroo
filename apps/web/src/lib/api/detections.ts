@@ -9,6 +9,7 @@ import type {
   SpeciesSummaryResponse,
   ChangeSpeciesRequest,
   DetectionFilters,
+  DetectionTemporalDataResponse,
 } from '$lib/types/detection';
 import { fetchWithErrorHandling, handleApiResponse } from './errors';
 
@@ -159,6 +160,28 @@ export async function createDetection(
     }
   );
   return handleApiResponse<Detection>(response);
+}
+
+// ============================================
+// Temporal data
+// ============================================
+
+/**
+ * Fetch hourly detection activity data for all species in a project.
+ * Used to render PolarHeatmap visualizations.
+ */
+export async function fetchTemporalData(
+  projectId: string,
+  datasetId?: string
+): Promise<DetectionTemporalDataResponse> {
+  const params = new URLSearchParams();
+  if (datasetId) params.set('dataset_id', datasetId);
+  const qs = params.toString() ? `?${params.toString()}` : '';
+  const response = await fetchWithErrorHandling(
+    `${API_BASE}/projects/${projectId}/detections/temporal-data${qs}`,
+    { credentials: 'include' }
+  );
+  return handleApiResponse<DetectionTemporalDataResponse>(response);
 }
 
 /**

@@ -46,7 +46,7 @@
   <!-- Species names -->
   <div class="min-w-0 flex-1">
     <div class="flex items-baseline gap-2">
-      <span class="truncate text-sm font-semibold text-gray-900">{species.tag_name}</span>
+      <span class="truncate text-sm font-semibold text-gray-900">{species.common_name ?? species.tag_name}</span>
       {#if species.scientific_name}
         <span class="truncate text-xs italic text-gray-500">{species.scientific_name}</span>
       {/if}

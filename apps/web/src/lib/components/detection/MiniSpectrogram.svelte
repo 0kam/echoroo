@@ -6,6 +6,7 @@
    * and time range, with a semi-transparent overlay for the detection region.
    */
 
+  export let projectId: string;
   export let recordingId: string;
   export let startTime: number;
   export let endTime: number;
@@ -18,16 +19,16 @@
   $: windowStart = Math.max(0, startTime - BUFFER_SECONDS);
   $: windowEnd = endTime + BUFFER_SECONDS;
 
-  $: spectrogramUrl = buildSpectrogramUrl(recordingId, windowStart, windowEnd);
+  $: spectrogramUrl = buildSpectrogramUrl(projectId, recordingId, windowStart, windowEnd);
 
-  function buildSpectrogramUrl(id: string, start: number, end: number): string {
+  function buildSpectrogramUrl(projId: string, id: string, start: number, end: number): string {
     const params = new URLSearchParams({
-      start_time: start.toString(),
-      end_time: end.toString(),
+      start: start.toString(),
+      end: end.toString(),
       width: '300',
       height: '120',
     });
-    return `/api/v1/recordings/${id}/spectrogram?${params}`;
+    return `/api/v1/projects/${projId}/recordings/${id}/spectrogram?${params}`;
   }
 
   function formatTime(seconds: number): string {
@@ -78,7 +79,6 @@
     class:opacity-0={!isLoaded}
     on:load={handleLoad}
     on:error={handleError}
-    crossorigin="use-credentials"
   />
 
   <!-- Detection region overlay -->

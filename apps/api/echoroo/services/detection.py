@@ -11,7 +11,7 @@ from fastapi import HTTPException, status
 from echoroo.models.annotation import Annotation
 from echoroo.models.confirmed_region import ConfirmedRegion
 from echoroo.models.enums import DetectionStatus
-from echoroo.repositories.annotation import AnnotationRepository
+from echoroo.repositories.annotation import AnnotationRepository, TemporalSummaryRow
 from echoroo.repositories.confirmed_region import ConfirmedRegionRepository
 from echoroo.schemas.detection import (
     ChangeSpeciesRequest,
@@ -19,8 +19,11 @@ from echoroo.schemas.detection import (
     DetectionCreate,
     DetectionListResponse,
     DetectionResponse,
+    DetectionTemporalDataResponse,
+    HourlyDetection,
     SpeciesSummaryItem,
     SpeciesSummaryResponse,
+    SpeciesTemporalData,
 )
 from echoroo.schemas.tag import TagResponse
 
@@ -136,6 +139,88 @@ class DetectionService:
         return SpeciesSummaryResponse(
             items=items,
             total_species=len(items),
+        )
+
+    async def get_temporal_data(
+        self,
+        project_id: UUID,
+        dataset_id: UUID | None = None,
+    ) -> DetectionTemporalDataResponse:
+        """Get hourly detection counts grouped by species, date, and hour.
+
+        Args:
+            project_id: Project's UUID
+            dataset_id: Optional dataset filter
+
+        Returns:
+            Temporal data response with per-species hourly counts
+        """
+        from datetime import date as DateType
+
+        from sqlalchemy import select as sa_select
+
+        from echoroo.models.tag import Tag
+
+        rows = await self.annotation_repo.temporal_summary(
+            project_id=project_id,
+            dataset_id=dataset_id,
+        )
+
+        # Group rows by tag_id
+        grouped: dict[UUID, list[TemporalSummaryRow]] = {}
+        for row in rows:
+            tag_id = row["tag_id"]
+            if tag_id not in grouped:
+                grouped[tag_id] = []
+            grouped[tag_id].append(row)
+
+        # Fetch tag details for each tag and build response
+        species_list: list[SpeciesTemporalData] = []
+        all_dates: list[DateType] = []
+
+        for tag_id, tag_rows in grouped.items():
+            tag_result = await self.annotation_repo.db.execute(
+                sa_select(Tag).where(Tag.id == tag_id)
+            )
+            tag = tag_result.scalar_one_or_none()
+            if tag is None:
+                continue
+
+            hourly_detections = [
+                HourlyDetection(
+                    date=row["date"],
+                    hour=row["hour"],
+                    count=row["count"],
+                )
+                for row in tag_rows
+            ]
+
+            total_detections = sum(row["count"] for row in tag_rows)
+            dates_for_tag = [row["date"] for row in tag_rows if isinstance(row["date"], DateType)]
+            all_dates.extend(dates_for_tag)
+
+            species_list.append(
+                SpeciesTemporalData(
+                    tag_id=tag.id,
+                    scientific_name=tag.scientific_name or tag.name,
+                    common_name=tag.common_name,
+                    total_detections=total_detections,
+                    detections=hourly_detections,
+                )
+            )
+
+        # Sort species by total detections descending
+        species_list.sort(key=lambda s: s.total_detections, reverse=True)
+
+        date_range: tuple[DateType, DateType] | None = None
+        if all_dates:
+            date_range = (min(all_dates), max(all_dates))
+
+        return DetectionTemporalDataResponse(
+            project_id=project_id,
+            dataset_id=dataset_id,
+            date_range=date_range,
+            species=species_list,
         )
 
     async def get(self, detection_id: UUID) -> DetectionResponse:

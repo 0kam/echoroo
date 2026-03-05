@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import date as DateType
 from datetime import datetime
 from uuid import UUID
 
@@ -129,3 +130,32 @@ class ChangeSpeciesRequest(BaseModel):
     new_tag_id: UUID = Field(..., description="New species tag ID")
     start_time: float | None = Field(None, ge=0.0, description="Updated start time in seconds")
     end_time: float | None = Field(None, gt=0.0, description="Updated end time in seconds")
+
+
+class HourlyDetection(BaseModel):
+    """Detection count for a specific date and hour."""
+
+    date: DateType = Field(..., description="Calendar date of the detection")
+    hour: int = Field(..., ge=0, le=23, description="Hour of the day (0-23)")
+    count: int = Field(..., ge=0, description="Number of detections in this hour")
+
+
+class SpeciesTemporalData(BaseModel):
+    """Temporal detection data for a single species."""
+
+    tag_id: UUID = Field(..., description="Species tag ID")
+    scientific_name: str = Field(..., description="Scientific name of the species")
+    common_name: str | None = Field(None, description="Common name of the species")
+    total_detections: int = Field(..., description="Total number of detections across all dates/hours")
+    detections: list[HourlyDetection] = Field(..., description="Hourly detection counts")
+
+
+class DetectionTemporalDataResponse(BaseModel):
+    """Temporal detection data aggregated by species, date, and hour."""
+
+    project_id: UUID = Field(..., description="Project ID")
+    dataset_id: UUID | None = Field(None, description="Dataset ID filter, if applied")
+    date_range: tuple[DateType, DateType] | None = Field(
+        None, description="Min and max dates covered by the data"
+    )
+    species: list[SpeciesTemporalData] = Field(..., description="Per-species temporal data")

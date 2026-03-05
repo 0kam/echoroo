@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import date
+from typing import TypedDict
 from uuid import UUID
 
 from sqlalchemy import Integer, delete, func, select
@@ -13,6 +15,29 @@ from sqlalchemy.sql.expression import cast
 from echoroo.models.annotation import Annotation
 from echoroo.models.enums import DetectionStatus
 from echoroo.models.tag import Tag
+
+
+class TemporalSummaryRow(TypedDict):
+    """Typed row for temporal summary query results."""
+
+    tag_id: UUID
+    date: date
+    hour: int
+    count: int
+
+
+class SpeciesSummaryRow(TypedDict):
+    """Typed row for species summary query results."""
+
+    tag_id: UUID
+    tag_name: str
+    scientific_name: str | None
+    common_name: str | None
+    total_count: int
+    avg_confidence: float | None
+    unreviewed_count: int
+    confirmed_count: int
+    rejected_count: int
 
 
 class AnnotationRepository:
@@ -145,7 +170,7 @@ class AnnotationRepository:
         self,
         project_id: UUID,
         dataset_id: UUID | None = None,
-    ) -> list[dict[str, object]]:
+    ) -> list[SpeciesSummaryRow]:
         """Get species detection summary grouped by tag.
 
         Returns count, average confidence, and status breakdown per species tag.
@@ -218,6 +243,65 @@ class AnnotationRepository:
                 "unreviewed_count": int(row.unreviewed_count or 0),
                 "confirmed_count": int(row.confirmed_count or 0),
                 "rejected_count": int(row.rejected_count or 0),
+            }
+            for row in rows
+        ]
+
+    async def temporal_summary(
+        self,
+        project_id: UUID,
+        dataset_id: UUID | None = None,
+    ) -> list[TemporalSummaryRow]:
+        """Get hourly detection counts grouped by tag, date, and hour.
+
+        Only includes recordings with a non-null datetime field.
+
+        Args:
+            project_id: Project's UUID
+            dataset_id: Optional dataset filter
+
+        Returns:
+            List of dicts with tag_id, date, hour, and count fields
+        """
+        from echoroo.models.dataset import Dataset
+        from echoroo.models.recording import Recording
+
+        query = (
+            select(
+                Annotation.tag_id,
+                func.date(Recording.datetime).label("detection_date"),
+                func.extract("hour", Recording.datetime).label("detection_hour"),
+                func.count(Annotation.id).label("detection_count"),
+            )
+            .join(Recording, Annotation.recording_id == Recording.id)
+            .join(Dataset, Recording.dataset_id == Dataset.id)
+            .where(Dataset.project_id == project_id)
+            .where(Annotation.tag_id.isnot(None))
+            .where(Recording.datetime.isnot(None))
+            .group_by(
+                Annotation.tag_id,
+                func.date(Recording.datetime),
+                func.extract("hour", Recording.datetime),
+            )
+            .order_by(
+                Annotation.tag_id,
+                func.date(Recording.datetime),
+                func.extract("hour", Recording.datetime),
+            )
+        )
+
+        if dataset_id is not None:
+            query = query.where(Recording.dataset_id == dataset_id)
+
+        result = await self.db.execute(query)
+        rows = result.all()
+
+        return [
+            {
+                "tag_id": row.tag_id,
+                "date": row.detection_date,
+                "hour": int(row.detection_hour),
+                "count": int(row.detection_count),
             }
             for row in rows
         ]
