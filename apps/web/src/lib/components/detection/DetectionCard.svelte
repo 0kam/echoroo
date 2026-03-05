@@ -6,7 +6,9 @@
    * Supports confirm, reject, and species change operations.
    */
 
+  import { onDestroy } from 'svelte';
   import type { Detection } from '$lib/types/detection';
+  import { apiClient } from '$lib/api/client';
   import MiniSpectrogram from './MiniSpectrogram.svelte';
   import ReviewActions from './ReviewActions.svelte';
   import SpeciesCorrector from './SpeciesCorrector.svelte';
@@ -20,9 +22,10 @@
   export let onChangeSpecies: (detectionId: string, newTagId: string) => void;
 
   let audio: HTMLAudioElement | null = null;
+  let audioBlobUrl: string | null = null;
   let isPlaying = false;
+  let isLoadingAudio = false;
 
-  $: audioUrl = buildAudioUrl(detection.recording_id, detection.start_time, detection.end_time);
   $: confidencePercent = detection.confidence != null
     ? Math.round(detection.confidence * 100)
     : null;
@@ -61,29 +64,58 @@
     }
   }
 
-  function toggleAudio() {
-    if (!audio) {
-      audio = new Audio(audioUrl);
+  function stopAndCleanAudio() {
+    if (audio) {
+      audio.pause();
+      audio = null;
+    }
+    if (audioBlobUrl) {
+      URL.revokeObjectURL(audioBlobUrl);
+      audioBlobUrl = null;
+    }
+    isPlaying = false;
+  }
+
+  async function toggleAudio() {
+    // If already playing, stop
+    if (isPlaying) {
+      stopAndCleanAudio();
+      return;
+    }
+
+    // Fetch audio with authentication and create blob URL
+    isLoadingAudio = true;
+    try {
+      const url = buildAudioUrl(detection.recording_id, detection.start_time, detection.end_time);
+      const res = await apiClient.fetchRaw(url);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const blob = await res.blob();
+
+      // Clean up any previous blob URL
+      if (audioBlobUrl) URL.revokeObjectURL(audioBlobUrl);
+      audioBlobUrl = URL.createObjectURL(blob);
+
+      audio = new Audio(audioBlobUrl);
       audio.addEventListener('ended', () => {
         isPlaying = false;
       });
       audio.addEventListener('error', () => {
         isPlaying = false;
       });
-    }
 
-    if (isPlaying) {
-      audio.pause();
-      audio.currentTime = 0;
+      await audio.play();
+      isPlaying = true;
+    } catch {
       isPlaying = false;
-    } else {
-      audio.play().then(() => {
-        isPlaying = true;
-      }).catch(() => {
-        isPlaying = false;
-      });
+      stopAndCleanAudio();
+    } finally {
+      isLoadingAudio = false;
     }
   }
+
+  onDestroy(() => {
+    stopAndCleanAudio();
+  });
 
   function handleConfirm() {
     if (isPlaying) {
@@ -105,13 +137,9 @@
     onChangeSpecies(detection.id, newTagId);
   }
 
-  // Stop audio when detection changes
+  // Stop audio and clean up blob URL when detection changes
   $: if (detection.id) {
-    if (audio && isPlaying) {
-      audio.pause();
-      audio = null;
-      isPlaying = false;
-    }
+    stopAndCleanAudio();
   }
 
   // Border color based on status
@@ -169,12 +197,16 @@
     <!-- Audio play/stop button overlay -->
     <button
       type="button"
-      class="absolute right-1 top-1 flex h-7 w-7 items-center justify-center rounded-full bg-black/50 text-white transition-colors hover:bg-black/70 focus:outline-none focus:ring-2 focus:ring-white/50"
+      class="absolute right-1 top-1 flex h-7 w-7 items-center justify-center rounded-full bg-black/50 text-white transition-colors hover:bg-black/70 focus:outline-none focus:ring-2 focus:ring-white/50 disabled:cursor-not-allowed disabled:opacity-60"
       on:click|stopPropagation={toggleAudio}
+      disabled={isLoadingAudio}
       aria-label={isPlaying ? 'Stop audio' : 'Play audio'}
-      title={isPlaying ? 'Stop' : 'Play clip (Space)'}
+      title={isLoadingAudio ? 'Loading...' : isPlaying ? 'Stop' : 'Play clip (Space)'}
     >
-      {#if isPlaying}
+      {#if isLoadingAudio}
+        <!-- Loading spinner -->
+        <div class="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/40 border-t-white"></div>
+      {:else if isPlaying}
         <!-- Stop icon -->
         <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="currentColor">
           <rect x="6" y="6" width="12" height="12" rx="1" />

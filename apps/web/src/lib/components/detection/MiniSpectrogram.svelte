@@ -4,7 +4,11 @@
    *
    * Renders a small spectrogram from the backend API for the given recording
    * and time range, with a semi-transparent overlay for the detection region.
+   * Uses authenticated fetch + blob URL to avoid 401 errors from direct <img> requests.
    */
+
+  import { onDestroy, onMount } from 'svelte';
+  import { apiClient } from '$lib/api/client';
 
   export let projectId: string;
   export let recordingId: string;
@@ -19,17 +23,71 @@
   $: windowStart = Math.max(0, startTime - BUFFER_SECONDS);
   $: windowEnd = endTime + BUFFER_SECONDS;
 
-  $: spectrogramUrl = buildSpectrogramUrl(projectId, recordingId, windowStart, windowEnd);
+  let blobUrl: string | null = null;
+  let isLoaded = false;
+  let isError = false;
+  let mounted = false;
 
-  function buildSpectrogramUrl(projId: string, id: string, start: number, end: number): string {
+  function revokeBlobUrl() {
+    if (blobUrl) {
+      URL.revokeObjectURL(blobUrl);
+      blobUrl = null;
+    }
+  }
+
+  // Track the latest fetch so stale responses are ignored
+  let fetchId = 0;
+
+  function fetchSpectrogram(projId: string, recId: string, start: number, end: number) {
+    if (!mounted) return;
+
     const params = new URLSearchParams({
       start: start.toString(),
       end: end.toString(),
       width: '300',
       height: '120',
     });
-    return `/api/v1/projects/${projId}/recordings/${id}/spectrogram?${params}`;
+    const url = `/api/v1/projects/${projId}/recordings/${recId}/spectrogram?${params}`;
+
+    const currentFetchId = ++fetchId;
+    isLoaded = false;
+    isError = false;
+    revokeBlobUrl();
+
+    apiClient
+      .fetchRaw(url)
+      .then((res) => {
+        if (currentFetchId !== fetchId) return; // Stale response
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.blob();
+      })
+      .then((blob) => {
+        if (currentFetchId !== fetchId) return; // Stale response
+        if (!blob) return;
+        revokeBlobUrl();
+        blobUrl = URL.createObjectURL(blob);
+        isLoaded = true;
+        isError = false;
+      })
+      .catch(() => {
+        if (currentFetchId !== fetchId) return; // Stale response
+        isError = true;
+        isLoaded = false;
+      });
   }
+
+  onMount(() => {
+    mounted = true;
+    fetchSpectrogram(projectId, recordingId, windowStart, windowEnd);
+  });
+
+  // Re-fetch when props change (after mount)
+  $: if (mounted) fetchSpectrogram(projectId, recordingId, windowStart, windowEnd);
+
+  onDestroy(() => {
+    fetchId++; // Invalidate any in-flight fetch
+    revokeBlobUrl();
+  });
 
   function formatTime(seconds: number): string {
     const mins = Math.floor(seconds / 60);
@@ -41,19 +99,6 @@
   $: windowDuration = windowEnd - windowStart;
   $: overlayLeft = windowDuration > 0 ? ((startTime - windowStart) / windowDuration) * 100 : 0;
   $: overlayRight = windowDuration > 0 ? ((windowEnd - endTime) / windowDuration) * 100 : 0;
-
-  let isLoaded = false;
-  let isError = false;
-
-  function handleLoad() {
-    isLoaded = true;
-    isError = false;
-  }
-
-  function handleError() {
-    isError = true;
-    isLoaded = false;
-  }
 </script>
 
 <div class="relative w-full overflow-hidden rounded" style="height: 120px; background: #1c1917;">
@@ -71,15 +116,14 @@
     </div>
   {/if}
 
-  <!-- Spectrogram image -->
-  <img
-    src={spectrogramUrl}
-    alt="Spectrogram {formatTime(startTime)} to {formatTime(endTime)}"
-    class="h-full w-full object-fill"
-    class:opacity-0={!isLoaded}
-    on:load={handleLoad}
-    on:error={handleError}
-  />
+  <!-- Spectrogram image (shown only when blob URL is ready) -->
+  {#if blobUrl}
+    <img
+      src={blobUrl}
+      alt="Spectrogram {formatTime(startTime)} to {formatTime(endTime)}"
+      class="h-full w-full object-fill"
+    />
+  {/if}
 
   <!-- Detection region overlay -->
   {#if isLoaded}

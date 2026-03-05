@@ -232,6 +232,47 @@ export class ApiClient {
   async delete<T>(endpoint: string, options?: RequestInit): Promise<T> {
     return this.request<T>(endpoint, { ...options, method: 'DELETE' });
   }
+
+  /**
+   * Fetch a raw binary resource (e.g., image, audio) with authentication.
+   * Returns the raw Response so callers can convert to blob for use with
+   * URL.createObjectURL(). Handles token refresh on 401.
+   */
+  async fetchRaw(endpoint: string, retry = true): Promise<Response> {
+    const url = `${this.baseUrl}${endpoint}`;
+
+    const headers: Record<string, string> = {};
+    if (this.accessToken) {
+      headers['Authorization'] = `Bearer ${this.accessToken}`;
+    }
+
+    let response = await fetch(url, {
+      method: 'GET',
+      credentials: 'include',
+      headers,
+    });
+
+    if (response.status === 401 && retry) {
+      try {
+        await this.refreshAccessToken();
+
+        const retryHeaders: Record<string, string> = {};
+        if (this.accessToken) {
+          retryHeaders['Authorization'] = `Bearer ${this.accessToken}`;
+        }
+
+        response = await fetch(url, {
+          method: 'GET',
+          credentials: 'include',
+          headers: retryHeaders,
+        });
+      } catch {
+        // Refresh failed, return the 401 response
+      }
+    }
+
+    return response;
+  }
 }
 
 // Export singleton instance
