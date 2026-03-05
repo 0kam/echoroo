@@ -9,6 +9,7 @@
 
   import { onDestroy, onMount } from 'svelte';
   import { apiClient } from '$lib/api/client';
+  import * as m from '$lib/paraglide/messages';
 
   export let projectId: string;
   export let recordingId: string;
@@ -112,7 +113,7 @@
   {#if isError}
     <!-- Error state -->
     <div class="absolute inset-0 flex items-center justify-center text-xs text-stone-400">
-      Spectrogram unavailable
+      {m.detection_spectrogram_unavailable()}
     </div>
   {/if}
 

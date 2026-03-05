@@ -9,6 +9,7 @@
   import { createQuery } from '@tanstack/svelte-query';
   import { fetchTags } from '$lib/api/tags';
   import type { Tag } from '$lib/types/annotation';
+  import * as m from '$lib/paraglide/messages';
 
   export let currentTagId: string | null;
   export let projectId: string;
@@ -66,14 +67,14 @@
 
 <div class="relative">
   <div class="flex items-center gap-1.5">
-    <span class="text-xs text-stone-500">Species:</span>
+    <span class="text-xs text-stone-500">{m.detection_species_label()}</span>
 
     {#if currentTag}
       <span class="rounded bg-green-100 px-1.5 py-0.5 text-xs font-medium text-green-800">
         {currentTag.name}
       </span>
     {:else}
-      <span class="text-xs italic text-stone-400">Unidentified</span>
+      <span class="text-xs italic text-stone-400">{m.detection_species_unidentified()}</span>
     {/if}
 
     <!-- Search input to reassign -->
@@ -81,7 +82,7 @@
       <input
         bind:this={inputEl}
         type="text"
-        placeholder="Change species..."
+        placeholder={m.detection_species_change_placeholder()}
         bind:value={searchQuery}
         class="w-36 rounded border border-stone-300 px-2 py-0.5 text-xs focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-400"
         on:focus={handleInputFocus}
@@ -89,7 +90,7 @@
         on:keydown={handleKeydown}
         autocomplete="off"
         role="combobox"
-        aria-label="Search for replacement species"
+        aria-label={m.detection_species_search_aria()}
         aria-expanded={isOpen}
         aria-controls="species-listbox"
       />
@@ -99,12 +100,12 @@
           id="species-listbox"
           class="absolute left-0 top-full z-50 mt-1 max-h-48 w-56 overflow-y-auto rounded-md border border-stone-200 bg-white shadow-lg"
           role="listbox"
-          aria-label="Species suggestions"
+          aria-label={m.detection_species_search_aria()}
         >
           {#if $tagsQuery.isLoading}
-            <div class="px-3 py-2 text-xs text-stone-400">Loading tags...</div>
+            <div class="px-3 py-2 text-xs text-stone-400">{m.detection_species_loading_tags()}</div>
           {:else if filteredTags.length === 0}
-            <div class="px-3 py-2 text-xs text-stone-400">No matching species</div>
+            <div class="px-3 py-2 text-xs text-stone-400">{m.detection_species_no_match()}</div>
           {:else}
             {#each filteredTags.slice(0, 20) as tag (tag.id)}
               <!-- svelte-ignore a11y_click_events_have_key_events -->
@@ -123,7 +124,7 @@
             {/each}
             {#if filteredTags.length > 20}
               <div class="px-3 py-1.5 text-xs text-stone-400">
-                {filteredTags.length - 20} more results - refine search
+                {m.detection_species_more_results({ count: filteredTags.length - 20 })}
               </div>
             {/if}
           {/if}

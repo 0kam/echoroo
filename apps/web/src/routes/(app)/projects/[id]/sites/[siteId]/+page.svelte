@@ -3,11 +3,13 @@
   import { goto } from '$app/navigation';
   import { createQuery, createMutation, useQueryClient } from '@tanstack/svelte-query';
   import { fetchSite, updateSite, deleteSite } from '$lib/api/sites';
+  import { localizeHref } from '$lib/paraglide/runtime';
   import { fetchDatasets } from '$lib/api/datasets';
   import type { SiteCreate } from '$lib/types/data';
   import SiteForm from '$lib/components/data/SiteForm.svelte';
   import DeleteConfirmDialog from '$lib/components/ui/DeleteConfirmDialog.svelte';
   import H3MapPicker from '$lib/components/map/H3MapPicker.svelte';
+  import * as m from '$lib/paraglide/messages';
 
   const projectId = $derived($page.params.id as string);
   const siteId = $derived($page.params.siteId as string);
@@ -46,7 +48,7 @@
     mutationFn: () => deleteSite(projectId, siteId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['sites', projectId] });
-      goto(`/projects/${projectId}/sites`);
+      goto(localizeHref(`/projects/${projectId}/sites`));
     },
   });
 
@@ -69,26 +71,26 @@
   const deleteWarnings = $derived(
     $siteQuery.data
       ? [
-          `${$siteQuery.data.dataset_count} dataset(s)`,
-          `${$siteQuery.data.recording_count} recording(s)`,
-          `${formatDuration($siteQuery.data.total_duration)} of audio data`,
+          m.site_detail_delete_warning_datasets({ count: $siteQuery.data.dataset_count }),
+          m.site_detail_delete_warning_recordings({ count: $siteQuery.data.recording_count }),
+          m.site_detail_delete_warning_audio({ duration: formatDuration($siteQuery.data.total_duration) }),
         ]
       : []
   );
 </script>
 
 <svelte:head>
-  <title>{$siteQuery.data?.name ?? 'Site'} | Project</title>
+  <title>{m.site_detail_page_title({ name: $siteQuery.data?.name ?? 'Site' })}</title>
 </svelte:head>
 
 <div class="mx-auto max-w-4xl space-y-6 px-6 py-8">
   <!-- Breadcrumb -->
   <nav class="flex items-center gap-2 text-sm text-gray-500">
-    <a href="/projects/{projectId}" class="hover:text-gray-900">Project</a>
+    <a href={localizeHref(`/projects/${projectId}`)} class="hover:text-gray-900">{m.site_detail_breadcrumb_project()}</a>
     <span>/</span>
-    <a href="/projects/{projectId}/sites" class="hover:text-gray-900">Sites</a>
+    <a href={localizeHref(`/projects/${projectId}/sites`)} class="hover:text-gray-900">{m.site_detail_breadcrumb_sites()}</a>
     <span>/</span>
-    <span class="font-medium text-gray-900">{$siteQuery.data?.name ?? 'Loading...'}</span>
+    <span class="font-medium text-gray-900">{$siteQuery.data?.name ?? m.common_loading()}</span>
   </nav>
 
   {#if $siteQuery.isLoading}
@@ -97,7 +99,7 @@
         <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
         <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
       </svg>
-      Loading site details...
+      {m.site_detail_loading()}
     </div>
   {:else if $siteQuery.isError}
     <div class="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
@@ -107,11 +109,11 @@
     {#if isEditing}
       <div class="rounded-lg border border-gray-200 bg-white p-6">
         <div class="mb-4 flex items-center justify-between">
-          <h2 class="text-lg font-semibold text-gray-900">Edit Site</h2>
+          <h2 class="text-lg font-semibold text-gray-900">{m.site_detail_edit_heading()}</h2>
           <button
             onclick={() => (isEditing = false)}
             class="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
-            aria-label="Cancel"
+            aria-label={m.common_cancel()}
           >
             <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor">
               <line x1="18" y1="6" x2="6" y2="18" stroke-width="2" />
@@ -144,13 +146,13 @@
             onclick={() => (isEditing = true)}
             class="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50"
           >
-            Edit
+            {m.site_detail_edit_button()}
           </button>
           <button
             onclick={() => (showDeleteConfirm = true)}
             class="rounded-md border border-red-200 bg-white px-3 py-2 text-sm font-medium text-red-600 transition-colors hover:bg-red-50"
           >
-            Delete
+            {m.site_detail_delete_button()}
           </button>
         </div>
       </div>
@@ -158,7 +160,7 @@
       <!-- Location map -->
       {#if $siteQuery.data.h3_index}
         <div class="rounded-lg border border-gray-200 bg-white p-4">
-          <h2 class="mb-3 text-sm font-semibold text-gray-700">Location</h2>
+          <h2 class="mb-3 text-sm font-semibold text-gray-700">{m.site_detail_location_heading()}</h2>
           <H3MapPicker h3Index={$siteQuery.data.h3_index} readonly={true} />
         </div>
       {/if}
@@ -167,38 +169,38 @@
       <div class="grid grid-cols-3 gap-4">
         <div class="rounded-lg border border-gray-200 bg-white p-5 text-center">
           <div class="text-2xl font-semibold text-gray-900">{$siteQuery.data.dataset_count}</div>
-          <div class="mt-1 text-sm text-gray-500">Datasets</div>
+          <div class="mt-1 text-sm text-gray-500">{m.site_detail_stat_datasets()}</div>
         </div>
         <div class="rounded-lg border border-gray-200 bg-white p-5 text-center">
           <div class="text-2xl font-semibold text-gray-900">{$siteQuery.data.recording_count}</div>
-          <div class="mt-1 text-sm text-gray-500">Recordings</div>
+          <div class="mt-1 text-sm text-gray-500">{m.site_detail_stat_recordings()}</div>
         </div>
         <div class="rounded-lg border border-gray-200 bg-white p-5 text-center">
           <div class="text-2xl font-semibold text-gray-900">{formatDuration($siteQuery.data.total_duration)}</div>
-          <div class="mt-1 text-sm text-gray-500">Total Duration</div>
+          <div class="mt-1 text-sm text-gray-500">{m.site_detail_stat_duration()}</div>
         </div>
       </div>
 
       <!-- Datasets at this site -->
       <section class="rounded-lg border border-gray-200 bg-white p-6">
         <div class="mb-4 flex items-center justify-between">
-          <h2 class="text-base font-semibold text-gray-900">Datasets at this Site</h2>
+          <h2 class="text-base font-semibold text-gray-900">{m.site_detail_datasets_heading()}</h2>
           <a
-            href="/projects/{projectId}/datasets?site_id={siteId}"
+            href={localizeHref(`/projects/${projectId}/datasets?site_id=${siteId}`)}
             class="text-sm font-medium text-blue-600 no-underline hover:underline"
           >
-            View all datasets
+            {m.site_detail_view_all_datasets()}
           </a>
         </div>
 
         {#if $datasetsQuery.isLoading}
-          <div class="py-4 text-center text-sm text-gray-400">Loading datasets...</div>
+          <div class="py-4 text-center text-sm text-gray-400">{m.site_detail_loading_datasets()}</div>
         {:else if $datasetsQuery.data && $datasetsQuery.data.items.length > 0}
           <ul class="flex flex-col gap-2 p-0 list-none">
             {#each $datasetsQuery.data.items as dataset}
               <li>
                 <a
-                  href="/projects/{projectId}/datasets/{dataset.id}"
+                  href={localizeHref(`/projects/${projectId}/datasets/${dataset.id}`)}
                   class="flex items-center justify-between rounded-md border border-gray-100 p-3 no-underline transition-colors hover:bg-gray-50"
                 >
                   <span class="text-sm font-medium text-gray-900">{dataset.name}</span>
@@ -209,25 +211,25 @@
           </ul>
           {#if $datasetsQuery.data.total > $datasetsQuery.data.items.length}
             <p class="mt-2 text-xs text-gray-400">
-              Showing {$datasetsQuery.data.items.length} of {$datasetsQuery.data.total} datasets
+              {m.site_detail_showing({ showing: $datasetsQuery.data.items.length, total: $datasetsQuery.data.total })}
             </p>
           {/if}
         {:else}
-          <p class="py-4 text-center text-sm text-gray-400">No datasets found at this site.</p>
+          <p class="py-4 text-center text-sm text-gray-400">{m.site_detail_no_datasets()}</p>
         {/if}
       </section>
 
       <!-- Recordings quick link -->
       <div class="flex items-center justify-between rounded-lg border border-gray-200 bg-white p-5">
         <div>
-          <h3 class="mb-0.5 text-base font-semibold text-gray-900">Recordings</h3>
-          <p class="text-sm text-gray-500">Browse recordings from this site</p>
+          <h3 class="mb-0.5 text-base font-semibold text-gray-900">{m.site_detail_recordings_heading()}</h3>
+          <p class="text-sm text-gray-500">{m.site_detail_recordings_description()}</p>
         </div>
         <a
-          href="/projects/{projectId}/recordings?site={siteId}"
+          href={localizeHref(`/projects/${projectId}/recordings?site=${siteId}`)}
           class="flex items-center gap-2 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white no-underline transition-colors hover:bg-blue-700"
         >
-          View Recordings
+          {m.site_detail_view_recordings()}
           <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
           </svg>
@@ -239,10 +241,10 @@
 
 <DeleteConfirmDialog
   isOpen={showDeleteConfirm}
-  title="Delete Site"
-  message={`Are you sure you want to delete "${$siteQuery.data?.name ?? 'this site'}"? This action cannot be undone.`}
+  title={m.site_detail_delete_title()}
+  message={m.site_detail_delete_message({ name: $siteQuery.data?.name ?? '' })}
   warnings={deleteWarnings}
-  confirmText="Delete Site"
+  confirmText={m.site_detail_delete_confirm()}
   isDeleting={$deleteMutation.isPending}
   onConfirm={handleDeleteConfirm}
   onCancel={() => (showDeleteConfirm = false)}

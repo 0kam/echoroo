@@ -16,6 +16,7 @@
     "test:e2e": "playwright test"
   },
   "dependencies": {
+    "@inlang/paraglide-js": "^2.13.1",
     "@sveltejs/kit": "^2.15.0",
     "@tanstack/svelte-query": "^5.67.0",
     "h3-js": "^4.1.0",

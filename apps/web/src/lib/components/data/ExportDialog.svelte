@@ -3,6 +3,8 @@
    * ExportDialog component for exporting datasets in CamtrapDP format.
    */
 
+  import * as m from '$lib/paraglide/messages';
+
   interface Props {
     projectId: string;
     datasetId: string;
@@ -68,7 +70,7 @@
     >
       <!-- Header -->
       <div class="flex items-center justify-between border-b border-gray-200 px-6 py-4">
-        <h3 id="export-dialog-title" class="m-0 text-lg font-semibold text-gray-900">Export Dataset</h3>
+        <h3 id="export-dialog-title" class="m-0 text-lg font-semibold text-gray-900">{m.data_export_title()}</h3>
         <button
           type="button"
           onclick={onClose}
@@ -94,19 +96,19 @@
           <label class="flex cursor-pointer items-start gap-3 rounded-lg border border-gray-200 p-4 transition-colors hover:bg-gray-50">
             <input type="checkbox" bind:checked={includeAudio} class="mt-0.5 h-4 w-4 cursor-pointer" />
             <div class="flex flex-col gap-0.5">
-              <span class="text-sm font-medium text-gray-900">Include audio files</span>
-              <span class="text-xs text-amber-600">Warning: This may result in a very large download</span>
+              <span class="text-sm font-medium text-gray-900">{m.data_export_include_audio_label()}</span>
+              <span class="text-xs text-amber-600">{m.data_export_audio_warning()}</span>
             </div>
           </label>
         </div>
 
         <!-- Export info -->
         <div class="rounded-lg border border-gray-200 bg-gray-50 p-4">
-          <h4 class="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-500">Export contents:</h4>
+          <h4 class="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-500">{m.data_export_contents_heading()}</h4>
           <ul class="m-0 pl-5 text-sm text-gray-600">
-            <li class="mb-1"><code class="rounded bg-gray-200 px-1 py-0.5 font-mono text-xs">datapackage.json</code> - Dataset metadata</li>
-            <li class="mb-1"><code class="rounded bg-gray-200 px-1 py-0.5 font-mono text-xs">deployments.csv</code> - Deployment information</li>
-            <li class="mb-1"><code class="rounded bg-gray-200 px-1 py-0.5 font-mono text-xs">media.csv</code> - Recording metadata</li>
+            <li class="mb-1"><code class="rounded bg-gray-200 px-1 py-0.5 font-mono text-xs">datapackage.json</code> - {m.data_export_datapackage_desc()}</li>
+            <li class="mb-1"><code class="rounded bg-gray-200 px-1 py-0.5 font-mono text-xs">deployments.csv</code> - {m.data_export_deployments_desc()}</li>
+            <li class="mb-1"><code class="rounded bg-gray-200 px-1 py-0.5 font-mono text-xs">media.csv</code> - {m.data_export_media_desc()}</li>
             {#if includeAudio}
               <li><code class="rounded bg-gray-200 px-1 py-0.5 font-mono text-xs">data/</code> - Audio files</li>
             {/if}
@@ -122,7 +124,7 @@
           disabled={isExporting}
           class="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
         >
-          Cancel
+          {m.data_export_cancel()}
         </button>
         <button
           type="button"
@@ -135,14 +137,14 @@
               <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" opacity="0.25"></circle>
               <path fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
             </svg>
-            Exporting...
+            {m.data_export_exporting()}
           {:else}
             <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
               <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" stroke-width="2" />
               <polyline points="7 10 12 15 17 10" stroke-width="2" />
               <line x1="12" y1="15" x2="12" y2="3" stroke-width="2" />
             </svg>
-            Export
+            {m.data_export_button()}
           {/if}
         </button>
       </div>

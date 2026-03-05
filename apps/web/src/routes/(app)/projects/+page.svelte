@@ -6,6 +6,8 @@
   import { goto } from '$app/navigation';
   import { projectsApi } from '$lib/api/projects';
   import { ApiError } from '$lib/api/client';
+  import { localizeHref, getLocale } from '$lib/paraglide/runtime';
+  import * as m from '$lib/paraglide/messages';
   import type { Project } from '$lib/types';
 
   // State
@@ -31,7 +33,7 @@
       if (err instanceof ApiError) {
         error = err.detail || err.message;
       } else {
-        error = 'Failed to load projects';
+        error = m.project_load_error();
       }
     } finally {
       isLoading = false;
@@ -47,14 +49,14 @@
    * Navigate to project detail
    */
   function viewProject(projectId: string) {
-    goto(`/projects/${projectId}`);
+    goto(localizeHref(`/projects/${projectId}`));
   }
 
   /**
    * Navigate to new project page
    */
   function createNewProject() {
-    goto('/projects/new');
+    goto(localizeHref('/projects/new'));
   }
 
   /**
@@ -71,15 +73,15 @@
 </script>
 
 <svelte:head>
-  <title>Projects - Echoroo</title>
+  <title>{m.project_page_title()}</title>
 </svelte:head>
 
 <div class="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
   <!-- Header -->
   <div class="mb-8 flex items-center justify-between">
     <div>
-      <h1 class="text-3xl font-bold text-gray-900">Projects</h1>
-      <p class="mt-2 text-sm text-gray-600">Manage your bioacoustic analysis projects</p>
+      <h1 class="text-3xl font-bold text-gray-900">{m.project_heading()}</h1>
+      <p class="mt-2 text-sm text-gray-600">{m.project_description()}</p>
     </div>
     <button
       onclick={createNewProject}
@@ -94,7 +96,7 @@
       >
         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
       </svg>
-      New Project
+      {m.project_new_button()}
     </button>
   </div>
 
@@ -158,8 +160,8 @@
           d="M9 13h6m-3-3v6m-9 1V7a2 2 0 012-2h6l2 2h6a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z"
         />
       </svg>
-      <h3 class="mt-2 text-sm font-medium text-gray-900">No projects</h3>
-      <p class="mt-1 text-sm text-gray-500">Get started by creating a new project.</p>
+      <h3 class="mt-2 text-sm font-medium text-gray-900">{m.project_no_projects_title()}</h3>
+      <p class="mt-1 text-sm text-gray-500">{m.project_no_projects_body()}</p>
       <div class="mt-6">
         <button
           onclick={createNewProject}
@@ -173,7 +175,7 @@
               d="M12 4v16m8-8H4"
             />
           </svg>
-          New Project
+          {m.project_new_button()}
         </button>
       </div>
     </div>
@@ -209,7 +211,7 @@
                     clip-rule="evenodd"
                   />
                 </svg>
-                Public
+                {m.project_visibility_public()}
               {:else}
                 <svg class="mr-1 h-3 w-3" fill="currentColor" viewBox="0 0 20 20">
                   <path
@@ -218,7 +220,7 @@
                     clip-rule="evenodd"
                   />
                 </svg>
-                Private
+                {m.project_visibility_private()}
               {/if}
             </span>
           </div>
@@ -227,7 +229,7 @@
           {#if project.description}
             <p class="mb-4 line-clamp-2 text-sm text-gray-600">{project.description}</p>
           {:else}
-            <p class="mb-4 text-sm italic text-gray-400">No description</p>
+            <p class="mb-4 text-sm italic text-gray-400">{m.project_no_description()}</p>
           {/if}
 
           <!-- Project Metadata -->
@@ -265,7 +267,7 @@
                   d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"
                 />
               </svg>
-              <span>Created {new Date(project.created_at).toLocaleDateString()}</span>
+              <span>{m.project_created({ date: new Date(project.created_at).toLocaleDateString(getLocale()) })}</span>
             </div>
           </div>
         </div>
@@ -280,7 +282,7 @@
           disabled={page === 1}
           class="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
         >
-          Previous
+          {m.project_previous()}
         </button>
 
         {#each Array.from({ length: totalPages }, (_, i) => i + 1) as pageNum}
@@ -303,7 +305,7 @@
           disabled={page === totalPages}
           class="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
         >
-          Next
+          {m.project_next()}
         </button>
       </div>
     {/if}

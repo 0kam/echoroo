@@ -113,7 +113,7 @@ services:
       - CELERY_BROKER_URL=redis://redis:6379/0
       - CELERY_RESULT_BACKEND=redis://redis:6379/1
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:8000/health"]
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 15s
       timeout: 5s
       retries: 5
@@ -185,12 +185,19 @@ services:
     volumes:
       # Mount source for hot reload
       - ./apps/web/src:/app/src:ro
+      # Paraglide-JS generates code into src/lib/paraglide at build time.
+      # Override the read-only src mount with a writable anonymous volume so the
+      # Vite plugin can write its output inside the container.
+      - paraglide-generated:/app/src/lib/paraglide
       - ./apps/web/static:/app/static:ro
       - ./apps/web/vite.config.ts:/app/vite.config.ts:ro
       - ./apps/web/svelte.config.js:/app/svelte.config.js:ro
       - ./apps/web/tailwind.config.js:/app/tailwind.config.js:ro
       - ./apps/web/postcss.config.js:/app/postcss.config.js:ro
       - ./apps/web/tsconfig.json:/app/tsconfig.json:ro
+      # Mount inlang project and message files for Paraglide compilation
+      - ./apps/web/project.inlang:/app/project.inlang:ro
+      - ./apps/web/messages:/app/messages:ro
     environment:
       - ECHOROO_API_URL=http://backend:8000
       - PUBLIC_API_URL=http://localhost:${ECHOROO_API_PORT:-8002}
@@ -213,3 +220,5 @@ volumes:
     name: echoroo-dev-localstack
   ml-models-data:
     name: echoroo-dev-ml-models
+  paraglide-generated:
+    name: echoroo-dev-paraglide

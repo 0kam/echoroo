@@ -1,5 +1,6 @@
 <script lang="ts">
   import { createQuery, createMutation, useQueryClient } from '@tanstack/svelte-query';
+  import * as m from '$lib/paraglide/messages';
   import {
     createUploadSession,
     completeUploadSession,
@@ -324,13 +325,13 @@
   // -----------------------------------------------
   function getSessionStatusLabel(status: UploadSessionStatus): string {
     switch (status) {
-      case 'issued':     return 'Session created';
-      case 'uploaded':   return 'Files uploaded';
-      case 'validating': return 'Validating files...';
-      case 'validated':  return 'Files validated';
-      case 'importing':  return 'Importing recordings...';
-      case 'imported':   return 'Import complete';
-      case 'failed':     return 'Failed';
+      case 'issued':     return m.upload_status_issued();
+      case 'uploaded':   return m.upload_status_uploaded();
+      case 'validating': return m.upload_status_validating();
+      case 'validated':  return m.upload_status_validated();
+      case 'importing':  return m.upload_status_importing();
+      case 'imported':   return m.upload_status_imported();
+      case 'failed':     return m.upload_status_failed();
       default:           return status;
     }
   }
@@ -599,7 +600,7 @@
             <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
           </svg>
           <span class="text-sm font-medium text-gray-700">
-            {status ? getSessionStatusLabel(status.status) : 'Processing...'}
+            {status ? getSessionStatusLabel(status.status) : m.common_processing()}
           </span>
         </div>
         {#if status}

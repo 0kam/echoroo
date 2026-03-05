@@ -1,12 +1,14 @@
 <script lang="ts">
   import type { AnnotationProjectDetail } from '$lib/types/annotation';
+  import { getLocale } from '$lib/paraglide/runtime';
+  import * as m from '$lib/paraglide/messages';
 
   export let projects: AnnotationProjectDetail[] = [];
   export let onSelect: (project: AnnotationProjectDetail) => void = () => {};
   export let onDelete: (project: AnnotationProjectDetail) => void = () => {};
 
   function formatDate(dateStr: string): string {
-    return new Date(dateStr).toLocaleDateString();
+    return new Date(dateStr).toLocaleDateString(getLocale());
   }
 
   function getProgressPercent(project: AnnotationProjectDetail): number {
@@ -28,7 +30,7 @@
 <div class="annotation-project-list">
   {#if projects.length === 0}
     <div class="empty-state">
-      <p>No annotation projects found. Create your first annotation project to get started.</p>
+      <p>{m.annotation_project_empty()}</p>
     </div>
   {:else}
     <ul>
@@ -45,7 +47,7 @@
             <div class="project-header">
               <h3>{project.name}</h3>
               <span class="visibility-badge {getVisibilityClass(project.visibility)}">
-                {project.visibility}
+                {project.visibility === 'public' ? m.annotation_project_visibility_public() : m.annotation_project_visibility_private()}
               </span>
             </div>
 
@@ -57,7 +59,7 @@
             <div class="progress-section">
               <div class="progress-labels">
                 <span class="progress-text">
-                  {project.progress.completed_tasks} / {project.progress.total_tasks} tasks completed
+                  {m.annotation_project_progress_tasks({ completed: project.progress.completed_tasks, total: project.progress.total_tasks })}
                 </span>
                 <span class="progress-percent">{getProgressPercent(project)}%</span>
               </div>
@@ -71,17 +73,17 @@
                 <div class="progress-details">
                   {#if project.progress.in_progress_tasks > 0}
                     <span class="detail-item detail-in-progress">
-                      {project.progress.in_progress_tasks} in progress
+                      {m.annotation_project_in_progress({ count: project.progress.in_progress_tasks })}
                     </span>
                   {/if}
                   {#if project.progress.review_pending_tasks > 0}
                     <span class="detail-item detail-review">
-                      {project.progress.review_pending_tasks} pending review
+                      {m.annotation_project_pending_review({ count: project.progress.review_pending_tasks })}
                     </span>
                   {/if}
                   {#if project.progress.pending_tasks > 0}
                     <span class="detail-item detail-pending">
-                      {project.progress.pending_tasks} pending
+                      {m.annotation_project_pending({ count: project.progress.pending_tasks })}
                     </span>
                   {/if}
                 </div>
@@ -91,12 +93,12 @@
             <div class="project-meta">
               {#if project.datasets.length > 0}
                 <span class="meta-item">
-                  <span class="meta-label">Datasets:</span>
+                  <span class="meta-label">{m.annotation_project_datasets_label()}</span>
                   {project.datasets.map((d) => d.name).join(', ')}
                 </span>
               {/if}
               <span class="meta-item">
-                <span class="meta-label">Created:</span>
+                <span class="meta-label">{m.annotation_project_created_label()}</span>
                 {formatDate(project.created_at)}
               </span>
             </div>
@@ -106,9 +108,9 @@
             <button
               class="delete-btn"
               on:click|stopPropagation={() => onDelete(project)}
-              aria-label="Delete annotation project"
+              aria-label={m.annotation_project_delete_button()}
             >
-              Delete
+              {m.annotation_project_delete_button()}
             </button>
           </div>
         </li>

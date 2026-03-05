@@ -7,6 +7,7 @@
   import NoteEditor from '$lib/components/data/NoteEditor.svelte';
   import { getDownloadUrl, updateRecording } from '$lib/api/recordings';
   import { createMutation, useQueryClient } from '@tanstack/svelte-query';
+  import { getLocale } from '$lib/paraglide/runtime';
 
   interface Props {
     projectId: string;
@@ -92,7 +93,7 @@
     {#if recording.datetime}
       <div class="metadata-item">
         <span class="metadata-label">Recorded</span>
-        <p class="metadata-value">{new Date(recording.datetime).toLocaleString()}</p>
+        <p class="metadata-value">{new Date(recording.datetime).toLocaleString(getLocale())}</p>
       </div>
       <div class="metadata-item">
         <span class="metadata-label">DateTime Status</span>
@@ -125,11 +126,11 @@
     </div>
     <div class="metadata-item">
       <span class="metadata-label">Created</span>
-      <p class="metadata-value">{new Date(recording.created_at).toLocaleString()}</p>
+      <p class="metadata-value">{new Date(recording.created_at).toLocaleString(getLocale())}</p>
     </div>
     <div class="metadata-item">
       <span class="metadata-label">Updated</span>
-      <p class="metadata-value">{new Date(recording.updated_at).toLocaleString()}</p>
+      <p class="metadata-value">{new Date(recording.updated_at).toLocaleString(getLocale())}</p>
     </div>
   </div>
 

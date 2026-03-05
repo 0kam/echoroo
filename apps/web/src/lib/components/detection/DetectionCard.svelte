@@ -9,6 +9,8 @@
   import { onDestroy } from 'svelte';
   import type { Detection } from '$lib/types/detection';
   import { apiClient } from '$lib/api/client';
+  import * as m from '$lib/paraglide/messages';
+  import { getLocale } from '$lib/paraglide/runtime';
   import MiniSpectrogram from './MiniSpectrogram.svelte';
   import ReviewActions from './ReviewActions.svelte';
   import SpeciesCorrector from './SpeciesCorrector.svelte';
@@ -200,8 +202,8 @@
       class="absolute right-1 top-1 flex h-7 w-7 items-center justify-center rounded-full bg-black/50 text-white transition-colors hover:bg-black/70 focus:outline-none focus:ring-2 focus:ring-white/50 disabled:cursor-not-allowed disabled:opacity-60"
       on:click|stopPropagation={toggleAudio}
       disabled={isLoadingAudio}
-      aria-label={isPlaying ? 'Stop audio' : 'Play audio'}
-      title={isLoadingAudio ? 'Loading...' : isPlaying ? 'Stop' : 'Play clip (Space)'}
+      aria-label={isPlaying ? m.detection_stop_audio_aria() : m.detection_play_audio_aria()}
+      title={isLoadingAudio ? m.detection_loading_audio_title() : isPlaying ? m.detection_stop_title() : m.detection_play_title()}
     >
       {#if isLoadingAudio}
         <!-- Loading spinner -->
@@ -258,8 +260,8 @@
         {getSourceLabel(detection.source)}
       </span>
       {#if detection.reviewed_at}
-        <span class="text-xs text-stone-400" title={new Date(detection.reviewed_at).toLocaleString()}>
-          Reviewed {new Date(detection.reviewed_at).toLocaleDateString()}
+        <span class="text-xs text-stone-400" title={new Date(detection.reviewed_at).toLocaleString(getLocale())}>
+          {m.detection_reviewed_on({ date: new Date(detection.reviewed_at).toLocaleDateString(getLocale()) })}
         </span>
       {/if}
     </div>

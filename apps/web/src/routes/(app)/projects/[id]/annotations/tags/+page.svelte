@@ -1,6 +1,8 @@
 <script lang="ts">
   import { page } from '$app/stores';
   import { createQuery, createMutation, useQueryClient } from '@tanstack/svelte-query';
+  import { localizeHref } from '$lib/paraglide/runtime';
+  import * as m from '$lib/paraglide/messages';
   import {
     fetchTags,
     createTag,
@@ -215,11 +217,11 @@
   function getCategoryLabel(category: string): string {
     switch (category) {
       case 'species':
-        return 'Species';
+        return m.annotation_tag_category_species();
       case 'sound_type':
-        return 'Sound Type';
+        return m.annotation_tag_category_sound_type();
       case 'quality':
-        return 'Quality';
+        return m.annotation_tag_category_quality();
       default:
         return category;
     }
@@ -237,22 +239,22 @@
 </script>
 
 <svelte:head>
-  <title>Tags | Project</title>
+  <title>{m.annotation_tag_page_title()}</title>
 </svelte:head>
 
 <div class="tags-page">
   <!-- Page header -->
   <header class="page-header">
     <div class="page-header__left">
-      <a href="/projects/{projectId}/annotations" class="back-link">
-        &larr; Annotation Projects
+      <a href={localizeHref(`/projects/${projectId}/annotations`)} class="back-link">
+        &larr; {m.annotation_tag_back_link()}
       </a>
-      <h1>Tags</h1>
-      <p>Manage labels for sound events and clips</p>
+      <h1>{m.annotation_tag_heading()}</h1>
+      <p>{m.annotation_tag_description()}</p>
     </div>
     {#if !showForm}
       <button class="btn-primary" on:click={openCreateForm}>
-        + New Tag
+        {m.annotation_tag_new_button()}
       </button>
     {/if}
   </header>
@@ -260,18 +262,18 @@
   <!-- Create / Edit form -->
   {#if showForm}
     <div class="form-container">
-      <h2>{editingTag ? 'Edit Tag' : 'Create New Tag'}</h2>
+      <h2>{editingTag ? m.annotation_tag_edit_form_title() : m.annotation_tag_create_form_title()}</h2>
 
       <form on:submit|preventDefault={handleFormSubmit} class="tag-form">
         <!-- Name -->
         <div class="field">
-          <label for="tag-name" class="label">Name <span class="required">*</span></label>
+          <label for="tag-name" class="label">{m.annotation_tag_form_name_label()} <span class="required">{m.annotation_tag_form_name_required()}</span></label>
           <input
             id="tag-name"
             type="text"
             class="input"
             bind:value={formName}
-            placeholder="Tag name"
+            placeholder={m.annotation_tag_form_name_placeholder()}
             required
           />
         </div>
@@ -279,20 +281,20 @@
         <!-- Category (only for new tags) -->
         {#if !editingTag}
           <div class="field">
-            <label for="tag-category" class="label">Category</label>
+            <label for="tag-category" class="label">{m.annotation_tag_form_category_label()}</label>
             <select id="tag-category" class="select" bind:value={formCategory}>
-              <option value="species">Species</option>
-              <option value="sound_type">Sound Type</option>
-              <option value="quality">Quality</option>
+              <option value="species">{m.annotation_tag_form_category_species()}</option>
+              <option value="sound_type">{m.annotation_tag_form_category_sound_type()}</option>
+              <option value="quality">{m.annotation_tag_form_category_quality()}</option>
             </select>
           </div>
         {/if}
 
         <!-- Parent tag -->
         <div class="field">
-          <label for="tag-parent" class="label">Parent Tag</label>
+          <label for="tag-parent" class="label">{m.annotation_tag_form_parent_label()}</label>
           <select id="tag-parent" class="select" bind:value={formParentId}>
-            <option value="">-- None --</option>
+            <option value="">{m.annotation_tag_form_parent_none()}</option>
             {#if $tagsQuery.data}
               {#each $tagsQuery.data.items.filter((t) => !editingTag || t.id !== editingTag.id) as tag}
                 <option value={tag.id}>{tag.name} ({getCategoryLabel(tag.category)})</option>
@@ -304,7 +306,7 @@
         <!-- GBIF search (species only) -->
         {#if formCategory === 'species' && !editingTag}
           <div class="field">
-            <label for="gbif-search" class="label">GBIF Species Search</label>
+            <label for="gbif-search" class="label">{m.annotation_tag_form_gbif_label()}</label>
             <div class="gbif-search-wrapper">
               <input
                 id="gbif-search"
@@ -312,11 +314,11 @@
                 class="input"
                 bind:value={formGbifSearch}
                 on:input={handleGBIFSearchInput}
-                placeholder="Search GBIF species..."
+                placeholder={m.annotation_tag_form_gbif_placeholder()}
                 autocomplete="off"
               />
               {#if isLoadingGBIF}
-                <div class="gbif-results gbif-results--loading">Searching GBIF...</div>
+                <div class="gbif-results gbif-results--loading">{m.annotation_tag_form_gbif_searching()}</div>
               {:else if gbifSuggestions.length > 0}
                 <div class="gbif-results">
                   {#each gbifSuggestions as suggestion}
@@ -334,7 +336,7 @@
               {/if}
             </div>
             {#if formGbifTaxonKey}
-              <p class="gbif-key-info">GBIF key: {formGbifTaxonKey}</p>
+              <p class="gbif-key-info">{m.annotation_tag_form_gbif_key_info({ key: formGbifTaxonKey })}</p>
             {/if}
           </div>
         {/if}
@@ -342,25 +344,25 @@
         <!-- Scientific name -->
         {#if formCategory === 'species' || (editingTag && editingTag.category === 'species')}
           <div class="field">
-            <label for="scientific-name" class="label">Scientific Name</label>
+            <label for="scientific-name" class="label">{m.annotation_tag_form_scientific_name_label()}</label>
             <input
               id="scientific-name"
               type="text"
               class="input"
               bind:value={formScientificName}
-              placeholder="e.g. Parus major"
+              placeholder={m.annotation_tag_form_scientific_name_placeholder()}
             />
           </div>
 
           <!-- Common name -->
           <div class="field">
-            <label for="common-name" class="label">Common Name</label>
+            <label for="common-name" class="label">{m.annotation_tag_form_common_name_label()}</label>
             <input
               id="common-name"
               type="text"
               class="input"
               bind:value={formCommonName}
-              placeholder="e.g. Great Tit"
+              placeholder={m.annotation_tag_form_common_name_placeholder()}
             />
           </div>
         {/if}
@@ -368,25 +370,25 @@
         <!-- Form actions -->
         <div class="form-actions">
           <button type="button" class="btn-secondary" on:click={closeForm} disabled={isMutating}>
-            Cancel
+            {m.annotation_tag_form_cancel()}
           </button>
           <button type="submit" class="btn-primary" disabled={isMutating || !formName.trim()}>
             {#if isMutating}
-              Saving...
+              {m.annotation_tag_form_saving()}
             {:else}
-              {editingTag ? 'Save Changes' : 'Create Tag'}
+              {editingTag ? m.annotation_tag_form_save_changes() : m.annotation_tag_form_create()}
             {/if}
           </button>
         </div>
 
         {#if $createMutationStore.isError}
           <div class="form-error">
-            {$createMutationStore.error?.message || 'Failed to create tag'}
+            {$createMutationStore.error?.message || m.annotation_tag_form_error_create()}
           </div>
         {/if}
         {#if $updateMutationStore.isError}
           <div class="form-error">
-            {$updateMutationStore.error?.message || 'Failed to update tag'}
+            {$updateMutationStore.error?.message || m.annotation_tag_form_error_update()}
           </div>
         {/if}
       </form>
@@ -402,28 +404,28 @@
         class:tab-btn--active={categoryFilter === ''}
         on:click={() => handleCategoryFilterChange('')}
       >
-        All
+        {m.annotation_tag_filter_all()}
       </button>
       <button
         class="tab-btn"
         class:tab-btn--active={categoryFilter === 'species'}
         on:click={() => handleCategoryFilterChange('species')}
       >
-        Species
+        {m.annotation_tag_filter_species()}
       </button>
       <button
         class="tab-btn"
         class:tab-btn--active={categoryFilter === 'sound_type'}
         on:click={() => handleCategoryFilterChange('sound_type')}
       >
-        Sound Type
+        {m.annotation_tag_filter_sound_type()}
       </button>
       <button
         class="tab-btn"
         class:tab-btn--active={categoryFilter === 'quality'}
         on:click={() => handleCategoryFilterChange('quality')}
       >
-        Quality
+        {m.annotation_tag_filter_quality()}
       </button>
     </div>
 
@@ -431,7 +433,7 @@
     <input
       type="text"
       class="search-input"
-      placeholder="Search tags..."
+      placeholder={m.annotation_tag_search_placeholder()}
       bind:value={search}
       on:input={handleSearchInput}
     />
@@ -439,27 +441,27 @@
 
   <!-- Tag list -->
   {#if $tagsQuery.isLoading}
-    <div class="state-message state-message--loading">Loading tags...</div>
+    <div class="state-message state-message--loading">{m.annotation_tag_loading()}</div>
   {:else if $tagsQuery.isError}
     <div class="state-message state-message--error">
-      Error loading tags: {$tagsQuery.error?.message}
+      {m.annotation_tag_error_load({ message: $tagsQuery.error?.message ?? '' })}
     </div>
   {:else if $tagsQuery.data}
     {#if $tagsQuery.data.items.length === 0}
       <div class="state-message">
-        {search || categoryFilter ? 'No tags match the current filters.' : 'No tags yet. Create your first tag.'}
+        {search || categoryFilter ? m.annotation_tag_empty_filter() : m.annotation_tag_empty()}
       </div>
     {:else}
       <div class="tag-table-wrapper">
         <table class="tag-table">
           <thead>
             <tr>
-              <th>Name</th>
-              <th>Category</th>
-              <th>Scientific Name</th>
-              <th>Common Name</th>
-              <th>Parent</th>
-              <th class="col-actions">Actions</th>
+              <th>{m.annotation_tag_col_name()}</th>
+              <th>{m.annotation_tag_col_category()}</th>
+              <th>{m.annotation_tag_col_scientific()}</th>
+              <th>{m.annotation_tag_col_common()}</th>
+              <th>{m.annotation_tag_col_parent()}</th>
+              <th class="col-actions">{m.annotation_tag_col_actions()}</th>
             </tr>
           </thead>
           <tbody>
@@ -478,16 +480,16 @@
                   <button
                     class="action-btn action-btn--edit"
                     on:click={() => openEditForm(tag)}
-                    aria-label="Edit {tag.name}"
+                    aria-label="{m.annotation_tag_edit_button()} {tag.name}"
                   >
-                    Edit
+                    {m.annotation_tag_edit_button()}
                   </button>
                   <button
                     class="action-btn action-btn--delete"
                     on:click={() => handleDeleteClick(tag)}
-                    aria-label="Delete {tag.name}"
+                    aria-label="{m.annotation_tag_delete_button()} {tag.name}"
                   >
-                    Delete
+                    {m.annotation_tag_delete_button()}
                   </button>
                 </td>
               </tr>
@@ -504,24 +506,24 @@
             on:click={() => (currentPage = Math.max(1, currentPage - 1))}
             disabled={currentPage === 1}
           >
-            Previous
+            {m.annotation_tag_previous()}
           </button>
           <span class="page-info">
-            Page {currentPage} of {$tagsQuery.data.pages}
+            {m.annotation_tag_page_info({ page: currentPage, total: $tagsQuery.data.pages })}
           </span>
           <button
             class="page-btn"
             on:click={() => (currentPage = Math.min($tagsQuery.data.pages, currentPage + 1))}
             disabled={currentPage === $tagsQuery.data.pages}
           >
-            Next
+            {m.annotation_tag_next()}
           </button>
         </div>
       {/if}
 
       {#if $tagsQuery.data.total > 0}
         <div class="pagination-info">
-          Showing {$tagsQuery.data.items.length} of {$tagsQuery.data.total} tags
+          {m.annotation_tag_showing({ showing: $tagsQuery.data.items.length, total: $tagsQuery.data.total })}
         </div>
       {/if}
     {/if}
@@ -530,7 +532,7 @@
   <!-- Statistics section -->
   {#if $statisticsQuery.data && $statisticsQuery.data.length > 0}
     <div class="statistics-section">
-      <h2>Tag Usage Statistics</h2>
+      <h2>{m.annotation_tag_stats_title()}</h2>
       <div class="statistics-grid">
         {#each $statisticsQuery.data as stat}
           <div class="stat-card">
@@ -540,7 +542,7 @@
                 {getCategoryLabel(stat.tag.category)}
               </span>
             </div>
-            <div class="stat-card__count">{stat.usage_count} uses</div>
+            <div class="stat-card__count">{m.annotation_tag_stats_uses({ count: stat.usage_count })}</div>
           </div>
         {/each}
       </div>
@@ -550,14 +552,14 @@
   <!-- Delete confirmation dialog -->
   <ConfirmDialog
     isOpen={showDeleteDialog}
-    title="Delete Tag"
+    title={m.annotation_tag_delete_title()}
     message={tagToDelete
-      ? `Are you sure you want to delete "${tagToDelete.name}"? This action cannot be undone.`
+      ? m.annotation_tag_delete_message({ name: tagToDelete.name })
       : ''}
-    confirmText="Delete Tag"
-    cancelText="Cancel"
+    confirmText={m.annotation_tag_delete_confirm()}
+    cancelText={m.annotation_tag_delete_cancel()}
     isDanger={true}
-    warningItems={['All annotations using this tag']}
+    warningItems={[m.annotation_tag_delete_warning()]}
     onConfirm={confirmDelete}
     onCancel={cancelDelete}
   />

@@ -8,6 +8,7 @@
   import { goto } from '$app/navigation';
   import { createQuery, createMutation, useQueryClient } from '@tanstack/svelte-query';
   import { fetchSites, createSite, deleteSite, fetchSite } from '$lib/api/sites';
+  import { localizeHref } from '$lib/paraglide/runtime';
   import { fetchDatasets, createDataset, deleteDataset, fetchDataset } from '$lib/api/datasets';
   import type { Dataset, DatasetCreate, DatasetStatus, DatasetVisibility, DatasetUpdate, Site, SiteCreate } from '$lib/types/data';
   import SiteList from '$lib/components/data/SiteList.svelte';
@@ -16,6 +17,7 @@
   import DatasetForm from '$lib/components/data/DatasetForm.svelte';
   import RecordingList from '$lib/components/data/RecordingList.svelte';
   import ConfirmDialog from '$lib/components/ui/ConfirmDialog.svelte';
+  import * as m from '$lib/paraglide/messages';
 
   const queryClient = useQueryClient();
 
@@ -86,7 +88,7 @@
     onSuccess: (created) => {
       queryClient.invalidateQueries({ queryKey: ['datasets', projectId] });
       showDatasetCreateForm = false;
-      goto(`/projects/${projectId}/datasets/${created.id}`);
+      goto(localizeHref(`/projects/${projectId}/datasets/${created.id}`));
     },
   });
 
@@ -105,7 +107,7 @@
 
   // --- Site handlers ---
   function handleSiteSelect(site: Site) {
-    goto(`/projects/${projectId}/sites/${site.id}`);
+    goto(localizeHref(`/projects/${projectId}/sites/${site.id}`));
   }
 
   async function handleSiteDeleteClick(site: Site) {
@@ -114,10 +116,10 @@
       const siteDetail = await fetchSite(projectId, site.id);
       const warnings: string[] = [];
       if (siteDetail.dataset_count > 0) {
-        warnings.push(`${siteDetail.dataset_count} dataset${siteDetail.dataset_count > 1 ? 's' : ''}`);
+        warnings.push(m.common_datasets_count({ count: siteDetail.dataset_count }));
       }
       if (siteDetail.recording_count > 0) {
-        warnings.push(`${siteDetail.recording_count} recording${siteDetail.recording_count > 1 ? 's' : ''}`);
+        warnings.push(m.common_recordings_count({ count: siteDetail.recording_count }));
       }
       if (warnings.length === 0) {
         warnings.push('All associated data');
@@ -149,7 +151,7 @@
 
   // --- Dataset handlers ---
   function handleDatasetSelect(dataset: Dataset) {
-    goto(`/projects/${projectId}/datasets/${dataset.id}`);
+    goto(localizeHref(`/projects/${projectId}/datasets/${dataset.id}`));
   }
 
   async function handleDatasetDeleteClick(dataset: Dataset) {
@@ -203,7 +205,7 @@
 
   // --- Recordings handlers ---
   function handleRecordingSelect(recordingId: string) {
-    goto(`/projects/${projectId}/recordings/${recordingId}`);
+    goto(localizeHref(`/projects/${projectId}/recordings/${recordingId}`));
   }
 
   // Tab labels map
@@ -222,7 +224,7 @@
   <!-- Page header -->
   <header class="mb-6">
     <nav class="mb-2 flex items-center gap-2 text-sm text-gray-500">
-      <a href="/projects/{projectId}" class="hover:text-gray-900">Project</a>
+      <a href={localizeHref(`/projects/${projectId}`)} class="hover:text-gray-900">Project</a>
       <span>/</span>
       <span class="font-medium text-gray-900">Sites & Data</span>
     </nav>

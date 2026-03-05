@@ -7,6 +7,8 @@
   import SiteForm from '$lib/components/data/SiteForm.svelte';
   import ConfirmDialog from '$lib/components/ui/ConfirmDialog.svelte';
   import { goto } from '$app/navigation';
+  import { localizeHref } from '$lib/paraglide/runtime';
+  import * as m from '$lib/paraglide/messages';
 
   const projectId = $derived($page.params.id as string);
 
@@ -42,7 +44,7 @@
   });
 
   function handleSiteSelect(site: Site) {
-    goto(`/projects/${projectId}/sites/${site.id}`);
+    goto(localizeHref(`/projects/${projectId}/sites/${site.id}`));
   }
 
   async function handleDeleteClick(site: Site) {
@@ -53,11 +55,11 @@
       const warnings: string[] = [];
 
       if (siteDetail.dataset_count > 0) {
-        warnings.push(`${siteDetail.dataset_count} dataset${siteDetail.dataset_count > 1 ? 's' : ''}`);
+        warnings.push(m.common_datasets_count({ count: siteDetail.dataset_count }));
       }
 
       if (siteDetail.recording_count > 0) {
-        warnings.push(`${siteDetail.recording_count} recording${siteDetail.recording_count > 1 ? 's' : ''}`);
+        warnings.push(m.common_recordings_count({ count: siteDetail.recording_count }));
       }
 
       if (warnings.length === 0) {
@@ -99,7 +101,7 @@
   <header class="mb-6 flex items-start justify-between">
     <div>
       <nav class="mb-2 flex items-center gap-2 text-sm text-gray-500">
-        <a href="/projects/{projectId}" class="hover:text-gray-900">Project</a>
+        <a href={localizeHref(`/projects/${projectId}`)} class="hover:text-gray-900">Project</a>
         <span>/</span>
         <span class="font-medium text-gray-900">Sites</span>
       </nav>

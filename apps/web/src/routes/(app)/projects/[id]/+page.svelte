@@ -7,6 +7,8 @@
   import { projectsApi } from '$lib/api/projects';
   import { authStore } from '$lib/stores/auth.svelte';
   import { ApiError } from '$lib/api/client';
+  import { localizeHref, getLocale } from '$lib/paraglide/runtime';
+  import * as m from '$lib/paraglide/messages';
   import type { Project, ProjectMember } from '$lib/types';
 
   // Props
@@ -59,12 +61,12 @@
       if (err instanceof ApiError) {
         error = err.detail || err.message;
         if (err.status === 404) {
-          error = 'Project not found';
+          error = m.project_detail_error_not_found();
         } else if (err.status === 403) {
-          error = 'You do not have permission to view this project';
+          error = m.project_detail_error_forbidden();
         }
       } else {
-        error = 'Failed to load project';
+        error = m.project_detail_error_load();
       }
     } finally {
       isLoading = false;
@@ -80,14 +82,14 @@
    * Navigate to settings
    */
   function goToSettings() {
-    goto(`/projects/${projectId}/settings`);
+    goto(localizeHref(`/projects/${projectId}/settings`));
   }
 
   /**
    * Navigate to members
    */
   function goToMembers() {
-    goto(`/projects/${projectId}/members`);
+    goto(localizeHref(`/projects/${projectId}/members`));
   }
 
   /**
@@ -113,12 +115,12 @@
     try {
       await projectsApi.delete(projectId);
       // Redirect to projects list
-      await goto('/projects');
+      await goto(localizeHref('/projects'));
     } catch (err) {
       if (err instanceof ApiError) {
         error = err.detail || err.message;
       } else {
-        error = 'Failed to delete project';
+        error = m.project_detail_error_delete();
       }
       showDeleteDialog = false;
     } finally {
@@ -173,8 +175,8 @@
         </div>
       </div>
       <div class="mt-4">
-        <a href="/projects" class="text-sm font-medium text-blue-600 hover:text-blue-500">
-          Back to Projects
+        <a href={localizeHref('/projects')} class="text-sm font-medium text-blue-600 hover:text-blue-500">
+          {m.project_detail_back_to_projects()}
         </a>
       </div>
     </div>
@@ -199,7 +201,7 @@
                     clip-rule="evenodd"
                   />
                 </svg>
-                Public
+                {m.project_detail_visibility_public()}
               {:else}
                 <svg class="mr-1.5 h-4 w-4" fill="currentColor" viewBox="0 0 20 20">
                   <path
@@ -208,13 +210,12 @@
                     clip-rule="evenodd"
                   />
                 </svg>
-                Private
+                {m.project_detail_visibility_private()}
               {/if}
             </span>
           </div>
           <p class="mt-2 text-sm text-gray-600">
-            Created {new Date(project.created_at).toLocaleDateString()} by {project.owner
-              .display_name || project.owner.email}
+            {m.project_detail_created_by({ date: new Date(project.created_at).toLocaleDateString(getLocale()), owner: project.owner.display_name || project.owner.email })}
           </p>
         </div>
 
@@ -239,7 +240,7 @@
                   d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
                 />
               </svg>
-              Settings
+              {m.project_detail_settings_button()}
             </button>
           {/if}
 
@@ -256,7 +257,7 @@
                   d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
                 />
               </svg>
-              Delete
+              {m.project_detail_delete_button()}
             </button>
           {/if}
         </div>
@@ -269,18 +270,18 @@
       <div class="lg:col-span-2">
         <!-- Description -->
         <div class="mb-6 rounded-lg bg-white p-6 shadow">
-          <h2 class="mb-4 text-lg font-semibold text-gray-900">Description</h2>
+          <h2 class="mb-4 text-lg font-semibold text-gray-900">{m.project_detail_description_heading()}</h2>
           {#if project.description}
             <p class="whitespace-pre-wrap text-sm text-gray-700">{project.description}</p>
           {:else}
-            <p class="text-sm italic text-gray-400">No description provided</p>
+            <p class="text-sm italic text-gray-400">{m.project_detail_no_description()}</p>
           {/if}
         </div>
 
         <!-- Target Taxa -->
         {#if project.target_taxa}
           <div class="mb-6 rounded-lg bg-white p-6 shadow">
-            <h2 class="mb-4 text-lg font-semibold text-gray-900">Target Taxa</h2>
+            <h2 class="mb-4 text-lg font-semibold text-gray-900">{m.project_detail_target_taxa_heading()}</h2>
             <p class="text-sm text-gray-700">{project.target_taxa}</p>
           </div>
         {/if}
@@ -288,51 +289,51 @@
         <!-- Quick Navigation -->
         <div class="mb-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <a
-            href="/projects/{projectId}/data"
+            href={localizeHref(`/projects/${projectId}/data`)}
             class="flex items-start rounded-lg bg-white p-4 shadow transition hover:shadow-md"
           >
             <svg class="mr-3 mt-0.5 h-5 w-5 flex-shrink-0 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4" />
             </svg>
             <div>
-              <h3 class="text-sm font-semibold text-gray-900">Sites & Data</h3>
-              <p class="mt-1 text-xs text-gray-500">Manage sites and recordings</p>
+              <h3 class="text-sm font-semibold text-gray-900">{m.project_detail_nav_sites_data_title()}</h3>
+              <p class="mt-1 text-xs text-gray-500">{m.project_detail_nav_sites_data_desc()}</p>
             </div>
           </a>
           <a
-            href="/projects/{projectId}/detections"
+            href={localizeHref(`/projects/${projectId}/detections`)}
             class="flex items-start rounded-lg bg-white p-4 shadow transition hover:shadow-md"
           >
             <svg class="mr-3 mt-0.5 h-5 w-5 flex-shrink-0 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3" />
             </svg>
             <div>
-              <h3 class="text-sm font-semibold text-gray-900">Detections</h3>
-              <p class="mt-1 text-xs text-gray-500">Review ML species detections</p>
+              <h3 class="text-sm font-semibold text-gray-900">{m.project_detail_nav_detections_title()}</h3>
+              <p class="mt-1 text-xs text-gray-500">{m.project_detail_nav_detections_desc()}</p>
             </div>
           </a>
           <a
-            href="/projects/{projectId}/reports"
+            href={localizeHref(`/projects/${projectId}/reports`)}
             class="flex items-start rounded-lg bg-white p-4 shadow transition hover:shadow-md"
           >
             <svg class="mr-3 mt-0.5 h-5 w-5 flex-shrink-0 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
             </svg>
             <div>
-              <h3 class="text-sm font-semibold text-gray-900">Reports</h3>
-              <p class="mt-1 text-xs text-gray-500">View analysis reports</p>
+              <h3 class="text-sm font-semibold text-gray-900">{m.project_detail_nav_reports_title()}</h3>
+              <p class="mt-1 text-xs text-gray-500">{m.project_detail_nav_reports_desc()}</p>
             </div>
           </a>
           <a
-            href="/projects/{projectId}/settings"
+            href={localizeHref(`/projects/${projectId}/settings`)}
             class="flex items-start rounded-lg bg-white p-4 shadow transition hover:shadow-md"
           >
             <svg class="mr-3 mt-0.5 h-5 w-5 flex-shrink-0 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
             </svg>
             <div>
-              <h3 class="text-sm font-semibold text-gray-900">Settings</h3>
-              <p class="mt-1 text-xs text-gray-500">Configure project settings</p>
+              <h3 class="text-sm font-semibold text-gray-900">{m.project_detail_nav_settings_title()}</h3>
+              <p class="mt-1 text-xs text-gray-500">{m.project_detail_nav_settings_desc()}</p>
             </div>
           </a>
         </div>
@@ -352,8 +353,8 @@
               d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3"
             />
           </svg>
-          <h3 class="mt-2 text-sm font-medium text-gray-900">No recordings yet</h3>
-          <p class="mt-1 text-sm text-gray-500">Upload recordings to start analyzing.</p>
+          <h3 class="mt-2 text-sm font-medium text-gray-900">{m.project_detail_no_recordings_title()}</h3>
+          <p class="mt-1 text-sm text-gray-500">{m.project_detail_no_recordings_body()}</p>
         </div>
       </div>
 
@@ -362,13 +363,13 @@
         <!-- Project Members -->
         <div class="rounded-lg bg-white p-6 shadow">
           <div class="mb-4 flex items-center justify-between">
-            <h2 class="text-lg font-semibold text-gray-900">Members</h2>
+            <h2 class="text-lg font-semibold text-gray-900">{m.project_detail_members_heading()}</h2>
             {#if isAdmin}
               <button
                 onclick={goToMembers}
                 class="text-sm font-medium text-blue-600 hover:text-blue-500"
               >
-                Manage
+                {m.project_detail_members_manage()}
               </button>
             {/if}
           </div>
@@ -397,7 +398,7 @@
                 onclick={goToMembers}
                 class="w-full pt-2 text-center text-sm text-gray-600 hover:text-gray-900"
               >
-                View all {members.length} members
+                {m.project_detail_members_view_all({ count: members.length })}
               </button>
             {/if}
           </div>
@@ -441,13 +442,11 @@
             </div>
             <div class="mt-3 text-center sm:ml-4 sm:mt-0 sm:text-left">
               <h3 class="text-lg font-medium leading-6 text-gray-900" id="modal-title">
-                Delete Project
+                {m.project_detail_delete_title()}
               </h3>
               <div class="mt-2">
                 <p class="text-sm text-gray-500">
-                  Are you sure you want to delete "{project?.name}"? This action cannot be undone and
-                  will permanently delete all recordings, annotations, and data associated with this
-                  project.
+                  {m.project_detail_delete_body({ name: project?.name ?? '' })}
                 </p>
               </div>
             </div>
@@ -481,9 +480,9 @@
                   d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
                 ></path>
               </svg>
-              Deleting...
+              {m.project_detail_deleting()}
             {:else}
-              Delete
+              {m.project_detail_delete_button()}
             {/if}
           </button>
           <button
@@ -492,7 +491,7 @@
             disabled={isDeleting}
             class="mt-3 inline-flex w-full justify-center rounded-md border border-gray-300 bg-white px-4 py-2 text-base font-medium text-gray-700 shadow-sm hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 sm:ml-3 sm:mt-0 sm:w-auto sm:text-sm"
           >
-            Cancel
+            {m.common_cancel()}
           </button>
         </div>
       </div>

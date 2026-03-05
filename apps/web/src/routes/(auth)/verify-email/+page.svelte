@@ -6,6 +6,7 @@
   import { onMount } from 'svelte';
   import { verifyEmail, resendVerificationEmail } from '$lib/api/auth';
   import { ApiError } from '$lib/api/client';
+  import { localizeHref } from '$lib/paraglide/runtime';
   import type { PageData } from './$types';
 
   interface Props {
@@ -153,7 +154,7 @@
           </p>
           <div class="mt-6">
             <a
-              href="/login"
+              href={localizeHref('/login')}
               class="inline-flex w-full justify-center rounded-md border border-transparent bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
             >
               Go to Login
@@ -250,7 +251,7 @@
             </button>
 
             <a
-              href="/login"
+              href={localizeHref('/login')}
               class="inline-flex w-full justify-center rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
             >
               Back to Login
@@ -263,7 +264,7 @@
           <p class="text-sm text-gray-600">No verification token provided.</p>
           <div class="mt-4">
             <a
-              href="/login"
+              href={localizeHref('/login')}
               class="inline-flex justify-center rounded-md border border-transparent bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
             >
               Go to Login

@@ -1,5 +1,7 @@
 <script lang="ts">
   import type { Note } from '$lib/types/annotation';
+  import { getLocale } from '$lib/paraglide/runtime';
+  import * as m from '$lib/paraglide/messages';
 
   export let clipAnnotationId: string;
   export let reviewStatus: string;  // 'unreviewed' | 'approved' | 'rejected'
@@ -30,7 +32,7 @@
 
   function handleReject() {
     if (!comment.trim()) {
-      rejectError = 'A comment is required when rejecting an annotation.';
+      rejectError = m.annotation_review_panel_reject_error();
       return;
     }
     rejectError = '';
@@ -40,7 +42,7 @@
 
   function formatDate(isoString: string): string {
     const date = new Date(isoString);
-    return date.toLocaleString(undefined, {
+    return date.toLocaleString(getLocale(), {
       month: 'short',
       day: 'numeric',
       hour: '2-digit',
@@ -51,11 +53,11 @@
   function getStatusLabel(status: string): string {
     switch (status) {
       case 'approved':
-        return 'Approved';
+        return m.annotation_review_panel_status_approved();
       case 'rejected':
-        return 'Rejected';
+        return m.annotation_review_panel_status_rejected();
       default:
-        return 'Unreviewed';
+        return m.annotation_review_panel_status_unreviewed();
     }
   }
 
@@ -129,13 +131,13 @@
   <!-- Comment textarea -->
   <div class="comment-section" aria-label="Review comment">
     <label class="comment-label" for="review-comment">
-      Comment {reviewStatus !== 'approved' ? '(required for rejection)' : '(optional)'}
+      {reviewStatus !== 'approved' ? m.annotation_review_panel_comment_label_required() : m.annotation_review_panel_comment_label_optional()}
     </label>
     <textarea
       id="review-comment"
       class="comment-textarea"
       class:comment-textarea--error={!!rejectError}
-      placeholder="Leave a reviewer comment..."
+      placeholder={m.annotation_review_panel_comment_placeholder()}
       bind:value={comment}
       disabled={isApproved}
       rows={3}
@@ -153,7 +155,7 @@
       class="btn btn--approve"
       on:click={handleApprove}
       disabled={isApproved}
-      aria-label={isApproved ? 'Already approved' : 'Approve annotation'}
+      aria-label={isApproved ? m.annotation_review_panel_already_approved_aria() : m.annotation_review_panel_approve_aria()}
     >
       <svg
         class="btn-icon"
@@ -165,7 +167,7 @@
       >
         <path stroke-linecap="round" stroke-linejoin="round" d="M3 8l3.5 3.5L13 4.5" />
       </svg>
-      {isApproved ? 'Approved' : 'Approve'}
+      {isApproved ? m.annotation_review_panel_approved_button() : m.annotation_review_panel_approve_button()}
     </button>
 
     <button
@@ -173,7 +175,7 @@
       class="btn btn--reject"
       on:click={handleReject}
       disabled={isApproved}
-      aria-label="Reject annotation"
+      aria-label={m.annotation_review_panel_reject_aria()}
     >
       <svg
         class="btn-icon"
@@ -185,13 +187,13 @@
       >
         <path stroke-linecap="round" d="M4 4l8 8M12 4l-8 8" />
       </svg>
-      {isRejected ? 'Rejected' : 'Reject'}
+      {isRejected ? m.annotation_review_panel_rejected_button() : m.annotation_review_panel_reject_button()}
     </button>
   </div>
 
   {#if isApproved}
     <p class="approved-notice" role="status">
-      This annotation has been approved and cannot be changed.
+      {m.annotation_review_panel_approved_notice()}
     </p>
   {/if}
 
@@ -199,12 +201,12 @@
   {#if reviewNotes.length > 0}
     <div class="divider" role="separator"></div>
     <section aria-labelledby="review-history-heading">
-      <h4 class="section-title" id="review-history-heading">Review History</h4>
-      <ul class="notes-list" aria-label="Review notes">
+      <h4 class="section-title" id="review-history-heading">{m.annotation_review_panel_history_title()}</h4>
+      <ul class="notes-list" aria-label={m.annotation_review_panel_history_title()}>
         {#each reviewNotes as note (note.id)}
           <li class="note-item">
             <div class="note-meta">
-              <span class="note-author">Reviewer</span>
+              <span class="note-author">{m.annotation_review_panel_reviewer()}</span>
               <time class="note-time" datetime={note.created_at}>
                 {formatDate(note.created_at)}
               </time>

@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { Dataset, DatasetStatus, DatasetVisibility } from '$lib/types/data';
+  import { getLocale } from '$lib/paraglide/runtime';
 
   interface Props {
     datasets: Dataset[];
@@ -24,7 +25,7 @@
   }: Props = $props();
 
   function formatDate(dateStr: string): string {
-    return new Date(dateStr).toLocaleDateString();
+    return new Date(dateStr).toLocaleDateString(getLocale());
   }
 
   function getStatusClasses(status: DatasetStatus): string {

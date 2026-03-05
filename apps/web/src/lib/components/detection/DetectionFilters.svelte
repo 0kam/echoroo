@@ -5,6 +5,7 @@
    */
 
   import type { DetectionFilters, DetectionStatus } from '$lib/types/detection';
+  import * as m from '$lib/paraglide/messages';
 
   export let filters: DetectionFilters;
   export let onFilterChange: (filters: DetectionFilters) => void;
@@ -15,11 +16,11 @@
   let confidenceMax: number = filters.confidence_max !== undefined ? Math.round(filters.confidence_max * 100) : 100;
   let searchValue: string = '';
 
-  const statusOptions: { value: DetectionStatus | ''; label: string }[] = [
-    { value: '', label: 'All statuses' },
-    { value: 'unreviewed', label: 'Unreviewed' },
-    { value: 'confirmed', label: 'Confirmed' },
-    { value: 'rejected', label: 'Rejected' },
+  $: statusOptions = [
+    { value: '' as DetectionStatus | '', label: m.detection_filter_all_statuses() },
+    { value: 'unreviewed' as DetectionStatus, label: m.detection_filter_unreviewed() },
+    { value: 'confirmed' as DetectionStatus, label: m.detection_filter_confirmed() },
+    { value: 'rejected' as DetectionStatus, label: m.detection_filter_rejected() },
   ];
 
   function emitChange() {
@@ -76,12 +77,12 @@
   <!-- Species search -->
   <div class="min-w-48 flex-1">
     <label for="species-search" class="mb-1 block text-xs font-medium text-gray-700">
-      Search species
+      {m.detection_filter_search_species_label()}
     </label>
     <input
       id="species-search"
       type="text"
-      placeholder="Species name..."
+      placeholder={m.detection_filter_search_species_placeholder()}
       value={searchValue}
       on:input={handleSearchInput}
       class="w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm text-gray-900 placeholder-gray-400
@@ -92,7 +93,7 @@
   <!-- Status filter -->
   <div class="min-w-40">
     <label for="status-filter" class="mb-1 block text-xs font-medium text-gray-700">
-      Status
+      {m.detection_filter_status_dropdown_label()}
     </label>
     <select
       id="status-filter"
@@ -110,7 +111,7 @@
   <!-- Confidence range -->
   <div class="min-w-48 flex-1">
     <div class="mb-1 flex items-center justify-between">
-      <span class="text-xs font-medium text-gray-700">Confidence</span>
+      <span class="text-xs font-medium text-gray-700">{m.detection_filter_confidence_label()}</span>
       <span class="text-xs text-gray-500">{confidenceMin}% – {confidenceMax}%</span>
     </div>
     <div class="flex items-center gap-2">
@@ -121,7 +122,7 @@
         value={confidenceMin}
         on:input={handleConfidenceMinChange}
         class="h-1.5 w-full cursor-pointer accent-blue-600"
-        aria-label="Minimum confidence"
+        aria-label={m.detection_filter_min_confidence_aria()}
       />
       <input
         type="range"
@@ -130,7 +131,7 @@
         value={confidenceMax}
         on:input={handleConfidenceMaxChange}
         class="h-1.5 w-full cursor-pointer accent-blue-600"
-        aria-label="Maximum confidence"
+        aria-label={m.detection_filter_max_confidence_aria()}
       />
     </div>
   </div>
@@ -144,7 +145,7 @@
         class="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-600
           hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500"
       >
-        Reset filters
+        {m.detection_filter_reset_button()}
       </button>
     </div>
   {/if}

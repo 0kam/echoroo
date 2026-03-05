@@ -6,6 +6,7 @@
 
   import type { APITokenCreateResponse } from '$lib/types';
   import { createToken } from '$lib/api/tokens';
+  import * as m from '$lib/paraglide/messages';
 
   interface Props {
     open: boolean;
@@ -108,14 +109,14 @@
     {#if !createdToken}
       <!-- Create Token Form -->
       <h2 id="dialog-title" class="mb-4 text-xl font-semibold text-gray-900">
-        Create New API Token
+        {m.token_dialog_create_title()}
       </h2>
 
       <form onsubmit={handleSubmit}>
         <!-- Name field -->
         <div class="mb-4">
           <label for="token-name" class="mb-1 block text-sm font-medium text-gray-700">
-            Token Name
+            {m.token_dialog_token_name_label()}
           </label>
           <input
             id="token-name"
@@ -127,14 +128,14 @@
             class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
           />
           <p class="mt-1 text-xs text-gray-500">
-            A descriptive name to identify this token
+            {m.token_dialog_token_name_hint()}
           </p>
         </div>
 
         <!-- Expiration field -->
         <div class="mb-4">
           <label for="token-expires" class="mb-1 block text-sm font-medium text-gray-700">
-            Expiration Date (Optional)
+            {m.token_dialog_expiration_label()}
           </label>
           <input
             id="token-expires"
@@ -144,7 +145,7 @@
             class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
           />
           <p class="mt-1 text-xs text-gray-500">
-            Leave empty for a token that never expires
+            {m.token_dialog_expiration_hint()}
           </p>
         </div>
 
@@ -161,21 +162,21 @@
             onclick={handleClose}
             class="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
           >
-            Cancel
+            {m.token_dialog_cancel()}
           </button>
           <button
             type="submit"
             disabled={isLoading || !name.trim()}
             class="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {isLoading ? 'Creating...' : 'Create Token'}
+            {isLoading ? m.token_dialog_creating() : m.token_dialog_create_button()}
           </button>
         </div>
       </form>
     {:else}
       <!-- Token Created View -->
       <h2 id="dialog-title" class="mb-4 text-xl font-semibold text-gray-900">
-        Token Created
+        {m.token_dialog_created_title()}
       </h2>
 
       <!-- Warning -->
@@ -194,9 +195,9 @@
             />
           </svg>
           <div class="ml-3">
-            <h3 class="text-sm font-medium text-yellow-800">Important</h3>
+            <h3 class="text-sm font-medium text-yellow-800">{m.token_dialog_important()}</h3>
             <p class="mt-1 text-sm text-yellow-700">
-              This token will only be shown once. Copy it now and store it securely.
+              {m.token_dialog_important_body()}
             </p>
           </div>
         </div>
@@ -204,7 +205,7 @@
 
       <!-- Token display -->
       <div class="mb-4">
-        <label for="api-token-value" class="mb-1 block text-sm font-medium text-gray-700">Your API Token</label>
+        <label for="api-token-value" class="mb-1 block text-sm font-medium text-gray-700">{m.token_dialog_your_api_token()}</label>
         <div class="flex items-center gap-2">
           <input
             id="api-token-value"
@@ -220,7 +221,7 @@
             class="flex-shrink-0 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
             data-testid="copy-token-button"
           >
-            {copied ? 'Copied!' : 'Copy'}
+            {copied ? m.token_dialog_copied() : m.token_dialog_copy()}
           </button>
         </div>
       </div>
@@ -232,7 +233,7 @@
           onclick={handleClose}
           class="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
         >
-          Done
+          {m.token_dialog_done()}
         </button>
       </div>
     {/if}

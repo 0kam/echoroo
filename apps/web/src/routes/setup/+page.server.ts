@@ -5,6 +5,7 @@
 
 import type { PageServerLoad } from './$types';
 import { redirect } from '@sveltejs/kit';
+import { localizeHref } from '$lib/paraglide/runtime';
 
 function getServerApiUrl(): string {
   return process.env.ECHOROO_API_URL || 'http://localhost:8002';
@@ -20,7 +21,7 @@ export const load: PageServerLoad = async () => {
 
     // If setup is already completed, redirect to login
     if (setupStatus.setup_completed) {
-      throw redirect(303, '/login');
+      throw redirect(303, localizeHref('/login'));
     }
 
     return {

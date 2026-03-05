@@ -11,17 +11,20 @@
   import { page } from '$app/stores';
   import { createQuery } from '@tanstack/svelte-query';
   import { fetchSpeciesSummary, fetchTemporalData } from '$lib/api/detections';
+  import { localizeHref, getLocale } from '$lib/paraglide/runtime';
+  import * as m from '$lib/paraglide/messages';
   import DetectionReviewGrid from '$lib/components/detection/DetectionReviewGrid.svelte';
   import PolarHeatmap from '$lib/components/detection/PolarHeatmap.svelte';
 
   // projectId and tagId come from the URL params (always defined for this route)
   $: projectId = $page.params.id ?? '';
   $: tagId = $page.params.tagId ?? '';
+  $: locale = getLocale();
 
   // Fetch species summary to display the species name in the page title
   $: summaryQuery = createQuery({
-    queryKey: ['species-summary', projectId],
-    queryFn: () => fetchSpeciesSummary(projectId),
+    queryKey: ['species-summary', projectId, locale],
+    queryFn: () => fetchSpeciesSummary(projectId, { locale }),
   });
 
   $: speciesSummary = $summaryQuery.data?.items ?? [];
@@ -29,15 +32,15 @@
   $: speciesName = currentSpecies?.common_name ?? currentSpecies?.tag_name ?? 'Species';
   $: scientificName = currentSpecies?.scientific_name ?? null;
 
-  $: backUrl = `/projects/${projectId}/detections`;
+  $: backUrl = localizeHref(`/projects/${projectId}/detections`);
 
   // Activity pattern section
   let activityExpanded = false;
 
   // Fetch temporal data only when the section is expanded
   $: temporalQuery = createQuery({
-    queryKey: ['temporal-data', projectId],
-    queryFn: () => fetchTemporalData(projectId),
+    queryKey: ['temporal-data', projectId, locale],
+    queryFn: () => fetchTemporalData(projectId, undefined, locale),
     enabled: !!projectId && activityExpanded,
   });
 
@@ -46,7 +49,7 @@
 </script>
 
 <svelte:head>
-  <title>{speciesName} - Detection Review - Echoroo</title>
+  <title>{speciesName} - {m.detection_heading()} - Echoroo</title>
 </svelte:head>
 
 <div class="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
@@ -57,12 +60,12 @@
       <a
         href={backUrl}
         class="inline-flex items-center gap-1 rounded border border-stone-300 bg-white px-3 py-1.5 text-sm text-stone-600 hover:bg-stone-50 focus:outline-none focus:ring-2 focus:ring-blue-400"
-        aria-label="Back to species list"
+        aria-label={m.detection_all_species_back()}
       >
         <svg class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
           <path fill-rule="evenodd" d="M9.707 16.707a1 1 0 01-1.414 0l-6-6a1 1 0 010-1.414l6-6a1 1 0 011.414 1.414L5.414 9H17a1 1 0 110 2H5.414l4.293 4.293a1 1 0 010 1.414z" clip-rule="evenodd" />
         </svg>
-        All Species
+        {m.detection_all_species_back()}
       </a>
 
       <!-- Species name -->
@@ -81,22 +84,22 @@
       <div class="flex items-center gap-4 rounded-lg border border-stone-200 bg-stone-50 px-4 py-2.5">
         <div class="text-center">
           <div class="text-lg font-semibold text-stone-800">{currentSpecies.total_count}</div>
-          <div class="text-xs text-stone-500">Total</div>
+          <div class="text-xs text-stone-500">{m.detection_total_label()}</div>
         </div>
         <div class="h-8 w-px bg-stone-200"></div>
         <div class="text-center">
           <div class="text-lg font-semibold text-stone-500">{currentSpecies.unreviewed_count}</div>
-          <div class="text-xs text-stone-500">Unreviewed</div>
+          <div class="text-xs text-stone-500">{m.detection_unreviewed_label()}</div>
         </div>
         <div class="h-8 w-px bg-stone-200"></div>
         <div class="text-center">
           <div class="text-lg font-semibold text-green-600">{currentSpecies.confirmed_count}</div>
-          <div class="text-xs text-stone-500">Confirmed</div>
+          <div class="text-xs text-stone-500">{m.detection_confirmed_label()}</div>
         </div>
         <div class="h-8 w-px bg-stone-200"></div>
         <div class="text-center">
           <div class="text-lg font-semibold text-red-600">{currentSpecies.rejected_count}</div>
-          <div class="text-xs text-stone-500">Rejected</div>
+          <div class="text-xs text-stone-500">{m.detection_rejected_label()}</div>
         </div>
         {#if currentSpecies.avg_confidence !== null}
           <div class="h-8 w-px bg-stone-200"></div>
@@ -104,7 +107,7 @@
             <div class="text-lg font-semibold text-stone-800">
               {Math.round(currentSpecies.avg_confidence * 100)}%
             </div>
-            <div class="text-xs text-stone-500">Avg. conf.</div>
+            <div class="text-xs text-stone-500">{m.detection_avg_confidence_label()}</div>
           </div>
         {/if}
       </div>
@@ -134,7 +137,7 @@
             d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
           />
         </svg>
-        <span class="text-sm font-medium text-stone-700">Activity Pattern</span>
+        <span class="text-sm font-medium text-stone-700">{m.detection_activity_pattern_section()}</span>
       </div>
       <svg
         class="h-4 w-4 text-stone-400 transition-transform duration-200 {activityExpanded ? 'rotate-180' : ''}"
@@ -155,21 +158,21 @@
                 <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
                 <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
               </svg>
-              <span class="text-sm">Loading activity pattern...</span>
+              <span class="text-sm">{m.detection_loading_activity_pattern()}</span>
             </div>
           </div>
         {:else if $temporalQuery.isError}
           <div class="rounded-lg border border-red-200 bg-red-50 px-4 py-4 text-center">
-            <p class="text-sm font-medium text-red-700">Failed to load activity pattern</p>
+            <p class="text-sm font-medium text-red-700">{m.detection_activity_pattern_load_error()}</p>
             <p class="mt-1 text-xs text-red-500">
-              {$temporalQuery.error?.message ?? 'An unexpected error occurred'}
+              {$temporalQuery.error?.message ?? m.common_error_unexpected()}
             </p>
             <button
               type="button"
               on:click={() => $temporalQuery.refetch()}
               class="mt-3 rounded-md bg-red-100 px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-200"
             >
-              Retry
+              {m.detection_retry()}
             </button>
           </div>
         {:else if speciesTemporalData}
@@ -184,7 +187,7 @@
           </div>
         {:else if $temporalQuery.isSuccess}
           <div class="py-6 text-center text-sm text-stone-500">
-            No activity pattern data available for this species.
+            {m.detection_no_activity_data()}
           </div>
         {/if}
       </div>

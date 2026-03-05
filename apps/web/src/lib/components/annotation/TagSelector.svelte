@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { Tag, GBIFSuggestion } from '$lib/types/annotation';
   import { fetchGBIFSuggestions } from '$lib/api/tags';
+  import * as m from '$lib/paraglide/messages';
 
   export let projectId: string;
   export let selectedTagIds: string[] = [];
@@ -106,11 +107,11 @@
   function getCategoryLabel(category: string): string {
     switch (category) {
       case 'species':
-        return 'Species';
+        return m.annotation_tag_filter_species();
       case 'sound_type':
-        return 'Sound Type';
+        return m.annotation_tag_filter_sound_type();
       case 'quality':
-        return 'Quality';
+        return m.annotation_tag_filter_quality();
       default:
         return category;
     }
@@ -143,7 +144,7 @@
       bind:this={inputElement}
       type="text"
       class="search-input"
-      placeholder="Search tags..."
+      placeholder={m.annotation_tag_selector_search_placeholder()}
       bind:value={searchQuery}
       on:input={handleSearchInput}
       on:focus={handleInputFocus}
@@ -158,7 +159,7 @@
         <!-- Local tags -->
         {#if filteredTags.length > 0}
           <div class="dropdown-section">
-            <div class="dropdown-section__header">Tags</div>
+            <div class="dropdown-section__header">{m.annotation_tag_selector_tags_header()}</div>
             {#each filteredTags as tag, index}
               <!-- svelte-ignore a11y_click_events_have_key_events -->
               <!-- svelte-ignore a11y_interactive_supports_focus -->
@@ -182,17 +183,17 @@
             {/each}
           </div>
         {:else if searchQuery === ''}
-          <div class="dropdown-empty">Type to search tags</div>
+          <div class="dropdown-empty">{m.annotation_tag_selector_type_to_search()}</div>
         {:else}
-          <div class="dropdown-empty">No matching tags found</div>
+          <div class="dropdown-empty">{m.annotation_tag_selector_no_match()}</div>
         {/if}
 
         <!-- GBIF suggestions -->
         {#if showGBIF && searchQuery.length >= 2}
           <div class="dropdown-section">
-            <div class="dropdown-section__header">GBIF Species Suggestions</div>
+            <div class="dropdown-section__header">{m.annotation_tag_selector_gbif_header()}</div>
             {#if isLoadingGBIF}
-              <div class="dropdown-loading">Searching GBIF...</div>
+              <div class="dropdown-loading">{m.annotation_tag_selector_gbif_searching()}</div>
             {:else if gbifSuggestions.length > 0}
               {#each gbifSuggestions as suggestion}
                 <!-- svelte-ignore a11y_click_events_have_key_events -->
@@ -217,7 +218,7 @@
                 </div>
               {/each}
             {:else}
-              <div class="dropdown-empty">No GBIF results</div>
+              <div class="dropdown-empty">{m.annotation_tag_selector_gbif_no_results()}</div>
             {/if}
           </div>
         {/if}

@@ -3,6 +3,8 @@
   import { listRecordings, deleteRecording } from '$lib/api/recordings';
   import type { Recording } from '$lib/types/data';
   import DeleteConfirmDialog from '$lib/components/ui/DeleteConfirmDialog.svelte';
+  import * as m from '$lib/paraglide/messages';
+  import { getLocale } from '$lib/paraglide/runtime';
 
   interface Props {
     projectId: string;
@@ -77,7 +79,7 @@
 
   function formatDatetime(datetime: string | null): string {
     if (!datetime) return 'N/A';
-    return new Date(datetime).toLocaleString();
+    return new Date(datetime).toLocaleString(getLocale());
   }
 
   function handleRowClick(recording: Recording) {
@@ -171,7 +173,7 @@
         <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
         <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
       </svg>
-      <span class="text-sm text-gray-600">Loading recordings...</span>
+      <span class="text-sm text-gray-600">{m.common_loading_recordings()}</span>
     </div>
   {:else if $recordingsQuery.error}
     <div class="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700">

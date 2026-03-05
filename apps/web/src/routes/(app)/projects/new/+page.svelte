@@ -6,6 +6,8 @@
   import { goto } from '$app/navigation';
   import { projectsApi } from '$lib/api/projects';
   import { ApiError } from '$lib/api/client';
+  import { localizeHref } from '$lib/paraglide/runtime';
+  import * as m from '$lib/paraglide/messages';
 
   // Predefined taxa options
   const TARGET_TAXA_OPTIONS = [
@@ -47,12 +49,12 @@
    */
   function validateForm(): boolean {
     if (!name.trim()) {
-      error = 'Project name is required';
+      error = m.project_new_name_required();
       return false;
     }
 
     if (name.length > 200) {
-      error = 'Project name must be less than 200 characters';
+      error = m.project_new_name_too_long();
       return false;
     }
 
@@ -81,12 +83,12 @@
       });
 
       // Redirect to project detail page
-      await goto(`/projects/${project.id}`);
+      await goto(localizeHref(`/projects/${project.id}`));
     } catch (err) {
       if (err instanceof ApiError) {
         error = err.detail || err.message;
       } else {
-        error = 'Failed to create project. Please try again.';
+        error = m.project_new_error();
       }
     } finally {
       isSubmitting = false;
@@ -97,20 +99,20 @@
    * Cancel and go back
    */
   function handleCancel() {
-    goto('/projects');
+    goto(localizeHref('/projects'));
   }
 </script>
 
 <svelte:head>
-  <title>New Project - Echoroo</title>
+  <title>{m.project_new_page_title()}</title>
 </svelte:head>
 
 <div class="mx-auto max-w-3xl px-4 py-8 sm:px-6 lg:px-8">
   <!-- Header -->
   <div class="mb-8">
-    <h1 class="text-3xl font-bold text-gray-900">Create New Project</h1>
+    <h1 class="text-3xl font-bold text-gray-900">{m.project_new_heading()}</h1>
     <p class="mt-2 text-sm text-gray-600">
-      Set up a new bioacoustic analysis project to organize your recordings and annotations.
+      {m.project_new_description()}
     </p>
   </div>
 
@@ -146,7 +148,7 @@
         <!-- Project Name -->
         <div>
           <label for="name" class="block text-sm font-medium text-gray-700">
-            Project Name <span class="text-red-500">*</span>
+            {m.project_new_name_label()} <span class="text-red-500">*</span>
           </label>
           <input
             id="name"
@@ -156,15 +158,15 @@
             bind:value={name}
             disabled={isSubmitting}
             class="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-gray-900 placeholder-gray-400 focus:border-blue-500 focus:outline-none focus:ring-blue-500 disabled:bg-gray-100 disabled:cursor-not-allowed sm:text-sm"
-            placeholder="e.g., Bird Survey 2026"
+            placeholder={m.project_new_name_placeholder()}
           />
-          <p class="mt-1 text-xs text-gray-500">A descriptive name for your project</p>
+          <p class="mt-1 text-xs text-gray-500">{m.project_new_name_hint()}</p>
         </div>
 
         <!-- Description -->
         <div>
           <label for="description" class="block text-sm font-medium text-gray-700">
-            Description
+            {m.project_new_description_label()}
           </label>
           <textarea
             id="description"
@@ -173,15 +175,15 @@
             bind:value={description}
             disabled={isSubmitting}
             class="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-gray-900 placeholder-gray-400 focus:border-blue-500 focus:outline-none focus:ring-blue-500 disabled:bg-gray-100 disabled:cursor-not-allowed sm:text-sm"
-            placeholder="What is this project about? What are your goals?"
+            placeholder={m.project_new_description_placeholder()}
           ></textarea>
-          <p class="mt-1 text-xs text-gray-500">Optional description of your project goals</p>
+          <p class="mt-1 text-xs text-gray-500">{m.project_new_description_hint()}</p>
         </div>
 
         <!-- Target Taxa -->
         <div>
           <span class="block text-sm font-medium text-gray-700" id="target-taxa-label">
-            Target Taxa
+            {m.project_new_target_taxa_label()}
           </span>
           <div
             class="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3"
@@ -209,13 +211,13 @@
             {/each}
           </div>
           <p class="mt-1 text-xs text-gray-500">
-            Select the taxonomic groups you're focusing on (optional)
+            {m.project_new_target_taxa_hint()}
           </p>
         </div>
 
         <!-- Visibility -->
         <div>
-          <span class="block text-sm font-medium text-gray-700" id="visibility-label">Visibility</span>
+          <span class="block text-sm font-medium text-gray-700" id="visibility-label">{m.project_new_visibility_label()}</span>
           <div class="mt-2 space-y-2" role="radiogroup" aria-labelledby="visibility-label">
             <label class="flex items-start">
               <input
@@ -235,9 +237,9 @@
                       clip-rule="evenodd"
                     />
                   </svg>
-                  <span class="text-sm font-medium text-gray-700">Private</span>
+                  <span class="text-sm font-medium text-gray-700">{m.project_new_visibility_private_label()}</span>
                 </div>
-                <p class="text-xs text-gray-500">Only you and invited members can access</p>
+                <p class="text-xs text-gray-500">{m.project_new_visibility_private_hint()}</p>
               </div>
             </label>
 
@@ -259,9 +261,9 @@
                       clip-rule="evenodd"
                     />
                   </svg>
-                  <span class="text-sm font-medium text-gray-700">Public</span>
+                  <span class="text-sm font-medium text-gray-700">{m.project_new_visibility_public_label()}</span>
                 </div>
-                <p class="text-xs text-gray-500">Anyone can view this project</p>
+                <p class="text-xs text-gray-500">{m.project_new_visibility_public_hint()}</p>
               </div>
             </label>
           </div>
@@ -276,7 +278,7 @@
           disabled={isSubmitting}
           class="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
         >
-          Cancel
+          {m.project_new_cancel()}
         </button>
         <button
           type="submit"
@@ -304,9 +306,9 @@
                 d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
               ></path>
             </svg>
-            Creating...
+            {m.project_new_submitting()}
           {:else}
-            Create Project
+            {m.project_new_submit()}
           {/if}
         </button>
       </div>

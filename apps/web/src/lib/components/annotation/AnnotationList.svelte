@@ -1,5 +1,7 @@
 <script lang="ts">
   import type { SoundEventAnnotation } from '$lib/types/annotation';
+  import { getLocale } from '$lib/paraglide/runtime';
+  import * as m from '$lib/paraglide/messages';
 
   export let annotations: SoundEventAnnotation[] = [];
   export let selectedAnnotationId: string | null = null;
@@ -42,7 +44,7 @@
     // coordinates = [time_start, freq_low, time_end, freq_high]
     const freqLow  = Math.round(annotation.geometry.coordinates[1] ?? 0);
     const freqHigh = Math.round(annotation.geometry.coordinates[3] ?? 0);
-    return `${freqLow.toLocaleString()}\u2013${freqHigh.toLocaleString()} Hz`;
+    return `${freqLow.toLocaleString(getLocale())}\u2013${freqHigh.toLocaleString(getLocale())} Hz`;
   }
 
   function getTagColor(category: string): { bg: string; text: string } {
@@ -69,8 +71,8 @@
         <path stroke-linecap="round" stroke-linejoin="round"
           d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" />
       </svg>
-      <p class="empty-title">No annotations yet</p>
-      <p class="empty-subtitle">Draw on the spectrogram to add one.</p>
+      <p class="empty-title">{m.annotation_list_no_annotations()}</p>
+      <p class="empty-subtitle">{m.annotation_list_draw_hint()}</p>
     </div>
   {:else}
     <ul class="annotation-items" role="listbox" aria-label="Sound event annotations">
@@ -110,9 +112,9 @@
             <div class="time-row">
               <span class="time-label">{formatTime(timeRange.start)} &ndash; {formatTime(timeRange.end)}</span>
               {#if annotation.source === 'model'}
-                <span class="source-badge model">AI</span>
+                <span class="source-badge model">{m.annotation_list_source_ai()}</span>
               {:else}
-                <span class="source-badge human">Human</span>
+                <span class="source-badge human">{m.annotation_list_source_human()}</span>
               {/if}
             </div>
 
@@ -140,8 +142,8 @@
           <!-- Right: delete button -->
           <button
             class="delete-btn"
-            title="Delete annotation"
-            aria-label="Delete annotation"
+            title={m.annotation_list_delete_title()}
+            aria-label={m.annotation_list_delete_aria()}
             on:click|stopPropagation={() => onDelete(annotation.id)}
           >
             <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" class="delete-icon">

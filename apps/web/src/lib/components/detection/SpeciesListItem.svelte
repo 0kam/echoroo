@@ -6,6 +6,8 @@
 
   import { goto } from '$app/navigation';
   import type { SpeciesSummary } from '$lib/types/detection';
+  import { localizeHref } from '$lib/paraglide/runtime';
+  import * as m from '$lib/paraglide/messages';
 
   export let species: SpeciesSummary;
   export let projectId: string;
@@ -22,7 +24,7 @@
     species.avg_confidence !== null ? Math.round(species.avg_confidence * 100) : null;
 
   function handleClick() {
-    goto(`/projects/${projectId}/detections/${species.tag_id}`);
+    goto(localizeHref(`/projects/${projectId}/detections/${species.tag_id}`));
   }
 
   function handleKeydown(event: KeyboardEvent) {
@@ -58,21 +60,21 @@
         <div
           class="h-full bg-green-500"
           style="width: {confirmedPct}%"
-          title="Confirmed: {species.confirmed_count}"
+          title="{m.detection_confirmed_label()}: {species.confirmed_count}"
         ></div>
       {/if}
       {#if rejectedPct > 0}
         <div
           class="h-full bg-red-400"
           style="width: {rejectedPct}%"
-          title="Rejected: {species.rejected_count}"
+          title="{m.detection_rejected_label()}: {species.rejected_count}"
         ></div>
       {/if}
       {#if unreviewedPct > 0}
         <div
           class="h-full bg-gray-200"
           style="width: {unreviewedPct}%"
-          title="Unreviewed: {species.unreviewed_count}"
+          title="{m.detection_unreviewed_label()}: {species.unreviewed_count}"
         ></div>
       {/if}
     </div>
@@ -80,13 +82,13 @@
     <!-- Progress counts -->
     <div class="mt-1 flex gap-3 text-xs text-gray-500">
       {#if species.confirmed_count > 0}
-        <span class="text-green-600">{species.confirmed_count} confirmed</span>
+        <span class="text-green-600">{species.confirmed_count} {m.detection_status_confirmed()}</span>
       {/if}
       {#if species.rejected_count > 0}
-        <span class="text-red-500">{species.rejected_count} rejected</span>
+        <span class="text-red-500">{species.rejected_count} {m.detection_status_rejected()}</span>
       {/if}
       {#if species.unreviewed_count > 0}
-        <span>{species.unreviewed_count} unreviewed</span>
+        <span>{species.unreviewed_count} {m.detection_status_unreviewed()}</span>
       {/if}
     </div>
   </div>
@@ -96,7 +98,7 @@
     <!-- Total count -->
     <div>
       <div class="text-sm font-semibold text-gray-900">{species.total_count}</div>
-      <div class="text-xs text-gray-500">detections</div>
+      <div class="text-xs text-gray-500">{m.detection_total_label()}</div>
     </div>
 
     <!-- Avg confidence -->
@@ -106,7 +108,7 @@
       {:else}
         <div class="text-sm text-gray-400">—</div>
       {/if}
-      <div class="text-xs text-gray-500">avg conf.</div>
+      <div class="text-xs text-gray-500">{m.detection_avg_confidence_label()}</div>
     </div>
 
     <!-- Chevron -->
