@@ -6,6 +6,9 @@
 
   import { goto } from '$app/navigation';
   import { authStore } from '$lib/stores/auth.svelte';
+  import { localizeHref } from '$lib/paraglide/runtime';
+  import * as m from '$lib/paraglide/messages';
+  import LanguageSwitcher from '$lib/components/ui/LanguageSwitcher.svelte';
 
   interface Props {
     children: import('svelte').Snippet;
@@ -18,7 +21,7 @@
    */
   $effect(() => {
     if (!authStore.isLoading && !authStore.isAuthenticated) {
-      goto('/login');
+      goto(localizeHref('/login'));
     }
   });
 
@@ -27,7 +30,7 @@
    */
   async function handleLogout() {
     await authStore.logout();
-    goto('/login');
+    goto(localizeHref('/login'));
   }
 </script>
 
@@ -55,17 +58,17 @@
       <!-- Left: Logo / brand link -->
       <div class="flex items-center gap-6">
         <a
-          href="/dashboard"
+          href={localizeHref('/dashboard')}
           class="text-sm font-semibold tracking-wide text-stone-800 hover:text-stone-600"
         >
-          Echoroo
+          {m.nav_brand()}
         </a>
         <nav class="flex items-center gap-1">
           <a
-            href="/projects"
+            href={localizeHref('/projects')}
             class="rounded px-3 py-1 text-sm font-medium text-stone-600 transition-colors hover:bg-stone-100 hover:text-stone-900"
           >
-            Projects
+            {m.nav_projects()}
           </a>
         </nav>
       </div>
@@ -80,18 +83,18 @@
 
         {#if authStore.user?.is_superuser}
           <a
-            href="/admin/users"
+            href={localizeHref('/admin/users')}
             class="rounded px-3 py-1 text-xs font-medium text-purple-700 ring-1 ring-purple-200 transition-colors hover:bg-purple-50"
           >
-            Admin
+            {m.nav_admin()}
           </a>
         {/if}
 
         <a
-          href="/profile"
+          href={localizeHref('/profile')}
           class="rounded px-3 py-1 text-xs font-medium text-stone-600 transition-colors hover:bg-stone-100 hover:text-stone-900"
         >
-          Profile
+          {m.nav_profile()}
         </a>
 
         <button
@@ -99,8 +102,10 @@
           onclick={handleLogout}
           class="rounded px-3 py-1 text-xs font-medium text-stone-600 transition-colors hover:bg-stone-100 hover:text-stone-900"
         >
-          Logout
+          {m.nav_logout()}
         </button>
+
+        <LanguageSwitcher />
       </div>
     {/if}
   </header>

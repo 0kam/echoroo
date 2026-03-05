@@ -5,6 +5,7 @@
     AnnotationProjectUpdate,
     AnnotationProjectVisibility,
   } from '$lib/types/annotation';
+  import * as m from '$lib/paraglide/messages';
 
   export let projectId: string;
   export let project: AnnotationProjectDetail | null = null;
@@ -24,7 +25,7 @@
 
   async function handleSubmit() {
     if (!name.trim()) {
-      error = 'Name is required';
+      error = m.annotation_form_name_required();
       return;
     }
 
@@ -50,7 +51,7 @@
         await onSubmit(createData);
       }
     } catch (e) {
-      error = e instanceof Error ? e.message : 'Failed to save annotation project';
+      error = e instanceof Error ? e.message : m.annotation_form_error_save();
     } finally {
       isSubmitting = false;
     }
@@ -63,12 +64,12 @@
 <form class="annotation-project-form" on:submit|preventDefault={handleSubmit}>
   <div class="form-row">
     <div class="form-group full-width">
-      <label for="name">Name *</label>
+      <label for="name">{m.annotation_form_name_label()}</label>
       <input
         id="name"
         type="text"
         bind:value={name}
-        placeholder="Enter annotation project name"
+        placeholder={m.annotation_form_name_placeholder()}
         maxlength="200"
         required
       />
@@ -77,11 +78,11 @@
 
   <div class="form-row">
     <div class="form-group full-width">
-      <label for="description">Description</label>
+      <label for="description">{m.annotation_form_description_label()}</label>
       <textarea
         id="description"
         bind:value={description}
-        placeholder="Describe this annotation project"
+        placeholder={m.annotation_form_description_placeholder()}
         rows="3"
       ></textarea>
     </div>
@@ -89,28 +90,28 @@
 
   <div class="form-row">
     <div class="form-group full-width">
-      <label for="instructions">Instructions</label>
+      <label for="instructions">{m.annotation_form_instructions_label()}</label>
       <textarea
         id="instructions"
         bind:value={instructions}
-        placeholder="Instructions displayed to annotators during the annotation workflow"
+        placeholder={m.annotation_form_instructions_placeholder()}
         rows="4"
       ></textarea>
       <p class="help-text">
-        These instructions will be shown to annotators when they work on tasks in this project.
+        {m.annotation_form_instructions_hint()}
       </p>
     </div>
   </div>
 
   <div class="form-row">
     <div class="form-group">
-      <label for="visibility">Visibility</label>
+      <label for="visibility">{m.annotation_form_visibility_label()}</label>
       <select id="visibility" bind:value={visibility}>
-        <option value="private">Private</option>
-        <option value="public">Public</option>
+        <option value="private">{m.annotation_form_visibility_private()}</option>
+        <option value="public">{m.annotation_form_visibility_public()}</option>
       </select>
       <p class="help-text">
-        Private projects are only visible to project members.
+        {m.annotation_form_visibility_hint()}
       </p>
     </div>
   </div>
@@ -121,13 +122,13 @@
 
   <div class="form-actions">
     <button type="button" class="btn-secondary" on:click={onCancel} disabled={isSubmitting}>
-      Cancel
+      {m.annotation_form_cancel()}
     </button>
     <button type="submit" class="btn-primary" disabled={isSubmitting || !name.trim()}>
       {#if isSubmitting}
-        Saving...
+        {m.annotation_form_saving()}
       {:else}
-        {isEdit ? 'Update Annotation Project' : 'Create Annotation Project'}
+        {isEdit ? m.annotation_form_update() : m.annotation_form_create()}
       {/if}
     </button>
   </div>

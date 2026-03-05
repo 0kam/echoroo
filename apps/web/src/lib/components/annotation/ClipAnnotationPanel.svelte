@@ -1,5 +1,7 @@
 <script lang="ts">
   import type { TagSummary, Note } from '$lib/types/annotation';
+  import { getLocale } from '$lib/paraglide/runtime';
+  import * as m from '$lib/paraglide/messages';
 
   export let projectId: string;
   export let clipAnnotationId: string | null = null;
@@ -52,7 +54,7 @@
 
   function formatNoteDate(isoString: string): string {
     const date = new Date(isoString);
-    return date.toLocaleString(undefined, {
+    return date.toLocaleString(getLocale(), {
       month: 'short',
       day: 'numeric',
       hour: '2-digit',
@@ -65,7 +67,7 @@
   <!-- Applied clip tags — shown as removable chips when tags are active -->
   {#if clipTags.length > 0}
     <section class="section" aria-labelledby="applied-tags-heading">
-      <h3 class="section-title" id="applied-tags-heading">Applied Tags</h3>
+      <h3 class="section-title" id="applied-tags-heading">{m.clip_panel_applied_tags()}</h3>
       <div class="chip-row" aria-label="Applied clip tags" aria-live="polite">
         {#each clipTags as tag (tag.id)}
           <button
@@ -87,7 +89,7 @@
 
   <!-- Quick Tags section — all available tags grouped by category -->
   <section class="section" aria-labelledby="quick-tags-heading">
-    <h3 class="section-title" id="quick-tags-heading">Quick Tags</h3>
+    <h3 class="section-title" id="quick-tags-heading">{m.clip_panel_quick_tags()}</h3>
 
     {#if availableTags.length === 0}
       <p class="empty-hint">No tags configured for this project.</p>
@@ -95,7 +97,7 @@
       <!-- Species -->
       {#if speciesTags.length > 0}
         <div class="tag-group">
-          <span class="tag-group-label">Species</span>
+          <span class="tag-group-label">{m.clip_panel_species()}</span>
           <div class="tag-buttons">
             {#each speciesTags as tag (tag.id)}
               <button
@@ -116,7 +118,7 @@
       <!-- Sound Type -->
       {#if soundTypeTags.length > 0}
         <div class="tag-group">
-          <span class="tag-group-label">Sound Type</span>
+          <span class="tag-group-label">{m.clip_panel_sound_type()}</span>
           <div class="tag-buttons">
             {#each soundTypeTags as tag (tag.id)}
               <button
@@ -137,7 +139,7 @@
       <!-- Quality -->
       {#if qualityTags.length > 0}
         <div class="tag-group">
-          <span class="tag-group-label">Quality</span>
+          <span class="tag-group-label">{m.clip_panel_quality()}</span>
           <div class="tag-buttons">
             {#each qualityTags as tag (tag.id)}
               <button
@@ -161,7 +163,7 @@
 
   <!-- Notes section -->
   <section class="section" aria-labelledby="notes-heading">
-    <h3 class="section-title" id="notes-heading">Notes</h3>
+    <h3 class="section-title" id="notes-heading">{m.clip_panel_notes()}</h3>
 
     <!-- Add note input -->
     <div class="note-input-row">

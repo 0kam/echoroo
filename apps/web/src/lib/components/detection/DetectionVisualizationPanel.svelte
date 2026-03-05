@@ -7,6 +7,7 @@
 
   import type { SpeciesTemporalData } from '$lib/types/detection';
   import PolarHeatmap from './PolarHeatmap.svelte';
+  import * as m from '$lib/paraglide/messages';
 
   export let species: SpeciesTemporalData[];
 
@@ -36,18 +37,18 @@
           d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"
         />
       </svg>
-      <p class="mt-3 text-sm font-medium text-stone-700">No activity data available</p>
+      <p class="mt-3 text-sm font-medium text-stone-700">{m.detection_viz_no_activity_title()}</p>
       <p class="mt-1 text-xs text-stone-500">
-        Activity patterns appear after detections are recorded.
+        {m.detection_viz_no_activity_body()}
       </p>
     </div>
   {:else}
     <!-- Species count -->
     <p class="text-sm text-stone-500">
       {#if !showAll && hasMore}
-        Showing top {DEFAULT_VISIBLE} of {species.length} species
+        {m.detection_viz_showing_top({ top: DEFAULT_VISIBLE, total: species.length })}
       {:else}
-        {species.length} {species.length === 1 ? 'species' : 'species'} detected
+        {m.detection_viz_species_detected({ count: species.length })}
       {/if}
     </p>
 
@@ -78,12 +79,12 @@
             <svg class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
               <path fill-rule="evenodd" d="M14.707 12.707a1 1 0 01-1.414 0L10 9.414l-3.293 3.293a1 1 0 01-1.414-1.414l4-4a1 1 0 011.414 0l4 4a1 1 0 010 1.414z" clip-rule="evenodd" />
             </svg>
-            Show fewer
+            {m.detection_viz_show_fewer()}
           {:else}
             <svg class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
               <path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd" />
             </svg>
-            Show all {species.length} species
+            {m.detection_viz_show_all({ count: species.length })}
           {/if}
         </button>
       </div>

@@ -3,6 +3,8 @@
   import { goto } from '$app/navigation';
   import { createQuery, createMutation, useQueryClient } from '@tanstack/svelte-query';
   import { fetchDataset, updateDataset, deleteDataset } from '$lib/api/datasets';
+  import { localizeHref, getLocale } from '$lib/paraglide/runtime';
+  import * as m from '$lib/paraglide/messages';
   import type { DatasetUpdate } from '$lib/types/data';
   import DatasetForm from '$lib/components/data/DatasetForm.svelte';
   import DatasetStatistics from '$lib/components/data/DatasetStatistics.svelte';
@@ -41,7 +43,7 @@
   const deleteMutation = createMutation({
     mutationFn: () => deleteDataset(projectId, datasetId),
     onSuccess: () => {
-      goto(`/projects/${projectId}/datasets`);
+      goto(localizeHref(`/projects/${projectId}/datasets`));
     },
   });
 
@@ -55,14 +57,14 @@
   }
 
   function formatDateTime(dateStr: string): string {
-    return new Date(dateStr).toLocaleString();
+    return new Date(dateStr).toLocaleString(getLocale());
   }
 
   const deleteWarnings = $derived(
     $datasetQuery.data
       ? [
-          `${$datasetQuery.data.recording_count || 0} recording(s)`,
-          'All associated clips and annotations',
+          m.dataset_detail_delete_warnings_recordings({ count: $datasetQuery.data.recording_count || 0 }),
+          m.dataset_detail_delete_warnings_annotations(),
         ]
       : []
   );
@@ -80,7 +82,7 @@
 </script>
 
 <svelte:head>
-  <title>{$datasetQuery.data?.name || 'Dataset'} | Project</title>
+  <title>{$datasetQuery.data ? m.dataset_detail_page_title({ name: $datasetQuery.data.name }) : m.dataset_detail_loading()}</title>
 </svelte:head>
 
 <div class="mx-auto max-w-5xl space-y-6 px-6 py-8">
@@ -90,7 +92,7 @@
         <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
         <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
       </svg>
-      Loading dataset...
+      {m.dataset_detail_loading()}
     </div>
   {:else if $datasetQuery.isError}
     <div class="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
@@ -102,9 +104,9 @@
     <!-- Header -->
     <div>
       <nav class="mb-2 flex items-center gap-2 text-sm text-gray-500">
-        <a href="/projects/{projectId}" class="hover:text-gray-900">Project</a>
+        <a href={localizeHref(`/projects/${projectId}`)} class="hover:text-gray-900">{m.dataset_detail_breadcrumb_project()}</a>
         <span>/</span>
-        <a href="/projects/{projectId}/datasets" class="hover:text-gray-900">Datasets</a>
+        <a href={localizeHref(`/projects/${projectId}/datasets`)} class="hover:text-gray-900">{m.dataset_detail_breadcrumb_datasets()}</a>
         <span>/</span>
         <span class="font-medium text-gray-900">{dataset.name}</span>
       </nav>
@@ -127,20 +129,20 @@
                 <polyline points="7 10 12 15 17 10" stroke-width="2" />
                 <line x1="12" y1="15" x2="12" y2="3" stroke-width="2" />
               </svg>
-              Export
+              {m.dataset_detail_export_button()}
             </button>
           {/if}
           <button
             onclick={() => (showEditModal = true)}
             class="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50"
           >
-            Edit
+            {m.dataset_detail_edit_button()}
           </button>
           <button
             onclick={() => (showDeleteConfirm = true)}
             class="rounded-md border border-red-200 bg-white px-3 py-2 text-sm font-medium text-red-600 transition-colors hover:bg-red-50"
           >
-            Delete
+            {m.dataset_detail_delete_button()}
           </button>
         </div>
       </div>
@@ -148,50 +150,50 @@
 
     <!-- Dataset info card -->
     <div class="rounded-lg border border-gray-200 bg-white p-6">
-      <h2 class="mb-4 text-sm font-semibold uppercase tracking-wider text-gray-500">Dataset Information</h2>
+      <h2 class="mb-4 text-sm font-semibold uppercase tracking-wider text-gray-500">{m.dataset_detail_info_heading()}</h2>
       <div class="grid grid-cols-2 gap-4 sm:grid-cols-3">
         <div class="flex flex-col gap-1">
-          <span class="text-xs font-medium uppercase tracking-wider text-gray-400">Site</span>
+          <span class="text-xs font-medium uppercase tracking-wider text-gray-400">{m.dataset_detail_site_label()}</span>
           <span class="text-sm text-gray-900">
             {#if dataset.site}
-              <a href="/projects/{projectId}/sites/{dataset.site.id}" class="text-blue-600 hover:underline">
+              <a href={localizeHref(`/projects/${projectId}/sites/${dataset.site.id}`)} class="text-blue-600 hover:underline">
                 {dataset.site.name}
               </a>
             {:else}
-              <span class="text-gray-400">N/A</span>
+              <span class="text-gray-400">{m.dataset_detail_site_na()}</span>
             {/if}
           </span>
         </div>
 
         <div class="flex flex-col gap-1">
-          <span class="text-xs font-medium uppercase tracking-wider text-gray-400">Status</span>
+          <span class="text-xs font-medium uppercase tracking-wider text-gray-400">{m.dataset_detail_status_label()}</span>
           <span class="inline-flex w-fit items-center rounded px-2 py-0.5 text-xs font-medium capitalize {getStatusClasses(dataset.status)}">
             {dataset.status}
           </span>
         </div>
 
         <div class="flex flex-col gap-1">
-          <span class="text-xs font-medium uppercase tracking-wider text-gray-400">Visibility</span>
+          <span class="text-xs font-medium uppercase tracking-wider text-gray-400">{m.dataset_detail_visibility_label()}</span>
           <span class="text-sm text-gray-900 capitalize">{dataset.visibility}</span>
         </div>
 
         {#if dataset.recorder}
           <div class="flex flex-col gap-1">
-            <span class="text-xs font-medium uppercase tracking-wider text-gray-400">Recorder</span>
+            <span class="text-xs font-medium uppercase tracking-wider text-gray-400">{m.dataset_detail_recorder_label()}</span>
             <span class="text-sm text-gray-900">{dataset.recorder.manufacturer} {dataset.recorder.recorder_name}</span>
           </div>
         {/if}
 
         {#if dataset.license}
           <div class="flex flex-col gap-1">
-            <span class="text-xs font-medium uppercase tracking-wider text-gray-400">License</span>
+            <span class="text-xs font-medium uppercase tracking-wider text-gray-400">{m.dataset_detail_license_label()}</span>
             <span class="text-sm text-gray-900">{dataset.license.name} ({dataset.license.short_name})</span>
           </div>
         {/if}
 
         {#if dataset.doi}
           <div class="flex flex-col gap-1">
-            <span class="text-xs font-medium uppercase tracking-wider text-gray-400">DOI</span>
+            <span class="text-xs font-medium uppercase tracking-wider text-gray-400">{m.dataset_detail_doi_label()}</span>
             <a href="https://doi.org/{dataset.doi}" target="_blank" rel="noopener noreferrer" class="text-sm text-blue-600 hover:underline">
               {dataset.doi}
             </a>
@@ -200,19 +202,19 @@
 
         {#if dataset.gain !== null}
           <div class="flex flex-col gap-1">
-            <span class="text-xs font-medium uppercase tracking-wider text-gray-400">Gain</span>
+            <span class="text-xs font-medium uppercase tracking-wider text-gray-400">{m.dataset_detail_gain_label()}</span>
             <span class="text-sm text-gray-900">{dataset.gain} dB</span>
           </div>
         {/if}
 
         <div class="flex flex-col gap-1">
-          <span class="text-xs font-medium uppercase tracking-wider text-gray-400">Created</span>
+          <span class="text-xs font-medium uppercase tracking-wider text-gray-400">{m.dataset_detail_created_label()}</span>
           <span class="text-sm text-gray-900">{formatDateTime(dataset.created_at)}</span>
         </div>
 
         {#if dataset.created_by}
           <div class="flex flex-col gap-1">
-            <span class="text-xs font-medium uppercase tracking-wider text-gray-400">Created By</span>
+            <span class="text-xs font-medium uppercase tracking-wider text-gray-400">{m.dataset_detail_created_by_label()}</span>
             <span class="text-sm text-gray-900">{dataset.created_by.display_name || dataset.created_by.username}</span>
           </div>
         {/if}
@@ -220,7 +222,7 @@
 
       {#if dataset.note}
         <div class="mt-4 border-t border-gray-100 pt-4">
-          <span class="mb-1 block text-xs font-medium uppercase tracking-wider text-gray-400">Note</span>
+          <span class="mb-1 block text-xs font-medium uppercase tracking-wider text-gray-400">{m.dataset_detail_note_label()}</span>
           <p class="whitespace-pre-wrap text-sm text-gray-700">{dataset.note}</p>
         </div>
       {/if}
@@ -256,13 +258,13 @@
     {#if dataset.recording_count > 0}
       <div class="rounded-lg border border-gray-200 bg-white p-6">
         <div class="mb-4">
-          <h3 class="text-base font-semibold text-gray-900">Recordings</h3>
-          <p class="mt-0.5 text-sm text-gray-500">{dataset.recording_count} recording(s) in this dataset</p>
+          <h3 class="text-base font-semibold text-gray-900">{m.dataset_detail_recordings_heading()}</h3>
+          <p class="mt-0.5 text-sm text-gray-500">{m.dataset_detail_recordings_count({ count: dataset.recording_count })}</p>
         </div>
         <RecordingList
           {projectId}
           {datasetId}
-          onSelect={(recordingId) => goto(`/projects/${projectId}/recordings/${recordingId}`)}
+          onSelect={(recordingId) => goto(localizeHref(`/projects/${projectId}/recordings/${recordingId}`))}
         />
       </div>
     {/if}
@@ -289,7 +291,7 @@
       role="document"
     >
       <div class="flex items-center justify-between border-b border-gray-200 px-6 py-4">
-        <h3 id="edit-dataset-title" class="m-0 text-lg font-semibold text-gray-900">Edit Dataset</h3>
+        <h3 id="edit-dataset-title" class="m-0 text-lg font-semibold text-gray-900">{m.dataset_detail_edit_modal_title()}</h3>
         <button
           onclick={() => (showEditModal = false)}
           class="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
@@ -321,10 +323,10 @@
 <!-- Delete Confirmation Dialog -->
 <DeleteConfirmDialog
   isOpen={showDeleteConfirm}
-  title="Delete Dataset"
-  message={`Are you sure you want to delete "${$datasetQuery.data?.name ?? 'this dataset'}"? This action cannot be undone.`}
+  title={m.dataset_detail_delete_title()}
+  message={m.dataset_detail_delete_message({ name: $datasetQuery.data?.name ?? '' })}
   warnings={deleteWarnings}
-  confirmText="Delete Dataset"
+  confirmText={m.dataset_detail_delete_confirm()}
   isDeleting={$deleteMutation.isPending}
   onConfirm={confirmDelete}
   onCancel={() => (showDeleteConfirm = false)}

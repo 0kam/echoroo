@@ -1,5 +1,6 @@
 <script lang="ts">
   import { createQuery } from '@tanstack/svelte-query';
+  import { getLocale } from '$lib/paraglide/runtime';
   import { fetchDatasetStatistics } from '$lib/api/datasets';
 
   interface Props {
@@ -31,7 +32,7 @@
   }
 
   function formatDate(dateStr: string): string {
-    return new Date(dateStr).toLocaleDateString();
+    return new Date(dateStr).toLocaleDateString(getLocale());
   }
 
   function getMaxValue(obj: Record<string | number, number>): number {
@@ -61,7 +62,7 @@
     <div class="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
       <div class="rounded-md border border-gray-200 bg-gray-50 p-4">
         <div class="mb-1 text-xs font-medium uppercase tracking-wider text-gray-500">Recordings</div>
-        <div class="text-2xl font-semibold text-gray-900">{stats.recording_count.toLocaleString()}</div>
+        <div class="text-2xl font-semibold text-gray-900">{stats.recording_count.toLocaleString(getLocale())}</div>
       </div>
 
       <div class="rounded-md border border-gray-200 bg-gray-50 p-4">
@@ -90,10 +91,10 @@
               {@const maxCount = getMaxValue(stats.samplerate_distribution)}
               {@const percentage = (count / maxCount) * 100}
               <div class="grid items-center gap-2" style="grid-template-columns: 80px 1fr">
-                <div class="text-right text-xs font-medium text-gray-600">{parseInt(samplerate).toLocaleString()} Hz</div>
+                <div class="text-right text-xs font-medium text-gray-600">{parseInt(samplerate).toLocaleString(getLocale())} Hz</div>
                 <div class="flex items-center gap-2">
                   <div class="h-5 rounded bg-blue-500 transition-all duration-300" style="width: {percentage}%; min-width: 2px;"></div>
-                  <span class="whitespace-nowrap text-xs text-gray-500">{count.toLocaleString()}</span>
+                  <span class="whitespace-nowrap text-xs text-gray-500">{count.toLocaleString(getLocale())}</span>
                 </div>
               </div>
             {/each}
@@ -113,7 +114,7 @@
                 <div class="text-right text-xs font-medium text-gray-600">{format.toUpperCase()}</div>
                 <div class="flex items-center gap-2">
                   <div class="h-5 rounded bg-blue-500 transition-all duration-300" style="width: {percentage}%; min-width: 2px;"></div>
-                  <span class="whitespace-nowrap text-xs text-gray-500">{count.toLocaleString()}</span>
+                  <span class="whitespace-nowrap text-xs text-gray-500">{count.toLocaleString(getLocale())}</span>
                 </div>
               </div>
             {/each}

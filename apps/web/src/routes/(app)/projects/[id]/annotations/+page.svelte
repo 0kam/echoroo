@@ -2,6 +2,8 @@
   import { page } from '$app/stores';
   import { goto } from '$app/navigation';
   import { createQuery, createMutation, useQueryClient } from '@tanstack/svelte-query';
+  import { localizeHref } from '$lib/paraglide/runtime';
+  import * as m from '$lib/paraglide/messages';
   import {
     fetchAnnotationProjects,
     createAnnotationProject,
@@ -57,7 +59,7 @@
   });
 
   function handleProjectSelect(project: AnnotationProjectDetail) {
-    goto(`/projects/${projectId}/annotations/${project.id}`);
+    goto(localizeHref(`/projects/${projectId}/annotations/${project.id}`));
   }
 
   function handleDeleteClick(project: AnnotationProjectDetail) {
@@ -84,25 +86,25 @@
 </script>
 
 <svelte:head>
-  <title>Annotation Projects | Project</title>
+  <title>{m.annotation_project_page_title()}</title>
 </svelte:head>
 
 <div class="annotations-page">
   <header class="page-header">
     <div>
-      <h1>Annotation Projects</h1>
-      <p>Manage annotation workflows for audio clips</p>
+      <h1>{m.annotation_project_heading()}</h1>
+      <p>{m.annotation_project_description()}</p>
     </div>
     {#if !showCreateForm}
       <button class="btn-primary" on:click={() => (showCreateForm = true)}>
-        + New Annotation Project
+        {m.annotation_project_new_button()}
       </button>
     {/if}
   </header>
 
   {#if showCreateForm}
     <div class="create-form-container">
-      <h2>Create New Annotation Project</h2>
+      <h2>{m.annotation_project_create_heading()}</h2>
       <AnnotationProjectForm
         {projectId}
         project={null}
@@ -112,15 +114,15 @@
       {#if $annotationProjectCreateMutation.isError}
         <div class="form-error">
           {$annotationProjectCreateMutation.error?.message ||
-            'Failed to create annotation project'}
+            m.annotation_project_error_create()}
         </div>
       {/if}
     </div>
   {:else if $annotationProjectsQuery.isLoading}
-    <div class="loading">Loading annotation projects...</div>
+    <div class="loading">{m.annotation_project_loading()}</div>
   {:else if $annotationProjectsQuery.isError}
     <div class="error">
-      Error loading annotation projects: {$annotationProjectsQuery.error?.message}
+      {m.annotation_project_error_load({ message: $annotationProjectsQuery.error?.message ?? '' })}
     </div>
   {:else if $annotationProjectsQuery.data}
     <AnnotationProjectList
@@ -137,11 +139,11 @@
           on:click={() => (currentPage = Math.max(1, currentPage - 1))}
           disabled={currentPage === 1}
         >
-          Previous
+          {m.annotation_project_previous()}
         </button>
 
         <span class="page-info">
-          Page {currentPage} of {$annotationProjectsQuery.data.pages}
+          {m.annotation_project_page_info({ page: currentPage, total: $annotationProjectsQuery.data.pages })}
         </span>
 
         <button
@@ -150,15 +152,14 @@
             (currentPage = Math.min($annotationProjectsQuery.data.pages, currentPage + 1))}
           disabled={currentPage === $annotationProjectsQuery.data.pages}
         >
-          Next
+          {m.annotation_project_next()}
         </button>
       </div>
     {/if}
 
     {#if $annotationProjectsQuery.data.total > 0}
       <div class="pagination-info">
-        Showing {$annotationProjectsQuery.data.items.length} of {$annotationProjectsQuery.data
-          .total} annotation projects
+        {m.annotation_project_showing({ showing: $annotationProjectsQuery.data.items.length, total: $annotationProjectsQuery.data.total })}
       </div>
     {/if}
   {/if}
@@ -166,16 +167,16 @@
   <!-- Delete Confirmation Dialog -->
   <ConfirmDialog
     isOpen={showDeleteDialog}
-    title="Delete Annotation Project"
+    title={m.annotation_project_delete_title()}
     message={projectToDelete
-      ? `Are you sure you want to delete "${projectToDelete.name}"? This action cannot be undone.`
+      ? m.annotation_project_delete_message({ name: projectToDelete.name })
       : ''}
-    confirmText="Delete Annotation Project"
-    cancelText="Cancel"
+    confirmText={m.annotation_project_delete_confirm()}
+    cancelText={m.annotation_project_delete_cancel()}
     isDanger={true}
     onConfirm={confirmDelete}
     onCancel={cancelDelete}
-    warningItems={['All associated annotation tasks', 'All clip annotations and sound events']}
+    warningItems={[m.annotation_project_delete_warning_tasks(), m.annotation_project_delete_warning_annotations()]}
   />
 </div>
 

@@ -13,6 +13,7 @@
   import { createQuery, createMutation, useQueryClient } from '@tanstack/svelte-query';
   import { fetchDetections, confirmDetection, rejectDetection, changeDetectionSpecies } from '$lib/api/detections';
   import type { DetectionStatus, DetectionListResponse } from '$lib/types/detection';
+  import * as m from '$lib/paraglide/messages';
   import DetectionCard from './DetectionCard.svelte';
 
   export let projectId: string;
@@ -184,7 +185,7 @@
   <div class="flex flex-wrap items-center gap-3 rounded-lg border border-stone-200 bg-stone-50 p-3">
     <!-- Status filters -->
     <div class="flex items-center gap-1">
-      <span class="mr-1 text-xs font-medium text-stone-500">Status:</span>
+      <span class="mr-1 text-xs font-medium text-stone-500">{m.detection_filter_status_label()}</span>
       <button
         type="button"
         class="rounded px-2.5 py-1 text-xs font-medium transition-colors
@@ -193,7 +194,7 @@
             : 'border border-stone-300 bg-white text-stone-600 hover:bg-stone-100'}"
         on:click={() => handleStatusFilter(undefined)}
       >
-        All
+        {m.detection_filter_all()}
         {#if totalItems > 0}
           <span class="ml-1 opacity-70">({totalItems})</span>
         {/if}
@@ -206,7 +207,7 @@
             : 'border border-stone-300 bg-white text-stone-600 hover:bg-stone-100'}"
         on:click={() => handleStatusFilter('unreviewed')}
       >
-        Unreviewed
+        {m.detection_filter_unreviewed()}
       </button>
       <button
         type="button"
@@ -216,7 +217,7 @@
             : 'border border-green-200 bg-green-50 text-green-700 hover:bg-green-100'}"
         on:click={() => handleStatusFilter('confirmed')}
       >
-        Confirmed
+        {m.detection_filter_confirmed()}
       </button>
       <button
         type="button"
@@ -226,14 +227,14 @@
             : 'border border-red-200 bg-red-50 text-red-700 hover:bg-red-100'}"
         on:click={() => handleStatusFilter('rejected')}
       >
-        Rejected
+        {m.detection_filter_rejected()}
       </button>
     </div>
 
     <!-- Confidence filter -->
     <div class="flex items-center gap-2">
       <span class="text-xs font-medium text-stone-500">
-        Min confidence: {Math.round(confidenceMin * 100)}%
+        {m.detection_filter_min_confidence({ percent: Math.round(confidenceMin * 100) })}
       </span>
       <input
         type="range"
@@ -243,16 +244,16 @@
         bind:value={confidenceMin}
         on:change={handleConfidenceChange}
         class="w-24 accent-blue-500"
-        aria-label="Minimum confidence threshold"
+        aria-label={m.detection_filter_confidence_aria()}
       />
     </div>
 
     <!-- Keyboard shortcuts hint -->
     <div class="ml-auto flex items-center gap-2 text-xs text-stone-400">
-      <kbd class="rounded border border-stone-200 bg-white px-1.5 py-0.5 font-mono text-xs">C</kbd> Confirm
-      <kbd class="rounded border border-stone-200 bg-white px-1.5 py-0.5 font-mono text-xs">R</kbd> Reject
-      <kbd class="rounded border border-stone-200 bg-white px-1.5 py-0.5 font-mono text-xs">Space</kbd> Play
-      <kbd class="rounded border border-stone-200 bg-white px-1.5 py-0.5 font-mono text-xs">Arrows</kbd> Navigate
+      <kbd class="rounded border border-stone-200 bg-white px-1.5 py-0.5 font-mono text-xs">C</kbd> {m.detection_keyboard_confirm()}
+      <kbd class="rounded border border-stone-200 bg-white px-1.5 py-0.5 font-mono text-xs">R</kbd> {m.detection_keyboard_reject()}
+      <kbd class="rounded border border-stone-200 bg-white px-1.5 py-0.5 font-mono text-xs">Space</kbd> {m.detection_keyboard_play()}
+      <kbd class="rounded border border-stone-200 bg-white px-1.5 py-0.5 font-mono text-xs">Arrows</kbd> {m.detection_keyboard_navigate()}
     </div>
   </div>
 
@@ -287,16 +288,16 @@
       <svg class="mx-auto mb-2 h-8 w-8 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
       </svg>
-      <p class="text-sm font-medium text-red-700">Failed to load detections</p>
+      <p class="text-sm font-medium text-red-700">{m.detection_load_detections_error()}</p>
       <p class="mt-1 text-xs text-red-500">
-        {$detectionsQuery.error?.message ?? 'An unexpected error occurred'}
+        {$detectionsQuery.error?.message ?? m.common_error_unexpected()}
       </p>
       <button
         type="button"
         on:click={() => $detectionsQuery.refetch()}
         class="mt-3 rounded-md bg-red-100 px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-200"
       >
-        Retry
+        {m.detection_retry()}
       </button>
     </div>
   {:else if detections.length === 0}
@@ -306,17 +307,17 @@
         <svg class="mb-3 h-12 w-12 text-stone-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2a1 1 0 01-.293.707L13 13.414V19a1 1 0 01-.553.894l-4 2A1 1 0 017 21v-7.586L3.293 6.707A1 1 0 013 6V4z" />
         </svg>
-        <p class="text-sm font-medium text-stone-500">No {statusFilter} detections</p>
+        <p class="text-sm font-medium text-stone-500">{m.detection_no_status_results_title({ status: statusFilter })}</p>
         <p class="mt-1 text-xs text-stone-400">
-          There are no detections with status "{statusFilter}" for the current filters.
+          {m.detection_no_status_results_body({ status: statusFilter })}
         </p>
       {:else}
         <!-- Truly empty: no detections at all -->
         <svg class="mb-3 h-12 w-12 text-stone-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
         </svg>
-        <p class="text-sm font-medium text-stone-500">No detections found</p>
-        <p class="mt-1 text-xs text-stone-400">No detections match the current filters.</p>
+        <p class="text-sm font-medium text-stone-500">{m.detection_no_results_title()}</p>
+        <p class="mt-1 text-xs text-stone-400">{m.detection_no_results_body()}</p>
       {/if}
     </div>
   {:else}
@@ -344,10 +345,10 @@
           on:click={prevPage}
           disabled={page === 1}
         >
-          Previous
+          {m.detection_previous()}
         </button>
         <span class="text-sm text-stone-500">
-          Page {page} of {totalPages}
+          {m.detection_page_of({ page, total: totalPages })}
         </span>
         <button
           type="button"
@@ -355,14 +356,14 @@
           on:click={nextPage}
           disabled={page === totalPages}
         >
-          Next
+          {m.detection_next()}
         </button>
       </div>
     {/if}
 
     <!-- Results summary -->
     <p class="text-center text-xs text-stone-400">
-      Showing {detections.length} of {totalItems} detections
+      {m.detection_showing_count({ showing: detections.length, total: totalItems })}
     </p>
   {/if}
 </div>

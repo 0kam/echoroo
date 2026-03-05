@@ -1,4 +1,6 @@
 <script lang="ts">
+  import * as m from '$lib/paraglide/messages';
+
   interface Props {
     isOpen?: boolean;
     title: string;
@@ -89,7 +91,7 @@
                 <line x1="12" y1="9" x2="12" y2="13" stroke-width="2" />
                 <line x1="12" y1="17" x2="12.01" y2="17" stroke-width="2" />
               </svg>
-              <span class="text-sm font-medium text-red-800">The following will be deleted:</span>
+              <span class="text-sm font-medium text-red-800">{m.common_delete_warning_items()}</span>
             </div>
             <ul class="m-0 pl-6 text-sm text-red-900">
               {#each warningItems as item}
@@ -123,7 +125,7 @@
           class="rounded-md px-5 py-2 text-sm font-medium text-white transition-colors disabled:cursor-not-allowed disabled:opacity-50
             {isDanger ? 'bg-red-600 hover:bg-red-700' : 'bg-blue-600 hover:bg-blue-700'}"
         >
-          {isProcessing ? 'Processing...' : confirmText}
+          {isProcessing ? m.common_processing() : confirmText}
         </button>
       </div>
     </div>

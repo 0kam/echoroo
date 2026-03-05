@@ -5,6 +5,7 @@
   import DatetimePatternTester from './DatetimePatternTester.svelte';
   import VisibilitySelector from './VisibilitySelector.svelte';
   import type { DatasetCreate, DatasetDetail, DatasetUpdate, DatasetVisibility } from '$lib/types/data';
+  import * as m from '$lib/paraglide/messages';
 
   interface Props {
     projectId: string;
@@ -65,11 +66,11 @@
   async function handleSubmit() {
     // Validation
     if (!name.trim()) {
-      error = 'Name is required';
+      error = m.validation_name_required();
       return;
     }
     if (!isEdit && !siteId) {
-      error = 'Site is required';
+      error = m.validation_site_required();
       return;
     }
 
@@ -108,7 +109,7 @@
         await onSubmit(createData);
       }
     } catch (e) {
-      error = e instanceof Error ? e.message : 'Failed to save dataset';
+      error = e instanceof Error ? e.message : m.error_save_dataset();
     } finally {
       isSubmitting = false;
     }
@@ -118,12 +119,12 @@
 <form class="flex flex-col gap-5" onsubmit={(e) => { e.preventDefault(); handleSubmit(); }}>
   <!-- Name -->
   <div class="flex flex-col gap-1.5">
-    <label for="name" class="text-sm font-medium text-gray-700">Name *</label>
+    <label for="name" class="text-sm font-medium text-gray-700">{m.form_dataset_name_label()} *</label>
     <input
       id="name"
       type="text"
       bind:value={name}
-      placeholder="Enter dataset name"
+      placeholder={m.form_dataset_name_placeholder()}
       maxlength="200"
       required
       class="rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
@@ -132,11 +133,11 @@
 
   <!-- Description -->
   <div class="flex flex-col gap-1.5">
-    <label for="description" class="text-sm font-medium text-gray-700">Description</label>
+    <label for="description" class="text-sm font-medium text-gray-700">{m.form_dataset_description_label()}</label>
     <textarea
       id="description"
       bind:value={description}
-      placeholder="Describe this dataset"
+      placeholder={m.form_dataset_description_placeholder()}
       rows="3"
       class="resize-y rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
     ></textarea>
@@ -145,13 +146,13 @@
   <!-- Site + Visibility row -->
   <div class="grid grid-cols-2 gap-4">
     <div class="flex flex-col gap-1.5">
-      <label for="site" class="text-sm font-medium text-gray-700">Site *</label>
+      <label for="site" class="text-sm font-medium text-gray-700">{m.form_dataset_site_label()} *</label>
       {#if $sitesQuery.isLoading}
         <select id="site" disabled class="rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-sm">
-          <option>Loading sites...</option>
+          <option>{m.common_loading_sites()}</option>
         </select>
       {:else if $sitesQuery.isError}
-        <div class="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-600">Error loading sites</div>
+        <div class="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-600">{m.common_error_load_sites()}</div>
       {:else if $sitesQuery.data}
         <select
           id="site"
@@ -160,13 +161,13 @@
           disabled={isEdit}
           class="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm focus:border-blue-500 focus:outline-none disabled:bg-gray-50 disabled:text-gray-500"
         >
-          <option value="">Select a site</option>
+          <option value="">{m.form_dataset_site_select_placeholder()}</option>
           {#each $sitesQuery.data.items as site}
             <option value={site.id}>{site.name}</option>
           {/each}
         </select>
         {#if isEdit}
-          <p class="text-xs text-gray-400">Site cannot be changed after creation</p>
+          <p class="text-xs text-gray-400">{m.form_dataset_site_cannot_change()}</p>
         {/if}
       {/if}
     </div>
@@ -188,26 +189,26 @@
     <div class="mt-4 flex flex-col gap-4">
       <div class="grid grid-cols-2 gap-4">
         <div class="flex flex-col gap-1.5">
-          <label for="recorder" class="text-sm font-medium text-gray-700">Recorder</label>
+          <label for="recorder" class="text-sm font-medium text-gray-700">{m.form_dataset_recorder_label()}</label>
           {#if $recordersQuery.isLoading}
             <select id="recorder" disabled class="rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-sm">
-              <option>Loading recorders...</option>
+              <option>{m.common_loading_recorders()}</option>
             </select>
           {:else if $recordersQuery.isError}
-            <div class="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-600">Error loading recorders</div>
+            <div class="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-600">{m.common_error_load_recorders()}</div>
           {:else if $recordersQuery.data}
             <select
               id="recorder"
               bind:value={recorderId}
               class="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
             >
-              <option value="">No recorder</option>
+              <option value="">{m.form_dataset_recorder_none()}</option>
               {#each $recordersQuery.data.items as recorder}
                 <option value={recorder.id}>{recorder.manufacturer} {recorder.recorder_name}</option>
               {/each}
             </select>
           {/if}
-          <p class="text-xs text-gray-400">Recording device used for this dataset</p>
+          <p class="text-xs text-gray-400">{m.form_dataset_recorder_hint()}</p>
         </div>
 
         <div class="flex flex-col gap-1.5">
@@ -316,14 +317,14 @@
       disabled={isSubmitting}
       class="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
     >
-      Cancel
+      {m.form_dataset_cancel()}
     </button>
     <button
       type="submit"
       disabled={isSubmitting || !name || (!isEdit && !siteId)}
       class="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
     >
-      {isSubmitting ? 'Saving...' : isEdit ? 'Update Dataset' : 'Create Dataset'}
+      {isSubmitting ? m.form_dataset_saving() : isEdit ? m.form_dataset_update() : m.form_dataset_create()}
     </button>
   </div>
 </form>

@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { Site } from '$lib/types/data';
+  import { getLocale } from '$lib/paraglide/runtime';
 
   interface Props {
     sites: Site[];
@@ -16,7 +17,7 @@
   }: Props = $props();
 
   function formatDate(dateStr: string): string {
-    return new Date(dateStr).toLocaleDateString();
+    return new Date(dateStr).toLocaleDateString(getLocale());
   }
 </script>
 

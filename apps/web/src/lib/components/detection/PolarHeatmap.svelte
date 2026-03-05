@@ -1,4 +1,7 @@
 <script lang="ts">
+  import { getLocale } from '$lib/paraglide/runtime';
+  import * as m from '$lib/paraglide/messages';
+
   /**
    * PolarHeatmap - SVG-based spiral/polar coordinate heatmap.
    *
@@ -127,7 +130,7 @@
   function formatDate(dateStr: string): string {
     try {
       const d = new Date(dateStr);
-      return d.toLocaleDateString('ja-JP', { month: 'short', day: 'numeric' });
+      return d.toLocaleDateString(getLocale(), { month: 'short', day: 'numeric' });
     } catch {
       return dateStr;
     }
@@ -262,7 +265,7 @@
       <h3 class="text-sm font-semibold italic text-stone-900">{scientificName}</h3>
     {/if}
     <p class="mt-0.5 text-xs text-stone-400">
-      {totalDetections.toLocaleString()} detections total
+      {m.polar_heatmap_detections_total({ count: totalDetections })}
     </p>
   </div>
 
@@ -385,8 +388,7 @@
             {formatHour(tooltip.hour)} - {formatHour((tooltip.hour + 1) % 24)}
           </div>
           <div class="mt-1 font-semibold text-emerald-400">
-            {tooltip.count}
-            {tooltip.count === 1 ? 'detection' : 'detections'}
+            {m.common_detections_count({ count: tooltip.count })}
           </div>
         </div>
       {/if}

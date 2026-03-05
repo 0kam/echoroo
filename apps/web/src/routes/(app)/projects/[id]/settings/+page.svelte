@@ -8,6 +8,8 @@
   import { projectsApi } from '$lib/api/projects';
   import { authStore } from '$lib/stores/auth.svelte';
   import { ApiError } from '$lib/api/client';
+  import { localizeHref } from '$lib/paraglide/runtime';
+  import * as m from '$lib/paraglide/messages';
   import type { Project, ProjectMember } from '$lib/types';
 
   // Predefined taxa options
@@ -102,12 +104,12 @@
       if (err instanceof ApiError) {
         error = err.detail || err.message;
         if (err.status === 404) {
-          error = 'Project not found';
+          error = m.project_settings_error_not_found();
         } else if (err.status === 403) {
-          error = 'You do not have permission to access this project';
+          error = m.project_settings_error_forbidden();
         }
       } else {
-        error = 'Failed to load project';
+        error = m.project_settings_error_load();
       }
     } finally {
       isLoading = false;
@@ -124,12 +126,12 @@
    */
   function validateForm(): boolean {
     if (!name.trim()) {
-      error = 'Project name is required';
+      error = m.project_settings_name_required();
       return false;
     }
 
     if (name.length > 200) {
-      error = 'Project name must be less than 200 characters';
+      error = m.project_settings_name_too_long();
       return false;
     }
 
@@ -145,7 +147,7 @@
     successMessage = null;
 
     if (!hasAdminAccess) {
-      error = 'You do not have permission to edit this project';
+      error = m.project_settings_error_permission();
       return;
     }
 
@@ -164,7 +166,7 @@
       });
 
       project = updated;
-      successMessage = 'Project settings saved successfully';
+      successMessage = m.project_settings_save_success();
 
       // Clear success message after 3 seconds
       setTimeout(() => {
@@ -174,7 +176,7 @@
       if (err instanceof ApiError) {
         error = err.detail || err.message;
       } else {
-        error = 'Failed to save changes. Please try again.';
+        error = m.project_settings_error_save();
       }
     } finally {
       isSaving = false;
@@ -185,20 +187,20 @@
    * Cancel and go back
    */
   function handleCancel() {
-    goto(`/projects/${projectId}`);
+    goto(localizeHref(`/projects/${projectId}`));
   }
 </script>
 
 <svelte:head>
-  <title>Project Settings - Echoroo</title>
+  <title>{m.project_settings_page_title()}</title>
 </svelte:head>
 
 <div class="mx-auto max-w-3xl px-4 py-8 sm:px-6 lg:px-8">
   <!-- Header -->
   <div class="mb-8">
-    <h1 class="text-3xl font-bold text-gray-900">Project Settings</h1>
+    <h1 class="text-3xl font-bold text-gray-900">{m.project_settings_heading()}</h1>
     <p class="mt-2 text-sm text-gray-600">
-      Manage your project settings and visibility. Only project admins can edit these settings.
+      {m.project_settings_description()}
     </p>
   </div>
 
@@ -240,16 +242,16 @@
         </div>
         <div class="ml-3">
           <p class="text-sm font-medium text-red-800">
-            You do not have permission to edit this project
+            {m.project_settings_access_denied()}
           </p>
         </div>
       </div>
       <div class="mt-4">
         <a
-          href="/projects/{projectId}"
+          href={localizeHref(`/projects/${projectId}`)}
           class="text-sm font-medium text-blue-600 hover:text-blue-500"
         >
-          Back to Project
+          {m.project_settings_back_to_project()}
         </a>
       </div>
     </div>
@@ -311,7 +313,7 @@
           <!-- Project Name -->
           <div>
             <label for="name" class="block text-sm font-medium text-gray-700">
-              Project Name <span class="text-red-500">*</span>
+              {m.project_settings_name_label()} <span class="text-red-500">*</span>
             </label>
             <input
               id="name"
@@ -321,14 +323,14 @@
               bind:value={name}
               disabled={isSaving}
               class="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-gray-900 placeholder-gray-400 focus:border-blue-500 focus:outline-none focus:ring-blue-500 disabled:bg-gray-100 disabled:cursor-not-allowed sm:text-sm"
-              placeholder="e.g., Bird Survey 2026"
+              placeholder={m.project_settings_name_placeholder()}
             />
           </div>
 
           <!-- Description -->
           <div>
             <label for="description" class="block text-sm font-medium text-gray-700">
-              Description
+              {m.project_settings_description_label()}
             </label>
             <textarea
               id="description"
@@ -337,14 +339,14 @@
               bind:value={description}
               disabled={isSaving}
               class="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-gray-900 placeholder-gray-400 focus:border-blue-500 focus:outline-none focus:ring-blue-500 disabled:bg-gray-100 disabled:cursor-not-allowed sm:text-sm"
-              placeholder="What is this project about?"
+              placeholder={m.project_settings_description_placeholder()}
             ></textarea>
           </div>
 
           <!-- Target Taxa -->
           <div>
             <span class="block text-sm font-medium text-gray-700" id="target-taxa-label">
-              Target Taxa
+              {m.project_settings_target_taxa_label()}
             </span>
             <div
               class="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3"
@@ -372,13 +374,13 @@
               {/each}
             </div>
             <p class="mt-1 text-xs text-gray-500">
-              Select the taxonomic groups you're focusing on (optional)
+              {m.project_settings_target_taxa_hint()}
             </p>
           </div>
 
           <!-- Visibility -->
           <div>
-            <span class="block text-sm font-medium text-gray-700" id="visibility-label">Visibility</span>
+            <span class="block text-sm font-medium text-gray-700" id="visibility-label">{m.project_settings_visibility_label()}</span>
             <div class="mt-2 space-y-2" role="radiogroup" aria-labelledby="visibility-label">
               <label class="flex items-start">
                 <input
@@ -398,9 +400,9 @@
                         clip-rule="evenodd"
                       />
                     </svg>
-                    <span class="text-sm font-medium text-gray-700">Private</span>
+                    <span class="text-sm font-medium text-gray-700">{m.project_settings_visibility_private_label()}</span>
                   </div>
-                  <p class="text-xs text-gray-500">Only you and invited members can access</p>
+                  <p class="text-xs text-gray-500">{m.project_settings_visibility_private_hint()}</p>
                 </div>
               </label>
 
@@ -422,9 +424,9 @@
                         clip-rule="evenodd"
                       />
                     </svg>
-                    <span class="text-sm font-medium text-gray-700">Public</span>
+                    <span class="text-sm font-medium text-gray-700">{m.project_settings_visibility_public_label()}</span>
                   </div>
-                  <p class="text-xs text-gray-500">Anyone can view this project</p>
+                  <p class="text-xs text-gray-500">{m.project_settings_visibility_public_hint()}</p>
                 </div>
               </label>
             </div>
@@ -439,7 +441,7 @@
             disabled={isSaving}
             class="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            Cancel
+            {m.project_settings_cancel()}
           </button>
           <button
             type="submit"
@@ -467,9 +469,9 @@
                   d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
                 ></path>
               </svg>
-              Saving...
+              {m.project_settings_saving()}
             {:else}
-              Save Changes
+              {m.project_settings_save()}
             {/if}
           </button>
         </div>

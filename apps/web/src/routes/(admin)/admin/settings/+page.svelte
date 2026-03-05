@@ -6,6 +6,7 @@
   import { adminApi } from '$lib/api/admin';
   import type { SystemSetting } from '$lib/api/admin';
   import { ApiError } from '$lib/api/client';
+  import { getLocale } from '$lib/paraglide/runtime';
 
   // State
   let settings = $state<Record<string, SystemSetting>>({});
@@ -119,7 +120,7 @@
    * Format date
    */
   function formatDate(dateString: string): string {
-    return new Date(dateString).toLocaleString();
+    return new Date(dateString).toLocaleString(getLocale());
   }
 </script>
 

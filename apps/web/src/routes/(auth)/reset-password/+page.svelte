@@ -6,6 +6,7 @@
   import { goto } from '$app/navigation';
   import { confirmPasswordReset } from '$lib/api/auth';
   import { ApiError } from '$lib/api/client';
+  import { localizeHref } from '$lib/paraglide/runtime';
   import type { PageData } from './$types';
 
   interface Props {
@@ -66,7 +67,7 @@
       await confirmPasswordReset(data.token, password);
 
       // Redirect to login with success message
-      await goto('/login?reset=success');
+      await goto(localizeHref('/login?reset=success'));
     } catch (err) {
       if (err instanceof ApiError) {
         error = err.detail || err.message;
@@ -212,7 +213,7 @@
 
       <!-- Back to Login Link -->
       <div class="text-center text-sm">
-        <a href="/login" class="font-medium text-blue-600 hover:text-blue-500">
+        <a href={localizeHref('/login')} class="font-medium text-blue-600 hover:text-blue-500">
           Back to Login
         </a>
       </div>

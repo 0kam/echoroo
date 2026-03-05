@@ -1,4 +1,6 @@
 <script lang="ts">
+  import * as m from '$lib/paraglide/messages';
+
   export let isOpen: boolean = false;
   export let title: string = 'Confirm Delete';
   export let message: string = 'Are you sure you want to delete this item?';
@@ -21,7 +23,7 @@
 
       {#if warnings.length > 0}
         <div class="warning-box">
-          <p class="warning-title">Warning: This will also delete:</p>
+          <p class="warning-title">{m.delete_dialog_warning_title()}</p>
           <ul class="warning-list">
             {#each warnings as warning}
               <li>{warning}</li>

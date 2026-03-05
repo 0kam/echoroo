@@ -8,6 +8,8 @@
   import { createQuery } from '@tanstack/svelte-query';
   import { fetchSpeciesSummary } from '$lib/api/detections';
   import type { DetectionFilters } from '$lib/types/detection';
+  import * as m from '$lib/paraglide/messages';
+  import { getLocale } from '$lib/paraglide/runtime';
   import SpeciesListItem from './SpeciesListItem.svelte';
   import DetectionFiltersComponent from './DetectionFilters.svelte';
   import DetectionExportDialog from './DetectionExportDialog.svelte';
@@ -18,11 +20,14 @@
   let searchText: string = '';
   let isExportDialogOpen: boolean = false;
 
+  $: locale = getLocale();
+
   $: speciesSummaryQuery = createQuery({
-    queryKey: ['species-summary', projectId, searchText],
+    queryKey: ['species-summary', projectId, searchText, locale],
     queryFn: () =>
       fetchSpeciesSummary(projectId, {
         search: searchText || undefined,
+        locale,
       }),
     enabled: !!projectId,
   });
@@ -78,13 +83,12 @@
   <div class="flex items-center justify-between">
     <div class="text-sm text-gray-600">
       {#if $speciesSummaryQuery.isLoading}
-        Loading species...
+        {m.detection_loading_species()}
       {:else if $speciesSummaryQuery.data}
         {#if filteredItems.length !== $speciesSummaryQuery.data.total_species}
-          Showing {filteredItems.length} of {$speciesSummaryQuery.data.total_species} species
+          {m.detection_species_showing({ showing: filteredItems.length, total: $speciesSummaryQuery.data.total_species })}
         {:else}
-          {$speciesSummaryQuery.data.total_species}
-          {$speciesSummaryQuery.data.total_species === 1 ? 'species' : 'species'} detected
+          {m.detection_species_count_plural({ count: $speciesSummaryQuery.data.total_species })}
         {/if}
       {/if}
     </div>
@@ -94,12 +98,12 @@
       type="button"
       on:click={openExportDialog}
       class="flex items-center gap-1.5 rounded-md border border-gray-200 bg-white px-3 py-1.5 text-sm font-medium text-gray-600 hover:bg-gray-50 hover:border-gray-300 transition-colors"
-      aria-label="Export detections"
+      aria-label={m.detection_export_aria()}
     >
       <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
       </svg>
-      Export
+      {m.detection_export_button()}
     </button>
   </div>
 
@@ -138,28 +142,28 @@
     </div>
   {:else if $speciesSummaryQuery.isError}
     <div class="rounded-lg border border-red-200 bg-red-50 px-4 py-6 text-center">
-      <p class="text-sm font-medium text-red-700">Failed to load species detections</p>
+      <p class="text-sm font-medium text-red-700">{m.detection_load_error()}</p>
       <p class="mt-1 text-xs text-red-500">
-        {$speciesSummaryQuery.error?.message ?? 'An unexpected error occurred'}
+        {$speciesSummaryQuery.error?.message ?? m.common_error_unexpected()}
       </p>
       <button
         type="button"
         on:click={() => $speciesSummaryQuery.refetch()}
         class="mt-3 rounded-md bg-red-100 px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-200"
       >
-        Retry
+        {m.detection_retry()}
       </button>
     </div>
   {:else if filteredItems.length === 0}
     <div class="rounded-lg border border-gray-200 bg-white px-4 py-12 text-center">
       {#if $speciesSummaryQuery.data?.total_species === 0}
-        <p class="text-sm font-medium text-gray-900">No detections yet</p>
+        <p class="text-sm font-medium text-gray-900">{m.detection_no_detections_yet_title()}</p>
         <p class="mt-1 text-xs text-gray-500">
-          Run a detection model or add detections manually to get started.
+          {m.detection_no_detections_yet_body()}
         </p>
       {:else}
-        <p class="text-sm font-medium text-gray-900">No species match the current filters</p>
-        <p class="mt-1 text-xs text-gray-500">Try adjusting your search or filter criteria.</p>
+        <p class="text-sm font-medium text-gray-900">{m.detection_no_species_match_title()}</p>
+        <p class="mt-1 text-xs text-gray-500">{m.detection_no_species_match_body()}</p>
       {/if}
     </div>
   {:else}

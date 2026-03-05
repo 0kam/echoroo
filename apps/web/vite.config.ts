@@ -1,8 +1,28 @@
 import { sveltekit } from '@sveltejs/kit/vite';
 import { defineConfig } from 'vitest/config';
+import { paraglideVitePlugin } from '@inlang/paraglide-js';
 
 export default defineConfig({
-  plugins: [sveltekit()],
+  plugins: [
+    paraglideVitePlugin({
+      project: './project.inlang',
+      outdir: './src/lib/paraglide',
+      cleanOutdir: false,
+      strategy: ['url', 'baseLocale'],
+      // URL patterns: both /en/ and /ja/ prefixes always present.
+      // The base locale (English) also gets the /en/ prefix.
+      urlPatterns: [
+        {
+          pattern: ':protocol://:domain(.*)::port?/:path(.*)?',
+          localized: [
+            ['en', ':protocol://:domain(.*)::port?/en/:path(.*)?'],
+            ['ja', ':protocol://:domain(.*)::port?/ja/:path(.*)?'],
+          ],
+        },
+      ],
+    }),
+    sveltekit(),
+  ],
   optimizeDeps: {
     include: ['maplibre-gl'],
     esbuildOptions: {

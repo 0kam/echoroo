@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
+  import * as m from '$lib/paraglide/messages';
 
   export let projectId: string;
   export let annotationProjectId: string;
@@ -36,12 +37,12 @@
 <nav class="task-navigator" aria-label="Task navigation">
   <!-- Left section: back link -->
   <div class="nav-left">
-    <a href={backHref} class="back-link" title="Back to task list">
+    <a href={backHref} class="back-link" title={m.annotation_navigator_back_title()}>
       <svg viewBox="0 0 20 20" fill="currentColor" class="back-icon">
         <path fill-rule="evenodd" clip-rule="evenodd"
           d="M17 10a.75.75 0 01-.75.75H5.612l4.158 3.96a.75.75 0 11-1.04 1.08l-5.5-5.25a.75.75 0 010-1.08l5.5-5.25a.75.75 0 111.04 1.08L5.612 9.25H16.25A.75.75 0 0117 10z"/>
       </svg>
-      <span class="back-label">Task list</span>
+      <span class="back-label">{m.annotation_navigator_back()}</span>
     </a>
   </div>
 
@@ -49,12 +50,12 @@
   <div class="nav-center">
     <div class="progress-info">
       <span class="progress-text">
-        {completedTasks} / {totalTasks} completed
+        {m.annotation_navigator_completed({ completed: completedTasks, total: totalTasks })}
       </span>
       {#if hasUnsavedChanges}
-        <span class="unsaved-indicator" title="You have unsaved changes">
+        <span class="unsaved-indicator" title={m.annotation_navigator_unsaved_title()}>
           <span class="unsaved-dot" aria-hidden="true"></span>
-          Unsaved
+          {m.annotation_navigator_unsaved()}
         </span>
       {/if}
     </div>
@@ -69,8 +70,8 @@
     <button
       class="nav-arrow-btn"
       disabled={!onNavigatePrevious}
-      title="Previous task"
-      aria-label="Go to previous task"
+      title={m.annotation_navigator_previous_title()}
+      aria-label={m.annotation_navigator_previous_aria()}
       on:click={() => onNavigatePrevious && onNavigatePrevious()}
     >
       <svg viewBox="0 0 20 20" fill="currentColor" class="arrow-icon">
@@ -82,8 +83,8 @@
     <!-- Next button -->
     <button
       class="nav-arrow-btn"
-      title="Next task"
-      aria-label="Go to next task"
+      title={m.annotation_navigator_next_title()}
+      aria-label={m.annotation_navigator_next_aria()}
       on:click={onNavigateNext}
     >
       <svg viewBox="0 0 20 20" fill="currentColor" class="arrow-icon">
@@ -95,15 +96,15 @@
     <!-- Complete & Next button -->
     <button
       class="complete-btn"
-      title="Complete this task and move to the next (Ctrl+Enter)"
-      aria-label="Complete task and go to next"
+      title={m.annotation_navigator_complete_title()}
+      aria-label={m.annotation_navigator_complete_aria()}
       on:click={onComplete}
     >
       <svg viewBox="0 0 20 20" fill="currentColor" class="complete-icon">
         <path fill-rule="evenodd" clip-rule="evenodd"
           d="M16.704 4.153a.75.75 0 01.143 1.052l-8 10.5a.75.75 0 01-1.127.075l-4.5-4.5a.75.75 0 011.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 011.05-.143z"/>
       </svg>
-      Complete &amp; Next
+      {m.annotation_navigator_complete_button()}
       <kbd class="shortcut-hint" aria-hidden="true">Ctrl+Enter</kbd>
     </button>
   </div>

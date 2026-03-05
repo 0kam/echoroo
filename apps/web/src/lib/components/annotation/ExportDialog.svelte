@@ -1,6 +1,7 @@
 <script lang="ts">
   import { fetchWithErrorHandling } from '$lib/api/errors';
   import type { ExportFormat } from '$lib/types/annotation';
+  import * as m from '$lib/paraglide/messages';
 
   export let isOpen: boolean = false;
   export let projectId: string;
@@ -83,7 +84,7 @@
 
       handleClose();
     } catch (error) {
-      exportError = error instanceof Error ? error.message : 'Export failed';
+      exportError = error instanceof Error ? error.message : m.annotation_export_error();
     } finally {
       isExporting = false;
     }
@@ -107,13 +108,13 @@
     <div class="dialog">
       <!-- Header -->
       <div class="dialog-header">
-        <h2 class="dialog-title" id="export-dialog-title">Export Annotations</h2>
+        <h2 class="dialog-title" id="export-dialog-title">{m.annotation_export_title()}</h2>
         <button
           type="button"
           class="close-btn"
           on:click={handleClose}
           disabled={isExporting}
-          aria-label="Close export dialog"
+          aria-label={m.annotation_export_close_aria()}
         >
           <svg
             viewBox="0 0 16 16"
@@ -132,7 +133,7 @@
       <div class="dialog-body">
         <!-- Format selector -->
         <fieldset class="format-fieldset">
-          <legend class="format-legend">Export Format</legend>
+          <legend class="format-legend">{m.annotation_export_format_legend()}</legend>
           <div class="format-options">
             {#each FORMAT_OPTIONS as option (option.value)}
               <label
@@ -183,7 +184,7 @@
           on:click={handleClose}
           disabled={isExporting}
         >
-          Cancel
+          {m.annotation_export_cancel()}
         </button>
         <button
           type="button"
@@ -204,7 +205,7 @@
                 stroke-dashoffset="10"
               />
             </svg>
-            Exporting...
+            {m.annotation_export_exporting()}
           {:else}
             <svg
               viewBox="0 0 16 16"
@@ -216,7 +217,7 @@
             >
               <path stroke-linecap="round" stroke-linejoin="round" d="M8 2v8M5 7l3 3 3-3M2 12h12" />
             </svg>
-            Export
+            {m.annotation_export_button()}
           {/if}
         </button>
       </div>

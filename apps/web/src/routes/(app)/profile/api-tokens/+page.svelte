@@ -6,7 +6,9 @@
 
   import { listTokens, createToken, revokeToken } from '$lib/api/tokens';
   import { ApiError } from '$lib/api/client';
+  import { localizeHref, getLocale } from '$lib/paraglide/runtime';
   import type { APIToken, APITokenCreateRequest } from '$lib/types';
+  import * as m from '$lib/paraglide/messages';
 
   // State
   let tokens = $state<APIToken[]>([]);
@@ -39,7 +41,7 @@
       if (err instanceof ApiError) {
         error = err.detail || err.message;
       } else {
-        error = 'Failed to load API tokens';
+        error = m.api_tokens_failed_load();
       }
     } finally {
       isLoading = false;
@@ -108,7 +110,7 @@
       if (err instanceof ApiError) {
         error = err.detail || err.message;
       } else {
-        error = 'Failed to create API token';
+        error = m.api_tokens_failed_create();
       }
     } finally {
       isCreating = false;
@@ -132,7 +134,7 @@
     try {
       await navigator.clipboard.writeText(newTokenValue);
       isCopied = true;
-      successMessage = 'Token copied to clipboard';
+      successMessage = m.api_tokens_copied_success();
 
       // Clear success message after 3 seconds
       setTimeout(() => {
@@ -147,13 +149,13 @@
    * Handle revoke token
    */
   async function handleRevokeToken(token: APIToken) {
-    if (!confirm(`Are you sure you want to revoke the token "${token.name}"? This action cannot be undone.`)) {
+    if (!confirm(m.api_tokens_revoke_confirm({ name: token.name }))) {
       return;
     }
 
     try {
       await revokeToken(token.id);
-      successMessage = 'Token revoked successfully';
+      successMessage = m.api_tokens_revoked_success();
 
       // Clear success message after 3 seconds
       setTimeout(() => {
@@ -166,7 +168,7 @@
       if (err instanceof ApiError) {
         error = err.detail || err.message;
       } else {
-        error = 'Failed to revoke token';
+        error = m.api_tokens_failed_revoke();
       }
     }
   }
@@ -175,8 +177,8 @@
    * Format date
    */
   function formatDate(dateString: string | undefined | null): string {
-    if (!dateString) return 'Never';
-    return new Date(dateString).toLocaleString();
+    if (!dateString) return m.api_tokens_never();
+    return new Date(dateString).toLocaleString(getLocale());
   }
 
   /**
@@ -190,30 +192,30 @@
 </script>
 
 <svelte:head>
-  <title>API Tokens - Profile - Echoroo</title>
+  <title>{m.api_tokens_page_title()}</title>
 </svelte:head>
 
 <div class="px-8 py-6">
   <!-- Header -->
   <div class="mb-6 flex items-center justify-between">
     <div>
-      <h1 class="text-3xl font-bold text-gray-900">API Tokens</h1>
+      <h1 class="text-3xl font-bold text-gray-900">{m.api_tokens_heading()}</h1>
       <p class="mt-2 text-sm text-gray-600">
-        Manage API tokens for programmatic access to Echoroo
+        {m.api_tokens_description()}
       </p>
     </div>
     <div class="flex space-x-3">
       <a
-        href="/profile"
+        href={localizeHref('/profile')}
         class="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
       >
-        Back to Profile
+        {m.api_tokens_back_to_profile()}
       </a>
       <button
         onclick={openCreateModal}
         class="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
       >
-        Create Token
+        {m.api_tokens_create_button()}
       </button>
     </div>
   </div>
@@ -302,14 +304,14 @@
           d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"
         />
       </svg>
-      <h3 class="mt-2 text-sm font-medium text-gray-900">No API tokens</h3>
-      <p class="mt-1 text-sm text-gray-500">Get started by creating a new API token.</p>
+      <h3 class="mt-2 text-sm font-medium text-gray-900">{m.api_tokens_no_tokens_heading()}</h3>
+      <p class="mt-1 text-sm text-gray-500">{m.api_tokens_no_tokens_hint()}</p>
       <div class="mt-6">
         <button
           onclick={openCreateModal}
           class="inline-flex items-center rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
         >
-          Create Token
+          {m.api_tokens_create_button()}
         </button>
       </div>
     </div>
@@ -323,37 +325,37 @@
                 scope="col"
                 class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500"
               >
-                Name
+                {m.api_tokens_col_name()}
               </th>
               <th
                 scope="col"
                 class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500"
               >
-                Created
+                {m.api_tokens_col_created()}
               </th>
               <th
                 scope="col"
                 class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500"
               >
-                Last Used
+                {m.api_tokens_col_last_used()}
               </th>
               <th
                 scope="col"
                 class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500"
               >
-                Expires
+                {m.api_tokens_col_expires()}
               </th>
               <th
                 scope="col"
                 class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500"
               >
-                Status
+                {m.api_tokens_col_status()}
               </th>
               <th
                 scope="col"
                 class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500"
               >
-                Actions
+                {m.api_tokens_col_actions()}
               </th>
             </tr>
           </thead>
@@ -387,7 +389,7 @@
                       ? 'bg-green-100 text-green-800'
                       : 'bg-red-100 text-red-800'}"
                   >
-                    {token.is_active ? 'Active' : 'Inactive'}
+                    {token.is_active ? m.api_tokens_status_active() : m.api_tokens_status_inactive()}
                   </span>
                 </td>
 
@@ -397,7 +399,7 @@
                     onclick={() => handleRevokeToken(token)}
                     class="rounded bg-red-100 px-3 py-1 text-xs font-medium text-red-700 transition-colors hover:bg-red-200"
                   >
-                    Revoke
+                    {m.api_tokens_revoke_button()}
                   </button>
                 </td>
               </tr>
@@ -432,13 +434,13 @@
             <div class="sm:flex sm:items-start">
               <div class="mt-3 w-full text-center sm:ml-4 sm:mt-0 sm:text-left">
                 <h3 class="text-lg font-medium leading-6 text-gray-900" id="modal-title">
-                  Create API Token
+                  {m.api_tokens_create_modal_title()}
                 </h3>
                 <div class="mt-4 space-y-4">
                   <!-- Token Name -->
                   <div>
                     <label for="token-name" class="block text-sm font-medium text-gray-700">
-                      Token Name
+                      {m.api_tokens_token_name_label()}
                     </label>
                     <input
                       type="text"
@@ -449,14 +451,14 @@
                       class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
                     />
                     <p class="mt-1 text-sm text-gray-500">
-                      A descriptive name to identify this token
+                      {m.api_tokens_token_name_hint()}
                     </p>
                   </div>
 
                   <!-- Expiration Date -->
                   <div>
                     <label for="expires-at" class="block text-sm font-medium text-gray-700">
-                      Expiration Date (Optional)
+                      {m.api_tokens_expiration_label()}
                     </label>
                     <input
                       type="datetime-local"
@@ -466,7 +468,7 @@
                       class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
                     />
                     <p class="mt-1 text-sm text-gray-500">
-                      Leave empty for no expiration
+                      {m.api_tokens_expiration_hint()}
                     </p>
                   </div>
 
@@ -480,11 +482,11 @@
                       </div>
                       <div class="ml-3">
                         <h3 class="text-sm font-medium text-yellow-800">
-                          Important
+                          {m.api_tokens_important_warning()}
                         </h3>
                         <div class="mt-2 text-sm text-yellow-700">
                           <p>
-                            The token will be displayed only once after creation. Make sure to copy and store it securely.
+                            {m.api_tokens_important_warning_body()}
                           </p>
                         </div>
                       </div>
@@ -501,9 +503,9 @@
               class="inline-flex w-full justify-center rounded-md bg-blue-600 px-4 py-2 text-base font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 sm:ml-3 sm:w-auto sm:text-sm"
             >
               {#if isCreating}
-                Creating...
+                {m.api_tokens_creating()}
               {:else}
-                Create Token
+                {m.api_tokens_create_button()}
               {/if}
             </button>
             <button
@@ -512,7 +514,7 @@
               disabled={isCreating}
               class="mt-3 inline-flex w-full justify-center rounded-md border border-gray-300 bg-white px-4 py-2 text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 sm:mt-0 sm:w-auto sm:text-sm"
             >
-              Cancel
+              {m.api_tokens_cancel()}
             </button>
           </div>
         </form>
@@ -541,13 +543,13 @@
             </div>
             <div class="mt-3 w-full text-center sm:ml-4 sm:mt-0 sm:text-left">
               <h3 class="text-lg font-medium leading-6 text-gray-900" id="token-modal-title">
-                Token Created Successfully
+                {m.api_tokens_created_title()}
               </h3>
               <div class="mt-4 space-y-4">
                 <!-- Token Name -->
                 <div>
                   <div class="block text-sm font-medium text-gray-700">
-                    Token Name
+                    {m.api_tokens_token_name_display()}
                   </div>
                   <p class="mt-1 text-sm text-gray-900">{newTokenName}</p>
                 </div>
@@ -555,7 +557,7 @@
                 <!-- Token Value -->
                 <div>
                   <div class="block text-sm font-medium text-gray-700">
-                    Token Value
+                    {m.api_tokens_token_value_label()}
                   </div>
                   <div class="mt-1 flex space-x-2">
                     <input
@@ -569,9 +571,9 @@
                       class="inline-flex items-center rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
                     >
                       {#if isCopied}
-                        Copied!
+                        {m.api_tokens_copied_button()}
                       {:else}
-                        Copy
+                        {m.api_tokens_copy_button()}
                       {/if}
                     </button>
                   </div>
@@ -587,11 +589,11 @@
                     </div>
                     <div class="ml-3">
                       <h3 class="text-sm font-medium text-red-800">
-                        Warning: This is your only chance to copy this token
+                        {m.api_tokens_security_warning()}
                       </h3>
                       <div class="mt-2 text-sm text-red-700">
                         <p>
-                          For security reasons, this token will not be shown again. Make sure to copy it now and store it in a safe place.
+                          {m.api_tokens_security_warning_body()}
                         </p>
                       </div>
                     </div>
@@ -607,7 +609,7 @@
             onclick={closeTokenModal}
             class="inline-flex w-full justify-center rounded-md bg-blue-600 px-4 py-2 text-base font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 sm:ml-3 sm:w-auto sm:text-sm"
           >
-            Close
+            {m.api_tokens_close_button()}
           </button>
         </div>
       </div>

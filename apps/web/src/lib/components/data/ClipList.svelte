@@ -3,6 +3,7 @@
   import { listClips, deleteClip, getClipSpectrogramUrl } from '$lib/api/clips';
   import type { Clip } from '$lib/types/data';
   import DeleteConfirmDialog from '$lib/components/ui/DeleteConfirmDialog.svelte';
+  import * as m from '$lib/paraglide/messages';
 
   interface Props {
     projectId: string;
@@ -85,7 +86,7 @@
 
 <div class="w-full">
   <div class="mb-4 flex items-center justify-between">
-    <h3 class="m-0 text-lg font-semibold text-gray-900">Clips</h3>
+    <h3 class="m-0 text-lg font-semibold text-gray-900">{m.clip_list_heading()}</h3>
     {#if $clipsQuery.data}
       <span class="text-sm font-medium text-gray-500">{$clipsQuery.data.total} total</span>
     {/if}
@@ -97,7 +98,7 @@
         <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
         <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
       </svg>
-      <p class="text-sm text-gray-500">Loading clips...</p>
+      <p class="text-sm text-gray-500">{m.clip_list_loading()}</p>
     </div>
   {:else if $clipsQuery.error}
     <div class="flex flex-col items-center gap-2 rounded-lg bg-red-50 py-8">
@@ -114,8 +115,8 @@
         <path d="M9 11l3 3L22 4" stroke-width="2" />
         <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" stroke-width="2" />
       </svg>
-      <p class="text-sm text-gray-500">No clips found</p>
-      <p class="text-xs text-gray-400">Create clips manually or use auto-generation</p>
+      <p class="text-sm text-gray-500">{m.clip_list_no_clips()}</p>
+      <p class="text-xs text-gray-400">{m.clip_list_no_clips_hint()}</p>
     </div>
   {:else if $clipsQuery.data}
     <div class="overflow-x-auto rounded-lg border border-gray-200">

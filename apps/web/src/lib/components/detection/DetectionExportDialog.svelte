@@ -6,6 +6,7 @@
 
   import type { DetectionStatus } from '$lib/types/detection';
   import { exportDetectionsCSV, exportMLDataset } from '$lib/api/detection-export';
+  import * as m from '$lib/paraglide/messages';
 
   // Props
   let {
@@ -85,7 +86,7 @@
       <!-- Header -->
       <div class="flex items-center justify-between border-b border-gray-200 px-6 py-4">
         <h2 id="export-dialog-title" class="text-base font-semibold text-gray-900">
-          Export Detections
+          {m.detection_export_title()}
         </h2>
         <button
           type="button"
@@ -103,7 +104,7 @@
       <div class="px-6 py-5 space-y-5">
         <!-- Format selection -->
         <div>
-          <p class="mb-3 text-sm font-medium text-gray-700">Export Format</p>
+          <p class="mb-3 text-sm font-medium text-gray-700">{m.detection_export_format_label()}</p>
           <div class="grid grid-cols-2 gap-3">
             <button
               type="button"
@@ -118,10 +119,10 @@
                 </svg>
               </div>
               <span class="text-sm font-medium {format === 'csv' ? 'text-blue-700' : 'text-gray-700'}">
-                Detection CSV
+                {m.detection_export_csv_name()}
               </span>
               <span class="mt-0.5 text-xs {format === 'csv' ? 'text-blue-500' : 'text-gray-400'}">
-                Spreadsheet-ready
+                {m.detection_export_csv_desc()}
               </span>
             </button>
 
@@ -138,10 +139,10 @@
                 </svg>
               </div>
               <span class="text-sm font-medium {format === 'ml-dataset' ? 'text-blue-700' : 'text-gray-700'}">
-                ML Dataset
+                {m.detection_export_ml_name()}
               </span>
               <span class="mt-0.5 text-xs {format === 'ml-dataset' ? 'text-blue-500' : 'text-gray-400'}">
-                ZIP with audio
+                {m.detection_export_ml_desc()}
               </span>
             </button>
           </div>
@@ -151,24 +152,24 @@
         {#if format === 'csv'}
           <div>
             <label for="status-filter" class="mb-1.5 block text-sm font-medium text-gray-700">
-              Status Filter
+              {m.detection_export_status_filter_label()}
             </label>
             <select
               id="status-filter"
               bind:value={statusFilter}
               class="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
             >
-              <option value="">All statuses</option>
-              <option value="unreviewed">Unreviewed</option>
-              <option value="confirmed">Confirmed</option>
-              <option value="rejected">Rejected</option>
+              <option value="">{m.detection_filter_all_statuses()}</option>
+              <option value="unreviewed">{m.detection_filter_unreviewed()}</option>
+              <option value="confirmed">{m.detection_filter_confirmed()}</option>
+              <option value="rejected">{m.detection_filter_rejected()}</option>
             </select>
           </div>
         {/if}
 
         <!-- Format details -->
         <div class="rounded-md border border-gray-100 bg-gray-50 px-4 py-3">
-          <p class="mb-1.5 text-xs font-medium uppercase tracking-wide text-gray-400">Includes</p>
+          <p class="mb-1.5 text-xs font-medium uppercase tracking-wide text-gray-400">{m.detection_export_includes_label()}</p>
           {#if format === 'csv'}
             <ul class="flex flex-wrap gap-1.5">
               {#each ['recording_filename', 'start_time / end_time', 'species, confidence', 'source, model_name', 'verified, verified_by'] as field}
@@ -204,7 +205,7 @@
           disabled={isExporting}
           class="rounded-md border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
         >
-          Cancel
+          {m.detection_export_cancel()}
         </button>
         <button
           type="button"
@@ -217,12 +218,12 @@
               <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
               <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
             </svg>
-            Exporting...
+            {m.detection_export_exporting()}
           {:else}
             <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
             </svg>
-            {format === 'csv' ? 'Export CSV' : 'Export ZIP'}
+            {format === 'csv' ? m.detection_export_csv_button() : m.detection_export_zip_button()}
           {/if}
         </button>
       </div>

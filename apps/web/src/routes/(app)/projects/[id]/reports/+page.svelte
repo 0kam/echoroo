@@ -6,6 +6,8 @@
 
   import { page } from '$app/stores';
   import DetectionExportDialog from '$lib/components/detection/DetectionExportDialog.svelte';
+  import { localizeHref } from '$lib/paraglide/runtime';
+  import * as m from '$lib/paraglide/messages';
 
   const projectId = $derived($page.params.id as string);
 
@@ -66,19 +68,19 @@
 </script>
 
 <svelte:head>
-  <title>Reports | Project</title>
+  <title>{m.report_page_title()}</title>
 </svelte:head>
 
 <div class="mx-auto max-w-4xl px-6 py-8">
   <!-- Page header -->
   <header class="mb-8">
     <nav class="mb-2 flex items-center gap-2 text-sm text-gray-500">
-      <a href="/projects/{projectId}" class="hover:text-gray-900">Project</a>
+      <a href={localizeHref(`/projects/${projectId}`)} class="hover:text-gray-900">{m.report_breadcrumb_project()}</a>
       <span>/</span>
-      <span class="font-medium text-gray-900">Reports</span>
+      <span class="font-medium text-gray-900">{m.report_heading()}</span>
     </nav>
-    <h1 class="text-2xl font-bold text-gray-900">Reports</h1>
-    <p class="mt-1 text-sm text-gray-500">Export project data for analysis and model training</p>
+    <h1 class="text-2xl font-bold text-gray-900">{m.report_heading()}</h1>
+    <p class="mt-1 text-sm text-gray-500">{m.report_description()}</p>
   </header>
 
   <!-- Export option cards -->
@@ -100,7 +102,7 @@
 
             <!-- Included fields -->
             <div class="mt-3">
-              <p class="mb-1.5 text-xs font-medium uppercase tracking-wide text-gray-400">Includes</p>
+              <p class="mb-1.5 text-xs font-medium uppercase tracking-wide text-gray-400">{m.report_includes_label()}</p>
               <ul class="flex flex-wrap gap-2">
                 {#each card.details as detail}
                   <li class="rounded-full bg-gray-100 px-2.5 py-0.5 text-xs font-medium text-gray-600">

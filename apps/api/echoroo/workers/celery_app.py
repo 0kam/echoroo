@@ -34,6 +34,7 @@ app.conf.include = [
     "echoroo.workers.import_task",
     "echoroo.workers.annotation_tasks",
     "echoroo.workers.ml_tasks",
+    "echoroo.workers.taxon_tasks",
 ]
 
 # Periodic tasks (beat schedule)
@@ -41,5 +42,10 @@ app.conf.beat_schedule = {
     "cleanup-orphan-uploads": {
         "task": "echoroo.workers.upload_tasks.cleanup_orphan_uploads",
         "schedule": crontab(minute=0),  # Every hour
+    },
+    "fetch-japanese-vernacular-names-weekly": {
+        "task": "echoroo.workers.taxon_tasks.fetch_japanese_vernacular_names",
+        "schedule": crontab(hour=2, minute=0, day_of_week=0),  # Every Sunday at 02:00 UTC
+        "kwargs": {"batch_size": 100},
     },
 }

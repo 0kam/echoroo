@@ -5,6 +5,7 @@
 
   import { adminApi } from '$lib/api/admin';
   import { ApiError } from '$lib/api/client';
+  import { getLocale } from '$lib/paraglide/runtime';
   import type { User } from '$lib/types';
 
   // State
@@ -158,7 +159,7 @@
    * Format date
    */
   function formatDate(dateString: string): string {
-    return new Date(dateString).toLocaleString();
+    return new Date(dateString).toLocaleString(getLocale());
   }
 </script>
 

@@ -5,6 +5,7 @@
 
   import { recorderApi } from '$lib/api/recorders';
   import { ApiError } from '$lib/api/client';
+  import { getLocale } from '$lib/paraglide/runtime';
   import type { Recorder, RecorderCreateRequest, RecorderUpdateRequest } from '$lib/types';
 
   // State
@@ -207,7 +208,7 @@
    * Format date
    */
   function formatDate(dateString: string): string {
-    return new Date(dateString).toLocaleString();
+    return new Date(dateString).toLocaleString(getLocale());
   }
 </script>
 

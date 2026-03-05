@@ -1,5 +1,7 @@
 <script lang="ts">
   import { createQuery, createMutation, useQueryClient } from '@tanstack/svelte-query';
+  import { localizeHref, getLocale } from '$lib/paraglide/runtime';
+  import * as m from '$lib/paraglide/messages';
   import {
     fetchDetectionRuns,
     createDetectionRun,
@@ -166,18 +168,18 @@
         </div>
         <div>
           <p class="text-sm font-medium text-green-800">
-            BirdNET complete — {latestRun.annotation_count} detection{latestRun.annotation_count !== 1 ? 's' : ''} found
+            BirdNET complete — {m.common_detections_count({ count: latestRun.annotation_count })} found
           </p>
           {#if latestRun.completed_at}
             <p class="text-xs text-gray-400">
-              Finished {new Date(latestRun.completed_at).toLocaleString()}
+              Finished {new Date(latestRun.completed_at).toLocaleString(getLocale())}
             </p>
           {/if}
         </div>
       </div>
       <div class="flex flex-shrink-0 gap-2">
         <a
-          href="/projects/{projectId}/detections?dataset_id={datasetId}"
+          href={localizeHref(`/projects/${projectId}/detections?dataset_id=${datasetId}`)}
           class="rounded-md bg-green-600 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-green-700"
         >
           View Detections

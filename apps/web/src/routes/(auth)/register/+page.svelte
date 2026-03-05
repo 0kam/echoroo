@@ -6,7 +6,10 @@
   import { goto } from '$app/navigation';
   import { register } from '$lib/api/auth';
   import { ApiError } from '$lib/api/client';
+  import { localizeHref } from '$lib/paraglide/runtime';
+  import * as m from '$lib/paraglide/messages';
   import Captcha from '$lib/components/Captcha.svelte';
+  import LanguageSwitcher from '$lib/components/ui/LanguageSwitcher.svelte';
   import { onMount } from 'svelte';
 
   // Form state
@@ -42,35 +45,35 @@
     // Email validation
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!email) {
-      fieldErrors.email = 'Email is required';
+      fieldErrors.email = m.error_email_required();
     } else if (!emailRegex.test(email)) {
-      fieldErrors.email = 'Please enter a valid email address';
+      fieldErrors.email = m.error_invalid_email();
     }
 
     // Password validation
     if (!password) {
-      fieldErrors.password = 'Password is required';
+      fieldErrors.password = m.error_password_required();
     } else if (password.length < 8) {
-      fieldErrors.password = 'Password must be at least 8 characters';
+      fieldErrors.password = m.error_password_too_short();
     } else if (!/(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/.test(password)) {
-      fieldErrors.password = 'Password must contain uppercase, lowercase, and number';
+      fieldErrors.password = m.error_password_complexity();
     }
 
     // Confirm password validation
     if (!confirmPassword) {
-      fieldErrors.confirmPassword = 'Please confirm your password';
+      fieldErrors.confirmPassword = m.error_confirm_password_required();
     } else if (password !== confirmPassword) {
-      fieldErrors.confirmPassword = 'Passwords do not match';
+      fieldErrors.confirmPassword = m.error_passwords_do_not_match();
     }
 
     // Display name validation (optional)
     if (displayName && displayName.length > 100) {
-      fieldErrors.displayName = 'Display name must be less than 100 characters';
+      fieldErrors.displayName = m.error_display_name_too_long();
     }
 
     // CAPTCHA validation
     if (!captchaToken) {
-      error = 'Please complete the CAPTCHA verification';
+      error = m.error_captcha_required();
       return false;
     }
 
@@ -100,7 +103,7 @@
       });
 
       // Redirect to email verification page
-      await goto('/verify-email?registered=true');
+      await goto(localizeHref('/verify-email?registered=true'));
     } catch (err) {
       if (err instanceof ApiError) {
         error = err.detail || err.message;
@@ -111,7 +114,7 @@
           captchaToken = null;
         }
       } else {
-        error = 'An unexpected error occurred. Please try again.';
+        error = m.error_unexpected();
       }
     } finally {
       isSubmitting = false;
@@ -130,7 +133,7 @@
    */
   function handleCaptchaError() {
     captchaToken = null;
-    error = 'CAPTCHA verification failed. Please try again.';
+    error = m.error_captcha_failed();
   }
 
   /**
@@ -142,18 +145,23 @@
 </script>
 
 <svelte:head>
-  <title>Register - Echoroo</title>
+  <title>{m.auth_register_page_title()}</title>
 </svelte:head>
 
 <div class="flex min-h-screen items-center justify-center bg-gray-50 px-4 py-12 sm:px-6 lg:px-8">
   <div class="w-full max-w-md space-y-8">
+    <!-- Language switcher -->
+    <div class="flex justify-end">
+      <LanguageSwitcher />
+    </div>
+
     <!-- Header -->
     <div>
       <h2 class="mt-6 text-center text-3xl font-extrabold text-gray-900">
-        Create your account
+        {m.auth_register_title()}
       </h2>
       <p class="mt-2 text-center text-sm text-gray-600">
-        Join Echoroo to start analyzing your audio recordings
+        {m.auth_register_subtitle()}
       </p>
     </div>
 
@@ -163,7 +171,7 @@
         <!-- Email Input -->
         <div>
           <label for="email" class="block text-sm font-medium text-gray-700">
-            Email address <span class="text-red-600">*</span>
+            {m.auth_register_email_label()} <span class="text-red-600">*</span>
           </label>
           <input
             id="email"
@@ -185,7 +193,7 @@
         <!-- Display Name Input (Optional) -->
         <div>
           <label for="displayName" class="block text-sm font-medium text-gray-700">
-            Display name (optional)
+            {m.auth_register_display_name_label()}
           </label>
           <input
             id="displayName"
@@ -196,7 +204,7 @@
             disabled={isSubmitting}
             class="mt-1 block w-full appearance-none rounded-md border border-gray-300 px-3 py-2 text-gray-900 placeholder-gray-500 focus:border-blue-500 focus:outline-none focus:ring-blue-500 disabled:bg-gray-100 disabled:cursor-not-allowed sm:text-sm"
             class:border-red-500={fieldErrors.displayName}
-            placeholder="John Doe"
+            placeholder={m.auth_register_display_name_placeholder()}
           />
           {#if fieldErrors.displayName}
             <p class="mt-1 text-sm text-red-600">{fieldErrors.displayName}</p>
@@ -206,7 +214,7 @@
         <!-- Password Input -->
         <div>
           <label for="password" class="block text-sm font-medium text-gray-700">
-            Password <span class="text-red-600">*</span>
+            {m.auth_register_password_label()} <span class="text-red-600">*</span>
           </label>
           <input
             id="password"
@@ -218,13 +226,13 @@
             disabled={isSubmitting}
             class="mt-1 block w-full appearance-none rounded-md border border-gray-300 px-3 py-2 text-gray-900 placeholder-gray-500 focus:border-blue-500 focus:outline-none focus:ring-blue-500 disabled:bg-gray-100 disabled:cursor-not-allowed sm:text-sm"
             class:border-red-500={fieldErrors.password}
-            placeholder="At least 8 characters"
+            placeholder={m.auth_register_password_placeholder()}
           />
           {#if fieldErrors.password}
             <p class="mt-1 text-sm text-red-600">{fieldErrors.password}</p>
           {:else}
             <p class="mt-1 text-xs text-gray-500">
-              Must be at least 8 characters with uppercase, lowercase, and number
+              {m.auth_register_password_hint()}
             </p>
           {/if}
         </div>
@@ -232,7 +240,7 @@
         <!-- Confirm Password Input -->
         <div>
           <label for="confirmPassword" class="block text-sm font-medium text-gray-700">
-            Confirm password <span class="text-red-600">*</span>
+            {m.auth_register_confirm_password_label()} <span class="text-red-600">*</span>
           </label>
           <input
             id="confirmPassword"
@@ -244,7 +252,7 @@
             disabled={isSubmitting}
             class="mt-1 block w-full appearance-none rounded-md border border-gray-300 px-3 py-2 text-gray-900 placeholder-gray-500 focus:border-blue-500 focus:outline-none focus:ring-blue-500 disabled:bg-gray-100 disabled:cursor-not-allowed sm:text-sm"
             class:border-red-500={fieldErrors.confirmPassword}
-            placeholder="Confirm your password"
+            placeholder={m.auth_register_confirm_password_placeholder()}
           />
           {#if fieldErrors.confirmPassword}
             <p class="mt-1 text-sm text-red-600">{fieldErrors.confirmPassword}</p>
@@ -318,19 +326,19 @@
                   d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
                 ></path>
               </svg>
-              Creating account...
+              {m.auth_register_submitting()}
             </span>
           {:else}
-            Create Account
+            {m.auth_register_submit()}
           {/if}
         </button>
       </div>
 
       <!-- Login Link -->
       <div class="text-center text-sm">
-        <span class="text-gray-600">Already have an account?</span>
-        <a href="/login" class="ml-1 font-medium text-blue-600 hover:text-blue-500">
-          Login
+        <span class="text-gray-600">{m.auth_register_already_have_account()}</span>
+        <a href={localizeHref('/login')} class="ml-1 font-medium text-blue-600 hover:text-blue-500">
+          {m.auth_register_login_link()}
         </a>
       </div>
     </form>

@@ -7,9 +7,11 @@
   import { projectsApi } from '$lib/api/projects';
   import { authStore } from '$lib/stores/auth.svelte';
   import { ApiError } from '$lib/api/client';
+  import { localizeHref, getLocale } from '$lib/paraglide/runtime';
   import type { Project, ProjectMember } from '$lib/types';
   import type { ProjectRole } from '$lib/stores/permissions';
   import { getRoleDescription, getRoleDisplayName } from '$lib/stores/permissions';
+  import * as m from '$lib/paraglide/messages';
 
   // Get project ID from URL
   const projectId = $derived($page.params.id!);
@@ -74,12 +76,12 @@
       if (err instanceof ApiError) {
         error = err.detail || err.message;
         if (err.status === 404) {
-          error = 'Project not found';
+          error = m.members_error_not_found();
         } else if (err.status === 403) {
-          error = 'You do not have permission to access this project';
+          error = m.members_error_forbidden();
         }
       } else {
-        error = 'Failed to load project';
+        error = m.members_error_load();
       }
     } finally {
       isLoading = false;
@@ -131,7 +133,7 @@
       if (err instanceof ApiError) {
         addError = err.detail || err.message;
       } else {
-        addError = 'Failed to add member';
+        addError = m.members_error_add();
       }
     } finally {
       isAdding = false;
@@ -175,7 +177,7 @@
       if (err instanceof ApiError) {
         error = err.detail || err.message;
       } else {
-        error = 'Failed to update member role';
+        error = m.members_error_update_role();
       }
     } finally {
       isChangingRole = false;
@@ -214,7 +216,7 @@
       if (err instanceof ApiError) {
         error = err.detail || err.message;
       } else {
-        error = 'Failed to remove member';
+        error = m.members_error_remove();
       }
     } finally {
       isRemoving = false;
@@ -230,7 +232,7 @@
 </script>
 
 <svelte:head>
-  <title>Project Members - Echoroo</title>
+  <title>{m.members_page_title()}</title>
 </svelte:head>
 
 <div class="mx-auto max-w-4xl px-4 py-8 sm:px-6 lg:px-8">
@@ -238,18 +240,18 @@
   <div class="mb-8">
     <div class="flex items-center justify-between">
       <div>
-        <h1 class="text-3xl font-bold text-gray-900">Project Members</h1>
+        <h1 class="text-3xl font-bold text-gray-900">{m.members_heading()}</h1>
         {#if project}
           <p class="mt-2 text-sm text-gray-600">
-            Manage members and permissions for "{project.name}"
+            {m.members_manage_description({ projectName: project.name })}
           </p>
         {/if}
       </div>
       <a
-        href="/projects/{projectId}"
+        href={localizeHref(`/projects/${projectId}`)}
         class="text-sm font-medium text-blue-600 hover:text-blue-500"
       >
-        Back to Project
+        {m.members_back_to_project()}
       </a>
     </div>
   </div>
@@ -292,7 +294,7 @@
         </div>
         <div class="ml-3">
           <p class="text-sm font-medium text-red-800">
-            You do not have permission to manage project members
+            {m.members_access_denied()}
           </p>
         </div>
       </div>
@@ -339,14 +341,14 @@
                 d="M12 4v16m8-8H4"
               />
             </svg>
-            Add Member
+            {m.members_add_button()}
           </button>
         {:else}
           <form onsubmit={handleAddMember} class="space-y-4">
             <div class="flex items-end space-x-4">
               <div class="flex-1">
                 <label for="email" class="block text-sm font-medium text-gray-700">
-                  Email Address
+                  {m.members_email_label()}
                 </label>
                 <input
                   id="email"
@@ -355,13 +357,13 @@
                   bind:value={newMemberEmail}
                   disabled={isAdding}
                   class="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-blue-500 disabled:bg-gray-100"
-                  placeholder="member@example.com"
+                  placeholder={m.members_email_placeholder()}
                 />
               </div>
 
               <div class="w-48">
                 <label for="role" class="block text-sm font-medium text-gray-700">
-                  Role
+                  {m.members_role_label()}
                   <button
                     type="button"
                     aria-label="Show role descriptions"
@@ -385,9 +387,9 @@
                     disabled={isAdding}
                     class="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-blue-500 disabled:bg-gray-100"
                   >
-                    <option value="viewer">Viewer</option>
-                    <option value="member">Member</option>
-                    <option value="admin">Admin</option>
+                    <option value="viewer">{m.role_viewer()}</option>
+                    <option value="member">{m.role_member()}</option>
+                    <option value="admin">{m.role_admin()}</option>
                   </select>
                   {#if showRoleTooltip === 'add-role'}
                     <div
@@ -414,7 +416,7 @@
                 disabled={isAdding}
                 class="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
               >
-                {isAdding ? 'Adding...' : 'Add'}
+                {isAdding ? m.members_adding() : m.members_add_submit()}
               </button>
 
               <button
@@ -423,7 +425,7 @@
                 disabled={isAdding}
                 class="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
               >
-                Cancel
+                {m.members_cancel()}
               </button>
             </div>
 
@@ -439,7 +441,7 @@
     <div class="rounded-lg bg-white shadow">
       <div class="p-6">
         <h2 class="mb-4 text-lg font-semibold text-gray-900">
-          Members ({members.length})
+          {m.members_count({ count: members.length })}
         </h2>
 
         <div class="divide-y divide-gray-200">
@@ -458,12 +460,12 @@
                   <p class="text-sm font-medium text-gray-900">
                     {member.user.display_name || member.user.email}
                     {#if isMemberOwner(member)}
-                      <span class="ml-2 text-xs text-gray-500">(Owner)</span>
+                      <span class="ml-2 text-xs text-gray-500">({m.role_owner()})</span>
                     {/if}
                   </p>
                   <p class="text-xs text-gray-500">{member.user.email}</p>
                   <p class="text-xs text-gray-500">
-                    Joined {new Date(member.joined_at).toLocaleDateString()}
+                    {m.members_joined({ date: new Date(member.joined_at).toLocaleDateString() })}
                   </p>
                 </div>
               </div>
@@ -479,9 +481,9 @@
                         onchange={(e) => showRoleChangeConfirmation(member, e.currentTarget.value)}
                         class="rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-blue-500"
                       >
-                        <option value="viewer">Viewer</option>
-                        <option value="member">Member</option>
-                        <option value="admin">Admin</option>
+                        <option value="viewer">{m.role_viewer()}</option>
+                        <option value="member">{m.role_member()}</option>
+                        <option value="admin">{m.role_admin()}</option>
                       </select>
                       <button
                         type="button"
@@ -523,11 +525,11 @@
                     onclick={() => showRemoveConfirmation(member)}
                     class="rounded-md border border-red-300 bg-white px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-50"
                   >
-                    Remove
+                    {m.members_remove_button()}
                   </button>
                 {:else}
                   <span class="rounded-md border border-gray-300 px-3 py-1.5 text-sm text-gray-500">
-                    Owner
+                    {m.role_owner()}
                   </span>
                 {/if}
               </div>
@@ -572,7 +574,7 @@
               </svg>
             </div>
             <div class="mt-3 text-center sm:ml-4 sm:mt-0 sm:text-left">
-              <h3 class="text-lg font-medium leading-6 text-gray-900">Change Member Role</h3>
+              <h3 class="text-lg font-medium leading-6 text-gray-900">{m.members_role_change_title()}</h3>
               <div class="mt-2">
                 <p class="text-sm text-gray-500">
                   Are you sure you want to change {roleChangeConfirmation.member.user.display_name ||
@@ -594,7 +596,7 @@
             disabled={isChangingRole}
             class="inline-flex w-full justify-center rounded-md bg-blue-600 px-4 py-2 text-base font-medium text-white shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 sm:ml-3 sm:w-auto sm:text-sm"
           >
-            {isChangingRole ? 'Changing...' : 'Change Role'}
+            {isChangingRole ? m.members_changing_role() : m.members_change_role_submit()}
           </button>
           <button
             type="button"
@@ -602,7 +604,7 @@
             disabled={isChangingRole}
             class="mt-3 inline-flex w-full justify-center rounded-md border border-gray-300 bg-white px-4 py-2 text-base font-medium text-gray-700 shadow-sm hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 sm:ml-3 sm:mt-0 sm:w-auto sm:text-sm"
           >
-            Cancel
+            {m.members_cancel()}
           </button>
         </div>
       </div>
@@ -643,7 +645,7 @@
               </svg>
             </div>
             <div class="mt-3 text-center sm:ml-4 sm:mt-0 sm:text-left">
-              <h3 class="text-lg font-medium leading-6 text-gray-900">Remove Member</h3>
+              <h3 class="text-lg font-medium leading-6 text-gray-900">{m.members_remove_title()}</h3>
               <div class="mt-2">
                 <p class="text-sm text-gray-500">
                   Are you sure you want to remove {memberToRemove.user.display_name ||
@@ -661,7 +663,7 @@
             disabled={isRemoving}
             class="inline-flex w-full justify-center rounded-md bg-red-600 px-4 py-2 text-base font-medium text-white shadow-sm hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 disabled:opacity-50 sm:ml-3 sm:w-auto sm:text-sm"
           >
-            {isRemoving ? 'Removing...' : 'Remove'}
+            {isRemoving ? m.members_removing() : m.members_remove_submit()}
           </button>
           <button
             type="button"
@@ -669,7 +671,7 @@
             disabled={isRemoving}
             class="mt-3 inline-flex w-full justify-center rounded-md border border-gray-300 bg-white px-4 py-2 text-base font-medium text-gray-700 shadow-sm hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 sm:ml-3 sm:mt-0 sm:w-auto sm:text-sm"
           >
-            Cancel
+            {m.members_cancel()}
           </button>
         </div>
       </div>
