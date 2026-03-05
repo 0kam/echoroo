@@ -28,14 +28,14 @@
     : null;
   $: recordingName = detection.recording?.filename
     ?? detection.recording_id.slice(0, 8) + '...';
-  $: tagName = detection.tag?.name ?? 'Unidentified';
+  $: tagName = detection.tag?.common_name ?? detection.tag?.name ?? 'Unidentified';
 
   function buildAudioUrl(recordingId: string, start: number, end: number): string {
     const params = new URLSearchParams({
-      start_time: start.toString(),
-      end_time: end.toString(),
+      start: start.toString(),
+      end: end.toString(),
     });
-    return `/api/v1/recordings/${recordingId}/audio?${params}`;
+    return `/api/v1/projects/${projectId}/recordings/${recordingId}/playback?${params}`;
   }
 
   function formatTime(seconds: number): string {
@@ -158,6 +158,7 @@
   <!-- Spectrogram -->
   <div class="relative">
     <MiniSpectrogram
+      {projectId}
       recordingId={detection.recording_id}
       startTime={detection.start_time}
       endTime={detection.end_time}

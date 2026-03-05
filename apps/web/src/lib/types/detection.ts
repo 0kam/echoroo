@@ -134,6 +134,8 @@ export interface SpeciesSummary {
   tag_id: string;
   /** Human-readable tag name */
   tag_name: string;
+  /** Common / vernacular name of the species; null if not available */
+  common_name: string | null;
   /** Scientific name of the species; null if not a species tag */
   scientific_name: string | null;
   /** Total number of detections for this species */
@@ -240,6 +242,52 @@ export interface DetectionRunListResponse {
   page_size: number;
   /** Total number of pages */
   pages: number;
+}
+
+// ============================================
+// Temporal Data Types (Polar Heatmap)
+// ============================================
+
+/**
+ * A single hourly detection data point for the activity pattern heatmap.
+ */
+export interface HourlyDetection {
+  /** ISO 8601 date string (YYYY-MM-DD) */
+  date: string;
+  /** Hour of day (0–23) */
+  hour: number;
+  /** Number of detections in this hour slot */
+  count: number;
+}
+
+/**
+ * Temporal detection data for a single species, used to render the PolarHeatmap.
+ */
+export interface SpeciesTemporalData {
+  /** Tag identifier */
+  tag_id: string;
+  /** Scientific name of the species */
+  scientific_name: string;
+  /** Common / vernacular name; null if not available */
+  common_name: string | null;
+  /** Total detection count across all time slots */
+  total_detections: number;
+  /** Hourly detection data points */
+  detections: HourlyDetection[];
+}
+
+/**
+ * Response from GET /api/v1/projects/{project_id}/detections/temporal-data
+ */
+export interface DetectionTemporalDataResponse {
+  /** Project identifier */
+  project_id: string;
+  /** Dataset scoped to this response; null means entire project */
+  dataset_id: string | null;
+  /** Date range covered by the data [start, end] in ISO 8601; null if no data */
+  date_range: [string, string] | null;
+  /** Per-species temporal data */
+  species: SpeciesTemporalData[];
 }
 
 // ============================================

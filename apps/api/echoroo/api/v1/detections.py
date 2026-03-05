@@ -20,6 +20,7 @@ from echoroo.schemas.detection import (
     DetectionCreate,
     DetectionListResponse,
     DetectionResponse,
+    DetectionTemporalDataResponse,
     RejectRequest,
     SpeciesSummaryResponse,
 )
@@ -219,6 +220,43 @@ async def export_ml_dataset(
         io.BytesIO(zip_content),
         media_type="application/zip",
         headers={"Content-Disposition": "attachment; filename=ml-dataset.zip"},
+    )
+
+
+@router.get(
+    "/temporal-data",
+    response_model=DetectionTemporalDataResponse,
+    summary="Detection temporal data",
+    description="Get hourly detection counts grouped by species, date, and hour for visualization",
+)
+async def get_temporal_data(
+    project_id: UUID,
+    current_user: CurrentUser,
+    service: DetectionServiceDep,
+    dataset_id: UUID | None = None,
+) -> DetectionTemporalDataResponse:
+    """Get temporal detection data for visualization.
+
+    Returns hourly detection counts per species, suitable for heatmap or
+    time-series visualizations.
+
+    NOTE: This route must appear before /{detection_id} to avoid routing conflicts.
+
+    Args:
+        project_id: Project's UUID
+        current_user: Current authenticated user
+        service: Detection service instance
+        dataset_id: Optional dataset filter
+
+    Returns:
+        Temporal data response grouped by species with hourly counts
+
+    Raises:
+        401: Not authenticated
+    """
+    return await service.get_temporal_data(
+        project_id=project_id,
+        dataset_id=dataset_id,
     )
 
 

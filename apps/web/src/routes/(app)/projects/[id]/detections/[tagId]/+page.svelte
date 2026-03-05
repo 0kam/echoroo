@@ -2,14 +2,17 @@
   /**
    * Detection Review page for a specific species tag.
    *
-   * Displays all detections for the given species within the project,
-   * with full review workflow (confirm / reject / change species).
+   * Displays:
+   * - Species header with review statistics
+   * - Collapsible "Activity Pattern" section with a PolarHeatmap
+   * - Detection review grid (confirm / reject / change species)
    */
 
   import { page } from '$app/stores';
   import { createQuery } from '@tanstack/svelte-query';
-  import { fetchSpeciesSummary } from '$lib/api/detections';
+  import { fetchSpeciesSummary, fetchTemporalData } from '$lib/api/detections';
   import DetectionReviewGrid from '$lib/components/detection/DetectionReviewGrid.svelte';
+  import PolarHeatmap from '$lib/components/detection/PolarHeatmap.svelte';
 
   // projectId and tagId come from the URL params (always defined for this route)
   $: projectId = $page.params.id ?? '';
@@ -23,10 +26,23 @@
 
   $: speciesSummary = $summaryQuery.data?.items ?? [];
   $: currentSpecies = speciesSummary.find((s) => s.tag_id === tagId) ?? null;
-  $: speciesName = currentSpecies?.tag_name ?? 'Species';
+  $: speciesName = currentSpecies?.common_name ?? currentSpecies?.tag_name ?? 'Species';
   $: scientificName = currentSpecies?.scientific_name ?? null;
 
   $: backUrl = `/projects/${projectId}/detections`;
+
+  // Activity pattern section
+  let activityExpanded = false;
+
+  // Fetch temporal data only when the section is expanded
+  $: temporalQuery = createQuery({
+    queryKey: ['temporal-data', projectId],
+    queryFn: () => fetchTemporalData(projectId),
+    enabled: !!projectId && activityExpanded,
+  });
+
+  // Find the temporal data entry for this species
+  $: speciesTemporalData = $temporalQuery.data?.species.find((s) => s.tag_id === tagId) ?? null;
 </script>
 
 <svelte:head>
@@ -89,6 +105,86 @@
               {Math.round(currentSpecies.avg_confidence * 100)}%
             </div>
             <div class="text-xs text-stone-500">Avg. conf.</div>
+          </div>
+        {/if}
+      </div>
+    {/if}
+  </div>
+
+  <!-- Activity Pattern collapsible section -->
+  <div class="mb-6 overflow-hidden rounded-lg border border-stone-200 bg-white">
+    <button
+      type="button"
+      on:click={() => (activityExpanded = !activityExpanded)}
+      class="flex w-full items-center justify-between px-4 py-3 text-left hover:bg-stone-50 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-emerald-400 transition-colors"
+      aria-expanded={activityExpanded}
+    >
+      <div class="flex items-center gap-2">
+        <svg
+          class="h-4 w-4 text-emerald-600"
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
+          aria-hidden="true"
+        >
+          <path
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            stroke-width="2"
+            d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
+          />
+        </svg>
+        <span class="text-sm font-medium text-stone-700">Activity Pattern</span>
+      </div>
+      <svg
+        class="h-4 w-4 text-stone-400 transition-transform duration-200 {activityExpanded ? 'rotate-180' : ''}"
+        viewBox="0 0 20 20"
+        fill="currentColor"
+        aria-hidden="true"
+      >
+        <path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd" />
+      </svg>
+    </button>
+
+    {#if activityExpanded}
+      <div class="border-t border-stone-100 px-4 py-6">
+        {#if $temporalQuery.isLoading}
+          <div class="flex items-center justify-center py-8">
+            <div class="flex items-center gap-3 text-stone-500">
+              <svg class="h-5 w-5 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+              </svg>
+              <span class="text-sm">Loading activity pattern...</span>
+            </div>
+          </div>
+        {:else if $temporalQuery.isError}
+          <div class="rounded-lg border border-red-200 bg-red-50 px-4 py-4 text-center">
+            <p class="text-sm font-medium text-red-700">Failed to load activity pattern</p>
+            <p class="mt-1 text-xs text-red-500">
+              {$temporalQuery.error?.message ?? 'An unexpected error occurred'}
+            </p>
+            <button
+              type="button"
+              on:click={() => $temporalQuery.refetch()}
+              class="mt-3 rounded-md bg-red-100 px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-200"
+            >
+              Retry
+            </button>
+          </div>
+        {:else if speciesTemporalData}
+          <div class="flex justify-center">
+            <PolarHeatmap
+              data={speciesTemporalData.detections}
+              scientificName={speciesTemporalData.scientific_name}
+              commonName={speciesTemporalData.common_name}
+              totalDetections={speciesTemporalData.total_detections}
+              size={320}
+            />
+          </div>
+        {:else if $temporalQuery.isSuccess}
+          <div class="py-6 text-center text-sm text-stone-500">
+            No activity pattern data available for this species.
           </div>
         {/if}
       </div>
