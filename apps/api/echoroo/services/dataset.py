@@ -427,6 +427,140 @@ class DatasetService:
             "error": error,
         }
 
+    async def get_datetime_config(self, dataset_id: UUID) -> dict[str, object]:
+        """Get current datetime config with sample filenames and parse summary.
+
+        Args:
+            dataset_id: Dataset's UUID
+
+        Returns:
+            Dictionary with datetime_pattern, datetime_format, sample_filenames,
+            and parse_summary
+        """
+        dataset = await self.dataset_repo.get_by_id(dataset_id)
+        sample_filenames = await self.recording_repo.get_sample_filenames(dataset_id)
+        parse_summary = await self.recording_repo.get_datetime_parse_summary(dataset_id)
+
+        return {
+            "datetime_pattern": dataset.datetime_pattern if dataset else None,
+            "datetime_format": dataset.datetime_format if dataset else None,
+            "sample_filenames": sample_filenames,
+            "parse_summary": parse_summary,
+        }
+
+    # Known datetime patterns ordered by commonality
+    _KNOWN_PATTERNS: list[dict[str, str]] = [
+        {"name": "AudioMoth", "pattern": r"(\d{8}_\d{6})", "format": "%Y%m%d_%H%M%S"},
+        {"name": "AudioMoth (T separator)", "pattern": r"(\d{8}T\d{6})", "format": "%Y%m%dT%H%M%S"},
+        {"name": "ISO 8601", "pattern": r"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})", "format": "%Y-%m-%dT%H:%M:%S"},
+        {"name": "ISO 8601 (no T)", "pattern": r"(\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})", "format": "%Y-%m-%d_%H-%M-%S"},
+        {"name": "Wildlife Acoustics", "pattern": r"(\d{8}\$\d{6})", "format": "%Y%m%d$%H%M%S"},
+        {"name": "Compact", "pattern": r"(\d{14})", "format": "%Y%m%d%H%M%S"},
+        {"name": "Underscore separated", "pattern": r"(\d{4}_\d{2}_\d{2}_\d{2}_\d{2}_\d{2})", "format": "%Y_%m_%d_%H_%M_%S"},
+        {"name": "Hyphen separated", "pattern": r"(\d{4}-\d{2}-\d{2}-\d{2}-\d{2}-\d{2})", "format": "%Y-%m-%d-%H-%M-%S"},
+    ]
+
+    async def auto_detect_datetime_pattern(self, dataset_id: UUID) -> dict[str, object]:
+        """Try known patterns against sample filenames and return the best match.
+
+        Tests each known pattern against the dataset's sample filenames and
+        returns the first pattern where >= 80% of filenames parse successfully.
+
+        Args:
+            dataset_id: Dataset's UUID
+
+        Returns:
+            Dictionary with detected, pattern, format_str, preset_name, and results
+        """
+        sample_filenames = await self.recording_repo.get_sample_filenames(dataset_id)
+
+        if not sample_filenames:
+            return {
+                "detected": False,
+                "pattern": None,
+                "format_str": None,
+                "preset_name": None,
+                "results": [],
+            }
+
+        for preset in self._KNOWN_PATTERNS:
+            results = await self.test_datetime_pattern_bulk(
+                sample_filenames, preset["pattern"], preset["format"]
+            )
+            success_count = sum(1 for r in results if r["success"])
+            if len(sample_filenames) > 0 and success_count / len(sample_filenames) >= 0.8:
+                return {
+                    "detected": True,
+                    "pattern": preset["pattern"],
+                    "format_str": preset["format"],
+                    "preset_name": preset["name"],
+                    "results": results,
+                }
+
+        return {
+            "detected": False,
+            "pattern": None,
+            "format_str": None,
+            "preset_name": None,
+            "results": [],
+        }
+
+    async def test_datetime_pattern_bulk(
+        self, filenames: list[str], pattern: str, format_str: str
+    ) -> list[dict[str, object]]:
+        """Test a pattern against multiple filenames.
+
+        Args:
+            filenames: List of filenames to test
+            pattern: Regex pattern for datetime extraction
+            format_str: strptime format string
+
+        Returns:
+            List of result dicts with filename, success, parsed_datetime, error
+        """
+        results: list[dict[str, object]] = []
+        for filename in filenames:
+            result = self.test_datetime_pattern(filename, pattern, format_str)
+            results.append(
+                {
+                    "filename": filename,
+                    "success": result["success"],
+                    "parsed_datetime": result["parsed_datetime"],
+                    "error": result["error"],
+                }
+            )
+        return results
+
+    async def apply_datetime_pattern(
+        self, dataset_id: UUID, pattern: str, format_str: str
+    ) -> tuple[str, int]:
+        """Save datetime pattern to dataset and dispatch a Celery task to re-parse all recordings.
+
+        Args:
+            dataset_id: Dataset's UUID
+            pattern: Regex pattern for datetime extraction
+            format_str: strptime format string
+
+        Returns:
+            Tuple of (task_id, total_recordings)
+        """
+        from echoroo.workers.upload_tasks import reparse_recording_datetimes
+
+        # Update dataset datetime pattern and format
+        dataset = await self.dataset_repo.get_by_id(dataset_id)
+        if dataset is not None:
+            dataset.datetime_pattern = pattern
+            dataset.datetime_format = format_str
+            await self.dataset_repo.update(dataset)
+
+        # Get total recording count
+        total_recordings = await self.recording_repo.count_by_dataset(dataset_id)
+
+        # Dispatch Celery task
+        task = reparse_recording_datetimes.delay(str(dataset_id), pattern, format_str)
+
+        return str(task.id), total_recordings
+
     async def get_statistics(
         self, db: AsyncSession, dataset_id: UUID
     ) -> DatasetStatisticsDict:

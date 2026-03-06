@@ -49,8 +49,11 @@ export default defineConfig({
       // to avoid CORS issues when SSH port-forwarding only the frontend port.
       '/s3-proxy/echoroo': {
         target: process.env.S3_PROXY_TARGET || 'http://localstack:4566',
-        changeOrigin: false,
+        changeOrigin: true,
         rewrite: (path) => path.replace(/^\/s3-proxy/, ''),
+        // Allow large file uploads (up to 2 GB) without timeout
+        timeout: 600000,       // 10 minutes for the proxy connection
+        proxyTimeout: 600000,  // 10 minutes for the target response
       }
     }
   }

@@ -27,7 +27,7 @@
     })
   );
 
-  // Navigation items for the project sidebar (5 items)
+  // Navigation items for the project sidebar
   const navItems = $derived([
     {
       name: m.sidebar_nav_overview(),
@@ -43,6 +43,11 @@
       name: m.sidebar_nav_detections(),
       hrefSuffix: '/detections',
       icon: 'M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3',
+    },
+    {
+      name: m.sidebar_nav_search(),
+      hrefSuffix: '/search',
+      icon: 'M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z',
     },
     {
       name: m.sidebar_nav_reports(),

@@ -2,6 +2,7 @@
 
 import logging
 import secrets
+import time
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
@@ -239,6 +240,19 @@ class AuthService:
         await self.user_repo.update(user)
         await self.db.commit()
 
+        # Clear any existing revocation marker so a fresh login always succeeds.
+        # This handles the case where a previous "replay attack detected" incorrectly
+        # set the revoked_user key due to a race condition with concurrent refresh requests.
+        redis = await self._get_redis()
+        if redis:
+            try:
+                await redis.delete(f"{self._REVOCATION_KEY_PREFIX}{user.id}")
+                logger.debug("Cleared revocation marker for user %s on login", user.id)
+            except Exception:
+                logger.warning(
+                    "Failed to clear revocation marker for user %s", user.id, exc_info=True
+                )
+
         # Generate tokens (only include user ID, not email, to minimize JWT payload exposure)
         token_data = {"sub": str(user.id)}
         access_token = create_access_token(token_data)
@@ -316,30 +330,56 @@ class AuthService:
         old_jti: str | None = payload.get("jti")
         old_family: str | None = payload.get("family")
 
-        # Replay attack detection via consumed-token tracking
+        # Replay attack detection via consumed-token tracking with grace period.
+        # We store the consumption timestamp so we can distinguish between:
+        #   - Race conditions (two concurrent requests using the same token within ~10s)
+        #   - Genuine replay attacks (token reused after the grace period)
+        _RACE_CONDITION_GRACE_SECONDS = 10
         redis = await self._get_redis()
         if redis and old_jti:
             consumed_key = f"consumed_rt:{old_jti}"
-            was_consumed = await redis.get(consumed_key)
-            if was_consumed:
-                # A previously-consumed token is being reused - this is a replay attack.
-                # Revoke ALL tokens for the user to protect the account.
-                logger.warning(
-                    "Replay attack detected: refresh token jti=%s reused for user %s; "
-                    "revoking all tokens",
-                    old_jti,
-                    user_id,
-                )
-                await self.revoke_user_tokens(user_id)
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Token reuse detected; all sessions have been revoked",
-                )
+            consumed_at_raw = await redis.get(consumed_key)
+            if consumed_at_raw:
+                try:
+                    consumed_ts = float(consumed_at_raw)
+                    elapsed = time.time() - consumed_ts
+                except (ValueError, TypeError):
+                    # Fallback: treat legacy "1" markers as a genuine replay attack
+                    elapsed = _RACE_CONDITION_GRACE_SECONDS + 1
 
-            # Mark this refresh token as consumed so it cannot be replayed
+                if elapsed < _RACE_CONDITION_GRACE_SECONDS:
+                    # Concurrent refresh request using the same token (race condition).
+                    # The first request already issued new tokens; simply reject this one
+                    # without revoking the user's entire session.
+                    logger.info(
+                        "Concurrent refresh detected for jti=%s (%.1fs ago), rejecting duplicate",
+                        old_jti,
+                        elapsed,
+                    )
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail="Token already refreshed",
+                    )
+                else:
+                    # Token reused well after it was consumed - this is a genuine replay attack.
+                    logger.warning(
+                        "Replay attack detected: refresh token jti=%s reused for user %s "
+                        "(%.1fs after consumption); revoking all tokens",
+                        old_jti,
+                        user_id,
+                        elapsed,
+                    )
+                    await self.revoke_user_tokens(user_id)
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail="Token reuse detected; all sessions have been revoked",
+                    )
+
+            # Mark this refresh token as consumed with the current timestamp.
+            # Using the timestamp (instead of "1") allows the grace period check above.
             ttl_seconds = settings.JWT_REFRESH_TOKEN_EXPIRE_DAYS * 86400
             try:
-                await redis.set(consumed_key, "1", ex=ttl_seconds)
+                await redis.set(consumed_key, str(time.time()), ex=ttl_seconds)
             except Exception:
                 logger.warning(
                     "Failed to mark refresh token jti=%s as consumed", old_jti, exc_info=True

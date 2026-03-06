@@ -10,6 +10,10 @@ import type {
   DatasetListResponse,
   DatasetStatistics,
   DatasetUpdate,
+  DatetimeApplyResult,
+  DatetimeAutoDetectResult,
+  DatetimeConfig,
+  DatetimeTestResult,
   ImportRequest,
   ImportStatusResponse,
 } from '$lib/types/data';
@@ -160,5 +164,78 @@ export async function fetchDatasetStatistics(
     { credentials: 'include' }
   );
   return handleApiResponse<DatasetStatistics>(response);
+}
+
+/**
+ * Get datetime parsing configuration for a dataset.
+ */
+export async function fetchDatetimeConfig(
+  projectId: string,
+  datasetId: string
+): Promise<DatetimeConfig> {
+  const response = await fetchWithErrorHandling(
+    `${API_BASE}/projects/${projectId}/datasets/${datasetId}/datetime-config`,
+    { credentials: 'include' }
+  );
+  return handleApiResponse<DatetimeConfig>(response);
+}
+
+/**
+ * Auto-detect datetime pattern from sample filenames.
+ */
+export async function autoDetectDatetime(
+  projectId: string,
+  datasetId: string
+): Promise<DatetimeAutoDetectResult> {
+  const response = await fetchWithErrorHandling(
+    `${API_BASE}/projects/${projectId}/datasets/${datasetId}/datetime-config/auto-detect`,
+    {
+      method: 'POST',
+      credentials: 'include',
+    }
+  );
+  return handleApiResponse<DatetimeAutoDetectResult>(response);
+}
+
+/**
+ * Test a datetime pattern against sample filenames.
+ */
+export async function testDatetimePattern(
+  projectId: string,
+  datasetId: string,
+  pattern: string,
+  formatStr: string
+): Promise<DatetimeTestResult[]> {
+  const response = await fetchWithErrorHandling(
+    `${API_BASE}/projects/${projectId}/datasets/${datasetId}/datetime-config/test`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ pattern, format_str: formatStr }),
+    }
+  );
+  return handleApiResponse<DatetimeTestResult[]>(response);
+}
+
+/**
+ * Apply a datetime pattern to all recordings in a dataset.
+ */
+export async function applyDatetimePattern(
+  projectId: string,
+  datasetId: string,
+  pattern: string,
+  formatStr: string
+): Promise<DatetimeApplyResult> {
+  const response = await fetchWithErrorHandling(
+    `${API_BASE}/projects/${projectId}/datasets/${datasetId}/datetime-config/apply`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ pattern, format_str: formatStr }),
+    }
+  );
+  return handleApiResponse<DatetimeApplyResult>(response);
 }
 

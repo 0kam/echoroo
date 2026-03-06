@@ -241,7 +241,7 @@ export type UploadFileStatus = 'pending' | 'uploaded' | 'valid' | 'invalid' | 'i
 export interface UploadFileRequest {
   filename: string;
   size: number;
-  checksum_sha256: string;
+  checksum_sha256?: string | null;
 }
 
 export interface CreateUploadSessionRequest {
@@ -465,4 +465,42 @@ export interface ClipListParams {
   page_size?: number;
   sort_by?: 'start_time' | 'created_at';
   sort_order?: 'asc' | 'desc';
+}
+
+// ============================================
+// Datetime Config Types
+// ============================================
+
+export interface DatetimeParseSummary {
+  total: number;
+  success: number;
+  failed: number;
+  pending: number;
+}
+
+export interface DatetimeConfig {
+  datetime_pattern: string | null;
+  datetime_format: string | null;
+  sample_filenames: string[];
+  parse_summary: DatetimeParseSummary;
+}
+
+export interface DatetimeTestResult {
+  filename: string;
+  success: boolean;
+  parsed_datetime: string | null;
+  error: string | null;
+}
+
+export interface DatetimeAutoDetectResult {
+  detected: boolean;
+  pattern: string | null;
+  format_str: string | null;
+  preset_name: string | null;
+  results: DatetimeTestResult[];
+}
+
+export interface DatetimeApplyResult {
+  task_id: string;
+  total_recordings: number;
 }

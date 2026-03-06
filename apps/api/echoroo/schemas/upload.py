@@ -6,7 +6,6 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field, field_validator
 
-
 # ---------------------------------------------------------------------------
 # Request schemas
 # ---------------------------------------------------------------------------
@@ -32,12 +31,12 @@ class UploadFileRequest(BaseModel):
             raise ValueError("Filename must not contain control characters")
         return v
     size: int = Field(..., gt=0, le=1073741824, description="File size in bytes (max 1GB)")
-    checksum_sha256: str = Field(
-        ...,
+    checksum_sha256: str | None = Field(
+        None,
         min_length=64,
         max_length=64,
         pattern=r"^[a-f0-9]{64}$",
-        description="Lowercase hex SHA-256 checksum",
+        description="Lowercase hex SHA-256 checksum (optional, skipped if unavailable e.g. HTTP without crypto.subtle)",
     )
 
 

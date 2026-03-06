@@ -13,7 +13,9 @@
   import ExportDialog from '$lib/components/data/ExportDialog.svelte';
   import RecordingList from '$lib/components/data/RecordingList.svelte';
   import DeleteConfirmDialog from '$lib/components/ui/DeleteConfirmDialog.svelte';
-  import BirdnetStatus from '$lib/components/data/BirdnetStatus.svelte';
+  import MLAnalysisStatus from '$lib/components/data/MLAnalysisStatus.svelte';
+  import EmbeddingStatus from '$lib/components/data/EmbeddingStatus.svelte';
+  import DatetimeConfigCard from '$lib/components/data/DatetimeConfigCard.svelte';
 
   const queryClient = useQueryClient();
 
@@ -244,9 +246,19 @@
       />
     {/if}
 
-    <!-- BirdNET ML Detection Status (only if dataset import is complete) -->
+    <!-- Datetime parsing configuration (show when recordings exist) -->
+    {#if dataset.recording_count > 0}
+      <DatetimeConfigCard {projectId} {datasetId} />
+    {/if}
+
+    <!-- ML Detection Status (only if dataset import is complete) -->
     {#if dataset.status === 'completed'}
-      <BirdnetStatus {projectId} {datasetId} />
+      <MLAnalysisStatus {projectId} {datasetId} />
+    {/if}
+
+    <!-- Embedding Generation Status (only if dataset import is complete) -->
+    {#if dataset.status === 'completed'}
+      <EmbeddingStatus {projectId} {datasetId} />
     {/if}
 
     <!-- Statistics (only if completed) -->

@@ -13,10 +13,11 @@ from echoroo.models.enums import DetectionRunStatus
 class DetectionRunCreate(BaseModel):
     """Detection run creation request schema."""
 
-    dataset_id: UUID | None = Field(None, description="Optional dataset ID to scope the run")
+    dataset_id: UUID = Field(..., description="Dataset ID to scope the run")
     model_name: str = Field(..., min_length=1, max_length=100, description="Name of the detection model")
     model_version: str = Field(..., min_length=1, max_length=50, description="Version of the detection model")
     parameters: dict[str, object] | None = Field(None, description="Optional model parameters")
+    embedding_only: bool = Field(False, description="If true, only generate embeddings without running detection")
 
 
 class DetectionRunUpdate(BaseModel):
@@ -55,3 +56,12 @@ class DetectionRunListResponse(BaseModel):
     page: int
     page_size: int
     pages: int
+
+
+class AvailableModelsResponse(BaseModel):
+    """Response listing available ML detection models."""
+
+    models: list[str] = Field(
+        ...,
+        description="Names of models registered in the ModelRegistry (e.g. 'birdnet', 'perch')",
+    )

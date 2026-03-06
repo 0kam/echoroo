@@ -3,10 +3,11 @@
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import case, delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from echoroo.models.enums import DatetimeParseStatus
 from echoroo.models.recording import Recording
 
 
@@ -261,3 +262,58 @@ class RecordingRepository:
             select(func.sum(Recording.duration)).where(Recording.dataset_id == dataset_id)
         )
         return result.scalar_one() or 0.0
+
+    async def get_sample_filenames(self, dataset_id: UUID, limit: int = 10) -> list[str]:
+        """Get diverse sample filenames from recordings in a dataset.
+
+        Args:
+            dataset_id: Dataset's UUID
+            limit: Maximum number of filenames to return
+
+        Returns:
+            List of filenames ordered alphabetically
+        """
+        result = await self.db.execute(
+            select(Recording.filename)
+            .where(Recording.dataset_id == dataset_id)
+            .order_by(Recording.filename)
+            .limit(limit)
+        )
+        return list(result.scalars().all())
+
+    async def get_datetime_parse_summary(self, dataset_id: UUID) -> dict[str, int]:
+        """Get counts of datetime parse statuses for a dataset.
+
+        Args:
+            dataset_id: Dataset's UUID
+
+        Returns:
+            Dictionary with keys: total, success, failed, pending
+        """
+        result = await self.db.execute(
+            select(
+                func.count(Recording.id).label("total"),
+                func.count(
+                    case(
+                        (Recording.datetime_parse_status == DatetimeParseStatus.SUCCESS, 1),
+                    )
+                ).label("success"),
+                func.count(
+                    case(
+                        (Recording.datetime_parse_status == DatetimeParseStatus.FAILED, 1),
+                    )
+                ).label("failed"),
+                func.count(
+                    case(
+                        (Recording.datetime_parse_status == DatetimeParseStatus.PENDING, 1),
+                    )
+                ).label("pending"),
+            ).where(Recording.dataset_id == dataset_id)
+        )
+        row = result.one()
+        return {
+            "total": row.total,
+            "success": row.success,
+            "failed": row.failed,
+            "pending": row.pending,
+        }

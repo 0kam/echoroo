@@ -102,6 +102,7 @@ class DetectionSource(str, Enum):
     """Source of detection (ML model or human reviewer)."""
 
     BIRDNET = "birdnet"
+    PERCH = "perch"
     PERCH_SEARCH = "perch_search"
     HUMAN = "human"
 

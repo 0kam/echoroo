@@ -7,10 +7,12 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 from fastapi import HTTPException, status
+from sqlalchemy import select as sa_select
 
 from echoroo.models.annotation import Annotation
 from echoroo.models.confirmed_region import ConfirmedRegion
 from echoroo.models.enums import DetectionStatus
+from echoroo.models.taxon_vernacular_name import TaxonVernacularName
 from echoroo.repositories.annotation import AnnotationRepository, TemporalSummaryRow
 from echoroo.repositories.confirmed_region import ConfirmedRegionRepository
 from echoroo.schemas.detection import (
@@ -102,16 +104,60 @@ class DetectionService:
             pages=pages,
         )
 
+    async def _resolve_vernacular_names(
+        self,
+        taxon_ids: list[UUID],
+        locale: str,
+    ) -> dict[UUID, str]:
+        """Batch-resolve vernacular names for a list of taxon IDs.
+
+        Fetches primary vernacular names in one query to avoid N+1 queries.
+        Falls back to any vernacular name for the locale if no primary exists.
+
+        Args:
+            taxon_ids: List of taxon UUIDs to resolve
+            locale: Locale code (e.g. "en", "ja")
+
+        Returns:
+            Mapping of taxon_id to vernacular name string
+        """
+        if not taxon_ids:
+            return {}
+
+        result = await self.annotation_repo.db.execute(
+            sa_select(TaxonVernacularName)
+            .where(TaxonVernacularName.taxon_id.in_(taxon_ids))
+            .where(TaxonVernacularName.locale == locale)
+            .order_by(
+                TaxonVernacularName.taxon_id,
+                TaxonVernacularName.is_primary.desc(),
+            )
+        )
+        vernacular_names = result.scalars().all()
+
+        # Build mapping: keep only the first (highest priority) entry per taxon_id
+        mapping: dict[UUID, str] = {}
+        for vn in vernacular_names:
+            if vn.taxon_id not in mapping:
+                mapping[vn.taxon_id] = vn.name
+
+        return mapping
+
     async def get_species_summary(
         self,
         project_id: UUID,
         dataset_id: UUID | None = None,
+        locale: str = "en",
     ) -> SpeciesSummaryResponse:
         """Get species detection summary grouped by tag.
+
+        When locale is specified, common names are resolved from TaxonVernacularName
+        using a single batch query to avoid N+1 database calls.
 
         Args:
             project_id: Project's UUID
             dataset_id: Optional dataset filter
+            locale: Locale code for common name resolution (default: "en")
 
         Returns:
             Species summary response with per-species statistics
@@ -121,12 +167,21 @@ class DetectionService:
             dataset_id=dataset_id,
         )
 
+        # Collect taxon IDs for batch vernacular name resolution
+        taxon_ids = [row["taxon_id"] for row in rows if row["taxon_id"] is not None]
+        vernacular_map = await self._resolve_vernacular_names(taxon_ids, locale)
+
         items = [
             SpeciesSummaryItem(
                 tag_id=row["tag_id"],
                 tag_name=row["tag_name"],
                 scientific_name=row["scientific_name"],
-                common_name=row["common_name"],
+                common_name=(
+                    vernacular_map.get(row["taxon_id"], row["common_name"])
+                    if row["taxon_id"] is not None
+                    else row["common_name"]
+                ),
+                taxon_id=row["taxon_id"],
                 total_count=row["total_count"],
                 unreviewed_count=row["unreviewed_count"],
                 confirmed_count=row["confirmed_count"],
@@ -145,19 +200,22 @@ class DetectionService:
         self,
         project_id: UUID,
         dataset_id: UUID | None = None,
+        locale: str = "en",
     ) -> DetectionTemporalDataResponse:
         """Get hourly detection counts grouped by species, date, and hour.
+
+        When locale is specified, common names are resolved from TaxonVernacularName
+        using a single batch query to avoid N+1 database calls.
 
         Args:
             project_id: Project's UUID
             dataset_id: Optional dataset filter
+            locale: Locale code for common name resolution (default: "en")
 
         Returns:
             Temporal data response with per-species hourly counts
         """
         from datetime import date as DateType
-
-        from sqlalchemy import select as sa_select
 
         from echoroo.models.tag import Tag
 
@@ -174,17 +232,35 @@ class DetectionService:
                 grouped[tag_id] = []
             grouped[tag_id].append(row)
 
-        # Fetch tag details for each tag and build response
+        # Batch fetch all tag records in one query
+        tag_ids = list(grouped.keys())
+        if tag_ids:
+            tags_result = await self.annotation_repo.db.execute(
+                sa_select(Tag).where(Tag.id.in_(tag_ids))
+            )
+            tags_by_id: dict[UUID, Tag] = {tag.id: tag for tag in tags_result.scalars().all()}
+        else:
+            tags_by_id = {}
+
+        # Batch resolve vernacular names for all taxon IDs
+        taxon_ids = [tag.taxon_id for tag in tags_by_id.values() if tag.taxon_id is not None]
+        vernacular_map = await self._resolve_vernacular_names(taxon_ids, locale)
+
+        # Build response
         species_list: list[SpeciesTemporalData] = []
         all_dates: list[DateType] = []
 
         for tag_id, tag_rows in grouped.items():
-            tag_result = await self.annotation_repo.db.execute(
-                sa_select(Tag).where(Tag.id == tag_id)
-            )
-            tag = tag_result.scalar_one_or_none()
+            tag = tags_by_id.get(tag_id)
             if tag is None:
                 continue
+
+            # Resolve common name via vernacular map, fall back to tag.common_name
+            resolved_common_name = (
+                vernacular_map.get(tag.taxon_id, tag.common_name)
+                if tag.taxon_id is not None
+                else tag.common_name
+            )
 
             hourly_detections = [
                 HourlyDetection(
@@ -203,7 +279,7 @@ class DetectionService:
                 SpeciesTemporalData(
                     tag_id=tag.id,
                     scientific_name=tag.scientific_name or tag.name,
-                    common_name=tag.common_name,
+                    common_name=resolved_common_name,
                     total_detections=total_detections,
                     detections=hourly_detections,
                 )

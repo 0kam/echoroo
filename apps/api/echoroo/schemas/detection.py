@@ -83,6 +83,7 @@ class SpeciesSummaryItem(BaseModel):
     tag_name: str = Field(..., description="Species tag name")
     scientific_name: str | None = Field(None, description="Scientific name")
     common_name: str | None = Field(None, description="Common name")
+    taxon_id: UUID | None = Field(None, description="Global taxon ID")
     total_count: int = Field(..., description="Total number of detections")
     unreviewed_count: int = Field(..., description="Number of unreviewed detections")
     confirmed_count: int = Field(..., description="Number of confirmed detections")

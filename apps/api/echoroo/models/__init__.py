@@ -42,6 +42,8 @@ from echoroo.models.site import Site
 from echoroo.models.sound_event_annotation import SoundEventAnnotation, sound_event_annotation_tags
 from echoroo.models.system import SystemSetting
 from echoroo.models.tag import Tag
+from echoroo.models.taxon import Taxon
+from echoroo.models.taxon_vernacular_name import TaxonVernacularName
 from echoroo.models.upload import UploadFile, UploadSession
 from echoroo.models.user import APIToken, LoginAttempt, User
 
@@ -71,6 +73,9 @@ __all__ = [
     "SoundEventAnnotation",
     "Note",
     "Tag",
+    # Taxon models
+    "Taxon",
+    "TaxonVernacularName",
     # Detection review models (003-detection-review)
     "Annotation",
     "ConfirmedRegion",

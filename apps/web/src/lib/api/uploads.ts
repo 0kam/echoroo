@@ -71,8 +71,14 @@ export async function fetchUploadSessionStatus(
 /**
  * Compute SHA-256 hash of a File object using the Web Crypto API.
  * Processes the file in 8MB chunks to avoid blocking the main thread for large files.
+ * Returns null if crypto.subtle is unavailable (e.g. HTTP non-secure contexts).
  */
-export async function computeFileSHA256(file: File): Promise<string> {
+export async function computeFileSHA256(file: File): Promise<string | null> {
+  // crypto.subtle is only available in secure contexts (HTTPS or localhost)
+  if (!crypto.subtle) {
+    return null;
+  }
+
   const CHUNK_SIZE = 8 * 1024 * 1024; // 8 MB chunks
   const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
 
@@ -98,6 +104,30 @@ function bufferToHex(buffer: ArrayBuffer): string {
   return Array.from(byteArray)
     .map((b) => b.toString(16).padStart(2, '0'))
     .join('');
+}
+
+/**
+ * Convert a presigned URL to a same-origin relative path.
+ *
+ * The backend generates presigned URLs with an absolute origin
+ * (e.g. http://localhost:3000/s3-proxy/echoroo/...) based on
+ * S3_PUBLIC_ENDPOINT_URL.  When the user accesses the app through
+ * SSH port-forwarding or a different host/IP, the origin in the
+ * presigned URL may not match the browser's actual origin, causing
+ * a cross-origin request that fails due to CORS.
+ *
+ * By stripping the origin and keeping only the path + query, the
+ * browser always sends a same-origin request through the Vite
+ * dev proxy (or production reverse proxy), avoiding CORS entirely.
+ */
+function toRelativeUrl(absoluteUrl: string): string {
+  try {
+    const parsed = new URL(absoluteUrl);
+    return parsed.pathname + parsed.search;
+  } catch {
+    // If it's already relative or unparseable, return as-is
+    return absoluteUrl;
+  }
 }
 
 /**
@@ -128,19 +158,26 @@ export function uploadFileToPresignedUrl(
         onProgress?.(100);
         resolve();
       } else {
-        reject(new Error(`Upload failed with status ${xhr.status}: ${xhr.statusText}`));
+        const body = xhr.responseText?.substring(0, 200) || '';
+        reject(new Error(`Upload failed with status ${xhr.status}: ${xhr.statusText}. ${body}`));
       }
     });
 
     xhr.addEventListener('error', () => {
-      reject(new Error('Network error during file upload'));
+      // XHR error events fire for network-level failures (CORS, DNS, connection refused, etc.)
+      // Include any available response info to help debugging.
+      const detail = xhr.statusText || 'no details available';
+      reject(new Error(`Network error during file upload (${detail}). Check browser console for CORS or connectivity issues.`));
     });
 
     xhr.addEventListener('abort', () => {
       reject(new Error('File upload was aborted'));
     });
 
-    xhr.open('PUT', url);
+    // Convert absolute presigned URL to relative path to ensure same-origin
+    // requests regardless of how the user accesses the app (SSH tunnel, IP, etc.)
+    const relativeUrl = toRelativeUrl(url);
+    xhr.open('PUT', relativeUrl);
     // Do not set Content-Type header; let the presigned URL policy control it
     xhr.send(file);
   });

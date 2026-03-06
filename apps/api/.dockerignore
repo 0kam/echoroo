@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+*.pyc
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.coverage
+*.egg-info/
+test_audio.wav
+celerybeat-schedule

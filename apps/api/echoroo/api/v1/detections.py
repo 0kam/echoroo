@@ -112,6 +112,7 @@ async def get_species_summary(
     current_user: CurrentUser,
     service: DetectionServiceDep,
     dataset_id: UUID | None = None,
+    locale: str = "en",
 ) -> SpeciesSummaryResponse:
     """Get species detection summary.
 
@@ -122,6 +123,7 @@ async def get_species_summary(
         current_user: Current authenticated user
         service: Detection service instance
         dataset_id: Optional dataset filter
+        locale: Locale code for common name resolution (default: "en")
 
     Returns:
         Species summary with per-species detection statistics
@@ -132,6 +134,7 @@ async def get_species_summary(
     return await service.get_species_summary(
         project_id=project_id,
         dataset_id=dataset_id,
+        locale=locale,
     )
 
 
@@ -234,6 +237,7 @@ async def get_temporal_data(
     current_user: CurrentUser,
     service: DetectionServiceDep,
     dataset_id: UUID | None = None,
+    locale: str = "en",
 ) -> DetectionTemporalDataResponse:
     """Get temporal detection data for visualization.
 
@@ -247,6 +251,7 @@ async def get_temporal_data(
         current_user: Current authenticated user
         service: Detection service instance
         dataset_id: Optional dataset filter
+        locale: Locale code for common name resolution (default: "en")
 
     Returns:
         Temporal data response grouped by species with hourly counts
@@ -257,6 +262,7 @@ async def get_temporal_data(
     return await service.get_temporal_data(
         project_id=project_id,
         dataset_id=dataset_id,
+        locale=locale,
     )
 
 

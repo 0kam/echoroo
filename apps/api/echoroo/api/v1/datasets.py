@@ -23,6 +23,13 @@ from echoroo.schemas.dataset import (
     DatasetResponse,
     DatasetStatisticsResponse,
     DatasetUpdate,
+    DatetimeApplyRequest,
+    DatetimeApplyResponse,
+    DatetimeAutoDetectResponse,
+    DatetimeConfigResponse,
+    DatetimeParseSummary,
+    DatetimeTestRequest,
+    DatetimeTestResult,
     ImportRequest,
     ImportStatusResponse,
 )
@@ -605,3 +612,192 @@ async def export_dataset(
         )
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
+
+
+# Datetime configuration endpoints
+
+
+@router.get(
+    "/{dataset_id}/datetime-config",
+    response_model=DatetimeConfigResponse,
+    summary="Get datetime config",
+    description="Get datetime parsing configuration and parse status summary for a dataset",
+)
+async def get_datetime_config(
+    project_id: UUID,
+    dataset_id: UUID,
+    current_user: CurrentUser,
+    service: DatasetServiceDep,
+) -> DatetimeConfigResponse:
+    """Get datetime parsing configuration and status for a dataset.
+
+    Args:
+        project_id: Project's UUID
+        dataset_id: Dataset's UUID
+        current_user: Current authenticated user
+        service: Dataset service instance
+
+    Returns:
+        Datetime config with sample filenames and parse summary
+
+    Raises:
+        401: Not authenticated
+        403: Access denied
+        404: Dataset not found
+    """
+    # Verify access
+    await service.get_by_id(current_user.id, project_id, dataset_id)
+
+    config = await service.get_datetime_config(dataset_id)
+    summary_data = config["parse_summary"]
+    assert isinstance(summary_data, dict)
+    sample_filenames = config["sample_filenames"]
+    assert isinstance(sample_filenames, list)
+
+    return DatetimeConfigResponse(
+        datetime_pattern=config["datetime_pattern"] if isinstance(config["datetime_pattern"], str) else None,
+        datetime_format=config["datetime_format"] if isinstance(config["datetime_format"], str) else None,
+        sample_filenames=sample_filenames,
+        parse_summary=DatetimeParseSummary(**summary_data),
+    )
+
+
+@router.post(
+    "/{dataset_id}/datetime-config/auto-detect",
+    response_model=DatetimeAutoDetectResponse,
+    summary="Auto-detect datetime pattern",
+    description="Auto-detect datetime pattern from sample filenames in the dataset",
+)
+async def auto_detect_datetime(
+    project_id: UUID,
+    dataset_id: UUID,
+    current_user: CurrentUser,
+    service: DatasetServiceDep,
+) -> DatetimeAutoDetectResponse:
+    """Auto-detect datetime pattern from sample filenames.
+
+    Args:
+        project_id: Project's UUID
+        dataset_id: Dataset's UUID
+        current_user: Current authenticated user
+        service: Dataset service instance
+
+    Returns:
+        Auto-detection result with pattern, format, and test results
+
+    Raises:
+        401: Not authenticated
+        403: Access denied
+        404: Dataset not found
+    """
+    # Verify access
+    await service.get_by_id(current_user.id, project_id, dataset_id)
+
+    result = await service.auto_detect_datetime_pattern(dataset_id)
+    raw_results = result.get("results", [])
+    assert isinstance(raw_results, list)
+    pattern_val = result.get("pattern")
+    format_str_val = result.get("format_str")
+    preset_name_val = result.get("preset_name")
+
+    return DatetimeAutoDetectResponse(
+        detected=bool(result["detected"]),
+        pattern=pattern_val if isinstance(pattern_val, str) else None,
+        format_str=format_str_val if isinstance(format_str_val, str) else None,
+        preset_name=preset_name_val if isinstance(preset_name_val, str) else None,
+        results=[DatetimeTestResult(**r) for r in raw_results],
+    )
+
+
+@router.post(
+    "/{dataset_id}/datetime-config/test",
+    response_model=list[DatetimeTestResult],
+    summary="Test datetime pattern",
+    description="Test a datetime pattern against sample filenames from the dataset",
+)
+async def test_datetime_pattern(
+    project_id: UUID,
+    dataset_id: UUID,
+    body: DatetimeTestRequest,
+    current_user: CurrentUser,
+    service: DatasetServiceDep,
+) -> list[DatetimeTestResult]:
+    """Test a datetime pattern against sample filenames.
+
+    Args:
+        project_id: Project's UUID
+        dataset_id: Dataset's UUID
+        body: Pattern and format string to test
+        current_user: Current authenticated user
+        service: Dataset service instance
+
+    Returns:
+        List of test results per sample filename
+
+    Raises:
+        401: Not authenticated
+        403: Access denied
+        404: Dataset not found
+    """
+    # Verify access
+    await service.get_by_id(current_user.id, project_id, dataset_id)
+
+    sample_filenames = await service.recording_repo.get_sample_filenames(dataset_id)
+    results = await service.test_datetime_pattern_bulk(sample_filenames, body.pattern, body.format_str)
+
+    return [DatetimeTestResult(**r) for r in results]
+
+
+@router.post(
+    "/{dataset_id}/datetime-config/apply",
+    response_model=DatetimeApplyResponse,
+    summary="Apply datetime pattern",
+    description="Apply a datetime pattern to all recordings in the dataset (admin only)",
+)
+async def apply_datetime_pattern(
+    project_id: UUID,
+    dataset_id: UUID,
+    body: DatetimeApplyRequest,
+    current_user: CurrentUser,
+    service: DatasetServiceDep,
+    db: DbSession,
+) -> DatetimeApplyResponse:
+    """Apply a datetime pattern to all recordings in the dataset.
+
+    Saves the pattern to the dataset and dispatches a Celery task to
+    re-parse datetimes for all recordings.
+
+    Args:
+        project_id: Project's UUID
+        dataset_id: Dataset's UUID
+        body: Pattern and format string to apply
+        current_user: Current authenticated user
+        service: Dataset service instance
+        db: Database session
+
+    Returns:
+        Task ID and total recording count
+
+    Raises:
+        401: Not authenticated
+        403: Not project admin
+        404: Dataset not found
+    """
+    # Verify dataset access (also checks project membership)
+    await service.get_by_id(current_user.id, project_id, dataset_id)
+
+    # Admin check
+    project_repo = ProjectRepository(db)
+    is_admin = await project_repo.is_project_admin(project_id, current_user.id)
+    if not is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only project admins can apply datetime patterns",
+        )
+
+    task_id, total_recordings = await service.apply_datetime_pattern(
+        dataset_id, body.pattern, body.format_str
+    )
+    await db.commit()
+
+    return DatetimeApplyResponse(task_id=task_id, total_recordings=total_recordings)

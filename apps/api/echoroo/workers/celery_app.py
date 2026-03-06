@@ -2,6 +2,16 @@
 
 from __future__ import annotations
 
+import multiprocessing
+
+# Set spawn start method before any TensorFlow/BirdNET imports.
+# On Linux the default is 'fork', which copies the parent's CUDA context into
+# child processes. The child then fails to reinitialize CUDA:
+#   CUDA error: Failed call to cuDeviceGet: CUDA_ERROR_NOT_INITIALIZED
+# Using 'spawn' creates a fresh Python interpreter that can initialize CUDA
+# cleanly. force=True allows calling this even if already set elsewhere.
+multiprocessing.set_start_method("spawn", force=True)
+
 from celery import Celery
 from celery.schedules import crontab
 

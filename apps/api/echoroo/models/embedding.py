@@ -38,8 +38,8 @@ class Embedding(Base):
     start_time: Mapped[float] = mapped_column(nullable=False)
     end_time: Mapped[float] = mapped_column(nullable=False)
 
-    # The actual embedding vector (1024 dimensions for Perch)
-    vector = mapped_column(Vector(1024), nullable=False)
+    # The actual embedding vector (1536 dimensions for Perch v2.0)
+    vector = mapped_column(Vector(1536), nullable=False)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False

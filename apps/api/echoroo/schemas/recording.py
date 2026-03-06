@@ -43,7 +43,7 @@ class RecordingResponse(BaseModel):
     dataset_id: UUID
     filename: str
     path: str
-    hash: str  # noqa: A003
+    hash: str | None = None  # noqa: A003
     duration: float
     samplerate: int
     channels: int
