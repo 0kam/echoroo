@@ -5,6 +5,7 @@
 import type { User } from '$lib/types';
 import { apiClient } from '$lib/api/client';
 import { goto } from '$app/navigation';
+import { localizeHref } from '$lib/paraglide/runtime';
 
 interface AuthState {
   user: User | null;
@@ -93,7 +94,7 @@ function createAuthStore() {
 
         if (isUnauthorized) {
           // Use replace to avoid adding login to the back-navigation stack
-          await goto('/login', { replaceState: true });
+          await goto(localizeHref('/login'), { replaceState: true });
         }
       } finally {
         state.isLoading = false;
@@ -179,10 +180,10 @@ export const authStore = createAuthStore();
 // cleared and the user is redirected to login.
 apiClient.onRefreshFailed = () => {
   authStore.clearUser();
-  goto('/login', { replaceState: true }).catch(() => {
+  goto(localizeHref('/login'), { replaceState: true }).catch(() => {
     // If SvelteKit navigation is not available (e.g., during SSR), fall back to hard redirect
     if (typeof window !== 'undefined') {
-      window.location.href = '/login';
+      window.location.href = localizeHref('/login');
     }
   });
 };

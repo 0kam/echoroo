@@ -68,7 +68,7 @@ BirdNET will automatically fall back to CPU inference. Processing will be slower
 
 ### ML Model Cache
 
-ML models (BirdNET, etc.) are cached in a Docker volume (`echoroo-dev-ml-models`) to avoid re-downloading on container restarts. The models are stored at `/root/.local/share/birdnet/` inside the container.
+ML models (BirdNET, etc.) are cached in a Docker volume (`echoroo-dev-ml-models`) to avoid re-downloading on container restarts. The volume is mounted at `/root/.local/share/birdnet/` inside both the `backend` and `worker` containers (BirdNET writes models to this path by default).
 
 ## Quick Start
 
@@ -112,18 +112,33 @@ All Docker operations are managed through `./scripts/docker.sh`:
 
 | Command | Description |
 |---------|-------------|
-| `start` (default) | Start containers |
+| `start` (default) | Start containers (no rebuild) |
 | `stop` | Stop containers |
-| `restart` | Restart containers |
+| `restart` | Restart containers (no rebuild) |
 | `logs [service]` | Show logs (optionally for specific service) |
 | `status` | Show container status |
 | `shell [service]` | Open shell in container (default: backend) |
 | `db` | Connect to PostgreSQL CLI |
-| `build` | Rebuild Docker images |
-| `watch` | Start with hot reload (dev only) |
+| `build` | Rebuild Docker images explicitly |
 | `clean` | Stop and remove containers |
 | `clean-all` | Remove everything including volumes (DATA LOSS!) |
-| `help` | Show help |
+
+To force a rebuild on start or restart, set `ECHOROO_BUILD=1`:
+
+```bash
+# Rebuild images then start
+ECHOROO_BUILD=1 ./scripts/docker.sh dev
+
+# Rebuild images then restart all services
+ECHOROO_BUILD=1 ./scripts/docker.sh dev restart
+```
+
+Use `./scripts/docker.sh dev build` for an explicit no-cache rebuild:
+
+```bash
+./scripts/docker.sh dev build
+./scripts/docker.sh dev restart
+```
 
 ## Development Environment
 
@@ -163,14 +178,25 @@ cd back && docker build -f Dockerfile.base -t echoroo-base:latest .
 
 This image contains all heavy ML dependencies (PyTorch, etc.) and only needs to be rebuilt when `pyproject.toml` or `uv.lock` changes.
 
+### LocalStack Persistence
+
+LocalStack S3 data is persisted via a bind mount so uploaded files survive container restarts. The host path defaults to `./.data/localstack` and can be customized:
+
+```bash
+# In .env (optional)
+ECHOROO_LOCALSTACK_DATA=/path/to/localstack-data
+```
+
+The `.data/` directory is git-ignored automatically.
+
 ### Starting
 
 ```bash
-# Start all services (source code is volume-mounted)
+# Start all services (source code is volume-mounted, no rebuild)
 ./scripts/docker.sh dev
 
-# Start with hot reload (watches for file changes)
-./scripts/docker.sh dev watch
+# Force rebuild then start (e.g. after dependency changes)
+ECHOROO_BUILD=1 ./scripts/docker.sh dev
 ```
 
 ### Services

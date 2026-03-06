@@ -5,14 +5,13 @@ Tests verify the complete upload lifecycle from session creation through status 
 
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
-from uuid import uuid4
 
 import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from echoroo.models.dataset import Dataset
-from echoroo.models.enums import DatasetStatus, UploadSessionStatus
+from echoroo.models.enums import DatasetStatus
 from echoroo.models.site import Site
 
 if TYPE_CHECKING:

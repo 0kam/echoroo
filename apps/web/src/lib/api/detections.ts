@@ -43,11 +43,12 @@ function buildDetectionParams(params?: DetectionFilters & { page?: number; page_
  */
 export async function fetchSpeciesSummary(
   projectId: string,
-  params?: { dataset_id?: string; search?: string }
+  params?: { dataset_id?: string; search?: string; locale?: string }
 ): Promise<SpeciesSummaryResponse> {
   const query = new URLSearchParams();
   if (params?.dataset_id) query.set('dataset_id', params.dataset_id);
   if (params?.search) query.set('search', params.search);
+  if (params?.locale) query.set('locale', params.locale);
   const qs = query.toString() ? `?${query.toString()}` : '';
   const response = await fetchWithErrorHandling(
     `${API_BASE}/projects/${projectId}/detections/species-summary${qs}`,
@@ -172,10 +173,12 @@ export async function createDetection(
  */
 export async function fetchTemporalData(
   projectId: string,
-  datasetId?: string
+  datasetId?: string,
+  locale?: string
 ): Promise<DetectionTemporalDataResponse> {
   const params = new URLSearchParams();
   if (datasetId) params.set('dataset_id', datasetId);
+  if (locale) params.set('locale', locale);
   const qs = params.toString() ? `?${params.toString()}` : '';
   const response = await fetchWithErrorHandling(
     `${API_BASE}/projects/${projectId}/detections/temporal-data${qs}`,

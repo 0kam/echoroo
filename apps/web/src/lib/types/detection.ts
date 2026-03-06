@@ -16,7 +16,7 @@ import type { Tag } from './annotation';
 /**
  * Origin of a detection: automated model or human review
  */
-export type DetectionSource = 'birdnet' | 'perch_search' | 'human';
+export type DetectionSource = 'birdnet' | 'perch' | 'perch_search' | 'human';
 
 /**
  * Review state of a detection
@@ -148,6 +148,8 @@ export interface SpeciesSummary {
   unreviewed_count: number;
   /** Mean confidence score across all detections (0–1); null if no scored detections */
   avg_confidence: number | null;
+  /** Global taxon identifier linking this species to the taxa table; null if not linked */
+  taxon_id?: string | null;
 }
 
 // ============================================

@@ -135,16 +135,21 @@ class TagRepository:
         project_id: UUID,
         scientific_name: str,
         common_name: str,
+        taxon_id: UUID | None = None,
     ) -> Tag:
         """Get an existing species tag by scientific name or create a new one.
 
         Queries by project_id and scientific_name. Creates a new tag with
         category=SPECIES when no match is found.
 
+        If taxon_id is provided and an existing tag has no taxon_id linked,
+        the existing tag is updated to link the taxon.
+
         Args:
             project_id: Project UUID to scope the lookup.
             scientific_name: Scientific species name (e.g. "Turdus merula").
             common_name: Common species name (e.g. "Eurasian Blackbird").
+            taxon_id: Optional UUID of the global Taxon record to link.
 
         Returns:
             Existing or newly created Tag instance.
@@ -158,6 +163,9 @@ class TagRepository:
         )
         existing = result.scalar_one_or_none()
         if existing is not None:
+            if taxon_id and existing.taxon_id is None:
+                existing.taxon_id = taxon_id
+                await self.db.flush()
             return existing
 
         tag = Tag(
@@ -166,6 +174,7 @@ class TagRepository:
             category=TagCategory.SPECIES,
             scientific_name=scientific_name,
             common_name=common_name,
+            taxon_id=taxon_id,
         )
         self.db.add(tag)
         await self.db.flush()

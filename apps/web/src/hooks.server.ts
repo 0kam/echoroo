@@ -78,37 +78,17 @@ async function checkSetupStatus(): Promise<{
 }
 
 /**
- * Validate refresh token against the backend.
- * Returns true if the token is valid, false otherwise.
- * Also returns the new set-cookie header from the backend if the token was refreshed.
+ * Check if a refresh token cookie value appears structurally valid (non-empty).
+ * We intentionally do NOT call the backend refresh endpoint here to avoid a
+ * race condition: the client-side auth store also calls /auth/refresh on
+ * initialization, and hitting the endpoint twice with the same token causes
+ * the backend to detect a replay attack and revoke the session.
+ *
+ * True token validity is verified lazily by the client when it calls
+ * /api/v1/users/me (which triggers a refresh internally if needed).
  */
-async function validateRefreshToken(
-  refreshToken: string
-): Promise<{ valid: boolean; setCookieHeader: string | null }> {
-  try {
-    const response = await fetch(`${getServerApiUrl()}/api/v1/auth/refresh`, {
-      method: 'POST',
-      headers: {
-        Cookie: `refresh_token=${refreshToken}`,
-        'Content-Type': 'application/json',
-      },
-      signal: AbortSignal.timeout(5000),
-    });
-
-    if (response.ok) {
-      return {
-        valid: true,
-        setCookieHeader: response.headers.get('set-cookie'),
-      };
-    }
-
-    // 401 or other error means token is invalid
-    return { valid: false, setCookieHeader: null };
-  } catch {
-    // Backend unreachable - fail open to preserve availability
-    // The client-side auth initialization will handle further validation
-    return { valid: true, setCookieHeader: null };
-  }
+function isRefreshTokenPresent(refreshToken: string): boolean {
+  return refreshToken.trim().length > 0;
 }
 
 /**
@@ -170,51 +150,17 @@ async function handleAuth(
   let isAuthenticated = false;
 
   if (refreshToken) {
-    // Check if we've recently validated this session (cache for 5 minutes)
-    const recentlyValidated = cookies.get('_auth_validated');
-
-    if (recentlyValidated) {
-      // Session was validated recently, trust the cached result
-      isAuthenticated = true;
-    } else {
-      // Validate token against the backend
-      const { valid, setCookieHeader } = await validateRefreshToken(refreshToken);
-
-      if (valid) {
-        isAuthenticated = true;
-
-        // Cache the validation result for 5 minutes to avoid hitting backend on every request
-        cookies.set('_auth_validated', '1', {
-          path: '/',
-          maxAge: 300,
-          httpOnly: true,
-          secure: false, // dev environment; set to true in production
-          sameSite: 'lax',
-        });
-
-        // Forward the updated refresh token cookie from the backend if provided
-        if (setCookieHeader) {
-          // Extract the refresh_token value from the Set-Cookie header
-          // Format: "refresh_token=<value>; Path=...; ..."
-          const match = setCookieHeader.match(/refresh_token=([^;]+)/);
-          const newTokenValue = match?.[1];
-          if (newTokenValue) {
-            cookies.set('refresh_token', newTokenValue, {
-              path: '/',
-              httpOnly: true,
-              secure: false,
-              sameSite: 'lax',
-            });
-          }
-        }
-      } else {
-        // Token is invalid - clear both possible cookie paths
-        // The cookie may have been set on '/' (old) or '/api/v1/auth' (new)
-        cookies.delete('refresh_token', { path: '/' });
-        cookies.delete('_auth_validated', { path: '/' });
-        isAuthenticated = false;
-      }
-    }
+    // Only check that the refresh token cookie is present and non-empty.
+    // We deliberately avoid calling the backend /auth/refresh endpoint here
+    // because the client-side auth store also calls it on initialization.
+    // Calling it twice with the same token triggers a replay-attack detection
+    // on the backend and causes the session to be revoked.
+    //
+    // The client is responsible for all token refresh operations.
+    // If the token is actually expired or revoked, the client's /users/me
+    // call will fail with 401, the client will attempt a refresh, and if that
+    // also fails it will redirect to /login.
+    isAuthenticated = isRefreshTokenPresent(refreshToken);
   }
 
   // Store auth state in locals for use in load functions

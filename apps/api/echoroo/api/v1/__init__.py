@@ -17,9 +17,11 @@ from echoroo.api.v1 import (
     projects,
     recorders,
     recordings,
+    search as search_module,
     setup,
     sites,
     tags,
+    taxa,
     uploads,
     users,
 )
@@ -38,6 +40,7 @@ api_router.include_router(recordings.router)
 api_router.include_router(clips.router)
 api_router.include_router(h3.router)
 api_router.include_router(tags.router)
+api_router.include_router(taxa.router)
 api_router.include_router(recorders.router)
 api_router.include_router(annotation_projects.router)
 api_router.include_router(annotation_tasks.router)
@@ -47,5 +50,8 @@ api_router.include_router(admin.router)
 api_router.include_router(detections.router)
 api_router.include_router(confirmed_regions.router)
 api_router.include_router(detection_runs.router)
+api_router.include_router(detection_runs.models_router)
 # Upload session router
 api_router.include_router(uploads.router)
+# Similarity search router
+api_router.include_router(search_module.router)

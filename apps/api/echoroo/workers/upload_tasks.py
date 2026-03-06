@@ -309,32 +309,34 @@ async def _run_validate(session_id: str) -> dict[str, Any]:
                     tmp.flush()
 
                     # Verify SHA-256 checksum to detect corruption or TOCTOU replacement
-                    tmp.seek(0)
-                    hasher = hashlib.sha256()
-                    while True:
-                        read_chunk = tmp.read(65536)
-                        if not read_chunk:
-                            break
-                        hasher.update(read_chunk)
-                    actual_hash = hasher.hexdigest()
-                    if not hmac.compare_digest(actual_hash, file.checksum_sha256):
-                        checksum_ok = False
-                        logger.warning(
-                            "Checksum mismatch for file %s: expected %s..., got %s...",
-                            file.original_filename,
-                            file.checksum_sha256[:16],
-                            actual_hash[:16],
-                        )
-                        await file_repo.update_status(
-                            file.id,
-                            UploadFileStatus.INVALID,
-                            validation_error=(
-                                f"Checksum mismatch: expected {file.checksum_sha256[:16]}..., "
-                                f"got {actual_hash[:16]}..."
-                            ),
-                        )
-                        await db.commit()
-                        invalid_count += 1
+                    # Skip verification if no checksum was provided (e.g. HTTP without crypto.subtle)
+                    if file.checksum_sha256 is not None:
+                        tmp.seek(0)
+                        hasher = hashlib.sha256()
+                        while True:
+                            read_chunk = tmp.read(65536)
+                            if not read_chunk:
+                                break
+                            hasher.update(read_chunk)
+                        actual_hash = hasher.hexdigest()
+                        if not hmac.compare_digest(actual_hash, file.checksum_sha256):
+                            checksum_ok = False
+                            logger.warning(
+                                "Checksum mismatch for file %s: expected %s..., got %s...",
+                                file.original_filename,
+                                file.checksum_sha256[:16],
+                                actual_hash[:16],
+                            )
+                            await file_repo.update_status(
+                                file.id,
+                                UploadFileStatus.INVALID,
+                                validation_error=(
+                                    f"Checksum mismatch: expected {file.checksum_sha256[:16]}..., "
+                                    f"got {actual_hash[:16]}..."
+                                ),
+                            )
+                            await db.commit()
+                            invalid_count += 1
 
                 if checksum_ok:
                     probe_data = _run_ffprobe(tmp_path)
@@ -566,15 +568,10 @@ async def _run_import(
             failed_count,
         )
 
-        # Trigger BirdNET detection after successful import
-        try:
-            from echoroo.workers.ml_tasks import run_birdnet_detection
-
-            run_birdnet_detection.delay(str(dataset_id), str(project_id))
-            logger.info("Triggered BirdNET detection for dataset %s", dataset_id)
-        except Exception as e:  # noqa: BLE001
-            logger.warning("Failed to trigger BirdNET detection: %s", e)
-            # Import itself should still succeed even if ML trigger fails
+        # Note: automatic BirdNET detection after import has been removed.
+        # Detection runs are now created explicitly via the API (DetectionRunService),
+        # which ensures a DetectionRun record is committed to the database before
+        # the Celery task is dispatched (avoiding a race condition).
 
         return {
             "session_id": session_id,
@@ -729,6 +726,107 @@ def import_from_upload_session(
         logger.exception("Import failed for session %s: %s", session_id, exc)
         with contextlib.suppress(Exception):
             asyncio.run(_mark_session_failed(session_id, str(exc)))
+        raise self.retry(exc=exc, countdown=30) from exc
+
+
+async def _run_reparse_datetimes(
+    dataset_id: str,
+    pattern: str,
+    format_str: str,
+) -> dict[str, Any]:
+    """Async implementation of datetime re-parsing for all recordings in a dataset."""
+    session_factory = _get_session_factory()
+    uuid_dataset_id = UUID(dataset_id)
+
+    async with session_factory() as db:
+        recording_repo = RecordingRepository(db)
+
+        total = await recording_repo.count_by_dataset(uuid_dataset_id)
+        updated = 0
+        failed = 0
+
+        # Process in batches of 100
+        page = 1
+        while True:
+            recordings_page, _ = await recording_repo.list_by_dataset(
+                uuid_dataset_id,
+                page=page,
+                page_size=_BATCH_SIZE,
+                sort_by="id",
+                sort_order="asc",
+            )
+            if not recordings_page:
+                break
+
+            for recording in recordings_page:
+                parsed_dt, parse_error = _parse_datetime_from_filename(
+                    recording.filename, pattern, format_str
+                )
+
+                if parse_error is not None:
+                    recording.datetime_parse_status = DatetimeParseStatus.FAILED
+                    recording.datetime_parse_error = parse_error
+                    recording.datetime = None
+                    failed += 1
+                elif parsed_dt is not None:
+                    recording.datetime_parse_status = DatetimeParseStatus.SUCCESS
+                    recording.datetime_parse_error = None
+                    recording.datetime = parsed_dt
+                    updated += 1
+                else:
+                    recording.datetime_parse_status = DatetimeParseStatus.PENDING
+                    recording.datetime_parse_error = None
+                    recording.datetime = None
+
+            await db.commit()
+            page += 1
+
+        logger.info(
+            "Re-parse complete for dataset %s: %d total, %d updated, %d failed",
+            dataset_id,
+            total,
+            updated,
+            failed,
+        )
+        return {
+            "dataset_id": dataset_id,
+            "total": total,
+            "updated": updated,
+            "failed": failed,
+        }
+
+
+@app.task(  # type: ignore[untyped-decorator]
+    bind=True,
+    name="echoroo.workers.upload_tasks.reparse_recording_datetimes",
+    max_retries=1,
+)
+def reparse_recording_datetimes(
+    self: Any,
+    dataset_id: str,
+    pattern: str,
+    format_str: str,
+) -> dict[str, Any]:
+    """Re-parse datetime from filenames for all recordings in a dataset.
+
+    Processes recordings in batches of 100. For each recording, applies the
+    given regex pattern and strptime format to extract a datetime from the
+    filename, then updates the recording's datetime, datetime_parse_status,
+    and datetime_parse_error fields.
+
+    Args:
+        dataset_id: Dataset UUID string.
+        pattern: Regex pattern for datetime extraction.
+        format_str: strptime format string.
+
+    Returns:
+        Summary dict with total, updated, and failed counts.
+    """
+    logger.info("Starting datetime re-parse for dataset %s", dataset_id)
+    try:
+        return asyncio.run(_run_reparse_datetimes(dataset_id, pattern, format_str))
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Datetime re-parse failed for dataset %s: %s", dataset_id, exc)
         raise self.retry(exc=exc, countdown=30) from exc
 
 

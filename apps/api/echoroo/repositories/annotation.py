@@ -33,6 +33,7 @@ class SpeciesSummaryRow(TypedDict):
     tag_name: str
     scientific_name: str | None
     common_name: str | None
+    taxon_id: UUID | None
     total_count: int
     avg_confidence: float | None
     unreviewed_count: int
@@ -191,6 +192,7 @@ class AnnotationRepository:
                 Tag.name.label("tag_name"),
                 Tag.scientific_name,
                 Tag.common_name,
+                Tag.taxon_id,
                 func.count(Annotation.id).label("total_count"),
                 func.avg(Annotation.confidence).label("avg_confidence"),
                 func.sum(
@@ -222,6 +224,7 @@ class AnnotationRepository:
                 Tag.name,
                 Tag.scientific_name,
                 Tag.common_name,
+                Tag.taxon_id,
             )
             .order_by(func.count(Annotation.id).desc())
         )
@@ -232,20 +235,22 @@ class AnnotationRepository:
         result = await self.db.execute(query)
         rows = result.all()
 
-        return [
-            {
-                "tag_id": row.tag_id,
-                "tag_name": row.tag_name,
-                "scientific_name": row.scientific_name,
-                "common_name": row.common_name,
-                "total_count": row.total_count,
-                "avg_confidence": float(row.avg_confidence) if row.avg_confidence is not None else None,
-                "unreviewed_count": int(row.unreviewed_count or 0),
-                "confirmed_count": int(row.confirmed_count or 0),
-                "rejected_count": int(row.rejected_count or 0),
-            }
+        summary_rows: list[SpeciesSummaryRow] = [
+            SpeciesSummaryRow(
+                tag_id=row.tag_id,
+                tag_name=row.tag_name,
+                scientific_name=row.scientific_name,
+                common_name=row.common_name,
+                taxon_id=row.taxon_id,
+                total_count=row.total_count,
+                avg_confidence=float(row.avg_confidence) if row.avg_confidence is not None else None,
+                unreviewed_count=int(row.unreviewed_count or 0),
+                confirmed_count=int(row.confirmed_count or 0),
+                rejected_count=int(row.rejected_count or 0),
+            )
             for row in rows
         ]
+        return summary_rows
 
     async def temporal_summary(
         self,

@@ -2,6 +2,9 @@ front/src/old_components
 front/src/old_hooks
 old
 
+# LocalStack and other service data (bind mounts)
+.data/
+
 echoroo.db
 front/tests-examples
 front/playwright-report

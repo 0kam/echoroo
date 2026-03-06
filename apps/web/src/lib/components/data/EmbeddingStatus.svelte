@@ -1,12 +1,13 @@
 <script lang="ts">
   import { createQuery, createMutation, useQueryClient } from '@tanstack/svelte-query';
-  import { localizeHref, getLocale } from '$lib/paraglide/runtime';
+  import { getLocale } from '$lib/paraglide/runtime';
   import * as m from '$lib/paraglide/messages';
   import {
     fetchDetectionRuns,
     createDetectionRun,
     retryDetectionRun,
     cancelDetectionRun,
+    fetchAvailableModels,
   } from '$lib/api/detection-runs';
   import type { DetectionRun } from '$lib/types/detection';
 
@@ -19,27 +20,51 @@
 
   const queryClient = useQueryClient();
 
-  const queryKey = $derived(['detection-runs', projectId, datasetId]);
+  // Default to perch — recommended model for embeddings
+  let selectedModel = $state('perch');
 
-  // Separate state for refetch interval to avoid derived_references_self circular reference.
-  // The query is created once; $effect updates refetchInterval reactively after data arrives.
+  /** Display label for a model name */
+  function modelDisplayName(name: string): string {
+    if (name === 'birdnet') return m.ml_analysis_model_birdnet();
+    if (name === 'perch') return m.ml_analysis_model_perch();
+    return name;
+  }
+
+  // Fetch available models from the server
+  const modelsQuery = createQuery({
+    queryKey: ['available-models'],
+    queryFn: fetchAvailableModels,
+    staleTime: 5 * 60 * 1000,
+  });
+
+  // Use a separate query key for embedding runs to avoid interfering with detection run cache
+  const queryKey = $derived(['embedding-runs', projectId, datasetId]);
+
   let refetchInterval = $state<number | false>(false);
 
   const runsQuery = $derived(
     createQuery({
       queryKey: queryKey,
-      queryFn: () => fetchDetectionRuns(projectId, datasetId),
+      queryFn: async () => {
+        const result = await fetchDetectionRuns(projectId, datasetId);
+        // Filter to only embedding-only runs
+        return {
+          ...result,
+          items: result.items.filter(
+            (run) => run.parameters?.embedding_only === true
+          ),
+        };
+      },
       refetchInterval: refetchInterval,
     })
   );
 
-  // Pick the most recent detection run for this dataset
+  // Pick the most recent embedding run for this dataset
   const latestRun: DetectionRun | null = $derived(
     ($runsQuery.data && $runsQuery.data.items.length > 0 ? $runsQuery.data.items[0] : null) ?? null
   );
 
   // Update polling interval reactively based on run status.
-  // This avoids the derived_references_self error caused by referencing runsQuery inside its own options.
   $effect(() => {
     const run = latestRun;
     refetchInterval = run && (run.status === 'pending' || run.status === 'running') ? 10000 : false;
@@ -48,13 +73,13 @@
   let mutationError = $state<string | null>(null);
 
   const createMut = createMutation({
-    mutationFn: () => createDetectionRun(projectId, datasetId),
+    mutationFn: () => createDetectionRun(projectId, datasetId, selectedModel, true),
     onSuccess: () => {
       mutationError = null;
       queryClient.invalidateQueries({ queryKey: queryKey });
     },
     onError: (err: Error) => {
-      mutationError = err.message || 'Failed to start BirdNET analysis';
+      mutationError = err.message || 'Failed to start embedding generation';
     },
   });
 
@@ -65,7 +90,7 @@
       queryClient.invalidateQueries({ queryKey: queryKey });
     },
     onError: (err: Error) => {
-      mutationError = err.message || 'Failed to retry BirdNET analysis';
+      mutationError = err.message || 'Failed to retry embedding generation';
     },
   });
 
@@ -76,20 +101,25 @@
       queryClient.invalidateQueries({ queryKey: queryKey });
     },
     onError: (err: Error) => {
-      mutationError = err.message || 'Failed to cancel BirdNET analysis';
+      mutationError = err.message || 'Failed to cancel embedding generation';
     },
   });
 
   const isActing = $derived(
     $createMut.isPending || $retryMut.isPending || $cancelMut.isPending
   );
+
+  /** Display name for the run's model */
+  function runModelLabel(run: DetectionRun): string {
+    return modelDisplayName(run.model_name);
+  }
 </script>
 
 <div class="rounded-lg border border-gray-200 bg-white p-6">
   <div class="mb-4 flex items-center gap-2">
-    <!-- Bird icon (SVG) -->
+    <!-- Embedding/vector icon (SVG) -->
     <svg
-      class="h-5 w-5 text-indigo-500"
+      class="h-5 w-5 text-violet-500"
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"
@@ -98,12 +128,18 @@
       stroke-linejoin="round"
       aria-hidden="true"
     >
-      <!-- Stylized bird silhouette using path -->
-      <path d="M2 12c1-4 4-6 7-6 2 0 4 1 5 3 1-1 2.5-1.5 4-1" />
-      <path d="M9 12c0 2 1.5 4 3 5s4 1 5-1" />
-      <path d="M12 17v3" />
+      <circle cx="6" cy="6" r="2" />
+      <circle cx="18" cy="6" r="2" />
+      <circle cx="6" cy="18" r="2" />
+      <circle cx="18" cy="18" r="2" />
+      <line x1="8" y1="6" x2="16" y2="6" />
+      <line x1="6" y1="8" x2="6" y2="16" />
+      <line x1="8" y1="18" x2="16" y2="18" />
+      <line x1="18" y1="8" x2="18" y2="16" />
+      <line x1="8" y1="8" x2="16" y2="16" />
+      <line x1="16" y1="8" x2="8" y2="16" />
     </svg>
-    <h3 class="text-base font-semibold text-gray-900">BirdNET Analysis</h3>
+    <h3 class="text-base font-semibold text-gray-900">{m.embedding_title()}</h3>
   </div>
 
   {#if $runsQuery.isLoading}
@@ -116,21 +152,45 @@
     </div>
   {:else if $runsQuery.isError}
     <div class="text-sm text-red-600">
-      Failed to load detection status: {$runsQuery.error?.message}
+      Failed to load embedding status: {$runsQuery.error?.message}
     </div>
   {:else if !latestRun}
-    <!-- No runs yet — invite the user to run BirdNET -->
-    <div class="flex items-center justify-between gap-4">
-      <p class="text-sm text-gray-500">
-        Run BirdNET to automatically detect bird species in the recordings.
-      </p>
-      <button
-        onclick={() => { mutationError = null; $createMut.mutate(); }}
-        disabled={isActing}
-        class="flex-shrink-0 rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
-      >
-        {$createMut.isPending ? 'Starting...' : 'Run BirdNET'}
-      </button>
+    <!-- No runs yet — show model selector and invite the user to generate embeddings -->
+    <div class="space-y-4">
+      <!-- Model selector -->
+      <div>
+        <label for="embedding-model-select" class="mb-1 block text-sm font-medium text-gray-700">
+          {m.embedding_select_model()}
+        </label>
+        <select
+          id="embedding-model-select"
+          bind:value={selectedModel}
+          class="block w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-violet-500 focus:outline-none focus:ring-1 focus:ring-violet-500"
+        >
+          {#if $modelsQuery.data}
+            {#each $modelsQuery.data as model (model)}
+              <option value={model}>{modelDisplayName(model)}</option>
+            {/each}
+          {:else}
+            <!-- Fallback options while loading -->
+            <option value="perch">{m.ml_analysis_model_perch()}</option>
+            <option value="birdnet">{m.ml_analysis_model_birdnet()}</option>
+          {/if}
+        </select>
+      </div>
+
+      <div class="flex items-center justify-between gap-4">
+        <p class="text-sm text-gray-500">
+          {m.embedding_desc()}
+        </p>
+        <button
+          onclick={() => { mutationError = null; $createMut.mutate(); }}
+          disabled={isActing}
+          class="flex-shrink-0 rounded-md bg-violet-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {$createMut.isPending ? 'Starting...' : m.embedding_run()}
+        </button>
+      </div>
     </div>
   {:else if latestRun.status === 'pending' || latestRun.status === 'running'}
     <!-- Processing state -->
@@ -141,7 +201,9 @@
           <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
         </svg>
         <div>
-          <p class="text-sm font-medium text-blue-700">Analyzing with BirdNET...</p>
+          <p class="text-sm font-medium text-blue-700">
+            {m.embedding_running({ model: runModelLabel(latestRun) })}
+          </p>
           {#if latestRun.status === 'pending'}
             <p class="text-xs text-blue-500">Queued, waiting to start</p>
           {:else}
@@ -161,14 +223,14 @@
     <!-- Completed state -->
     <div class="flex items-center justify-between gap-4">
       <div class="flex items-center gap-3">
-        <div class="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-green-600">
+        <div class="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-violet-600">
           <svg class="h-4 w-4 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
             <polyline points="20 6 9 17 4 12"></polyline>
           </svg>
         </div>
         <div>
-          <p class="text-sm font-medium text-green-800">
-            BirdNET complete — {m.common_detections_count({ count: latestRun.annotation_count })} found
+          <p class="text-sm font-medium text-violet-800">
+            {m.embedding_completed({ model: runModelLabel(latestRun) })} — {m.embedding_count({ count: latestRun.annotation_count })}
           </p>
           {#if latestRun.completed_at}
             <p class="text-xs text-gray-400">
@@ -178,12 +240,6 @@
         </div>
       </div>
       <div class="flex flex-shrink-0 gap-2">
-        <a
-          href={localizeHref(`/projects/${projectId}/detections?dataset_id=${datasetId}`)}
-          class="rounded-md bg-green-600 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-green-700"
-        >
-          View Detections
-        </a>
         <button
           onclick={() => { if (latestRun) $retryMut.mutate(latestRun.id); }}
           disabled={isActing}
@@ -203,7 +259,9 @@
           </svg>
         </div>
         <div>
-          <p class="text-sm font-medium text-red-700">BirdNET analysis failed</p>
+          <p class="text-sm font-medium text-red-700">
+            {m.embedding_failed({ model: runModelLabel(latestRun) })}
+          </p>
           {#if latestRun.error_message}
             <p class="mt-0.5 text-xs text-red-500">{latestRun.error_message}</p>
           {/if}
@@ -222,6 +280,34 @@
   {#if mutationError}
     <div class="mt-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-600">
       {mutationError}
+    </div>
+  {/if}
+
+  <!-- Recent embedding runs history -->
+  {#if $runsQuery.data && $runsQuery.data.items.length > 1}
+    <div class="mt-4 border-t border-gray-100 pt-4">
+      <p class="mb-2 text-xs font-medium uppercase tracking-wider text-gray-400">Recent Runs</p>
+      <ul class="space-y-1.5">
+        {#each $runsQuery.data.items as run (run.id)}
+          <li class="flex items-center justify-between gap-2 text-xs text-gray-500">
+            <span class="font-medium text-gray-700">{modelDisplayName(run.model_name)} v{run.model_version}</span>
+            <span class={
+              run.status === 'completed' ? 'text-violet-600' :
+              run.status === 'failed' ? 'text-red-500' :
+              run.status === 'running' ? 'text-blue-500' :
+              'text-gray-400'
+            }>
+              {run.status === 'completed' ? 'Completed' :
+               run.status === 'failed' ? 'Failed' :
+               run.status === 'running' ? 'Running...' :
+               run.status === 'pending' ? 'Pending' : run.status}
+            </span>
+            {#if run.completed_at}
+              <span class="ml-auto text-gray-400">{new Date(run.completed_at).toLocaleDateString(getLocale())}</span>
+            {/if}
+          </li>
+        {/each}
+      </ul>
     </div>
   {/if}
 </div>

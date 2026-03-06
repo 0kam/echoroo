@@ -193,3 +193,64 @@ class ExportRequest(BaseModel):
     """Dataset export request."""
 
     include_audio: bool = Field(default=False, description="Include audio files in export")
+
+
+# Datetime configuration schemas
+
+
+class DatetimeParseSummary(BaseModel):
+    """Counts of datetime parse statuses for a dataset."""
+
+    total: int
+    success: int
+    failed: int
+    pending: int
+
+
+class DatetimeConfigResponse(BaseModel):
+    """Current datetime parsing configuration and status for a dataset."""
+
+    datetime_pattern: str | None
+    datetime_format: str | None
+    sample_filenames: list[str]
+    parse_summary: DatetimeParseSummary
+
+
+class DatetimeTestResult(BaseModel):
+    """Result of testing a datetime pattern against a single filename."""
+
+    filename: str
+    success: bool
+    parsed_datetime: str | None = None  # ISO format string
+    error: str | None = None
+
+
+class DatetimeAutoDetectResponse(BaseModel):
+    """Result of auto-detecting a datetime pattern from sample filenames."""
+
+    detected: bool
+    pattern: str | None = None
+    format_str: str | None = None
+    preset_name: str | None = None
+    results: list[DatetimeTestResult]
+
+
+class DatetimeTestRequest(BaseModel):
+    """Request to test a datetime pattern against sample filenames."""
+
+    pattern: str = Field(..., max_length=200)
+    format_str: str
+
+
+class DatetimeApplyRequest(BaseModel):
+    """Request to apply a datetime pattern to all recordings in a dataset."""
+
+    pattern: str = Field(..., max_length=200)
+    format_str: str
+
+
+class DatetimeApplyResponse(BaseModel):
+    """Response after dispatching a datetime re-parse task."""
+
+    task_id: str
+    total_recordings: int

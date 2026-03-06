@@ -468,8 +468,8 @@ async def stream_audio(
 
     try:
         local_file_path = service.audio_service.ensure_file_local(recording.path)
-    except FileNotFoundError:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Audio file not found")
+    except FileNotFoundError as err:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Audio file not found") from err
 
     # Use the recording's stored time_expansion when the caller does not override it
     effective_time_expansion = (
@@ -881,8 +881,8 @@ async def download_recording(
 
     try:
         file_path = service.audio_service.ensure_file_local(recording.path)
-    except FileNotFoundError:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Audio file not found")
+    except FileNotFoundError as err:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Audio file not found") from err
 
     def iter_file() -> Generator[bytes, None, None]:
         """Iterate over file chunks."""

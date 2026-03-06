@@ -66,10 +66,10 @@ class Recording(UUIDMixin, TimestampMixin, Base):
         nullable=False,
         doc="Relative path within audio_dir",
     )
-    hash: Mapped[str] = mapped_column(
+    hash: Mapped[str | None] = mapped_column(
         String(64),
-        nullable=False,
-        doc="MD5 hash for deduplication",
+        nullable=True,
+        doc="SHA-256 hash for deduplication (nullable when checksum unavailable)",
     )
     duration: Mapped[float] = mapped_column(
         Float,

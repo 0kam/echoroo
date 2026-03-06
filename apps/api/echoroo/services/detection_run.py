@@ -7,7 +7,9 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 from fastapi import HTTPException, status
+from sqlalchemy import select
 
+from echoroo.models.dataset import Dataset
 from echoroo.models.detection_run import DetectionRun
 from echoroo.models.enums import DetectionRunStatus
 from echoroo.repositories.annotation import AnnotationRepository
@@ -110,6 +112,10 @@ class DetectionRunService:
     ) -> DetectionRunResponse:
         """Create a new detection run and queue the Celery detection task.
 
+        Dispatches to `run_detection` for all supported models. The model_name
+        is passed through to the Celery task so the worker can load the
+        appropriate inference engine via ModelRegistry.
+
         Args:
             project_id: Project's UUID
             request: Detection run creation data
@@ -119,41 +125,116 @@ class DetectionRunService:
         """
         import logging
 
-        from echoroo.workers.ml_tasks import run_birdnet_detection
+        from echoroo.workers.ml_tasks import run_detection
 
         logger = logging.getLogger(__name__)
+
+        # Validate model_name against the registry before creating the DB record.
+        # Import lazily inside the method because ml modules load heavy
+        # model packages at import time.
+        try:
+            import echoroo.ml.birdnet  # noqa: F401
+            import echoroo.ml.perch  # noqa: F401
+            from echoroo.ml.registry import ModelRegistry
+
+            if not ModelRegistry.is_registered(request.model_name):
+                available = ModelRegistry.available_models()
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Unknown model: '{request.model_name}'. Available: {available}",
+                )
+        except ImportError:
+            # If ml packages are not installed (e.g. lightweight API container),
+            # skip validation and let the Celery worker surface the error.
+            logger.warning(
+                "Could not import ML registry to validate model_name='%s'; "
+                "skipping pre-flight check",
+                request.model_name,
+            )
+
+        # Validate that the dataset belongs to the specified project before
+        # creating the run, to prevent cross-project data processing.
+        dataset_result = await self.detection_run_repo.db.execute(
+            select(Dataset).where(
+                Dataset.id == request.dataset_id,
+                Dataset.project_id == project_id,
+            )
+        )
+        if dataset_result.scalar_one_or_none() is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Dataset not found",
+            )
+
+        # Merge embedding_only flag into parameters so retry() can reconstruct
+        # the correct task type without requiring a schema change to DetectionRun.
+        merged_parameters: dict[str, object] = dict(request.parameters or {})
+        if request.embedding_only:
+            merged_parameters["embedding_only"] = True
 
         run = DetectionRun(
             project_id=project_id,
             dataset_id=request.dataset_id,
             model_name=request.model_name,
             model_version=request.model_version,
-            parameters=request.parameters,
+            parameters=merged_parameters if merged_parameters else None,
             status=DetectionRunStatus.PENDING,
         )
 
         created = await self.detection_run_repo.create(run)
+
+        # Commit before dispatching Celery task to avoid a race condition where
+        # the worker starts before the DB transaction is visible to other connections.
+        await self.detection_run_repo.db.commit()
+
         response = DetectionRunResponse.model_validate(created)
 
-        # Queue the Celery task after the record is created.
-        # Use try/except so DB record creation succeeds even if Celery is unavailable.
+        # Queue the Celery task after the record is committed to the database.
+        # If dispatch fails, mark the run as FAILED so it is not stuck in PENDING
+        # with no task queued.
         try:
-            run_birdnet_detection.delay(
-                str(created.dataset_id),
-                str(project_id),
-                str(created.id),
-            )
-            logger.info(
-                "Queued BirdNET detection task for detection run %s (dataset %s)",
-                created.id,
-                created.dataset_id,
-            )
-        except Exception:  # noqa: BLE001
+            if request.embedding_only:
+                from echoroo.workers.ml_tasks import run_embedding_generation
+
+                run_embedding_generation.delay(
+                    str(created.dataset_id),
+                    str(project_id),
+                    str(created.id),
+                    request.model_name,
+                )
+                logger.info(
+                    "Queued %s embedding-only task for detection run %s (dataset %s)",
+                    request.model_name,
+                    created.id,
+                    created.dataset_id,
+                )
+            else:
+                run_detection.delay(
+                    str(created.dataset_id),
+                    str(project_id),
+                    str(created.id),
+                    request.model_name,
+                )
+                logger.info(
+                    "Queued %s detection task for detection run %s (dataset %s)",
+                    request.model_name,
+                    created.id,
+                    created.dataset_id,
+                )
+        except Exception as exc:  # noqa: BLE001
             logger.exception(
-                "Failed to queue BirdNET detection task for detection run %s; "
-                "record created but worker will not start automatically",
+                "Failed to queue %s task for detection run %s",
+                request.model_name,
                 created.id,
             )
+            run.status = DetectionRunStatus.FAILED
+            run.error_message = f"Failed to queue detection task: {exc}"
+            await self.detection_run_repo.update(run)
+            await self.detection_run_repo.db.commit()
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to queue detection task",
+            ) from exc
 
         return response
 
@@ -208,8 +289,8 @@ class DetectionRunService:
     async def retry(self, project_id: UUID, run_id: UUID) -> DetectionRunResponse:
         """Retry a completed or failed detection run.
 
-        Deletes all existing annotations for the run, resets the run to PENDING,
-        and re-queues the Celery detection task.
+        Deletes all existing annotations and embeddings for the run, resets
+        the run to PENDING, and re-queues the Celery detection task.
 
         Args:
             project_id: Project's UUID (used to validate ownership and queue task)
@@ -221,13 +302,31 @@ class DetectionRunService:
         Raises:
             HTTPException: If run not found or status does not allow retry
         """
-        from echoroo.workers.ml_tasks import run_birdnet_detection
+        import logging
+
+        from echoroo.repositories.embedding import EmbeddingRepository
+        from echoroo.workers.ml_tasks import run_detection
+
+        logger = logging.getLogger(__name__)
 
         run = await self.detection_run_repo.get_by_id(run_id)
         if not run or run.project_id != project_id:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Detection run not found",
+            )
+
+        # Validate that the dataset still belongs to this project (defense-in-depth).
+        dataset_result = await self.detection_run_repo.db.execute(
+            select(Dataset).where(
+                Dataset.id == run.dataset_id,
+                Dataset.project_id == project_id,
+            )
+        )
+        if dataset_result.scalar_one_or_none() is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Dataset not found",
             )
 
         if run.status not in (DetectionRunStatus.COMPLETED, DetectionRunStatus.FAILED):
@@ -243,6 +342,10 @@ class DetectionRunService:
         # Delete all existing annotations for this run
         await self.annotation_repo.delete_by_detection_run(run_id)
 
+        # Delete all existing embeddings for this run
+        embedding_repo = EmbeddingRepository(self.detection_run_repo.db)
+        await embedding_repo.delete_by_run(run_id)
+
         # Reset run fields
         run.status = DetectionRunStatus.PENDING
         run.annotation_count = 0
@@ -252,12 +355,57 @@ class DetectionRunService:
 
         updated = await self.detection_run_repo.update(run)
 
-        # Queue Celery task with the existing run_id
-        run_birdnet_detection.delay(
-            str(run.dataset_id),
-            str(project_id),
-            str(run_id),
+        # Commit before dispatching Celery task to avoid a race condition where
+        # the worker starts before the DB transaction is visible to other connections.
+        await self.detection_run_repo.db.commit()
+
+        # Determine whether to dispatch an embedding-only or full detection task
+        # based on the flag stored in the parameters dict at creation time.
+        is_embedding_only = bool(
+            run.parameters and run.parameters.get("embedding_only")
         )
+
+        # Queue Celery task with the existing run_id and model_name.
+        # If dispatch fails, mark the run as FAILED so it is not stuck in PENDING
+        # with its data already deleted and no task queued.
+        try:
+            if is_embedding_only:
+                from echoroo.workers.ml_tasks import run_embedding_generation
+
+                run_embedding_generation.delay(
+                    str(run.dataset_id),
+                    str(project_id),
+                    str(run_id),
+                    run.model_name,
+                )
+                logger.info(
+                    "Queued %s embedding-only task for retry of detection run %s (dataset %s)",
+                    run.model_name,
+                    run_id,
+                    run.dataset_id,
+                )
+            else:
+                run_detection.delay(
+                    str(run.dataset_id),
+                    str(project_id),
+                    str(run_id),
+                    run.model_name,
+                )
+                logger.info(
+                    "Queued %s detection task for retry of detection run %s (dataset %s)",
+                    run.model_name,
+                    run_id,
+                    run.dataset_id,
+                )
+        except Exception as exc:  # noqa: BLE001
+            run.status = DetectionRunStatus.FAILED
+            run.error_message = f"Failed to queue retry task: {exc}"
+            await self.detection_run_repo.update(run)
+            await self.detection_run_repo.db.commit()
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to queue retry task",
+            ) from exc
 
         return DetectionRunResponse.model_validate(updated)
 

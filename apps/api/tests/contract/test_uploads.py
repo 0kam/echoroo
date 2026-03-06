@@ -8,14 +8,14 @@ disabled during test execution by the test client setup in conftest.py.
 """
 
 from typing import TYPE_CHECKING
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from echoroo.models.dataset import Dataset
-from echoroo.models.enums import DatasetStatus, UploadSessionStatus
+from echoroo.models.enums import DatasetStatus
 from echoroo.models.site import Site
 
 if TYPE_CHECKING:

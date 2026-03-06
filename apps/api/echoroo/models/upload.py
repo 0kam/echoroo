@@ -169,10 +169,10 @@ class UploadFile(UUIDMixin, TimestampMixin, Base):
         nullable=False,
         doc="Expected file size in bytes",
     )
-    checksum_sha256: Mapped[str] = mapped_column(
+    checksum_sha256: Mapped[str | None] = mapped_column(
         String(64),
-        nullable=False,
-        doc="SHA-256 checksum for integrity verification",
+        nullable=True,
+        doc="SHA-256 checksum for integrity verification (optional)",
     )
     status: Mapped[UploadFileStatus] = mapped_column(
         Enum(

@@ -13,6 +13,7 @@ from echoroo.repositories.annotation import AnnotationRepository
 from echoroo.repositories.detection_run import DetectionRunRepository
 from echoroo.repositories.project import ProjectRepository
 from echoroo.schemas.detection_run import (
+    AvailableModelsResponse,
     DetectionRunCreate,
     DetectionRunListResponse,
     DetectionRunResponse,
@@ -21,6 +22,9 @@ from echoroo.schemas.detection_run import (
 from echoroo.services.detection_run import DetectionRunService
 
 router = APIRouter(prefix="/projects/{project_id}/detection-runs", tags=["detection-runs"])
+
+# Router for model discovery (no project_id prefix needed)
+models_router = APIRouter(prefix="/detection-runs", tags=["detection-runs"])
 
 
 async def check_project_access(project_id: UUID, user_id: UUID, db: DbSession) -> None:
@@ -169,8 +173,9 @@ async def create_detection_run(
         422: Validation error
     """
     await check_project_access(project_id, current_user.id, db)
+    # Note: service.create() already commits before dispatching the Celery task
+    # to avoid a race condition. Do NOT commit again here.
     run = await service.create(project_id=project_id, request=request)
-    await db.commit()
     return run
 
 
@@ -288,3 +293,34 @@ async def cancel_detection_run(
     run = await service.cancel(project_id=project_id, run_id=run_id)
     await db.commit()
     return run
+
+
+@models_router.get(
+    "/available-models",
+    response_model=AvailableModelsResponse,
+    summary="List available detection models",
+    description="Return the names of all ML models registered in the ModelRegistry.",
+)
+async def list_available_models(
+    current_user: CurrentUser,
+) -> AvailableModelsResponse:
+    """List all detection models available for use.
+
+    Imports registered model modules to ensure all models are registered
+    before querying the ModelRegistry.
+
+    Args:
+        current_user: Current authenticated user
+
+    Returns:
+        List of available model names
+
+    Raises:
+        401: Not authenticated
+    """
+    # Import model packages to trigger their __init__.py registration side-effects
+    import echoroo.ml.birdnet  # noqa: F401
+    import echoroo.ml.perch  # noqa: F401
+    from echoroo.ml.registry import ModelRegistry
+
+    return AvailableModelsResponse(models=ModelRegistry.available_models())

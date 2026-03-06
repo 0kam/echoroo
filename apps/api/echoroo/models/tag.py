@@ -15,6 +15,7 @@ from echoroo.models.enums import TagCategory
 if TYPE_CHECKING:
     from echoroo.models.annotation_project import AnnotationProject
     from echoroo.models.project import Project
+    from echoroo.models.taxon import Taxon
 
 
 class Tag(UUIDMixin, TimestampMixin, Base):
@@ -75,6 +76,12 @@ class Tag(UUIDMixin, TimestampMixin, Base):
         nullable=True,
         doc="Common name (for species tags)",
     )
+    taxon_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("taxa.id", ondelete="SET NULL"),
+        nullable=True,
+        doc="Link to global taxon record",
+    )
 
     # Relationships
     project: Mapped[Project] = relationship(
@@ -98,12 +105,17 @@ class Tag(UUIDMixin, TimestampMixin, Base):
         back_populates="tags",
         lazy="select",
     )
+    taxon: Mapped[Taxon | None] = relationship(
+        "Taxon",
+        lazy="joined",
+    )
 
     __table_args__ = (
         UniqueConstraint("project_id", "name", "category", name="uq_tag_project_name_category"),
         Index("ix_tags_project_id", "project_id"),
         Index("ix_tags_category", "category"),
         Index("ix_tags_gbif_taxon_key", "gbif_taxon_key"),
+        Index("ix_tags_taxon_id", "taxon_id"),
     )
 
     def __repr__(self) -> str:
