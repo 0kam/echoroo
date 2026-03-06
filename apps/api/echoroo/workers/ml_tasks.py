@@ -17,6 +17,7 @@ from uuid import UUID, uuid4
 import numpy as np
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import selectinload
 
@@ -26,7 +27,9 @@ from echoroo.models.dataset import Dataset
 from echoroo.models.embedding import Embedding
 from echoroo.models.enums import DetectionRunStatus, DetectionSource, DetectionStatus
 from echoroo.models.recording import Recording
-from echoroo.repositories.annotation import AnnotationRepository
+from echoroo.models.tag import Tag
+from echoroo.models.taxon import Taxon
+from echoroo.models.taxon_vernacular_name import TaxonVernacularName
 from echoroo.repositories.detection_run import DetectionRunRepository
 from echoroo.repositories.system import SystemSettingRepository
 from echoroo.repositories.tag import TagRepository
@@ -315,6 +318,190 @@ def _download_recordings_to_local(
     return recording_paths, failed
 
 
+def _collect_unique_species_from_batch(
+    predictions_result: Any,
+    inference_engine: Any,
+) -> dict[str, tuple[str, str, bool]]:
+    """Collect all unique species names predicted across all files in a batch result.
+
+    Parses the raw batch prediction result to find every unique species that
+    appears with confidence above threshold. Returns a mapping from scientific_name
+    to (scientific_name, common_name, is_non_biological) so callers can build DB caches.
+
+    Args:
+        predictions_result: Raw result from ``predict_files_batch()``.
+        inference_engine: The inference engine instance (used for _filter_predictions).
+
+    Returns:
+        Dict mapping scientific_name -> (scientific_name, common_name, is_non_biological).
+    """
+    unique_species: dict[str, tuple[str, str, bool]] = {}
+
+    all_probs = getattr(predictions_result, "species_probs", None)
+    all_ids = getattr(predictions_result, "species_ids", None)
+    if all_probs is None or all_ids is None or all_probs.size == 0:
+        return unique_species
+
+    # Flatten to 3D: (n_files, n_segments, n_species_candidates)
+    if all_probs.ndim == 4:
+        probs_3d = all_probs[:, 0, :, :]
+        ids_3d = all_ids[:, 0, :, :]
+    elif all_probs.ndim == 3:
+        probs_3d = all_probs
+        ids_3d = all_ids
+    else:
+        return unique_species
+
+    n_files = probs_3d.shape[0]
+    has_filter = hasattr(inference_engine, "_filter_predictions")
+    species_list = getattr(getattr(inference_engine, "_model", None), "species_list", [])
+
+    for file_idx in range(n_files):
+        file_probs = probs_3d[file_idx]
+        file_ids = ids_3d[file_idx]
+        for seg_idx in range(len(file_probs)):
+            if has_filter and species_list:
+                preds = inference_engine._filter_predictions(
+                    file_probs[seg_idx].astype(np.float32),
+                    file_ids[seg_idx],
+                    species_list,
+                )
+            else:
+                preds = []
+            for species_name, _conf in preds:
+                parts = species_name.split("_", 1)
+                scientific_name = parts[0] if parts else species_name
+                common_name = parts[1] if len(parts) > 1 else ""
+                is_non_bio = common_name in NON_SPECIES_LABELS
+                if scientific_name not in unique_species:
+                    unique_species[scientific_name] = (scientific_name, common_name, is_non_bio)
+
+    return unique_species
+
+
+async def _build_taxon_tag_caches(
+    db: AsyncSession,
+    project_uuid: UUID,
+    unique_species: dict[str, tuple[str, str, bool]],
+) -> tuple[dict[str, Taxon], dict[str, Tag]]:
+    """Batch-fetch taxons and tags for all known species, returning in-memory caches.
+
+    Queries the DB once for all species names rather than one query per species.
+    New taxons and tags for species not yet in the DB are created in bulk and
+    added to the caches.
+
+    Args:
+        db: SQLAlchemy async session (must be inside an active transaction).
+        project_uuid: Project UUID used to scope tag lookups.
+        unique_species: Mapping from scientific_name -> (sci, common, is_non_bio).
+
+    Returns:
+        Tuple of (taxon_cache, tag_cache) where keys are scientific_name strings.
+    """
+    if not unique_species:
+        return {}, {}
+
+    sci_names = list(unique_species.keys())
+
+    # Batch-fetch existing taxons
+    taxon_result = await db.execute(
+        select(Taxon).where(Taxon.scientific_name.in_(sci_names))
+    )
+    taxon_cache: dict[str, Taxon] = {t.scientific_name: t for t in taxon_result.scalars().all()}
+
+    # Create missing taxons one-by-one (rare: only new species)
+    for sci_name, (_, common_name, is_non_bio) in unique_species.items():
+        if sci_name not in taxon_cache:
+            taxon = Taxon(
+                scientific_name=sci_name,
+                is_non_biological=is_non_bio,
+            )
+            db.add(taxon)
+            await db.flush()
+            if common_name:
+                vn = TaxonVernacularName(
+                    taxon_id=taxon.id,
+                    locale="en",
+                    name=common_name,
+                    source="birdnet",
+                    is_primary=True,
+                )
+                db.add(vn)
+                await db.flush()
+            taxon_cache[sci_name] = taxon
+
+    # Batch-fetch existing tags for this project
+    tag_result = await db.execute(
+        select(Tag).where(
+            Tag.project_id == project_uuid,
+            Tag.scientific_name.in_(sci_names),
+        )
+    )
+    tag_cache: dict[str, Tag] = {
+        t.scientific_name: t for t in tag_result.scalars().all() if t.scientific_name
+    }
+
+    # Create missing tags one-by-one (rare: only new species)
+    from echoroo.models.enums import TagCategory
+
+    for sci_name, (_, common_name, _is_non_bio) in unique_species.items():
+        if sci_name not in tag_cache:
+            maybe_taxon: Taxon | None = taxon_cache.get(sci_name)
+            tag = Tag(
+                project_id=project_uuid,
+                name=sci_name,
+                category=TagCategory.SPECIES,
+                scientific_name=sci_name,
+                common_name=common_name,
+                taxon_id=maybe_taxon.id if maybe_taxon else None,
+            )
+            db.add(tag)
+            await db.flush()
+            tag_cache[sci_name] = tag
+        else:
+            # Update taxon_id if missing
+            existing_tag = tag_cache[sci_name]
+            if existing_tag.taxon_id is None:
+                update_taxon: Taxon | None = taxon_cache.get(sci_name)
+                if update_taxon:
+                    existing_tag.taxon_id = update_taxon.id
+                    await db.flush()
+
+    return taxon_cache, tag_cache
+
+
+async def _bulk_insert_annotations(
+    db: AsyncSession,
+    annotation_dicts: list[dict[str, Any]],
+) -> int:
+    """Bulk-insert annotations using raw SQL, skipping any duplicates.
+
+    Much faster than ORM create_batch() because it avoids per-row refresh
+    and relationship loading. Uses INSERT ... ON CONFLICT DO NOTHING to
+    handle any potential duplicates from retries.
+
+    Args:
+        db: SQLAlchemy async session.
+        annotation_dicts: List of dicts with annotation field values.
+
+    Returns:
+        Number of rows actually inserted.
+    """
+    if not annotation_dicts:
+        return 0
+
+    # PostgreSQL limits query parameters to 32767. Each annotation has ~11 columns,
+    # so chunk to 2000 rows per batch (2000 * 11 = 22000, safely under the limit).
+    BATCH_CHUNK_SIZE = 2000
+    total_inserted = 0
+    for i in range(0, len(annotation_dicts), BATCH_CHUNK_SIZE):
+        chunk = annotation_dicts[i : i + BATCH_CHUNK_SIZE]
+        stmt = pg_insert(Annotation).values(chunk).on_conflict_do_nothing()
+        cursor: CursorResult[tuple[()]] = await db.execute(stmt)  # type: ignore[assignment]
+        total_inserted += cursor.rowcount
+    return total_inserted
+
+
 # ---------------------------------------------------------------------------
 # Detection-only async implementation (annotations only, no embeddings)
 # ---------------------------------------------------------------------------
@@ -474,7 +661,8 @@ async def _run_detection(
         total_annotations = 0
         recordings_processed = 0
         recordings_failed = 0
-        pending_annotations: list[Annotation] = []
+        # Pending annotation dicts for bulk insert (avoids ORM refresh overhead)
+        pending_annotation_dicts: list[dict[str, Any]] = []
 
         # ------------------------------------------------------------------
         # Step 5: Download all files from S3 and collect local paths
@@ -518,6 +706,30 @@ async def _run_detection(
             except ValueError:
                 detection_source = DetectionSource.BIRDNET
 
+            # ------------------------------------------------------------------
+            # Pre-fetch taxon and tag caches to avoid per-annotation DB lookups.
+            # Collect all unique species across the entire batch first, then
+            # issue a single batch query for taxons and tags.
+            # ------------------------------------------------------------------
+            taxon_cache: dict[str, Taxon] = {}
+            tag_cache: dict[str, Tag] = {}
+
+            if supports_classification:
+                unique_species = _collect_unique_species_from_batch(
+                    predictions_result, inference_engine
+                )
+                logger.info(
+                    "Pre-fetching taxon/tag cache for %d unique species (run %s)",
+                    len(unique_species),
+                    run_uuid,
+                )
+                if unique_species:
+                    async with session_factory() as db:
+                        taxon_cache, tag_cache = await _build_taxon_tag_caches(
+                            db, project_uuid, unique_species
+                        )
+                        await db.commit()
+
             for file_index, (recording, _) in enumerate(recording_paths):
                 # Cancellation check before processing each file
                 async with session_factory() as db:
@@ -553,68 +765,71 @@ async def _run_detection(
 
                     n_segments = len(file_probs)
 
-                    # Build annotations per segment
+                    # Build annotation dicts per segment using pre-fetched caches
                     if supports_classification:
-                        async with session_factory() as db:
-                            tag_repo = TagRepository(db)
-                            taxon_repo = TaxonRepository(db)
+                        now = datetime.now(UTC)
+                        for seg_idx in range(n_segments):
+                            start_time = seg_idx * hop_duration
+                            end_time = start_time + segment_duration
 
-                            for seg_idx in range(n_segments):
-                                start_time = seg_idx * hop_duration
-                                end_time = start_time + segment_duration
+                            seg_probs = file_probs[seg_idx]
+                            seg_ids = file_ids[seg_idx]
 
-                                # Build annotations from predictions for this segment
-                                seg_probs = file_probs[seg_idx]
-                                seg_ids = file_ids[seg_idx]
+                            # Use the inference engine's filter logic
+                            if hasattr(inference_engine, "_filter_predictions"):
+                                preds = inference_engine._filter_predictions(
+                                    seg_probs.astype(np.float32),
+                                    seg_ids,
+                                    inference_engine._model.species_list,
+                                )
+                            else:
+                                preds = []
 
-                                # Use the inference engine's filter logic if available,
-                                # otherwise apply threshold manually
-                                if hasattr(inference_engine, "_collect_predictions_by_segment"):
-                                    if hasattr(inference_engine, "_filter_predictions"):
-                                        preds = inference_engine._filter_predictions(
-                                            seg_probs.astype(np.float32),
-                                            seg_ids,
-                                            inference_engine._model.species_list,
-                                        )
-                                    else:
-                                        preds = []
-                                else:
-                                    preds = []
+                            for species_name, confidence in preds:
+                                parts = species_name.split("_", 1)
+                                scientific_name = parts[0] if parts else species_name
 
-                                for species_name, confidence in preds:
-                                    # Species name format: "Scientific Name_Common Name"
-                                    parts = species_name.split("_", 1)
-                                    scientific_name = parts[0] if parts else species_name
+                                # Cache lookup (fallback to DB only for genuinely new species)
+                                tag = tag_cache.get(scientific_name)
+                                if tag is None:
                                     common_name = parts[1] if len(parts) > 1 else ""
                                     is_non_bio = common_name in NON_SPECIES_LABELS
-
-                                    taxon = await taxon_repo.get_or_create_by_scientific_name(
-                                        scientific_name=scientific_name,
-                                        common_name=common_name,
-                                        is_non_biological=is_non_bio,
-                                    )
-                                    tag = await tag_repo.get_or_create_species(
-                                        project_id=project_uuid,
-                                        scientific_name=scientific_name,
-                                        common_name=common_name,
-                                        taxon_id=taxon.id,
-                                    )
-
-                                    pending_annotations.append(
-                                        Annotation(
-                                            recording_id=recording.id,
-                                            tag_id=tag.id,
-                                            detection_run_id=run_uuid,
-                                            source=detection_source,
-                                            status=DetectionStatus.UNREVIEWED,
-                                            confidence=confidence,
-                                            start_time=start_time,
-                                            end_time=end_time,
+                                    miss_taxon: Taxon
+                                    miss_tag: Tag
+                                    async with session_factory() as db:
+                                        taxon_repo = TaxonRepository(db)
+                                        tag_repo = TagRepository(db)
+                                        miss_taxon = await taxon_repo.get_or_create_by_scientific_name(
+                                            scientific_name=scientific_name,
+                                            common_name=common_name,
+                                            is_non_biological=is_non_bio,
                                         )
-                                    )
+                                        miss_tag = await tag_repo.get_or_create_species(
+                                            project_id=project_uuid,
+                                            scientific_name=scientific_name,
+                                            common_name=common_name,
+                                            taxon_id=miss_taxon.id,
+                                        )
+                                        await db.commit()
+                                    taxon_cache[scientific_name] = miss_taxon
+                                    tag_cache[scientific_name] = miss_tag
+                                    tag = miss_tag
 
-                            # Commit tag/taxon get_or_create operations once per recording
-                            await db.commit()
+                                pending_annotation_dicts.append(
+                                    {
+                                        "id": uuid4(),
+                                        "recording_id": recording.id,
+                                        "tag_id": tag.id,
+                                        "detection_run_id": run_uuid,
+                                        "source": detection_source,
+                                        "status": DetectionStatus.UNREVIEWED,
+                                        "confidence": confidence,
+                                        "start_time": start_time,
+                                        "end_time": end_time,
+                                        "created_at": now,
+                                        "updated_at": now,
+                                    }
+                                )
 
                     recordings_processed += 1
 
@@ -632,15 +847,14 @@ async def _run_detection(
                 # ------------------------------------------------------------------
                 # Step 6: Flush batch every _COMMIT_BATCH_SIZE recordings
                 # ------------------------------------------------------------------
-                if recordings_processed % _COMMIT_BATCH_SIZE == 0 and pending_annotations:
-                    batch_annotations = len(pending_annotations)
+                if recordings_processed % _COMMIT_BATCH_SIZE == 0 and pending_annotation_dicts:
+                    batch_count = len(pending_annotation_dicts)
                     async with session_factory() as db:
-                        annotation_repo = AnnotationRepository(db)
-                        await annotation_repo.create_batch(pending_annotations)
+                        inserted = await _bulk_insert_annotations(db, pending_annotation_dicts)
                         await db.commit()
 
-                    total_annotations += batch_annotations
-                    pending_annotations = []
+                    total_annotations += inserted
+                    pending_annotation_dicts = []
 
                     # Update annotation_count on DetectionRun
                     async with session_factory() as db:
@@ -650,6 +864,13 @@ async def _run_detection(
                             run.annotation_count = total_annotations
                             await run_repo.update(run)
                             await db.commit()
+
+                    logger.debug(
+                        "Flushed %d annotation dicts (%d inserted) for run %s",
+                        batch_count,
+                        total_annotations,
+                        run_uuid,
+                    )
 
                     logger.info(
                         "DetectionRun %s progress: %d/%d recordings, "
@@ -703,6 +924,7 @@ async def _run_detection(
                         async with session_factory() as db:
                             tag_repo = TagRepository(db)
                             taxon_repo = TaxonRepository(db)
+                            now = datetime.now(UTC)
 
                             for inference_result in results:
                                 if supports_classification and inference_result.has_detection:
@@ -724,17 +946,20 @@ async def _run_detection(
                                             taxon_id=taxon.id,
                                         )
 
-                                        pending_annotations.append(
-                                            Annotation(
-                                                recording_id=recording.id,
-                                                tag_id=tag.id,
-                                                detection_run_id=run_uuid,
-                                                source=detection_source,
-                                                status=DetectionStatus.UNREVIEWED,
-                                                confidence=confidence,
-                                                start_time=inference_result.start_time,
-                                                end_time=inference_result.end_time,
-                                            )
+                                        pending_annotation_dicts.append(
+                                            {
+                                                "id": uuid4(),
+                                                "recording_id": recording.id,
+                                                "tag_id": tag.id,
+                                                "detection_run_id": run_uuid,
+                                                "source": detection_source,
+                                                "status": DetectionStatus.UNREVIEWED,
+                                                "confidence": confidence,
+                                                "start_time": inference_result.start_time,
+                                                "end_time": inference_result.end_time,
+                                                "created_at": now,
+                                                "updated_at": now,
+                                            }
                                         )
 
                             await db.commit()
@@ -753,15 +978,14 @@ async def _run_detection(
                     recordings_processed += 1
 
                 # Flush batch every _COMMIT_BATCH_SIZE recordings
-                if recordings_processed % _COMMIT_BATCH_SIZE == 0 and pending_annotations:
-                    batch_annotations = len(pending_annotations)
+                if recordings_processed % _COMMIT_BATCH_SIZE == 0 and pending_annotation_dicts:
+                    batch_count = len(pending_annotation_dicts)
                     async with session_factory() as db:
-                        annotation_repo = AnnotationRepository(db)
-                        await annotation_repo.create_batch(pending_annotations)
+                        inserted = await _bulk_insert_annotations(db, pending_annotation_dicts)
                         await db.commit()
 
-                    total_annotations += batch_annotations
-                    pending_annotations = []
+                    total_annotations += inserted
+                    pending_annotation_dicts = []
 
                     async with session_factory() as db:
                         run_repo = DetectionRunRepository(db)
@@ -783,13 +1007,11 @@ async def _run_detection(
         # ------------------------------------------------------------------
         # Step 7: Flush remaining batch
         # ------------------------------------------------------------------
-        if pending_annotations:
-            remaining_annotations = len(pending_annotations)
+        if pending_annotation_dicts:
             async with session_factory() as db:
-                annotation_repo = AnnotationRepository(db)
-                await annotation_repo.create_batch(pending_annotations)
+                inserted = await _bulk_insert_annotations(db, pending_annotation_dicts)
                 await db.commit()
-            total_annotations += remaining_annotations
+            total_annotations += inserted
 
         # ------------------------------------------------------------------
         # Step 8: Mark DetectionRun as COMPLETED
@@ -1014,7 +1236,7 @@ async def _run_embedding_generation(
             # Step 5: Batch encode -- call model.encode() ONCE with ALL file paths
             # ------------------------------------------------------------------
             try:
-                batch_result = inference_engine.encode_batch(file_paths)
+                batch_result = inference_engine.encode_batch(file_paths)  # type: ignore[attr-defined]
             except Exception as exc:
                 logger.exception("Batch encode failed for run %s: %s", run_uuid, exc)
                 raise
@@ -1087,10 +1309,16 @@ async def _run_embedding_generation(
                         )
 
                     if embedding_values:
+                        # PostgreSQL limits query parameters to 32767. Each embedding
+                        # has 8 columns (including the vector), so chunk conservatively
+                        # to 500 rows per batch to avoid hitting the parameter limit.
+                        EMBED_CHUNK_SIZE = 500
                         async with session_factory() as db:
-                            stmt = pg_insert(Embedding).values(embedding_values)
-                            stmt = stmt.on_conflict_do_nothing()
-                            await db.execute(stmt)
+                            for j in range(0, len(embedding_values), EMBED_CHUNK_SIZE):
+                                chunk = embedding_values[j : j + EMBED_CHUNK_SIZE]
+                                stmt = pg_insert(Embedding).values(chunk)
+                                stmt = stmt.on_conflict_do_nothing()
+                                await db.execute(stmt)
                             await db.commit()
                         total_embeddings += len(embedding_values)
 
