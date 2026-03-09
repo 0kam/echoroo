@@ -80,12 +80,12 @@
   <!-- Header -->
   <div class="mb-8 flex items-center justify-between">
     <div>
-      <h1 class="text-3xl font-bold text-gray-900">{m.project_heading()}</h1>
-      <p class="mt-2 text-sm text-gray-600">{m.project_description()}</p>
+      <h1 class="text-3xl font-bold text-stone-900">{m.project_heading()}</h1>
+      <p class="mt-2 text-sm text-stone-600">{m.project_description()}</p>
     </div>
     <button
       onclick={createNewProject}
-      class="inline-flex items-center rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+      class="inline-flex items-center rounded-md bg-primary-600 px-4 py-2 text-sm font-medium text-white hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2"
     >
       <svg
         class="mr-2 h-5 w-5"
@@ -129,7 +129,7 @@
   {#if isLoading}
     <div class="flex items-center justify-center py-12">
       <svg
-        class="h-8 w-8 animate-spin text-blue-600"
+        class="h-8 w-8 animate-spin text-primary-600"
         xmlns="http://www.w3.org/2000/svg"
         fill="none"
         viewBox="0 0 24 24"
@@ -145,9 +145,9 @@
     </div>
   {:else if projects.length === 0}
     <!-- Empty State -->
-    <div class="rounded-lg border-2 border-dashed border-gray-300 p-12 text-center">
+    <div class="rounded-lg border-2 border-dashed border-stone-300 p-12 text-center">
       <svg
-        class="mx-auto h-12 w-12 text-gray-400"
+        class="mx-auto h-12 w-12 text-stone-400"
         xmlns="http://www.w3.org/2000/svg"
         fill="none"
         viewBox="0 0 24 24"
@@ -160,12 +160,12 @@
           d="M9 13h6m-3-3v6m-9 1V7a2 2 0 012-2h6l2 2h6a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z"
         />
       </svg>
-      <h3 class="mt-2 text-sm font-medium text-gray-900">{m.project_no_projects_title()}</h3>
-      <p class="mt-1 text-sm text-gray-500">{m.project_no_projects_body()}</p>
+      <h3 class="mt-2 text-sm font-medium text-stone-900">{m.project_no_projects_title()}</h3>
+      <p class="mt-1 text-sm text-stone-500">{m.project_no_projects_body()}</p>
       <div class="mt-6">
         <button
           onclick={createNewProject}
-          class="inline-flex items-center rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+          class="inline-flex items-center rounded-md bg-primary-600 px-4 py-2 text-sm font-medium text-white hover:bg-primary-700"
         >
           <svg class="mr-2 h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path
@@ -184,7 +184,7 @@
     <div class="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
       {#each projects as project (project.id)}
         <div
-          class="cursor-pointer rounded-lg border border-gray-200 bg-white p-6 shadow-sm transition-shadow hover:shadow-md"
+          class="cursor-pointer rounded-lg border border-card bg-surface-card p-6 shadow-sm transition-shadow hover:shadow-md"
           onclick={() => viewProject(project.id)}
           role="button"
           tabindex="0"
@@ -196,12 +196,12 @@
         >
           <!-- Project Header -->
           <div class="mb-4 flex items-start justify-between">
-            <h3 class="text-lg font-semibold text-gray-900">{project.name}</h3>
+            <h3 class="text-lg font-semibold text-stone-900">{project.name}</h3>
             <span
               class="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium {project.visibility ===
               'public'
                 ? 'bg-green-100 text-green-800'
-                : 'bg-gray-100 text-gray-800'}"
+                : 'bg-stone-100 text-stone-800'}"
             >
               {#if project.visibility === 'public'}
                 <svg class="mr-1 h-3 w-3" fill="currentColor" viewBox="0 0 20 20">
@@ -227,13 +227,13 @@
 
           <!-- Project Description -->
           {#if project.description}
-            <p class="mb-4 line-clamp-2 text-sm text-gray-600">{project.description}</p>
+            <p class="mb-4 line-clamp-2 text-sm text-stone-600">{project.description}</p>
           {:else}
-            <p class="mb-4 text-sm italic text-gray-400">{m.project_no_description()}</p>
+            <p class="mb-4 text-sm italic text-stone-400">{m.project_no_description()}</p>
           {/if}
 
           <!-- Project Metadata -->
-          <div class="space-y-2 text-xs text-gray-500">
+          <div class="space-y-2 text-xs text-stone-500">
             {#if project.target_taxa}
               <div class="flex items-center">
                 <svg class="mr-2 h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -280,7 +280,7 @@
         <button
           onclick={() => changePage(page - 1)}
           disabled={page === 1}
-          class="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+          class="rounded-md border border-stone-300 bg-surface-card px-4 py-2 text-sm font-medium text-stone-700 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {m.project_previous()}
         </button>
@@ -290,20 +290,20 @@
             <button
               onclick={() => changePage(pageNum)}
               class="rounded-md px-4 py-2 text-sm font-medium {pageNum === page
-                ? 'bg-blue-600 text-white'
-                : 'border border-gray-300 bg-white text-gray-700 hover:bg-gray-50'}"
+                ? 'bg-primary-600 text-white'
+                : 'border border-stone-300 bg-surface-card text-stone-700 hover:bg-stone-50'}"
             >
               {pageNum}
             </button>
           {:else if pageNum === page - 2 || pageNum === page + 2}
-            <span class="px-2 text-gray-500">...</span>
+            <span class="px-2 text-stone-500">...</span>
           {/if}
         {/each}
 
         <button
           onclick={() => changePage(page + 1)}
           disabled={page === totalPages}
-          class="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+          class="rounded-md border border-stone-300 bg-surface-card px-4 py-2 text-sm font-medium text-stone-700 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {m.project_next()}
         </button>

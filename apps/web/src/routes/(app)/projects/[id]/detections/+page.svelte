@@ -5,11 +5,14 @@
    * Provides two views:
    * - "Species List": paginated list of detected species with review progress
    * - "Activity Patterns": polar heatmap grid showing hourly detection activity
+   *
+   * Includes a Run selector to filter results by a specific MLAnalysis run.
    */
 
   import { page } from '$app/stores';
   import { createQuery } from '@tanstack/svelte-query';
   import { fetchTemporalData } from '$lib/api/detections';
+  import { fetchDetectionRuns } from '$lib/api/detection-runs';
   import { localizeHref, getLocale } from '$lib/paraglide/runtime';
   import * as m from '$lib/paraglide/messages';
   import SpeciesListView from '$lib/components/detection/SpeciesListView.svelte';
@@ -21,10 +24,44 @@
   type Tab = 'species-list' | 'activity-patterns';
   let activeTab: Tab = 'species-list';
 
+  // Selected detection run ID (undefined = all runs)
+  let selectedRunId: string | undefined = undefined;
+  let runSelectorInitialized = false;
+
+  // Fetch completed detection runs for the selector
+  $: runsQuery = createQuery({
+    queryKey: ['detection-runs', projectId],
+    queryFn: () => fetchDetectionRuns(projectId),
+    enabled: !!projectId,
+  });
+
+  // Filter to only COMPLETED runs, sorted newest first
+  $: completedRuns = ($runsQuery.data?.items ?? []).filter((r) => r.status === 'completed');
+
+  // Auto-select the most recent run once loaded
+  $: if (!runSelectorInitialized && completedRuns.length > 0) {
+    const firstRun = completedRuns[0];
+    if (firstRun) {
+      selectedRunId = firstRun.id;
+    }
+    runSelectorInitialized = true;
+  }
+
+  // Format a run label for display in the selector
+  function formatRunLabel(run: { model_name: string; model_version: string; created_at: string; annotation_count: number }): string {
+    const date = new Date(run.created_at).toLocaleDateString(locale === 'ja' ? 'ja-JP' : 'en-US', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+    });
+    const version = run.model_version.replace(/^v/, '');
+    return `${run.model_name} v${version} - ${date} (${run.annotation_count} ${locale === 'ja' ? '件の検出' : 'detections'})`;
+  }
+
   // Lazy-load temporal data only when the "Activity Patterns" tab is selected
   $: temporalQuery = createQuery({
-    queryKey: ['temporal-data', projectId, locale],
-    queryFn: () => fetchTemporalData(projectId, undefined, locale),
+    queryKey: ['temporal-data', projectId, locale, selectedRunId],
+    queryFn: () => fetchTemporalData(projectId, undefined, locale, selectedRunId),
     enabled: !!projectId && activeTab === 'activity-patterns',
   });
 
@@ -38,18 +75,40 @@
 <div class="mx-auto max-w-7xl px-6 py-8">
   <!-- Page header -->
   <div class="mb-6">
-    <nav class="mb-2 flex items-center gap-2 text-sm text-gray-500">
-      <a href={localizeHref(`/projects/${projectId}`)} class="hover:text-gray-900">{m.detection_breadcrumb_project()}</a>
+    <nav class="mb-2 flex items-center gap-2 text-sm text-stone-500">
+      <a href={localizeHref(`/projects/${projectId}`)} class="hover:text-stone-900">{m.detection_breadcrumb_project()}</a>
       <span>/</span>
-      <span class="font-medium text-gray-900">{m.detection_breadcrumb_detections()}</span>
+      <span class="font-medium text-stone-900">{m.detection_breadcrumb_detections()}</span>
     </nav>
-    <h1 class="text-2xl font-bold text-gray-900">{m.detection_heading()}</h1>
-    <p class="mt-1 text-sm text-gray-500">
+    <h1 class="text-2xl font-bold text-stone-900">{m.detection_heading()}</h1>
+    <p class="mt-1 text-sm text-stone-500">
       {m.detection_description()}
     </p>
   </div>
 
   {#if projectId}
+    <!-- Run selector -->
+    <div class="mb-6 flex items-center gap-3 rounded-lg border border-stone-200 bg-stone-50 px-4 py-3">
+      <label for="run-selector" class="shrink-0 text-sm font-medium text-stone-600">
+        {m.detection_run_selector_label()}:
+      </label>
+      {#if $runsQuery.isLoading}
+        <span class="text-sm text-stone-400">{m.detection_run_loading()}</span>
+      {:else if completedRuns.length === 0}
+        <span class="text-sm text-stone-400">{m.detection_run_no_runs()}</span>
+      {:else}
+        <select
+          id="run-selector"
+          bind:value={selectedRunId}
+          class="min-w-0 flex-1 rounded-md border border-stone-300 bg-surface-card px-3 py-1.5 text-sm text-stone-900 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500 sm:max-w-sm"
+        >
+          {#each completedRuns as run (run.id)}
+            <option value={run.id}>{formatRunLabel(run)}</option>
+          {/each}
+        </select>
+      {/if}
+    </div>
+
     <!-- Tab navigation -->
     <div class="mb-6 border-b border-stone-200">
       <nav class="-mb-px flex gap-6" aria-label="Detection views">
@@ -79,7 +138,7 @@
     <!-- Tab content -->
     {#if activeTab === 'species-list'}
       <div class="max-w-4xl">
-        <SpeciesListView {projectId} />
+        <SpeciesListView {projectId} detectionRunId={selectedRunId} />
       </div>
     {:else}
       <!-- Activity Patterns tab -->

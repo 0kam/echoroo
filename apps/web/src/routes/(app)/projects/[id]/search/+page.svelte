@@ -203,9 +203,9 @@
    */
   function getSimilarityClass(similarity: number): string {
     if (similarity >= 0.9) return 'bg-green-100 text-green-800';
-    if (similarity >= 0.7) return 'bg-blue-100 text-blue-800';
+    if (similarity >= 0.7) return 'bg-primary-100 text-primary-800';
     if (similarity >= 0.5) return 'bg-yellow-100 text-yellow-800';
-    return 'bg-gray-100 text-gray-800';
+    return 'bg-stone-100 text-stone-800';
   }
 
   /**
@@ -225,19 +225,19 @@
 <div class="mx-auto max-w-4xl space-y-6 px-6 py-8">
   <!-- Page header -->
   <div>
-    <nav class="mb-2 flex items-center gap-2 text-sm text-gray-500">
-      <a href={localizeHref(`/projects/${projectId}`)} class="hover:text-gray-900">
+    <nav class="mb-2 flex items-center gap-2 text-sm text-stone-500">
+      <a href={localizeHref(`/projects/${projectId}`)} class="hover:text-stone-900">
         {m.search_breadcrumb_project()}
       </a>
       <span>/</span>
-      <span class="font-medium text-gray-900">{m.search_title()}</span>
+      <span class="font-medium text-stone-900">{m.search_title()}</span>
     </nav>
-    <h1 class="text-2xl font-bold text-gray-900">{m.search_title()}</h1>
-    <p class="mt-1 text-sm text-gray-500">{m.search_description()}</p>
+    <h1 class="text-2xl font-bold text-stone-900">{m.search_title()}</h1>
+    <p class="mt-1 text-sm text-stone-500">{m.search_description()}</p>
   </div>
 
   <!-- Search form card -->
-  <div class="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
+  <div class="rounded-lg border border-card bg-surface-card p-6 shadow-sm">
     <div class="space-y-5">
       <!-- File upload area -->
       <div>
@@ -245,10 +245,10 @@
         <!-- svelte-ignore a11y_no_static_element_interactions -->
         <div
           class="relative flex cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed px-6 py-8 text-center transition-colors {isDragging
-            ? 'border-blue-400 bg-blue-50'
+            ? 'border-primary-400 bg-primary-50'
             : selectedFile
               ? 'border-green-400 bg-green-50'
-              : 'border-gray-300 bg-gray-50 hover:border-gray-400 hover:bg-gray-100'}"
+              : 'border-stone-300 bg-stone-50 hover:border-stone-400 hover:bg-stone-100'}"
           ondrop={handleDrop}
           ondragover={handleDragOver}
           ondragleave={handleDragLeave}
@@ -284,11 +284,11 @@
             </p>
           {:else}
             <!-- Empty state -->
-            <svg class="mb-2 h-8 w-8 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <svg class="mb-2 h-8 w-8 text-stone-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
             </svg>
-            <p class="text-sm font-medium text-gray-700">{m.search_drop_audio()}</p>
-            <p class="mt-1 text-xs text-gray-500">{m.search_audio_hint()}</p>
+            <p class="text-sm font-medium text-stone-700">{m.search_drop_audio()}</p>
+            <p class="mt-1 text-xs text-stone-500">{m.search_audio_hint()}</p>
           {/if}
         </div>
       </div>
@@ -297,13 +297,13 @@
       <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <!-- Model selector -->
         <div>
-          <label for="model-select" class="mb-1 block text-xs font-medium text-gray-700">
+          <label for="model-select" class="mb-1 block text-xs font-medium text-stone-700">
             {m.search_select_model()}
           </label>
           <select
             id="model-select"
             bind:value={modelName}
-            class="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+            class="w-full rounded-md border border-stone-300 bg-surface-card px-3 py-2 text-sm focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
           >
             <option value="perch">Perch v2.0</option>
             <option value="birdnet">BirdNET v2.4</option>
@@ -312,7 +312,7 @@
 
         <!-- Min similarity slider -->
         <div>
-          <label for="similarity-slider" class="mb-1 block text-xs font-medium text-gray-700">
+          <label for="similarity-slider" class="mb-1 block text-xs font-medium text-stone-700">
             {m.search_min_similarity()}: {(minSimilarity * 100).toFixed(0)}%
           </label>
           <input
@@ -322,13 +322,13 @@
             max="1"
             step="0.05"
             bind:value={minSimilarity}
-            class="w-full accent-blue-600"
+            class="w-full accent-primary-600"
           />
         </div>
 
         <!-- Max results -->
         <div>
-          <label for="limit-input" class="mb-1 block text-xs font-medium text-gray-700">
+          <label for="limit-input" class="mb-1 block text-xs font-medium text-stone-700">
             {m.search_max_results()}
           </label>
           <input
@@ -337,19 +337,19 @@
             min="1"
             max="100"
             bind:value={limit}
-            class="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+            class="w-full rounded-md border border-stone-300 bg-surface-card px-3 py-2 text-sm focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
           />
         </div>
 
         <!-- Dataset filter -->
         <div>
-          <label for="dataset-select" class="mb-1 block text-xs font-medium text-gray-700">
+          <label for="dataset-select" class="mb-1 block text-xs font-medium text-stone-700">
             {m.search_dataset_filter()}
           </label>
           <select
             id="dataset-select"
             bind:value={datasetFilter}
-            class="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+            class="w-full rounded-md border border-stone-300 bg-surface-card px-3 py-2 text-sm focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
           >
             <option value="">{m.search_all_datasets()}</option>
             {#each $datasetsQuery.data?.items ?? [] as dataset (dataset.id)}
@@ -371,7 +371,7 @@
         <button
           onclick={handleSearch}
           disabled={isSearching || !selectedFile}
-          class="flex items-center gap-2 rounded-md bg-blue-600 px-5 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+          class="flex items-center gap-2 rounded-md bg-primary-600 px-5 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {#if isSearching}
             <svg class="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24">
@@ -392,10 +392,10 @@
 
   <!-- Results section -->
   {#if searchResults !== null}
-    <div class="rounded-lg border border-gray-200 bg-white shadow-sm">
-      <div class="flex items-center justify-between border-b border-gray-100 px-6 py-4">
-        <h2 class="text-base font-semibold text-gray-900">{m.search_results()}</h2>
-        <span class="text-sm text-gray-500">
+    <div class="rounded-lg border border-card bg-surface-card shadow-sm">
+      <div class="flex items-center justify-between border-b border-stone-100 px-6 py-4">
+        <h2 class="text-base font-semibold text-stone-900">{m.search_results()}</h2>
+        <span class="text-sm text-stone-500">
           {m.search_results_count({ count: searchResults.total_results })}
         </span>
       </div>
@@ -403,15 +403,15 @@
       {#if searchResults.results.length === 0}
         <!-- No results -->
         <div class="flex flex-col items-center justify-center px-6 py-12 text-center">
-          <svg class="mb-3 h-10 w-10 text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <svg class="mb-3 h-10 w-10 text-stone-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3" />
           </svg>
-          <p class="text-sm font-medium text-gray-700">{m.search_no_results()}</p>
-          <p class="mt-1 text-xs text-gray-400">{m.search_no_results_hint()}</p>
+          <p class="text-sm font-medium text-stone-700">{m.search_no_results()}</p>
+          <p class="mt-1 text-xs text-stone-400">{m.search_no_results_hint()}</p>
         </div>
       {:else}
         <!-- Results list -->
-        <ul class="divide-y divide-gray-100">
+        <ul class="divide-y divide-stone-100">
           {#each searchResults.results as result (result.embedding_id)}
             <li class="px-6 py-4">
               <div class="flex items-start justify-between gap-4">
@@ -421,13 +421,13 @@
                     <!-- Play button -->
                     <button
                       onclick={() => togglePlayback(result)}
-                      class="flex-shrink-0 rounded-full p-1.5 text-gray-500 transition-colors hover:bg-gray-100 hover:text-blue-600"
+                      class="flex-shrink-0 rounded-full p-1.5 text-stone-500 transition-colors hover:bg-stone-100 hover:text-primary-600"
                       title={playingId === result.embedding_id ? m.search_stop() : m.search_play()}
                       aria-label={playingId === result.embedding_id ? m.search_stop() : m.search_play()}
                     >
                       {#if playingId === result.embedding_id}
                         <!-- Stop icon -->
-                        <svg class="h-5 w-5 text-blue-600" fill="currentColor" viewBox="0 0 24 24">
+                        <svg class="h-5 w-5 text-primary-600" fill="currentColor" viewBox="0 0 24 24">
                           <rect x="6" y="6" width="12" height="12" rx="1" />
                         </svg>
                       {:else}
@@ -439,13 +439,13 @@
                     </button>
 
                     <!-- Filename -->
-                    <span class="truncate text-sm font-medium text-gray-900">
+                    <span class="truncate text-sm font-medium text-stone-900">
                       {result.recording_filename}
                     </span>
                   </div>
 
                   <!-- Metadata row -->
-                  <div class="mt-1.5 flex flex-wrap items-center gap-3 text-xs text-gray-500">
+                  <div class="mt-1.5 flex flex-wrap items-center gap-3 text-xs text-stone-500">
                     <!-- Time range -->
                     <span class="flex items-center gap-1">
                       <svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -474,7 +474,7 @@
                   <!-- View recording link -->
                   <a
                     href={localizeHref(`/projects/${projectId}/recordings/${result.recording_id}`)}
-                    class="text-xs text-blue-600 hover:underline"
+                    class="text-xs text-primary-600 hover:underline"
                   >
                     {m.search_view_recording()}
                   </a>
@@ -488,13 +488,13 @@
   {/if}
 
   <!-- Embedding stats section -->
-  <div class="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
-    <h2 class="mb-4 text-sm font-semibold uppercase tracking-wider text-gray-500">
+  <div class="rounded-lg border border-card bg-surface-card p-6 shadow-sm">
+    <h2 class="mb-4 text-sm font-semibold uppercase tracking-wider text-stone-500">
       {m.search_embedding_stats()}
     </h2>
 
     {#if $statsQuery.isLoading}
-      <div class="flex items-center gap-2 text-sm text-gray-400">
+      <div class="flex items-center gap-2 text-sm text-stone-400">
         <svg class="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24">
           <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
           <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
@@ -514,10 +514,10 @@
         <div class="flex flex-wrap gap-6">
           <!-- Total count -->
           <div>
-            <p class="text-xs font-medium uppercase tracking-wider text-gray-400">
+            <p class="text-xs font-medium uppercase tracking-wider text-stone-400">
               {m.search_total_embeddings()}
             </p>
-            <p class="mt-1 text-2xl font-bold text-gray-900">
+            <p class="mt-1 text-2xl font-bold text-stone-900">
               {stats.total_count.toLocaleString()}
             </p>
           </div>
@@ -525,12 +525,12 @@
           <!-- By model -->
           {#if Object.keys(stats.by_model).length > 0}
             <div>
-              <p class="text-xs font-medium uppercase tracking-wider text-gray-400">
+              <p class="text-xs font-medium uppercase tracking-wider text-stone-400">
                 {m.search_stats_by_model()}
               </p>
               <div class="mt-1 flex flex-wrap gap-2">
                 {#each Object.entries(stats.by_model) as [model, count] (model)}
-                  <span class="inline-flex items-center gap-1 rounded-full bg-blue-100 px-2.5 py-0.5 text-xs font-medium text-blue-800">
+                  <span class="inline-flex items-center gap-1 rounded-full bg-primary-100 px-2.5 py-0.5 text-xs font-medium text-primary-800">
                     {model}: {count.toLocaleString()}
                   </span>
                 {/each}

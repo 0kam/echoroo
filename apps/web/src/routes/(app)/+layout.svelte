@@ -9,6 +9,7 @@
   import { localizeHref } from '$lib/paraglide/runtime';
   import * as m from '$lib/paraglide/messages';
   import LanguageSwitcher from '$lib/components/ui/LanguageSwitcher.svelte';
+  import DarkModeToggle from '$lib/components/ui/DarkModeToggle.svelte';
 
   interface Props {
     children: import('svelte').Snippet;
@@ -34,14 +35,14 @@
   }
 </script>
 
-<div class="flex h-screen flex-col bg-gray-50">
+<div class="flex h-screen flex-col bg-surface-page">
   <!-- Global top navigation header -->
-  <header class="flex h-12 flex-shrink-0 items-center border-b border-stone-200 bg-white px-4">
+  <header class="flex h-12 flex-shrink-0 items-center border-b border-card bg-surface-card px-4">
     {#if authStore.isLoading}
       <!-- Loading spinner while auth state resolves -->
       <div class="flex w-full items-center justify-center">
         <svg
-          class="h-5 w-5 animate-spin text-gray-400"
+          class="h-5 w-5 animate-spin text-stone-400"
           xmlns="http://www.w3.org/2000/svg"
           fill="none"
           viewBox="0 0 24 24"
@@ -59,8 +60,9 @@
       <div class="flex items-center gap-6">
         <a
           href={localizeHref('/dashboard')}
-          class="text-sm font-semibold tracking-wide text-stone-800 hover:text-stone-600"
+          class="flex items-center gap-1.5 text-sm font-semibold tracking-wide text-primary-500 hover:text-primary-600"
         >
+          <img src="/echoroo.png" alt="Echoroo" class="h-6 w-auto" />
           {m.nav_brand()}
         </a>
         <nav class="flex items-center gap-1">
@@ -84,7 +86,7 @@
         {#if authStore.user?.is_superuser}
           <a
             href={localizeHref('/admin/users')}
-            class="rounded px-3 py-1 text-xs font-medium text-purple-700 ring-1 ring-purple-200 transition-colors hover:bg-purple-50"
+            class="rounded px-3 py-1 text-xs font-medium text-primary-700 ring-1 ring-primary-200 transition-colors hover:bg-primary-50"
           >
             {m.nav_admin()}
           </a>
@@ -105,6 +107,7 @@
           {m.nav_logout()}
         </button>
 
+        <DarkModeToggle />
         <LanguageSwitcher />
       </div>
     {/if}

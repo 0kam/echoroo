@@ -82,6 +82,7 @@ class AnnotationRepository:
         confidence_max: float | None = None,
         dataset_id: UUID | None = None,
         recording_id: UUID | None = None,
+        detection_run_id: UUID | None = None,
         page: int = 1,
         page_size: int = 50,
     ) -> tuple[list[Annotation], int]:
@@ -95,6 +96,7 @@ class AnnotationRepository:
             confidence_max: Optional maximum confidence score filter
             dataset_id: Optional dataset filter (via recording -> dataset)
             recording_id: Optional specific recording filter
+            detection_run_id: Optional detection run filter
             page: Page number (1-indexed)
             page_size: Items per page
 
@@ -145,6 +147,10 @@ class AnnotationRepository:
             base_query = base_query.where(Annotation.recording_id == recording_id)
             count_query = count_query.where(Annotation.recording_id == recording_id)
 
+        if detection_run_id is not None:
+            base_query = base_query.where(Annotation.detection_run_id == detection_run_id)
+            count_query = count_query.where(Annotation.detection_run_id == detection_run_id)
+
         # Get total count
         count_result = await self.db.execute(count_query)
         total: int = count_result.scalar_one()
@@ -171,6 +177,7 @@ class AnnotationRepository:
         self,
         project_id: UUID,
         dataset_id: UUID | None = None,
+        detection_run_id: UUID | None = None,
     ) -> list[SpeciesSummaryRow]:
         """Get species detection summary grouped by tag.
 
@@ -179,6 +186,7 @@ class AnnotationRepository:
         Args:
             project_id: Project's UUID
             dataset_id: Optional dataset filter
+            detection_run_id: Optional detection run filter
 
         Returns:
             List of dicts with tag info and aggregated statistics
@@ -232,6 +240,9 @@ class AnnotationRepository:
         if dataset_id is not None:
             query = query.where(Recording.dataset_id == dataset_id)
 
+        if detection_run_id is not None:
+            query = query.where(Annotation.detection_run_id == detection_run_id)
+
         result = await self.db.execute(query)
         rows = result.all()
 
@@ -256,6 +267,7 @@ class AnnotationRepository:
         self,
         project_id: UUID,
         dataset_id: UUID | None = None,
+        detection_run_id: UUID | None = None,
     ) -> list[TemporalSummaryRow]:
         """Get hourly detection counts grouped by tag, date, and hour.
 
@@ -264,6 +276,7 @@ class AnnotationRepository:
         Args:
             project_id: Project's UUID
             dataset_id: Optional dataset filter
+            detection_run_id: Optional detection run filter
 
         Returns:
             List of dicts with tag_id, date, hour, and count fields
@@ -297,6 +310,9 @@ class AnnotationRepository:
 
         if dataset_id is not None:
             query = query.where(Recording.dataset_id == dataset_id)
+
+        if detection_run_id is not None:
+            query = query.where(Annotation.detection_run_id == detection_run_id)
 
         result = await self.db.execute(query)
         rows = result.all()

@@ -67,17 +67,17 @@
     switch (status) {
       case 'pending': return 'bg-yellow-100 text-yellow-800';
       case 'scanning':
-      case 'processing': return 'bg-blue-100 text-blue-800';
+      case 'processing': return 'bg-primary-100 text-primary-800';
       case 'completed': return 'bg-green-100 text-green-800';
       case 'failed': return 'bg-red-100 text-red-800';
-      default: return 'bg-gray-100 text-gray-800';
+      default: return 'bg-stone-100 text-stone-800';
     }
   }
 </script>
 
-<div class="rounded-lg border border-gray-200 bg-white p-6">
+<div class="rounded-lg border border-card bg-surface-card p-6">
   <div class="mb-4 flex items-center justify-between">
-    <h3 class="m-0 text-base font-semibold text-gray-900">Import Status</h3>
+    <h3 class="m-0 text-base font-semibold text-stone-900">Import Status</h3>
     <span class="rounded-md px-3 py-1 text-sm font-medium {getStatusClasses(currentStatus)}">
       {getStatusMessage(currentStatus)}
     </span>
@@ -85,13 +85,13 @@
 
   {#if isProcessing}
     <div class="mb-4">
-      <div class="mb-1.5 flex justify-between text-sm text-gray-500">
+      <div class="mb-1.5 flex justify-between text-sm text-stone-500">
         <span>{processedFiles} / {totalFiles} files processed</span>
         <span>{progressPercent.toFixed(1)}%</span>
       </div>
-      <div class="h-2 overflow-hidden rounded-full bg-gray-200">
+      <div class="h-2 overflow-hidden rounded-full bg-stone-200">
         <div
-          class="h-full bg-blue-600 transition-all duration-300"
+          class="h-full bg-primary-600 transition-all duration-300"
           style="width: {progressPercent}%"
         ></div>
       </div>
@@ -138,7 +138,7 @@
       <button
         onclick={() => { mutationError = null; $startImportMutation.mutate(); }}
         disabled={$startImportMutation.isPending}
-        class="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+        class="rounded-md bg-primary-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50"
       >
         {$startImportMutation.isPending ? 'Starting...' : 'Start Import'}
       </button>
@@ -146,7 +146,7 @@
       <button
         onclick={() => $rescanMutation.mutate()}
         disabled={$rescanMutation.isPending}
-        class="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+        class="rounded-md border border-stone-300 bg-surface-card px-4 py-2 text-sm font-medium text-stone-700 transition-colors hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-50"
       >
         {$rescanMutation.isPending ? 'Rescanning...' : 'Rescan Directory'}
       </button>

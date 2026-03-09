@@ -64,6 +64,7 @@ async def list_detections(
     confidence_max: float | None = None,
     dataset_id: UUID | None = None,
     recording_id: UUID | None = None,
+    detection_run_id: UUID | None = None,
     page: int = 1,
     page_size: int = 50,
 ) -> DetectionListResponse:
@@ -79,6 +80,7 @@ async def list_detections(
         confidence_max: Optional maximum confidence filter
         dataset_id: Optional dataset filter
         recording_id: Optional recording filter
+        detection_run_id: Optional detection run filter
         page: Page number (default: 1)
         page_size: Items per page (default: 50)
 
@@ -96,6 +98,7 @@ async def list_detections(
         confidence_max=confidence_max,
         dataset_id=dataset_id,
         recording_id=recording_id,
+        detection_run_id=detection_run_id,
         page=page,
         page_size=page_size,
     )
@@ -112,6 +115,7 @@ async def get_species_summary(
     current_user: CurrentUser,
     service: DetectionServiceDep,
     dataset_id: UUID | None = None,
+    detection_run_id: UUID | None = None,
     locale: str = "en",
 ) -> SpeciesSummaryResponse:
     """Get species detection summary.
@@ -123,6 +127,7 @@ async def get_species_summary(
         current_user: Current authenticated user
         service: Detection service instance
         dataset_id: Optional dataset filter
+        detection_run_id: Optional detection run filter
         locale: Locale code for common name resolution (default: "en")
 
     Returns:
@@ -134,6 +139,7 @@ async def get_species_summary(
     return await service.get_species_summary(
         project_id=project_id,
         dataset_id=dataset_id,
+        detection_run_id=detection_run_id,
         locale=locale,
     )
 
@@ -150,6 +156,7 @@ async def export_csv(
     status: DetectionStatus | None = None,
     tag_id: UUID | None = None,
     dataset_id: UUID | None = None,
+    detection_run_id: UUID | None = None,
 ) -> StreamingResponse:
     """Export detections as a CSV file.
 
@@ -162,6 +169,7 @@ async def export_csv(
         status: Optional detection status filter
         tag_id: Optional tag UUID filter
         dataset_id: Optional dataset UUID filter
+        detection_run_id: Optional detection run UUID filter
 
     Returns:
         StreamingResponse with CSV content (text/csv)
@@ -175,6 +183,7 @@ async def export_csv(
         status=status,
         tag_id=tag_id,
         dataset_id=dataset_id,
+        detection_run_id=detection_run_id,
     )
     return StreamingResponse(
         io.BytesIO(csv_content.encode("utf-8")),
@@ -193,6 +202,7 @@ async def export_ml_dataset(
     current_user: CurrentUser,
     db: DbSession,
     dataset_id: UUID | None = None,
+    detection_run_id: UUID | None = None,
 ) -> StreamingResponse:
     """Export confirmed detections as a ZIP ML training dataset.
 
@@ -207,6 +217,7 @@ async def export_ml_dataset(
         current_user: Current authenticated user
         db: Database session
         dataset_id: Optional dataset UUID filter
+        detection_run_id: Optional detection run UUID filter
 
     Returns:
         StreamingResponse with ZIP content (application/zip)
@@ -218,6 +229,7 @@ async def export_ml_dataset(
     zip_content = await service.export_ml_dataset(
         project_id=project_id,
         dataset_id=dataset_id,
+        detection_run_id=detection_run_id,
     )
     return StreamingResponse(
         io.BytesIO(zip_content),
@@ -237,6 +249,7 @@ async def get_temporal_data(
     current_user: CurrentUser,
     service: DetectionServiceDep,
     dataset_id: UUID | None = None,
+    detection_run_id: UUID | None = None,
     locale: str = "en",
 ) -> DetectionTemporalDataResponse:
     """Get temporal detection data for visualization.
@@ -251,6 +264,7 @@ async def get_temporal_data(
         current_user: Current authenticated user
         service: Detection service instance
         dataset_id: Optional dataset filter
+        detection_run_id: Optional detection run filter
         locale: Locale code for common name resolution (default: "en")
 
     Returns:
@@ -262,6 +276,7 @@ async def get_temporal_data(
     return await service.get_temporal_data(
         project_id=project_id,
         dataset_id=dataset_id,
+        detection_run_id=detection_run_id,
         locale=locale,
     )
 

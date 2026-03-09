@@ -150,7 +150,7 @@
     : detection.status === 'rejected'
     ? 'border-red-400 ring-1 ring-red-300'
     : isSelected
-    ? 'border-blue-400 ring-1 ring-blue-300'
+    ? 'border-primary-400 ring-1 ring-primary-300'
     : 'border-stone-200';
 
   // Brief scale animation when a mutation completes (isLoading transitions true -> false)
@@ -171,13 +171,13 @@
 <!-- svelte-ignore a11y_click_events_have_key_events -->
 <!-- svelte-ignore a11y_interactive_supports_focus -->
 <div
-  class="relative flex flex-col overflow-hidden rounded-lg border bg-white shadow-sm transition-all duration-300 ease-in-out hover:shadow-md {borderClass} {justUpdated ? 'scale-[1.02]' : ''}"
+  class="relative flex flex-col overflow-hidden rounded-lg border bg-surface-card shadow-sm transition-all duration-300 ease-in-out hover:shadow-md {borderClass} {justUpdated ? 'scale-[1.02]' : ''}"
   role="article"
   aria-label="Detection: {tagName}"
 >
   <!-- Loading overlay: semi-transparent overlay while mutation is in flight -->
   {#if isLoading}
-    <div class="absolute inset-0 z-10 flex items-center justify-center rounded-lg bg-white/60">
+    <div class="absolute inset-0 z-10 flex items-center justify-center rounded-lg bg-surface-card/60">
       <svg class="h-5 w-5 animate-spin text-stone-400" viewBox="0 0 24 24" fill="none">
         <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
         <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>

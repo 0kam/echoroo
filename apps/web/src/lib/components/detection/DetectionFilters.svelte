@@ -73,10 +73,10 @@
     statusValue !== '' || confidenceMin > 0 || confidenceMax < 100 || searchValue !== '';
 </script>
 
-<div class="flex flex-wrap items-end gap-3 rounded-lg border border-gray-200 bg-white p-4">
+<div class="flex flex-wrap items-end gap-3 rounded-lg border border-card bg-surface-card p-4">
   <!-- Species search -->
   <div class="min-w-48 flex-1">
-    <label for="species-search" class="mb-1 block text-xs font-medium text-gray-700">
+    <label for="species-search" class="mb-1 block text-xs font-medium text-stone-700">
       {m.detection_filter_search_species_label()}
     </label>
     <input
@@ -85,22 +85,22 @@
       placeholder={m.detection_filter_search_species_placeholder()}
       value={searchValue}
       on:input={handleSearchInput}
-      class="w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm text-gray-900 placeholder-gray-400
-        focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+      class="w-full rounded-md border border-stone-300 px-3 py-1.5 text-sm text-stone-900 placeholder-stone-400
+        focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
     />
   </div>
 
   <!-- Status filter -->
   <div class="min-w-40">
-    <label for="status-filter" class="mb-1 block text-xs font-medium text-gray-700">
+    <label for="status-filter" class="mb-1 block text-xs font-medium text-stone-700">
       {m.detection_filter_status_dropdown_label()}
     </label>
     <select
       id="status-filter"
       value={statusValue}
       on:change={handleStatusChange}
-      class="w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm text-gray-900
-        focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+      class="w-full rounded-md border border-stone-300 px-3 py-1.5 text-sm text-stone-900
+        focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
     >
       {#each statusOptions as opt}
         <option value={opt.value}>{opt.label}</option>
@@ -111,8 +111,8 @@
   <!-- Confidence range -->
   <div class="min-w-48 flex-1">
     <div class="mb-1 flex items-center justify-between">
-      <span class="text-xs font-medium text-gray-700">{m.detection_filter_confidence_label()}</span>
-      <span class="text-xs text-gray-500">{confidenceMin}% – {confidenceMax}%</span>
+      <span class="text-xs font-medium text-stone-700">{m.detection_filter_confidence_label()}</span>
+      <span class="text-xs text-stone-500">{confidenceMin}% – {confidenceMax}%</span>
     </div>
     <div class="flex items-center gap-2">
       <input
@@ -121,7 +121,7 @@
         max="100"
         value={confidenceMin}
         on:input={handleConfidenceMinChange}
-        class="h-1.5 w-full cursor-pointer accent-blue-600"
+        class="h-1.5 w-full cursor-pointer accent-primary-600"
         aria-label={m.detection_filter_min_confidence_aria()}
       />
       <input
@@ -130,7 +130,7 @@
         max="100"
         value={confidenceMax}
         on:input={handleConfidenceMaxChange}
-        class="h-1.5 w-full cursor-pointer accent-blue-600"
+        class="h-1.5 w-full cursor-pointer accent-primary-600"
         aria-label={m.detection_filter_max_confidence_aria()}
       />
     </div>
@@ -142,8 +142,8 @@
       <button
         type="button"
         on:click={handleReset}
-        class="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-600
-          hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500"
+        class="rounded-md border border-stone-300 bg-surface-card px-3 py-1.5 text-sm text-stone-600
+          hover:bg-stone-50 focus:outline-none focus:ring-2 focus:ring-primary-500"
       >
         {m.detection_filter_reset_button()}
       </button>

@@ -13,12 +13,14 @@ function buildExportParams(params?: {
   status?: string;
   tag_id?: string;
   dataset_id?: string;
+  detection_run_id?: string;
 }): string {
   if (!params) return '';
   const query = new URLSearchParams();
   if (params.status) query.set('status', params.status);
   if (params.tag_id) query.set('tag_id', params.tag_id);
   if (params.dataset_id) query.set('dataset_id', params.dataset_id);
+  if (params.detection_run_id) query.set('detection_run_id', params.detection_run_id);
   const str = query.toString();
   return str ? `?${str}` : '';
 }
@@ -28,7 +30,7 @@ function buildExportParams(params?: {
  */
 export async function exportDetectionsCSV(
   projectId: string,
-  params?: { status?: string; tag_id?: string; dataset_id?: string }
+  params?: { status?: string; tag_id?: string; dataset_id?: string; detection_run_id?: string }
 ): Promise<void> {
   const qs = buildExportParams(params);
   const response = await fetchWithErrorHandling(
@@ -47,7 +49,7 @@ export async function exportDetectionsCSV(
  */
 export async function exportMLDataset(
   projectId: string,
-  params?: { dataset_id?: string }
+  params?: { dataset_id?: string; detection_run_id?: string }
 ): Promise<void> {
   const qs = buildExportParams(params);
   const response = await fetchWithErrorHandling(

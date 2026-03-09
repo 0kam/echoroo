@@ -38,12 +38,12 @@
   );
 </script>
 
-<div class="rounded-lg border border-gray-200 bg-white p-6">
+<div class="rounded-lg border border-card bg-surface-card p-6">
   <div class="flex items-start justify-between gap-4">
     <div class="flex items-center gap-2">
       <!-- Clock icon -->
       <svg
-        class="h-5 w-5 text-blue-500"
+        class="h-5 w-5 text-primary-500"
         viewBox="0 0 24 24"
         fill="none"
         stroke="currentColor"
@@ -56,22 +56,22 @@
         <polyline points="12 6 12 12 16 14" />
       </svg>
       <div>
-        <h3 class="text-base font-semibold text-gray-900">{m.datetime_config_title()}</h3>
-        <p class="mt-0.5 text-sm text-gray-500">{m.datetime_config_description()}</p>
+        <h3 class="text-base font-semibold text-stone-900">{m.datetime_config_title()}</h3>
+        <p class="mt-0.5 text-sm text-stone-500">{m.datetime_config_description()}</p>
       </div>
     </div>
 
     <button
       onclick={() => (showModal = true)}
-      class="flex-shrink-0 rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50"
+      class="flex-shrink-0 rounded-md border border-stone-300 bg-surface-card px-3 py-1.5 text-sm font-medium text-stone-700 transition-colors hover:bg-stone-50"
     >
       {isConfigured ? m.datetime_config_reconfigure() : m.datetime_config_configure()}
     </button>
   </div>
 
   {#if $configQuery.isLoading}
-    <div class="mt-4 flex items-center gap-2 text-sm text-gray-500">
-      <svg class="h-4 w-4 animate-spin text-blue-600" fill="none" viewBox="0 0 24 24">
+    <div class="mt-4 flex items-center gap-2 text-sm text-stone-500">
+      <svg class="h-4 w-4 animate-spin text-primary-600" fill="none" viewBox="0 0 24 24">
         <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
         <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
       </svg>
@@ -111,13 +111,13 @@
         </span>
       {/if}
       {#if summary.total === 0}
-        <span class="text-sm text-gray-400">{m.datetime_config_no_recordings()}</span>
+        <span class="text-sm text-stone-400">{m.datetime_config_no_recordings()}</span>
       {/if}
     </div>
 
     {#if isConfigured}
-      <div class="mt-3 rounded-md bg-gray-50 px-3 py-2">
-        <code class="text-xs text-gray-600">{$configQuery.data.datetime_format}</code>
+      <div class="mt-3 rounded-md bg-stone-50 px-3 py-2">
+        <code class="text-xs text-stone-600">{$configQuery.data.datetime_format}</code>
       </div>
     {/if}
   {/if}
@@ -129,6 +129,7 @@
     {datasetId}
     currentPattern={$configQuery.data?.datetime_pattern ?? null}
     currentFormat={$configQuery.data?.datetime_format ?? null}
+    currentTimezone={$configQuery.data?.datetime_timezone ?? null}
     sampleFilenames={$configQuery.data?.sample_filenames ?? []}
     onClose={handleModalClose}
   />

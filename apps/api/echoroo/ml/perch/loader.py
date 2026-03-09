@@ -106,8 +106,33 @@ class PerchLoader(ModelLoader):
             species_list=self._species_list,
         )
 
+    def _detect_gpu_available(self) -> bool:
+        """Check whether at least one GPU is visible to TensorFlow.
+
+        Returns
+        -------
+        bool
+            True if TensorFlow can see at least one GPU, False otherwise.
+        """
+        try:
+            import tensorflow as tf  # type: ignore[import-untyped]
+
+            return len(tf.config.list_physical_devices("GPU")) > 0
+        except Exception:
+            return False
+
     def _configure_device(self) -> None:
-        """Configure TensorFlow to use the specified device."""
+        """Configure TensorFlow to use the specified device.
+
+        When device is "GPU" but no physical GPU is available, automatically
+        falls back to "CPU" to avoid an AssertionError inside birdnet internals.
+        """
+        if self._device == "GPU" and not self._detect_gpu_available():
+            logger.warning(
+                "Perch requested GPU but no GPU is available; falling back to CPU"
+            )
+            self._device = "CPU"
+
         if self._device == "CPU":
             os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
             logger.info("Perch configured to use CPU (GPU disabled)")

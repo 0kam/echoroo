@@ -55,7 +55,7 @@
     <!-- Responsive grid -->
     <div class="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
       {#each visibleSpecies as sp (sp.tag_id)}
-        <div class="rounded-lg border border-stone-200 bg-white p-4 shadow-sm">
+        <div class="rounded-lg border border-card bg-surface-card p-4 shadow-sm">
           <PolarHeatmap
             data={sp.detections}
             scientificName={sp.scientific_name}
@@ -73,7 +73,7 @@
         <button
           type="button"
           on:click={() => (showAll = !showAll)}
-          class="inline-flex items-center gap-1.5 rounded-md border border-stone-300 bg-white px-4 py-2 text-sm font-medium text-stone-600 hover:bg-stone-50 focus:outline-none focus:ring-2 focus:ring-emerald-400 transition-colors"
+          class="inline-flex items-center gap-1.5 rounded-md border border-stone-300 bg-surface-card px-4 py-2 text-sm font-medium text-stone-600 hover:bg-stone-50 focus:outline-none focus:ring-2 focus:ring-emerald-400 transition-colors"
         >
           {#if showAll}
             <svg class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">

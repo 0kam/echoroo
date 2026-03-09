@@ -137,7 +137,7 @@
       placeholder="Search recordings..."
       bind:value={search}
       oninput={handleSearchInput}
-      class="min-w-[200px] flex-1 rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+      class="min-w-[200px] flex-1 rounded-md border border-stone-300 px-3 py-2 text-sm focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
     />
 
     <div class="flex gap-2">
@@ -146,20 +146,20 @@
         bind:value={datetimeFrom}
         oninput={handleSearchInput}
         title="From date"
-        class="rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
+        class="rounded-md border border-stone-300 px-3 py-2 text-sm focus:border-primary-500 focus:outline-none"
       />
       <input
         type="datetime-local"
         bind:value={datetimeTo}
         oninput={handleSearchInput}
         title="To date"
-        class="rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
+        class="rounded-md border border-stone-300 px-3 py-2 text-sm focus:border-primary-500 focus:outline-none"
       />
     </div>
 
     <select
       bind:value={sortOrder}
-      class="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
+      class="rounded-md border border-stone-300 bg-surface-card px-3 py-2 text-sm focus:border-primary-500 focus:outline-none"
     >
       <option value="desc">Descending</option>
       <option value="asc">Ascending</option>
@@ -168,12 +168,12 @@
 
   <!-- Loading and error states -->
   {#if $recordingsQuery.isLoading}
-    <div class="flex items-center justify-center rounded-lg bg-gray-50 py-12">
-      <svg class="mr-3 h-5 w-5 animate-spin text-blue-600" fill="none" viewBox="0 0 24 24">
+    <div class="flex items-center justify-center rounded-lg bg-stone-50 py-12">
+      <svg class="mr-3 h-5 w-5 animate-spin text-primary-600" fill="none" viewBox="0 0 24 24">
         <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
         <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
       </svg>
-      <span class="text-sm text-gray-600">{m.common_loading_recordings()}</span>
+      <span class="text-sm text-stone-600">{m.common_loading_recordings()}</span>
     </div>
   {:else if $recordingsQuery.error}
     <div class="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700">
@@ -183,20 +183,20 @@
     {@const recordings = $recordingsQuery.data.items}
 
     {#if recordings.length === 0}
-      <div class="rounded-lg bg-gray-50 py-12 text-center">
-        <svg class="mx-auto mb-3 h-10 w-10 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <div class="rounded-lg bg-stone-50 py-12 text-center">
+        <svg class="mx-auto mb-3 h-10 w-10 text-stone-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
         </svg>
-        <p class="text-sm text-gray-500">No recordings found.</p>
+        <p class="text-sm text-stone-500">No recordings found.</p>
       </div>
     {:else}
       <!-- Recordings table -->
-      <div class="overflow-x-auto rounded-lg border border-gray-200 bg-white">
+      <div class="overflow-x-auto rounded-lg border border-card bg-surface-card">
         <table class="w-full border-collapse">
-          <thead class="border-b border-gray-200 bg-gray-50">
+          <thead class="border-b border-stone-200 bg-stone-50">
             <tr>
               <th
-                class="cursor-pointer px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500 hover:bg-gray-100"
+                class="cursor-pointer px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-stone-500 hover:bg-stone-100"
                 onclick={() => handleSort('filename')}
               >
                 <span class="flex items-center gap-1">
@@ -209,7 +209,7 @@
                 </span>
               </th>
               <th
-                class="cursor-pointer px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500 hover:bg-gray-100"
+                class="cursor-pointer px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-stone-500 hover:bg-stone-100"
                 onclick={() => handleSort('datetime')}
               >
                 <span class="flex items-center gap-1">
@@ -222,7 +222,7 @@
                 </span>
               </th>
               <th
-                class="cursor-pointer px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500 hover:bg-gray-100"
+                class="cursor-pointer px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-stone-500 hover:bg-stone-100"
                 onclick={() => handleSort('duration')}
               >
                 <span class="flex items-center gap-1">
@@ -234,16 +234,16 @@
                   {/if}
                 </span>
               </th>
-              <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">
+              <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-stone-500">
                 Sample Rate
               </th>
-              <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">
+              <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-stone-500">
                 Ch
               </th>
-              <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">
+              <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-stone-500">
                 Status
               </th>
-              <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">
+              <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-stone-500">
                 Actions
               </th>
             </tr>
@@ -251,16 +251,16 @@
           <tbody>
             {#each recordings as recording (recording.id)}
               <tr
-                class="border-b border-gray-100 transition-colors last:border-b-0 hover:bg-gray-50 {onSelect ? 'cursor-pointer' : ''}"
+                class="border-b border-stone-100 transition-colors last:border-b-0 hover:bg-stone-50 {onSelect ? 'cursor-pointer' : ''}"
                 onclick={() => onSelect && handleRowClick(recording)}
               >
                 <td class="px-4 py-3">
-                  <span class="font-mono text-sm font-medium text-gray-900">{recording.filename}</span>
+                  <span class="font-mono text-sm font-medium text-stone-900">{recording.filename}</span>
                 </td>
-                <td class="px-4 py-3 text-sm text-gray-600">{formatDatetime(recording.datetime)}</td>
-                <td class="px-4 py-3 text-sm text-gray-600">{formatDuration(recording.duration)}</td>
-                <td class="px-4 py-3 text-sm text-gray-600">{formatSamplerate(recording.samplerate)}</td>
-                <td class="px-4 py-3 text-sm text-gray-600">{recording.channels}</td>
+                <td class="px-4 py-3 text-sm text-stone-600">{formatDatetime(recording.datetime)}</td>
+                <td class="px-4 py-3 text-sm text-stone-600">{formatDuration(recording.duration)}</td>
+                <td class="px-4 py-3 text-sm text-stone-600">{formatSamplerate(recording.samplerate)}</td>
+                <td class="px-4 py-3 text-sm text-stone-600">{recording.channels}</td>
                 <td class="px-4 py-3">
                   <span
                     class="inline-flex items-center rounded px-2 py-0.5 text-xs font-medium capitalize
@@ -273,7 +273,7 @@
                 </td>
                 <td class="px-4 py-3">
                   <button
-                    class="rounded border border-red-200 bg-white px-2 py-1 text-xs font-medium text-red-600 transition-colors hover:bg-red-50 hover:border-red-300"
+                    class="rounded border border-red-200 bg-surface-card px-2 py-1 text-xs font-medium text-red-600 transition-colors hover:bg-red-50 hover:border-red-300"
                     onclick={(e) => { e.stopPropagation(); handleDeleteClick(recording); }}
                     disabled={$deleteMutation.isPending}
                     aria-label="Delete recording"
@@ -292,18 +292,18 @@
         <button
           onclick={prevPage}
           disabled={page <= 1}
-          class="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+          class="rounded-md border border-stone-300 bg-surface-card px-4 py-2 text-sm font-medium text-stone-700 transition-colors hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-50"
         >
           Previous
         </button>
-        <span class="text-sm text-gray-500">
+        <span class="text-sm text-stone-500">
           Page {$recordingsQuery.data.page} of {$recordingsQuery.data.pages}
           ({$recordingsQuery.data.total} total)
         </span>
         <button
           onclick={nextPage}
           disabled={page >= $recordingsQuery.data.pages}
-          class="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+          class="rounded-md border border-stone-300 bg-surface-card px-4 py-2 text-sm font-medium text-stone-700 transition-colors hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-50"
         >
           Next
         </button>

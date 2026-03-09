@@ -343,14 +343,14 @@
         return 'bg-yellow-100 text-yellow-800';
       case 'validating':
       case 'importing':
-        return 'bg-blue-100 text-blue-800';
+        return 'bg-primary-100 text-primary-800';
       case 'validated':
       case 'imported':
         return 'bg-green-100 text-green-800';
       case 'failed':
         return 'bg-red-100 text-red-800';
       default:
-        return 'bg-gray-100 text-gray-800';
+        return 'bg-stone-100 text-stone-800';
     }
   }
 
@@ -366,8 +366,8 @@
   }
 </script>
 
-<div class="rounded-lg border border-gray-200 bg-white p-6">
-  <h3 class="mb-4 text-base font-semibold text-gray-900">Upload Audio Files</h3>
+<div class="rounded-lg border border-card bg-surface-card p-6">
+  <h3 class="mb-4 text-base font-semibold text-stone-900">Upload Audio Files</h3>
 
   <!-- ============================================ -->
   <!-- Step: File Selection                         -->
@@ -378,8 +378,8 @@
     <div
       class="mb-4 flex min-h-40 cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed p-8 text-center transition-colors
         {isDragOver
-          ? 'border-blue-400 bg-blue-50'
-          : 'border-gray-300 hover:border-gray-400 hover:bg-gray-50'}"
+          ? 'border-primary-400 bg-primary-50'
+          : 'border-stone-300 hover:border-stone-400 hover:bg-stone-50'}"
       role="button"
       aria-label="Drop audio files here or click to browse"
       ondragover={handleDragOver}
@@ -389,7 +389,7 @@
       onkeydown={(e) => e.key === 'Enter' && document.getElementById('file-input')?.click()}
     >
       <svg
-        class="mb-3 h-10 w-10 {isDragOver ? 'text-blue-400' : 'text-gray-300'}"
+        class="mb-3 h-10 w-10 {isDragOver ? 'text-primary-400' : 'text-stone-300'}"
         viewBox="0 0 24 24"
         fill="none"
         stroke="currentColor"
@@ -397,11 +397,11 @@
         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
           d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
       </svg>
-      <p class="mb-1 text-sm font-medium text-gray-700">
+      <p class="mb-1 text-sm font-medium text-stone-700">
         {isDragOver ? 'Release to add files' : 'Drag and drop audio files here'}
       </p>
-      <p class="text-xs text-gray-400">
-        or <span class="text-blue-600 underline">browse</span> &mdash;
+      <p class="text-xs text-stone-400">
+        or <span class="text-primary-600 underline">browse</span> &mdash;
         WAV, FLAC, MP3, OGG, OPUS &bull; max 1 GB per file &bull; up to 500 files
       </p>
     </div>
@@ -432,30 +432,30 @@
     {#if selectedFiles.length > 0}
       <div class="mb-4">
         <div class="mb-2 flex items-center justify-between">
-          <span class="text-sm font-medium text-gray-700">
+          <span class="text-sm font-medium text-stone-700">
             {selectedFiles.length} file{selectedFiles.length !== 1 ? 's' : ''} selected
-            <span class="font-normal text-gray-400">({formatBytes(totalBytes)})</span>
+            <span class="font-normal text-stone-400">({formatBytes(totalBytes)})</span>
           </span>
           <button
             onclick={() => (selectedFiles = [])}
-            class="text-xs text-gray-400 underline hover:text-gray-600"
+            class="text-xs text-stone-400 underline hover:text-stone-600"
           >
             Clear all
           </button>
         </div>
 
-        <ul class="max-h-60 divide-y divide-gray-100 overflow-y-auto rounded-md border border-gray-200">
+        <ul class="max-h-60 divide-y divide-stone-100 overflow-y-auto rounded-md border border-stone-200">
           {#each selectedFiles as file, i}
             <li class="flex items-center gap-3 px-3 py-2">
-              <svg class="h-4 w-4 flex-shrink-0 text-gray-400" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+              <svg class="h-4 w-4 flex-shrink-0 text-stone-400" viewBox="0 0 24 24" fill="none" stroke="currentColor">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                   d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3" />
               </svg>
-              <span class="min-w-0 flex-1 truncate text-sm text-gray-700">{file.name}</span>
-              <span class="flex-shrink-0 text-xs text-gray-400">{formatBytes(file.size)}</span>
+              <span class="min-w-0 flex-1 truncate text-sm text-stone-700">{file.name}</span>
+              <span class="flex-shrink-0 text-xs text-stone-400">{formatBytes(file.size)}</span>
               <button
                 onclick={() => removeFile(i)}
-                class="flex-shrink-0 rounded p-0.5 text-gray-300 hover:bg-gray-100 hover:text-gray-500"
+                class="flex-shrink-0 rounded p-0.5 text-stone-300 hover:bg-stone-100 hover:text-stone-500"
                 aria-label="Remove {file.name}"
               >
                 <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor">
@@ -471,7 +471,7 @@
       <div class="flex justify-end">
         <button
           onclick={startUpload}
-          class="rounded-md bg-blue-600 px-5 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700"
+          class="rounded-md bg-primary-600 px-5 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-700"
         >
           Upload {selectedFiles.length} File{selectedFiles.length !== 1 ? 's' : ''}
         </button>
@@ -485,20 +485,20 @@
   {#if step === 'hashing'}
     <div class="space-y-3">
       <div class="flex items-center gap-3">
-        <svg class="h-5 w-5 animate-spin text-blue-600" fill="none" viewBox="0 0 24 24">
+        <svg class="h-5 w-5 animate-spin text-primary-600" fill="none" viewBox="0 0 24 24">
           <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
           <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
         </svg>
-        <span class="text-sm font-medium text-gray-700">Computing file checksums...</span>
-        <span class="ml-auto text-sm text-gray-500">{hashingProgress}%</span>
+        <span class="text-sm font-medium text-stone-700">Computing file checksums...</span>
+        <span class="ml-auto text-sm text-stone-500">{hashingProgress}%</span>
       </div>
-      <div class="h-2 overflow-hidden rounded-full bg-gray-200">
+      <div class="h-2 overflow-hidden rounded-full bg-stone-200">
         <div
-          class="h-full bg-blue-600 transition-all duration-200"
+          class="h-full bg-primary-600 transition-all duration-200"
           style="width: {hashingProgress}%"
         ></div>
       </div>
-      <p class="text-xs text-gray-400">
+      <p class="text-xs text-stone-400">
         Verifying integrity of {selectedFiles.length} file{selectedFiles.length !== 1 ? 's' : ''}.
         This may take a moment for large files.
       </p>
@@ -510,11 +510,11 @@
   <!-- ============================================ -->
   {#if step === 'creating'}
     <div class="flex items-center gap-3">
-      <svg class="h-5 w-5 animate-spin text-blue-600" fill="none" viewBox="0 0 24 24">
+      <svg class="h-5 w-5 animate-spin text-primary-600" fill="none" viewBox="0 0 24 24">
         <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
         <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
       </svg>
-      <span class="text-sm font-medium text-gray-700">Creating upload session...</span>
+      <span class="text-sm font-medium text-stone-700">Creating upload session...</span>
     </div>
   {/if}
 
@@ -525,24 +525,24 @@
     <div class="space-y-4">
       <!-- Overall progress -->
       <div>
-        <div class="mb-1.5 flex justify-between text-sm text-gray-600">
+        <div class="mb-1.5 flex justify-between text-sm text-stone-600">
           <span class="font-medium">Uploading files</span>
           <span>{overallUploadPercent()}%</span>
         </div>
-        <div class="h-2 overflow-hidden rounded-full bg-gray-200">
+        <div class="h-2 overflow-hidden rounded-full bg-stone-200">
           <div
-            class="h-full bg-blue-600 transition-all duration-300"
+            class="h-full bg-primary-600 transition-all duration-300"
             style="width: {overallUploadPercent()}%"
           ></div>
         </div>
-        <p class="mt-1 text-xs text-gray-400">
+        <p class="mt-1 text-xs text-stone-400">
           Uploading {selectedFiles.length} file{selectedFiles.length !== 1 ? 's' : ''}
           &mdash; up to {UPLOAD_CONCURRENCY} at a time
         </p>
       </div>
 
       <!-- Per-file progress list -->
-      <ul class="max-h-64 divide-y divide-gray-100 overflow-y-auto rounded-md border border-gray-200">
+      <ul class="max-h-64 divide-y divide-stone-100 overflow-y-auto rounded-md border border-stone-200">
         {#each selectedFiles as file, i}
           {@const pct = fileUploadProgress[i] ?? 0}
           <li class="px-3 py-2">
@@ -552,19 +552,19 @@
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7" />
                 </svg>
               {:else if pct > 0}
-                <svg class="h-3.5 w-3.5 flex-shrink-0 animate-spin text-blue-500" fill="none" viewBox="0 0 24 24">
+                <svg class="h-3.5 w-3.5 flex-shrink-0 animate-spin text-primary-500" fill="none" viewBox="0 0 24 24">
                   <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
                   <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
                 </svg>
               {:else}
-                <div class="h-3.5 w-3.5 flex-shrink-0 rounded-full border-2 border-gray-200"></div>
+                <div class="h-3.5 w-3.5 flex-shrink-0 rounded-full border-2 border-stone-200"></div>
               {/if}
-              <span class="min-w-0 flex-1 truncate text-xs text-gray-700">{file.name}</span>
-              <span class="flex-shrink-0 text-xs text-gray-400">{pct}%</span>
+              <span class="min-w-0 flex-1 truncate text-xs text-stone-700">{file.name}</span>
+              <span class="flex-shrink-0 text-xs text-stone-400">{pct}%</span>
             </div>
-            <div class="h-1 overflow-hidden rounded-full bg-gray-100">
+            <div class="h-1 overflow-hidden rounded-full bg-stone-100">
               <div
-                class="h-full transition-all duration-200 {pct >= 100 ? 'bg-green-500' : 'bg-blue-500'}"
+                class="h-full transition-all duration-200 {pct >= 100 ? 'bg-green-500' : 'bg-primary-500'}"
                 style="width: {pct}%"
               ></div>
             </div>
@@ -579,11 +579,11 @@
   <!-- ============================================ -->
   {#if step === 'completing'}
     <div class="flex items-center gap-3">
-      <svg class="h-5 w-5 animate-spin text-blue-600" fill="none" viewBox="0 0 24 24">
+      <svg class="h-5 w-5 animate-spin text-primary-600" fill="none" viewBox="0 0 24 24">
         <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
         <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
       </svg>
-      <span class="text-sm font-medium text-gray-700">Finalizing upload and starting import...</span>
+      <span class="text-sm font-medium text-stone-700">Finalizing upload and starting import...</span>
     </div>
   {/if}
 
@@ -595,11 +595,11 @@
     <div class="space-y-4">
       <div class="flex items-center justify-between">
         <div class="flex items-center gap-3">
-          <svg class="h-5 w-5 animate-spin text-blue-600" fill="none" viewBox="0 0 24 24">
+          <svg class="h-5 w-5 animate-spin text-primary-600" fill="none" viewBox="0 0 24 24">
             <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
             <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
           </svg>
-          <span class="text-sm font-medium text-gray-700">
+          <span class="text-sm font-medium text-stone-700">
             {status ? getSessionStatusLabel(status.status) : m.common_processing()}
           </span>
         </div>
@@ -613,7 +613,7 @@
       {#if status}
         <!-- Progress bar -->
         <div>
-          <div class="mb-1.5 flex justify-between text-sm text-gray-500">
+          <div class="mb-1.5 flex justify-between text-sm text-stone-500">
             {#if status.status === 'validating' || status.status === 'validated'}
               <span>{status.validated_files} / {status.total_files} files validated</span>
             {:else}
@@ -621,9 +621,9 @@
             {/if}
             <span>{status.progress_percent.toFixed(1)}%</span>
           </div>
-          <div class="h-2 overflow-hidden rounded-full bg-gray-200">
+          <div class="h-2 overflow-hidden rounded-full bg-stone-200">
             <div
-              class="h-full bg-blue-600 transition-all duration-300"
+              class="h-full bg-primary-600 transition-all duration-300"
               style="width: {status.progress_percent}%"
             ></div>
           </div>
@@ -693,7 +693,7 @@
       <div class="flex justify-end">
         <button
           onclick={resetToSelect}
-          class="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50"
+          class="rounded-md border border-stone-300 bg-surface-card px-4 py-2 text-sm font-medium text-stone-700 transition-colors hover:bg-stone-50"
         >
           Upload More Files
         </button>
@@ -722,7 +722,7 @@
       <div class="flex justify-end">
         <button
           onclick={resetToSelect}
-          class="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50"
+          class="rounded-md border border-stone-300 bg-surface-card px-4 py-2 text-sm font-medium text-stone-700 transition-colors hover:bg-stone-50"
         >
           Try Again
         </button>

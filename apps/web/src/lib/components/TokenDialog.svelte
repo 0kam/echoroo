@@ -101,21 +101,21 @@
 
   <!-- Dialog -->
   <div
-    class="fixed left-1/2 top-1/2 z-50 w-full max-w-md -translate-x-1/2 -translate-y-1/2 rounded-lg bg-white p-6 shadow-xl"
+    class="fixed left-1/2 top-1/2 z-50 w-full max-w-md -translate-x-1/2 -translate-y-1/2 rounded-lg bg-surface-card p-6 shadow-xl"
     role="dialog"
     aria-modal="true"
     aria-labelledby="dialog-title"
   >
     {#if !createdToken}
       <!-- Create Token Form -->
-      <h2 id="dialog-title" class="mb-4 text-xl font-semibold text-gray-900">
+      <h2 id="dialog-title" class="mb-4 text-xl font-semibold text-stone-900">
         {m.token_dialog_create_title()}
       </h2>
 
       <form onsubmit={handleSubmit}>
         <!-- Name field -->
         <div class="mb-4">
-          <label for="token-name" class="mb-1 block text-sm font-medium text-gray-700">
+          <label for="token-name" class="mb-1 block text-sm font-medium text-stone-700">
             {m.token_dialog_token_name_label()}
           </label>
           <input
@@ -125,16 +125,16 @@
             required
             maxlength="100"
             placeholder="e.g., CI/CD Pipeline"
-            class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+            class="w-full rounded-md border border-stone-300 px-3 py-2 text-sm focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
           />
-          <p class="mt-1 text-xs text-gray-500">
+          <p class="mt-1 text-xs text-stone-500">
             {m.token_dialog_token_name_hint()}
           </p>
         </div>
 
         <!-- Expiration field -->
         <div class="mb-4">
-          <label for="token-expires" class="mb-1 block text-sm font-medium text-gray-700">
+          <label for="token-expires" class="mb-1 block text-sm font-medium text-stone-700">
             {m.token_dialog_expiration_label()}
           </label>
           <input
@@ -142,9 +142,9 @@
             type="datetime-local"
             bind:value={expiresAt}
             min={new Date().toISOString().slice(0, 16)}
-            class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+            class="w-full rounded-md border border-stone-300 px-3 py-2 text-sm focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
           />
-          <p class="mt-1 text-xs text-gray-500">
+          <p class="mt-1 text-xs text-stone-500">
             {m.token_dialog_expiration_hint()}
           </p>
         </div>
@@ -160,14 +160,14 @@
           <button
             type="button"
             onclick={handleClose}
-            class="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+            class="rounded-md border border-stone-300 bg-surface-card px-4 py-2 text-sm font-medium text-stone-700 hover:bg-stone-50 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2"
           >
             {m.token_dialog_cancel()}
           </button>
           <button
             type="submit"
             disabled={isLoading || !name.trim()}
-            class="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+            class="rounded-md bg-primary-600 px-4 py-2 text-sm font-medium text-white hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {isLoading ? m.token_dialog_creating() : m.token_dialog_create_button()}
           </button>
@@ -175,7 +175,7 @@
       </form>
     {:else}
       <!-- Token Created View -->
-      <h2 id="dialog-title" class="mb-4 text-xl font-semibold text-gray-900">
+      <h2 id="dialog-title" class="mb-4 text-xl font-semibold text-stone-900">
         {m.token_dialog_created_title()}
       </h2>
 
@@ -205,20 +205,20 @@
 
       <!-- Token display -->
       <div class="mb-4">
-        <label for="api-token-value" class="mb-1 block text-sm font-medium text-gray-700">{m.token_dialog_your_api_token()}</label>
+        <label for="api-token-value" class="mb-1 block text-sm font-medium text-stone-700">{m.token_dialog_your_api_token()}</label>
         <div class="flex items-center gap-2">
           <input
             id="api-token-value"
             type="text"
             value={createdToken}
             readonly
-            class="w-full rounded-md border border-gray-300 bg-gray-50 px-3 py-2 font-mono text-sm"
+            class="w-full rounded-md border border-stone-300 bg-stone-50 px-3 py-2 font-mono text-sm"
             data-testid="token-value"
           />
           <button
             type="button"
             onclick={copyToClipboard}
-            class="flex-shrink-0 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+            class="flex-shrink-0 rounded-md border border-stone-300 bg-surface-card px-3 py-2 text-sm font-medium text-stone-700 hover:bg-stone-50 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2"
             data-testid="copy-token-button"
           >
             {copied ? m.token_dialog_copied() : m.token_dialog_copy()}
@@ -231,7 +231,7 @@
         <button
           type="button"
           onclick={handleClose}
-          class="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+          class="rounded-md bg-primary-600 px-4 py-2 text-sm font-medium text-white hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2"
         >
           {m.token_dialog_done()}
         </button>

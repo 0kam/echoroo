@@ -9,6 +9,7 @@
   import { localizeHref } from '$lib/paraglide/runtime';
   import * as m from '$lib/paraglide/messages';
   import LanguageSwitcher from '$lib/components/ui/LanguageSwitcher.svelte';
+  import DarkModeToggle from '$lib/components/ui/DarkModeToggle.svelte';
 
   interface Props {
     children: import('svelte').Snippet;
@@ -74,13 +75,19 @@
   <title>{m.admin_page_title()}</title>
 </svelte:head>
 
-<div class="flex h-screen bg-gray-50">
+<div class="flex h-screen bg-surface-page">
   <!-- Sidebar -->
-  <aside class="w-64 border-r border-gray-200 bg-white">
+  <aside class="w-64 border-r border-card bg-surface-card">
     <!-- Sidebar Header -->
-    <div class="flex h-16 items-center justify-between border-b border-gray-200 px-6">
-      <h1 class="text-xl font-bold text-gray-900">{m.admin_sidebar_title()}</h1>
-      <LanguageSwitcher />
+    <div class="flex h-16 items-center justify-between border-b border-card px-6">
+      <div class="flex items-center gap-2">
+        <img src="/echoroo.png" alt="Echoroo" class="h-7 w-auto" />
+        <h1 class="text-xl font-bold text-stone-900">{m.admin_sidebar_title()}</h1>
+      </div>
+      <div class="flex items-center gap-1">
+        <DarkModeToggle />
+        <LanguageSwitcher />
+      </div>
     </div>
 
     <!-- Navigation -->
@@ -91,8 +98,8 @@
           class="flex w-full items-center rounded-lg px-4 py-3 text-sm font-medium transition-colors {isActive(
             item.href
           )
-            ? 'bg-blue-50 text-blue-700'
-            : 'text-gray-700 hover:bg-gray-50'}"
+            ? 'bg-primary-100 text-primary-600'
+            : 'text-stone-700 hover:bg-stone-50'}"
         >
           <svg class="mr-3 h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={item.icon} />
@@ -103,17 +110,17 @@
     </nav>
 
     <!-- Sidebar Footer -->
-    <div class="border-t border-gray-200 p-4">
-      <div class="mb-3 rounded-lg bg-blue-50 p-3">
-        <p class="text-xs font-medium text-blue-900">{m.admin_sidebar_logged_in_as()}</p>
-        <p class="mt-1 truncate text-sm text-blue-700">
+    <div class="border-t border-card p-4">
+      <div class="mb-3 rounded-lg bg-primary-100 p-3">
+        <p class="text-xs font-medium text-primary-900">{m.admin_sidebar_logged_in_as()}</p>
+        <p class="mt-1 truncate text-sm text-primary-600">
           {authStore.user?.display_name || authStore.user?.email || 'Admin'}
         </p>
       </div>
       <div class="space-y-2">
         <a
           href={localizeHref('/dashboard')}
-          class="flex w-full items-center justify-center rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50"
+          class="flex w-full items-center justify-center rounded-lg border border-stone-300 px-4 py-2 text-sm font-medium text-stone-700 transition-colors hover:bg-stone-50"
         >
           <svg class="mr-2 h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path
@@ -127,7 +134,7 @@
         </a>
         <button
           onclick={handleLogout}
-          class="flex w-full items-center justify-center rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50"
+          class="flex w-full items-center justify-center rounded-lg border border-stone-300 px-4 py-2 text-sm font-medium text-stone-700 transition-colors hover:bg-stone-50"
         >
           <svg class="mr-2 h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path

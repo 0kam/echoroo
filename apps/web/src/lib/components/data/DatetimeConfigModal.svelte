@@ -1,7 +1,7 @@
 <script lang="ts">
   /**
    * Modal for configuring datetime pattern parsing on dataset recordings.
-   * Supports auto-detect, preset formats, and a template string UI.
+   * Supports auto-detect, preset formats, and a click-to-select custom format UI.
    */
 
   import { createMutation } from '@tanstack/svelte-query';
@@ -15,6 +15,7 @@
     datasetId: string;
     currentPattern: string | null;
     currentFormat: string | null;
+    currentTimezone: string | null;
     sampleFilenames: string[];
     onClose: () => void;
   }
@@ -24,13 +25,15 @@
     datasetId,
     currentPattern,
     currentFormat,
+    currentTimezone,
     sampleFilenames,
     onClose,
   }: Props = $props();
 
   // ── Step management ────────────────────────────────────────────────────────
-  // 'auto-detect' | 'manual'
-  type Step = 'auto-detect' | 'manual';
+  // 'auto-detect' | 'auto-confirm' | 'manual'
+  // auto-confirm: auto-detect succeeded, showing results + apply button (no manual config)
+  type Step = 'auto-detect' | 'auto-confirm' | 'manual';
   let step = $state<Step>('auto-detect');
 
   // ── Auto-detect state ──────────────────────────────────────────────────────
@@ -59,23 +62,14 @@
     }
   }
 
+  // ── Timezone state ────────────────────────────────────────────────────────
+  let timezone = $state(currentTimezone ?? '');
+
   // ── Manual config state ────────────────────────────────────────────────────
-  // Use first sample filename for the template UI
+  // Use first sample filename for the custom format UI
   const sampleFilename = $derived(sampleFilenames[0] ?? '');
 
-  // Template string (same length as filename, filled with Y/M/D/h/m/s or spaces)
-  let templateString = $state('');
-
-  // Initialize template from current pattern if available
-  $effect(() => {
-    if (currentFormat && sampleFilename) {
-      templateString = ' '.repeat(sampleFilename.length);
-    } else if (sampleFilename) {
-      templateString = ' '.repeat(sampleFilename.length);
-    }
-  });
-
-  // Currently active pattern and format (derived from template OR set from preset/auto-detect)
+  // Currently active pattern and format (set from assignments OR preset/auto-detect)
   let activePattern = $state<string | null>(currentPattern);
   let activeFormat = $state<string | null>(currentFormat);
 
@@ -86,6 +80,154 @@
   // Apply result
   let applySuccess = $state<string | null>(null);
   let applyError = $state<string | null>(null);
+
+  // ── Click-to-select state ─────────────────────────────────────────────────
+
+  type DatetimePart = 'Y' | 'M' | 'D' | 'h' | 'm' | 's';
+
+  // Selection state
+  let selectionStart = $state<number | null>(null);
+  let selectionEnd = $state<number | null>(null);
+  let isSelecting = $state(false);
+
+  // Assignment state - maps part to [start, end] range (inclusive)
+  let assignments = $state<Map<DatetimePart, [number, number]>>(new Map());
+
+  const PART_COLORS: Record<DatetimePart, { bg: string; text: string; label: () => string }> = {
+    Y: { bg: 'bg-primary-200', text: 'text-primary-900', label: () => m.datetime_config_year() },
+    M: { bg: 'bg-green-200', text: 'text-green-900', label: () => m.datetime_config_month() },
+    D: { bg: 'bg-orange-200', text: 'text-orange-900', label: () => m.datetime_config_day() },
+    h: { bg: 'bg-red-200', text: 'text-red-900', label: () => m.datetime_config_hour() },
+    m: { bg: 'bg-purple-200', text: 'text-purple-900', label: () => m.datetime_config_minute() },
+    s: { bg: 'bg-teal-200', text: 'text-teal-900', label: () => m.datetime_config_second() },
+  };
+
+  const PART_KEYS: DatetimePart[] = ['Y', 'M', 'D', 'h', 'm', 's'];
+
+  function getCharColorClass(index: number): string {
+    for (const part of PART_KEYS) {
+      const range = assignments.get(part);
+      if (range && index >= range[0] && index <= range[1]) {
+        return `${PART_COLORS[part].bg} ${PART_COLORS[part].text}`;
+      }
+    }
+    return 'bg-stone-100 text-stone-700';
+  }
+
+  function isInSelection(index: number): boolean {
+    if (selectionStart === null || selectionEnd === null) return false;
+    const min = Math.min(selectionStart, selectionEnd);
+    const max = Math.max(selectionStart, selectionEnd);
+    return index >= min && index <= max;
+  }
+
+  function startSelection(index: number) {
+    selectionStart = index;
+    selectionEnd = index;
+    isSelecting = true;
+  }
+
+  function extendSelection(index: number) {
+    if (isSelecting) {
+      selectionEnd = index;
+    }
+  }
+
+  function endSelection() {
+    isSelecting = false;
+  }
+
+  function assignPart(part: DatetimePart) {
+    if (selectionStart === null || selectionEnd === null) return;
+    const min = Math.min(selectionStart, selectionEnd);
+    const max = Math.max(selectionStart, selectionEnd);
+
+    const newAssignments = new Map(assignments);
+    newAssignments.set(part, [min, max]);
+    assignments = newAssignments;
+
+    // Clear selection after assigning
+    selectionStart = null;
+    selectionEnd = null;
+  }
+
+  function clearAssignment(part: DatetimePart) {
+    const newAssignments = new Map(assignments);
+    newAssignments.delete(part);
+    assignments = newAssignments;
+  }
+
+  function clearAllAssignments() {
+    assignments = new Map();
+    selectionStart = null;
+    selectionEnd = null;
+  }
+
+  // Document-level mouseup to end selection if released outside the grid
+  $effect(() => {
+    const handler = () => { isSelecting = false; };
+    document.addEventListener('mouseup', handler);
+    return () => document.removeEventListener('mouseup', handler);
+  });
+
+  // ── Pattern generation from assignments ───────────────────────────────────
+
+  function escapeRegex(str: string): string {
+    return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+
+  const FORMAT_MAP: Record<DatetimePart, string> = {
+    Y: '%Y', M: '%m', D: '%d', h: '%H', m: '%M', s: '%S',
+  };
+
+  function generatePatternFromAssignments(
+    asgn: Map<DatetimePart, [number, number]>,
+    filename: string
+  ): { pattern: string; formatStr: string } | null {
+    if (asgn.size === 0 || !filename) return null;
+
+    // Sort assignments by start position
+    const sorted = ([...asgn.entries()] as [DatetimePart, [number, number]][])
+      .sort((a, b) => a[1][0] - b[1][0]);
+
+    let pattern = '';
+    let formatStr = '';
+    let pos = sorted[0]![1][0]; // start at first assignment's start
+    const overallEnd = sorted[sorted.length - 1]![1][1];
+
+    for (const [part, [start, end]] of sorted) {
+      // Add literal characters between previous end and this start
+      if (pos < start) {
+        for (let i = pos; i < start; i++) {
+          const ch = filename[i] ?? '';
+          pattern += escapeRegex(ch);
+          formatStr += ch;
+        }
+      }
+
+      // Add datetime part
+      const len = end - start + 1;
+      pattern += `\\d{${len}}`;
+      formatStr += FORMAT_MAP[part];
+
+      pos = end + 1;
+    }
+
+    if (!pattern) return null;
+    return { pattern: `(${pattern})`, formatStr };
+  }
+
+  const assignmentResult = $derived(
+    generatePatternFromAssignments(assignments, sampleFilename)
+  );
+
+  // Update active pattern/format when assignments change
+  $effect(() => {
+    if (assignmentResult) {
+      activePattern = assignmentResult.pattern;
+      activeFormat = assignmentResult.formatStr;
+    }
+  });
 
   // ── Presets ────────────────────────────────────────────────────────────────
   interface Preset {
@@ -98,18 +240,11 @@
 
   const PRESETS: Preset[] = [
     {
-      name: 'AudioMoth',
-      label: 'AudioMoth (20240315_143000)',
+      name: 'AudioMoth / Wildlife Acoustics',
+      label: 'AudioMoth / Wildlife Acoustics (20240315_143000)',
       pattern: '(\\d{8}_\\d{6})',
       format: '%Y%m%d_%H%M%S',
       example: '20240315_143000.WAV',
-    },
-    {
-      name: 'Wildlife Acoustics',
-      label: 'Wildlife Acoustics (20240315$143000)',
-      pattern: '(\\d{8}\\$\\d{6})',
-      format: '%Y%m%d$%H%M%S',
-      example: 'SM4_20240315$143000.wav',
     },
     {
       name: 'ISO datetime',
@@ -127,204 +262,80 @@
     },
   ];
 
+  /**
+   * Map a format string + matched string back to per-character assignments.
+   */
+  function formatToAssignments(
+    formatStr: string,
+    matchStart: number,
+    matchedStr: string
+  ): Map<DatetimePart, [number, number]> {
+    const result = new Map<DatetimePart, [number, number]>();
+    let pos = matchStart; // position in filename
+    let fi = 0; // position in format string
+    let mi = 0; // position in matchedStr
+
+    while (fi < formatStr.length) {
+      if (formatStr[fi] === '%' && fi + 1 < formatStr.length) {
+        const spec = formatStr[fi + 1];
+        let part: DatetimePart | null = null;
+        let len = 0;
+
+        switch (spec) {
+          case 'Y': part = 'Y'; len = 4; break;
+          case 'm': part = 'M'; len = 2; break;
+          case 'd': part = 'D'; len = 2; break;
+          case 'H': part = 'h'; len = 2; break;
+          case 'M': part = 'm'; len = 2; break;
+          case 'S': part = 's'; len = 2; break;
+        }
+
+        if (part !== null) {
+          result.set(part, [pos, pos + len - 1]);
+          pos += len;
+          mi += len;
+        }
+        fi += 2;
+      } else {
+        // Literal character - skip one character in matched string and filename
+        pos += 1;
+        mi += 1;
+        fi += 1;
+      }
+    }
+
+    return result;
+  }
+
   function applyPreset(preset: Preset) {
     activePattern = preset.pattern;
     activeFormat = preset.format;
-    templateString = ' '.repeat(sampleFilename.length);
     previewResults = null;
     previewError = null;
     applySuccess = null;
     applyError = null;
-  }
 
-  // ── Template string UI ─────────────────────────────────────────────────────
-
-  // Color scheme for datetime markers
-  const MARKER_COLORS: Record<string, string> = {
-    Y: 'bg-blue-200 text-blue-900',
-    M: 'bg-green-200 text-green-900',
-    D: 'bg-orange-200 text-orange-900',
-    h: 'bg-red-200 text-red-900',
-    m: 'bg-purple-200 text-purple-900',
-    s: 'bg-teal-200 text-teal-900',
-  };
-
-  // Characters that are datetime markers
-  const MARKER_CHARS = new Set(['Y', 'M', 'D', 'h', 'm', 's']);
-
-  function getTemplateCharColor(char: string): string {
-    return MARKER_COLORS[char] ?? '';
-  }
-
-  function isMarker(char: string): boolean {
-    return MARKER_CHARS.has(char);
-  }
-
-  /**
-   * Convert a template string to a regex pattern and strptime format string.
-   * Template markers: YYYY=year, MM=month, DD=day, hh=hour, mm=minute, ss=second
-   * Non-marker chars between datetime region use actual filename chars as literals.
-   */
-  function templateToPattern(
-    template: string,
-    filename: string
-  ): { pattern: string; formatStr: string } | null {
-    if (!template.trim() || !filename) return null;
-
-    // Find the extent of the datetime region (first to last marker)
-    let firstMarker = -1;
-    let lastMarker = -1;
-    for (let i = 0; i < template.length; i++) {
-      if (isMarker(template[i] ?? '')) {
-        if (firstMarker === -1) firstMarker = i;
-        lastMarker = i;
+    // Try to map assignments from the sample filename
+    if (sampleFilename) {
+      try {
+        const regex = new RegExp(preset.pattern);
+        const match = sampleFilename.match(regex);
+        if (match && match.index !== undefined) {
+          const matchStart = match.index;
+          const matchStr = match[0] ?? '';
+          assignments = formatToAssignments(preset.format, matchStart, matchStr);
+        } else {
+          assignments = new Map();
+        }
+      } catch {
+        assignments = new Map();
       }
+    } else {
+      assignments = new Map();
     }
 
-    if (firstMarker === -1) return null;
-
-    // Build regex and format string for the datetime region
-    let regexPart = '';
-    let formatStr = '';
-    let i = firstMarker;
-
-    while (i <= lastMarker) {
-      const ch = template[i];
-      if (ch === 'Y') {
-        // Consume up to 4 Y's
-        const run = consumeRun(template, i, 'Y');
-        if (run >= 4) {
-          regexPart += '\\d{4}';
-          formatStr += '%Y';
-          i += 4;
-        } else {
-          regexPart += `\\d{${run}}`;
-          formatStr += '%Y';
-          i += run;
-        }
-      } else if (ch === 'M') {
-        const run = consumeRun(template, i, 'M');
-        if (run >= 2) {
-          regexPart += '\\d{2}';
-          formatStr += '%m';
-          i += 2;
-        } else {
-          regexPart += `\\d{${run}}`;
-          formatStr += '%m';
-          i += run;
-        }
-      } else if (ch === 'D') {
-        const run = consumeRun(template, i, 'D');
-        if (run >= 2) {
-          regexPart += '\\d{2}';
-          formatStr += '%d';
-          i += 2;
-        } else {
-          regexPart += `\\d{${run}}`;
-          formatStr += '%d';
-          i += run;
-        }
-      } else if (ch === 'h') {
-        const run = consumeRun(template, i, 'h');
-        if (run >= 2) {
-          regexPart += '\\d{2}';
-          formatStr += '%H';
-          i += 2;
-        } else {
-          regexPart += `\\d{${run}}`;
-          formatStr += '%H';
-          i += run;
-        }
-      } else if (ch === 'm') {
-        const run = consumeRun(template, i, 'm');
-        if (run >= 2) {
-          regexPart += '\\d{2}';
-          formatStr += '%M';
-          i += 2;
-        } else {
-          regexPart += `\\d{${run}}`;
-          formatStr += '%M';
-          i += run;
-        }
-      } else if (ch === 's') {
-        const run = consumeRun(template, i, 's');
-        if (run >= 2) {
-          regexPart += '\\d{2}';
-          formatStr += '%S';
-          i += 2;
-        } else {
-          regexPart += `\\d{${run}}`;
-          formatStr += '%S';
-          i += run;
-        }
-      } else {
-        // Non-marker: use actual filename character as literal separator
-        const literal = (filename[i] ?? ch) as string;
-        regexPart += escapeRegex(literal);
-        formatStr += literal;
-        i++;
-      }
-    }
-
-    if (!regexPart) return null;
-
-    return {
-      pattern: `(${regexPart})`,
-      formatStr,
-    };
-  }
-
-  function consumeRun(str: string, start: number, char: string): number {
-    let count = 0;
-    while (start + count < str.length && str[start + count] === char) {
-      count++;
-    }
-    return count;
-  }
-
-  function escapeRegex(str: string): string {
-    return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  }
-
-  // Derived pattern/format from template
-  const templateResult = $derived(
-    sampleFilename ? templateToPattern(templateString, sampleFilename) : null
-  );
-
-  // Update active pattern/format when template changes
-  $effect(() => {
-    if (templateResult) {
-      activePattern = templateResult.pattern;
-      activeFormat = templateResult.formatStr;
-    }
-  });
-
-  // Handle template input keydown to only allow valid chars
-  function handleTemplateKeydown(e: KeyboardEvent, charIndex: number) {
-    // Allow navigation keys
-    if (['ArrowLeft', 'ArrowRight', 'Tab', 'Backspace', 'Delete'].includes(e.key)) return;
-    // Allow valid marker chars and space
-    if (![...MARKER_CHARS, ' '].includes(e.key)) {
-      e.preventDefault();
-    }
-  }
-
-  // Handle template input as a whole text input
-  function handleTemplateInput(e: Event) {
-    const input = e.target as HTMLInputElement;
-    const raw = input.value;
-    // Pad or trim to filename length
-    const len = sampleFilename.length;
-    let result = raw.slice(0, len);
-    // Replace invalid chars with spaces
-    result = result
-      .split('')
-      .map((ch) => (isMarker(ch) || ch === ' ' ? ch : ' '))
-      .join('');
-    // Pad with spaces
-    while (result.length < len) result += ' ';
-    templateString = result;
-    input.value = result;
+    selectionStart = null;
+    selectionEnd = null;
   }
 
   // ── Mutations ──────────────────────────────────────────────────────────────
@@ -332,7 +343,7 @@
   const testMut = createMutation({
     mutationFn: () => {
       if (!activePattern || !activeFormat) throw new Error('No pattern set');
-      return testDatetimePattern(projectId, datasetId, activePattern, activeFormat);
+      return testDatetimePattern(projectId, datasetId, activePattern, activeFormat, timezone || undefined);
     },
     onSuccess: (results) => {
       previewResults = results;
@@ -347,7 +358,7 @@
   const applyMut = createMutation({
     mutationFn: () => {
       if (!activePattern || !activeFormat) throw new Error('No pattern set');
-      return applyDatetimePattern(projectId, datasetId, activePattern, activeFormat);
+      return applyDatetimePattern(projectId, datasetId, activePattern, activeFormat, timezone || undefined);
     },
     onSuccess: (result) => {
       applySuccess = m.datetime_config_apply_success({ count: result.total_recordings });
@@ -372,16 +383,8 @@
     previewError = null;
     applySuccess = null;
     applyError = null;
-    step = 'manual';
-  }
-
-  // Filename cell colors based on whether template has a marker at that position
-  function getFilenameCharClass(index: number): string {
-    const tch = templateString[index] ?? ' ';
-    if (isMarker(tch)) {
-      return MARKER_COLORS[tch] ?? '';
-    }
-    return '';
+    // Go to auto-confirm: show results + apply button, skip manual config
+    step = 'auto-confirm';
   }
 
   function formatParsedDatetime(dt: string | null): string {
@@ -392,6 +395,21 @@
       return dt;
     }
   }
+
+  // ── Derived: current selection range (normalized) ─────────────────────────
+  const currentSelectionRange = $derived(
+    selectionStart !== null && selectionEnd !== null
+      ? { min: Math.min(selectionStart, selectionEnd), max: Math.max(selectionStart, selectionEnd) }
+      : null
+  );
+
+  const hasSelection = $derived(currentSelectionRange !== null);
+
+  // Sorted assignments for display
+  const sortedAssignments = $derived(
+    ([...assignments.entries()] as [DatetimePart, [number, number]][])
+      .sort((a, b) => a[1][0] - b[1][0])
+  );
 </script>
 
 <svelte:window onkeydown={handleKeydown} />
@@ -409,20 +427,20 @@
   <!-- svelte-ignore a11y_click_events_have_key_events -->
   <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
   <div
-    class="flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden rounded-lg bg-white shadow-xl"
+    class="flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden rounded-lg bg-surface-card shadow-xl"
     onclick={(e) => e.stopPropagation()}
     role="document"
   >
     <!-- Header -->
-    <div class="flex flex-shrink-0 items-center justify-between border-b border-gray-200 px-6 py-4">
-      <h3 id="datetime-config-modal-title" class="m-0 text-lg font-semibold text-gray-900">
+    <div class="flex flex-shrink-0 items-center justify-between border-b border-stone-200 px-6 py-4">
+      <h3 id="datetime-config-modal-title" class="m-0 text-lg font-semibold text-stone-900">
         {m.datetime_config_modal_title()}
       </h3>
       <button
         type="button"
         onclick={onClose}
         aria-label="Close"
-        class="rounded p-1 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600"
+        class="rounded p-1 text-stone-400 transition-colors hover:bg-stone-100 hover:text-stone-600"
       >
         <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor">
           <line x1="18" y1="6" x2="6" y2="18" stroke-width="2" />
@@ -436,12 +454,12 @@
 
       <!-- Auto-detect section -->
       {#if isAutoDetecting}
-        <div class="flex items-center gap-3 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3">
-          <svg class="h-5 w-5 animate-spin text-blue-600" fill="none" viewBox="0 0 24 24">
+        <div class="flex items-center gap-3 rounded-lg border border-primary-200 bg-primary-50 px-4 py-3">
+          <svg class="h-5 w-5 animate-spin text-primary-600" fill="none" viewBox="0 0 24 24">
             <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
             <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
           </svg>
-          <span class="text-sm text-blue-700">{m.datetime_config_auto_detecting()}</span>
+          <span class="text-sm text-primary-700">{m.datetime_config_auto_detecting()}</span>
         </div>
       {:else if autoDetectResult?.detected && step === 'auto-detect'}
         <!-- Auto-detect success -->
@@ -457,13 +475,13 @@
             </p>
           </div>
 
-          <div class="rounded-md bg-white/60 px-3 py-2 text-xs font-mono text-gray-700 border border-green-200">
+          <div class="rounded-md bg-surface-card/60 px-3 py-2 text-xs font-mono text-stone-700 border border-green-200">
             {autoDetectResult.format_str}
           </div>
 
           <!-- Preview of auto-detect results -->
           {#if autoDetectResult.results.length > 0}
-            <div class="overflow-x-auto rounded-md border border-green-200 bg-white">
+            <div class="overflow-x-auto rounded-md border border-green-200 bg-surface-card">
               <table class="w-full text-xs">
                 <thead>
                   <tr class="border-b border-green-100 bg-green-50">
@@ -474,9 +492,9 @@
                 </thead>
                 <tbody>
                   {#each autoDetectResult.results.slice(0, 5) as result}
-                    <tr class="border-b border-gray-100 last:border-0">
-                      <td class="px-3 py-1.5 font-mono text-gray-700">{result.filename}</td>
-                      <td class="px-3 py-1.5 text-gray-600">{formatParsedDatetime(result.parsed_datetime)}</td>
+                    <tr class="border-b border-stone-100 last:border-0">
+                      <td class="px-3 py-1.5 font-mono text-stone-700">{result.filename}</td>
+                      <td class="px-3 py-1.5 text-stone-600">{formatParsedDatetime(result.parsed_datetime)}</td>
                       <td class="px-3 py-1.5 text-center">
                         {#if result.success}
                           <svg class="mx-auto h-4 w-4 text-green-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
@@ -504,7 +522,7 @@
             </button>
             <button
               onclick={() => { step = 'manual'; }}
-              class="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50"
+              class="rounded-md border border-stone-300 bg-surface-card px-4 py-2 text-sm font-medium text-stone-700 transition-colors hover:bg-stone-50"
             >
               {m.datetime_config_configure_manually()}
             </button>
@@ -516,95 +534,324 @@
         </div>
       {/if}
 
+      <!-- Auto-confirm: auto-detect succeeded, user clicked "Use this pattern" -->
+      {#if step === 'auto-confirm'}
+        <div class="space-y-4">
+          <!-- Confirmed pattern info -->
+          <div class="rounded-lg border border-green-200 bg-green-50 p-4 space-y-3">
+            <div class="flex items-center gap-2">
+              <div class="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full bg-green-600">
+                <svg class="h-3.5 w-3.5 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                  <polyline points="20 6 9 17 4 12"></polyline>
+                </svg>
+              </div>
+              <p class="text-sm font-medium text-green-800">
+                {m.datetime_config_auto_detected({ name: autoDetectResult?.preset_name ?? 'Custom' })}
+              </p>
+            </div>
+            <div class="rounded-md bg-surface-card/60 px-3 py-2 text-xs font-mono text-stone-700 border border-green-200">
+              {activeFormat}
+            </div>
+          </div>
+
+          <!-- Timezone selector -->
+          <div class="flex flex-col gap-1.5">
+            <label class="text-sm font-medium text-stone-700" for="modal-timezone-auto">
+              {m.datetime_config_timezone_label()}
+            </label>
+            <select
+              id="modal-timezone-auto"
+              bind:value={timezone}
+              class="rounded-md border border-stone-300 bg-surface-card px-3 py-2 text-sm focus:border-primary-400 focus:outline-none focus:ring-1 focus:ring-primary-400"
+            >
+              <option value="">{m.datetime_config_timezone_none()}</option>
+              <optgroup label="UTC">
+                <option value="UTC">UTC</option>
+              </optgroup>
+              <optgroup label="Asia">
+                <option value="Asia/Tokyo">Asia/Tokyo (JST, UTC+9)</option>
+                <option value="Asia/Shanghai">Asia/Shanghai (CST, UTC+8)</option>
+                <option value="Asia/Kolkata">Asia/Kolkata (IST, UTC+5:30)</option>
+                <option value="Asia/Seoul">Asia/Seoul (KST, UTC+9)</option>
+              </optgroup>
+              <optgroup label="Australia / Pacific">
+                <option value="Australia/Sydney">Australia/Sydney (AEST, UTC+10)</option>
+                <option value="Pacific/Auckland">Pacific/Auckland (NZST, UTC+12)</option>
+              </optgroup>
+              <optgroup label="Europe">
+                <option value="Europe/London">Europe/London (GMT, UTC+0)</option>
+                <option value="Europe/Paris">Europe/Paris (CET, UTC+1)</option>
+                <option value="Europe/Berlin">Europe/Berlin (CET, UTC+1)</option>
+              </optgroup>
+              <optgroup label="Americas">
+                <option value="America/New_York">America/New_York (EST, UTC-5)</option>
+                <option value="America/Chicago">America/Chicago (CST, UTC-6)</option>
+                <option value="America/Denver">America/Denver (MST, UTC-7)</option>
+                <option value="America/Los_Angeles">America/Los_Angeles (PST, UTC-8)</option>
+                <option value="America/Sao_Paulo">America/Sao Paulo (BRT, UTC-3)</option>
+              </optgroup>
+              <optgroup label="Africa">
+                <option value="Africa/Nairobi">Africa/Nairobi (EAT, UTC+3)</option>
+              </optgroup>
+            </select>
+            <p class="text-xs text-stone-500">{m.datetime_config_timezone_hint()}</p>
+          </div>
+
+          <!-- Preview results table -->
+          {#if previewResults && previewResults.length > 0}
+            <div>
+              <h4 class="mb-3 text-sm font-semibold text-stone-700">{m.datetime_config_preview_title()}</h4>
+              {#if timezone}
+                <p class="mb-2 text-xs text-primary-600">Times shown in {timezone}</p>
+              {/if}
+              <div class="overflow-x-auto rounded-md border border-stone-200">
+                <table class="w-full text-xs">
+                  <thead>
+                    <tr class="border-b border-stone-200 bg-stone-50">
+                      <th class="px-3 py-2 text-left font-medium text-stone-600">{m.datetime_config_preview_filename()}</th>
+                      <th class="px-3 py-2 text-left font-medium text-stone-600">{m.datetime_config_preview_datetime()}</th>
+                      <th class="w-12 px-3 py-2 text-center font-medium text-stone-600">{m.datetime_config_preview_status()}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {#each previewResults as result}
+                      <tr class="border-b border-stone-100 last:border-0 {result.success ? '' : 'bg-red-50'}">
+                        <td class="px-3 py-1.5 font-mono text-stone-700">{result.filename}</td>
+                        <td class="px-3 py-1.5 text-stone-600">
+                          {#if result.success}
+                            {formatParsedDatetime(result.parsed_datetime)}
+                          {:else}
+                            <span class="text-red-500">{result.error ?? 'Parse failed'}</span>
+                          {/if}
+                        </td>
+                        <td class="px-3 py-1.5 text-center">
+                          {#if result.success}
+                            <svg class="mx-auto h-4 w-4 text-green-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                              <polyline points="20 6 9 17 4 12"></polyline>
+                            </svg>
+                          {:else}
+                            <svg class="mx-auto h-4 w-4 text-red-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                              <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+                            </svg>
+                          {/if}
+                        </td>
+                      </tr>
+                    {/each}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          {/if}
+
+          <!-- Apply success / error feedback -->
+          {#if applySuccess}
+            <div class="flex items-center gap-2 rounded-md border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800">
+              <svg class="h-4 w-4 flex-shrink-0 text-green-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="20 6 9 17 4 12"></polyline>
+              </svg>
+              {applySuccess}
+            </div>
+          {/if}
+          {#if applyError}
+            <div class="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
+              {applyError}
+            </div>
+          {/if}
+
+          <!-- Link to switch to manual config -->
+          <div class="text-center">
+            <button
+              type="button"
+              onclick={() => { step = 'manual'; }}
+              class="text-sm text-primary-600 underline hover:text-primary-800"
+            >
+              {m.datetime_config_configure_manually()}
+            </button>
+          </div>
+        </div>
+      {/if}
+
       <!-- Manual configuration (always shown when step === 'manual') -->
       {#if step === 'manual'}
         <!-- Presets -->
         <div>
-          <h4 class="mb-3 text-sm font-semibold text-gray-700">{m.datetime_config_presets_title()}</h4>
+          <h4 class="mb-3 text-sm font-semibold text-stone-700">{m.datetime_config_presets_title()}</h4>
           <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
             {#each PRESETS as preset}
               <button
                 type="button"
                 onclick={() => applyPreset(preset)}
-                class="flex flex-col items-start rounded-lg border border-gray-200 px-3 py-2.5 text-left transition-colors hover:border-blue-300 hover:bg-blue-50 {activeFormat === preset.format && activePattern === preset.pattern ? 'border-blue-400 bg-blue-50' : 'bg-white'}"
+                class="flex flex-col items-start rounded-lg border border-stone-200 px-3 py-2.5 text-left transition-colors hover:border-primary-300 hover:bg-primary-50 {activeFormat === preset.format && activePattern === preset.pattern ? 'border-primary-400 bg-primary-50' : 'bg-surface-card'}"
               >
-                <span class="text-xs font-medium text-gray-900">{preset.name}</span>
-                <span class="mt-0.5 font-mono text-xs text-gray-500">{preset.example}</span>
+                <span class="text-xs font-medium text-stone-900">{preset.name}</span>
+                <span class="mt-0.5 font-mono text-xs text-stone-500">{preset.example}</span>
               </button>
             {/each}
           </div>
         </div>
 
-        <!-- Template string UI -->
+        <!-- Click-to-select custom format UI -->
         {#if sampleFilename}
           <div>
-            <h4 class="mb-1 text-sm font-semibold text-gray-700">{m.datetime_config_template_title()}</h4>
-            <p class="mb-3 text-xs text-gray-500">{m.datetime_config_template_description()}</p>
+            <h4 class="mb-1 text-sm font-semibold text-stone-700">{m.datetime_config_template_title()}</h4>
+            <p class="mb-3 text-xs text-stone-500">{m.datetime_config_custom_instruction()}</p>
 
             <!-- Color legend -->
             <div class="mb-3 flex flex-wrap gap-2">
-              {#each ([['Y', m.datetime_config_year()], ['M', m.datetime_config_month()], ['D', m.datetime_config_day()], ['h', m.datetime_config_hour()], ['m', m.datetime_config_minute()], ['s', m.datetime_config_second()]] as const) as [char, label]}
-                <span class="inline-flex items-center gap-1 rounded px-2 py-0.5 text-xs font-medium {MARKER_COLORS[char] ?? ''}">
-                  {char} = {label}
+              {#each PART_KEYS as part}
+                <span class="inline-flex items-center gap-1 rounded px-2 py-0.5 text-xs font-medium {PART_COLORS[part].bg} {PART_COLORS[part].text}">
+                  {PART_COLORS[part].label()}
                 </span>
               {/each}
             </div>
 
-            <!-- Filename display with per-character coloring -->
-            <div class="overflow-x-auto rounded-t-md border border-b-0 border-gray-300 bg-gray-50 px-3 py-2">
-              <div class="flex font-mono text-sm leading-relaxed">
+            <!-- Filename character grid (clickable) -->
+            <!-- svelte-ignore a11y_no_static_element_interactions -->
+            <div
+              class="overflow-x-auto rounded-t-md border border-stone-300 bg-stone-50 px-3 py-2 select-none"
+              onmouseleave={() => { if (isSelecting) isSelecting = false; }}
+            >
+              <div class="flex flex-wrap font-mono text-sm leading-relaxed gap-0.5">
                 {#each sampleFilename.split('') as char, i}
-                  <span
-                    class="inline-block min-w-[0.65rem] text-center {getFilenameCharClass(i)} {getFilenameCharClass(i) ? 'rounded-sm' : ''}"
-                  >{char}</span>
+                  <button
+                    type="button"
+                    class="inline-flex items-center justify-center w-6 h-7 border rounded-sm cursor-pointer transition-colors
+                      {getCharColorClass(i)}
+                      {isInSelection(i)
+                        ? 'ring-2 ring-primary-500 ring-inset border-primary-400'
+                        : 'border-transparent hover:border-stone-400'}"
+                    onmousedown={(e) => { e.preventDefault(); startSelection(i); }}
+                    onmouseenter={() => extendSelection(i)}
+                    onmouseup={() => endSelection()}
+                    aria-label="{char} at position {i}"
+                  >{char}</button>
                 {/each}
               </div>
             </div>
 
-            <!-- Editable template row -->
-            <div class="overflow-x-auto">
-              <input
-                type="text"
-                class="w-full rounded-b-md border border-gray-300 bg-white px-3 py-2 font-mono text-sm tracking-normal focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-400"
-                value={templateString}
-                maxlength={sampleFilename.length}
-                spellcheck={false}
-                oninput={handleTemplateInput}
-                aria-label="Datetime template"
-              />
+            <!-- Assign buttons -->
+            <div class="rounded-b-md border border-t-0 border-stone-300 bg-surface-card px-3 py-2.5">
+              <div class="flex flex-wrap items-center gap-2">
+                <span class="text-xs text-stone-500 shrink-0">{m.datetime_config_assign_part()}</span>
+                {#each PART_KEYS as part}
+                  <button
+                    type="button"
+                    disabled={!hasSelection}
+                    onclick={() => assignPart(part)}
+                    class="inline-flex items-center rounded px-2 py-1 text-xs font-medium transition-colors
+                      {PART_COLORS[part].bg} {PART_COLORS[part].text}
+                      disabled:opacity-40 disabled:cursor-not-allowed
+                      hover:opacity-80 active:opacity-60"
+                  >
+                    {PART_COLORS[part].label()}
+                  </button>
+                {/each}
+                {#if assignments.size > 0}
+                  <button
+                    type="button"
+                    onclick={clearAllAssignments}
+                    class="inline-flex items-center rounded border border-stone-300 bg-surface-card px-2 py-1 text-xs font-medium text-stone-600 transition-colors hover:bg-stone-50 hover:text-red-600 hover:border-red-300"
+                  >
+                    {m.datetime_config_clear_all()}
+                  </button>
+                {/if}
+              </div>
+
+              {#if !hasSelection && assignments.size === 0}
+                <p class="mt-1.5 text-xs text-stone-400">{m.datetime_config_no_selection()}</p>
+              {/if}
             </div>
 
-            <p class="mt-1.5 text-xs text-gray-400">{m.datetime_config_template_help()}</p>
+            <!-- Current assignment badges -->
+            {#if sortedAssignments.length > 0}
+              <div class="flex flex-wrap gap-2 mt-2">
+                {#each sortedAssignments as [part, [start, end]]}
+                  <div class="flex items-center gap-1 rounded-full px-2 py-0.5 text-xs {PART_COLORS[part].bg} {PART_COLORS[part].text}">
+                    <span>{PART_COLORS[part].label()}: "{sampleFilename.slice(start, end + 1)}"</span>
+                    <button
+                      type="button"
+                      class="ml-1 hover:opacity-70 font-semibold"
+                      onclick={() => clearAssignment(part)}
+                      aria-label="Remove {PART_COLORS[part].label()} assignment"
+                    >x</button>
+                  </div>
+                {/each}
+              </div>
+            {/if}
 
-            {#if templateResult}
-              <div class="mt-3 rounded-md bg-gray-50 border border-gray-200 px-3 py-2 space-y-1">
+            <!-- Pattern / format preview -->
+            {#if assignmentResult}
+              <div class="mt-3 rounded-md bg-stone-50 border border-stone-200 px-3 py-2 space-y-1">
                 <div class="flex items-center gap-2 text-xs">
-                  <span class="font-medium text-gray-500">Pattern:</span>
-                  <code class="font-mono text-gray-700">{templateResult.pattern}</code>
+                  <span class="font-medium text-stone-500">Pattern:</span>
+                  <code class="font-mono text-stone-700">{assignmentResult.pattern}</code>
                 </div>
                 <div class="flex items-center gap-2 text-xs">
-                  <span class="font-medium text-gray-500">Format:</span>
-                  <code class="font-mono text-gray-700">{templateResult.formatStr}</code>
+                  <span class="font-medium text-stone-500">Format:</span>
+                  <code class="font-mono text-stone-700">{assignmentResult.formatStr}</code>
                 </div>
               </div>
             {/if}
           </div>
         {:else}
-          <div class="rounded-lg border border-gray-200 bg-gray-50 px-4 py-6 text-center text-sm text-gray-500">
+          <div class="rounded-lg border border-stone-200 bg-stone-50 px-4 py-6 text-center text-sm text-stone-500">
             {m.datetime_config_no_recordings()}
           </div>
         {/if}
+
+        <!-- Timezone selector -->
+        <div class="flex flex-col gap-1.5">
+          <label class="text-sm font-medium text-stone-700" for="modal-timezone">
+            {m.datetime_config_timezone_label()}
+          </label>
+          <select
+            id="modal-timezone"
+            bind:value={timezone}
+            class="rounded-md border border-stone-300 bg-surface-card px-3 py-2 text-sm focus:border-primary-400 focus:outline-none focus:ring-1 focus:ring-primary-400"
+          >
+            <option value="">{m.datetime_config_timezone_none()}</option>
+            <optgroup label="UTC">
+              <option value="UTC">UTC</option>
+            </optgroup>
+            <optgroup label="Asia">
+              <option value="Asia/Tokyo">Asia/Tokyo (JST, UTC+9)</option>
+              <option value="Asia/Shanghai">Asia/Shanghai (CST, UTC+8)</option>
+              <option value="Asia/Kolkata">Asia/Kolkata (IST, UTC+5:30)</option>
+              <option value="Asia/Seoul">Asia/Seoul (KST, UTC+9)</option>
+            </optgroup>
+            <optgroup label="Australia / Pacific">
+              <option value="Australia/Sydney">Australia/Sydney (AEST, UTC+10)</option>
+              <option value="Pacific/Auckland">Pacific/Auckland (NZST, UTC+12)</option>
+            </optgroup>
+            <optgroup label="Europe">
+              <option value="Europe/London">Europe/London (GMT, UTC+0)</option>
+              <option value="Europe/Paris">Europe/Paris (CET, UTC+1)</option>
+              <option value="Europe/Berlin">Europe/Berlin (CET, UTC+1)</option>
+            </optgroup>
+            <optgroup label="Americas">
+              <option value="America/New_York">America/New_York (EST, UTC-5)</option>
+              <option value="America/Chicago">America/Chicago (CST, UTC-6)</option>
+              <option value="America/Denver">America/Denver (MST, UTC-7)</option>
+              <option value="America/Los_Angeles">America/Los_Angeles (PST, UTC-8)</option>
+              <option value="America/Sao_Paulo">America/Sao Paulo (BRT, UTC-3)</option>
+            </optgroup>
+            <optgroup label="Africa">
+              <option value="Africa/Nairobi">Africa/Nairobi (EAT, UTC+3)</option>
+            </optgroup>
+          </select>
+          <p class="text-xs text-stone-500">{m.datetime_config_timezone_hint()}</p>
+        </div>
 
         <!-- Test / Preview section -->
         {#if activePattern && activeFormat}
           <div>
             <div class="flex items-center justify-between mb-3">
-              <h4 class="text-sm font-semibold text-gray-700">{m.datetime_config_preview_title()}</h4>
+              <h4 class="text-sm font-semibold text-stone-700">{m.datetime_config_preview_title()}</h4>
               <button
                 type="button"
                 onclick={() => $testMut.mutate()}
                 disabled={$testMut.isPending}
-                class="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+                class="rounded-md border border-stone-300 bg-surface-card px-3 py-1.5 text-xs font-medium text-stone-700 transition-colors hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {$testMut.isPending ? m.common_loading() : m.datetime_config_test()}
               </button>
@@ -617,20 +864,23 @@
             {/if}
 
             {#if previewResults}
-              <div class="overflow-x-auto rounded-md border border-gray-200">
+              {#if timezone}
+                <p class="mb-2 text-xs text-primary-600">Times shown in {timezone}</p>
+              {/if}
+              <div class="overflow-x-auto rounded-md border border-stone-200">
                 <table class="w-full text-xs">
                   <thead>
-                    <tr class="border-b border-gray-200 bg-gray-50">
-                      <th class="px-3 py-2 text-left font-medium text-gray-600">{m.datetime_config_preview_filename()}</th>
-                      <th class="px-3 py-2 text-left font-medium text-gray-600">{m.datetime_config_preview_datetime()}</th>
-                      <th class="w-12 px-3 py-2 text-center font-medium text-gray-600">{m.datetime_config_preview_status()}</th>
+                    <tr class="border-b border-stone-200 bg-stone-50">
+                      <th class="px-3 py-2 text-left font-medium text-stone-600">{m.datetime_config_preview_filename()}</th>
+                      <th class="px-3 py-2 text-left font-medium text-stone-600">{m.datetime_config_preview_datetime()}</th>
+                      <th class="w-12 px-3 py-2 text-center font-medium text-stone-600">{m.datetime_config_preview_status()}</th>
                     </tr>
                   </thead>
                   <tbody>
                     {#each previewResults as result}
-                      <tr class="border-b border-gray-100 last:border-0 {result.success ? '' : 'bg-red-50'}">
-                        <td class="px-3 py-1.5 font-mono text-gray-700">{result.filename}</td>
-                        <td class="px-3 py-1.5 text-gray-600">
+                      <tr class="border-b border-stone-100 last:border-0 {result.success ? '' : 'bg-red-50'}">
+                        <td class="px-3 py-1.5 font-mono text-stone-700">{result.filename}</td>
+                        <td class="px-3 py-1.5 text-stone-600">
                           {#if result.success}
                             {formatParsedDatetime(result.parsed_datetime)}
                           {:else}
@@ -675,21 +925,21 @@
     </div>
 
     <!-- Footer -->
-    <div class="flex flex-shrink-0 items-center justify-between gap-3 rounded-b-lg border-t border-gray-200 bg-gray-50 px-6 py-4">
+    <div class="flex flex-shrink-0 items-center justify-between gap-3 rounded-b-lg border-t border-stone-200 bg-stone-50 px-6 py-4">
       <button
         type="button"
         onclick={onClose}
-        class="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50"
+        class="rounded-md border border-stone-300 bg-surface-card px-4 py-2 text-sm font-medium text-stone-700 transition-colors hover:bg-stone-50"
       >
         {m.common_cancel()}
       </button>
 
-      {#if step === 'manual' && activePattern && activeFormat}
+      {#if (step === 'manual' || step === 'auto-confirm') && activePattern && activeFormat}
         <button
           type="button"
           onclick={() => $applyMut.mutate()}
           disabled={$applyMut.isPending}
-          class="flex items-center gap-2 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+          class="flex items-center gap-2 rounded-md bg-primary-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {#if $applyMut.isPending}
             <svg class="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24">

@@ -83,7 +83,7 @@
   }
 
   .modal-message {
-    color: #4b5563;
+    color: #57534e;
     margin: 0 0 1rem 0;
     line-height: 1.5;
   }
@@ -132,12 +132,12 @@
 
   .btn-cancel {
     background: white;
-    color: #374151;
-    border: 1px solid #d1d5db;
+    color: #44403c;
+    border: 1px solid #d6d3d1;
   }
 
   .btn-cancel:hover:not(:disabled) {
-    background: #f9fafb;
+    background: #fafaf9;
   }
 
   .btn-cancel:disabled {

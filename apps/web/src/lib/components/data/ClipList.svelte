@@ -86,19 +86,19 @@
 
 <div class="w-full">
   <div class="mb-4 flex items-center justify-between">
-    <h3 class="m-0 text-lg font-semibold text-gray-900">{m.clip_list_heading()}</h3>
+    <h3 class="m-0 text-lg font-semibold text-stone-900">{m.clip_list_heading()}</h3>
     {#if $clipsQuery.data}
-      <span class="text-sm font-medium text-gray-500">{$clipsQuery.data.total} total</span>
+      <span class="text-sm font-medium text-stone-500">{$clipsQuery.data.total} total</span>
     {/if}
   </div>
 
   {#if $clipsQuery.isLoading}
     <div class="flex flex-col items-center justify-center gap-3 py-12">
-      <svg class="h-8 w-8 animate-spin text-blue-600" fill="none" viewBox="0 0 24 24">
+      <svg class="h-8 w-8 animate-spin text-primary-600" fill="none" viewBox="0 0 24 24">
         <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
         <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
       </svg>
-      <p class="text-sm text-gray-500">{m.clip_list_loading()}</p>
+      <p class="text-sm text-stone-500">{m.clip_list_loading()}</p>
     </div>
   {:else if $clipsQuery.error}
     <div class="flex flex-col items-center gap-2 rounded-lg bg-red-50 py-8">
@@ -110,24 +110,24 @@
       <p class="text-sm text-red-600">Error: {$clipsQuery.error.message}</p>
     </div>
   {:else if $clipsQuery.data && $clipsQuery.data.items.length === 0}
-    <div class="flex flex-col items-center gap-2 rounded-lg bg-gray-50 py-12">
-      <svg class="h-10 w-10 text-gray-400" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+    <div class="flex flex-col items-center gap-2 rounded-lg bg-stone-50 py-12">
+      <svg class="h-10 w-10 text-stone-400" viewBox="0 0 24 24" fill="none" stroke="currentColor">
         <path d="M9 11l3 3L22 4" stroke-width="2" />
         <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" stroke-width="2" />
       </svg>
-      <p class="text-sm text-gray-500">{m.clip_list_no_clips()}</p>
-      <p class="text-xs text-gray-400">{m.clip_list_no_clips_hint()}</p>
+      <p class="text-sm text-stone-500">{m.clip_list_no_clips()}</p>
+      <p class="text-xs text-stone-400">{m.clip_list_no_clips_hint()}</p>
     </div>
   {:else if $clipsQuery.data}
-    <div class="overflow-x-auto rounded-lg border border-gray-200">
-      <table class="w-full border-collapse bg-white">
-        <thead class="border-b border-gray-200 bg-gray-50">
+    <div class="overflow-x-auto rounded-lg border border-stone-200">
+      <table class="w-full border-collapse bg-surface-card">
+        <thead class="border-b border-stone-200 bg-stone-50">
           <tr>
-            <th class="w-44 px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">
+            <th class="w-44 px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-stone-500">
               Preview
             </th>
             <th
-              class="w-52 cursor-pointer select-none px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500 hover:bg-gray-100"
+              class="w-52 cursor-pointer select-none px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-stone-500 hover:bg-stone-100"
               onclick={() => handleSort('start_time')}
             >
               <span class="flex items-center gap-1">
@@ -139,13 +139,13 @@
                 {/if}
               </span>
             </th>
-            <th class="w-24 px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">
+            <th class="w-24 px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-stone-500">
               Duration
             </th>
-            <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">
+            <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-stone-500">
               Note
             </th>
-            <th class="w-28 px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">
+            <th class="w-28 px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-stone-500">
               Actions
             </th>
           </tr>
@@ -153,7 +153,7 @@
         <tbody>
           {#each $clipsQuery.data.items as clip (clip.id)}
             <tr
-              class="border-b border-gray-100 transition-colors last:border-b-0 hover:bg-gray-50 {onSelect ? 'cursor-pointer' : ''}"
+              class="border-b border-stone-100 transition-colors last:border-b-0 hover:bg-stone-50 {onSelect ? 'cursor-pointer' : ''}"
               onclick={() => onSelect?.(clip.id)}
               role={onSelect ? 'button' : undefined}
               tabindex={onSelect ? 0 : undefined}
@@ -163,24 +163,24 @@
                 <img
                   src={getClipSpectrogramUrl(projectId, recordingId, clip.id, { width: 160, height: 60 })}
                   alt="Clip preview"
-                  class="block h-16 w-40 rounded bg-gray-900 object-cover"
+                  class="block h-16 w-40 rounded bg-stone-900 object-cover"
                 />
               </td>
               <td class="px-4 py-3">
-                <span class="font-mono text-sm font-medium text-gray-900">
+                <span class="font-mono text-sm font-medium text-stone-900">
                   {formatTime(clip.start_time)} - {formatTime(clip.end_time)}
                 </span>
               </td>
               <td class="px-4 py-3">
-                <span class="font-mono text-sm text-gray-500">
+                <span class="font-mono text-sm text-stone-500">
                   {(clip.end_time - clip.start_time).toFixed(2)}s
                 </span>
               </td>
               <td class="px-4 py-3">
                 {#if clip.note}
-                  <span class="text-sm leading-relaxed text-gray-700">{clip.note}</span>
+                  <span class="text-sm leading-relaxed text-stone-700">{clip.note}</span>
                 {:else}
-                  <span class="text-sm text-gray-400">-</span>
+                  <span class="text-sm text-stone-400">-</span>
                 {/if}
               </td>
               <td class="px-4 py-3">
@@ -188,10 +188,10 @@
                   {#if onEdit}
                     <button
                       onclick={(e) => { e.stopPropagation(); onEdit?.(clip); }}
-                      class="rounded border border-gray-200 p-1.5 transition-colors hover:bg-gray-100"
+                      class="rounded border border-stone-200 p-1.5 transition-colors hover:bg-stone-100"
                       title="Edit clip"
                     >
-                      <svg class="h-4 w-4 text-gray-500" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                      <svg class="h-4 w-4 text-stone-500" viewBox="0 0 24 24" fill="none" stroke="currentColor">
                         <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" stroke-width="2" />
                         <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" stroke-width="2" />
                       </svg>
@@ -199,11 +199,11 @@
                   {/if}
                   <button
                     onclick={(e) => { e.stopPropagation(); handleDeleteClick(clip); }}
-                    class="rounded border border-gray-200 p-1.5 transition-colors hover:border-red-200 hover:bg-red-50"
+                    class="rounded border border-stone-200 p-1.5 transition-colors hover:border-red-200 hover:bg-red-50"
                     title="Delete clip"
                     disabled={$deleteMut.isPending}
                   >
-                    <svg class="h-4 w-4 text-gray-500 hover:text-red-500" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                    <svg class="h-4 w-4 text-stone-500 hover:text-red-500" viewBox="0 0 24 24" fill="none" stroke="currentColor">
                       <polyline points="3 6 5 6 21 6" stroke-width="2" />
                       <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" stroke-width="2" />
                     </svg>
@@ -222,7 +222,7 @@
         <button
           onclick={prevPage}
           disabled={page === 1}
-          class="flex items-center gap-1 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+          class="flex items-center gap-1 rounded-md border border-stone-300 bg-surface-card px-3 py-2 text-sm font-medium text-stone-700 transition-colors hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-50"
         >
           <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
             <polyline points="15 18 9 12 15 6" stroke-width="2" />
@@ -230,14 +230,14 @@
           Previous
         </button>
 
-        <span class="text-sm font-medium text-gray-500">
+        <span class="text-sm font-medium text-stone-500">
           Page {page} of {$clipsQuery.data.pages}
         </span>
 
         <button
           onclick={nextPage}
           disabled={page >= $clipsQuery.data.pages}
-          class="flex items-center gap-1 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+          class="flex items-center gap-1 rounded-md border border-stone-300 bg-surface-card px-3 py-2 text-sm font-medium text-stone-700 transition-colors hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-50"
         >
           Next
           <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">

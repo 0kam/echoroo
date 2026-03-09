@@ -96,7 +96,7 @@
 >
   <!-- Selection highlight -->
   <div
-    class="pointer-events-none absolute inset-y-0 bg-blue-400/15"
+    class="pointer-events-none absolute inset-y-0 bg-primary-400/15"
     style="left: {startPercent}%; width: {endPercent - startPercent}%;"
   ></div>
 
@@ -109,17 +109,17 @@
     on:mousedown={handleMouseDown('start')}
     on:touchstart|passive={() => (dragging = 'start')}
   >
-    <div class="h-full w-0.5 bg-blue-500 opacity-90"></div>
+    <div class="h-full w-0.5 bg-primary-500 opacity-90"></div>
     <!-- Handle grip indicator -->
-    <div class="absolute top-1/2 -translate-y-1/2 rounded bg-blue-500 px-0.5 py-1 text-white shadow-sm">
+    <div class="absolute top-1/2 -translate-y-1/2 rounded bg-primary-500 px-0.5 py-1 text-white shadow-sm">
       <div class="flex flex-col gap-0.5">
-        <div class="h-0.5 w-1 bg-white/70"></div>
-        <div class="h-0.5 w-1 bg-white/70"></div>
-        <div class="h-0.5 w-1 bg-white/70"></div>
+        <div class="h-0.5 w-1 bg-surface-card/70"></div>
+        <div class="h-0.5 w-1 bg-surface-card/70"></div>
+        <div class="h-0.5 w-1 bg-surface-card/70"></div>
       </div>
     </div>
     <!-- Time label -->
-    <div class="absolute top-0 left-2 whitespace-nowrap rounded bg-blue-600 px-1 py-0.5 font-mono text-xs text-white shadow-sm">
+    <div class="absolute top-0 left-2 whitespace-nowrap rounded bg-primary-600 px-1 py-0.5 font-mono text-xs text-white shadow-sm">
       {formatTime(startTime)}
     </div>
   </button>
@@ -133,17 +133,17 @@
     on:mousedown={handleMouseDown('end')}
     on:touchstart|passive={() => (dragging = 'end')}
   >
-    <div class="h-full w-0.5 bg-blue-500 opacity-90"></div>
+    <div class="h-full w-0.5 bg-primary-500 opacity-90"></div>
     <!-- Handle grip indicator -->
-    <div class="absolute top-1/2 -translate-y-1/2 rounded bg-blue-500 px-0.5 py-1 text-white shadow-sm">
+    <div class="absolute top-1/2 -translate-y-1/2 rounded bg-primary-500 px-0.5 py-1 text-white shadow-sm">
       <div class="flex flex-col gap-0.5">
-        <div class="h-0.5 w-1 bg-white/70"></div>
-        <div class="h-0.5 w-1 bg-white/70"></div>
-        <div class="h-0.5 w-1 bg-white/70"></div>
+        <div class="h-0.5 w-1 bg-surface-card/70"></div>
+        <div class="h-0.5 w-1 bg-surface-card/70"></div>
+        <div class="h-0.5 w-1 bg-surface-card/70"></div>
       </div>
     </div>
     <!-- Time label -->
-    <div class="absolute top-0 right-2 whitespace-nowrap rounded bg-blue-600 px-1 py-0.5 font-mono text-xs text-white shadow-sm">
+    <div class="absolute top-0 right-2 whitespace-nowrap rounded bg-primary-600 px-1 py-0.5 font-mono text-xs text-white shadow-sm">
       {formatTime(endTime)}
     </div>
   </button>

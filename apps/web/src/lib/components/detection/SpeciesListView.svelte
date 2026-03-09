@@ -15,6 +15,7 @@
   import DetectionExportDialog from './DetectionExportDialog.svelte';
 
   export let projectId: string;
+  export let detectionRunId: string | undefined = undefined;
 
   let filters: DetectionFilters = {};
   let searchText: string = '';
@@ -23,11 +24,12 @@
   $: locale = getLocale();
 
   $: speciesSummaryQuery = createQuery({
-    queryKey: ['species-summary', projectId, searchText, locale],
+    queryKey: ['species-summary', projectId, searchText, locale, detectionRunId],
     queryFn: () =>
       fetchSpeciesSummary(projectId, {
         search: searchText || undefined,
         locale,
+        detection_run_id: detectionRunId,
       }),
     enabled: !!projectId,
   });
@@ -81,7 +83,7 @@
 
   <!-- Header with total count and export button -->
   <div class="flex items-center justify-between">
-    <div class="text-sm text-gray-600">
+    <div class="text-sm text-stone-600">
       {#if $speciesSummaryQuery.isLoading}
         {m.detection_loading_species()}
       {:else if $speciesSummaryQuery.data}
@@ -97,7 +99,7 @@
     <button
       type="button"
       on:click={openExportDialog}
-      class="flex items-center gap-1.5 rounded-md border border-gray-200 bg-white px-3 py-1.5 text-sm font-medium text-gray-600 hover:bg-gray-50 hover:border-gray-300 transition-colors"
+      class="flex items-center gap-1.5 rounded-md border border-card bg-surface-card px-3 py-1.5 text-sm font-medium text-stone-600 hover:bg-stone-50 hover:border-stone-300 transition-colors"
       aria-label={m.detection_export_aria()}
     >
       <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -112,30 +114,30 @@
     <div class="space-y-2">
       {#each { length: 5 } as _}
         <!-- Skeleton mimicking SpeciesListItem structure -->
-        <div class="animate-pulse rounded-lg border border-gray-100 bg-white p-3">
+        <div class="animate-pulse rounded-lg border border-stone-100 bg-surface-card p-3">
           <!-- Top row: species name + scientific name placeholder + right-side stats -->
           <div class="flex items-start justify-between gap-3">
             <div class="min-w-0 flex-1">
               <!-- Common name placeholder -->
-              <div class="h-4 w-2/5 rounded bg-gray-200"></div>
+              <div class="h-4 w-2/5 rounded bg-stone-200"></div>
               <!-- Scientific name placeholder -->
-              <div class="mt-1.5 h-3 w-1/3 rounded bg-gray-100"></div>
+              <div class="mt-1.5 h-3 w-1/3 rounded bg-stone-100"></div>
             </div>
             <!-- Right-side stats placeholders -->
             <div class="flex shrink-0 items-center gap-2">
               <div class="h-5 w-10 rounded bg-green-100"></div>
               <div class="h-5 w-10 rounded bg-red-100"></div>
-              <div class="h-5 w-10 rounded bg-gray-100"></div>
+              <div class="h-5 w-10 rounded bg-stone-100"></div>
             </div>
           </div>
           <!-- Progress bar placeholder -->
-          <div class="mt-2.5 h-1.5 w-full rounded-full bg-gray-100">
-            <div class="h-1.5 w-1/3 rounded-full bg-gray-200"></div>
+          <div class="mt-2.5 h-1.5 w-full rounded-full bg-stone-100">
+            <div class="h-1.5 w-1/3 rounded-full bg-stone-200"></div>
           </div>
           <!-- Counts row placeholder -->
           <div class="mt-2 flex items-center gap-3">
-            <div class="h-3 w-20 rounded bg-gray-100"></div>
-            <div class="h-3 w-16 rounded bg-gray-100"></div>
+            <div class="h-3 w-20 rounded bg-stone-100"></div>
+            <div class="h-3 w-16 rounded bg-stone-100"></div>
           </div>
         </div>
       {/each}
@@ -155,21 +157,21 @@
       </button>
     </div>
   {:else if filteredItems.length === 0}
-    <div class="rounded-lg border border-gray-200 bg-white px-4 py-12 text-center">
+    <div class="rounded-lg border border-card bg-surface-card px-4 py-12 text-center">
       {#if $speciesSummaryQuery.data?.total_species === 0}
-        <p class="text-sm font-medium text-gray-900">{m.detection_no_detections_yet_title()}</p>
-        <p class="mt-1 text-xs text-gray-500">
+        <p class="text-sm font-medium text-stone-900">{m.detection_no_detections_yet_title()}</p>
+        <p class="mt-1 text-xs text-stone-500">
           {m.detection_no_detections_yet_body()}
         </p>
       {:else}
-        <p class="text-sm font-medium text-gray-900">{m.detection_no_species_match_title()}</p>
-        <p class="mt-1 text-xs text-gray-500">{m.detection_no_species_match_body()}</p>
+        <p class="text-sm font-medium text-stone-900">{m.detection_no_species_match_title()}</p>
+        <p class="mt-1 text-xs text-stone-500">{m.detection_no_species_match_body()}</p>
       {/if}
     </div>
   {:else}
     <div class="space-y-2">
       {#each filteredItems as species (species.tag_id)}
-        <SpeciesListItem {species} {projectId} isSelected={false} />
+        <SpeciesListItem {species} {projectId} isSelected={false} {detectionRunId} />
       {/each}
     </div>
   {/if}
@@ -180,5 +182,6 @@
   {projectId}
   isOpen={isExportDialogOpen}
   initialFormat="csv"
+  {detectionRunId}
   onClose={closeExportDialog}
 />

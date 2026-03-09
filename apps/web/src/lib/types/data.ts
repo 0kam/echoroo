@@ -126,6 +126,7 @@ export interface Dataset {
   doi: string | null;
   gain: number | null;
   note: string | null;
+  datetime_timezone: string | null;
   total_files: number;
   processed_files: number;
   processing_error: string | null;
@@ -156,6 +157,7 @@ export interface DatasetCreate {
   note?: string | null;
   datetime_pattern?: string | null;
   datetime_format?: string | null;
+  datetime_timezone?: string | null;
 }
 
 export interface DatasetUpdate {
@@ -169,6 +171,7 @@ export interface DatasetUpdate {
   note?: string | null;
   datetime_pattern?: string | null;
   datetime_format?: string | null;
+  datetime_timezone?: string | null;
 }
 
 export interface DatasetListResponse {
@@ -183,6 +186,7 @@ export interface ImportRequest {
   source?: string | null;
   datetime_pattern?: string | null;
   datetime_format?: string | null;
+  datetime_timezone?: string | null;
 }
 
 export interface ImportStatusResponse {
@@ -481,6 +485,7 @@ export interface DatetimeParseSummary {
 export interface DatetimeConfig {
   datetime_pattern: string | null;
   datetime_format: string | null;
+  datetime_timezone: string | null;
   sample_filenames: string[];
   parse_summary: DatetimeParseSummary;
 }

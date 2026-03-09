@@ -116,11 +116,11 @@
   }
 </script>
 
-<div class="rounded-lg border border-gray-200 bg-white p-6">
+<div class="rounded-lg border border-card bg-surface-card p-6">
   <div class="mb-4 flex items-center gap-2">
     <!-- Brain/ML icon (SVG) -->
     <svg
-      class="h-5 w-5 text-indigo-500"
+      class="h-5 w-5 text-primary-500"
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"
@@ -135,12 +135,12 @@
       <path d="M9.5 21.5a2.5 2.5 0 0 1 5 0" />
       <rect x="7" y="7" width="10" height="10" rx="2" />
     </svg>
-    <h3 class="text-base font-semibold text-gray-900">{m.ml_analysis_title()}</h3>
+    <h3 class="text-base font-semibold text-stone-900">{m.ml_analysis_title()}</h3>
   </div>
 
   {#if $runsQuery.isLoading}
-    <div class="flex items-center gap-2 text-sm text-gray-500">
-      <svg class="h-4 w-4 animate-spin text-blue-600" fill="none" viewBox="0 0 24 24">
+    <div class="flex items-center gap-2 text-sm text-stone-500">
+      <svg class="h-4 w-4 animate-spin text-primary-600" fill="none" viewBox="0 0 24 24">
         <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
         <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
       </svg>
@@ -155,13 +155,13 @@
     <div class="space-y-4">
       <!-- Model selector -->
       <div>
-        <label for="model-select" class="mb-1 block text-sm font-medium text-gray-700">
+        <label for="model-select" class="mb-1 block text-sm font-medium text-stone-700">
           {m.ml_analysis_select_model()}
         </label>
         <select
           id="model-select"
           bind:value={selectedModel}
-          class="block w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+          class="block w-full rounded-md border border-stone-300 bg-surface-card px-3 py-2 text-sm text-stone-900 shadow-sm focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
         >
           {#if $modelsQuery.data}
             {#each $modelsQuery.data as model (model)}
@@ -174,18 +174,18 @@
           {/if}
         </select>
         {#if modelDescription}
-          <p class="mt-1.5 text-xs text-gray-500">{modelDescription}</p>
+          <p class="mt-1.5 text-xs text-stone-500">{modelDescription}</p>
         {/if}
       </div>
 
       <div class="flex items-center justify-between gap-4">
-        <p class="text-sm text-gray-500">
+        <p class="text-sm text-stone-500">
           Run ML analysis to automatically detect species in the recordings.
         </p>
         <button
           onclick={() => { mutationError = null; $createMut.mutate(); }}
           disabled={isActing}
-          class="flex-shrink-0 rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+          class="flex-shrink-0 rounded-md bg-primary-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {$createMut.isPending ? 'Starting...' : m.ml_analysis_run()}
         </button>
@@ -195,25 +195,25 @@
     <!-- Processing state -->
     <div class="flex items-center justify-between gap-4">
       <div class="flex items-center gap-3">
-        <svg class="h-5 w-5 animate-spin text-blue-600" fill="none" viewBox="0 0 24 24">
+        <svg class="h-5 w-5 animate-spin text-primary-600" fill="none" viewBox="0 0 24 24">
           <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
           <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
         </svg>
         <div>
-          <p class="text-sm font-medium text-blue-700">
+          <p class="text-sm font-medium text-primary-700">
             {m.ml_analysis_running({ model: runModelLabel(latestRun) })}
           </p>
           {#if latestRun.status === 'pending'}
-            <p class="text-xs text-blue-500">Queued, waiting to start</p>
+            <p class="text-xs text-primary-500">Queued, waiting to start</p>
           {:else}
-            <p class="text-xs text-blue-500">Processing recordings</p>
+            <p class="text-xs text-primary-500">Processing recordings</p>
           {/if}
         </div>
       </div>
       <button
         onclick={() => { if (latestRun) $cancelMut.mutate(latestRun.id); }}
         disabled={isActing}
-        class="flex-shrink-0 rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-600 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+        class="flex-shrink-0 rounded-md border border-stone-300 bg-surface-card px-3 py-1.5 text-sm font-medium text-stone-600 transition-colors hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-50"
       >
         {$cancelMut.isPending ? 'Cancelling...' : 'Cancel'}
       </button>
@@ -232,7 +232,7 @@
             {m.ml_analysis_completed({ model: runModelLabel(latestRun) })} — {m.common_detections_count({ count: latestRun.annotation_count })} found
           </p>
           {#if latestRun.completed_at}
-            <p class="text-xs text-gray-400">
+            <p class="text-xs text-stone-400">
               Finished {new Date(latestRun.completed_at).toLocaleString(getLocale())}
             </p>
           {/if}
@@ -248,7 +248,7 @@
         <button
           onclick={() => { if (latestRun) $retryMut.mutate(latestRun.id); }}
           disabled={isActing}
-          class="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-600 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+          class="rounded-md border border-stone-300 bg-surface-card px-3 py-1.5 text-sm font-medium text-stone-600 transition-colors hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {$retryMut.isPending ? 'Retrying...' : 'Re-run'}
         </button>
@@ -290,17 +290,17 @@
 
   <!-- Recent runs history -->
   {#if $runsQuery.data && $runsQuery.data.items.length > 1}
-    <div class="mt-4 border-t border-gray-100 pt-4">
-      <p class="mb-2 text-xs font-medium uppercase tracking-wider text-gray-400">Recent Runs</p>
+    <div class="mt-4 border-t border-stone-100 pt-4">
+      <p class="mb-2 text-xs font-medium uppercase tracking-wider text-stone-400">Recent Runs</p>
       <ul class="space-y-1.5">
         {#each $runsQuery.data.items as run (run.id)}
-          <li class="flex items-center justify-between gap-2 text-xs text-gray-500">
-            <span class="font-medium text-gray-700">{modelDisplayName(run.model_name)} v{run.model_version}</span>
+          <li class="flex items-center justify-between gap-2 text-xs text-stone-500">
+            <span class="font-medium text-stone-700">{modelDisplayName(run.model_name)} v{run.model_version}</span>
             <span class={
               run.status === 'completed' ? 'text-green-600' :
               run.status === 'failed' ? 'text-red-500' :
-              run.status === 'running' ? 'text-blue-500' :
-              'text-gray-400'
+              run.status === 'running' ? 'text-primary-500' :
+              'text-stone-400'
             }>
               {run.status === 'completed' ? 'Completed' :
                run.status === 'failed' ? 'Failed' :
@@ -308,7 +308,7 @@
                run.status === 'pending' ? 'Pending' : run.status}
             </span>
             {#if run.completed_at}
-              <span class="ml-auto text-gray-400">{new Date(run.completed_at).toLocaleDateString(getLocale())}</span>
+              <span class="ml-auto text-stone-400">{new Date(run.completed_at).toLocaleDateString(getLocale())}</span>
             {/if}
           </li>
         {/each}

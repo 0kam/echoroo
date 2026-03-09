@@ -9,6 +9,37 @@ from echoroo.models.enums import ProjectRole, ProjectVisibility
 from echoroo.schemas.auth import UserResponse
 
 
+class ProjectOverviewSite(BaseModel):
+    """Site summary within project overview."""
+
+    id: UUID
+    name: str
+    h3_index: str
+    latitude: float | None
+    longitude: float | None
+    recording_count: int
+    dataset_count: int
+
+
+class RecordingCalendarEntry(BaseModel):
+    """Monthly recording activity entry."""
+
+    year: int
+    month: int
+    site_count: int
+    recording_count: int
+
+
+class ProjectOverviewResponse(BaseModel):
+    """Project overview aggregated statistics."""
+
+    sites: list[ProjectOverviewSite]
+    recording_calendar: list[RecordingCalendarEntry]
+    total_recordings: int
+    total_sites: int
+    total_duration: float
+
+
 class ProjectCreateRequest(BaseModel):
     """Project creation request schema."""
 

@@ -285,7 +285,7 @@
         {m.recording_detail_breadcrumb_recordings()}
       </a>
       <span>/</span>
-      <span class="truncate text-stone-600 dark:text-stone-300 font-medium">
+      <span class="truncate text-stone-600 font-medium">
         {recording.filename}
       </span>
     </nav>
@@ -509,14 +509,14 @@
       <!-- svelte-ignore a11y_click_events_have_key_events -->
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div
-        class="bg-white dark:bg-stone-800 rounded-lg shadow-xl p-6 w-full max-w-md"
+        class="bg-surface-card rounded-lg shadow-xl p-6 w-full max-w-md"
         onclick={(e) => e.stopPropagation()}
       >
-        <h3 class="text-lg font-semibold text-stone-800 dark:text-stone-100 mb-4">{m.recording_detail_edit_modal_title()}</h3>
+        <h3 class="text-lg font-semibold text-stone-800 mb-4">{m.recording_detail_edit_modal_title()}</h3>
         <form onsubmit={handleEditSubmit}>
           <div class="space-y-4 mb-6">
             <div>
-              <label for="time-expansion" class="block text-sm font-medium text-stone-700 dark:text-stone-300 mb-1">
+              <label for="time-expansion" class="block text-sm font-medium text-stone-700 mb-1">
                 {m.recording_detail_time_expansion_label()}
               </label>
               <input
@@ -526,19 +526,19 @@
                 min="0.1"
                 max="100"
                 bind:value={editTimeExpansion}
-                class="w-full px-3 py-2 border border-stone-300 dark:border-stone-600 rounded-md text-sm bg-white dark:bg-stone-700 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                class="w-full px-3 py-2 border border-stone-300 rounded-md text-sm bg-surface-card focus:outline-none focus:ring-2 focus:ring-emerald-500"
               />
               <p class="mt-1 text-xs text-stone-500">{m.recording_detail_time_expansion_hint()}</p>
             </div>
             <div>
-              <label for="note" class="block text-sm font-medium text-stone-700 dark:text-stone-300 mb-1">
+              <label for="note" class="block text-sm font-medium text-stone-700 mb-1">
                 {m.recording_detail_notes_label()}
               </label>
               <textarea
                 id="note"
                 bind:value={editNote}
                 rows="3"
-                class="w-full px-3 py-2 border border-stone-300 dark:border-stone-600 rounded-md text-sm bg-white dark:bg-stone-700 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                class="w-full px-3 py-2 border border-stone-300 rounded-md text-sm bg-surface-card focus:outline-none focus:ring-2 focus:ring-emerald-500"
               ></textarea>
             </div>
           </div>
@@ -546,7 +546,7 @@
             <button
               type="button"
               onclick={() => (showEditModal = false)}
-              class="px-4 py-2 text-sm font-medium border border-stone-300 rounded-md hover:bg-stone-50 dark:border-stone-600 dark:hover:bg-stone-700"
+              class="px-4 py-2 text-sm font-medium border border-stone-300 rounded-md hover:bg-stone-50"
             >
               {m.recording_detail_cancel()}
             </button>

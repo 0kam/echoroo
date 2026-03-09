@@ -74,14 +74,14 @@
   }
 </script>
 
-<div class="flex flex-1 overflow-hidden bg-gray-50">
+<div class="flex flex-1 overflow-hidden bg-surface-page">
   <!-- Sidebar -->
-  <aside class="w-56 flex-shrink-0 border-r border-gray-200 bg-white">
+  <aside class="w-56 flex-shrink-0 border-r border-card bg-surface-card">
     <!-- Back link -->
-    <div class="flex h-14 items-center border-b border-gray-200 px-4">
+    <div class="flex h-14 items-center border-b border-card px-4">
       <a
         href={localizeHref('/projects')}
-        class="flex items-center text-sm font-medium text-gray-500 hover:text-gray-900"
+        class="flex items-center text-sm font-medium text-stone-500 hover:text-stone-900"
       >
         <svg
           class="mr-1.5 h-4 w-4"
@@ -101,15 +101,15 @@
     </div>
 
     <!-- Project name -->
-    <div class="border-b border-gray-200 px-4 py-3">
+    <div class="border-b border-card px-4 py-3">
       {#if $projectQuery.isLoading}
-        <div class="h-4 w-32 animate-pulse rounded bg-gray-200"></div>
+        <div class="h-4 w-32 animate-pulse rounded bg-stone-200"></div>
       {:else if $projectQuery.data}
-        <p class="truncate text-xs font-semibold text-gray-900" title={$projectQuery.data.name}>
+        <p class="truncate text-xs font-semibold text-stone-900" title={$projectQuery.data.name}>
           {$projectQuery.data.name}
         </p>
       {:else}
-        <p class="text-xs text-gray-400">{m.sidebar_project_loading()}</p>
+        <p class="text-xs text-stone-400">{m.sidebar_project_loading()}</p>
       {/if}
     </div>
 
@@ -121,8 +121,8 @@
           class="flex items-center rounded-lg px-3 py-2 text-sm font-medium transition-colors {isActive(
             item.hrefSuffix
           )
-            ? 'bg-blue-50 text-blue-700'
-            : 'text-gray-700 hover:bg-gray-50'}"
+            ? 'bg-primary-100 text-primary-600'
+            : 'text-stone-700 hover:bg-stone-50'}"
         >
           <svg class="mr-2.5 h-4 w-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={item.icon} />

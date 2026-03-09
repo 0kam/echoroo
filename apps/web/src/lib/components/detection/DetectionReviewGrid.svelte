@@ -18,6 +18,7 @@
 
   export let projectId: string;
   export let tagId: string;
+  export let detectionRunId: string | undefined = undefined;
 
   const queryClient = useQueryClient();
 
@@ -35,7 +36,7 @@
   let mutatingId: string | null = null;
 
   // Query key includes all filter params
-  $: queryKey = ['detections', projectId, tagId, statusFilter, confidenceMin, page, PAGE_SIZE];
+  $: queryKey = ['detections', projectId, tagId, statusFilter, confidenceMin, page, PAGE_SIZE, detectionRunId];
 
   $: detectionsQuery = createQuery({
     queryKey: queryKey,
@@ -47,6 +48,7 @@
         confidence_max: confidenceMax < 1 ? confidenceMax : undefined,
         page,
         page_size: PAGE_SIZE,
+        detection_run_id: detectionRunId,
       }),
     placeholderData: (prev: DetectionListResponse | undefined) => prev,
   });
@@ -191,7 +193,7 @@
         class="rounded px-2.5 py-1 text-xs font-medium transition-colors
           {statusFilter === undefined
             ? 'bg-stone-700 text-white'
-            : 'border border-stone-300 bg-white text-stone-600 hover:bg-stone-100'}"
+            : 'border border-stone-300 bg-surface-card text-stone-600 hover:bg-stone-100'}"
         on:click={() => handleStatusFilter(undefined)}
       >
         {m.detection_filter_all()}
@@ -204,7 +206,7 @@
         class="rounded px-2.5 py-1 text-xs font-medium transition-colors
           {statusFilter === 'unreviewed'
             ? 'bg-stone-700 text-white'
-            : 'border border-stone-300 bg-white text-stone-600 hover:bg-stone-100'}"
+            : 'border border-stone-300 bg-surface-card text-stone-600 hover:bg-stone-100'}"
         on:click={() => handleStatusFilter('unreviewed')}
       >
         {m.detection_filter_unreviewed()}
@@ -243,17 +245,17 @@
         step="0.05"
         bind:value={confidenceMin}
         on:change={handleConfidenceChange}
-        class="w-24 accent-blue-500"
+        class="w-24 accent-primary-500"
         aria-label={m.detection_filter_confidence_aria()}
       />
     </div>
 
     <!-- Keyboard shortcuts hint -->
     <div class="ml-auto flex items-center gap-2 text-xs text-stone-400">
-      <kbd class="rounded border border-stone-200 bg-white px-1.5 py-0.5 font-mono text-xs">C</kbd> {m.detection_keyboard_confirm()}
-      <kbd class="rounded border border-stone-200 bg-white px-1.5 py-0.5 font-mono text-xs">R</kbd> {m.detection_keyboard_reject()}
-      <kbd class="rounded border border-stone-200 bg-white px-1.5 py-0.5 font-mono text-xs">Space</kbd> {m.detection_keyboard_play()}
-      <kbd class="rounded border border-stone-200 bg-white px-1.5 py-0.5 font-mono text-xs">Arrows</kbd> {m.detection_keyboard_navigate()}
+      <kbd class="rounded border border-stone-200 bg-surface-card px-1.5 py-0.5 font-mono text-xs">C</kbd> {m.detection_keyboard_confirm()}
+      <kbd class="rounded border border-stone-200 bg-surface-card px-1.5 py-0.5 font-mono text-xs">R</kbd> {m.detection_keyboard_reject()}
+      <kbd class="rounded border border-stone-200 bg-surface-card px-1.5 py-0.5 font-mono text-xs">Space</kbd> {m.detection_keyboard_play()}
+      <kbd class="rounded border border-stone-200 bg-surface-card px-1.5 py-0.5 font-mono text-xs">Arrows</kbd> {m.detection_keyboard_navigate()}
     </div>
   </div>
 
@@ -262,7 +264,7 @@
     <!-- Skeleton cards matching the 3-column grid layout -->
     <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
       {#each { length: 6 } as _}
-        <div class="animate-pulse overflow-hidden rounded-lg border border-stone-200 bg-white shadow-sm">
+        <div class="animate-pulse overflow-hidden rounded-lg border border-stone-200 bg-surface-card shadow-sm">
           <!-- Spectrogram area placeholder -->
           <div class="h-[120px] bg-stone-200"></div>
           <!-- Card body placeholder -->
@@ -341,7 +343,7 @@
       <div class="flex items-center justify-center gap-3 py-2">
         <button
           type="button"
-          class="rounded border border-stone-300 bg-white px-3 py-1.5 text-sm text-stone-600 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-40"
+          class="rounded border border-stone-300 bg-surface-card px-3 py-1.5 text-sm text-stone-600 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-40"
           on:click={prevPage}
           disabled={page === 1}
         >
@@ -352,7 +354,7 @@
         </span>
         <button
           type="button"
-          class="rounded border border-stone-300 bg-white px-3 py-1.5 text-sm text-stone-600 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-40"
+          class="rounded border border-stone-300 bg-surface-card px-3 py-1.5 text-sm text-stone-600 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-40"
           on:click={nextPage}
           disabled={page === totalPages}
         >

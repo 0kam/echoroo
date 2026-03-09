@@ -178,6 +178,7 @@ async def create_dataset(
         note=request.note,
         datetime_pattern=request.datetime_pattern,
         datetime_format=request.datetime_format,
+        datetime_timezone=request.datetime_timezone,
     )
     await db.commit()
 
@@ -286,6 +287,7 @@ async def update_dataset(
         note=request.note,
         datetime_pattern=request.datetime_pattern,
         datetime_format=request.datetime_format,
+        datetime_timezone=request.datetime_timezone,
     )
     await db.commit()
 
@@ -436,6 +438,7 @@ async def start_import(
         str(upload_session.id),
         request.datetime_pattern,
         request.datetime_format,
+        request.datetime_timezone,
     )
 
     return ImportStatusResponse(
@@ -657,6 +660,7 @@ async def get_datetime_config(
     return DatetimeConfigResponse(
         datetime_pattern=config["datetime_pattern"] if isinstance(config["datetime_pattern"], str) else None,
         datetime_format=config["datetime_format"] if isinstance(config["datetime_format"], str) else None,
+        datetime_timezone=config["datetime_timezone"] if isinstance(config["datetime_timezone"], str) else None,
         sample_filenames=sample_filenames,
         parse_summary=DatetimeParseSummary(**summary_data),
     )
@@ -743,7 +747,7 @@ async def test_datetime_pattern(
     await service.get_by_id(current_user.id, project_id, dataset_id)
 
     sample_filenames = await service.recording_repo.get_sample_filenames(dataset_id)
-    results = await service.test_datetime_pattern_bulk(sample_filenames, body.pattern, body.format_str)
+    results = await service.test_datetime_pattern_bulk(sample_filenames, body.pattern, body.format_str, body.timezone)
 
     return [DatetimeTestResult(**r) for r in results]
 
@@ -796,7 +800,7 @@ async def apply_datetime_pattern(
         )
 
     task_id, total_recordings = await service.apply_datetime_pattern(
-        dataset_id, body.pattern, body.format_str
+        dataset_id, body.pattern, body.format_str, body.timezone
     )
     await db.commit()
 

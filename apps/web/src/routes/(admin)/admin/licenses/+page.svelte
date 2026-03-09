@@ -218,12 +218,12 @@
   <!-- Header -->
   <div class="mb-6 flex items-center justify-between">
     <div>
-      <h1 class="text-3xl font-bold text-gray-900">License Management</h1>
-      <p class="mt-2 text-sm text-gray-600">Manage licenses for recordings and datasets</p>
+      <h1 class="text-3xl font-bold text-stone-900">License Management</h1>
+      <p class="mt-2 text-sm text-stone-600">Manage licenses for recordings and datasets</p>
     </div>
     <button
       onclick={openCreateModal}
-      class="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+      class="rounded-lg bg-primary-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2"
     >
       Add New License
     </button>
@@ -283,7 +283,7 @@
   {#if isLoading}
     <div class="flex items-center justify-center py-12">
       <svg
-        class="h-8 w-8 animate-spin text-blue-600"
+        class="h-8 w-8 animate-spin text-primary-600"
         xmlns="http://www.w3.org/2000/svg"
         fill="none"
         viewBox="0 0 24 24"
@@ -298,9 +298,9 @@
       </svg>
     </div>
   {:else if licenses.length === 0}
-    <div class="rounded-lg border-2 border-dashed border-gray-300 p-12 text-center">
+    <div class="rounded-lg border-2 border-dashed border-stone-300 p-12 text-center">
       <svg
-        class="mx-auto h-12 w-12 text-gray-400"
+        class="mx-auto h-12 w-12 text-stone-400"
         xmlns="http://www.w3.org/2000/svg"
         fill="none"
         viewBox="0 0 24 24"
@@ -313,83 +313,83 @@
           d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
         />
       </svg>
-      <h3 class="mt-2 text-sm font-medium text-gray-900">No licenses found</h3>
-      <p class="mt-1 text-sm text-gray-500">Get started by creating a new license.</p>
+      <h3 class="mt-2 text-sm font-medium text-stone-900">No licenses found</h3>
+      <p class="mt-1 text-sm text-stone-500">Get started by creating a new license.</p>
       <div class="mt-6">
         <button
           onclick={openCreateModal}
-          class="inline-flex items-center rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+          class="inline-flex items-center rounded-md bg-primary-600 px-4 py-2 text-sm font-medium text-white hover:bg-primary-700"
         >
           Add New License
         </button>
       </div>
     </div>
   {:else}
-    <div class="overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm">
+    <div class="overflow-hidden rounded-lg border border-card bg-surface-card shadow-sm">
       <div class="overflow-x-auto">
-        <table class="min-w-full divide-y divide-gray-200">
-          <thead class="bg-gray-50">
+        <table class="min-w-full divide-y divide-stone-200">
+          <thead class="bg-stone-50">
             <tr>
               <th
                 scope="col"
-                class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500"
+                class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-stone-500"
               >
                 ID
               </th>
               <th
                 scope="col"
-                class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500"
+                class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-stone-500"
               >
                 Name
               </th>
               <th
                 scope="col"
-                class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500"
+                class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-stone-500"
               >
                 Short Name
               </th>
               <th
                 scope="col"
-                class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500"
+                class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-stone-500"
               >
                 URL
               </th>
               <th
                 scope="col"
-                class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500"
+                class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-stone-500"
               >
                 Description
               </th>
               <th
                 scope="col"
-                class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500"
+                class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-stone-500"
               >
                 Created
               </th>
               <th
                 scope="col"
-                class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500"
+                class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-stone-500"
               >
                 Actions
               </th>
             </tr>
           </thead>
-          <tbody class="divide-y divide-gray-200 bg-white">
+          <tbody class="divide-y divide-stone-200 bg-surface-card">
             {#each licenses as license (license.id)}
-              <tr class="hover:bg-gray-50">
+              <tr class="hover:bg-stone-50">
                 <!-- ID -->
                 <td class="whitespace-nowrap px-6 py-4">
-                  <div class="text-sm font-medium text-gray-900">{license.id}</div>
+                  <div class="text-sm font-medium text-stone-900">{license.id}</div>
                 </td>
 
                 <!-- Name -->
                 <td class="whitespace-nowrap px-6 py-4">
-                  <div class="text-sm text-gray-900">{license.name}</div>
+                  <div class="text-sm text-stone-900">{license.name}</div>
                 </td>
 
                 <!-- Short Name -->
                 <td class="whitespace-nowrap px-6 py-4">
-                  <div class="text-sm text-gray-900">{license.short_name}</div>
+                  <div class="text-sm text-stone-900">{license.short_name}</div>
                 </td>
 
                 <!-- URL -->
@@ -399,24 +399,24 @@
                       href={license.url}
                       target="_blank"
                       rel="noopener noreferrer"
-                      class="text-sm text-blue-600 hover:text-blue-800 hover:underline"
+                      class="text-sm text-primary-600 hover:text-primary-800 hover:underline"
                     >
                       {truncate(license.url, 40)}
                     </a>
                   {:else}
-                    <span class="text-sm text-gray-500">-</span>
+                    <span class="text-sm text-stone-500">-</span>
                   {/if}
                 </td>
 
                 <!-- Description -->
                 <td class="px-6 py-4">
-                  <div class="max-w-xs text-sm text-gray-900">
+                  <div class="max-w-xs text-sm text-stone-900">
                     {truncate(license.description, 60)}
                   </div>
                 </td>
 
                 <!-- Created -->
-                <td class="whitespace-nowrap px-6 py-4 text-sm text-gray-500">
+                <td class="whitespace-nowrap px-6 py-4 text-sm text-stone-500">
                   {formatDate(license.created_at)}
                 </td>
 
@@ -425,7 +425,7 @@
                   <div class="flex gap-2">
                     <button
                       onclick={() => openEditModal(license)}
-                      class="rounded bg-blue-100 px-3 py-1 text-xs font-medium text-blue-700 transition-colors hover:bg-blue-200"
+                      class="rounded bg-primary-100 px-3 py-1 text-xs font-medium text-primary-700 transition-colors hover:bg-primary-200"
                     >
                       Edit
                     </button>
@@ -452,21 +452,21 @@
     <div class="flex min-h-screen items-center justify-center px-4 pb-20 pt-4 text-center sm:block sm:p-0">
       <!-- Background overlay -->
       <div
-        class="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity"
+        class="fixed inset-0 bg-stone-500 bg-opacity-75 transition-opacity"
         aria-hidden="true"
         onclick={closeModals}
       ></div>
 
       <!-- Modal panel -->
-      <div class="inline-block transform overflow-hidden rounded-lg bg-white text-left align-bottom shadow-xl transition-all sm:my-8 sm:w-full sm:max-w-lg sm:align-middle">
-        <div class="bg-white px-4 pb-4 pt-5 sm:p-6 sm:pb-4">
-          <h3 class="text-lg font-medium leading-6 text-gray-900" id="modal-title">
+      <div class="inline-block transform overflow-hidden rounded-lg bg-surface-card text-left align-bottom shadow-xl transition-all sm:my-8 sm:w-full sm:max-w-lg sm:align-middle">
+        <div class="bg-surface-card px-4 pb-4 pt-5 sm:p-6 sm:pb-4">
+          <h3 class="text-lg font-medium leading-6 text-stone-900" id="modal-title">
             Create New License
           </h3>
           <div class="mt-4 space-y-4">
             <!-- ID -->
             <div>
-              <label for="create-id" class="block text-sm font-medium text-gray-700">
+              <label for="create-id" class="block text-sm font-medium text-stone-700">
                 ID <span class="text-red-500">*</span>
               </label>
               <input
@@ -475,13 +475,13 @@
                 bind:value={formData.id}
                 required
                 placeholder="e.g., CC-BY-4.0"
-                class="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                class="mt-1 block w-full rounded-md border border-stone-300 px-3 py-2 text-sm focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
               />
             </div>
 
             <!-- Name -->
             <div>
-              <label for="create-name" class="block text-sm font-medium text-gray-700">
+              <label for="create-name" class="block text-sm font-medium text-stone-700">
                 Name <span class="text-red-500">*</span>
               </label>
               <input
@@ -490,13 +490,13 @@
                 bind:value={formData.name}
                 required
                 placeholder="e.g., Creative Commons Attribution 4.0 International"
-                class="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                class="mt-1 block w-full rounded-md border border-stone-300 px-3 py-2 text-sm focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
               />
             </div>
 
             <!-- Short Name -->
             <div>
-              <label for="create-short-name" class="block text-sm font-medium text-gray-700">
+              <label for="create-short-name" class="block text-sm font-medium text-stone-700">
                 Short Name <span class="text-red-500">*</span>
               </label>
               <input
@@ -505,13 +505,13 @@
                 bind:value={formData.short_name}
                 required
                 placeholder="e.g., CC BY 4.0"
-                class="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                class="mt-1 block w-full rounded-md border border-stone-300 px-3 py-2 text-sm focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
               />
             </div>
 
             <!-- URL -->
             <div>
-              <label for="create-url" class="block text-sm font-medium text-gray-700">
+              <label for="create-url" class="block text-sm font-medium text-stone-700">
                 URL
               </label>
               <input
@@ -519,13 +519,13 @@
                 id="create-url"
                 bind:value={formData.url}
                 placeholder="https://creativecommons.org/licenses/by/4.0/"
-                class="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                class="mt-1 block w-full rounded-md border border-stone-300 px-3 py-2 text-sm focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
               />
             </div>
 
             <!-- Description -->
             <div>
-              <label for="create-description" class="block text-sm font-medium text-gray-700">
+              <label for="create-description" class="block text-sm font-medium text-stone-700">
                 Description
               </label>
               <textarea
@@ -533,23 +533,23 @@
                 bind:value={formData.description}
                 rows="3"
                 placeholder="License description..."
-                class="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                class="mt-1 block w-full rounded-md border border-stone-300 px-3 py-2 text-sm focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
               ></textarea>
             </div>
           </div>
         </div>
-        <div class="bg-gray-50 px-4 py-3 sm:flex sm:flex-row-reverse sm:px-6">
+        <div class="bg-stone-50 px-4 py-3 sm:flex sm:flex-row-reverse sm:px-6">
           <button
             type="button"
             onclick={handleCreate}
-            class="inline-flex w-full justify-center rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 sm:ml-3 sm:w-auto"
+            class="inline-flex w-full justify-center rounded-md bg-primary-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 sm:ml-3 sm:w-auto"
           >
             Create
           </button>
           <button
             type="button"
             onclick={closeModals}
-            class="mt-3 inline-flex w-full justify-center rounded-md bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 sm:mt-0 sm:w-auto"
+            class="mt-3 inline-flex w-full justify-center rounded-md bg-surface-card px-4 py-2 text-sm font-medium text-stone-700 shadow-sm hover:bg-stone-50 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 sm:mt-0 sm:w-auto"
           >
             Cancel
           </button>
@@ -565,21 +565,21 @@
     <div class="flex min-h-screen items-center justify-center px-4 pb-20 pt-4 text-center sm:block sm:p-0">
       <!-- Background overlay -->
       <div
-        class="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity"
+        class="fixed inset-0 bg-stone-500 bg-opacity-75 transition-opacity"
         aria-hidden="true"
         onclick={closeModals}
       ></div>
 
       <!-- Modal panel -->
-      <div class="inline-block transform overflow-hidden rounded-lg bg-white text-left align-bottom shadow-xl transition-all sm:my-8 sm:w-full sm:max-w-lg sm:align-middle">
-        <div class="bg-white px-4 pb-4 pt-5 sm:p-6 sm:pb-4">
-          <h3 class="text-lg font-medium leading-6 text-gray-900" id="modal-title">
+      <div class="inline-block transform overflow-hidden rounded-lg bg-surface-card text-left align-bottom shadow-xl transition-all sm:my-8 sm:w-full sm:max-w-lg sm:align-middle">
+        <div class="bg-surface-card px-4 pb-4 pt-5 sm:p-6 sm:pb-4">
+          <h3 class="text-lg font-medium leading-6 text-stone-900" id="modal-title">
             Edit License: {currentLicense.id}
           </h3>
           <div class="mt-4 space-y-4">
             <!-- Name -->
             <div>
-              <label for="edit-name" class="block text-sm font-medium text-gray-700">
+              <label for="edit-name" class="block text-sm font-medium text-stone-700">
                 Name <span class="text-red-500">*</span>
               </label>
               <input
@@ -587,13 +587,13 @@
                 id="edit-name"
                 bind:value={formData.name}
                 required
-                class="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                class="mt-1 block w-full rounded-md border border-stone-300 px-3 py-2 text-sm focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
               />
             </div>
 
             <!-- Short Name -->
             <div>
-              <label for="edit-short-name" class="block text-sm font-medium text-gray-700">
+              <label for="edit-short-name" class="block text-sm font-medium text-stone-700">
                 Short Name <span class="text-red-500">*</span>
               </label>
               <input
@@ -601,49 +601,49 @@
                 id="edit-short-name"
                 bind:value={formData.short_name}
                 required
-                class="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                class="mt-1 block w-full rounded-md border border-stone-300 px-3 py-2 text-sm focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
               />
             </div>
 
             <!-- URL -->
             <div>
-              <label for="edit-url" class="block text-sm font-medium text-gray-700">
+              <label for="edit-url" class="block text-sm font-medium text-stone-700">
                 URL
               </label>
               <input
                 type="url"
                 id="edit-url"
                 bind:value={formData.url}
-                class="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                class="mt-1 block w-full rounded-md border border-stone-300 px-3 py-2 text-sm focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
               />
             </div>
 
             <!-- Description -->
             <div>
-              <label for="edit-description" class="block text-sm font-medium text-gray-700">
+              <label for="edit-description" class="block text-sm font-medium text-stone-700">
                 Description
               </label>
               <textarea
                 id="edit-description"
                 bind:value={formData.description}
                 rows="3"
-                class="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                class="mt-1 block w-full rounded-md border border-stone-300 px-3 py-2 text-sm focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
               ></textarea>
             </div>
           </div>
         </div>
-        <div class="bg-gray-50 px-4 py-3 sm:flex sm:flex-row-reverse sm:px-6">
+        <div class="bg-stone-50 px-4 py-3 sm:flex sm:flex-row-reverse sm:px-6">
           <button
             type="button"
             onclick={handleUpdate}
-            class="inline-flex w-full justify-center rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 sm:ml-3 sm:w-auto"
+            class="inline-flex w-full justify-center rounded-md bg-primary-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 sm:ml-3 sm:w-auto"
           >
             Update
           </button>
           <button
             type="button"
             onclick={closeModals}
-            class="mt-3 inline-flex w-full justify-center rounded-md bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 sm:mt-0 sm:w-auto"
+            class="mt-3 inline-flex w-full justify-center rounded-md bg-surface-card px-4 py-2 text-sm font-medium text-stone-700 shadow-sm hover:bg-stone-50 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 sm:mt-0 sm:w-auto"
           >
             Cancel
           </button>
@@ -659,14 +659,14 @@
     <div class="flex min-h-screen items-center justify-center px-4 pb-20 pt-4 text-center sm:block sm:p-0">
       <!-- Background overlay -->
       <div
-        class="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity"
+        class="fixed inset-0 bg-stone-500 bg-opacity-75 transition-opacity"
         aria-hidden="true"
         onclick={closeModals}
       ></div>
 
       <!-- Modal panel -->
-      <div class="inline-block transform overflow-hidden rounded-lg bg-white text-left align-bottom shadow-xl transition-all sm:my-8 sm:w-full sm:max-w-lg sm:align-middle">
-        <div class="bg-white px-4 pb-4 pt-5 sm:p-6 sm:pb-4">
+      <div class="inline-block transform overflow-hidden rounded-lg bg-surface-card text-left align-bottom shadow-xl transition-all sm:my-8 sm:w-full sm:max-w-lg sm:align-middle">
+        <div class="bg-surface-card px-4 pb-4 pt-5 sm:p-6 sm:pb-4">
           <div class="sm:flex sm:items-start">
             <div class="mx-auto flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-full bg-red-100 sm:mx-0 sm:h-10 sm:w-10">
               <svg class="h-6 w-6 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -679,11 +679,11 @@
               </svg>
             </div>
             <div class="mt-3 text-center sm:ml-4 sm:mt-0 sm:text-left">
-              <h3 class="text-lg font-medium leading-6 text-gray-900" id="modal-title">
+              <h3 class="text-lg font-medium leading-6 text-stone-900" id="modal-title">
                 Delete License
               </h3>
               <div class="mt-2">
-                <p class="text-sm text-gray-500">
+                <p class="text-sm text-stone-500">
                   Are you sure you want to delete the license "<strong>{currentLicense.name}</strong>" ({currentLicense.id})?
                   This action cannot be undone.
                 </p>
@@ -691,7 +691,7 @@
             </div>
           </div>
         </div>
-        <div class="bg-gray-50 px-4 py-3 sm:flex sm:flex-row-reverse sm:px-6">
+        <div class="bg-stone-50 px-4 py-3 sm:flex sm:flex-row-reverse sm:px-6">
           <button
             type="button"
             onclick={handleDelete}
@@ -702,7 +702,7 @@
           <button
             type="button"
             onclick={closeModals}
-            class="mt-3 inline-flex w-full justify-center rounded-md bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 sm:mt-0 sm:w-auto"
+            class="mt-3 inline-flex w-full justify-center rounded-md bg-surface-card px-4 py-2 text-sm font-medium text-stone-700 shadow-sm hover:bg-stone-50 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 sm:mt-0 sm:w-auto"
           >
             Cancel
           </button>

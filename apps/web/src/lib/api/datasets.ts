@@ -204,7 +204,8 @@ export async function testDatetimePattern(
   projectId: string,
   datasetId: string,
   pattern: string,
-  formatStr: string
+  formatStr: string,
+  timezone?: string
 ): Promise<DatetimeTestResult[]> {
   const response = await fetchWithErrorHandling(
     `${API_BASE}/projects/${projectId}/datasets/${datasetId}/datetime-config/test`,
@@ -212,7 +213,7 @@ export async function testDatetimePattern(
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
-      body: JSON.stringify({ pattern, format_str: formatStr }),
+      body: JSON.stringify({ pattern, format_str: formatStr, timezone: timezone || null }),
     }
   );
   return handleApiResponse<DatetimeTestResult[]>(response);
@@ -225,7 +226,8 @@ export async function applyDatetimePattern(
   projectId: string,
   datasetId: string,
   pattern: string,
-  formatStr: string
+  formatStr: string,
+  timezone?: string
 ): Promise<DatetimeApplyResult> {
   const response = await fetchWithErrorHandling(
     `${API_BASE}/projects/${projectId}/datasets/${datasetId}/datetime-config/apply`,
@@ -233,7 +235,7 @@ export async function applyDatetimePattern(
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
-      body: JSON.stringify({ pattern, format_str: formatStr }),
+      body: JSON.stringify({ pattern, format_str: formatStr, timezone: timezone || null }),
     }
   );
   return handleApiResponse<DatetimeApplyResult>(response);

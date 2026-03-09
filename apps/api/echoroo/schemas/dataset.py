@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from datetime import datetime
 from uuid import UUID
+from zoneinfo import ZoneInfoNotFoundError
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from echoroo.models.enums import DatasetStatus, DatasetVisibility
 
@@ -50,6 +51,18 @@ class SiteSummary(BaseModel):
     model_config = {"from_attributes": True}
 
 
+def _validate_iana_timezone(v: str | None) -> str | None:
+    """Validate that the given string is a valid IANA timezone identifier."""
+    if v is None:
+        return v
+    try:
+        from zoneinfo import ZoneInfo
+        ZoneInfo(v)
+    except (ZoneInfoNotFoundError, KeyError):
+        raise ValueError(f"Invalid IANA timezone: '{v}'") from None
+    return v
+
+
 class DatasetCreate(BaseModel):
     """Dataset creation request schema."""
 
@@ -64,6 +77,15 @@ class DatasetCreate(BaseModel):
     note: str | None = Field(None, description="Internal notes")
     datetime_pattern: str | None = Field(None, max_length=200, description="Regex pattern for datetime extraction")
     datetime_format: str | None = Field(None, description="strftime format string")
+    datetime_timezone: str | None = Field(
+        None, max_length=50, description="IANA timezone for interpreting filenames (e.g., 'Asia/Tokyo')"
+    )
+
+    @field_validator("datetime_timezone")
+    @classmethod
+    def validate_timezone(cls, v: str | None) -> str | None:
+        """Validate IANA timezone string."""
+        return _validate_iana_timezone(v)
 
 
 class DatasetUpdate(BaseModel):
@@ -79,6 +101,15 @@ class DatasetUpdate(BaseModel):
     note: str | None = Field(None, description="Internal notes")
     datetime_pattern: str | None = Field(None, max_length=200, description="Regex pattern for datetime extraction")
     datetime_format: str | None = Field(None, description="strftime format string")
+    datetime_timezone: str | None = Field(
+        None, max_length=50, description="IANA timezone for interpreting filenames (e.g., 'Asia/Tokyo')"
+    )
+
+    @field_validator("datetime_timezone")
+    @classmethod
+    def validate_timezone(cls, v: str | None) -> str | None:
+        """Validate IANA timezone string."""
+        return _validate_iana_timezone(v)
 
 
 class DatasetResponse(BaseModel):
@@ -97,6 +128,7 @@ class DatasetResponse(BaseModel):
     doi: str | None
     gain: float | None
     note: str | None
+    datetime_timezone: str | None = None
     total_files: int
     processed_files: int
     processing_error: str | None
@@ -143,6 +175,15 @@ class ImportRequest(BaseModel):
     )
     datetime_pattern: str | None = Field(None, max_length=200, description="Regex pattern for datetime extraction")
     datetime_format: str | None = Field(None, description="strftime format string")
+    datetime_timezone: str | None = Field(
+        None, max_length=50, description="IANA timezone for interpreting filenames (e.g., 'Asia/Tokyo')"
+    )
+
+    @field_validator("datetime_timezone")
+    @classmethod
+    def validate_timezone(cls, v: str | None) -> str | None:
+        """Validate IANA timezone string."""
+        return _validate_iana_timezone(v)
 
 
 class ImportStatusResponse(BaseModel):
@@ -212,6 +253,7 @@ class DatetimeConfigResponse(BaseModel):
 
     datetime_pattern: str | None
     datetime_format: str | None
+    datetime_timezone: str | None = None
     sample_filenames: list[str]
     parse_summary: DatetimeParseSummary
 
@@ -240,6 +282,15 @@ class DatetimeTestRequest(BaseModel):
 
     pattern: str = Field(..., max_length=200)
     format_str: str
+    timezone: str | None = Field(
+        None, max_length=50, description="IANA timezone for interpreting filenames (e.g., 'Asia/Tokyo')"
+    )
+
+    @field_validator("timezone")
+    @classmethod
+    def validate_timezone(cls, v: str | None) -> str | None:
+        """Validate IANA timezone string."""
+        return _validate_iana_timezone(v)
 
 
 class DatetimeApplyRequest(BaseModel):
@@ -247,6 +298,15 @@ class DatetimeApplyRequest(BaseModel):
 
     pattern: str = Field(..., max_length=200)
     format_str: str
+    timezone: str | None = Field(
+        None, max_length=50, description="IANA timezone for interpreting filenames (e.g., 'Asia/Tokyo')"
+    )
+
+    @field_validator("timezone")
+    @classmethod
+    def validate_timezone(cls, v: str | None) -> str | None:
+        """Validate IANA timezone string."""
+        return _validate_iana_timezone(v)
 
 
 class DatetimeApplyResponse(BaseModel):

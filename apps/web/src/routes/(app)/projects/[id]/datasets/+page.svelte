@@ -131,18 +131,18 @@
 <div class="mx-auto max-w-6xl px-6 py-8">
   <header class="mb-6 flex items-start justify-between">
     <div>
-      <nav class="mb-2 flex items-center gap-2 text-sm text-gray-500">
-        <a href={localizeHref(`/projects/${projectId}`)} class="hover:text-gray-900">{m.dataset_list_breadcrumb_project()}</a>
+      <nav class="mb-2 flex items-center gap-2 text-sm text-stone-500">
+        <a href={localizeHref(`/projects/${projectId}`)} class="hover:text-stone-900">{m.dataset_list_breadcrumb_project()}</a>
         <span>/</span>
-        <span class="font-medium text-gray-900">{m.dataset_list_breadcrumb_datasets()}</span>
+        <span class="font-medium text-stone-900">{m.dataset_list_breadcrumb_datasets()}</span>
       </nav>
-      <h1 class="text-2xl font-bold text-gray-900">{m.dataset_list_heading()}</h1>
-      <p class="mt-1 text-sm text-gray-500">{m.dataset_list_description()}</p>
+      <h1 class="text-2xl font-bold text-stone-900">{m.dataset_list_heading()}</h1>
+      <p class="mt-1 text-sm text-stone-500">{m.dataset_list_description()}</p>
     </div>
     {#if !showCreateForm}
       <button
         onclick={() => (showCreateForm = true)}
-        class="flex items-center gap-2 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700"
+        class="flex items-center gap-2 rounded-md bg-primary-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-700"
       >
         <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
           <line x1="12" y1="5" x2="12" y2="19" stroke-width="2" />
@@ -154,12 +154,12 @@
   </header>
 
   {#if showCreateForm}
-    <div class="mb-6 rounded-lg border border-gray-200 bg-white p-6">
+    <div class="mb-6 rounded-lg border border-card bg-surface-card p-6">
       <div class="mb-4 flex items-center justify-between">
-        <h2 class="text-lg font-semibold text-gray-900">{m.dataset_list_create_heading()}</h2>
+        <h2 class="text-lg font-semibold text-stone-900">{m.dataset_list_create_heading()}</h2>
         <button
           onclick={() => (showCreateForm = false)}
-          class="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+          class="rounded p-1 text-stone-400 hover:bg-stone-100 hover:text-stone-600"
           aria-label="Close"
         >
           <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor">
@@ -183,8 +183,8 @@
   {/if}
 
   {#if $datasetsQuery.isLoading}
-    <div class="flex items-center justify-center py-12 text-sm text-gray-500">
-      <svg class="mr-2 h-5 w-5 animate-spin text-blue-600" fill="none" viewBox="0 0 24 24">
+    <div class="flex items-center justify-center py-12 text-sm text-stone-500">
+      <svg class="mr-2 h-5 w-5 animate-spin text-primary-600" fill="none" viewBox="0 0 24 24">
         <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
         <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
       </svg>
@@ -211,17 +211,17 @@
         <button
           onclick={() => (currentPage = Math.max(1, currentPage - 1))}
           disabled={currentPage === 1}
-          class="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+          class="rounded-md border border-stone-300 bg-surface-card px-4 py-2 text-sm font-medium text-stone-700 transition-colors hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {m.dataset_list_previous()}
         </button>
-        <span class="text-sm text-gray-500">
+        <span class="text-sm text-stone-500">
           {m.dataset_list_page_info({ page: currentPage, total: $datasetsQuery.data.pages })}
         </span>
         <button
           onclick={() => (currentPage = Math.min($datasetsQuery.data!.pages, currentPage + 1))}
           disabled={currentPage === $datasetsQuery.data.pages}
-          class="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+          class="rounded-md border border-stone-300 bg-surface-card px-4 py-2 text-sm font-medium text-stone-700 transition-colors hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {m.dataset_list_next()}
         </button>
@@ -229,7 +229,7 @@
     {/if}
 
     {#if $datasetsQuery.data.total > 0}
-      <p class="mt-3 text-center text-sm text-gray-400">
+      <p class="mt-3 text-center text-sm text-stone-400">
         {m.dataset_list_showing({ showing: $datasetsQuery.data.items.length, total: $datasetsQuery.data.total })}
       </p>
     {/if}

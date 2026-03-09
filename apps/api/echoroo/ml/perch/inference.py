@@ -152,14 +152,23 @@ class PerchInference(InferenceEngine):
 
         Perch V2 uses ``n_producers`` (not ``n_feeders``) for file reading
         processes.
+
+        Notes
+        -----
+        Multiprocessing params (``n_producers``, ``n_workers``) are only
+        passed when running on GPU (protobuf backend).  The TFLite backend
+        used for CPU does not support these parameters.
         """
         kwargs: dict[str, Any] = {"device": self._device}
         if self._batch_size > 0:
             kwargs["batch_size"] = self._batch_size
-        if self._feeders > 0:
-            kwargs["n_producers"] = self._feeders
-        if self._workers > 0:
-            kwargs["n_workers"] = self._workers
+        # Only pass multiprocessing params for GPU mode (protobuf backend).
+        # TFLite backend (CPU mode) does not support these params.
+        if self._device != "CPU":
+            if self._feeders > 0:
+                kwargs["n_producers"] = self._feeders
+            if self._workers > 0:
+                kwargs["n_workers"] = self._workers
         return kwargs
 
     def _extract_embeddings(self, embeddings_result: Any) -> NDArray[np.float32]:

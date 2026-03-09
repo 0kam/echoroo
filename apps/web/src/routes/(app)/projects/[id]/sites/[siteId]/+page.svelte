@@ -85,17 +85,17 @@
 
 <div class="mx-auto max-w-4xl space-y-6 px-6 py-8">
   <!-- Breadcrumb -->
-  <nav class="flex items-center gap-2 text-sm text-gray-500">
-    <a href={localizeHref(`/projects/${projectId}`)} class="hover:text-gray-900">{m.site_detail_breadcrumb_project()}</a>
+  <nav class="flex items-center gap-2 text-sm text-stone-500">
+    <a href={localizeHref(`/projects/${projectId}`)} class="hover:text-stone-900">{m.site_detail_breadcrumb_project()}</a>
     <span>/</span>
-    <a href={localizeHref(`/projects/${projectId}/sites`)} class="hover:text-gray-900">{m.site_detail_breadcrumb_sites()}</a>
+    <a href={localizeHref(`/projects/${projectId}/sites`)} class="hover:text-stone-900">{m.site_detail_breadcrumb_sites()}</a>
     <span>/</span>
-    <span class="font-medium text-gray-900">{$siteQuery.data?.name ?? m.common_loading()}</span>
+    <span class="font-medium text-stone-900">{$siteQuery.data?.name ?? m.common_loading()}</span>
   </nav>
 
   {#if $siteQuery.isLoading}
-    <div class="flex items-center justify-center py-12 text-sm text-gray-500">
-      <svg class="mr-2 h-5 w-5 animate-spin text-blue-600" fill="none" viewBox="0 0 24 24">
+    <div class="flex items-center justify-center py-12 text-sm text-stone-500">
+      <svg class="mr-2 h-5 w-5 animate-spin text-primary-600" fill="none" viewBox="0 0 24 24">
         <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
         <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
       </svg>
@@ -107,12 +107,12 @@
     </div>
   {:else if $siteQuery.data}
     {#if isEditing}
-      <div class="rounded-lg border border-gray-200 bg-white p-6">
+      <div class="rounded-lg border border-card bg-surface-card p-6">
         <div class="mb-4 flex items-center justify-between">
-          <h2 class="text-lg font-semibold text-gray-900">{m.site_detail_edit_heading()}</h2>
+          <h2 class="text-lg font-semibold text-stone-900">{m.site_detail_edit_heading()}</h2>
           <button
             onclick={() => (isEditing = false)}
-            class="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+            class="rounded p-1 text-stone-400 hover:bg-stone-100 hover:text-stone-600"
             aria-label={m.common_cancel()}
           >
             <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor">
@@ -131,12 +131,12 @@
       <!-- Site header -->
       <div class="flex items-start justify-between">
         <div>
-          <h1 class="text-2xl font-bold text-gray-900">{$siteQuery.data.name}</h1>
-          <code class="mt-1 inline-block rounded bg-gray-100 px-2 py-0.5 font-mono text-xs text-gray-500">
+          <h1 class="text-2xl font-bold text-stone-900">{$siteQuery.data.name}</h1>
+          <code class="mt-1 inline-block rounded bg-stone-100 px-2 py-0.5 font-mono text-xs text-stone-500">
             {$siteQuery.data.h3_index}
           </code>
           {#if $siteQuery.data.latitude !== null && $siteQuery.data.longitude !== null}
-            <p class="mt-1 text-sm text-gray-500">
+            <p class="mt-1 text-sm text-stone-500">
               {$siteQuery.data.latitude?.toFixed(6)}, {$siteQuery.data.longitude?.toFixed(6)}
             </p>
           {/if}
@@ -144,13 +144,13 @@
         <div class="flex gap-2">
           <button
             onclick={() => (isEditing = true)}
-            class="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50"
+            class="rounded-md border border-stone-300 bg-surface-card px-3 py-2 text-sm font-medium text-stone-700 transition-colors hover:bg-stone-50"
           >
             {m.site_detail_edit_button()}
           </button>
           <button
             onclick={() => (showDeleteConfirm = true)}
-            class="rounded-md border border-red-200 bg-white px-3 py-2 text-sm font-medium text-red-600 transition-colors hover:bg-red-50"
+            class="rounded-md border border-red-200 bg-surface-card px-3 py-2 text-sm font-medium text-red-600 transition-colors hover:bg-red-50"
           >
             {m.site_detail_delete_button()}
           </button>
@@ -159,75 +159,75 @@
 
       <!-- Location map -->
       {#if $siteQuery.data.h3_index}
-        <div class="rounded-lg border border-gray-200 bg-white p-4">
-          <h2 class="mb-3 text-sm font-semibold text-gray-700">{m.site_detail_location_heading()}</h2>
+        <div class="rounded-lg border border-stone-200 bg-surface-card p-4">
+          <h2 class="mb-3 text-sm font-semibold text-stone-700">{m.site_detail_location_heading()}</h2>
           <H3MapPicker h3Index={$siteQuery.data.h3_index} readonly={true} />
         </div>
       {/if}
 
       <!-- Stats -->
       <div class="grid grid-cols-3 gap-4">
-        <div class="rounded-lg border border-gray-200 bg-white p-5 text-center">
-          <div class="text-2xl font-semibold text-gray-900">{$siteQuery.data.dataset_count}</div>
-          <div class="mt-1 text-sm text-gray-500">{m.site_detail_stat_datasets()}</div>
+        <div class="rounded-lg border border-card bg-surface-card p-5 text-center">
+          <div class="text-2xl font-semibold text-stone-900">{$siteQuery.data.dataset_count}</div>
+          <div class="mt-1 text-sm text-stone-500">{m.site_detail_stat_datasets()}</div>
         </div>
-        <div class="rounded-lg border border-gray-200 bg-white p-5 text-center">
-          <div class="text-2xl font-semibold text-gray-900">{$siteQuery.data.recording_count}</div>
-          <div class="mt-1 text-sm text-gray-500">{m.site_detail_stat_recordings()}</div>
+        <div class="rounded-lg border border-card bg-surface-card p-5 text-center">
+          <div class="text-2xl font-semibold text-stone-900">{$siteQuery.data.recording_count}</div>
+          <div class="mt-1 text-sm text-stone-500">{m.site_detail_stat_recordings()}</div>
         </div>
-        <div class="rounded-lg border border-gray-200 bg-white p-5 text-center">
-          <div class="text-2xl font-semibold text-gray-900">{formatDuration($siteQuery.data.total_duration)}</div>
-          <div class="mt-1 text-sm text-gray-500">{m.site_detail_stat_duration()}</div>
+        <div class="rounded-lg border border-card bg-surface-card p-5 text-center">
+          <div class="text-2xl font-semibold text-stone-900">{formatDuration($siteQuery.data.total_duration)}</div>
+          <div class="mt-1 text-sm text-stone-500">{m.site_detail_stat_duration()}</div>
         </div>
       </div>
 
       <!-- Datasets at this site -->
-      <section class="rounded-lg border border-gray-200 bg-white p-6">
+      <section class="rounded-lg border border-card bg-surface-card p-6">
         <div class="mb-4 flex items-center justify-between">
-          <h2 class="text-base font-semibold text-gray-900">{m.site_detail_datasets_heading()}</h2>
+          <h2 class="text-base font-semibold text-stone-900">{m.site_detail_datasets_heading()}</h2>
           <a
             href={localizeHref(`/projects/${projectId}/datasets?site_id=${siteId}`)}
-            class="text-sm font-medium text-blue-600 no-underline hover:underline"
+            class="text-sm font-medium text-primary-600 no-underline hover:underline"
           >
             {m.site_detail_view_all_datasets()}
           </a>
         </div>
 
         {#if $datasetsQuery.isLoading}
-          <div class="py-4 text-center text-sm text-gray-400">{m.site_detail_loading_datasets()}</div>
+          <div class="py-4 text-center text-sm text-stone-400">{m.site_detail_loading_datasets()}</div>
         {:else if $datasetsQuery.data && $datasetsQuery.data.items.length > 0}
           <ul class="flex flex-col gap-2 p-0 list-none">
             {#each $datasetsQuery.data.items as dataset}
               <li>
                 <a
                   href={localizeHref(`/projects/${projectId}/datasets/${dataset.id}`)}
-                  class="flex items-center justify-between rounded-md border border-gray-100 p-3 no-underline transition-colors hover:bg-gray-50"
+                  class="flex items-center justify-between rounded-md border border-stone-100 p-3 no-underline transition-colors hover:bg-stone-50"
                 >
-                  <span class="text-sm font-medium text-gray-900">{dataset.name}</span>
-                  <span class="text-xs text-gray-400">{dataset.processed_files} files</span>
+                  <span class="text-sm font-medium text-stone-900">{dataset.name}</span>
+                  <span class="text-xs text-stone-400">{dataset.processed_files} files</span>
                 </a>
               </li>
             {/each}
           </ul>
           {#if $datasetsQuery.data.total > $datasetsQuery.data.items.length}
-            <p class="mt-2 text-xs text-gray-400">
+            <p class="mt-2 text-xs text-stone-400">
               {m.site_detail_showing({ showing: $datasetsQuery.data.items.length, total: $datasetsQuery.data.total })}
             </p>
           {/if}
         {:else}
-          <p class="py-4 text-center text-sm text-gray-400">{m.site_detail_no_datasets()}</p>
+          <p class="py-4 text-center text-sm text-stone-400">{m.site_detail_no_datasets()}</p>
         {/if}
       </section>
 
       <!-- Recordings quick link -->
-      <div class="flex items-center justify-between rounded-lg border border-gray-200 bg-white p-5">
+      <div class="flex items-center justify-between rounded-lg border border-card bg-surface-card p-5">
         <div>
-          <h3 class="mb-0.5 text-base font-semibold text-gray-900">{m.site_detail_recordings_heading()}</h3>
-          <p class="text-sm text-gray-500">{m.site_detail_recordings_description()}</p>
+          <h3 class="mb-0.5 text-base font-semibold text-stone-900">{m.site_detail_recordings_heading()}</h3>
+          <p class="text-sm text-stone-500">{m.site_detail_recordings_description()}</p>
         </div>
         <a
           href={localizeHref(`/projects/${projectId}/recordings?site=${siteId}`)}
-          class="flex items-center gap-2 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white no-underline transition-colors hover:bg-blue-700"
+          class="flex items-center gap-2 rounded-md bg-primary-600 px-4 py-2 text-sm font-medium text-white no-underline transition-colors hover:bg-primary-700"
         >
           {m.site_detail_view_recordings()}
           <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">

@@ -45,7 +45,7 @@
   <!-- Header -->
   <div class="flex items-start justify-between gap-4 mb-6">
     <div class="min-w-0 flex-1">
-      <h2 class="text-xl font-semibold font-mono text-stone-800 dark:text-stone-100 break-all">
+      <h2 class="text-xl font-semibold font-mono text-stone-800 break-all">
         {recording.filename}
       </h2>
       <p class="mt-1 text-sm text-stone-500 font-mono truncate">{recording.path}</p>
@@ -136,7 +136,7 @@
 
   <!-- Notes -->
   <div>
-    <h3 class="text-sm font-semibold text-stone-700 dark:text-stone-300 mb-2">Notes</h3>
+    <h3 class="text-sm font-semibold text-stone-700 mb-2">Notes</h3>
     <NoteEditor
       value={recording.note ?? ''}
       placeholder="Add notes about this recording..."

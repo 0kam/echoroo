@@ -75,10 +75,10 @@
     switch (status) {
       case 'pending': return 'bg-yellow-100 text-yellow-800';
       case 'scanning':
-      case 'processing': return 'bg-blue-100 text-blue-800';
+      case 'processing': return 'bg-primary-100 text-primary-800';
       case 'completed': return 'bg-green-100 text-green-800';
       case 'failed': return 'bg-red-100 text-red-800';
-      default: return 'bg-gray-100 text-gray-800';
+      default: return 'bg-stone-100 text-stone-800';
     }
   }
 </script>
@@ -89,8 +89,8 @@
 
 <div class="mx-auto max-w-5xl space-y-6 px-6 py-8">
   {#if $datasetQuery.isLoading}
-    <div class="flex items-center justify-center py-12 text-sm text-gray-500">
-      <svg class="mr-2 h-5 w-5 animate-spin text-blue-600" fill="none" viewBox="0 0 24 24">
+    <div class="flex items-center justify-center py-12 text-sm text-stone-500">
+      <svg class="mr-2 h-5 w-5 animate-spin text-primary-600" fill="none" viewBox="0 0 24 24">
         <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
         <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
       </svg>
@@ -105,19 +105,19 @@
 
     <!-- Header -->
     <div>
-      <nav class="mb-2 flex items-center gap-2 text-sm text-gray-500">
-        <a href={localizeHref(`/projects/${projectId}`)} class="hover:text-gray-900">{m.dataset_detail_breadcrumb_project()}</a>
+      <nav class="mb-2 flex items-center gap-2 text-sm text-stone-500">
+        <a href={localizeHref(`/projects/${projectId}`)} class="hover:text-stone-900">{m.dataset_detail_breadcrumb_project()}</a>
         <span>/</span>
-        <a href={localizeHref(`/projects/${projectId}/datasets`)} class="hover:text-gray-900">{m.dataset_detail_breadcrumb_datasets()}</a>
+        <a href={localizeHref(`/projects/${projectId}/datasets`)} class="hover:text-stone-900">{m.dataset_detail_breadcrumb_datasets()}</a>
         <span>/</span>
-        <span class="font-medium text-gray-900">{dataset.name}</span>
+        <span class="font-medium text-stone-900">{dataset.name}</span>
       </nav>
 
       <div class="flex items-start justify-between gap-4">
         <div>
-          <h1 class="text-2xl font-bold text-gray-900">{dataset.name}</h1>
+          <h1 class="text-2xl font-bold text-stone-900">{dataset.name}</h1>
           {#if dataset.description}
-            <p class="mt-1 text-sm text-gray-500">{dataset.description}</p>
+            <p class="mt-1 text-sm text-stone-500">{dataset.description}</p>
           {/if}
         </div>
         <div class="flex flex-shrink-0 gap-2">
@@ -136,13 +136,13 @@
           {/if}
           <button
             onclick={() => (showEditModal = true)}
-            class="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50"
+            class="rounded-md border border-stone-300 bg-surface-card px-3 py-2 text-sm font-medium text-stone-700 transition-colors hover:bg-stone-50"
           >
             {m.dataset_detail_edit_button()}
           </button>
           <button
             onclick={() => (showDeleteConfirm = true)}
-            class="rounded-md border border-red-200 bg-white px-3 py-2 text-sm font-medium text-red-600 transition-colors hover:bg-red-50"
+            class="rounded-md border border-red-200 bg-surface-card px-3 py-2 text-sm font-medium text-red-600 transition-colors hover:bg-red-50"
           >
             {m.dataset_detail_delete_button()}
           </button>
@@ -151,52 +151,52 @@
     </div>
 
     <!-- Dataset info card -->
-    <div class="rounded-lg border border-gray-200 bg-white p-6">
-      <h2 class="mb-4 text-sm font-semibold uppercase tracking-wider text-gray-500">{m.dataset_detail_info_heading()}</h2>
+    <div class="rounded-lg border border-card bg-surface-card p-6">
+      <h2 class="mb-4 text-sm font-semibold uppercase tracking-wider text-stone-500">{m.dataset_detail_info_heading()}</h2>
       <div class="grid grid-cols-2 gap-4 sm:grid-cols-3">
         <div class="flex flex-col gap-1">
-          <span class="text-xs font-medium uppercase tracking-wider text-gray-400">{m.dataset_detail_site_label()}</span>
-          <span class="text-sm text-gray-900">
+          <span class="text-xs font-medium uppercase tracking-wider text-stone-400">{m.dataset_detail_site_label()}</span>
+          <span class="text-sm text-stone-900">
             {#if dataset.site}
-              <a href={localizeHref(`/projects/${projectId}/sites/${dataset.site.id}`)} class="text-blue-600 hover:underline">
+              <a href={localizeHref(`/projects/${projectId}/sites/${dataset.site.id}`)} class="text-primary-600 hover:underline">
                 {dataset.site.name}
               </a>
             {:else}
-              <span class="text-gray-400">{m.dataset_detail_site_na()}</span>
+              <span class="text-stone-400">{m.dataset_detail_site_na()}</span>
             {/if}
           </span>
         </div>
 
         <div class="flex flex-col gap-1">
-          <span class="text-xs font-medium uppercase tracking-wider text-gray-400">{m.dataset_detail_status_label()}</span>
+          <span class="text-xs font-medium uppercase tracking-wider text-stone-400">{m.dataset_detail_status_label()}</span>
           <span class="inline-flex w-fit items-center rounded px-2 py-0.5 text-xs font-medium capitalize {getStatusClasses(dataset.status)}">
             {dataset.status}
           </span>
         </div>
 
         <div class="flex flex-col gap-1">
-          <span class="text-xs font-medium uppercase tracking-wider text-gray-400">{m.dataset_detail_visibility_label()}</span>
-          <span class="text-sm text-gray-900 capitalize">{dataset.visibility}</span>
+          <span class="text-xs font-medium uppercase tracking-wider text-stone-400">{m.dataset_detail_visibility_label()}</span>
+          <span class="text-sm text-stone-900 capitalize">{dataset.visibility}</span>
         </div>
 
         {#if dataset.recorder}
           <div class="flex flex-col gap-1">
-            <span class="text-xs font-medium uppercase tracking-wider text-gray-400">{m.dataset_detail_recorder_label()}</span>
-            <span class="text-sm text-gray-900">{dataset.recorder.manufacturer} {dataset.recorder.recorder_name}</span>
+            <span class="text-xs font-medium uppercase tracking-wider text-stone-400">{m.dataset_detail_recorder_label()}</span>
+            <span class="text-sm text-stone-900">{dataset.recorder.manufacturer} {dataset.recorder.recorder_name}</span>
           </div>
         {/if}
 
         {#if dataset.license}
           <div class="flex flex-col gap-1">
-            <span class="text-xs font-medium uppercase tracking-wider text-gray-400">{m.dataset_detail_license_label()}</span>
-            <span class="text-sm text-gray-900">{dataset.license.name} ({dataset.license.short_name})</span>
+            <span class="text-xs font-medium uppercase tracking-wider text-stone-400">{m.dataset_detail_license_label()}</span>
+            <span class="text-sm text-stone-900">{dataset.license.name} ({dataset.license.short_name})</span>
           </div>
         {/if}
 
         {#if dataset.doi}
           <div class="flex flex-col gap-1">
-            <span class="text-xs font-medium uppercase tracking-wider text-gray-400">{m.dataset_detail_doi_label()}</span>
-            <a href="https://doi.org/{dataset.doi}" target="_blank" rel="noopener noreferrer" class="text-sm text-blue-600 hover:underline">
+            <span class="text-xs font-medium uppercase tracking-wider text-stone-400">{m.dataset_detail_doi_label()}</span>
+            <a href="https://doi.org/{dataset.doi}" target="_blank" rel="noopener noreferrer" class="text-sm text-primary-600 hover:underline">
               {dataset.doi}
             </a>
           </div>
@@ -204,28 +204,28 @@
 
         {#if dataset.gain !== null}
           <div class="flex flex-col gap-1">
-            <span class="text-xs font-medium uppercase tracking-wider text-gray-400">{m.dataset_detail_gain_label()}</span>
-            <span class="text-sm text-gray-900">{dataset.gain} dB</span>
+            <span class="text-xs font-medium uppercase tracking-wider text-stone-400">{m.dataset_detail_gain_label()}</span>
+            <span class="text-sm text-stone-900">{dataset.gain} dB</span>
           </div>
         {/if}
 
         <div class="flex flex-col gap-1">
-          <span class="text-xs font-medium uppercase tracking-wider text-gray-400">{m.dataset_detail_created_label()}</span>
-          <span class="text-sm text-gray-900">{formatDateTime(dataset.created_at)}</span>
+          <span class="text-xs font-medium uppercase tracking-wider text-stone-400">{m.dataset_detail_created_label()}</span>
+          <span class="text-sm text-stone-900">{formatDateTime(dataset.created_at)}</span>
         </div>
 
         {#if dataset.created_by}
           <div class="flex flex-col gap-1">
-            <span class="text-xs font-medium uppercase tracking-wider text-gray-400">{m.dataset_detail_created_by_label()}</span>
-            <span class="text-sm text-gray-900">{dataset.created_by.display_name || dataset.created_by.username}</span>
+            <span class="text-xs font-medium uppercase tracking-wider text-stone-400">{m.dataset_detail_created_by_label()}</span>
+            <span class="text-sm text-stone-900">{dataset.created_by.display_name || dataset.created_by.username}</span>
           </div>
         {/if}
       </div>
 
       {#if dataset.note}
-        <div class="mt-4 border-t border-gray-100 pt-4">
-          <span class="mb-1 block text-xs font-medium uppercase tracking-wider text-gray-400">{m.dataset_detail_note_label()}</span>
-          <p class="whitespace-pre-wrap text-sm text-gray-700">{dataset.note}</p>
+        <div class="mt-4 border-t border-stone-100 pt-4">
+          <span class="mb-1 block text-xs font-medium uppercase tracking-wider text-stone-400">{m.dataset_detail_note_label()}</span>
+          <p class="whitespace-pre-wrap text-sm text-stone-700">{dataset.note}</p>
         </div>
       {/if}
     </div>
@@ -268,10 +268,10 @@
 
     <!-- Recordings list (show when recordings exist) -->
     {#if dataset.recording_count > 0}
-      <div class="rounded-lg border border-gray-200 bg-white p-6">
+      <div class="rounded-lg border border-card bg-surface-card p-6">
         <div class="mb-4">
-          <h3 class="text-base font-semibold text-gray-900">{m.dataset_detail_recordings_heading()}</h3>
-          <p class="mt-0.5 text-sm text-gray-500">{m.dataset_detail_recordings_count({ count: dataset.recording_count })}</p>
+          <h3 class="text-base font-semibold text-stone-900">{m.dataset_detail_recordings_heading()}</h3>
+          <p class="mt-0.5 text-sm text-stone-500">{m.dataset_detail_recordings_count({ count: dataset.recording_count })}</p>
         </div>
         <RecordingList
           {projectId}
@@ -298,15 +298,15 @@
     <!-- svelte-ignore a11y_click_events_have_key_events -->
     <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
     <div
-      class="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-lg bg-white"
+      class="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-lg bg-surface-card"
       onclick={(e) => e.stopPropagation()}
       role="document"
     >
-      <div class="flex items-center justify-between border-b border-gray-200 px-6 py-4">
-        <h3 id="edit-dataset-title" class="m-0 text-lg font-semibold text-gray-900">{m.dataset_detail_edit_modal_title()}</h3>
+      <div class="flex items-center justify-between border-b border-stone-200 px-6 py-4">
+        <h3 id="edit-dataset-title" class="m-0 text-lg font-semibold text-stone-900">{m.dataset_detail_edit_modal_title()}</h3>
         <button
           onclick={() => (showEditModal = false)}
-          class="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+          class="rounded p-1 text-stone-400 hover:bg-stone-100 hover:text-stone-600"
           aria-label="Close"
         >
           <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor">
