@@ -169,6 +169,7 @@ class DatasetService:
         note: str | None = None,
         datetime_pattern: str | None = None,
         datetime_format: str | None = None,
+        datetime_timezone: str | None = None,
     ) -> Dataset:
         """Create a new dataset.
 
@@ -186,6 +187,7 @@ class DatasetService:
             note: Internal notes
             datetime_pattern: Regex pattern for datetime extraction
             datetime_format: strftime format string
+            datetime_timezone: IANA timezone for datetime parsing
 
         Returns:
             Created dataset
@@ -233,6 +235,7 @@ class DatasetService:
             note=note,
             datetime_pattern=datetime_pattern,
             datetime_format=datetime_format,
+            datetime_timezone=datetime_timezone,
         )
 
         created_dataset = await self.dataset_repo.create(dataset)
@@ -253,6 +256,7 @@ class DatasetService:
         note: str | None = None,
         datetime_pattern: str | None = None,
         datetime_format: str | None = None,
+        datetime_timezone: str | None = None,
     ) -> Dataset:
         """Update dataset.
 
@@ -270,6 +274,7 @@ class DatasetService:
             note: Internal notes
             datetime_pattern: Regex pattern for datetime extraction
             datetime_format: strftime format string
+            datetime_timezone: IANA timezone for datetime parsing
 
         Returns:
             Updated dataset
@@ -321,6 +326,8 @@ class DatasetService:
             dataset.datetime_pattern = datetime_pattern
         if datetime_format is not None:
             dataset.datetime_format = datetime_format
+        if datetime_timezone is not None:
+            dataset.datetime_timezone = datetime_timezone
 
         updated_dataset = await self.dataset_repo.update(dataset)
         return updated_dataset
@@ -377,7 +384,7 @@ class DatasetService:
         }
 
     def parse_datetime_from_filename(
-        self, filename: str, pattern: str | None, format_str: str | None
+        self, filename: str, pattern: str | None, format_str: str | None, timezone: str | None = None
     ) -> tuple[datetime | None, str | None]:
         """Extract datetime from filename using pattern/format.
 
@@ -385,6 +392,7 @@ class DatasetService:
             filename: Filename to parse
             pattern: Regex pattern to extract datetime string
             format_str: strftime format string
+            timezone: Optional IANA timezone string (e.g., 'Asia/Tokyo')
 
         Returns:
             Tuple of (parsed datetime or None, error message or None)
@@ -403,12 +411,16 @@ class DatasetService:
 
             datetime_str = match.group(0)
             parsed = datetime.strptime(datetime_str, format_str)
+            if timezone:
+                from zoneinfo import ZoneInfo
+                tz = ZoneInfo(timezone)
+                parsed = parsed.replace(tzinfo=tz)
             return parsed, None
         except Exception as e:
             return None, str(e)
 
     def test_datetime_pattern(
-        self, filename: str, pattern: str, format_str: str
+        self, filename: str, pattern: str, format_str: str, timezone: str | None = None
     ) -> dict[str, bool | str | None]:
         """Test datetime extraction pattern.
 
@@ -416,11 +428,12 @@ class DatasetService:
             filename: Filename to test
             pattern: Regex pattern
             format_str: strftime format string
+            timezone: Optional IANA timezone string (e.g., 'Asia/Tokyo')
 
         Returns:
             Dictionary with test results
         """
-        dt, error = self.parse_datetime_from_filename(filename, pattern, format_str)
+        dt, error = self.parse_datetime_from_filename(filename, pattern, format_str, timezone)
         return {
             "success": dt is not None,
             "parsed_datetime": dt.isoformat() if dt else None,
@@ -434,8 +447,8 @@ class DatasetService:
             dataset_id: Dataset's UUID
 
         Returns:
-            Dictionary with datetime_pattern, datetime_format, sample_filenames,
-            and parse_summary
+            Dictionary with datetime_pattern, datetime_format, datetime_timezone,
+            sample_filenames, and parse_summary
         """
         dataset = await self.dataset_repo.get_by_id(dataset_id)
         sample_filenames = await self.recording_repo.get_sample_filenames(dataset_id)
@@ -444,17 +457,17 @@ class DatasetService:
         return {
             "datetime_pattern": dataset.datetime_pattern if dataset else None,
             "datetime_format": dataset.datetime_format if dataset else None,
+            "datetime_timezone": dataset.datetime_timezone if dataset else None,
             "sample_filenames": sample_filenames,
             "parse_summary": parse_summary,
         }
 
     # Known datetime patterns ordered by commonality
     _KNOWN_PATTERNS: list[dict[str, str]] = [
-        {"name": "AudioMoth", "pattern": r"(\d{8}_\d{6})", "format": "%Y%m%d_%H%M%S"},
+        {"name": "AudioMoth / Wildlife Acoustics", "pattern": r"(\d{8}_\d{6})", "format": "%Y%m%d_%H%M%S"},
         {"name": "AudioMoth (T separator)", "pattern": r"(\d{8}T\d{6})", "format": "%Y%m%dT%H%M%S"},
         {"name": "ISO 8601", "pattern": r"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})", "format": "%Y-%m-%dT%H:%M:%S"},
         {"name": "ISO 8601 (no T)", "pattern": r"(\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})", "format": "%Y-%m-%d_%H-%M-%S"},
-        {"name": "Wildlife Acoustics", "pattern": r"(\d{8}\$\d{6})", "format": "%Y%m%d$%H%M%S"},
         {"name": "Compact", "pattern": r"(\d{14})", "format": "%Y%m%d%H%M%S"},
         {"name": "Underscore separated", "pattern": r"(\d{4}_\d{2}_\d{2}_\d{2}_\d{2}_\d{2})", "format": "%Y_%m_%d_%H_%M_%S"},
         {"name": "Hyphen separated", "pattern": r"(\d{4}-\d{2}-\d{2}-\d{2}-\d{2}-\d{2})", "format": "%Y-%m-%d-%H-%M-%S"},
@@ -506,7 +519,7 @@ class DatasetService:
         }
 
     async def test_datetime_pattern_bulk(
-        self, filenames: list[str], pattern: str, format_str: str
+        self, filenames: list[str], pattern: str, format_str: str, timezone: str | None = None
     ) -> list[dict[str, object]]:
         """Test a pattern against multiple filenames.
 
@@ -514,13 +527,14 @@ class DatasetService:
             filenames: List of filenames to test
             pattern: Regex pattern for datetime extraction
             format_str: strptime format string
+            timezone: Optional IANA timezone string (e.g., 'Asia/Tokyo')
 
         Returns:
             List of result dicts with filename, success, parsed_datetime, error
         """
         results: list[dict[str, object]] = []
         for filename in filenames:
-            result = self.test_datetime_pattern(filename, pattern, format_str)
+            result = self.test_datetime_pattern(filename, pattern, format_str, timezone)
             results.append(
                 {
                     "filename": filename,
@@ -532,7 +546,7 @@ class DatasetService:
         return results
 
     async def apply_datetime_pattern(
-        self, dataset_id: UUID, pattern: str, format_str: str
+        self, dataset_id: UUID, pattern: str, format_str: str, timezone: str | None = None
     ) -> tuple[str, int]:
         """Save datetime pattern to dataset and dispatch a Celery task to re-parse all recordings.
 
@@ -540,24 +554,26 @@ class DatasetService:
             dataset_id: Dataset's UUID
             pattern: Regex pattern for datetime extraction
             format_str: strptime format string
+            timezone: Optional IANA timezone string (e.g., 'Asia/Tokyo')
 
         Returns:
             Tuple of (task_id, total_recordings)
         """
         from echoroo.workers.upload_tasks import reparse_recording_datetimes
 
-        # Update dataset datetime pattern and format
+        # Update dataset datetime pattern, format, and timezone
         dataset = await self.dataset_repo.get_by_id(dataset_id)
         if dataset is not None:
             dataset.datetime_pattern = pattern
             dataset.datetime_format = format_str
+            dataset.datetime_timezone = timezone
             await self.dataset_repo.update(dataset)
 
         # Get total recording count
         total_recordings = await self.recording_repo.count_by_dataset(dataset_id)
 
         # Dispatch Celery task
-        task = reparse_recording_datetimes.delay(str(dataset_id), pattern, format_str)
+        task = reparse_recording_datetimes.delay(str(dataset_id), pattern, format_str, timezone)
 
         return str(task.id), total_recordings
 

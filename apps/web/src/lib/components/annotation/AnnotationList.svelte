@@ -50,7 +50,7 @@
   function getTagColor(category: string): { bg: string; text: string } {
     switch (category) {
       case 'species':    return { bg: '#dcfce7', text: '#15803d' };
-      case 'sound_type': return { bg: '#dbeafe', text: '#1d4ed8' };
+      case 'sound_type': return { bg: '#FFF3EB', text: '#E65100' };
       case 'quality':    return { bg: '#fef9c3', text: '#a16207' };
       default:           return { bg: '#f3f4f6', text: '#374151' };
     }

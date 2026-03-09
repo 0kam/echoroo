@@ -84,14 +84,15 @@
   <title>Reset Password - Echoroo</title>
 </svelte:head>
 
-<div class="flex min-h-screen items-center justify-center bg-gray-50 px-4 py-12 sm:px-6 lg:px-8">
+<div class="flex min-h-screen items-center justify-center bg-stone-50 px-4 py-12 sm:px-6 lg:px-8">
   <div class="w-full max-w-md space-y-8">
     <!-- Header -->
-    <div>
-      <h2 class="mt-6 text-center text-3xl font-extrabold text-gray-900">
+    <div class="flex flex-col items-center">
+      <img src="/echoroo.png" alt="Echoroo" class="h-16 w-auto mb-4" />
+      <h2 class="text-center text-3xl font-extrabold text-stone-900">
         Reset your password
       </h2>
-      <p class="mt-2 text-center text-sm text-gray-600">
+      <p class="mt-2 text-center text-sm text-stone-600">
         Enter your new password below.
       </p>
     </div>
@@ -101,7 +102,7 @@
       <div class="space-y-4 rounded-md shadow-sm">
         <!-- Password Input -->
         <div>
-          <label for="password" class="block text-sm font-medium text-gray-700">
+          <label for="password" class="block text-sm font-medium text-stone-700">
             New password <span class="text-red-600">*</span>
           </label>
           <input
@@ -112,14 +113,14 @@
             required
             bind:value={password}
             disabled={isSubmitting}
-            class="mt-1 block w-full appearance-none rounded-md border border-gray-300 px-3 py-2 text-gray-900 placeholder-gray-500 focus:border-blue-500 focus:outline-none focus:ring-blue-500 disabled:bg-gray-100 disabled:cursor-not-allowed sm:text-sm"
+            class="mt-1 block w-full appearance-none rounded-md border border-stone-300 px-3 py-2 text-stone-900 placeholder-stone-500 focus:border-primary-500 focus:outline-none focus:ring-primary-500 disabled:bg-stone-100 disabled:cursor-not-allowed sm:text-sm"
             class:border-red-500={fieldErrors.password}
             placeholder="At least 8 characters"
           />
           {#if fieldErrors.password}
             <p class="mt-1 text-sm text-red-600">{fieldErrors.password}</p>
           {:else}
-            <p class="mt-1 text-xs text-gray-500">
+            <p class="mt-1 text-xs text-stone-500">
               Must be at least 8 characters with uppercase, lowercase, and number
             </p>
           {/if}
@@ -127,7 +128,7 @@
 
         <!-- Confirm Password Input -->
         <div>
-          <label for="confirmPassword" class="block text-sm font-medium text-gray-700">
+          <label for="confirmPassword" class="block text-sm font-medium text-stone-700">
             Confirm new password <span class="text-red-600">*</span>
           </label>
           <input
@@ -138,7 +139,7 @@
             required
             bind:value={confirmPassword}
             disabled={isSubmitting}
-            class="mt-1 block w-full appearance-none rounded-md border border-gray-300 px-3 py-2 text-gray-900 placeholder-gray-500 focus:border-blue-500 focus:outline-none focus:ring-blue-500 disabled:bg-gray-100 disabled:cursor-not-allowed sm:text-sm"
+            class="mt-1 block w-full appearance-none rounded-md border border-stone-300 px-3 py-2 text-stone-900 placeholder-stone-500 focus:border-primary-500 focus:outline-none focus:ring-primary-500 disabled:bg-stone-100 disabled:cursor-not-allowed sm:text-sm"
             class:border-red-500={fieldErrors.confirmPassword}
             placeholder="Confirm your password"
           />
@@ -179,7 +180,7 @@
         <button
           type="submit"
           disabled={isSubmitting}
-          class="group relative flex w-full justify-center rounded-md border border-transparent bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:bg-gray-400 disabled:cursor-not-allowed"
+          class="group relative flex w-full justify-center rounded-md border border-transparent bg-primary-600 px-4 py-2 text-sm font-medium text-white hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 disabled:bg-stone-400 disabled:cursor-not-allowed"
         >
           {#if isSubmitting}
             <span class="flex items-center">
@@ -213,7 +214,7 @@
 
       <!-- Back to Login Link -->
       <div class="text-center text-sm">
-        <a href={localizeHref('/login')} class="font-medium text-blue-600 hover:text-blue-500">
+        <a href={localizeHref('/login')} class="font-medium text-primary-600 hover:text-primary-500">
           Back to Login
         </a>
       </div>

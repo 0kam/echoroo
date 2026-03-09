@@ -375,6 +375,47 @@ export interface ProjectListResponse extends PaginationMeta {
 }
 
 // ============================================
+// Project Overview Types
+// ============================================
+
+/**
+ * A site entry in the project overview
+ */
+export interface ProjectOverviewSite {
+  id: string;
+  name: string;
+  h3_index: string;
+  latitude: number | null;
+  longitude: number | null;
+  recording_count: number;
+  dataset_count: number;
+}
+
+/**
+ * A calendar entry for recording activity by month
+ */
+export interface RecordingCalendarEntry {
+  year: number;
+  month: number;
+  /** Number of sites with recordings in this month */
+  site_count: number;
+  /** Total recordings in this month */
+  recording_count: number;
+}
+
+/**
+ * Project overview response from GET /projects/{project_id}/overview
+ */
+export interface ProjectOverviewResponse {
+  sites: ProjectOverviewSite[];
+  recording_calendar: RecordingCalendarEntry[];
+  total_recordings: number;
+  total_sites: number;
+  /** Total duration in seconds */
+  total_duration: number;
+}
+
+// ============================================
 // Project Member Types
 // ============================================
 

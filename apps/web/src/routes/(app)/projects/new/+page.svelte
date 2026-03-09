@@ -110,8 +110,8 @@
 <div class="mx-auto max-w-3xl px-4 py-8 sm:px-6 lg:px-8">
   <!-- Header -->
   <div class="mb-8">
-    <h1 class="text-3xl font-bold text-gray-900">{m.project_new_heading()}</h1>
-    <p class="mt-2 text-sm text-gray-600">
+    <h1 class="text-3xl font-bold text-stone-900">{m.project_new_heading()}</h1>
+    <p class="mt-2 text-sm text-stone-600">
       {m.project_new_description()}
     </p>
   </div>
@@ -143,11 +143,11 @@
 
   <!-- Form -->
   <form onsubmit={handleSubmit} class="space-y-6">
-    <div class="rounded-lg bg-white shadow">
+    <div class="rounded-lg bg-surface-card shadow">
       <div class="space-y-6 p-6">
         <!-- Project Name -->
         <div>
-          <label for="name" class="block text-sm font-medium text-gray-700">
+          <label for="name" class="block text-sm font-medium text-stone-700">
             {m.project_new_name_label()} <span class="text-red-500">*</span>
           </label>
           <input
@@ -157,15 +157,15 @@
             required
             bind:value={name}
             disabled={isSubmitting}
-            class="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-gray-900 placeholder-gray-400 focus:border-blue-500 focus:outline-none focus:ring-blue-500 disabled:bg-gray-100 disabled:cursor-not-allowed sm:text-sm"
+            class="mt-1 block w-full rounded-md border border-stone-300 px-3 py-2 text-stone-900 placeholder-stone-400 focus:border-primary-500 focus:outline-none focus:ring-primary-500 disabled:bg-stone-100 disabled:cursor-not-allowed sm:text-sm"
             placeholder={m.project_new_name_placeholder()}
           />
-          <p class="mt-1 text-xs text-gray-500">{m.project_new_name_hint()}</p>
+          <p class="mt-1 text-xs text-stone-500">{m.project_new_name_hint()}</p>
         </div>
 
         <!-- Description -->
         <div>
-          <label for="description" class="block text-sm font-medium text-gray-700">
+          <label for="description" class="block text-sm font-medium text-stone-700">
             {m.project_new_description_label()}
           </label>
           <textarea
@@ -174,15 +174,15 @@
             rows="4"
             bind:value={description}
             disabled={isSubmitting}
-            class="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-gray-900 placeholder-gray-400 focus:border-blue-500 focus:outline-none focus:ring-blue-500 disabled:bg-gray-100 disabled:cursor-not-allowed sm:text-sm"
+            class="mt-1 block w-full rounded-md border border-stone-300 px-3 py-2 text-stone-900 placeholder-stone-400 focus:border-primary-500 focus:outline-none focus:ring-primary-500 disabled:bg-stone-100 disabled:cursor-not-allowed sm:text-sm"
             placeholder={m.project_new_description_placeholder()}
           ></textarea>
-          <p class="mt-1 text-xs text-gray-500">{m.project_new_description_hint()}</p>
+          <p class="mt-1 text-xs text-stone-500">{m.project_new_description_hint()}</p>
         </div>
 
         <!-- Target Taxa -->
         <div>
-          <span class="block text-sm font-medium text-gray-700" id="target-taxa-label">
+          <span class="block text-sm font-medium text-stone-700" id="target-taxa-label">
             {m.project_new_target_taxa_label()}
           </span>
           <div
@@ -194,8 +194,8 @@
               <label
                 class="flex cursor-pointer items-center gap-2 rounded-md border px-3 py-2 text-sm transition-colors
                   {selectedTaxa.includes(option.value)
-                  ? 'border-blue-500 bg-blue-50 text-blue-700'
-                  : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-50'}
+                  ? 'border-primary-500 bg-primary-50 text-primary-700'
+                  : 'border-stone-200 bg-surface-card text-stone-700 hover:bg-stone-50'}
                   {isSubmitting ? 'cursor-not-allowed opacity-50' : ''}"
               >
                 <input
@@ -204,20 +204,20 @@
                   checked={selectedTaxa.includes(option.value)}
                   disabled={isSubmitting}
                   onchange={() => toggleTaxon(option.value)}
-                  class="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                  class="h-4 w-4 rounded border-stone-300 text-primary-600 focus:ring-primary-500"
                 />
                 {option.label}
               </label>
             {/each}
           </div>
-          <p class="mt-1 text-xs text-gray-500">
+          <p class="mt-1 text-xs text-stone-500">
             {m.project_new_target_taxa_hint()}
           </p>
         </div>
 
         <!-- Visibility -->
         <div>
-          <span class="block text-sm font-medium text-gray-700" id="visibility-label">{m.project_new_visibility_label()}</span>
+          <span class="block text-sm font-medium text-stone-700" id="visibility-label">{m.project_new_visibility_label()}</span>
           <div class="mt-2 space-y-2" role="radiogroup" aria-labelledby="visibility-label">
             <label class="flex items-start">
               <input
@@ -226,20 +226,20 @@
                 value="private"
                 bind:group={visibility}
                 disabled={isSubmitting}
-                class="mt-0.5 h-4 w-4 border-gray-300 text-blue-600 focus:ring-blue-500"
+                class="mt-0.5 h-4 w-4 border-stone-300 text-primary-600 focus:ring-primary-500"
               />
               <div class="ml-3">
                 <div class="flex items-center">
-                  <svg class="mr-1.5 h-4 w-4 text-gray-500" fill="currentColor" viewBox="0 0 20 20">
+                  <svg class="mr-1.5 h-4 w-4 text-stone-500" fill="currentColor" viewBox="0 0 20 20">
                     <path
                       fill-rule="evenodd"
                       d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z"
                       clip-rule="evenodd"
                     />
                   </svg>
-                  <span class="text-sm font-medium text-gray-700">{m.project_new_visibility_private_label()}</span>
+                  <span class="text-sm font-medium text-stone-700">{m.project_new_visibility_private_label()}</span>
                 </div>
-                <p class="text-xs text-gray-500">{m.project_new_visibility_private_hint()}</p>
+                <p class="text-xs text-stone-500">{m.project_new_visibility_private_hint()}</p>
               </div>
             </label>
 
@@ -250,20 +250,20 @@
                 value="public"
                 bind:group={visibility}
                 disabled={isSubmitting}
-                class="mt-0.5 h-4 w-4 border-gray-300 text-blue-600 focus:ring-blue-500"
+                class="mt-0.5 h-4 w-4 border-stone-300 text-primary-600 focus:ring-primary-500"
               />
               <div class="ml-3">
                 <div class="flex items-center">
-                  <svg class="mr-1.5 h-4 w-4 text-gray-500" fill="currentColor" viewBox="0 0 20 20">
+                  <svg class="mr-1.5 h-4 w-4 text-stone-500" fill="currentColor" viewBox="0 0 20 20">
                     <path
                       fill-rule="evenodd"
                       d="M10 18a8 8 0 100-16 8 8 0 000 16zM4.332 8.027a6.012 6.012 0 011.912-2.706C6.512 5.73 6.974 6 7.5 6A1.5 1.5 0 019 7.5V8a2 2 0 004 0 2 2 0 011.523-1.943A5.977 5.977 0 0116 10c0 .34-.028.675-.083 1H15a2 2 0 00-2 2v2.197A5.973 5.973 0 0110 16v-2a2 2 0 00-2-2 2 2 0 01-2-2 2 2 0 00-1.668-1.973z"
                       clip-rule="evenodd"
                     />
                   </svg>
-                  <span class="text-sm font-medium text-gray-700">{m.project_new_visibility_public_label()}</span>
+                  <span class="text-sm font-medium text-stone-700">{m.project_new_visibility_public_label()}</span>
                 </div>
-                <p class="text-xs text-gray-500">{m.project_new_visibility_public_hint()}</p>
+                <p class="text-xs text-stone-500">{m.project_new_visibility_public_hint()}</p>
               </div>
             </label>
           </div>
@@ -271,19 +271,19 @@
       </div>
 
       <!-- Form Actions -->
-      <div class="flex justify-end space-x-3 border-t border-gray-200 bg-gray-50 px-6 py-4">
+      <div class="flex justify-end space-x-3 border-t border-stone-200 bg-stone-50 px-6 py-4">
         <button
           type="button"
           onclick={handleCancel}
           disabled={isSubmitting}
-          class="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+          class="rounded-md border border-stone-300 bg-surface-card px-4 py-2 text-sm font-medium text-stone-700 hover:bg-stone-50 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {m.project_new_cancel()}
         </button>
         <button
           type="submit"
           disabled={isSubmitting}
-          class="inline-flex items-center rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+          class="inline-flex items-center rounded-md bg-primary-600 px-4 py-2 text-sm font-medium text-white hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {#if isSubmitting}
             <svg

@@ -18,7 +18,7 @@
     success: 'bg-green-100 border-green-500 text-green-800',
     error: 'bg-red-100 border-red-500 text-red-800',
     warning: 'bg-amber-100 border-amber-500 text-amber-800',
-    info: 'bg-blue-100 border-blue-500 text-blue-800',
+    info: 'bg-primary-100 border-primary-500 text-primary-800',
   };
 
   onMount(() => {
@@ -90,16 +90,16 @@
     color: #92400e;
   }
 
-  .bg-blue-100 {
-    background-color: #dbeafe;
+  .bg-primary-100 {
+    background-color: #FFF3EB;
   }
 
-  .border-blue-500 {
-    border-color: #3b82f6;
+  .border-primary-500 {
+    border-color: #FF5A00;
   }
 
-  .text-blue-800 {
-    color: #1e40af;
+  .text-primary-800 {
+    color: #993500;
   }
 
   .toast-icon {

@@ -39,7 +39,7 @@
 </script>
 
 <div class="flex flex-col gap-2">
-  <span class="text-sm font-medium text-gray-700">Visibility</span>
+  <span class="text-sm font-medium text-stone-700">Visibility</span>
   <div class="grid grid-cols-2 gap-3">
     {#each options as option}
       <button
@@ -48,14 +48,14 @@
         {disabled}
         class="rounded-md border p-2.5 text-left transition-all
           {value === option.value
-            ? 'border-blue-500 bg-blue-50'
-            : 'border-gray-200 bg-white hover:border-gray-300 hover:bg-gray-50'}
+            ? 'border-primary-500 bg-primary-50'
+            : 'border-stone-200 bg-surface-card hover:border-stone-300 hover:bg-stone-50'}
           {disabled ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'}"
       >
         <div class="mb-1 flex items-center gap-1.5">
           {#if option.icon === 'lock'}
             <svg
-              class="h-3.5 w-3.5 {value === option.value ? 'text-blue-500' : 'text-gray-500'}"
+              class="h-3.5 w-3.5 {value === option.value ? 'text-primary-500' : 'text-stone-500'}"
               viewBox="0 0 24 24"
               fill="none"
               stroke="currentColor"
@@ -65,7 +65,7 @@
             </svg>
           {:else if option.icon === 'globe'}
             <svg
-              class="h-3.5 w-3.5 {value === option.value ? 'text-blue-500' : 'text-gray-500'}"
+              class="h-3.5 w-3.5 {value === option.value ? 'text-primary-500' : 'text-stone-500'}"
               viewBox="0 0 24 24"
               fill="none"
               stroke="currentColor"
@@ -75,11 +75,11 @@
               <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" stroke-width="2" />
             </svg>
           {/if}
-          <span class="text-sm font-semibold {value === option.value ? 'text-blue-700' : 'text-gray-900'}">
+          <span class="text-sm font-semibold {value === option.value ? 'text-primary-700' : 'text-stone-900'}">
             {option.label}
           </span>
         </div>
-        <p class="m-0 text-xs leading-snug {value === option.value ? 'text-blue-500' : 'text-gray-500'}">
+        <p class="m-0 text-xs leading-snug {value === option.value ? 'text-primary-500' : 'text-stone-500'}">
           {option.description}
         </p>
       </button>

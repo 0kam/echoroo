@@ -141,6 +141,11 @@ class Dataset(UUIDMixin, TimestampMixin, Base):
         nullable=True,
         doc="strftime format string",
     )
+    datetime_timezone: Mapped[str | None] = mapped_column(
+        String(50),
+        nullable=True,
+        doc="IANA timezone for datetime parsing (e.g., 'Asia/Tokyo', 'UTC')",
+    )
     total_files: Mapped[int] = mapped_column(
         Integer,
         default=0,

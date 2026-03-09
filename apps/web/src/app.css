@@ -3,7 +3,78 @@
 @tailwind utilities;
 
 @layer base {
+  :root {
+    /* Primary (Sunrise Orange) */
+    --primary-50: 255 247 240;
+    --primary-100: 255 237 222;
+    --primary-200: 255 213 180;
+    --primary-300: 255 183 130;
+    --primary-400: 255 140 72;
+    --primary-500: 255 90 0;
+    --primary-600: 228 76 0;
+    --primary-700: 194 62 0;
+    --primary-800: 156 48 4;
+    --primary-900: 112 36 6;
+    --primary-950: 68 20 2;
+
+    /* Stone (Warm Neutrals - Light Mode) */
+    --stone-50: 252 250 248;
+    --stone-100: 247 244 241;
+    --stone-200: 236 231 226;
+    --stone-300: 220 213 207;
+    --stone-400: 180 172 165;
+    --stone-500: 133 125 118;
+    --stone-600: 95 88 82;
+    --stone-700: 72 66 61;
+    --stone-800: 48 43 39;
+    --stone-900: 32 28 25;
+    --stone-950: 18 15 13;
+
+    /* Semantic */
+    --color-page-bg: 251 247 241;
+    --color-card-bg: 255 255 255;
+    --color-card-border: 228 218 207;
+    --color-nav-bg: 255 253 250;
+    --color-nav-border: 232 222 212;
+  }
+
+  .dark {
+    /* Primary (Sunrise Orange - Dark Mode: FLIPPED) */
+    --primary-50: 48 18 4;
+    --primary-100: 72 30 6;
+    --primary-200: 112 48 10;
+    --primary-300: 164 72 14;
+    --primary-400: 220 104 28;
+    --primary-500: 255 120 40;
+    --primary-600: 255 152 82;
+    --primary-700: 255 180 122;
+    --primary-800: 255 208 168;
+    --primary-900: 255 232 210;
+    --primary-950: 255 245 236;
+
+    /* Stone (Warm Neutrals - Dark Mode: FLIPPED) */
+    --stone-50: 18 20 24;
+    --stone-100: 26 28 33;
+    --stone-200: 38 41 48;
+    --stone-300: 54 58 66;
+    --stone-400: 100 104 112;
+    --stone-500: 140 143 150;
+    --stone-600: 172 175 181;
+    --stone-700: 200 202 207;
+    --stone-800: 224 226 230;
+    --stone-900: 240 241 244;
+    --stone-950: 250 250 252;
+
+    /* Semantic */
+    --color-page-bg: 14 16 20;
+    --color-card-bg: 24 26 32;
+    --color-card-border: 44 47 56;
+    --color-nav-bg: 20 22 27;
+    --color-nav-border: 44 47 56;
+  }
+
   body {
-    @apply bg-white text-gray-900 dark:bg-gray-950 dark:text-gray-100;
+    background-color: rgb(var(--color-page-bg));
+    color: rgb(var(--stone-900));
   }
 }

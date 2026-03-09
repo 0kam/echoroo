@@ -46,7 +46,7 @@
    */
   function getPasswordStrength(password: string): { level: string; color: string; width: string } {
     if (password.length === 0) {
-      return { level: '', color: 'bg-gray-200', width: 'w-0' };
+      return { level: '', color: 'bg-stone-200', width: 'w-0' };
     }
     if (password.length < 8) {
       return { level: m.settings_password_strength_short(), color: 'bg-red-500', width: 'w-1/4' };
@@ -63,7 +63,7 @@
       return { level: m.settings_password_strength_weak(), color: 'bg-yellow-500', width: 'w-1/2' };
     }
     if (score <= 3) {
-      return { level: m.settings_password_strength_good(), color: 'bg-blue-500', width: 'w-3/4' };
+      return { level: m.settings_password_strength_good(), color: 'bg-primary-500', width: 'w-3/4' };
     }
     return { level: m.settings_password_strength_strong(), color: 'bg-green-500', width: 'w-full' };
   }
@@ -200,15 +200,15 @@
   <title>{m.settings_page_title()}</title>
 </svelte:head>
 
-<div class="min-h-screen bg-gray-50">
+<div class="min-h-screen bg-stone-50">
   <!-- Header -->
-  <header class="bg-white shadow">
+  <header class="bg-surface-card shadow">
     <div class="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
       <div class="flex items-center justify-between">
-        <h1 class="text-3xl font-bold text-gray-900">{m.settings_heading()}</h1>
+        <h1 class="text-3xl font-bold text-stone-900">{m.settings_heading()}</h1>
         <a
           href={localizeHref('/dashboard')}
-          class="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+          class="rounded-md border border-stone-300 bg-surface-card px-4 py-2 text-sm font-medium text-stone-700 hover:bg-stone-50 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2"
         >
           {m.settings_back_to_dashboard()}
         </a>
@@ -219,12 +219,12 @@
   <!-- Main Content -->
   <main class="mx-auto max-w-3xl px-4 py-8 sm:px-6 lg:px-8">
     <!-- Password Change Section -->
-    <div class="overflow-hidden rounded-lg bg-white shadow">
+    <div class="overflow-hidden rounded-lg bg-surface-card shadow">
       <div class="px-4 py-5 sm:p-6">
-        <h2 class="text-lg font-medium leading-6 text-gray-900">
+        <h2 class="text-lg font-medium leading-6 text-stone-900">
           {m.settings_change_password_heading()}
         </h2>
-        <p class="mt-1 text-sm text-gray-600">
+        <p class="mt-1 text-sm text-stone-600">
           {m.settings_change_password_description()}
         </p>
 
@@ -263,7 +263,7 @@
         <form class="mt-6 space-y-6" onsubmit={handleSubmit}>
           <!-- Current Password -->
           <div>
-            <label for="current_password" class="block text-sm font-medium text-gray-700">
+            <label for="current_password" class="block text-sm font-medium text-stone-700">
               {m.settings_current_password_label()}
             </label>
             <div class="mt-1">
@@ -274,14 +274,14 @@
                 bind:value={currentPassword}
                 autocomplete="current-password"
                 required
-                class="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+                class="block w-full rounded-md border-stone-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
               />
             </div>
           </div>
 
           <!-- New Password -->
           <div>
-            <label for="new_password" class="block text-sm font-medium text-gray-700">
+            <label for="new_password" class="block text-sm font-medium text-stone-700">
               {m.settings_new_password_label()}
             </label>
             <div class="mt-1">
@@ -293,7 +293,7 @@
                 autocomplete="new-password"
                 required
                 minlength="8"
-                class="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+                class="block w-full rounded-md border-stone-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
               />
             </div>
 
@@ -302,13 +302,13 @@
               <div class="mt-2">
                 <div class="flex items-center justify-between">
                   <div class="flex-1">
-                    <div class="h-2 w-full rounded-full bg-gray-200">
+                    <div class="h-2 w-full rounded-full bg-stone-200">
                       <div
                         class="h-2 rounded-full transition-all duration-300 {passwordStrength.color} {passwordStrength.width}"
                       ></div>
                     </div>
                   </div>
-                  <span class="ml-3 text-sm font-medium text-gray-600">
+                  <span class="ml-3 text-sm font-medium text-stone-600">
                     {passwordStrength.level}
                   </span>
                 </div>
@@ -316,16 +316,16 @@
             {/if}
 
             <!-- Password Requirements -->
-            <div class="mt-2 text-sm text-gray-500">
+            <div class="mt-2 text-sm text-stone-500">
               <p>{m.settings_password_requirements()}</p>
               <ul class="mt-1 list-inside list-disc space-y-1">
-                <li class:text-green-600={newPassword.length >= 8} class:text-gray-500={newPassword.length < 8}>
+                <li class:text-green-600={newPassword.length >= 8} class:text-stone-500={newPassword.length < 8}>
                   {m.settings_password_req_length()}
                 </li>
-                <li class:text-green-600={/[a-zA-Z]/.test(newPassword)} class:text-gray-500={!/[a-zA-Z]/.test(newPassword)}>
+                <li class:text-green-600={/[a-zA-Z]/.test(newPassword)} class:text-stone-500={!/[a-zA-Z]/.test(newPassword)}>
                   {m.settings_password_req_letter()}
                 </li>
-                <li class:text-green-600={/\d/.test(newPassword)} class:text-gray-500={!/\d/.test(newPassword)}>
+                <li class:text-green-600={/\d/.test(newPassword)} class:text-stone-500={!/\d/.test(newPassword)}>
                   {m.settings_password_req_number()}
                 </li>
               </ul>
@@ -334,7 +334,7 @@
 
           <!-- Confirm New Password -->
           <div>
-            <label for="confirm_new_password" class="block text-sm font-medium text-gray-700">
+            <label for="confirm_new_password" class="block text-sm font-medium text-stone-700">
               {m.settings_confirm_new_password_label()}
             </label>
             <div class="mt-1">
@@ -345,10 +345,10 @@
                 bind:value={confirmNewPassword}
                 autocomplete="new-password"
                 required
-                class="block w-full rounded-md shadow-sm focus:ring-blue-500 sm:text-sm"
-                class:border-gray-300={confirmNewPassword.length === 0 || passwordsMatch}
+                class="block w-full rounded-md shadow-sm focus:ring-primary-500 sm:text-sm"
+                class:border-stone-300={confirmNewPassword.length === 0 || passwordsMatch}
                 class:border-red-500={confirmNewPassword.length > 0 && !passwordsMatch}
-                class:focus:border-blue-500={confirmNewPassword.length === 0 || passwordsMatch}
+                class:focus:border-primary-500={confirmNewPassword.length === 0 || passwordsMatch}
                 class:focus:border-red-500={confirmNewPassword.length > 0 && !passwordsMatch}
               />
             </div>
@@ -358,19 +358,19 @@
           </div>
 
           <!-- Form Actions -->
-          <div class="flex justify-end space-x-3 border-t border-gray-200 pt-6">
+          <div class="flex justify-end space-x-3 border-t border-stone-200 pt-6">
             <button
               type="button"
               onclick={handleReset}
               disabled={isSubmitting}
-              class="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+              class="rounded-md border border-stone-300 bg-surface-card px-4 py-2 text-sm font-medium text-stone-700 hover:bg-stone-50 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {m.settings_clear_button()}
             </button>
             <button
               type="submit"
               disabled={!formValid || isSubmitting}
-              class="inline-flex items-center rounded-md border border-transparent bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+              class="inline-flex items-center rounded-md border border-transparent bg-primary-600 px-4 py-2 text-sm font-medium text-white hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {#if isSubmitting}
                 <svg class="-ml-1 mr-2 h-4 w-4 animate-spin" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
@@ -386,17 +386,17 @@
         </form>
 
         <!-- Profile Link -->
-        <div class="mt-8 border-t border-gray-200 pt-6">
+        <div class="mt-8 border-t border-stone-200 pt-6">
           <a
             href={localizeHref('/profile')}
-            class="inline-flex items-center text-sm font-medium text-blue-600 hover:text-blue-500"
+            class="inline-flex items-center text-sm font-medium text-primary-600 hover:text-primary-500"
           >
             <svg class="mr-2 h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
             </svg>
             {m.settings_profile_link()}
           </a>
-          <p class="mt-1 text-sm text-gray-500">
+          <p class="mt-1 text-sm text-stone-500">
             {m.settings_profile_description()}
           </p>
         </div>
@@ -404,19 +404,19 @@
     </div>
 
     <!-- API Tokens Section -->
-    <div class="mt-8 overflow-hidden rounded-lg bg-white shadow">
+    <div class="mt-8 overflow-hidden rounded-lg bg-surface-card shadow">
       <div class="px-4 py-5 sm:p-6">
         <div class="mb-4 flex items-center justify-between">
           <div>
-            <h2 class="text-lg font-medium leading-6 text-gray-900">{m.settings_api_tokens_heading()}</h2>
-            <p class="mt-1 text-sm text-gray-600">
+            <h2 class="text-lg font-medium leading-6 text-stone-900">{m.settings_api_tokens_heading()}</h2>
+            <p class="mt-1 text-sm text-stone-600">
               {m.settings_api_tokens_description()}
             </p>
           </div>
           <button
             type="button"
             onclick={() => (isTokenDialogOpen = true)}
-            class="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+            class="rounded-md bg-primary-600 px-4 py-2 text-sm font-medium text-white hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2"
             data-testid="create-token-button"
           >
             {m.settings_create_token_button()}
@@ -430,11 +430,11 @@
         {/if}
 
         {#if tokensLoading}
-          <div class="py-8 text-center text-gray-500">{m.settings_loading_tokens()}</div>
+          <div class="py-8 text-center text-stone-500">{m.settings_loading_tokens()}</div>
         {:else if tokens.length === 0}
-          <div class="py-8 text-center text-gray-500" data-testid="no-tokens-message">
+          <div class="py-8 text-center text-stone-500" data-testid="no-tokens-message">
             <svg
-              class="mx-auto h-12 w-12 text-gray-400"
+              class="mx-auto h-12 w-12 text-stone-400"
               xmlns="http://www.w3.org/2000/svg"
               fill="none"
               viewBox="0 0 24 24"
@@ -451,48 +451,48 @@
             <p class="text-sm">{m.settings_no_tokens_hint()}</p>
           </div>
         {:else}
-          <div class="overflow-hidden rounded-md border border-gray-200">
-            <table class="min-w-full divide-y divide-gray-200" data-testid="tokens-table">
-              <thead class="bg-gray-50">
+          <div class="overflow-hidden rounded-md border border-stone-200">
+            <table class="min-w-full divide-y divide-stone-200" data-testid="tokens-table">
+              <thead class="bg-stone-50">
                 <tr>
                   <th
-                    class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500"
+                    class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-stone-500"
                   >
                     {m.settings_token_col_name()}
                   </th>
                   <th
-                    class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500"
+                    class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-stone-500"
                   >
                     {m.settings_token_col_created()}
                   </th>
                   <th
-                    class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500"
+                    class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-stone-500"
                   >
                     {m.settings_token_col_last_used()}
                   </th>
                   <th
-                    class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500"
+                    class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-stone-500"
                   >
                     {m.settings_token_col_expires()}
                   </th>
-                  <th class="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500">
+                  <th class="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-stone-500">
                     {m.settings_token_col_actions()}
                   </th>
                 </tr>
               </thead>
-              <tbody class="divide-y divide-gray-200 bg-white">
+              <tbody class="divide-y divide-stone-200 bg-surface-card">
                 {#each tokens as token (token.id)}
                   <tr data-testid={`token-row-${token.id}`}>
-                    <td class="whitespace-nowrap px-4 py-3 text-sm font-medium text-gray-900">
+                    <td class="whitespace-nowrap px-4 py-3 text-sm font-medium text-stone-900">
                       {token.name}
                     </td>
-                    <td class="whitespace-nowrap px-4 py-3 text-sm text-gray-500">
+                    <td class="whitespace-nowrap px-4 py-3 text-sm text-stone-500">
                       {formatTokenDate(token.created_at)}
                     </td>
-                    <td class="whitespace-nowrap px-4 py-3 text-sm text-gray-500">
+                    <td class="whitespace-nowrap px-4 py-3 text-sm text-stone-500">
                       {formatTokenDate(token.last_used_at)}
                     </td>
-                    <td class="whitespace-nowrap px-4 py-3 text-sm text-gray-500">
+                    <td class="whitespace-nowrap px-4 py-3 text-sm text-stone-500">
                       {token.expires_at ? formatTokenDate(token.expires_at) : m.settings_token_never()}
                     </td>
                     <td class="whitespace-nowrap px-4 py-3 text-right text-sm">

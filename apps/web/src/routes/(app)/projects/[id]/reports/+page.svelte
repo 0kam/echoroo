@@ -74,38 +74,38 @@
 <div class="mx-auto max-w-4xl px-6 py-8">
   <!-- Page header -->
   <header class="mb-8">
-    <nav class="mb-2 flex items-center gap-2 text-sm text-gray-500">
-      <a href={localizeHref(`/projects/${projectId}`)} class="hover:text-gray-900">{m.report_breadcrumb_project()}</a>
+    <nav class="mb-2 flex items-center gap-2 text-sm text-stone-500">
+      <a href={localizeHref(`/projects/${projectId}`)} class="hover:text-stone-900">{m.report_breadcrumb_project()}</a>
       <span>/</span>
-      <span class="font-medium text-gray-900">{m.report_heading()}</span>
+      <span class="font-medium text-stone-900">{m.report_heading()}</span>
     </nav>
-    <h1 class="text-2xl font-bold text-gray-900">{m.report_heading()}</h1>
-    <p class="mt-1 text-sm text-gray-500">{m.report_description()}</p>
+    <h1 class="text-2xl font-bold text-stone-900">{m.report_heading()}</h1>
+    <p class="mt-1 text-sm text-stone-500">{m.report_description()}</p>
   </header>
 
   <!-- Export option cards -->
   <div class="flex flex-col gap-6">
     {#each exportCards as card (card.id)}
-      <div class="rounded-lg border border-gray-200 bg-white p-6">
+      <div class="rounded-lg border border-card bg-surface-card p-6">
         <div class="flex items-start gap-4">
           <!-- Icon -->
-          <div class="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-lg bg-blue-50">
-            <svg class="h-6 w-6 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <div class="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-lg bg-primary-50">
+            <svg class="h-6 w-6 text-primary-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={card.icon} />
             </svg>
           </div>
 
           <!-- Content -->
           <div class="min-w-0 flex-1">
-            <h2 class="text-lg font-semibold text-gray-900">{card.title}</h2>
-            <p class="mt-1 text-sm text-gray-500">{card.description}</p>
+            <h2 class="text-lg font-semibold text-stone-900">{card.title}</h2>
+            <p class="mt-1 text-sm text-stone-500">{card.description}</p>
 
             <!-- Included fields -->
             <div class="mt-3">
-              <p class="mb-1.5 text-xs font-medium uppercase tracking-wide text-gray-400">{m.report_includes_label()}</p>
+              <p class="mb-1.5 text-xs font-medium uppercase tracking-wide text-stone-400">{m.report_includes_label()}</p>
               <ul class="flex flex-wrap gap-2">
                 {#each card.details as detail}
-                  <li class="rounded-full bg-gray-100 px-2.5 py-0.5 text-xs font-medium text-gray-600">
+                  <li class="rounded-full bg-stone-100 px-2.5 py-0.5 text-xs font-medium text-stone-600">
                     {detail}
                   </li>
                 {/each}
@@ -118,7 +118,7 @@
             <button
               type="button"
               onclick={() => openExportDialog(card.format)}
-              class="flex items-center gap-2 rounded-md border border-blue-200 bg-blue-50 px-4 py-2 text-sm font-medium text-blue-700 hover:bg-blue-100 hover:border-blue-300 transition-colors"
+              class="flex items-center gap-2 rounded-md border border-primary-200 bg-primary-50 px-4 py-2 text-sm font-medium text-primary-700 hover:bg-primary-100 hover:border-primary-300 transition-colors"
               aria-label={card.buttonLabel}
             >
               <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">

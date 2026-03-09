@@ -56,6 +56,7 @@ class DetectionService:
         confidence_max: float | None = None,
         dataset_id: UUID | None = None,
         recording_id: UUID | None = None,
+        detection_run_id: UUID | None = None,
         page: int = 1,
         page_size: int = 50,
     ) -> DetectionListResponse:
@@ -69,6 +70,7 @@ class DetectionService:
             confidence_max: Optional maximum confidence filter
             dataset_id: Optional dataset filter
             recording_id: Optional recording filter
+            detection_run_id: Optional detection run filter
             page: Page number (1-indexed)
             page_size: Items per page
 
@@ -88,6 +90,7 @@ class DetectionService:
             confidence_max=confidence_max,
             dataset_id=dataset_id,
             recording_id=recording_id,
+            detection_run_id=detection_run_id,
             page=page,
             page_size=page_size,
         )
@@ -147,6 +150,7 @@ class DetectionService:
         self,
         project_id: UUID,
         dataset_id: UUID | None = None,
+        detection_run_id: UUID | None = None,
         locale: str = "en",
     ) -> SpeciesSummaryResponse:
         """Get species detection summary grouped by tag.
@@ -157,6 +161,7 @@ class DetectionService:
         Args:
             project_id: Project's UUID
             dataset_id: Optional dataset filter
+            detection_run_id: Optional detection run filter
             locale: Locale code for common name resolution (default: "en")
 
         Returns:
@@ -165,6 +170,7 @@ class DetectionService:
         rows = await self.annotation_repo.species_summary(
             project_id=project_id,
             dataset_id=dataset_id,
+            detection_run_id=detection_run_id,
         )
 
         # Collect taxon IDs for batch vernacular name resolution
@@ -200,6 +206,7 @@ class DetectionService:
         self,
         project_id: UUID,
         dataset_id: UUID | None = None,
+        detection_run_id: UUID | None = None,
         locale: str = "en",
     ) -> DetectionTemporalDataResponse:
         """Get hourly detection counts grouped by species, date, and hour.
@@ -210,6 +217,7 @@ class DetectionService:
         Args:
             project_id: Project's UUID
             dataset_id: Optional dataset filter
+            detection_run_id: Optional detection run filter
             locale: Locale code for common name resolution (default: "en")
 
         Returns:
@@ -222,6 +230,7 @@ class DetectionService:
         rows = await self.annotation_repo.temporal_summary(
             project_id=project_id,
             dataset_id=dataset_id,
+            detection_run_id=detection_run_id,
         )
 
         # Group rows by tag_id
@@ -295,6 +304,7 @@ class DetectionService:
         return DetectionTemporalDataResponse(
             project_id=project_id,
             dataset_id=dataset_id,
+            detection_run_id=detection_run_id,
             date_range=date_range,
             species=species_list,
         )

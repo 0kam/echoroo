@@ -223,24 +223,24 @@
 <div class="mx-auto max-w-6xl px-6 py-8">
   <!-- Page header -->
   <header class="mb-6">
-    <nav class="mb-2 flex items-center gap-2 text-sm text-gray-500">
-      <a href={localizeHref(`/projects/${projectId}`)} class="hover:text-gray-900">Project</a>
+    <nav class="mb-2 flex items-center gap-2 text-sm text-stone-500">
+      <a href={localizeHref(`/projects/${projectId}`)} class="hover:text-stone-900">Project</a>
       <span>/</span>
-      <span class="font-medium text-gray-900">Sites & Data</span>
+      <span class="font-medium text-stone-900">Sites & Data</span>
     </nav>
-    <h1 class="text-2xl font-bold text-gray-900">Sites & Data</h1>
-    <p class="mt-1 text-sm text-gray-500">Manage sites, datasets, and recordings for this project</p>
+    <h1 class="text-2xl font-bold text-stone-900">Sites & Data</h1>
+    <p class="mt-1 text-sm text-stone-500">Manage sites, datasets, and recordings for this project</p>
   </header>
 
   <!-- Tab bar -->
-  <div class="mb-6 border-b border-gray-200">
+  <div class="mb-6 border-b border-stone-200">
     <nav class="-mb-px flex gap-6" aria-label="Tabs">
       {#each tabs as tab}
         <button
           onclick={() => (activeTab = tab.id)}
           class="border-b-2 pb-3 text-sm font-medium transition-colors {activeTab === tab.id
-            ? 'border-blue-600 text-blue-600'
-            : 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700'}"
+            ? 'border-primary-600 text-primary-600'
+            : 'border-transparent text-stone-500 hover:border-stone-300 hover:text-stone-700'}"
           aria-current={activeTab === tab.id ? 'page' : undefined}
         >
           {tab.label}
@@ -253,11 +253,11 @@
   {#if activeTab === 'sites'}
     <div>
       <div class="mb-6 flex items-center justify-between">
-        <p class="text-sm text-gray-500">Manage geographic locations for your recordings</p>
+        <p class="text-sm text-stone-500">Manage geographic locations for your recordings</p>
         {#if !showSiteCreateForm}
           <button
             onclick={() => (showSiteCreateForm = true)}
-            class="flex items-center gap-2 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700"
+            class="flex items-center gap-2 rounded-md bg-primary-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-700"
           >
             <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
               <line x1="12" y1="5" x2="12" y2="19" stroke-width="2" />
@@ -269,12 +269,12 @@
       </div>
 
       {#if showSiteCreateForm}
-        <div class="mb-6 rounded-lg border border-gray-200 bg-white p-6">
+        <div class="mb-6 rounded-lg border border-card bg-surface-card p-6">
           <div class="mb-4 flex items-center justify-between">
-            <h2 class="text-lg font-semibold text-gray-900">Create New Site</h2>
+            <h2 class="text-lg font-semibold text-stone-900">Create New Site</h2>
             <button
               onclick={() => (showSiteCreateForm = false)}
-              class="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+              class="rounded p-1 text-stone-400 hover:bg-stone-100 hover:text-stone-600"
               aria-label="Close"
             >
               <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor">
@@ -291,8 +291,8 @@
           {/if}
         </div>
       {:else if $sitesQuery.isLoading}
-        <div class="flex items-center justify-center py-12 text-sm text-gray-500">
-          <svg class="mr-2 h-5 w-5 animate-spin text-blue-600" fill="none" viewBox="0 0 24 24">
+        <div class="flex items-center justify-center py-12 text-sm text-stone-500">
+          <svg class="mr-2 h-5 w-5 animate-spin text-primary-600" fill="none" viewBox="0 0 24 24">
             <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
             <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
           </svg>
@@ -309,7 +309,7 @@
           onDelete={handleSiteDeleteClick}
         />
         {#if $sitesQuery.data.total > 0}
-          <p class="mt-3 text-center text-sm text-gray-400">
+          <p class="mt-3 text-center text-sm text-stone-400">
             Showing {$sitesQuery.data.items.length} of {$sitesQuery.data.total} sites
           </p>
         {/if}
@@ -321,11 +321,11 @@
   {#if activeTab === 'datasets'}
     <div>
       <div class="mb-6 flex items-center justify-between">
-        <p class="text-sm text-gray-500">Manage collections of audio recordings</p>
+        <p class="text-sm text-stone-500">Manage collections of audio recordings</p>
         {#if !showDatasetCreateForm}
           <button
             onclick={() => (showDatasetCreateForm = true)}
-            class="flex items-center gap-2 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700"
+            class="flex items-center gap-2 rounded-md bg-primary-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-700"
           >
             <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
               <line x1="12" y1="5" x2="12" y2="19" stroke-width="2" />
@@ -337,12 +337,12 @@
       </div>
 
       {#if showDatasetCreateForm}
-        <div class="mb-6 rounded-lg border border-gray-200 bg-white p-6">
+        <div class="mb-6 rounded-lg border border-card bg-surface-card p-6">
           <div class="mb-4 flex items-center justify-between">
-            <h2 class="text-lg font-semibold text-gray-900">Create New Dataset</h2>
+            <h2 class="text-lg font-semibold text-stone-900">Create New Dataset</h2>
             <button
               onclick={() => (showDatasetCreateForm = false)}
-              class="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+              class="rounded p-1 text-stone-400 hover:bg-stone-100 hover:text-stone-600"
               aria-label="Close"
             >
               <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor">
@@ -366,8 +366,8 @@
       {/if}
 
       {#if $datasetsQuery.isLoading}
-        <div class="flex items-center justify-center py-12 text-sm text-gray-500">
-          <svg class="mr-2 h-5 w-5 animate-spin text-blue-600" fill="none" viewBox="0 0 24 24">
+        <div class="flex items-center justify-center py-12 text-sm text-stone-500">
+          <svg class="mr-2 h-5 w-5 animate-spin text-primary-600" fill="none" viewBox="0 0 24 24">
             <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
             <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
           </svg>
@@ -393,17 +393,17 @@
             <button
               onclick={() => (datasetCurrentPage = Math.max(1, datasetCurrentPage - 1))}
               disabled={datasetCurrentPage === 1}
-              class="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+              class="rounded-md border border-stone-300 bg-surface-card px-4 py-2 text-sm font-medium text-stone-700 transition-colors hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-50"
             >
               Previous
             </button>
-            <span class="text-sm text-gray-500">
+            <span class="text-sm text-stone-500">
               Page {datasetCurrentPage} of {$datasetsQuery.data.pages}
             </span>
             <button
               onclick={() => (datasetCurrentPage = Math.min($datasetsQuery.data!.pages, datasetCurrentPage + 1))}
               disabled={datasetCurrentPage === $datasetsQuery.data.pages}
-              class="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+              class="rounded-md border border-stone-300 bg-surface-card px-4 py-2 text-sm font-medium text-stone-700 transition-colors hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-50"
             >
               Next
             </button>
@@ -411,7 +411,7 @@
         {/if}
 
         {#if $datasetsQuery.data.total > 0}
-          <p class="mt-3 text-center text-sm text-gray-400">
+          <p class="mt-3 text-center text-sm text-stone-400">
             Showing {$datasetsQuery.data.items.length} of {$datasetsQuery.data.total} datasets
           </p>
         {/if}
@@ -423,7 +423,7 @@
   {#if activeTab === 'recordings'}
     <div>
       <div class="mb-6">
-        <p class="text-sm text-gray-500">All recordings in this project</p>
+        <p class="text-sm text-stone-500">All recordings in this project</p>
       </div>
       {#if projectId}
         <RecordingList {projectId} onSelect={handleRecordingSelect} />

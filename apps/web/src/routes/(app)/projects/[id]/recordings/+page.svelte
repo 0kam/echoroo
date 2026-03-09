@@ -22,18 +22,18 @@
   <!-- Page header -->
   <div class="mb-6 flex items-start justify-between">
     <div>
-      <nav class="mb-2 flex items-center gap-2 text-sm text-gray-500">
-        <a href={localizeHref(`/projects/${projectId}`)} class="hover:text-gray-900">{m.recording_list_breadcrumb_project()}</a>
+      <nav class="mb-2 flex items-center gap-2 text-sm text-stone-500">
+        <a href={localizeHref(`/projects/${projectId}`)} class="hover:text-stone-900">{m.recording_list_breadcrumb_project()}</a>
         <span>/</span>
-        <span class="font-medium text-gray-900">{m.recording_list_breadcrumb_recordings()}</span>
+        <span class="font-medium text-stone-900">{m.recording_list_breadcrumb_recordings()}</span>
       </nav>
-      <h1 class="text-2xl font-bold text-gray-900">{m.recording_list_heading()}</h1>
+      <h1 class="text-2xl font-bold text-stone-900">{m.recording_list_heading()}</h1>
       {#if datasetId}
-        <p class="mt-1 text-sm text-gray-500">{m.recording_list_filtered_by_dataset()}</p>
+        <p class="mt-1 text-sm text-stone-500">{m.recording_list_filtered_by_dataset()}</p>
       {:else if siteId}
-        <p class="mt-1 text-sm text-gray-500">{m.recording_list_filtered_by_site()}</p>
+        <p class="mt-1 text-sm text-stone-500">{m.recording_list_filtered_by_site()}</p>
       {:else}
-        <p class="mt-1 text-sm text-gray-500">{m.recording_list_all_recordings()}</p>
+        <p class="mt-1 text-sm text-stone-500">{m.recording_list_all_recordings()}</p>
       {/if}
     </div>
   </div>

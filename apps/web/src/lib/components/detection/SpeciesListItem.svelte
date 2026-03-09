@@ -12,6 +12,7 @@
   export let species: SpeciesSummary;
   export let projectId: string;
   export let isSelected: boolean = false;
+  export let detectionRunId: string | undefined = undefined;
 
   $: confirmedPct =
     species.total_count > 0 ? (species.confirmed_count / species.total_count) * 100 : 0;
@@ -24,7 +25,9 @@
     species.avg_confidence !== null ? Math.round(species.avg_confidence * 100) : null;
 
   function handleClick() {
-    goto(localizeHref(`/projects/${projectId}/detections/${species.tag_id}`));
+    const base = `/projects/${projectId}/detections/${species.tag_id}`;
+    const url = detectionRunId ? `${base}?run=${encodeURIComponent(detectionRunId)}` : base;
+    goto(localizeHref(url));
   }
 
   function handleKeydown(event: KeyboardEvent) {
@@ -40,22 +43,22 @@
   tabindex="0"
   class="flex cursor-pointer items-center gap-4 rounded-lg border px-4 py-3 transition-colors
     {isSelected
-    ? 'border-blue-300 bg-blue-50'
-    : 'border-gray-200 bg-white hover:border-gray-300 hover:bg-gray-50'}"
+    ? 'border-primary-300 bg-primary-50'
+    : 'border-card bg-surface-card hover:border-stone-300 hover:bg-stone-50'}"
   on:click={handleClick}
   on:keydown={handleKeydown}
 >
   <!-- Species names -->
   <div class="min-w-0 flex-1">
     <div class="flex items-baseline gap-2">
-      <span class="truncate text-sm font-semibold text-gray-900">{species.common_name ?? species.tag_name}</span>
+      <span class="truncate text-sm font-semibold text-stone-900">{species.common_name ?? species.tag_name}</span>
       {#if species.scientific_name}
-        <span class="truncate text-xs italic text-gray-500">{species.scientific_name}</span>
+        <span class="truncate text-xs italic text-stone-500">{species.scientific_name}</span>
       {/if}
     </div>
 
     <!-- Review progress bar -->
-    <div class="mt-2 flex h-1.5 w-full overflow-hidden rounded-full bg-gray-100">
+    <div class="mt-2 flex h-1.5 w-full overflow-hidden rounded-full bg-stone-100">
       {#if confirmedPct > 0}
         <div
           class="h-full bg-green-500"
@@ -72,7 +75,7 @@
       {/if}
       {#if unreviewedPct > 0}
         <div
-          class="h-full bg-gray-200"
+          class="h-full bg-stone-200"
           style="width: {unreviewedPct}%"
           title="{m.detection_unreviewed_label()}: {species.unreviewed_count}"
         ></div>
@@ -80,7 +83,7 @@
     </div>
 
     <!-- Progress counts -->
-    <div class="mt-1 flex gap-3 text-xs text-gray-500">
+    <div class="mt-1 flex gap-3 text-xs text-stone-500">
       {#if species.confirmed_count > 0}
         <span class="text-green-600">{species.confirmed_count} {m.detection_status_confirmed()}</span>
       {/if}
@@ -97,22 +100,22 @@
   <div class="flex flex-shrink-0 items-center gap-4 text-right">
     <!-- Total count -->
     <div>
-      <div class="text-sm font-semibold text-gray-900">{species.total_count}</div>
-      <div class="text-xs text-gray-500">{m.detection_total_label()}</div>
+      <div class="text-sm font-semibold text-stone-900">{species.total_count}</div>
+      <div class="text-xs text-stone-500">{m.detection_total_label()}</div>
     </div>
 
     <!-- Avg confidence -->
     <div>
       {#if avgConfidencePct !== null}
-        <div class="text-sm font-semibold text-gray-900">{avgConfidencePct}%</div>
+        <div class="text-sm font-semibold text-stone-900">{avgConfidencePct}%</div>
       {:else}
-        <div class="text-sm text-gray-400">—</div>
+        <div class="text-sm text-stone-400">—</div>
       {/if}
-      <div class="text-xs text-gray-500">{m.detection_avg_confidence_label()}</div>
+      <div class="text-xs text-stone-500">{m.detection_avg_confidence_label()}</div>
     </div>
 
     <!-- Chevron -->
-    <svg class="h-4 w-4 flex-shrink-0 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+    <svg class="h-4 w-4 flex-shrink-0 text-stone-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
     </svg>
   </div>

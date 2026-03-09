@@ -199,21 +199,21 @@
   <!-- Header -->
   <div class="mb-6 flex items-center justify-between">
     <div>
-      <h1 class="text-3xl font-bold text-gray-900">{m.api_tokens_heading()}</h1>
-      <p class="mt-2 text-sm text-gray-600">
+      <h1 class="text-3xl font-bold text-stone-900">{m.api_tokens_heading()}</h1>
+      <p class="mt-2 text-sm text-stone-600">
         {m.api_tokens_description()}
       </p>
     </div>
     <div class="flex space-x-3">
       <a
         href={localizeHref('/profile')}
-        class="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+        class="rounded-md border border-stone-300 bg-surface-card px-4 py-2 text-sm font-medium text-stone-700 hover:bg-stone-50 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2"
       >
         {m.api_tokens_back_to_profile()}
       </a>
       <button
         onclick={openCreateModal}
-        class="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+        class="rounded-md bg-primary-600 px-4 py-2 text-sm font-medium text-white hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2"
       >
         {m.api_tokens_create_button()}
       </button>
@@ -274,7 +274,7 @@
   {#if isLoading}
     <div class="flex items-center justify-center py-12">
       <svg
-        class="h-8 w-8 animate-spin text-blue-600"
+        class="h-8 w-8 animate-spin text-primary-600"
         xmlns="http://www.w3.org/2000/svg"
         fill="none"
         viewBox="0 0 24 24"
@@ -289,9 +289,9 @@
       </svg>
     </div>
   {:else if tokens.length === 0}
-    <div class="rounded-lg border-2 border-dashed border-gray-300 p-12 text-center">
+    <div class="rounded-lg border-2 border-dashed border-stone-300 p-12 text-center">
       <svg
-        class="mx-auto h-12 w-12 text-gray-400"
+        class="mx-auto h-12 w-12 text-stone-400"
         xmlns="http://www.w3.org/2000/svg"
         fill="none"
         viewBox="0 0 24 24"
@@ -304,81 +304,81 @@
           d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"
         />
       </svg>
-      <h3 class="mt-2 text-sm font-medium text-gray-900">{m.api_tokens_no_tokens_heading()}</h3>
-      <p class="mt-1 text-sm text-gray-500">{m.api_tokens_no_tokens_hint()}</p>
+      <h3 class="mt-2 text-sm font-medium text-stone-900">{m.api_tokens_no_tokens_heading()}</h3>
+      <p class="mt-1 text-sm text-stone-500">{m.api_tokens_no_tokens_hint()}</p>
       <div class="mt-6">
         <button
           onclick={openCreateModal}
-          class="inline-flex items-center rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+          class="inline-flex items-center rounded-md bg-primary-600 px-4 py-2 text-sm font-medium text-white hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2"
         >
           {m.api_tokens_create_button()}
         </button>
       </div>
     </div>
   {:else}
-    <div class="overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm">
+    <div class="overflow-hidden rounded-lg border border-card bg-surface-card shadow-sm">
       <div class="overflow-x-auto">
-        <table class="min-w-full divide-y divide-gray-200">
-          <thead class="bg-gray-50">
+        <table class="min-w-full divide-y divide-stone-200">
+          <thead class="bg-stone-50">
             <tr>
               <th
                 scope="col"
-                class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500"
+                class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-stone-500"
               >
                 {m.api_tokens_col_name()}
               </th>
               <th
                 scope="col"
-                class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500"
+                class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-stone-500"
               >
                 {m.api_tokens_col_created()}
               </th>
               <th
                 scope="col"
-                class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500"
+                class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-stone-500"
               >
                 {m.api_tokens_col_last_used()}
               </th>
               <th
                 scope="col"
-                class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500"
+                class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-stone-500"
               >
                 {m.api_tokens_col_expires()}
               </th>
               <th
                 scope="col"
-                class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500"
+                class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-stone-500"
               >
                 {m.api_tokens_col_status()}
               </th>
               <th
                 scope="col"
-                class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500"
+                class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-stone-500"
               >
                 {m.api_tokens_col_actions()}
               </th>
             </tr>
           </thead>
-          <tbody class="divide-y divide-gray-200 bg-white">
+          <tbody class="divide-y divide-stone-200 bg-surface-card">
             {#each tokens as token (token.id)}
-              <tr class="hover:bg-gray-50">
+              <tr class="hover:bg-stone-50">
                 <!-- Name -->
                 <td class="whitespace-nowrap px-6 py-4">
-                  <div class="text-sm font-medium text-gray-900">{token.name}</div>
+                  <div class="text-sm font-medium text-stone-900">{token.name}</div>
                 </td>
 
                 <!-- Created -->
-                <td class="whitespace-nowrap px-6 py-4 text-sm text-gray-500">
+                <td class="whitespace-nowrap px-6 py-4 text-sm text-stone-500">
                   {formatDate(token.created_at)}
                 </td>
 
                 <!-- Last Used -->
-                <td class="whitespace-nowrap px-6 py-4 text-sm text-gray-500">
+                <td class="whitespace-nowrap px-6 py-4 text-sm text-stone-500">
                   {formatDate(token.last_used_at)}
                 </td>
 
                 <!-- Expires -->
-                <td class="whitespace-nowrap px-6 py-4 text-sm text-gray-500">
+                <td class="whitespace-nowrap px-6 py-4 text-sm text-stone-500">
                   {formatDate(token.expires_at)}
                 </td>
 
@@ -417,7 +417,7 @@
     <div class="flex min-h-screen items-end justify-center px-4 pb-20 pt-4 text-center sm:block sm:p-0">
       <!-- Background overlay -->
       <div
-        class="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity"
+        class="fixed inset-0 bg-stone-500 bg-opacity-75 transition-opacity"
         onclick={closeCreateModal}
         onkeydown={(e) => e.key === 'Escape' && closeCreateModal()}
         role="button"
@@ -428,18 +428,18 @@
       <!-- Center modal -->
       <span class="hidden sm:inline-block sm:h-screen sm:align-middle" aria-hidden="true">&#8203;</span>
 
-      <div class="inline-block transform overflow-hidden rounded-lg bg-white text-left align-bottom shadow-xl transition-all sm:my-8 sm:w-full sm:max-w-lg sm:align-middle">
+      <div class="inline-block transform overflow-hidden rounded-lg bg-surface-card text-left align-bottom shadow-xl transition-all sm:my-8 sm:w-full sm:max-w-lg sm:align-middle">
         <form onsubmit={handleCreateToken}>
-          <div class="bg-white px-4 pb-4 pt-5 sm:p-6 sm:pb-4">
+          <div class="bg-surface-card px-4 pb-4 pt-5 sm:p-6 sm:pb-4">
             <div class="sm:flex sm:items-start">
               <div class="mt-3 w-full text-center sm:ml-4 sm:mt-0 sm:text-left">
-                <h3 class="text-lg font-medium leading-6 text-gray-900" id="modal-title">
+                <h3 class="text-lg font-medium leading-6 text-stone-900" id="modal-title">
                   {m.api_tokens_create_modal_title()}
                 </h3>
                 <div class="mt-4 space-y-4">
                   <!-- Token Name -->
                   <div>
-                    <label for="token-name" class="block text-sm font-medium text-gray-700">
+                    <label for="token-name" class="block text-sm font-medium text-stone-700">
                       {m.api_tokens_token_name_label()}
                     </label>
                     <input
@@ -448,16 +448,16 @@
                       bind:value={tokenName}
                       required
                       placeholder="e.g., Production API Token"
-                      class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+                      class="mt-1 block w-full rounded-md border-stone-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
                     />
-                    <p class="mt-1 text-sm text-gray-500">
+                    <p class="mt-1 text-sm text-stone-500">
                       {m.api_tokens_token_name_hint()}
                     </p>
                   </div>
 
                   <!-- Expiration Date -->
                   <div>
-                    <label for="expires-at" class="block text-sm font-medium text-gray-700">
+                    <label for="expires-at" class="block text-sm font-medium text-stone-700">
                       {m.api_tokens_expiration_label()}
                     </label>
                     <input
@@ -465,9 +465,9 @@
                       id="expires-at"
                       bind:value={expiresAt}
                       min={getMinDateTime()}
-                      class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+                      class="mt-1 block w-full rounded-md border-stone-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
                     />
-                    <p class="mt-1 text-sm text-gray-500">
+                    <p class="mt-1 text-sm text-stone-500">
                       {m.api_tokens_expiration_hint()}
                     </p>
                   </div>
@@ -496,11 +496,11 @@
               </div>
             </div>
           </div>
-          <div class="bg-gray-50 px-4 py-3 sm:flex sm:flex-row-reverse sm:px-6">
+          <div class="bg-stone-50 px-4 py-3 sm:flex sm:flex-row-reverse sm:px-6">
             <button
               type="submit"
               disabled={isCreating}
-              class="inline-flex w-full justify-center rounded-md bg-blue-600 px-4 py-2 text-base font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 sm:ml-3 sm:w-auto sm:text-sm"
+              class="inline-flex w-full justify-center rounded-md bg-primary-600 px-4 py-2 text-base font-medium text-white hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 sm:ml-3 sm:w-auto sm:text-sm"
             >
               {#if isCreating}
                 {m.api_tokens_creating()}
@@ -512,7 +512,7 @@
               type="button"
               onclick={closeCreateModal}
               disabled={isCreating}
-              class="mt-3 inline-flex w-full justify-center rounded-md border border-gray-300 bg-white px-4 py-2 text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 sm:mt-0 sm:w-auto sm:text-sm"
+              class="mt-3 inline-flex w-full justify-center rounded-md border border-stone-300 bg-surface-card px-4 py-2 text-base font-medium text-stone-700 hover:bg-stone-50 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 sm:mt-0 sm:w-auto sm:text-sm"
             >
               {m.api_tokens_cancel()}
             </button>
@@ -528,13 +528,13 @@
   <div class="fixed inset-0 z-10 overflow-y-auto" aria-labelledby="token-modal-title" role="dialog" aria-modal="true">
     <div class="flex min-h-screen items-end justify-center px-4 pb-20 pt-4 text-center sm:block sm:p-0">
       <!-- Background overlay -->
-      <div class="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity"></div>
+      <div class="fixed inset-0 bg-stone-500 bg-opacity-75 transition-opacity"></div>
 
       <!-- Center modal -->
       <span class="hidden sm:inline-block sm:h-screen sm:align-middle" aria-hidden="true">&#8203;</span>
 
-      <div class="inline-block transform overflow-hidden rounded-lg bg-white text-left align-bottom shadow-xl transition-all sm:my-8 sm:w-full sm:max-w-2xl sm:align-middle">
-        <div class="bg-white px-4 pb-4 pt-5 sm:p-6 sm:pb-4">
+      <div class="inline-block transform overflow-hidden rounded-lg bg-surface-card text-left align-bottom shadow-xl transition-all sm:my-8 sm:w-full sm:max-w-2xl sm:align-middle">
+        <div class="bg-surface-card px-4 pb-4 pt-5 sm:p-6 sm:pb-4">
           <div class="sm:flex sm:items-start">
             <div class="mx-auto flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-full bg-green-100 sm:mx-0 sm:h-10 sm:w-10">
               <svg class="h-6 w-6 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -542,21 +542,21 @@
               </svg>
             </div>
             <div class="mt-3 w-full text-center sm:ml-4 sm:mt-0 sm:text-left">
-              <h3 class="text-lg font-medium leading-6 text-gray-900" id="token-modal-title">
+              <h3 class="text-lg font-medium leading-6 text-stone-900" id="token-modal-title">
                 {m.api_tokens_created_title()}
               </h3>
               <div class="mt-4 space-y-4">
                 <!-- Token Name -->
                 <div>
-                  <div class="block text-sm font-medium text-gray-700">
+                  <div class="block text-sm font-medium text-stone-700">
                     {m.api_tokens_token_name_display()}
                   </div>
-                  <p class="mt-1 text-sm text-gray-900">{newTokenName}</p>
+                  <p class="mt-1 text-sm text-stone-900">{newTokenName}</p>
                 </div>
 
                 <!-- Token Value -->
                 <div>
-                  <div class="block text-sm font-medium text-gray-700">
+                  <div class="block text-sm font-medium text-stone-700">
                     {m.api_tokens_token_value_label()}
                   </div>
                   <div class="mt-1 flex space-x-2">
@@ -564,11 +564,11 @@
                       type="text"
                       readonly
                       value={newTokenValue}
-                      class="block w-full rounded-md border-gray-300 bg-gray-50 font-mono text-sm shadow-sm"
+                      class="block w-full rounded-md border-stone-300 bg-stone-50 font-mono text-sm shadow-sm"
                     />
                     <button
                       onclick={copyToClipboard}
-                      class="inline-flex items-center rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+                      class="inline-flex items-center rounded-md bg-primary-600 px-4 py-2 text-sm font-medium text-white hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2"
                     >
                       {#if isCopied}
                         {m.api_tokens_copied_button()}
@@ -603,11 +603,11 @@
             </div>
           </div>
         </div>
-        <div class="bg-gray-50 px-4 py-3 sm:flex sm:flex-row-reverse sm:px-6">
+        <div class="bg-stone-50 px-4 py-3 sm:flex sm:flex-row-reverse sm:px-6">
           <button
             type="button"
             onclick={closeTokenModal}
-            class="inline-flex w-full justify-center rounded-md bg-blue-600 px-4 py-2 text-base font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 sm:ml-3 sm:w-auto sm:text-sm"
+            class="inline-flex w-full justify-center rounded-md bg-primary-600 px-4 py-2 text-base font-medium text-white hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 sm:ml-3 sm:w-auto sm:text-sm"
           >
             {m.api_tokens_close_button()}
           </button>

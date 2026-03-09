@@ -21,10 +21,13 @@
   $: tagId = $page.params.tagId ?? '';
   $: locale = getLocale();
 
+  // Detection run ID from URL query param (passed by the species list page)
+  $: detectionRunId = ($page.url.searchParams.get('run') ?? undefined) as string | undefined;
+
   // Fetch species summary to display the species name in the page title
   $: summaryQuery = createQuery({
-    queryKey: ['species-summary', projectId, locale],
-    queryFn: () => fetchSpeciesSummary(projectId, { locale }),
+    queryKey: ['species-summary', projectId, locale, detectionRunId],
+    queryFn: () => fetchSpeciesSummary(projectId, { locale, detection_run_id: detectionRunId }),
   });
 
   $: speciesSummary = $summaryQuery.data?.items ?? [];
@@ -39,8 +42,8 @@
 
   // Fetch temporal data only when the section is expanded
   $: temporalQuery = createQuery({
-    queryKey: ['temporal-data', projectId, locale],
-    queryFn: () => fetchTemporalData(projectId, undefined, locale),
+    queryKey: ['temporal-data', projectId, locale, detectionRunId],
+    queryFn: () => fetchTemporalData(projectId, undefined, locale, detectionRunId),
     enabled: !!projectId && activityExpanded,
   });
 
@@ -59,7 +62,7 @@
       <!-- Back button -->
       <a
         href={backUrl}
-        class="inline-flex items-center gap-1 rounded border border-stone-300 bg-white px-3 py-1.5 text-sm text-stone-600 hover:bg-stone-50 focus:outline-none focus:ring-2 focus:ring-blue-400"
+        class="inline-flex items-center gap-1 rounded border border-stone-300 bg-surface-card px-3 py-1.5 text-sm text-stone-600 hover:bg-stone-50 focus:outline-none focus:ring-2 focus:ring-primary-400"
         aria-label={m.detection_all_species_back()}
       >
         <svg class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
@@ -115,7 +118,7 @@
   </div>
 
   <!-- Activity Pattern collapsible section -->
-  <div class="mb-6 overflow-hidden rounded-lg border border-stone-200 bg-white">
+  <div class="mb-6 overflow-hidden rounded-lg border border-card bg-surface-card">
     <button
       type="button"
       on:click={() => (activityExpanded = !activityExpanded)}
@@ -195,5 +198,5 @@
   </div>
 
   <!-- Detection review grid -->
-  <DetectionReviewGrid {projectId} {tagId} />
+  <DetectionReviewGrid {projectId} {tagId} {detectionRunId} />
 </div>

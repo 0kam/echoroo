@@ -50,6 +50,7 @@ class DetectionExportService:
         status: DetectionStatus | None = None,
         tag_id: UUID | None = None,
         dataset_id: UUID | None = None,
+        detection_run_id: UUID | None = None,
     ) -> str:
         """Export detections as a CSV-formatted string.
 
@@ -61,6 +62,7 @@ class DetectionExportService:
             status: Optional detection status filter
             tag_id: Optional tag UUID filter
             dataset_id: Optional dataset UUID filter
+            detection_run_id: Optional detection run UUID filter
 
         Returns:
             CSV content as a string
@@ -70,6 +72,7 @@ class DetectionExportService:
             status=status,
             tag_id=tag_id,
             dataset_id=dataset_id,
+            detection_run_id=detection_run_id,
         )
 
         output = io.StringIO()
@@ -114,6 +117,7 @@ class DetectionExportService:
         self,
         project_id: UUID,
         dataset_id: UUID | None = None,
+        detection_run_id: UUID | None = None,
     ) -> bytes:
         """Export ML training dataset as ZIP bytes.
 
@@ -129,6 +133,7 @@ class DetectionExportService:
         Args:
             project_id: Project UUID to scope the export
             dataset_id: Optional dataset UUID filter
+            detection_run_id: Optional detection run UUID filter
 
         Returns:
             ZIP archive as bytes
@@ -138,6 +143,7 @@ class DetectionExportService:
             project_id=project_id,
             status=DetectionStatus.CONFIRMED,
             dataset_id=dataset_id,
+            detection_run_id=detection_run_id,
         )
 
         # Fetch confirmed regions for deriving negative examples
@@ -254,6 +260,7 @@ class DetectionExportService:
         status: DetectionStatus | None = None,
         tag_id: UUID | None = None,
         dataset_id: UUID | None = None,
+        detection_run_id: UUID | None = None,
     ) -> list[Annotation]:
         """Fetch annotations with all relationships needed for export.
 
@@ -264,6 +271,7 @@ class DetectionExportService:
             status: Optional status filter
             tag_id: Optional tag UUID filter
             dataset_id: Optional dataset UUID filter
+            detection_run_id: Optional detection run UUID filter
 
         Returns:
             List of Annotation instances with eagerly loaded relationships
@@ -288,6 +296,8 @@ class DetectionExportService:
             query = query.where(Annotation.tag_id == tag_id)
         if dataset_id is not None:
             query = query.where(Recording.dataset_id == dataset_id)
+        if detection_run_id is not None:
+            query = query.where(Annotation.detection_run_id == detection_run_id)
 
         result = await self.db.execute(query)
         return list(result.scalars().all())

@@ -115,11 +115,11 @@
   }
 </script>
 
-<div class="rounded-lg border border-gray-200 bg-white p-6">
+<div class="rounded-lg border border-card bg-surface-card p-6">
   <div class="mb-4 flex items-center gap-2">
     <!-- Embedding/vector icon (SVG) -->
     <svg
-      class="h-5 w-5 text-violet-500"
+      class="h-5 w-5 text-primary-500"
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"
@@ -139,12 +139,12 @@
       <line x1="8" y1="8" x2="16" y2="16" />
       <line x1="16" y1="8" x2="8" y2="16" />
     </svg>
-    <h3 class="text-base font-semibold text-gray-900">{m.embedding_title()}</h3>
+    <h3 class="text-base font-semibold text-stone-900">{m.embedding_title()}</h3>
   </div>
 
   {#if $runsQuery.isLoading}
-    <div class="flex items-center gap-2 text-sm text-gray-500">
-      <svg class="h-4 w-4 animate-spin text-blue-600" fill="none" viewBox="0 0 24 24">
+    <div class="flex items-center gap-2 text-sm text-stone-500">
+      <svg class="h-4 w-4 animate-spin text-primary-600" fill="none" viewBox="0 0 24 24">
         <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
         <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
       </svg>
@@ -159,13 +159,13 @@
     <div class="space-y-4">
       <!-- Model selector -->
       <div>
-        <label for="embedding-model-select" class="mb-1 block text-sm font-medium text-gray-700">
+        <label for="embedding-model-select" class="mb-1 block text-sm font-medium text-stone-700">
           {m.embedding_select_model()}
         </label>
         <select
           id="embedding-model-select"
           bind:value={selectedModel}
-          class="block w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-violet-500 focus:outline-none focus:ring-1 focus:ring-violet-500"
+          class="block w-full rounded-md border border-stone-300 bg-surface-card px-3 py-2 text-sm text-stone-900 shadow-sm focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
         >
           {#if $modelsQuery.data}
             {#each $modelsQuery.data as model (model)}
@@ -180,13 +180,13 @@
       </div>
 
       <div class="flex items-center justify-between gap-4">
-        <p class="text-sm text-gray-500">
+        <p class="text-sm text-stone-500">
           {m.embedding_desc()}
         </p>
         <button
           onclick={() => { mutationError = null; $createMut.mutate(); }}
           disabled={isActing}
-          class="flex-shrink-0 rounded-md bg-violet-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-50"
+          class="flex-shrink-0 rounded-md bg-primary-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {$createMut.isPending ? 'Starting...' : m.embedding_run()}
         </button>
@@ -196,25 +196,25 @@
     <!-- Processing state -->
     <div class="flex items-center justify-between gap-4">
       <div class="flex items-center gap-3">
-        <svg class="h-5 w-5 animate-spin text-blue-600" fill="none" viewBox="0 0 24 24">
+        <svg class="h-5 w-5 animate-spin text-primary-600" fill="none" viewBox="0 0 24 24">
           <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
           <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
         </svg>
         <div>
-          <p class="text-sm font-medium text-blue-700">
+          <p class="text-sm font-medium text-primary-700">
             {m.embedding_running({ model: runModelLabel(latestRun) })}
           </p>
           {#if latestRun.status === 'pending'}
-            <p class="text-xs text-blue-500">Queued, waiting to start</p>
+            <p class="text-xs text-primary-500">Queued, waiting to start</p>
           {:else}
-            <p class="text-xs text-blue-500">Processing recordings</p>
+            <p class="text-xs text-primary-500">Processing recordings</p>
           {/if}
         </div>
       </div>
       <button
         onclick={() => { if (latestRun) $cancelMut.mutate(latestRun.id); }}
         disabled={isActing}
-        class="flex-shrink-0 rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-600 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+        class="flex-shrink-0 rounded-md border border-stone-300 bg-surface-card px-3 py-1.5 text-sm font-medium text-stone-600 transition-colors hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-50"
       >
         {$cancelMut.isPending ? 'Cancelling...' : 'Cancel'}
       </button>
@@ -223,17 +223,17 @@
     <!-- Completed state -->
     <div class="flex items-center justify-between gap-4">
       <div class="flex items-center gap-3">
-        <div class="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-violet-600">
+        <div class="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-primary-600">
           <svg class="h-4 w-4 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
             <polyline points="20 6 9 17 4 12"></polyline>
           </svg>
         </div>
         <div>
-          <p class="text-sm font-medium text-violet-800">
+          <p class="text-sm font-medium text-primary-800">
             {m.embedding_completed({ model: runModelLabel(latestRun) })} — {m.embedding_count({ count: latestRun.annotation_count })}
           </p>
           {#if latestRun.completed_at}
-            <p class="text-xs text-gray-400">
+            <p class="text-xs text-stone-400">
               Finished {new Date(latestRun.completed_at).toLocaleString(getLocale())}
             </p>
           {/if}
@@ -243,7 +243,7 @@
         <button
           onclick={() => { if (latestRun) $retryMut.mutate(latestRun.id); }}
           disabled={isActing}
-          class="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-600 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+          class="rounded-md border border-stone-300 bg-surface-card px-3 py-1.5 text-sm font-medium text-stone-600 transition-colors hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {$retryMut.isPending ? 'Retrying...' : 'Re-run'}
         </button>
@@ -285,17 +285,17 @@
 
   <!-- Recent embedding runs history -->
   {#if $runsQuery.data && $runsQuery.data.items.length > 1}
-    <div class="mt-4 border-t border-gray-100 pt-4">
-      <p class="mb-2 text-xs font-medium uppercase tracking-wider text-gray-400">Recent Runs</p>
+    <div class="mt-4 border-t border-stone-100 pt-4">
+      <p class="mb-2 text-xs font-medium uppercase tracking-wider text-stone-400">Recent Runs</p>
       <ul class="space-y-1.5">
         {#each $runsQuery.data.items as run (run.id)}
-          <li class="flex items-center justify-between gap-2 text-xs text-gray-500">
-            <span class="font-medium text-gray-700">{modelDisplayName(run.model_name)} v{run.model_version}</span>
+          <li class="flex items-center justify-between gap-2 text-xs text-stone-500">
+            <span class="font-medium text-stone-700">{modelDisplayName(run.model_name)} v{run.model_version}</span>
             <span class={
-              run.status === 'completed' ? 'text-violet-600' :
+              run.status === 'completed' ? 'text-primary-600' :
               run.status === 'failed' ? 'text-red-500' :
-              run.status === 'running' ? 'text-blue-500' :
-              'text-gray-400'
+              run.status === 'running' ? 'text-primary-500' :
+              'text-stone-400'
             }>
               {run.status === 'completed' ? 'Completed' :
                run.status === 'failed' ? 'Failed' :
@@ -303,7 +303,7 @@
                run.status === 'pending' ? 'Pending' : run.status}
             </span>
             {#if run.completed_at}
-              <span class="ml-auto text-gray-400">{new Date(run.completed_at).toLocaleDateString(getLocale())}</span>
+              <span class="ml-auto text-stone-400">{new Date(run.completed_at).toLocaleDateString(getLocale())}</span>
             {/if}
           </li>
         {/each}

@@ -81,15 +81,15 @@
   <title>{m.profile_page_title()}</title>
 </svelte:head>
 
-<div class="min-h-screen bg-gray-50">
+<div class="min-h-screen bg-stone-50">
   <!-- Header -->
-  <header class="bg-white shadow">
+  <header class="bg-surface-card shadow">
     <div class="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
       <div class="flex items-center justify-between">
-        <h1 class="text-3xl font-bold text-gray-900">{m.profile_heading()}</h1>
+        <h1 class="text-3xl font-bold text-stone-900">{m.profile_heading()}</h1>
         <a
           href={localizeHref('/dashboard')}
-          class="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+          class="rounded-md border border-stone-300 bg-surface-card px-4 py-2 text-sm font-medium text-stone-700 hover:bg-stone-50 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2"
         >
           {m.profile_back_to_dashboard()}
         </a>
@@ -99,12 +99,12 @@
 
   <!-- Main Content -->
   <main class="mx-auto max-w-3xl px-4 py-8 sm:px-6 lg:px-8">
-    <div class="overflow-hidden rounded-lg bg-white shadow">
+    <div class="overflow-hidden rounded-lg bg-surface-card shadow">
       <div class="px-4 py-5 sm:p-6">
-        <h2 class="text-lg font-medium leading-6 text-gray-900">
+        <h2 class="text-lg font-medium leading-6 text-stone-900">
           {m.profile_info_heading()}
         </h2>
-        <p class="mt-1 text-sm text-gray-600">
+        <p class="mt-1 text-sm text-stone-600">
           {m.profile_info_description()}
         </p>
 
@@ -143,7 +143,7 @@
         <form class="mt-6 space-y-6" onsubmit={handleSubmit}>
           <!-- Email (read-only) -->
           <div>
-            <label for="email" class="block text-sm font-medium text-gray-700">
+            <label for="email" class="block text-sm font-medium text-stone-700">
               {m.profile_email_label()}
             </label>
             <div class="mt-1">
@@ -153,17 +153,17 @@
                 name="email"
                 value={authStore.user?.email ?? ''}
                 disabled
-                class="block w-full rounded-md border-gray-300 bg-gray-100 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+                class="block w-full rounded-md border-stone-300 bg-stone-100 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
               />
             </div>
-            <p class="mt-1 text-sm text-gray-500">
+            <p class="mt-1 text-sm text-stone-500">
               {m.profile_email_cannot_change()}
             </p>
           </div>
 
           <!-- Display Name -->
           <div>
-            <label for="display_name" class="block text-sm font-medium text-gray-700">
+            <label for="display_name" class="block text-sm font-medium text-stone-700">
               {m.profile_display_name_label()}
             </label>
             <div class="mt-1">
@@ -174,17 +174,17 @@
                 bind:value={displayName}
                 maxlength="100"
                 placeholder={m.profile_display_name_placeholder()}
-                class="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+                class="block w-full rounded-md border-stone-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
               />
             </div>
-            <p class="mt-1 text-sm text-gray-500">
+            <p class="mt-1 text-sm text-stone-500">
               {m.profile_display_name_hint()}
             </p>
           </div>
 
           <!-- Organization -->
           <div>
-            <label for="organization" class="block text-sm font-medium text-gray-700">
+            <label for="organization" class="block text-sm font-medium text-stone-700">
               {m.profile_organization_label()}
             </label>
             <div class="mt-1">
@@ -195,21 +195,21 @@
                 bind:value={organization}
                 maxlength="200"
                 placeholder={m.profile_organization_placeholder()}
-                class="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+                class="block w-full rounded-md border-stone-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
               />
             </div>
-            <p class="mt-1 text-sm text-gray-500">
+            <p class="mt-1 text-sm text-stone-500">
               {m.profile_organization_hint()}
             </p>
           </div>
 
           <!-- Account Information -->
-          <div class="border-t border-gray-200 pt-6">
-            <h3 class="text-sm font-medium text-gray-700">{m.profile_account_info_heading()}</h3>
+          <div class="border-t border-stone-200 pt-6">
+            <h3 class="text-sm font-medium text-stone-700">{m.profile_account_info_heading()}</h3>
             <dl class="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div>
-                <dt class="text-sm font-medium text-gray-500">{m.profile_status_label()}</dt>
-                <dd class="mt-1 text-sm text-gray-900">
+                <dt class="text-sm font-medium text-stone-500">{m.profile_status_label()}</dt>
+                <dd class="mt-1 text-sm text-stone-900">
                   <span
                     class="inline-flex rounded-full px-2 py-1 text-xs font-semibold leading-5"
                     class:bg-green-100={authStore.user?.is_verified}
@@ -220,23 +220,23 @@
                     {authStore.user?.is_verified ? m.profile_status_verified() : m.profile_status_unverified()}
                   </span>
                   {#if authStore.user?.is_superuser}
-                    <span class="ml-2 inline-flex rounded-full bg-purple-100 px-2 py-1 text-xs font-semibold leading-5 text-purple-800">
+                    <span class="ml-2 inline-flex rounded-full bg-primary-100 px-2 py-1 text-xs font-semibold leading-5 text-primary-800">
                       {m.profile_status_admin()}
                     </span>
                   {/if}
                 </dd>
               </div>
               <div>
-                <dt class="text-sm font-medium text-gray-500">{m.profile_member_since_label()}</dt>
-                <dd class="mt-1 text-sm text-gray-900">
+                <dt class="text-sm font-medium text-stone-500">{m.profile_member_since_label()}</dt>
+                <dd class="mt-1 text-sm text-stone-900">
                   {authStore.user?.created_at
                     ? new Date(authStore.user.created_at).toLocaleDateString(getLocale())
                     : '-'}
                 </dd>
               </div>
               <div>
-                <dt class="text-sm font-medium text-gray-500">{m.profile_last_login_label()}</dt>
-                <dd class="mt-1 text-sm text-gray-900">
+                <dt class="text-sm font-medium text-stone-500">{m.profile_last_login_label()}</dt>
+                <dd class="mt-1 text-sm text-stone-900">
                   {authStore.user?.last_login_at
                     ? new Date(authStore.user.last_login_at).toLocaleString(getLocale())
                     : m.profile_last_login_never()}
@@ -246,19 +246,19 @@
           </div>
 
           <!-- Form Actions -->
-          <div class="flex justify-end space-x-3 border-t border-gray-200 pt-6">
+          <div class="flex justify-end space-x-3 border-t border-stone-200 pt-6">
             <button
               type="button"
               onclick={handleReset}
               disabled={!hasChanges || isSubmitting}
-              class="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+              class="rounded-md border border-stone-300 bg-surface-card px-4 py-2 text-sm font-medium text-stone-700 hover:bg-stone-50 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {m.profile_reset_button()}
             </button>
             <button
               type="submit"
               disabled={!hasChanges || isSubmitting}
-              class="inline-flex items-center rounded-md border border-transparent bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+              class="inline-flex items-center rounded-md border border-transparent bg-primary-600 px-4 py-2 text-sm font-medium text-white hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {#if isSubmitting}
                 <svg class="-ml-1 mr-2 h-4 w-4 animate-spin" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
@@ -274,19 +274,19 @@
         </form>
 
         <!-- Additional Settings -->
-        <div class="mt-8 space-y-6 border-t border-gray-200 pt-6">
+        <div class="mt-8 space-y-6 border-t border-stone-200 pt-6">
           <!-- Security Link -->
           <div>
             <a
               href={localizeHref('/settings')}
-              class="inline-flex items-center text-sm font-medium text-blue-600 hover:text-blue-500"
+              class="inline-flex items-center text-sm font-medium text-primary-600 hover:text-primary-500"
             >
               <svg class="mr-2 h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
               </svg>
               {m.profile_security_link()}
             </a>
-            <p class="mt-1 text-sm text-gray-500">
+            <p class="mt-1 text-sm text-stone-500">
               {m.profile_security_description()}
             </p>
           </div>
@@ -295,14 +295,14 @@
           <div>
             <a
               href={localizeHref('/profile/api-tokens')}
-              class="inline-flex items-center text-sm font-medium text-blue-600 hover:text-blue-500"
+              class="inline-flex items-center text-sm font-medium text-primary-600 hover:text-primary-500"
             >
               <svg class="mr-2 h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
               </svg>
               {m.profile_api_tokens_link()}
             </a>
-            <p class="mt-1 text-sm text-gray-500">
+            <p class="mt-1 text-sm text-stone-500">
               {m.profile_api_tokens_description()}
             </p>
           </div>

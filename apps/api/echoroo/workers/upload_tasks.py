@@ -34,6 +34,7 @@ from echoroo.core.settings import get_settings
 from echoroo.models.enums import DatetimeParseStatus, UploadFileStatus, UploadSessionStatus
 from echoroo.models.recording import Recording
 from echoroo.models.upload import UploadFile, UploadSession
+from echoroo.repositories.dataset import DatasetRepository
 from echoroo.repositories.recording import RecordingRepository
 from echoroo.repositories.upload import UploadFileRepository, UploadSessionRepository
 from echoroo.workers.celery_app import app
@@ -167,6 +168,7 @@ def _parse_datetime_from_filename(
     filename: str,
     pattern: str | None,
     format_str: str | None,
+    timezone: str | None = None,
 ) -> tuple[datetime | None, str | None]:
     """Parse a datetime from a filename using regex pattern and strptime format.
 
@@ -174,6 +176,9 @@ def _parse_datetime_from_filename(
         filename: Original filename string.
         pattern: Regex pattern to extract the datetime portion.
         format_str: strptime format string.
+        timezone: Optional IANA timezone string (e.g., 'Asia/Tokyo'). When provided,
+            the parsed naive datetime is made timezone-aware by attaching this tzinfo.
+            PostgreSQL will store it correctly as UTC internally.
 
     Returns:
         Tuple of (parsed datetime or None, error message or None).
@@ -190,6 +195,10 @@ def _parse_datetime_from_filename(
             return None, "Pattern did not match filename"
         datetime_str = match.group(0)
         parsed = datetime.strptime(datetime_str, format_str)
+        if timezone:
+            from zoneinfo import ZoneInfo
+            tz = ZoneInfo(timezone)
+            parsed = parsed.replace(tzinfo=tz)
         return parsed, None
     except re.error as exc:
         return None, f"Invalid regex pattern: {exc}"
@@ -420,6 +429,7 @@ async def _run_import(
     session_id: str,
     datetime_pattern: str | None,
     datetime_format: str | None,
+    datetime_timezone: str | None = None,
 ) -> dict[str, Any]:
     """Async implementation of import from upload session."""
     session_factory = _get_session_factory()
@@ -455,9 +465,10 @@ async def _run_import(
         project_id = dataset.project_id
         dataset_id = dataset.id
 
-        # Resolve datetime pattern/format: prefer task arguments, fall back to dataset settings
+        # Resolve datetime pattern/format/timezone: prefer task arguments, fall back to dataset settings
         effective_pattern = datetime_pattern or dataset.datetime_pattern
         effective_format = datetime_format or dataset.datetime_format
+        effective_timezone = datetime_timezone or dataset.datetime_timezone
 
         imported_count = 0
         failed_count = 0
@@ -522,6 +533,7 @@ async def _run_import(
                 file.original_filename,
                 effective_pattern,
                 effective_format,
+                effective_timezone,
             )
 
             if parse_error is not None:
@@ -704,6 +716,7 @@ def import_from_upload_session(
     session_id: str,
     datetime_pattern: str | None = None,
     datetime_format: str | None = None,
+    datetime_timezone: str | None = None,
 ) -> dict[str, Any]:
     """Create Recording records from a validated upload session.
 
@@ -715,13 +728,14 @@ def import_from_upload_session(
         session_id: Upload session UUID string.
         datetime_pattern: Override regex for datetime extraction (optional).
         datetime_format: Override strptime format string (optional).
+        datetime_timezone: Override IANA timezone for datetime parsing (optional).
 
     Returns:
         Summary dict with imported_files and failed_files counts.
     """
     logger.info("Starting import for session %s", session_id)
     try:
-        return asyncio.run(_run_import(session_id, datetime_pattern, datetime_format))
+        return asyncio.run(_run_import(session_id, datetime_pattern, datetime_format, datetime_timezone))
     except Exception as exc:  # noqa: BLE001
         logger.exception("Import failed for session %s: %s", session_id, exc)
         with contextlib.suppress(Exception):
@@ -733,6 +747,7 @@ async def _run_reparse_datetimes(
     dataset_id: str,
     pattern: str,
     format_str: str,
+    timezone: str | None = None,
 ) -> dict[str, Any]:
     """Async implementation of datetime re-parsing for all recordings in a dataset."""
     session_factory = _get_session_factory()
@@ -740,10 +755,18 @@ async def _run_reparse_datetimes(
 
     async with session_factory() as db:
         recording_repo = RecordingRepository(db)
+        dataset_repo = DatasetRepository(db)
 
         total = await recording_repo.count_by_dataset(uuid_dataset_id)
         updated = 0
         failed = 0
+
+        # Update dataset's datetime_timezone field when saving
+        dataset = await dataset_repo.get_by_id(uuid_dataset_id)
+        if dataset is not None:
+            dataset.datetime_timezone = timezone
+            await dataset_repo.update(dataset)
+            await db.commit()
 
         # Process in batches of 100
         page = 1
@@ -760,7 +783,7 @@ async def _run_reparse_datetimes(
 
             for recording in recordings_page:
                 parsed_dt, parse_error = _parse_datetime_from_filename(
-                    recording.filename, pattern, format_str
+                    recording.filename, pattern, format_str, timezone
                 )
 
                 if parse_error is not None:
@@ -806,6 +829,7 @@ def reparse_recording_datetimes(
     dataset_id: str,
     pattern: str,
     format_str: str,
+    timezone: str | None = None,
 ) -> dict[str, Any]:
     """Re-parse datetime from filenames for all recordings in a dataset.
 
@@ -818,13 +842,14 @@ def reparse_recording_datetimes(
         dataset_id: Dataset UUID string.
         pattern: Regex pattern for datetime extraction.
         format_str: strptime format string.
+        timezone: Optional IANA timezone string (e.g., 'Asia/Tokyo').
 
     Returns:
         Summary dict with total, updated, and failed counts.
     """
     logger.info("Starting datetime re-parse for dataset %s", dataset_id)
     try:
-        return asyncio.run(_run_reparse_datetimes(dataset_id, pattern, format_str))
+        return asyncio.run(_run_reparse_datetimes(dataset_id, pattern, format_str, timezone))
     except Exception as exc:  # noqa: BLE001
         logger.exception("Datetime re-parse failed for dataset %s: %s", dataset_id, exc)
         raise self.retry(exc=exc, countdown=30) from exc

@@ -19,7 +19,7 @@ const API_BASE = '/api/v1';
 // Query param helpers
 // ============================================
 
-function buildDetectionParams(params?: DetectionFilters & { page?: number; page_size?: number }): string {
+function buildDetectionParams(params?: DetectionFilters & { page?: number; page_size?: number; detection_run_id?: string }): string {
   if (!params) return '';
   const query = new URLSearchParams();
   if (params.tag_id !== undefined) query.set('tag_id', params.tag_id);
@@ -28,6 +28,7 @@ function buildDetectionParams(params?: DetectionFilters & { page?: number; page_
   if (params.confidence_max !== undefined) query.set('confidence_max', String(params.confidence_max));
   if (params.dataset_id !== undefined) query.set('dataset_id', params.dataset_id);
   if (params.recording_id !== undefined) query.set('recording_id', params.recording_id);
+  if (params.detection_run_id !== undefined) query.set('detection_run_id', params.detection_run_id);
   if (params.page !== undefined) query.set('page', String(params.page));
   if (params.page_size !== undefined) query.set('page_size', String(params.page_size));
   const str = query.toString();
@@ -43,12 +44,13 @@ function buildDetectionParams(params?: DetectionFilters & { page?: number; page_
  */
 export async function fetchSpeciesSummary(
   projectId: string,
-  params?: { dataset_id?: string; search?: string; locale?: string }
+  params?: { dataset_id?: string; search?: string; locale?: string; detection_run_id?: string }
 ): Promise<SpeciesSummaryResponse> {
   const query = new URLSearchParams();
   if (params?.dataset_id) query.set('dataset_id', params.dataset_id);
   if (params?.search) query.set('search', params.search);
   if (params?.locale) query.set('locale', params.locale);
+  if (params?.detection_run_id) query.set('detection_run_id', params.detection_run_id);
   const qs = query.toString() ? `?${query.toString()}` : '';
   const response = await fetchWithErrorHandling(
     `${API_BASE}/projects/${projectId}/detections/species-summary${qs}`,
@@ -66,7 +68,7 @@ export async function fetchSpeciesSummary(
  */
 export async function fetchDetections(
   projectId: string,
-  params?: DetectionFilters & { page?: number; page_size?: number }
+  params?: DetectionFilters & { page?: number; page_size?: number; detection_run_id?: string }
 ): Promise<DetectionListResponse> {
   const qs = buildDetectionParams(params);
   const response = await fetchWithErrorHandling(
@@ -174,11 +176,13 @@ export async function createDetection(
 export async function fetchTemporalData(
   projectId: string,
   datasetId?: string,
-  locale?: string
+  locale?: string,
+  detectionRunId?: string
 ): Promise<DetectionTemporalDataResponse> {
   const params = new URLSearchParams();
   if (datasetId) params.set('dataset_id', datasetId);
   if (locale) params.set('locale', locale);
+  if (detectionRunId) params.set('detection_run_id', detectionRunId);
   const qs = params.toString() ? `?${params.toString()}` : '';
   const response = await fetchWithErrorHandling(
     `${API_BASE}/projects/${projectId}/detections/temporal-data${qs}`,

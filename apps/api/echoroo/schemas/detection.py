@@ -156,6 +156,7 @@ class DetectionTemporalDataResponse(BaseModel):
 
     project_id: UUID = Field(..., description="Project ID")
     dataset_id: UUID | None = Field(None, description="Dataset ID filter, if applied")
+    detection_run_id: UUID | None = Field(None, description="Detection run ID filter, if applied")
     date_range: tuple[DateType, DateType] | None = Field(
         None, description="Min and max dates covered by the data"
     )

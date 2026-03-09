@@ -139,14 +139,14 @@
   }
 </script>
 
-<div class="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center px-4 sm:px-6 lg:px-8">
+<div class="min-h-screen bg-gradient-to-br from-primary-50 to-primary-100 flex items-center justify-center px-4 sm:px-6 lg:px-8">
   <div class="max-w-md w-full">
     <!-- Card Container -->
-    <div class="bg-white shadow-xl rounded-lg p-8">
+    <div class="bg-surface-card shadow-xl rounded-lg p-8">
       <!-- Header -->
       <div class="text-center mb-8">
-        <h1 class="text-3xl font-bold text-gray-900 mb-2">{m.setup_page_title()}</h1>
-        <p class="text-gray-600">{m.setup_create_admin()}</p>
+        <h1 class="text-3xl font-bold text-stone-900 mb-2">{m.setup_page_title()}</h1>
+        <p class="text-stone-600">{m.setup_create_admin()}</p>
       </div>
 
       <!-- Error Message -->
@@ -160,7 +160,7 @@
       <form onsubmit={handleSubmit} class="space-y-6">
         <!-- Email Field -->
         <div>
-          <label for="email" class="block text-sm font-medium text-gray-700 mb-1">
+          <label for="email" class="block text-sm font-medium text-stone-700 mb-1">
             {m.setup_email_label()}
           </label>
           <input
@@ -169,7 +169,7 @@
             bind:value={email}
             onblur={handleEmailBlur}
             disabled={isLoading}
-            class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 disabled:bg-gray-100 disabled:cursor-not-allowed"
+            class="w-full px-3 py-2 border border-stone-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 disabled:bg-stone-100 disabled:cursor-not-allowed"
             placeholder={m.setup_email_placeholder()}
             autocomplete="email"
           />
@@ -180,7 +180,7 @@
 
         <!-- Password Field -->
         <div>
-          <label for="password" class="block text-sm font-medium text-gray-700 mb-1">
+          <label for="password" class="block text-sm font-medium text-stone-700 mb-1">
             {m.setup_password_label()}
           </label>
           <input
@@ -189,20 +189,20 @@
             bind:value={password}
             onblur={handlePasswordBlur}
             disabled={isLoading}
-            class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 disabled:bg-gray-100 disabled:cursor-not-allowed"
+            class="w-full px-3 py-2 border border-stone-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 disabled:bg-stone-100 disabled:cursor-not-allowed"
             placeholder={m.setup_password_placeholder()}
             autocomplete="new-password"
           />
           {#if passwordError}
             <p class="mt-1 text-sm text-red-600">{passwordError}</p>
           {:else}
-            <p class="mt-1 text-xs text-gray-500">{m.setup_password_hint()}</p>
+            <p class="mt-1 text-xs text-stone-500">{m.setup_password_hint()}</p>
           {/if}
         </div>
 
         <!-- Confirm Password Field -->
         <div>
-          <label for="confirmPassword" class="block text-sm font-medium text-gray-700 mb-1">
+          <label for="confirmPassword" class="block text-sm font-medium text-stone-700 mb-1">
             {m.setup_confirm_password_label()}
           </label>
           <input
@@ -211,7 +211,7 @@
             bind:value={confirmPassword}
             onblur={handleConfirmPasswordBlur}
             disabled={isLoading}
-            class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 disabled:bg-gray-100 disabled:cursor-not-allowed"
+            class="w-full px-3 py-2 border border-stone-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 disabled:bg-stone-100 disabled:cursor-not-allowed"
             placeholder={m.setup_confirm_password_placeholder()}
             autocomplete="new-password"
           />
@@ -222,15 +222,15 @@
 
         <!-- Display Name Field (Optional) -->
         <div>
-          <label for="displayName" class="block text-sm font-medium text-gray-700 mb-1">
-            {m.setup_display_name_label()} <span class="text-gray-400 text-xs">{m.setup_display_name_optional()}</span>
+          <label for="displayName" class="block text-sm font-medium text-stone-700 mb-1">
+            {m.setup_display_name_label()} <span class="text-stone-400 text-xs">{m.setup_display_name_optional()}</span>
           </label>
           <input
             id="displayName"
             type="text"
             bind:value={displayName}
             disabled={isLoading}
-            class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 disabled:bg-gray-100 disabled:cursor-not-allowed"
+            class="w-full px-3 py-2 border border-stone-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 disabled:bg-stone-100 disabled:cursor-not-allowed"
             placeholder={m.setup_display_name_placeholder()}
             autocomplete="name"
           />
@@ -240,7 +240,7 @@
         <button
           type="submit"
           disabled={isLoading}
-          class="w-full py-3 px-4 bg-indigo-600 hover:bg-indigo-700 text-white font-medium rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
+          class="w-full py-3 px-4 bg-primary-600 hover:bg-primary-700 text-white font-medium rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:bg-stone-400 disabled:cursor-not-allowed transition-colors"
         >
           {#if isLoading}
             <span class="flex items-center justify-center">
@@ -259,7 +259,7 @@
 
     <!-- Footer Info -->
     <div class="mt-6 text-center">
-      <p class="text-sm text-gray-600">
+      <p class="text-sm text-stone-600">
         {m.setup_footer()}
       </p>
     </div>
