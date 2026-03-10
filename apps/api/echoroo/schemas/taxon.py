@@ -61,3 +61,24 @@ class TaxonSearchResult(BaseModel):
     rank: str | None
     is_non_biological: bool
     common_name: str | None = Field(None, description="Best matching vernacular name")
+
+
+class GBIFSpeciesResult(BaseModel):
+    """A single species result from the GBIF real-time search API."""
+
+    gbif_key: int
+    scientific_name: str
+    canonical_name: str
+    rank: str | None = None
+    vernacular_name: str | None = Field(
+        None, description="Best matching vernacular name from available vernacular names"
+    )
+    vernacular_names: list[dict[str, str]] | None = Field(
+        None,
+        description="All vernacular names as list of {name, language} dicts",
+    )
+    kingdom: str | None = None
+    phylum: str | None = None
+    class_name: str | None = None
+    order: str | None = None
+    family: str | None = None

@@ -6,10 +6,13 @@
  */
 
 import type {
+  BatchSearchResponse,
   EmbeddingStats,
+  SearchConfig,
   SimilarByAudioParams,
   SimilarByEmbeddingRequest,
   SimilaritySearchResponse,
+  TargetSpecies,
 } from '$lib/types/search';
 import { fetchWithErrorHandling, handleApiResponse } from './errors';
 
@@ -105,4 +108,72 @@ export async function fetchEmbeddingStats(
     { credentials: 'include' }
   );
   return handleApiResponse<EmbeddingStats>(response);
+}
+
+/**
+ * Run a multi-species batch similarity search using uploaded reference sounds.
+ *
+ * Sends species metadata and audio files as multipart/form-data. Each
+ * `SoundSource` with `origin === 'upload'` must have a `file` attached;
+ * URL-based sources (Phase 2) are forwarded as metadata only.
+ *
+ * @param projectId - Project UUID
+ * @param species - List of target species with reference sound sources
+ * @param config - Search configuration (model, threshold, per-species limit)
+ * @returns Batch search response with per-species match lists and timing info
+ */
+export async function searchBatch(
+  projectId: string,
+  species: TargetSpecies[],
+  config: SearchConfig
+): Promise<BatchSearchResponse> {
+  const formData = new FormData();
+
+  // Assign file_keys sequentially across all species / sources
+  let fileIndex = 0;
+
+  const speciesData = species.map((sp) => ({
+    tag_id: sp.tag_id,
+    scientific_name: sp.scientific_name,
+    sources: sp.sources.map((src) => {
+      if (src.origin === 'upload' && src.file) {
+        const fileKey = `source_${fileIndex}`;
+        formData.append(fileKey, src.file);
+        fileIndex++;
+        return {
+          type: 'upload' as const,
+          file_key: fileKey,
+          start_time: src.start_time ?? null,
+          end_time: src.end_time ?? null,
+        };
+      }
+      return {
+        type: src.origin as 'upload' | 'url',
+        source_url: src.source_url ?? null,
+        start_time: src.start_time ?? null,
+        end_time: src.end_time ?? null,
+      };
+    }),
+  }));
+
+  const metadataObj = {
+    species: speciesData,
+    model_name: config.model_name,
+    min_similarity: config.min_similarity,
+    limit_per_species: config.limit_per_species,
+    dataset_id: config.dataset_id || null,
+  };
+
+  formData.append('metadata', JSON.stringify(metadataObj));
+
+  const response = await fetchWithErrorHandling(
+    `${API_BASE}/projects/${projectId}/search/batch`,
+    {
+      method: 'POST',
+      credentials: 'include',
+      // Do not set Content-Type — browser sets it with the correct multipart boundary
+      body: formData,
+    }
+  );
+  return handleApiResponse<BatchSearchResponse>(response);
 }

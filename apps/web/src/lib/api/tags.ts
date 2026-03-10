@@ -105,7 +105,7 @@ export async function fetchGBIFSuggestions(
 ): Promise<GBIFSuggestion[]> {
   const searchParams = new URLSearchParams({ q: query, limit: limit.toString() });
   const response = await fetchWithErrorHandling(
-    `${API_BASE}/projects/${projectId}/tags/gbif-suggestions?${searchParams}`,
+    `${API_BASE}/projects/${projectId}/tags/gbif-suggest?${searchParams}`,
     { credentials: 'include' }
   );
   return handleApiResponse<GBIFSuggestion[]>(response);

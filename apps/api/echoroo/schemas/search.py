@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class SimilaritySearchRequest(BaseModel):
@@ -59,4 +60,103 @@ class EmbeddingStatsResponse(BaseModel):
     )
     by_dataset: dict[str, int] = Field(
         ..., description="Count per dataset UUID string, e.g. {'uuid': 1500}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Batch search schemas
+# ---------------------------------------------------------------------------
+
+
+class SourceConfig(BaseModel):
+    """Configuration for a single reference sound source."""
+
+    type: Literal["upload", "url"]
+    file_key: str | None = Field(
+        default=None,
+        description="References multipart form field name (e.g. 'source_0') for upload type",
+    )
+    source_url: str | None = Field(
+        default=None,
+        description="URL of the reference sound for url type (Phase 2)",
+    )
+    start_time: float | None = Field(
+        default=None,
+        description="Clip start time in seconds (None = beginning of file)",
+    )
+    end_time: float | None = Field(
+        default=None,
+        description="Clip end time in seconds (None = end of file)",
+    )
+
+
+class SpeciesSearchConfig(BaseModel):
+    """Configuration for searching one species."""
+
+    tag_id: str | None = Field(
+        default=None,
+        description="Existing tag UUID; None for a custom (ad-hoc) species",
+    )
+    scientific_name: str = Field(..., description="Scientific name of the species to search for")
+    sources: list[SourceConfig] = Field(
+        ...,
+        description="Reference sound sources for this species (max 10)",
+    )
+
+    @field_validator("tag_id", mode="before")
+    @classmethod
+    def empty_str_to_none(cls, v: object) -> object:
+        """Convert empty string to None so callers don't need to distinguish."""
+        if isinstance(v, str) and v.strip() == "":
+            return None
+        return v
+
+
+class BatchSearchRequest(BaseModel):
+    """Metadata for a batch search request sent as the 'metadata' form field."""
+
+    species: list[SpeciesSearchConfig] = Field(
+        ...,
+        description="Species configurations to search (max 20)",
+    )
+    model_name: str = Field(default="perch", description="Model to use for embedding generation")
+    min_similarity: float = Field(
+        default=0.5, ge=0.0, le=1.0, description="Minimum cosine similarity threshold"
+    )
+    limit_per_species: int = Field(
+        default=20, ge=1, le=100, description="Maximum results returned per species"
+    )
+    dataset_id: str | None = Field(default=None, description="Optional dataset UUID filter")
+
+    @field_validator("dataset_id", mode="before")
+    @classmethod
+    def empty_str_to_none(cls, v: object) -> object:
+        """Convert empty string to None so callers don't need to distinguish."""
+        if isinstance(v, str) and v.strip() == "":
+            return None
+        return v
+
+
+class SpeciesMatchResult(BaseModel):
+    """Aggregated search results for a single species."""
+
+    scientific_name: str = Field(..., description="Scientific name of the species")
+    common_name: str | None = Field(default=None, description="Common name of the species")
+    matches: list[SimilarityResult] = Field(
+        ..., description="Matching audio segments ordered by descending similarity"
+    )
+
+
+class BatchSearchResponse(BaseModel):
+    """Response for a batch species search."""
+
+    results: dict[str, SpeciesMatchResult] = Field(
+        ...,
+        description=(
+            "Search results keyed by tag_id (or auto-generated key for custom species)"
+        ),
+    )
+    total_matches: int = Field(..., description="Total number of matches across all species")
+    search_duration_ms: int = Field(
+        ..., description="Wall-clock search duration in milliseconds"
     )

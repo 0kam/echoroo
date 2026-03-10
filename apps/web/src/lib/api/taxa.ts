@@ -3,7 +3,7 @@
  */
 
 import { apiClient } from './client';
-import type { TaxonDetail, TaxonListResponse, TaxonSearchResult } from '$lib/types/taxon';
+import type { GBIFSpeciesResult, TaxonDetail, TaxonListResponse, TaxonSearchResult } from '$lib/types/taxon';
 
 /**
  * Query parameters for listing taxa.
@@ -56,4 +56,16 @@ export async function searchTaxa(
   if (locale) searchParams.set('locale', locale);
   if (limit !== 20) searchParams.set('limit', String(limit));
   return apiClient.get<TaxonSearchResult[]>(`/api/v1/taxa/search?${searchParams.toString()}`);
+}
+
+/**
+ * Search the GBIF backbone taxonomy in real-time for species not yet in the local database.
+ *
+ * @param q - Search query string (scientific name or vernacular name)
+ * @param limit - Maximum number of results to return (default: 10)
+ */
+export async function searchGBIF(q: string, limit: number = 10): Promise<GBIFSpeciesResult[]> {
+  const searchParams = new URLSearchParams({ q });
+  if (limit !== 10) searchParams.set('limit', String(limit));
+  return apiClient.get<GBIFSpeciesResult[]>(`/api/v1/taxa/gbif-search?${searchParams.toString()}`);
 }
