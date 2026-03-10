@@ -67,6 +67,35 @@ export interface TaxonListResponse {
 }
 
 /**
+ * Species result returned by the GBIF real-time search endpoint.
+ * Represents a species from the GBIF backbone that may not yet be in the local database.
+ */
+export interface GBIFSpeciesResult {
+  /** GBIF backbone taxon key */
+  gbif_key: number;
+  /** Full scientific name including authorship */
+  scientific_name: string;
+  /** Canonical scientific name without authorship */
+  canonical_name: string;
+  /** Taxonomic rank (e.g. "SPECIES", "GENUS"); null if unknown */
+  rank: string | null;
+  /** Best matching vernacular name for the current locale; null if not available */
+  vernacular_name: string | null;
+  /** All vernacular names across locales; null if none available */
+  vernacular_names: Array<{ name: string; language: string }> | null;
+  /** Kingdom classification; null if unknown */
+  kingdom: string | null;
+  /** Phylum classification; null if unknown */
+  phylum: string | null;
+  /** Class classification; null if unknown */
+  class_name: string | null;
+  /** Order classification; null if unknown */
+  order: string | null;
+  /** Family classification; null if unknown */
+  family: string | null;
+}
+
+/**
  * Lightweight taxon result returned by the search endpoint.
  * Includes a resolved common name for the requested locale.
  */

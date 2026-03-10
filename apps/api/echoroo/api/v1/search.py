@@ -6,17 +6,20 @@ All endpoints are scoped to a project_id for data isolation.
 
 from __future__ import annotations
 
+import json
 import tempfile
 from pathlib import Path
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, status
 
 from echoroo.core.database import DbSession
 from echoroo.middleware.auth import CurrentUser
 from echoroo.repositories.project import ProjectRepository
 from echoroo.schemas.search import (
+    BatchSearchRequest,
+    BatchSearchResponse,
     EmbeddingStatsResponse,
     SimilaritySearchRequest,
     SimilaritySearchResponse,
@@ -216,6 +219,154 @@ async def search_similar_by_audio(
 
         with contextlib.suppress(OSError):
             os.unlink(tmp_path)
+
+
+@router.post(
+    "/batch",
+    response_model=BatchSearchResponse,
+    summary="Batch species search by uploaded audio",
+    description=(
+        "Upload reference audio clips for multiple species and find similar sounds "
+        "across the project simultaneously. "
+        "Send as multipart/form-data with a 'metadata' JSON field and audio files "
+        "named source_0, source_1, etc. Supports up to 20 species and 10 sources each."
+    ),
+)
+async def batch_search(
+    project_id: UUID,
+    current_user: CurrentUser,
+    service: SearchServiceDep,
+    db: DbSession,
+    request: Request,
+    metadata: str = Form(
+        ...,
+        description="JSON string of BatchSearchRequest",
+    ),
+) -> BatchSearchResponse:
+    """Search for multiple species simultaneously using reference audio clips.
+
+    Accepts multipart/form-data where:
+    - ``metadata`` is a JSON-encoded BatchSearchRequest
+    - ``source_0``, ``source_1``, etc. are uploaded audio files referenced by
+      the ``file_key`` fields inside the metadata JSON
+
+    Args:
+        project_id: Project UUID (path parameter)
+        current_user: Current authenticated user
+        service: Search service instance
+        db: Database session
+        request: Raw FastAPI request (to access multipart form data)
+        metadata: JSON string encoding a BatchSearchRequest
+
+    Returns:
+        BatchSearchResponse with per-species results and timing metadata
+
+    Raises:
+        400: Malformed metadata JSON
+        403: Access denied to project
+        413: One or more uploaded files exceed 10 MB
+        422: Constraint violation (too many species/sources) or invalid model
+        501: URL sources are not yet supported
+    """
+    await check_project_access(project_id, current_user.id, db)
+
+    # Parse the metadata JSON field
+    try:
+        batch_request = BatchSearchRequest.model_validate(json.loads(metadata))
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid metadata JSON: {exc}",
+        ) from exc
+
+    # Validate constraints
+    MAX_SPECIES = 20
+    MAX_SOURCES_PER_SPECIES = 10
+    MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
+    BATCH_AUDIO_EXTENSIONS = {".wav", ".mp3", ".flac", ".ogg", ".opus"}
+
+    if len(batch_request.species) > MAX_SPECIES:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Too many species: {len(batch_request.species)} (max {MAX_SPECIES})",
+        )
+
+    for sp in batch_request.species:
+        if len(sp.sources) > MAX_SOURCES_PER_SPECIES:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    f"Species '{sp.scientific_name}' has {len(sp.sources)} sources "
+                    f"(max {MAX_SOURCES_PER_SPECIES})"
+                ),
+            )
+        for src in sp.sources:
+            if src.type == "url":
+                raise HTTPException(
+                    status_code=status.HTTP_501_NOT_IMPLEMENTED,
+                    detail="URL sources are not yet supported (Phase 2)",
+                )
+
+    # Read and persist all uploaded audio files
+    form = await request.form()
+    audio_files: dict[str, str] = {}  # file_key -> temp file path
+    tmp_paths: list[str] = []
+
+    try:
+        for field_name, field_value in form.items():
+            if field_name == "metadata":
+                continue
+
+            if not hasattr(field_value, "read"):
+                # Not a file upload — skip
+                continue
+
+            upload: UploadFile = field_value  # type: ignore[assignment]
+            content = await upload.read()
+
+            if len(content) > MAX_FILE_SIZE:
+                raise HTTPException(
+                    status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                    detail=f"File '{field_name}' exceeds 10 MB limit",
+                )
+
+            suffix = Path(upload.filename or "upload.wav").suffix.lower()
+            if suffix not in BATCH_AUDIO_EXTENSIONS:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=(
+                        f"Unsupported file type for '{field_name}': {suffix}. "
+                        f"Allowed: {sorted(BATCH_AUDIO_EXTENSIONS)}"
+                    ),
+                )
+
+            with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp_file:
+                tmp_path = tmp_file.name
+                tmp_file.write(content)
+
+            audio_files[field_name] = tmp_path
+            tmp_paths.append(tmp_path)
+
+        try:
+            return await service.batch_search(
+                project_id=project_id,
+                request=batch_request,
+                audio_files=audio_files,
+            )
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=str(exc),
+            ) from exc
+
+    finally:
+        # Always clean up uploaded temp files
+        import contextlib
+        import os
+
+        for p in tmp_paths:
+            with contextlib.suppress(OSError):
+                os.unlink(p)
 
 
 @router.get(

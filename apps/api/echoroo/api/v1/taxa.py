@@ -9,10 +9,12 @@ from echoroo.core.database import DbSession
 from echoroo.middleware.auth import CurrentUser
 from echoroo.repositories.taxon import TaxonRepository
 from echoroo.schemas.taxon import (
+    GBIFSpeciesResult,
     TaxonDetailResponse,
     TaxonListResponse,
     TaxonSearchResult,
 )
+from echoroo.services.gbif import GBIFService
 from echoroo.services.taxon import TaxonService
 
 router = APIRouter(prefix="/taxa", tags=["taxa"])
@@ -102,6 +104,41 @@ async def search_taxa(
         401: Not authenticated
     """
     return await service.search(query=q, locale=locale, limit=limit)
+
+
+@router.get(
+    "/gbif-search",
+    response_model=list[GBIFSpeciesResult],
+    summary="Search species via GBIF real-time API",
+    description=(
+        "Search any species using the GBIF /v1/species/search API. "
+        "Returns results from the GBIF Backbone Taxonomy including vernacular names. "
+        "Useful for finding species not yet in the local taxa database."
+    ),
+)
+async def gbif_search_taxa(
+    current_user: CurrentUser,
+    q: str,
+    limit: int = 10,
+) -> list[GBIFSpeciesResult]:
+    """Search GBIF Backbone Taxonomy for species matching the query string.
+
+    NOTE: This route must appear before /{taxon_id} to avoid routing conflicts.
+
+    Args:
+        current_user: Current authenticated user
+        q: Search query string (scientific name, vernacular name, etc.)
+        limit: Maximum number of results to return (default: 10)
+
+    Returns:
+        List of matching species results with vernacular names
+
+    Raises:
+        401: Not authenticated
+    """
+    gbif_service = GBIFService()
+    raw_results = await gbif_service.search_species_full(query=q, limit=limit)
+    return [GBIFSpeciesResult.model_validate(r) for r in raw_results]
 
 
 @router.get(

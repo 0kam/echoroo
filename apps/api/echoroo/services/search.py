@@ -10,6 +10,7 @@ All queries are scoped to a project_id to enforce data isolation.
 from __future__ import annotations
 
 import logging
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 from uuid import UUID
@@ -18,9 +19,12 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from echoroo.schemas.search import (
+    BatchSearchRequest,
+    BatchSearchResponse,
     EmbeddingStatsResponse,
     SimilarityResult,
     SimilaritySearchResponse,
+    SpeciesMatchResult,
 )
 
 if TYPE_CHECKING:
@@ -403,10 +407,273 @@ class SimilaritySearchService:
             by_dataset=by_dataset,
         )
 
+    async def batch_search(
+        self,
+        project_id: UUID,
+        request: BatchSearchRequest,
+        audio_files: dict[str, str],
+    ) -> BatchSearchResponse:
+        """Search for multiple species simultaneously using reference audio clips.
+
+        For each species config, this method:
+        1. Processes each source audio file (clip to start_time/end_time if set)
+        2. Runs model inference to generate query embeddings
+        3. Searches pgvector for each query vector
+        4. Aggregates results: max(similarity) per candidate across all query vectors
+        5. Deduplicates overlapping time ranges, keeps highest score
+        6. Sorts and trims to limit_per_species
+
+        Args:
+            project_id: Project UUID for access scoping
+            request: Batch search parameters including species configs
+            audio_files: Mapping of file_key to local temp file paths
+
+        Returns:
+            BatchSearchResponse with per-species results and timing
+
+        Raises:
+            ValueError: If model is not registered or audio cannot be processed
+        """
+        import contextlib
+        import os
+
+        start_ts = time.monotonic()
+
+        dataset_id: UUID | None = None
+        if request.dataset_id is not None and request.dataset_id.strip() != "":
+            try:
+                dataset_id = UUID(request.dataset_id)
+            except ValueError as exc:
+                raise ValueError(
+                    f"Invalid dataset_id: {request.dataset_id!r}"
+                ) from exc
+
+        # Load model once for all species
+        from echoroo.ml.registry import ModelNotFoundError, ModelRegistry
+
+        try:
+            loader, engine = _get_or_load_model(request.model_name)
+        except ModelNotFoundError as exc:
+            available = ModelRegistry.available_models()
+            raise ValueError(
+                f"Model '{request.model_name}' not registered. Available: {available}"
+            ) from exc
+
+        results: dict[str, SpeciesMatchResult] = {}
+        total_matches = 0
+
+        for species_cfg in request.species:
+            # Resolve or create the tag for this species
+            tag_id_key: str
+            common_name: str | None = None
+
+            if species_cfg.tag_id is not None:
+                tag_id_key = species_cfg.tag_id
+                # Fetch common_name from DB
+                tag_sql = text(
+                    "SELECT common_name FROM tags WHERE id = :tag_id LIMIT 1"
+                )
+                tag_row = (
+                    await self.db.execute(
+                        tag_sql, {"tag_id": str(species_cfg.tag_id)}
+                    )
+                ).fetchone()
+                if tag_row is not None:
+                    common_name = tag_row.common_name
+            else:
+                # Auto-create a tag for the custom species and use its ID as key
+                from echoroo.repositories.tag import TagRepository
+
+                tag_repo = TagRepository(self.db)
+                tag = await tag_repo.get_or_create_species(
+                    project_id=project_id,
+                    scientific_name=species_cfg.scientific_name,
+                    common_name=species_cfg.scientific_name,
+                )
+                tag_id_key = str(tag.id)
+                common_name = tag.common_name
+
+            # Collect all query vectors for this species across all sources
+            query_vectors: list[list[float]] = []
+            clipped_tmp_paths: list[str] = []
+
+            for source in species_cfg.sources:
+                if source.type == "url":
+                    # Phase 2 — URL sources are not supported yet
+                    logger.warning(
+                        "Skipping url source for species '%s' (not implemented)",
+                        species_cfg.scientific_name,
+                    )
+                    continue
+
+                if source.file_key is None or source.file_key not in audio_files:
+                    logger.warning(
+                        "Missing audio file for key '%s', skipping source",
+                        source.file_key,
+                    )
+                    continue
+
+                src_path = audio_files[source.file_key]
+
+                # Clip audio if start_time or end_time is specified
+                audio_path_for_inference = src_path
+                if source.start_time is not None or source.end_time is not None:
+                    clipped_path = _clip_audio(
+                        src_path,
+                        start_time=source.start_time,
+                        end_time=source.end_time,
+                    )
+                    if clipped_path is not None:
+                        clipped_tmp_paths.append(clipped_path)
+                        audio_path_for_inference = clipped_path
+
+                # Run inference to get embedding vectors
+                try:
+                    inference_results = engine.predict_file(Path(audio_path_for_inference))
+                except Exception:
+                    logger.exception(
+                        "Inference failed for source '%s', skipping",
+                        source.file_key,
+                    )
+                    continue
+
+                for inf_res in inference_results:
+                    raw_emb: list[float] = inf_res.embedding.tolist()
+                    # Zero-pad to storage dimension
+                    if len(raw_emb) < _STORAGE_EMBEDDING_DIM:
+                        raw_emb.extend([0.0] * (_STORAGE_EMBEDDING_DIM - len(raw_emb)))
+                    query_vectors.append(raw_emb[:_STORAGE_EMBEDDING_DIM])
+
+            # Clean up clipped temp files for this source set
+            for tmp_p in clipped_tmp_paths:
+                with contextlib.suppress(OSError):
+                    os.unlink(tmp_p)
+
+            if not query_vectors:
+                logger.warning(
+                    "No valid query vectors generated for species '%s', skipping",
+                    species_cfg.scientific_name,
+                )
+                results[tag_id_key] = SpeciesMatchResult(
+                    scientific_name=species_cfg.scientific_name,
+                    common_name=common_name,
+                    matches=[],
+                )
+                continue
+
+            # Search using each query vector and aggregate by max similarity
+            # candidate_key -> best SimilarityResult seen so far
+            best_by_candidate: dict[str, SimilarityResult] = {}
+
+            for qv in query_vectors:
+                vec_results = await self.search_by_vector(
+                    project_id=project_id,
+                    query_vector=qv,
+                    model_name=request.model_name,
+                    # Fetch more candidates than needed to ensure coverage
+                    # after deduplication
+                    limit=request.limit_per_species * 3,
+                    min_similarity=request.min_similarity,
+                    dataset_id=dataset_id,
+                )
+                for sim_result in vec_results:
+                    candidate_key = _candidate_key(sim_result)
+                    existing = best_by_candidate.get(candidate_key)
+                    if existing is None or sim_result.similarity > existing.similarity:
+                        best_by_candidate[candidate_key] = sim_result
+
+            # Sort by descending similarity and truncate
+            sorted_matches = sorted(
+                best_by_candidate.values(),
+                key=lambda r: r.similarity,
+                reverse=True,
+            )[: request.limit_per_species]
+
+            total_matches += len(sorted_matches)
+            results[tag_id_key] = SpeciesMatchResult(
+                scientific_name=species_cfg.scientific_name,
+                common_name=common_name,
+                matches=sorted_matches,
+            )
+
+            logger.info(
+                "Batch search: species='%s' query_vectors=%d matches=%d",
+                species_cfg.scientific_name,
+                len(query_vectors),
+                len(sorted_matches),
+            )
+
+        elapsed_ms = int((time.monotonic() - start_ts) * 1000)
+
+        return BatchSearchResponse(
+            results=results,
+            total_matches=total_matches,
+            search_duration_ms=elapsed_ms,
+        )
+
 
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+
+def _clip_audio(
+    src_path: str,
+    start_time: float | None,
+    end_time: float | None,
+) -> str | None:
+    """Read a time slice from an audio file and write it to a new temp file.
+
+    Returns the path to the clipped temp file, or None on error.
+
+    Args:
+        src_path: Path to the source audio file
+        start_time: Clip start in seconds (None = 0)
+        end_time: Clip end in seconds (None = full duration)
+
+    Returns:
+        Path to the clipped temp file, or None if clipping failed
+    """
+    import tempfile
+
+    import soundfile as sf
+
+    try:
+        info = sf.info(src_path)
+        sr = info.samplerate
+
+        frame_start = int((start_time or 0.0) * sr)
+        frames = (
+            max(1, int((end_time - (start_time or 0.0)) * sr)) if end_time is not None else -1
+        )
+
+        data, _ = sf.read(src_path, start=frame_start, frames=frames, dtype="float32")
+
+        suffix = Path(src_path).suffix or ".wav"
+        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+            clipped_path = tmp.name
+
+        sf.write(clipped_path, data, sr)
+        return clipped_path
+    except Exception:
+        logger.exception("Failed to clip audio '%s'", src_path)
+        return None
+
+
+def _candidate_key(result: SimilarityResult) -> str:
+    """Build a deduplication key for a similarity result.
+
+    Results from the same recording with the same segment boundaries are
+    considered identical. We use embedding_id as it uniquely identifies a
+    stored segment.
+
+    Args:
+        result: Similarity result to build a key for
+
+    Returns:
+        String key suitable for dict-based deduplication
+    """
+    return str(result.embedding_id)
 
 
 def _get_or_load_model(model_name: str) -> tuple[ModelLoader, InferenceEngine]:
