@@ -7,13 +7,17 @@
    * 2. SearchConfigBar — configure model, threshold, limits, dataset filter
    * 3. ResultsPanel — display per-species search results
    * 4. Inline embedding stats — project-level embedding statistics
+   *
+   * Search is now async: POST /search/batch returns a job_id (202 Accepted),
+   * and we poll GET /search/jobs/{job_id} every 2 seconds until completion.
    */
 
+  import { onDestroy } from 'svelte';
   import { page } from '$app/stores';
   import { createQuery } from '@tanstack/svelte-query';
-  import { localizeHref } from '$lib/paraglide/runtime';
+  import { localizeHref, getLocale } from '$lib/paraglide/runtime';
   import * as m from '$lib/paraglide/messages';
-  import { searchBatch, fetchEmbeddingStats } from '$lib/api/search';
+  import { searchBatch, getSearchJobStatus, fetchEmbeddingStats } from '$lib/api/search';
   import ReferenceSoundsPanel from '$lib/components/search/ReferenceSoundsPanel.svelte';
   import SearchConfigBar from '$lib/components/search/SearchConfigBar.svelte';
   import ResultsPanel from '$lib/components/search/ResultsPanel.svelte';
@@ -21,7 +25,6 @@
     TargetSpecies,
     SearchConfig,
     SpeciesMatchResult,
-    BatchSearchResponse,
     EmbeddingStats,
   } from '$lib/types/search';
 
@@ -34,8 +37,9 @@
   let species = $state<TargetSpecies[]>([]);
   let config = $state<SearchConfig>({
     model_name: 'perch',
-    min_similarity: 0.5,
-    limit_per_species: 20,
+    // Use a low backend threshold to fetch all results; client-side filtering applied in ResultsPanel
+    min_similarity: 0.1,
+    limit_per_species: 200,
     dataset_id: undefined,
   });
   let results = $state<Record<string, SpeciesMatchResult> | null>(null);
@@ -44,6 +48,11 @@
   let isSearching = $state(false);
   let searchError = $state<string | undefined>(undefined);
 
+  // Async job polling state
+  let searchJobId = $state<string | null>(null);
+  let searchProgress = $state<{ species_completed: number; species_total: number } | null>(null);
+  let pollingInterval = $state<ReturnType<typeof setInterval> | null>(null);
+
   // ============================================
   // Derived
   // ============================================
@@ -51,6 +60,18 @@
   const hasAllSources = $derived(
     species.length > 0 && species.every((sp) => sp.sources.length > 0)
   );
+
+  /** Human-readable searching status message for the progress indicator. */
+  const searchStatusMessage = $derived(() => {
+    if (!isSearching) return '';
+    if (searchProgress) {
+      return m.search_analyzing({
+        completed: String(searchProgress.species_completed),
+        total: String(searchProgress.species_total),
+      });
+    }
+    return m.search_starting();
+  });
 
   // ============================================
   // Embedding stats query (project-level)
@@ -63,6 +84,21 @@
       enabled: !!projectId,
     })
   );
+
+  // ============================================
+  // Polling cleanup
+  // ============================================
+
+  function stopPolling() {
+    if (pollingInterval !== null) {
+      clearInterval(pollingInterval);
+      pollingInterval = null;
+    }
+  }
+
+  onDestroy(() => {
+    stopPolling();
+  });
 
   // ============================================
   // Handlers
@@ -79,18 +115,47 @@
   async function handleSearch() {
     if (!hasAllSources || species.length === 0) return;
 
+    // Cancel any in-flight poll from a previous search
+    stopPolling();
+
     isSearching = true;
     searchError = undefined;
     results = null;
+    searchJobId = null;
+    searchProgress = null;
 
     try {
-      const response: BatchSearchResponse = await searchBatch(projectId, species, config);
-      results = response.results;
-      totalMatches = response.total_matches;
-      searchDurationMs = response.search_duration_ms;
+      const { job_id } = await searchBatch(projectId, species, config);
+      searchJobId = job_id;
+
+      // Begin polling the job status endpoint every 2 seconds
+      pollingInterval = setInterval(async () => {
+        try {
+          const status = await getSearchJobStatus(projectId, job_id, getLocale());
+
+          if (status.status === 'processing') {
+            searchProgress = status.progress;
+          } else if (status.status === 'completed') {
+            stopPolling();
+            if (status.results) {
+              results = status.results.results;
+              totalMatches = status.results.total_matches;
+              searchDurationMs = status.results.search_duration_ms;
+            }
+            isSearching = false;
+          } else if (status.status === 'failed') {
+            stopPolling();
+            searchError = status.error ?? m.search_failed();
+            isSearching = false;
+          }
+          // 'pending' state: keep polling without any state change
+        } catch (pollErr) {
+          // Do not stop polling on transient network errors
+          console.warn('Search job polling error:', pollErr);
+        }
+      }, 2000);
     } catch (err) {
       searchError = err instanceof Error ? err.message : m.search_error_search_failed();
-    } finally {
       isSearching = false;
     }
   }
@@ -137,6 +202,17 @@
   {#if searchError}
     <div class="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700 dark:border-red-800 dark:bg-red-950/30 dark:text-red-400">
       {searchError}
+    </div>
+  {/if}
+
+  <!-- Search progress indicator (shown while async job is running) -->
+  {#if isSearching && !results}
+    <div class="flex items-center gap-3 rounded-lg border border-card bg-surface-card p-4 text-sm text-stone-600 dark:text-stone-400">
+      <svg class="h-4 w-4 shrink-0 animate-spin text-primary-500" fill="none" viewBox="0 0 24 24" aria-hidden="true">
+        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+      </svg>
+      <span>{searchStatusMessage()}</span>
     </div>
   {/if}
 

@@ -45,6 +45,7 @@ app.conf.include = [
     "echoroo.workers.annotation_tasks",
     "echoroo.workers.ml_tasks",
     "echoroo.workers.taxon_tasks",
+    "echoroo.workers.search_tasks",
 ]
 
 # Periodic tasks (beat schedule)

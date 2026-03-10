@@ -24,6 +24,7 @@ from echoroo.api.v1 import (
     taxa,
     uploads,
     users,
+    xeno_canto,
 )
 
 # Create main API router with /api/v1 prefix
@@ -55,3 +56,7 @@ api_router.include_router(detection_runs.models_router)
 api_router.include_router(uploads.router)
 # Similarity search router
 api_router.include_router(search_module.router)
+# Search annotation creation router
+api_router.include_router(search_module.annotations_router)
+# Xeno-canto proxy router
+api_router.include_router(xeno_canto.router)

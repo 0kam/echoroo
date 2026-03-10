@@ -121,10 +121,10 @@ class BatchSearchRequest(BaseModel):
     )
     model_name: str = Field(default="perch", description="Model to use for embedding generation")
     min_similarity: float = Field(
-        default=0.5, ge=0.0, le=1.0, description="Minimum cosine similarity threshold"
+        default=0.1, ge=0.0, le=1.0, description="Minimum cosine similarity threshold"
     )
     limit_per_species: int = Field(
-        default=20, ge=1, le=100, description="Maximum results returned per species"
+        default=100, ge=1, le=500, description="Maximum results returned per species"
     )
     dataset_id: str | None = Field(default=None, description="Optional dataset UUID filter")
 
@@ -140,6 +140,7 @@ class BatchSearchRequest(BaseModel):
 class SpeciesMatchResult(BaseModel):
     """Aggregated search results for a single species."""
 
+    tag_id: str | None = Field(default=None, description="Tag UUID for this species")
     scientific_name: str = Field(..., description="Scientific name of the species")
     common_name: str | None = Field(default=None, description="Common name of the species")
     matches: list[SimilarityResult] = Field(

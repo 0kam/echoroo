@@ -104,6 +104,7 @@ class DetectionSource(str, Enum):
     BIRDNET = "birdnet"
     PERCH = "perch"
     PERCH_SEARCH = "perch_search"
+    SIMILARITY_SEARCH = "similarity_search"
     HUMAN = "human"
 
 
