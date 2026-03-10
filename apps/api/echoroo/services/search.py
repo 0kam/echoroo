@@ -10,6 +10,7 @@ All queries are scoped to a project_id to enforce data isolation.
 from __future__ import annotations
 
 import logging
+import tempfile
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -273,7 +274,7 @@ class SimilaritySearchService:
         # cached (loader, engine) pair for each model name and reuse it across
         # requests.
         try:
-            loader, engine = _get_or_load_model(model_name)
+            _, engine = _get_or_load_model(model_name)
         except ModelNotFoundError as exc:
             available = ModelRegistry.available_models()
             raise ValueError(
@@ -452,7 +453,7 @@ class SimilaritySearchService:
         from echoroo.ml.registry import ModelNotFoundError, ModelRegistry
 
         try:
-            loader, engine = _get_or_load_model(request.model_name)
+            _, engine = _get_or_load_model(request.model_name)
         except ModelNotFoundError as exc:
             available = ModelRegistry.available_models()
             raise ValueError(
@@ -499,11 +500,53 @@ class SimilaritySearchService:
 
             for source in species_cfg.sources:
                 if source.type == "url":
-                    # Phase 2 — URL sources are not supported yet
-                    logger.warning(
-                        "Skipping url source for species '%s' (not implemented)",
-                        species_cfg.scientific_name,
-                    )
+                    # Download the audio file from the provided URL and process it
+                    if not source.source_url:
+                        logger.warning(
+                            "URL source for species '%s' has no source_url, skipping",
+                            species_cfg.scientific_name,
+                        )
+                        continue
+
+                    downloaded_path = await _download_audio_url(source.source_url)
+                    if downloaded_path is None:
+                        logger.warning(
+                            "Failed to download audio from URL '%s' for species '%s', skipping",
+                            source.source_url,
+                            species_cfg.scientific_name,
+                        )
+                        continue
+
+                    clipped_tmp_paths.append(downloaded_path)
+
+                    # Clip audio if start_time or end_time is specified
+                    audio_path_for_inference = downloaded_path
+                    if source.start_time is not None or source.end_time is not None:
+                        clipped_path = _clip_audio(
+                            downloaded_path,
+                            start_time=source.start_time,
+                            end_time=source.end_time,
+                        )
+                        if clipped_path is not None:
+                            clipped_tmp_paths.append(clipped_path)
+                            audio_path_for_inference = clipped_path
+
+                    # Run inference on the downloaded audio
+                    try:
+                        inference_results = engine.predict_file(Path(audio_path_for_inference))
+                    except Exception:
+                        logger.exception(
+                            "Inference failed for URL source '%s', skipping",
+                            source.source_url,
+                        )
+                        continue
+
+                    for inf_res in inference_results:
+                        raw_emb: list[float] = inf_res.embedding.tolist()
+                        if len(raw_emb) < _STORAGE_EMBEDDING_DIM:
+                            raw_emb.extend([0.0] * (_STORAGE_EMBEDDING_DIM - len(raw_emb)))
+                        query_vectors.append(raw_emb[:_STORAGE_EMBEDDING_DIM])
+
                     continue
 
                 if source.file_key is None or source.file_key not in audio_files:
@@ -538,11 +581,11 @@ class SimilaritySearchService:
                     continue
 
                 for inf_res in inference_results:
-                    raw_emb: list[float] = inf_res.embedding.tolist()
+                    upload_emb: list[float] = inf_res.embedding.tolist()
                     # Zero-pad to storage dimension
-                    if len(raw_emb) < _STORAGE_EMBEDDING_DIM:
-                        raw_emb.extend([0.0] * (_STORAGE_EMBEDDING_DIM - len(raw_emb)))
-                    query_vectors.append(raw_emb[:_STORAGE_EMBEDDING_DIM])
+                    if len(upload_emb) < _STORAGE_EMBEDDING_DIM:
+                        upload_emb.extend([0.0] * (_STORAGE_EMBEDDING_DIM - len(upload_emb)))
+                    query_vectors.append(upload_emb[:_STORAGE_EMBEDDING_DIM])
 
             # Clean up clipped temp files for this source set
             for tmp_p in clipped_tmp_paths:
@@ -555,6 +598,7 @@ class SimilaritySearchService:
                     species_cfg.scientific_name,
                 )
                 results[tag_id_key] = SpeciesMatchResult(
+                    tag_id=tag_id_key,
                     scientific_name=species_cfg.scientific_name,
                     common_name=common_name,
                     matches=[],
@@ -591,6 +635,7 @@ class SimilaritySearchService:
 
             total_matches += len(sorted_matches)
             results[tag_id_key] = SpeciesMatchResult(
+                tag_id=tag_id_key,
                 scientific_name=species_cfg.scientific_name,
                 common_name=common_name,
                 matches=sorted_matches,
@@ -615,6 +660,80 @@ class SimilaritySearchService:
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+# Maximum file size allowed for URL audio downloads (10 MB)
+_URL_DOWNLOAD_MAX_BYTES = 10 * 1024 * 1024
+
+# Timeout in seconds for audio file downloads from URLs
+_URL_DOWNLOAD_TIMEOUT = 30.0
+
+
+async def _download_audio_url(url: str) -> str | None:
+    """Download an audio file from a URL to a local temporary file.
+
+    Streams the response to avoid loading large files entirely into memory.
+    Enforces a 10 MB size limit and a 30-second download timeout.
+
+    Args:
+        url: Public URL of the audio file to download
+
+    Returns:
+        Absolute path to the downloaded temporary file, or None on any error
+    """
+    import contextlib
+    import os
+
+    import httpx
+
+    # Determine a reasonable file suffix from the URL path
+    url_path = url.split("?")[0]  # strip query string before inspecting extension
+    suffix = Path(url_path).suffix.lower() or ".wav"
+    allowed = {".wav", ".mp3", ".flac", ".ogg", ".opus"}
+    if suffix not in allowed:
+        suffix = ".wav"
+
+    tmp_path: str | None = None
+    try:
+        async with httpx.AsyncClient(timeout=_URL_DOWNLOAD_TIMEOUT) as client, client.stream("GET", url) as resp:
+            resp.raise_for_status()
+
+            with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp_file:
+                tmp_path = tmp_file.name
+                downloaded = 0
+                async for chunk in resp.aiter_bytes(chunk_size=65536):
+                    downloaded += len(chunk)
+                    if downloaded > _URL_DOWNLOAD_MAX_BYTES:
+                        logger.warning(
+                            "Audio download from '%s' exceeded %d byte limit, aborting",
+                            url,
+                            _URL_DOWNLOAD_MAX_BYTES,
+                        )
+                        # Clean up the partial file before returning
+                        with contextlib.suppress(OSError):
+                            os.unlink(tmp_path)
+                        return None
+                    tmp_file.write(chunk)
+
+        logger.info("Downloaded audio from '%s' to '%s' (%d bytes)", url, tmp_path, downloaded)
+        return tmp_path
+
+    except httpx.TimeoutException:
+        logger.warning("Timed out downloading audio from '%s'", url)
+    except httpx.HTTPStatusError as exc:
+        logger.warning(
+            "HTTP %s error downloading audio from '%s'", exc.response.status_code, url
+        )
+    except httpx.RequestError as exc:
+        logger.warning("Network error downloading audio from '%s': %s", url, exc)
+    except Exception:
+        logger.exception("Unexpected error downloading audio from '%s'", url)
+
+    # Clean up any partial temp file on error
+    if tmp_path is not None:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp_path)
+
+    return None
 
 
 def _clip_audio(

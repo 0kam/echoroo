@@ -51,7 +51,7 @@
 </script>
 
 <div class="rounded-lg border border-card bg-surface-card p-4 shadow-sm">
-  <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+  <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
     <!-- Model selector -->
     <div>
       <label for="scb-model" class="mb-1 block text-sm font-medium text-stone-700">
@@ -66,39 +66,6 @@
         <option value="perch">Perch v2.0</option>
         <option value="birdnet">BirdNET</option>
       </select>
-    </div>
-
-    <!-- Threshold slider -->
-    <div>
-      <label for="scb-threshold" class="mb-1 block text-sm font-medium text-stone-700">
-        {m.search_threshold()} {Math.round(config.min_similarity * 100)}%
-      </label>
-      <input
-        id="scb-threshold"
-        type="range"
-        class="w-full accent-primary-500"
-        min="0"
-        max="1"
-        step="0.05"
-        bind:value={config.min_similarity}
-        oninput={emitChange}
-      />
-    </div>
-
-    <!-- Max results per species -->
-    <div>
-      <label for="scb-limit" class="mb-1 block text-sm font-medium text-stone-700">
-        {m.search_max_results_per_species()}
-      </label>
-      <input
-        id="scb-limit"
-        type="number"
-        class="w-full rounded-md border border-card bg-surface-card px-3 py-2 text-sm focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
-        min="1"
-        max="100"
-        bind:value={config.limit_per_species}
-        onchange={emitChange}
-      />
     </div>
 
     <!-- Dataset filter -->

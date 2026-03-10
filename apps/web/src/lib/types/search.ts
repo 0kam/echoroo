@@ -169,6 +169,8 @@ export interface SearchConfig {
  * Aggregated similarity matches for a single species.
  */
 export interface SpeciesMatchResult {
+  /** Project tag ID for the species */
+  tag_id?: string;
   /** Scientific name of the matched species */
   scientific_name: string;
   /** Optional vernacular/common name */
@@ -176,6 +178,11 @@ export interface SpeciesMatchResult {
   /** Ordered list of similar audio segments (descending similarity) */
   matches: SimilarityResult[];
 }
+
+/**
+ * Client-side review status for a search result card.
+ */
+export type SearchResultStatus = 'unreviewed' | 'confirmed' | 'rejected';
 
 /**
  * Response from the batch species search endpoint.
@@ -187,6 +194,88 @@ export interface BatchSearchResponse {
   total_matches: number;
   /** Wall-clock time the search took on the server, in milliseconds */
   search_duration_ms: number;
+}
+
+// ============================================
+// Xeno-canto Search Types
+// ============================================
+
+/**
+ * A single recording result from the Xeno-canto API.
+ */
+export interface XenoCantoRecording {
+  /** Xeno-canto recording ID (numeric string, e.g. "1065457") */
+  xc_id: string;
+  /** Scientific name of the species */
+  scientific_name: string;
+  /** Common/vernacular name of the species */
+  common_name: string;
+  /** Name of the recordist */
+  recordist: string;
+  /** Country where the recording was made */
+  country: string;
+  /** Specific location of the recording */
+  location: string;
+  /** Latitude of the recording location */
+  latitude: number | null;
+  /** Longitude of the recording location */
+  longitude: number | null;
+  /** Type of vocalization (e.g. "song", "call") */
+  recording_type: string;
+  /** Quality rating (A–E) */
+  quality: string;
+  /** Duration of the recording (e.g. "1:23") */
+  length: string;
+  /** Date the recording was made */
+  date: string;
+  /** Direct URL to the audio file */
+  file_url: string;
+  /** URL to the sonogram image (small version), or null if unavailable */
+  sonogram_url: string | null;
+  /** License string for the recording */
+  license: string;
+}
+
+/**
+ * Paginated response from the Xeno-canto search endpoint.
+ */
+export interface XenoCantoSearchResponse {
+  /** Total number of matching recordings */
+  total_recordings: number;
+  /** Total number of matching species */
+  total_species: number;
+  /** Current page number (1-indexed) */
+  page: number;
+  /** Total number of pages */
+  total_pages: number;
+  /** Recordings on the current page */
+  recordings: XenoCantoRecording[];
+}
+
+/**
+ * Response returned immediately when a batch search job is submitted (202 Accepted).
+ */
+export interface SearchJobSubmitResponse {
+  /** UUID of the submitted search job */
+  job_id: string;
+  /** Initial status of the job (always "pending" on submission) */
+  status: string;
+}
+
+/**
+ * Response from polling the search job status endpoint.
+ */
+export interface SearchJobStatusResponse {
+  /** UUID of the search job */
+  job_id: string;
+  /** Current status of the job */
+  status: 'pending' | 'processing' | 'completed' | 'failed';
+  /** Progress information during processing, or null if not yet available */
+  progress: { species_completed: number; species_total: number } | null;
+  /** Full batch search results once completed, or null if not yet done */
+  results: BatchSearchResponse | null;
+  /** Error message if the job failed, or null otherwise */
+  error: string | null;
 }
 
 /**

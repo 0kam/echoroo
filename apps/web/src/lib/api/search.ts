@@ -9,10 +9,13 @@ import type {
   BatchSearchResponse,
   EmbeddingStats,
   SearchConfig,
+  SearchJobStatusResponse,
+  SearchJobSubmitResponse,
   SimilarByAudioParams,
   SimilarByEmbeddingRequest,
   SimilaritySearchResponse,
   TargetSpecies,
+  XenoCantoSearchResponse,
 } from '$lib/types/search';
 import { fetchWithErrorHandling, handleApiResponse } from './errors';
 
@@ -111,22 +114,83 @@ export async function fetchEmbeddingStats(
 }
 
 /**
- * Run a multi-species batch similarity search using uploaded reference sounds.
+ * Search Xeno-canto for recordings matching a query and optional filters.
+ *
+ * @param projectId - Project UUID (used for auth context)
+ * @param params - Search parameters including query string and optional filters
+ * @returns Paginated list of matching Xeno-canto recordings
+ */
+export async function searchXenoCanto(
+  projectId: string,
+  params: {
+    query: string;
+    country?: string;
+    area?: string;
+    quality_min?: string;
+    recording_type?: string;
+    page?: number;
+    per_page?: number;
+  }
+): Promise<XenoCantoSearchResponse> {
+  const qs = new URLSearchParams();
+  qs.set('query', params.query);
+  if (params.country) qs.set('country', params.country);
+  if (params.area) qs.set('area', params.area);
+  if (params.quality_min) qs.set('quality_min', params.quality_min);
+  if (params.recording_type) qs.set('recording_type', params.recording_type);
+  if (params.page !== undefined) qs.set('page', String(params.page));
+  if (params.per_page !== undefined) qs.set('per_page', String(params.per_page));
+
+  const response = await fetchWithErrorHandling(
+    `${API_BASE}/projects/${projectId}/xeno-canto/search?${qs.toString()}`,
+    { credentials: 'include' }
+  );
+  return handleApiResponse<XenoCantoSearchResponse>(response);
+}
+
+/**
+ * Fetch audio for a Xeno-canto recording via the backend proxy.
+ *
+ * Returns the raw audio as an ArrayBuffer so it can be decoded by the Web Audio API.
+ *
+ * @param projectId - Project UUID (used for auth context)
+ * @param xcId - Xeno-canto recording ID (numeric string, e.g. "1065457")
+ * @returns ArrayBuffer containing the raw audio bytes
+ */
+export async function fetchXenoCantoAudio(
+  projectId: string,
+  xcId: string
+): Promise<ArrayBuffer> {
+  const response = await fetchWithErrorHandling(
+    `${API_BASE}/projects/${projectId}/xeno-canto/audio/${xcId}`,
+    { credentials: 'include' }
+  );
+  if (!response.ok) {
+    throw new Error(`Failed to fetch Xeno-canto audio: ${response.status} ${response.statusText}`);
+  }
+  return response.arrayBuffer();
+}
+
+/**
+ * Submit a multi-species batch similarity search job using uploaded reference sounds.
  *
  * Sends species metadata and audio files as multipart/form-data. Each
  * `SoundSource` with `origin === 'upload'` must have a `file` attached;
  * URL-based sources (Phase 2) are forwarded as metadata only.
  *
+ * The API now returns 202 Accepted with a job_id immediately. Use
+ * `getSearchJobStatus()` to poll for results.
+ *
  * @param projectId - Project UUID
  * @param species - List of target species with reference sound sources
  * @param config - Search configuration (model, threshold, per-species limit)
- * @returns Batch search response with per-species match lists and timing info
+ * @returns Job submission response containing job_id for polling
  */
 export async function searchBatch(
   projectId: string,
   species: TargetSpecies[],
   config: SearchConfig
-): Promise<BatchSearchResponse> {
+): Promise<SearchJobSubmitResponse> {
   const formData = new FormData();
 
   // Assign file_keys sequentially across all species / sources
@@ -175,5 +239,63 @@ export async function searchBatch(
       body: formData,
     }
   );
-  return handleApiResponse<BatchSearchResponse>(response);
+  return handleApiResponse<SearchJobSubmitResponse>(response);
+}
+
+/**
+ * Poll the status of a previously submitted batch search job.
+ *
+ * Call this repeatedly (e.g., every 2 seconds) after `searchBatch()` until
+ * the status is "completed" or "failed".
+ *
+ * @param projectId - Project UUID
+ * @param jobId - Job UUID returned by `searchBatch()`
+ * @param locale - Optional locale for species common name localization (e.g. "ja")
+ * @returns Current job status, optional progress info, and results when done
+ */
+export async function getSearchJobStatus(
+  projectId: string,
+  jobId: string,
+  locale?: string
+): Promise<SearchJobStatusResponse> {
+  const params = locale ? `?locale=${locale}` : '';
+  const response = await fetchWithErrorHandling(
+    `${API_BASE}/projects/${projectId}/search/jobs/${jobId}${params}`,
+    { credentials: 'include' }
+  );
+  return handleApiResponse<SearchJobStatusResponse>(response);
+}
+
+/**
+ * Create an annotation from a similarity search result.
+ *
+ * Posts a confirmed annotation derived from a search result card.
+ *
+ * @param projectId - Project UUID
+ * @param data - Annotation data including recording_id, tag_id, time range and confidence
+ */
+export async function createAnnotationFromSearch(
+  projectId: string,
+  data: {
+    recording_id: string;
+    tag_id: string;
+    start_time: number;
+    end_time: number;
+    confidence: number;
+  }
+): Promise<void> {
+  const response = await fetchWithErrorHandling(
+    `${API_BASE}/projects/${projectId}/annotations`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({
+        ...data,
+        review_status: 'confirmed',
+        source: 'similarity_search',
+      }),
+    }
+  );
+  await handleApiResponse<unknown>(response);
 }
