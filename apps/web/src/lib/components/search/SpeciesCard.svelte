@@ -14,18 +14,21 @@
   interface Props {
     species: TargetSpecies;
     modelName: string;
+    /** Project ID passed through to AddSourcePanel for Xeno-canto search */
+    projectId: string;
     onUpdate: (species: TargetSpecies) => void;
     onRemove: () => void;
   }
 
-  let { species, modelName, onUpdate, onRemove }: Props = $props();
+  let { species, modelName, projectId, onUpdate, onRemove }: Props = $props();
 
   let showAddSource = $state(false);
 
-  function handleAddSource(source: SoundSource) {
+  function handleAddSource(incoming: SoundSource | SoundSource[]) {
+    const newSources = Array.isArray(incoming) ? incoming : [incoming];
     onUpdate({
       ...species,
-      sources: [...species.sources, source],
+      sources: [...species.sources, ...newSources],
     });
     showAddSource = false;
   }
@@ -34,6 +37,15 @@
     onUpdate({
       ...species,
       sources: species.sources.filter((s) => s.id !== sourceId),
+    });
+  }
+
+  function updateSourceClip(sourceId: string, updates: { start_time?: number; end_time?: number }) {
+    onUpdate({
+      ...species,
+      sources: species.sources.map((s) =>
+        s.id === sourceId ? { ...s, ...updates } : s
+      ),
     });
   }
 
@@ -105,6 +117,8 @@
   {#if showAddSource}
     <AddSourcePanel
       {modelName}
+      {projectId}
+      scientificName={species.scientific_name}
       onAdd={handleAddSource}
       onCancel={() => (showAddSource = false)}
     />
@@ -114,7 +128,13 @@
   {#if species.sources.length > 0}
     <div class="space-y-2 px-3 pb-3">
       {#each species.sources as source (source.id)}
-        <SourceCard {source} onRemove={() => removeSource(source.id)} />
+        <SourceCard
+          {source}
+          {projectId}
+          {modelName}
+          onRemove={() => removeSource(source.id)}
+          onUpdate={(updates) => updateSourceClip(source.id, updates)}
+        />
       {/each}
     </div>
   {:else if !showAddSource}
