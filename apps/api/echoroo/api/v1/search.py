@@ -18,7 +18,9 @@ logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, status
 from pydantic import BaseModel
-from sqlalchemy import select, text
+from sqlalchemy import String, bindparam, select, text
+from sqlalchemy.dialects.postgresql import ARRAY
+from sqlalchemy.dialects.postgresql import UUID as PGUUID
 
 from echoroo.core.database import DbSession
 from echoroo.middleware.auth import CurrentUser
@@ -407,6 +409,95 @@ async def batch_search(
     return SearchJobAcceptedResponse(job_id=job_id, status="pending")
 
 
+async def _resolve_vernacular_via_gbif(
+    scientific_name: str,
+    locale: str,
+    db: DbSession,
+) -> str | None:
+    """Resolve vernacular name for a species not found in the local taxa table.
+
+    Performs the following steps:
+    1. Match the scientific name via GBIF /species/match to get a usageKey.
+    2. Fetch vernacular names via GBIF /species/{key}/vernacularNames.
+    3. Insert the taxon and its vernacular names into the local database for
+       future lookups (so subsequent searches are fast).
+
+    Args:
+        scientific_name: Canonical scientific name to look up.
+        locale: Locale code (e.g. "ja", "en").
+        db: Database session for caching the resolved taxon.
+
+    Returns:
+        The vernacular name in the requested locale, or None if not found.
+    """
+    import datetime
+
+    from echoroo.models.taxon import Taxon
+    from echoroo.models.taxon_vernacular_name import TaxonVernacularName
+    from echoroo.services.gbif import GBIFService
+
+    gbif = GBIFService()
+
+    # Step 1: resolve scientific name to GBIF taxon key
+    resolve_result = await gbif.resolve_taxon(scientific_name)
+    if resolve_result is None:
+        logger.debug("GBIF could not resolve scientific name=%r", scientific_name)
+        return None
+
+    taxon_key = resolve_result.taxon_key
+    logger.debug("GBIF resolved %r -> taxon_key=%d", scientific_name, taxon_key)
+
+    # Step 2: fetch vernacular names from GBIF
+    vernacular_entries = await gbif.get_vernacular_names(taxon_key)
+    logger.debug(
+        "GBIF vernacular names for key=%d: %d entries", taxon_key, len(vernacular_entries)
+    )
+
+    # Step 3: persist to local DB for future lookups
+    try:
+        taxon = Taxon(
+            scientific_name=resolve_result.scientific_name,
+            gbif_taxon_key=taxon_key,
+            rank=resolve_result.rank,
+            gbif_metadata=resolve_result.metadata,
+            gbif_resolved_at=datetime.datetime.now(datetime.UTC),
+        )
+        db.add(taxon)
+        await db.flush()  # populate taxon.id
+
+        for entry in vernacular_entries:
+            vn = TaxonVernacularName(
+                taxon_id=taxon.id,
+                locale=entry["locale"],
+                name=entry["name"],
+                source="gbif",
+                is_primary=False,
+            )
+            db.add(vn)
+
+        await db.commit()
+        logger.debug(
+            "Cached taxon %r (id=%s) with %d vernacular names",
+            scientific_name,
+            taxon.id,
+            len(vernacular_entries),
+        )
+    except Exception:
+        # If insertion fails (e.g. race condition / duplicate), roll back and continue
+        await db.rollback()
+        logger.debug(
+            "Could not cache taxon for %r (may already exist); continuing without caching",
+            scientific_name,
+        )
+
+    # Find the requested locale in vernacular_entries (resolved just above)
+    for entry in vernacular_entries:
+        if entry["locale"] == locale:
+            return entry["name"]
+
+    return None
+
+
 async def _enrich_search_results_with_locale(
     response: BatchSearchResponse,
     locale: str,
@@ -418,7 +509,16 @@ async def _enrich_search_results_with_locale(
     taxon_id, then queries TaxonVernacularName for a locale-specific common name.
     Falls back to the stored common_name if no vernacular name is found.
 
+    For species with no tag_id (e.g. searched directly from GBIF without being
+    detected by BirdNET), falls back to a direct taxa table lookup by scientific
+    name, and finally to a live GBIF API call if the taxon is not yet cached
+    locally.  The GBIF result is persisted for future lookups.
+
     Uses a single batch query to avoid N+1 database calls.
+
+    Note: asyncpg does not support inline PostgreSQL type casts (e.g. ``::uuid[]``)
+    in parameterised queries.  We use ``bindparam(..., type_=ARRAY(PGUUID()))``
+    so that SQLAlchemy emits the correct ``$1::UUID[]`` syntax at the driver level.
 
     Args:
         response: Batch search response to enrich
@@ -428,63 +528,197 @@ async def _enrich_search_results_with_locale(
     Returns:
         New BatchSearchResponse with common_name fields enriched for the locale
     """
-    # Collect all tag_ids from results (skip if no tag_id)
-    tag_ids = [v.tag_id for v in response.results.values() if v.tag_id is not None]
-    if not tag_ids or locale == "en":
-        # For English or no tag_ids, return as-is (common_name is already in English)
+    if locale == "en":
+        # common_name is already stored in English; nothing to enrich.
+        logger.debug("Skipping locale enrichment: locale=en")
         return response
 
-    # Batch fetch tag -> taxon_id mapping
-    tag_sql = text(
-        """
-        SELECT t.id AS tag_id, t.common_name, tx.id AS taxon_id
-        FROM tags t
-        LEFT JOIN taxa tx ON t.taxon_id = tx.id
-        WHERE t.id = ANY(:tag_ids::uuid[])
-        """
+    # Collect all tag_ids from results (skip None values)
+    tag_id_strings = [v.tag_id for v in response.results.values() if v.tag_id is not None]
+    logger.debug(
+        "Locale enrichment requested for locale=%r, found %d tag_ids: %s",
+        locale,
+        len(tag_id_strings),
+        tag_id_strings,
     )
-    tag_rows = (await db.execute(tag_sql, {"tag_ids": tag_ids})).fetchall()
 
+    # -----------------------------------------------------------------------
+    # Phase 1: tag_id -> taxon_id -> vernacular lookup (existing detected species)
+    # -----------------------------------------------------------------------
     taxon_id_by_tag: dict[str, str | None] = {}
     fallback_common_name_by_tag: dict[str, str | None] = {}
-    for row in tag_rows:
-        tag_id_str = str(row.tag_id)
-        taxon_id_by_tag[tag_id_str] = str(row.taxon_id) if row.taxon_id else None
-        fallback_common_name_by_tag[tag_id_str] = row.common_name
 
-    # Batch fetch vernacular names for all relevant taxon IDs
-    taxon_ids = [tid for tid in taxon_id_by_tag.values() if tid is not None]
+    if tag_id_strings:
+        # Convert string tag_ids to UUID objects for proper asyncpg binding
+        try:
+            tag_ids_uuid = [uuid_module.UUID(tid) for tid in tag_id_strings]
+        except ValueError:
+            logger.warning(
+                "Could not parse one or more tag_ids as UUID; skipping enrichment. tag_ids=%s",
+                tag_id_strings,
+            )
+            return response
+
+        # Batch fetch tag -> taxon_id mapping.
+        # asyncpg requires ARRAY(PGUUID()) binding — inline ::uuid[] cast is not supported.
+        tag_sql = text(
+            """
+            SELECT t.id AS tag_id, t.common_name, tx.id AS taxon_id
+            FROM tags t
+            LEFT JOIN taxa tx ON t.taxon_id = tx.id
+            WHERE t.id = ANY(:tag_ids)
+            """
+        ).bindparams(bindparam("tag_ids", value=tag_ids_uuid, type_=ARRAY(PGUUID())))
+        tag_rows = (await db.execute(tag_sql)).fetchall()
+        logger.debug(
+            "Tag query returned %d rows for %d requested tag_ids",
+            len(tag_rows),
+            len(tag_ids_uuid),
+        )
+
+        for row in tag_rows:
+            tag_id_str = str(row.tag_id)
+            taxon_id_by_tag[tag_id_str] = str(row.taxon_id) if row.taxon_id else None
+            fallback_common_name_by_tag[tag_id_str] = row.common_name
+
+    # Batch fetch vernacular names for all taxon IDs found via tags
+    taxon_id_strings = [tid for tid in taxon_id_by_tag.values() if tid is not None]
     vernacular_by_taxon: dict[str, str] = {}
-    if taxon_ids:
+    if taxon_id_strings:
+        taxon_ids_uuid = [uuid_module.UUID(tid) for tid in taxon_id_strings]
         vn_sql = text(
             """
             SELECT taxon_id, name
             FROM taxon_vernacular_names
-            WHERE taxon_id = ANY(:taxon_ids::uuid[])
+            WHERE taxon_id = ANY(:taxon_ids)
               AND locale = :locale
             ORDER BY taxon_id, is_primary DESC
             """
+        ).bindparams(bindparam("taxon_ids", value=taxon_ids_uuid, type_=ARRAY(PGUUID())))
+        vn_rows = (await db.execute(vn_sql, {"locale": locale})).fetchall()
+        logger.debug(
+            "Vernacular name query returned %d rows for locale=%r, taxon_count=%d",
+            len(vn_rows),
+            locale,
+            len(taxon_ids_uuid),
         )
-        vn_rows = (await db.execute(vn_sql, {"taxon_ids": taxon_ids, "locale": locale})).fetchall()
         # Keep first (highest priority) per taxon_id
         for row in vn_rows:
             taxon_id_str = str(row.taxon_id)
             if taxon_id_str not in vernacular_by_taxon:
                 vernacular_by_taxon[taxon_id_str] = row.name
+    else:
+        logger.debug("No taxon_ids found for the given tag_ids; vernacular lookup skipped")
 
+    logger.debug(
+        "Vernacular names resolved: %d/%d taxon_ids have a %r name",
+        len(vernacular_by_taxon),
+        len(taxon_id_strings),
+        locale,
+    )
+
+    # -----------------------------------------------------------------------
+    # Phase 2: For species still missing a locale name, try taxa by scientific_name
+    # -----------------------------------------------------------------------
+    # Build set of scientific names that need further enrichment:
+    # - no tag_id (GBIF-only species), OR
+    # - tag_id present but no vernacular name found above
+    sci_names_needing_enrichment: set[str] = set()
+    for species_result in response.results.values():
+        tag_id = species_result.tag_id
+        if tag_id is None:
+            sci_names_needing_enrichment.add(species_result.scientific_name)
+        else:
+            taxon_id = taxon_id_by_tag.get(tag_id)
+            if taxon_id is None or taxon_id not in vernacular_by_taxon:
+                sci_names_needing_enrichment.add(species_result.scientific_name)
+
+    vernacular_by_sci_name: dict[str, str] = {}
+    if sci_names_needing_enrichment:
+        # Look up taxa by scientific_name and join vernacular names in one query
+        sci_name_list = list(sci_names_needing_enrichment)
+        taxa_vn_sql = text(
+            """
+            SELECT tx.scientific_name, tvn.taxon_id, tvn.name
+            FROM taxa tx
+            JOIN taxon_vernacular_names tvn ON tvn.taxon_id = tx.id
+            WHERE tx.scientific_name = ANY(:sci_names)
+              AND tvn.locale = :locale
+            ORDER BY tx.scientific_name, tvn.is_primary DESC
+            """
+        ).bindparams(bindparam("sci_names", value=sci_name_list, type_=ARRAY(String())))
+        try:
+            taxa_vn_rows = (await db.execute(taxa_vn_sql, {"locale": locale})).fetchall()
+        except Exception:
+            logger.warning("taxa vernacular name lookup failed", exc_info=True)
+            taxa_vn_rows = []
+
+        for row in taxa_vn_rows:
+            sci = row.scientific_name
+            if sci not in vernacular_by_sci_name:
+                vernacular_by_sci_name[sci] = row.name
+
+        logger.debug(
+            "Direct taxa lookup resolved %d/%d scientific names for locale=%r",
+            len(vernacular_by_sci_name),
+            len(sci_names_needing_enrichment),
+            locale,
+        )
+
+        # Phase 3: For species still not resolved, call GBIF API and cache results
+        still_unresolved = sci_names_needing_enrichment - vernacular_by_sci_name.keys()
+        for sci_name in still_unresolved:
+            logger.debug(
+                "Falling back to GBIF API for locale=%r enrichment of %r", locale, sci_name
+            )
+            resolved = await _resolve_vernacular_via_gbif(sci_name, locale, db)
+            if resolved:
+                vernacular_by_sci_name[sci_name] = resolved
+                logger.debug("GBIF resolved %r -> %r in locale=%r", sci_name, resolved, locale)
+            else:
+                logger.debug("GBIF could not provide %r name for %r", locale, sci_name)
+
+    # -----------------------------------------------------------------------
     # Rebuild results with enriched common names
+    # -----------------------------------------------------------------------
     enriched_results: dict[str, SpeciesMatchResult] = {}
     for key, species_result in response.results.items():
         tag_id = species_result.tag_id
         resolved_name: str | None
+
         if tag_id is not None:
             taxon_id = taxon_id_by_tag.get(tag_id)
             if taxon_id is not None and taxon_id in vernacular_by_taxon:
                 resolved_name = vernacular_by_taxon[taxon_id]
+                logger.debug(
+                    "Enriched %r (%s) via tag->taxon -> %r",
+                    species_result.scientific_name,
+                    tag_id,
+                    resolved_name,
+                )
             else:
-                resolved_name = fallback_common_name_by_tag.get(tag_id) or species_result.common_name
+                # Try scientific name fallback (phase 2/3)
+                resolved_name = (
+                    vernacular_by_sci_name.get(species_result.scientific_name)
+                    or fallback_common_name_by_tag.get(tag_id)
+                    or species_result.common_name
+                )
+                logger.debug(
+                    "No tag->taxon vernacular for %r; using sci_name/fallback %r",
+                    species_result.scientific_name,
+                    resolved_name,
+                )
         else:
-            resolved_name = species_result.common_name
+            # No tag_id: use scientific name lookup (phase 2/3)
+            resolved_name = (
+                vernacular_by_sci_name.get(species_result.scientific_name)
+                or species_result.common_name
+            )
+            logger.debug(
+                "No tag_id for %r; resolved via sci_name -> %r",
+                species_result.scientific_name,
+                resolved_name,
+            )
 
         enriched_results[key] = SpeciesMatchResult(
             tag_id=species_result.tag_id,

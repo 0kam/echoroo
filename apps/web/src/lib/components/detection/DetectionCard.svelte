@@ -2,56 +2,70 @@
   /**
    * DetectionCard - Compact card showing a single detection with review actions.
    *
-   * Assembles: MiniSpectrogram + audio playback + ReviewActions + metadata.
-   * Supports confirm, reject, and species change operations.
+   * Wraps ReviewCard (shared component) and adds detection-specific features:
+   * species name/confidence header, source badge, reviewed_at metadata,
+   * and SpeciesCorrector for reassigning the species tag.
    */
 
-  import { onDestroy } from 'svelte';
   import type { Detection } from '$lib/types/detection';
-  import { apiClient } from '$lib/api/client';
   import * as m from '$lib/paraglide/messages';
   import { getLocale } from '$lib/paraglide/runtime';
-  import MiniSpectrogram from './MiniSpectrogram.svelte';
-  import ReviewActions from './ReviewActions.svelte';
+  import ReviewCard from '$lib/components/common/ReviewCard.svelte';
   import SpeciesCorrector from './SpeciesCorrector.svelte';
 
-  export let detection: Detection;
-  export let projectId: string;
-  export let isSelected: boolean = false;
-  export let isLoading: boolean = false;
-  export let onConfirm: (detectionId: string, startTime: number, endTime: number) => void;
-  export let onReject: (detectionId: string) => void;
-  export let onChangeSpecies: (detectionId: string, newTagId: string) => void;
-
-  let audio: HTMLAudioElement | null = null;
-  let audioBlobUrl: string | null = null;
-  let isPlaying = false;
-  let isLoadingAudio = false;
-
-  $: confidencePercent = detection.confidence != null
-    ? Math.round(detection.confidence * 100)
-    : null;
-  $: recordingName = detection.recording?.filename
-    ?? detection.recording_id.slice(0, 8) + '...';
-  $: tagName = detection.tag?.common_name ?? detection.tag?.name ?? 'Unidentified';
-
-  function buildAudioUrl(recordingId: string, start: number, end: number): string {
-    const params = new URLSearchParams({
-      start: start.toString(),
-      end: end.toString(),
-    });
-    return `/api/v1/projects/${projectId}/recordings/${recordingId}/playback?${params}`;
+  interface Props {
+    detection: Detection;
+    projectId: string;
+    isSelected?: boolean;
+    isLoading?: boolean;
+    onConfirm: (detectionId: string, startTime: number, endTime: number) => void;
+    onReject: (detectionId: string) => void;
+    onChangeSpecies: (detectionId: string, newTagId: string) => void;
   }
 
-  function formatTime(seconds: number): string {
-    const mins = Math.floor(seconds / 60);
-    const secs = (seconds % 60).toFixed(1);
-    return `${mins}:${secs.padStart(4, '0')}`;
-  }
+  let {
+    detection,
+    projectId,
+    isSelected = false,
+    isLoading = false,
+    onConfirm,
+    onReject,
+    onChangeSpecies,
+  }: Props = $props();
 
-  function formatDuration(start: number, end: number): string {
-    return `${formatTime(start)} \u2013 ${formatTime(end)}`;
-  }
+  const confidencePercent = $derived(
+    detection.confidence != null ? Math.round(detection.confidence * 100) : null
+  );
+  const recordingName = $derived(
+    detection.recording?.filename ?? detection.recording_id.slice(0, 8) + '...'
+  );
+  const tagName = $derived(
+    detection.tag?.common_name ?? detection.tag?.name ?? 'Unidentified'
+  );
+
+  const confidenceBadgeClass = $derived(
+    confidencePercent == null
+      ? 'bg-stone-100 text-stone-600'
+      : confidencePercent >= 80
+        ? 'bg-green-100 text-green-700'
+        : confidencePercent >= 50
+          ? 'bg-yellow-100 text-yellow-700'
+          : 'bg-red-100 text-red-700'
+  );
+
+  // Brief scale animation when a mutation completes (isLoading transitions true -> false)
+  let justUpdated = $state(false);
+  let prevIsLoading = $state(false);
+
+  $effect(() => {
+    if (prevIsLoading && !isLoading) {
+      justUpdated = true;
+      setTimeout(() => {
+        justUpdated = false;
+      }, 400);
+    }
+    prevIsLoading = isLoading;
+  });
 
   function getSourceLabel(source: string): string {
     switch (source) {
@@ -66,219 +80,81 @@
     }
   }
 
-  function stopAndCleanAudio() {
-    if (audio) {
-      audio.pause();
-      audio = null;
-    }
-    if (audioBlobUrl) {
-      URL.revokeObjectURL(audioBlobUrl);
-      audioBlobUrl = null;
-    }
-    isPlaying = false;
-  }
-
-  async function toggleAudio() {
-    // If already playing, stop
-    if (isPlaying) {
-      stopAndCleanAudio();
-      return;
-    }
-
-    // Fetch audio with authentication and create blob URL
-    isLoadingAudio = true;
-    try {
-      const url = buildAudioUrl(detection.recording_id, detection.start_time, detection.end_time);
-      const res = await apiClient.fetchRaw(url);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const blob = await res.blob();
-
-      // Clean up any previous blob URL
-      if (audioBlobUrl) URL.revokeObjectURL(audioBlobUrl);
-      audioBlobUrl = URL.createObjectURL(blob);
-
-      audio = new Audio(audioBlobUrl);
-      audio.addEventListener('ended', () => {
-        isPlaying = false;
-      });
-      audio.addEventListener('error', () => {
-        isPlaying = false;
-      });
-
-      await audio.play();
-      isPlaying = true;
-    } catch {
-      isPlaying = false;
-      stopAndCleanAudio();
-    } finally {
-      isLoadingAudio = false;
-    }
-  }
-
-  onDestroy(() => {
-    stopAndCleanAudio();
-  });
-
   function handleConfirm() {
-    if (isPlaying) {
-      audio?.pause();
-      isPlaying = false;
-    }
     onConfirm(detection.id, detection.start_time, detection.end_time);
   }
 
   function handleReject() {
-    if (isPlaying) {
-      audio?.pause();
-      isPlaying = false;
-    }
     onReject(detection.id);
   }
 
   function handleChangeSpecies(newTagId: string) {
     onChangeSpecies(detection.id, newTagId);
   }
-
-  // Stop audio and clean up blob URL when detection changes
-  $: if (detection.id) {
-    stopAndCleanAudio();
-  }
-
-  // Border color based on status
-  $: borderClass = detection.status === 'confirmed'
-    ? 'border-green-400 ring-1 ring-green-300'
-    : detection.status === 'rejected'
-    ? 'border-red-400 ring-1 ring-red-300'
-    : isSelected
-    ? 'border-primary-400 ring-1 ring-primary-300'
-    : 'border-stone-200';
-
-  // Brief scale animation when a mutation completes (isLoading transitions true -> false)
-  let justUpdated = false;
-  let prevIsLoading = false;
-
-  $: {
-    if (prevIsLoading && !isLoading) {
-      justUpdated = true;
-      setTimeout(() => {
-        justUpdated = false;
-      }, 400);
-    }
-    prevIsLoading = isLoading;
-  }
 </script>
 
-<!-- svelte-ignore a11y_click_events_have_key_events -->
-<!-- svelte-ignore a11y_interactive_supports_focus -->
+<!-- Wrapper applies the scale animation on top of ReviewCard -->
 <div
-  class="relative flex flex-col overflow-hidden rounded-lg border bg-surface-card shadow-sm transition-all duration-300 ease-in-out hover:shadow-md {borderClass} {justUpdated ? 'scale-[1.02]' : ''}"
+  class="transition-transform duration-300 ease-in-out {justUpdated ? 'scale-[1.02]' : ''}"
   role="article"
   aria-label="Detection: {tagName}"
 >
-  <!-- Loading overlay: semi-transparent overlay while mutation is in flight -->
-  {#if isLoading}
-    <div class="absolute inset-0 z-10 flex items-center justify-center rounded-lg bg-surface-card/60">
-      <svg class="h-5 w-5 animate-spin text-stone-400" viewBox="0 0 24 24" fill="none">
-        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
-      </svg>
-    </div>
-  {/if}
-
-  <!-- Spectrogram -->
-  <div class="relative">
-    <MiniSpectrogram
-      {projectId}
-      recordingId={detection.recording_id}
-      startTime={detection.start_time}
-      endTime={detection.end_time}
-      freqLow={detection.freq_low ?? undefined}
-      freqHigh={detection.freq_high ?? undefined}
-    />
-
-    <!-- Audio play/stop button overlay -->
-    <button
-      type="button"
-      class="absolute right-1 top-1 flex h-7 w-7 items-center justify-center rounded-full bg-black/50 text-white transition-colors hover:bg-black/70 focus:outline-none focus:ring-2 focus:ring-white/50 disabled:cursor-not-allowed disabled:opacity-60"
-      on:click|stopPropagation={toggleAudio}
-      disabled={isLoadingAudio}
-      aria-label={isPlaying ? m.detection_stop_audio_aria() : m.detection_play_audio_aria()}
-      title={isLoadingAudio ? m.detection_loading_audio_title() : isPlaying ? m.detection_stop_title() : m.detection_play_title()}
-    >
-      {#if isLoadingAudio}
-        <!-- Loading spinner -->
-        <div class="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/40 border-t-white"></div>
-      {:else if isPlaying}
-        <!-- Stop icon -->
-        <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="currentColor">
-          <rect x="6" y="6" width="12" height="12" rx="1" />
-        </svg>
-      {:else}
-        <!-- Play icon -->
-        <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="currentColor">
-          <polygon points="5 3 19 12 5 21 5 3" />
-        </svg>
-      {/if}
-    </button>
-  </div>
-
-  <!-- Card body -->
-  <div class="flex flex-col gap-2 p-2.5">
-    <!-- Tag name and confidence -->
-    <div class="flex items-center justify-between gap-2">
-      <span class="truncate text-sm font-semibold text-stone-800" title={tagName}>
-        {tagName}
-      </span>
-      {#if confidencePercent !== null}
-        <span
-          class="shrink-0 rounded px-1.5 py-0.5 text-xs font-medium
-            {confidencePercent >= 80
-              ? 'bg-green-100 text-green-700'
-              : confidencePercent >= 50
-              ? 'bg-yellow-100 text-yellow-700'
-              : 'bg-red-100 text-red-700'}"
-          title="Model confidence"
-        >
-          {confidencePercent}%
+  <ReviewCard
+    {projectId}
+    recordingId={detection.recording_id}
+    {recordingName}
+    startTime={detection.start_time}
+    endTime={detection.end_time}
+    freqLow={detection.freq_low ?? undefined}
+    freqHigh={detection.freq_high ?? undefined}
+    status={detection.status}
+    scoreValue={null}
+    {isLoading}
+    {isSelected}
+    onConfirm={handleConfirm}
+    onReject={handleReject}
+  >
+    {#snippet extraHeader()}
+      <!-- Tag name and confidence badge -->
+      <div class="flex items-center justify-between gap-2">
+        <span class="truncate text-sm font-semibold text-stone-800" title={tagName}>
+          {tagName}
         </span>
-      {/if}
-    </div>
+        {#if confidencePercent !== null}
+          <span
+            class="shrink-0 rounded px-1.5 py-0.5 text-xs font-medium {confidenceBadgeClass}"
+            title="Model confidence"
+          >
+            {confidencePercent}%
+          </span>
+        {/if}
+      </div>
+    {/snippet}
 
-    <!-- Recording name and time -->
-    <div class="flex flex-col gap-0.5">
-      <span class="truncate text-xs text-stone-500" title={recordingName}>
-        {recordingName}
-      </span>
-      <span class="font-mono text-xs text-stone-400">
-        {formatDuration(detection.start_time, detection.end_time)}
-      </span>
-    </div>
-
-    <!-- Source badge -->
-    <div class="flex items-center gap-1">
-      <span class="rounded bg-stone-100 px-1.5 py-0.5 text-xs text-stone-500">
-        {getSourceLabel(detection.source)}
-      </span>
-      {#if detection.reviewed_at}
-        <span class="text-xs text-stone-400" title={new Date(detection.reviewed_at).toLocaleString(getLocale())}>
-          {m.detection_reviewed_on({ date: new Date(detection.reviewed_at).toLocaleDateString(getLocale()) })}
+    {#snippet extraBody()}
+      <!-- Source badge and reviewed_at -->
+      <div class="flex items-center gap-1">
+        <span class="rounded bg-stone-100 px-1.5 py-0.5 text-xs text-stone-500">
+          {getSourceLabel(detection.source)}
         </span>
-      {/if}
-    </div>
+        {#if detection.reviewed_at}
+          <span
+            class="text-xs text-stone-400"
+            title={new Date(detection.reviewed_at).toLocaleString(getLocale())}
+          >
+            {m.detection_reviewed_on({
+              date: new Date(detection.reviewed_at).toLocaleDateString(getLocale()),
+            })}
+          </span>
+        {/if}
+      </div>
 
-    <!-- Species corrector -->
-    <SpeciesCorrector
-      currentTagId={detection.tag_id}
-      {projectId}
-      onChangeSpecies={handleChangeSpecies}
-    />
-
-    <!-- Review actions -->
-    <ReviewActions
-      status={detection.status}
-      {isLoading}
-      onConfirm={handleConfirm}
-      onReject={handleReject}
-    />
-  </div>
+      <!-- Species corrector -->
+      <SpeciesCorrector
+        currentTagId={detection.tag_id}
+        {projectId}
+        onChangeSpecies={handleChangeSpecies}
+      />
+    {/snippet}
+  </ReviewCard>
 </div>

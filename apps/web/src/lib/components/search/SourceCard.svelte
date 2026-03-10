@@ -4,25 +4,67 @@
    *
    * Displays file name/label, clip range, duration, origin badge, and a play/stop button.
    * Audio playback uses the Web Audio API to play the selected clip range.
+   *
+   * Supports an inline SpectrogramClipEditor that can be opened with the "Edit Clip" button.
+   * For upload sources the audio_data / file is used directly; for XC/URL sources the audio
+   * is fetched from the backend proxy before opening the editor.
    */
 
   import { onDestroy } from 'svelte';
   import * as m from '$lib/paraglide/messages.js';
   import type { SoundSource } from '$lib/types/search';
+  import { fetchXenoCantoAudio } from '$lib/api/search';
+  import SpectrogramClipEditor from './SpectrogramClipEditor.svelte';
 
   interface Props {
     source: SoundSource;
+    /** Project ID required for the Xeno-canto audio proxy endpoint */
+    projectId: string;
+    /** Model name passed to SpectrogramClipEditor for min-clip enforcement */
+    modelName?: string;
     onRemove: () => void;
+    /** Called when the user confirms a new clip range in the editor */
+    onUpdate?: (updates: { start_time?: number; end_time?: number }) => void;
   }
 
-  let { source, onRemove }: Props = $props();
+  let { source, projectId, modelName = 'perch', onRemove, onUpdate }: Props = $props();
 
-  // Playback state
+  // ============================================================
+  // Playback state (upload sources - Web Audio API)
+  // ============================================================
   let isPlaying = $state(false);
   let audioCtx: AudioContext | null = null;
   let sourceNode: AudioBufferSourceNode | null = null;
   let decodedBuffer: AudioBuffer | null = null;
   let animHandle: number | null = null;
+
+  // ============================================================
+  // Playback state (URL sources - HTML Audio element)
+  // ============================================================
+  let urlAudio = $state<HTMLAudioElement | null>(null);
+  let isUrlPlaying = $state(false);
+  let urlAudioError = $state(false);
+
+  // ============================================================
+  // Clip editor state
+  // ============================================================
+  let showEditor = $state(false);
+  let isLoadingAudio = $state(false);
+  let fetchAudioError = $state<string | null>(null);
+  /** Audio data (ArrayBuffer) ready to pass to SpectrogramClipEditor */
+  let editorAudioData = $state<ArrayBuffer | null>(null);
+  /** Duration (seconds) for the editor – derived from decoded audio */
+  let editorDuration = $state(0);
+  /** Sample rate for the editor */
+  let editorSampleRate = $state(48000);
+
+  // Local mutable clip times that reflect pending edits before confirmation
+  let editorStart = $state(source.start_time ?? 0);
+  let editorEnd = $state(source.end_time ?? (source.duration ?? 0));
+
+  // ============================================================
+  // Upload playback helpers
+  // ============================================================
 
   async function ensureDecoded(): Promise<AudioBuffer | null> {
     if (decodedBuffer) return decodedBuffer;
@@ -83,6 +125,40 @@
     sourceNode.onended = () => stopPlayback();
   }
 
+  // ============================================================
+  // URL playback helpers
+  // ============================================================
+
+  function toggleUrlPlay() {
+    if (isUrlPlaying) {
+      urlAudio?.pause();
+      isUrlPlaying = false;
+      return;
+    }
+
+    urlAudioError = false;
+
+    if (!urlAudio) {
+      const url = source.source_url;
+      if (!url) return;
+      const audio = new Audio(url);
+      audio.onended = () => {
+        isUrlPlaying = false;
+      };
+      audio.onerror = () => {
+        urlAudioError = true;
+        isUrlPlaying = false;
+      };
+      urlAudio = audio;
+    }
+
+    isUrlPlaying = true;
+    urlAudio.play().catch(() => {
+      urlAudioError = true;
+      isUrlPlaying = false;
+    });
+  }
+
   function stopPlayback() {
     if (animHandle !== null) {
       cancelAnimationFrame(animHandle);
@@ -97,7 +173,98 @@
     isPlaying = false;
   }
 
+  // ============================================================
+  // Clip editor helpers
+  // ============================================================
+
+  async function openEditor() {
+    fetchAudioError = null;
+
+    if (source.origin === 'upload') {
+      // For upload sources: use existing audio_data or read from File
+      try {
+        isLoadingAudio = true;
+        let arrayBuffer: ArrayBuffer;
+        if (source.audio_data) {
+          arrayBuffer = source.audio_data;
+        } else if (source.file) {
+          arrayBuffer = await source.file.arrayBuffer();
+        } else {
+          fetchAudioError = 'No audio data available';
+          isLoadingAudio = false;
+          return;
+        }
+
+        // Decode to get duration and sample rate
+        const ctx = new AudioContext();
+        const decoded = await ctx.decodeAudioData(arrayBuffer.slice(0));
+        editorDuration = decoded.duration;
+        editorSampleRate = decoded.sampleRate;
+        await ctx.close();
+
+        editorAudioData = arrayBuffer;
+      } catch (err) {
+        fetchAudioError = err instanceof Error ? err.message : m.search_fetch_audio_error();
+        isLoadingAudio = false;
+        return;
+      }
+    } else {
+      // For XC/URL sources: fetch via backend proxy
+      if (!source.xc_id) {
+        fetchAudioError = 'No Xeno-canto ID available';
+        isLoadingAudio = false;
+        return;
+      }
+      try {
+        isLoadingAudio = true;
+        const arrayBuffer = await fetchXenoCantoAudio(projectId, source.xc_id);
+
+        // Decode to get duration and sample rate
+        const ctx = new AudioContext();
+        const decoded = await ctx.decodeAudioData(arrayBuffer.slice(0));
+        editorDuration = decoded.duration;
+        editorSampleRate = decoded.sampleRate;
+        await ctx.close();
+
+        editorAudioData = arrayBuffer;
+      } catch (err) {
+        fetchAudioError = err instanceof Error ? err.message : m.search_fetch_audio_error();
+        isLoadingAudio = false;
+        return;
+      }
+    }
+
+    // Initialise editor clip bounds from current source values
+    editorStart = source.start_time ?? 0;
+    editorEnd = source.end_time ?? editorDuration;
+
+    isLoadingAudio = false;
+    showEditor = true;
+  }
+
+  function closeEditor() {
+    showEditor = false;
+    editorAudioData = null;
+    fetchAudioError = null;
+  }
+
+  function handleEditorRangeChange(start: number, end: number) {
+    editorStart = start;
+    editorEnd = end;
+  }
+
+  function confirmClip() {
+    onUpdate?.({
+      start_time: editorStart === 0 ? undefined : editorStart,
+      end_time: editorEnd === editorDuration ? undefined : editorEnd,
+    });
+    closeEditor();
+  }
+
+  // ============================================================
   // Derived display values
+  // ============================================================
+
   let displayName = $derived(
     source.label || source.file?.name || source.xc_id || 'Reference'
   );
@@ -112,57 +279,204 @@
     return '';
   });
 
+  /** Whether the source has a non-default clip range set */
+  let hasClipRange = $derived(source.start_time != null || source.end_time != null);
+
+  // ============================================================
+  // Cleanup
+  // ============================================================
+
   onDestroy(() => {
     stopPlayback();
     if (audioCtx) {
       audioCtx.close().catch(() => {});
       audioCtx = null;
     }
+    if (urlAudio) {
+      urlAudio.pause();
+      urlAudio.src = '';
+      urlAudio = null;
+    }
   });
 </script>
 
-<div class="flex items-center gap-3 rounded-lg bg-stone-50 px-3 py-2 dark:bg-stone-800/50">
-  <!-- Play / Stop button -->
-  <button
-    type="button"
-    class="shrink-0 text-stone-500 transition-colors hover:text-primary-600"
-    onclick={togglePlay}
-    aria-label={isPlaying ? m.search_clip_stop() : m.search_clip_play_selection()}
-  >
-    {#if isPlaying}
-      <!-- Stop icon -->
-      <svg class="h-4 w-4" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-        <rect x="6" y="6" width="12" height="12" rx="1" />
-      </svg>
+<div class="rounded-lg bg-stone-50 dark:bg-stone-800/50">
+  <!-- Main card row -->
+  <div class="flex items-center gap-3 px-3 py-2">
+    <!-- Play / Stop button -->
+    {#if source.origin === 'url'}
+      <button
+        type="button"
+        class="shrink-0 transition-colors
+               {urlAudioError
+                 ? 'text-red-400 hover:text-red-500'
+                 : isUrlPlaying
+                   ? 'text-primary-600 hover:text-primary-700 dark:text-primary-400'
+                   : 'text-stone-500 hover:text-primary-600'}"
+        onclick={toggleUrlPlay}
+        aria-label={isUrlPlaying ? m.search_clip_stop() : m.search_clip_play_selection()}
+        title={urlAudioError ? 'Playback failed' : isUrlPlaying ? 'Pause' : 'Play preview'}
+      >
+        {#if urlAudioError}
+          <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <circle cx="12" cy="12" r="10" />
+            <path d="M12 8v4m0 4h.01" stroke-linecap="round" />
+          </svg>
+        {:else if isUrlPlaying}
+          <svg class="h-4 w-4" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <rect x="6" y="4" width="4" height="16" rx="1" />
+            <rect x="14" y="4" width="4" height="16" rx="1" />
+          </svg>
+        {:else}
+          <svg class="h-4 w-4" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <path d="M8 5.14v13.72a1 1 0 0 0 1.5.86l11-6.86a1 1 0 0 0 0-1.72l-11-6.86A1 1 0 0 0 8 5.14z" />
+          </svg>
+        {/if}
+      </button>
+      {#if source.xc_id}
+        <a
+          href="https://xeno-canto.org/{source.xc_id}"
+          target="_blank"
+          rel="noopener noreferrer"
+          class="shrink-0 text-stone-400 transition-colors hover:text-primary-600"
+          title={m.search_xc_listen()}
+          aria-label={m.search_xc_listen()}
+        >
+          <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14 21 3" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+        </a>
+      {/if}
     {:else}
-      <!-- Play icon -->
-      <svg class="h-4 w-4" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-        <path d="M8 5.14v13.72a1 1 0 0 0 1.5.86l11-6.86a1 1 0 0 0 0-1.72l-11-6.86A1 1 0 0 0 8 5.14z" />
-      </svg>
+      <button
+        type="button"
+        class="shrink-0 text-stone-500 transition-colors hover:text-primary-600"
+        onclick={togglePlay}
+        aria-label={isPlaying ? m.search_clip_stop() : m.search_clip_play_selection()}
+      >
+        {#if isPlaying}
+          <svg class="h-4 w-4" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <rect x="6" y="6" width="12" height="12" rx="1" />
+          </svg>
+        {:else}
+          <svg class="h-4 w-4" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <path d="M8 5.14v13.72a1 1 0 0 0 1.5.86l11-6.86a1 1 0 0 0 0-1.72l-11-6.86A1 1 0 0 0 8 5.14z" />
+          </svg>
+        {/if}
+      </button>
     {/if}
-  </button>
 
-  <!-- Info -->
-  <div class="min-w-0 flex-1">
-    <p class="truncate text-sm text-stone-900 dark:text-stone-100">{displayName}</p>
-    <p class="text-xs text-stone-400">{clipInfo()}</p>
+    <!-- Info -->
+    <div class="min-w-0 flex-1">
+      <p class="truncate text-sm text-stone-900 dark:text-stone-100">{displayName}</p>
+      {#if source.origin === 'url'}
+        <p class="truncate text-xs text-stone-400">
+          {[source.recording_type, source.quality ? `Q:${source.quality}` : null, source.recordist, source.location]
+            .filter(Boolean)
+            .join(' · ')}
+        </p>
+        {#if hasClipRange}
+          <p class="text-xs text-primary-600 dark:text-primary-400">
+            {m.search_clip_range({ start: (source.start_time ?? 0).toFixed(1) + 's', end: (source.end_time ?? 0).toFixed(1) + 's' })}
+          </p>
+        {/if}
+      {:else}
+        <p class="text-xs text-stone-400">{clipInfo()}</p>
+      {/if}
+    </div>
+
+    <!-- Origin badge -->
+    {#if source.origin === 'url'}
+      <span class="shrink-0 rounded bg-amber-100 px-1.5 py-0.5 text-xs font-medium text-amber-700
+                   dark:bg-amber-900/30 dark:text-amber-400">
+        {m.search_origin_xc()}
+      </span>
+    {:else}
+      <span class="shrink-0 rounded bg-stone-100 px-1.5 py-0.5 text-xs text-stone-600 dark:bg-stone-700 dark:text-stone-300">
+        {m.search_origin_upload()}
+      </span>
+    {/if}
+
+    <!-- Edit Clip button -->
+    <button
+      type="button"
+      class="shrink-0 transition-colors
+             {showEditor
+               ? 'text-primary-600 hover:text-primary-700 dark:text-primary-400'
+               : 'text-stone-400 hover:text-primary-600 dark:hover:text-primary-400'}"
+      onclick={showEditor ? closeEditor : openEditor}
+      disabled={isLoadingAudio}
+      aria-label={showEditor ? m.search_clip_editor_close() : m.search_edit_clip()}
+      title={showEditor ? m.search_clip_editor_close() : m.search_edit_clip()}
+    >
+      {#if isLoadingAudio}
+        <!-- Spinner -->
+        <svg class="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+          <circle cx="12" cy="12" r="10" stroke-opacity="0.25" />
+          <path d="M12 2a10 10 0 0 1 10 10" stroke-linecap="round" />
+        </svg>
+      {:else}
+        <!-- Scissors icon -->
+        <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+          <circle cx="6" cy="6" r="3" />
+          <circle cx="6" cy="18" r="3" />
+          <path d="M20 4 8.12 15.88M14.47 14.48 20 20M8.12 8.12 12 12" stroke-linecap="round" stroke-linejoin="round" />
+        </svg>
+      {/if}
+    </button>
+
+    <!-- Remove button -->
+    <button
+      type="button"
+      class="shrink-0 text-stone-300 transition-colors hover:text-stone-500"
+      onclick={onRemove}
+      aria-label="Remove source"
+    >
+      <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+        <path d="M18 6 6 18M6 6l12 12" />
+      </svg>
+    </button>
   </div>
 
-  <!-- Origin badge -->
-  <span class="shrink-0 rounded bg-stone-100 px-1.5 py-0.5 text-xs text-stone-600 dark:bg-stone-700 dark:text-stone-300">
-    {m.search_origin_upload()}
-  </span>
+  <!-- Loading audio indicator -->
+  {#if isLoadingAudio}
+    <div class="flex items-center gap-2 border-t border-stone-200 px-3 py-2 dark:border-stone-700">
+      <div class="h-4 w-4 animate-spin rounded-full border-2 border-stone-300 border-t-primary-500"></div>
+      <span class="text-xs text-stone-500">{m.search_loading_audio()}</span>
+    </div>
+  {/if}
 
-  <!-- Remove button -->
-  <button
-    type="button"
-    class="shrink-0 text-stone-300 transition-colors hover:text-stone-500"
-    onclick={onRemove}
-    aria-label="Remove source"
-  >
-    <!-- X icon -->
-    <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-      <path d="M18 6 6 18M6 6l12 12" />
-    </svg>
-  </button>
+  <!-- Fetch error -->
+  {#if fetchAudioError}
+    <div class="border-t border-stone-200 px-3 py-2 dark:border-stone-700">
+      <p class="text-xs text-red-500 dark:text-red-400">{fetchAudioError}</p>
+    </div>
+  {/if}
+
+  <!-- Inline SpectrogramClipEditor -->
+  {#if showEditor && editorAudioData}
+    <div class="border-t border-stone-200 px-3 pt-2 pb-3 dark:border-stone-700">
+      <div class="mb-2 flex items-center justify-between">
+        <p class="text-xs font-medium text-stone-600 dark:text-stone-400">
+          {m.search_clip_editor_title()}
+        </p>
+        <button
+          type="button"
+          class="rounded bg-primary-600 px-2 py-1 text-xs font-medium text-white hover:bg-primary-700"
+          onclick={confirmClip}
+        >
+          {m.search_add_source()}
+        </button>
+      </div>
+      <SpectrogramClipEditor
+        audioFile={editorAudioData}
+        duration={editorDuration}
+        sampleRate={editorSampleRate}
+        modelName={modelName === 'perch' || modelName === 'birdnet' ? modelName : 'perch'}
+        startTime={editorStart}
+        endTime={editorEnd}
+        onRangeChange={handleEditorRangeChange}
+      />
+    </div>
+  {/if}
 </div>

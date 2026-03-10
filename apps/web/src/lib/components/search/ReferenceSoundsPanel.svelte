@@ -95,6 +95,7 @@
       <SpeciesCard
         species={sp}
         {modelName}
+        {projectId}
         onUpdate={(updated) => updateSpecies(sp.id, updated)}
         onRemove={() => removeSpecies(sp.id)}
       />
@@ -103,10 +104,14 @@
     <!-- Empty state (no species yet, selector closed) -->
     {#if species.length === 0 && !showSelector}
       <div class="py-8 text-center">
-        <!-- Bird icon -->
-      <svg class="mx-auto mb-3 h-12 w-12 text-stone-300 dark:text-stone-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
-        <path d="M16 7c0-1.1-.4-2-1-2.8M16 7c0 1.1-.4 2-1 2.8M16 7h2a2 2 0 0 1 0 4h-2M6 7h3l2.5 5L16 7m0 9c-4 1-8 0-8-4l1-5" stroke-linecap="round" stroke-linejoin="round" />
-        <circle cx="17" cy="5" r="1" fill="currentColor" />
+        <!-- Sound wave icon -->
+      <svg class="mx-auto mb-3 h-12 w-12 text-stone-300 dark:text-stone-600" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M2 12h2" />
+        <path d="M6 8v8" />
+        <path d="M10 4v16" />
+        <path d="M14 6v12" />
+        <path d="M18 8v8" />
+        <path d="M22 12h2" />
       </svg>
         <p class="font-medium text-stone-400 dark:text-stone-500">{m.search_no_species()}</p>
         <p class="mt-1 text-sm text-stone-400 dark:text-stone-500">{m.search_no_species_hint()}</p>

@@ -11,14 +11,23 @@
   import type { SoundSource } from '$lib/types/search';
   import { generateId } from '$lib/utils/id';
   import SpectrogramClipEditor from './SpectrogramClipEditor.svelte';
+  import XenoCantoSearchPanel from './XenoCantoSearchPanel.svelte';
 
   interface Props {
     modelName: string;
-    onAdd: (source: SoundSource) => void;
+    /** Scientific name of the species (pre-filled into Xeno-canto search) */
+    scientificName: string;
+    /** Project ID passed to Xeno-canto search API */
+    projectId: string;
+    /** Called with a single source (upload) or an array of sources (Xeno-canto multi-select) */
+    onAdd: (sources: SoundSource | SoundSource[]) => void;
     onCancel: () => void;
   }
 
-  let { modelName, onAdd, onCancel }: Props = $props();
+  let { modelName, scientificName, projectId, onAdd, onCancel }: Props = $props();
+
+  // Active tab: 'upload' or 'xeno-canto'
+  let activeTab = $state<'upload' | 'xeno-canto'>('upload');
 
   // File input DOM reference
   let fileInput: HTMLInputElement | undefined = $state();
@@ -161,25 +170,53 @@
 </script>
 
 <div class="border-t border-stone-200 px-3 py-3 dark:border-stone-700">
-  <!-- Tab selector (Phase 1: Upload only) -->
+  <!-- Tab selector -->
   <div class="mb-3 flex gap-1">
     <button
       type="button"
-      class="rounded bg-stone-700 px-3 py-1.5 text-sm font-medium text-white dark:bg-stone-600"
+      onclick={() => (activeTab = 'upload')}
+      class="rounded px-3 py-1.5 text-sm font-medium transition-colors
+             {activeTab === 'upload'
+               ? 'bg-stone-700 text-white dark:bg-stone-600'
+               : 'border border-stone-300 bg-white text-stone-600 hover:bg-stone-50 dark:border-stone-600 dark:bg-stone-800 dark:text-stone-400 dark:hover:bg-stone-700'}"
     >
       {m.search_upload_file()}
     </button>
     <button
       type="button"
-      class="cursor-not-allowed rounded border border-stone-300 bg-white px-3 py-1.5 text-sm text-stone-400 dark:border-stone-600 dark:bg-stone-800"
-      disabled
+      onclick={() => (activeTab = 'xeno-canto')}
+      class="rounded px-3 py-1.5 text-sm font-medium transition-colors
+             {activeTab === 'xeno-canto'
+               ? 'bg-stone-700 text-white dark:bg-stone-600'
+               : 'border border-stone-300 bg-white text-stone-600 hover:bg-stone-50 dark:border-stone-600 dark:bg-stone-800 dark:text-stone-400 dark:hover:bg-stone-700'}"
     >
       {m.search_from_url()}
     </button>
   </div>
 
+  <!-- Xeno-canto search panel -->
+  {#if activeTab === 'xeno-canto'}
+    <XenoCantoSearchPanel
+      {scientificName}
+      {projectId}
+      onAdd={(sources) => {
+        onAdd(sources);
+      }}
+    />
+    <!-- Cancel button -->
+    <div class="mt-3 flex justify-end">
+      <button
+        type="button"
+        class="rounded-md px-3 py-1.5 text-sm text-stone-600 hover:bg-stone-100 dark:text-stone-400 dark:hover:bg-stone-700"
+        onclick={onCancel}
+      >
+        {m.search_cancel()}
+      </button>
+    </div>
+  {/if}
+
   <!-- Upload content -->
-  {#if !selectedFile}
+  {#if activeTab === 'upload' && !selectedFile}
     <!-- Validation error -->
     {#if decodeError}
       <p class="mb-2 rounded bg-red-50 px-3 py-2 text-sm text-red-600 dark:bg-red-900/20 dark:text-red-400">
@@ -218,7 +255,7 @@
       onchange={handleFileSelect}
     />
 
-  {:else}
+  {:else if activeTab === 'upload' && selectedFile}
     <!-- Decoding spinner -->
     {#if isDecoding}
       <div class="flex items-center justify-center py-6">
