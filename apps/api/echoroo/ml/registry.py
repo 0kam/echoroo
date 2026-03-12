@@ -33,7 +33,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Type
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from echoroo.ml.base import InferenceEngine, ModelLoader
@@ -59,17 +59,17 @@ class ModelInfo:
     ----------
     name : str
         Unique identifier for the model.
-    loader_class : Type[ModelLoader]
+    loader_class : type[ModelLoader]
         Class for loading the model.
-    engine_class : Type[InferenceEngine]
+    engine_class : type[InferenceEngine]
         Class for running inference.
     description : str
         Human-readable description of the model.
     """
 
     name: str
-    loader_class: Type[ModelLoader]
-    engine_class: Type[InferenceEngine]
+    loader_class: type[ModelLoader]
+    engine_class: type[InferenceEngine]
     description: str = ""
 
 
@@ -115,8 +115,8 @@ class ModelRegistry:
     def register(
         cls,
         name: str,
-        loader_class: Type[ModelLoader],
-        engine_class: Type[InferenceEngine],
+        loader_class: type[ModelLoader],
+        engine_class: type[InferenceEngine],
         description: str = "",
     ) -> None:
         """Register a model with the registry.
@@ -125,9 +125,9 @@ class ModelRegistry:
         ----------
         name : str
             Unique identifier for the model. Should be lowercase.
-        loader_class : Type[ModelLoader]
+        loader_class : type[ModelLoader]
             Class for loading the model.
-        engine_class : Type[InferenceEngine]
+        engine_class : type[InferenceEngine]
             Class for running inference.
         description : str, optional
             Human-readable description of the model.
@@ -170,7 +170,7 @@ class ModelRegistry:
         return False
 
     @classmethod
-    def get_loader_class(cls, name: str) -> Type[ModelLoader]:
+    def get_loader_class(cls, name: str) -> type[ModelLoader]:
         """Get the loader class for a model.
 
         Parameters
@@ -180,7 +180,7 @@ class ModelRegistry:
 
         Returns
         -------
-        Type[ModelLoader]
+        type[ModelLoader]
             The loader class for the model.
 
         Raises
@@ -191,7 +191,7 @@ class ModelRegistry:
         return cls._get_model_info_or_raise(name).loader_class
 
     @classmethod
-    def get_engine_class(cls, name: str) -> Type[InferenceEngine]:
+    def get_engine_class(cls, name: str) -> type[InferenceEngine]:
         """Get the inference engine class for a model.
 
         Parameters
@@ -201,7 +201,7 @@ class ModelRegistry:
 
         Returns
         -------
-        Type[InferenceEngine]
+        type[InferenceEngine]
             The inference engine class for the model.
 
         Raises

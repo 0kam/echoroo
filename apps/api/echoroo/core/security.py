@@ -1,6 +1,6 @@
 """Password hashing service using Argon2id."""
 
-from passlib.context import CryptContext
+from passlib.context import CryptContext  # type: ignore[import-untyped]
 
 from echoroo.core.settings import get_settings
 
@@ -31,7 +31,7 @@ def hash_password(password: str) -> str:
         # Returns: $argon2id$v=19$m=19456,t=2,p=1$...
         ```
     """
-    return pwd_context.hash(password)
+    return str(pwd_context.hash(password))
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
@@ -51,4 +51,4 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
             raise ValueError("Invalid password")
         ```
     """
-    return pwd_context.verify(plain_password, hashed_password)
+    return bool(pwd_context.verify(plain_password, hashed_password))

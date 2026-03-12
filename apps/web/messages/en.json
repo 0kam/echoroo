@@ -1224,5 +1224,15 @@
   "search_rejected": "Rejected",
   "search_max_per_species": "Max per species",
   "search_no_results_above_threshold": "No results above threshold",
+  "search_sessions": "Search History",
+  "search_sessions_empty": "No search sessions yet",
+  "search_session_load": "Load",
+  "search_session_delete": "Delete",
+  "search_session_delete_confirm": "Delete this search session?",
+  "search_export_csv": "Export CSV",
+  "search_exporting": "Exporting...",
+  "search_results_count_session": "{count} results",
+  "search_confirmed_count": "{count} confirmed",
+  "search_rejected_count": "{count} rejected",
   "sidebar_nav_search": "Search"
 }

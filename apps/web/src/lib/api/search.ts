@@ -11,6 +11,8 @@ import type {
   SearchConfig,
   SearchJobStatusResponse,
   SearchJobSubmitResponse,
+  SearchSession,
+  SearchSessionListResponse,
   SimilarByAudioParams,
   SimilarByEmbeddingRequest,
   SimilaritySearchResponse,
@@ -272,7 +274,7 @@ export async function getSearchJobStatus(
  * Posts a confirmed annotation derived from a search result card.
  *
  * @param projectId - Project UUID
- * @param data - Annotation data including recording_id, tag_id, time range and confidence
+ * @param data - Annotation data including recording_id, tag_id, time range, confidence, and optional session
  */
 export async function createAnnotationFromSearch(
   projectId: string,
@@ -282,8 +284,11 @@ export async function createAnnotationFromSearch(
     start_time: number;
     end_time: number;
     confidence: number;
+    review_status?: string;
+    source?: string;
+    search_session_id?: string;
   }
-): Promise<void> {
+): Promise<unknown> {
   const response = await fetchWithErrorHandling(
     `${API_BASE}/projects/${projectId}/annotations`,
     {
@@ -292,10 +297,137 @@ export async function createAnnotationFromSearch(
       credentials: 'include',
       body: JSON.stringify({
         ...data,
-        review_status: 'confirmed',
-        source: 'similarity_search',
+        review_status: data.review_status ?? 'confirmed',
+        source: data.source ?? 'similarity_search',
       }),
     }
   );
+  return handleApiResponse<unknown>(response);
+}
+
+/**
+ * Reject a similarity search result by creating a rejected annotation.
+ *
+ * @param projectId - Project UUID
+ * @param data - Result data including recording_id, tag_id, time range, confidence, and optional session
+ */
+export async function rejectSearchResult(
+  projectId: string,
+  data: {
+    recording_id: string;
+    tag_id: string;
+    start_time: number;
+    end_time: number;
+    confidence: number;
+    search_session_id?: string;
+  }
+): Promise<unknown> {
+  const response = await fetchWithErrorHandling(
+    `${API_BASE}/projects/${projectId}/annotations`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({
+        ...data,
+        source: 'similarity_search',
+        review_status: 'rejected',
+      }),
+    }
+  );
+  return handleApiResponse<unknown>(response);
+}
+
+/**
+ * List persisted search sessions for a project.
+ *
+ * @param projectId - Project UUID
+ * @param limit - Maximum number of sessions to return (default 50)
+ * @param offset - Number of sessions to skip for pagination (default 0)
+ * @returns Paginated list of search session summaries
+ */
+export async function listSearchSessions(
+  projectId: string,
+  limit = 50,
+  offset = 0
+): Promise<SearchSessionListResponse> {
+  const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+  const response = await fetchWithErrorHandling(
+    `${API_BASE}/projects/${projectId}/search/sessions?${params}`,
+    { credentials: 'include' }
+  );
+  return handleApiResponse<SearchSessionListResponse>(response);
+}
+
+/**
+ * Fetch the full details of a single search session, including merged review statuses.
+ *
+ * @param projectId - Project UUID
+ * @param sessionId - Search session UUID
+ * @returns Full search session including results and review counts
+ */
+export async function getSearchSession(
+  projectId: string,
+  sessionId: string
+): Promise<SearchSession> {
+  const response = await fetchWithErrorHandling(
+    `${API_BASE}/projects/${projectId}/search/sessions/${sessionId}`,
+    { credentials: 'include' }
+  );
+  return handleApiResponse<SearchSession>(response);
+}
+
+/**
+ * Delete a search session and its associated data.
+ *
+ * @param projectId - Project UUID
+ * @param sessionId - Search session UUID to delete
+ */
+export async function deleteSearchSession(
+  projectId: string,
+  sessionId: string
+): Promise<void> {
+  const response = await fetchWithErrorHandling(
+    `${API_BASE}/projects/${projectId}/search/sessions/${sessionId}`,
+    {
+      method: 'DELETE',
+      credentials: 'include',
+    }
+  );
   await handleApiResponse<unknown>(response);
+}
+
+/**
+ * Export a search session's results as a CSV file and trigger a browser download.
+ *
+ * @param projectId - Project UUID
+ * @param sessionId - Search session UUID to export
+ */
+export async function exportSearchSessionCSV(
+  projectId: string,
+  sessionId: string
+): Promise<void> {
+  const response = await fetchWithErrorHandling(
+    `${API_BASE}/projects/${projectId}/search/sessions/${sessionId}/export/csv`,
+    { credentials: 'include' }
+  );
+
+  if (!response.ok) {
+    throw new Error(`Failed to export session: ${response.status}`);
+  }
+
+  // Trigger browser download
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download =
+    response.headers
+      .get('Content-Disposition')
+      ?.split('filename=')[1]
+      ?.replace(/"/g, '') ?? `search_session_${sessionId}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }

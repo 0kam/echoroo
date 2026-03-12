@@ -51,6 +51,7 @@ class DetectionExportService:
         tag_id: UUID | None = None,
         dataset_id: UUID | None = None,
         detection_run_id: UUID | None = None,
+        search_session_id: UUID | None = None,
     ) -> str:
         """Export detections as a CSV-formatted string.
 
@@ -63,6 +64,7 @@ class DetectionExportService:
             tag_id: Optional tag UUID filter
             dataset_id: Optional dataset UUID filter
             detection_run_id: Optional detection run UUID filter
+            search_session_id: Optional search session UUID filter
 
         Returns:
             CSV content as a string
@@ -73,6 +75,7 @@ class DetectionExportService:
             tag_id=tag_id,
             dataset_id=dataset_id,
             detection_run_id=detection_run_id,
+            search_session_id=search_session_id,
         )
 
         output = io.StringIO()
@@ -261,6 +264,7 @@ class DetectionExportService:
         tag_id: UUID | None = None,
         dataset_id: UUID | None = None,
         detection_run_id: UUID | None = None,
+        search_session_id: UUID | None = None,
     ) -> list[Annotation]:
         """Fetch annotations with all relationships needed for export.
 
@@ -272,6 +276,7 @@ class DetectionExportService:
             tag_id: Optional tag UUID filter
             dataset_id: Optional dataset UUID filter
             detection_run_id: Optional detection run UUID filter
+            search_session_id: Optional search session UUID filter
 
         Returns:
             List of Annotation instances with eagerly loaded relationships
@@ -298,6 +303,8 @@ class DetectionExportService:
             query = query.where(Recording.dataset_id == dataset_id)
         if detection_run_id is not None:
             query = query.where(Annotation.detection_run_id == detection_run_id)
+        if search_session_id is not None:
+            query = query.where(Annotation.search_session_id == search_session_id)
 
         result = await self.db.execute(query)
         return list(result.scalars().all())

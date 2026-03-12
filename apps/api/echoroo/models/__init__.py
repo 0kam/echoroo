@@ -28,6 +28,7 @@ from echoroo.models.enums import (
     ProjectRole,
     ProjectVisibility,
     ReviewStatus,
+    SearchSessionStatus,
     SettingType,
     TagCategory,
     UploadFileStatus,
@@ -38,6 +39,7 @@ from echoroo.models.note import Note
 from echoroo.models.project import Project, ProjectInvitation, ProjectMember
 from echoroo.models.recorder import Recorder
 from echoroo.models.recording import Recording
+from echoroo.models.search_session import SearchSession
 from echoroo.models.site import Site
 from echoroo.models.sound_event_annotation import SoundEventAnnotation, sound_event_annotation_tags
 from echoroo.models.system import SystemSetting
@@ -80,6 +82,8 @@ __all__ = [
     "Annotation",
     "ConfirmedRegion",
     "DetectionRun",
+    # Search session models
+    "SearchSession",
     # ML embedding models
     "Embedding",
     # Upload models
@@ -108,6 +112,8 @@ __all__ = [
     "DetectionSource",
     "DetectionStatus",
     "DetectionRunStatus",
+    # Enums (search session)
+    "SearchSessionStatus",
     # Enums (upload)
     "UploadSessionStatus",
     "UploadFileStatus",

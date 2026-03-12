@@ -690,7 +690,8 @@ async def _run_detection(
 
             try:
                 _embeddings_result, predictions_result = inference_engine.predict_files_batch(
-                    file_paths
+                    file_paths,
+                    custom_species_list=custom_species_list,
                 )
             except Exception as exc:
                 logger.exception("Batch predict failed for run %s: %s", run_uuid, exc)

@@ -11,10 +11,12 @@ import json
 import logging
 import shutil
 import time
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from uuid import UUID
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from echoroo.core.settings import get_settings
@@ -128,18 +130,53 @@ async def _run_batch_search(
 
     try:
         async with session_factory() as db:
+            from echoroo.models.enums import SearchSessionStatus
+            from echoroo.models.search_session import SearchSession
             from echoroo.services.search import SimilaritySearchService
 
             service = SimilaritySearchService(db)
 
-            # Run batch search with progress updates
-            result = await _run_batch_search_with_progress(
-                task=task,
-                service=service,
-                project_id=UUID(project_id),
-                request=batch_request,
-                audio_files=audio_files_abs,
+            # Update session status to RUNNING
+            session_result = await db.execute(
+                select(SearchSession).where(SearchSession.celery_job_id == job_id)
             )
+            search_session = session_result.scalar_one_or_none()
+            if search_session is not None:
+                search_session.status = SearchSessionStatus.RUNNING
+                search_session.started_at = datetime.now(UTC)
+                await db.commit()
+
+            try:
+                # Run batch search with progress updates
+                result = await _run_batch_search_with_progress(
+                    task=task,
+                    service=service,
+                    project_id=UUID(project_id),
+                    request=batch_request,
+                    audio_files=audio_files_abs,
+                )
+            except Exception as e:
+                # Update session to FAILED
+                if search_session is not None:
+                    search_session.status = SearchSessionStatus.FAILED
+                    search_session.error_message = str(e)
+                    search_session.completed_at = datetime.now(UTC)
+                    try:
+                        await db.commit()
+                    except Exception:
+                        logger.exception("Failed to persist FAILED status for session job_id=%s", job_id)
+                raise
+
+            # Update session to COMPLETED
+            if search_session is not None:
+                search_session.status = SearchSessionStatus.COMPLETED
+                search_session.results = result
+                search_session.result_count = result.get("total_matches", 0)
+                search_session.completed_at = datetime.now(UTC)
+                try:
+                    await db.commit()
+                except Exception:
+                    logger.exception("Failed to persist COMPLETED status for session job_id=%s", job_id)
 
         # Clean up temp files on success
         shutil.rmtree(tmp_dir, ignore_errors=True)

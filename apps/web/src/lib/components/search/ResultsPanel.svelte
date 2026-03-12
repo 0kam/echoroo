@@ -20,6 +20,7 @@
     searchDurationMs: number;
     isSearching: boolean;
     searchingSpecies: TargetSpecies[];
+    searchSessionId?: string;
   }
 
   let {
@@ -29,6 +30,7 @@
     searchDurationMs,
     isSearching,
     searchingSpecies,
+    searchSessionId,
   }: Props = $props();
 
   // Client-side filter state
@@ -46,12 +48,24 @@
     results !== null ? Object.entries(results) : []
   );
 
-  // When results change (new search), reset the tab selection and status map
+  // When results change (new search or session load), reset the tab selection
+  // and initialize the status map from any server-side review_status values.
   $effect(() => {
     if (results !== null) {
       const keys = Object.keys(results);
       selectedTabKey = keys.length > 0 ? (keys[0] ?? null) : null;
-      statusMap = new Map();
+      const newMap = new Map<string, SearchResultStatus>();
+      for (const speciesData of Object.values(results)) {
+        if (speciesData?.matches) {
+          for (const match of speciesData.matches) {
+            const reviewStatus = (match as SimilarityResult & { review_status?: string }).review_status;
+            if (reviewStatus && reviewStatus !== 'unreviewed') {
+              newMap.set(match.embedding_id, reviewStatus as SearchResultStatus);
+            }
+          }
+        }
+      }
+      statusMap = newMap;
     }
   });
 
@@ -242,6 +256,7 @@
                     {result}
                     tagId={getTagId(selectedTabKey ?? '', selectedGroup)}
                     status={getStatus(result)}
+                    {searchSessionId}
                     onConfirm={() => handleConfirm(result.embedding_id)}
                     onReject={() => handleReject(result.embedding_id)}
                   />

@@ -85,7 +85,9 @@
   });
 
   const retryMut = createMutation({
-    mutationFn: (runId: string) => retryDetectionRun(projectId, runId),
+    // Re-run creates a fresh DetectionRun rather than reusing the existing run_id,
+    // so each click produces a new record with its own history.
+    mutationFn: (_runId: string) => createDetectionRun(projectId, datasetId, selectedModel),
     onSuccess: () => {
       mutationError = null;
       queryClient.invalidateQueries({ queryKey: queryKey });
@@ -295,7 +297,7 @@
       <ul class="space-y-1.5">
         {#each $runsQuery.data.items as run (run.id)}
           <li class="flex items-center justify-between gap-2 text-xs text-stone-500">
-            <span class="font-medium text-stone-700">{modelDisplayName(run.model_name)} v{run.model_version}</span>
+            <span class="font-medium text-stone-700">{modelDisplayName(run.model_name)}</span>
             <span class={
               run.status === 'completed' ? 'text-green-600' :
               run.status === 'failed' ? 'text-red-500' :

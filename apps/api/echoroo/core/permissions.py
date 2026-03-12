@@ -4,7 +4,7 @@ This module provides decorators and helper functions to check user permissions
 on projects based on their role (admin, member, viewer).
 """
 
-from enum import Enum
+from enum import StrEnum
 from uuid import UUID
 
 from sqlalchemy import select
@@ -14,7 +14,7 @@ from echoroo.models.enums import ProjectRole
 from echoroo.models.project import Project, ProjectMember
 
 
-class Permission(str, Enum):
+class Permission(StrEnum):
     """Permission types for project access control.
 
     Attributes:

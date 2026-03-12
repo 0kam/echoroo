@@ -6,9 +6,8 @@
    * the search API. Reject is client-side state only.
    */
 
-  import { onDestroy } from 'svelte';
   import * as m from '$lib/paraglide/messages.js';
-  import { createAnnotationFromSearch } from '$lib/api/search';
+  import { createAnnotationFromSearch, rejectSearchResult } from '$lib/api/search';
   import type { SimilarityResult, SearchResultStatus } from '$lib/types/search';
   import ReviewCard from '$lib/components/common/ReviewCard.svelte';
 
@@ -17,13 +16,15 @@
     result: SimilarityResult;
     tagId: string;
     status: SearchResultStatus;
+    searchSessionId?: string;
     onConfirm: () => void;
     onReject: () => void;
   }
 
-  let { projectId, result, tagId, status, onConfirm, onReject }: Props = $props();
+  let { projectId, result, tagId, status, searchSessionId, onConfirm, onReject }: Props = $props();
 
   let isConfirming = $state(false);
+  let isRejecting = $state(false);
 
   const recordingName = $derived(result.recording_filename ?? result.recording_id.slice(0, 8) + '...');
 
@@ -44,6 +45,7 @@
         start_time: result.start_time,
         end_time: result.end_time,
         confidence: result.similarity,
+        search_session_id: searchSessionId,
       });
       onConfirm();
     } catch {
@@ -53,8 +55,26 @@
     }
   }
 
-  function handleReject() {
-    onReject();
+  async function handleReject() {
+    if (isRejecting || status === 'rejected') return;
+    isRejecting = true;
+    try {
+      await rejectSearchResult(projectId, {
+        recording_id: result.recording_id,
+        tag_id: tagId,
+        start_time: result.start_time,
+        end_time: result.end_time,
+        confidence: result.similarity,
+        search_session_id: searchSessionId,
+      });
+      onReject();
+    } catch (err) {
+      console.error('Failed to reject:', err);
+      // Still update UI even if API call fails
+      onReject();
+    } finally {
+      isRejecting = false;
+    }
   }
 </script>
 
@@ -68,7 +88,7 @@
   scoreValue={result.similarity}
   scoreLabel={m.search_similarity()}
   scoreBadgeClass={getSimilarityBadgeClass(result.similarity)}
-  isLoading={isConfirming}
+  isLoading={isConfirming || isRejecting}
   onConfirm={handleConfirm}
   onReject={handleReject}
 />

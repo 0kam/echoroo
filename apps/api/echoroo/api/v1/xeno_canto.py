@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import os
+from collections.abc import AsyncIterator
 from uuid import UUID
 
 import httpx
@@ -211,43 +212,45 @@ async def proxy_audio(
 
     url = f"https://xeno-canto.org/{xc_id}/download"
 
-    async def _stream_audio() -> object:
+    async def _stream_audio() -> AsyncIterator[bytes]:
         try:
-            async with httpx.AsyncClient(
-                timeout=30.0,
-                follow_redirects=True,
-            ) as client:
-                async with client.stream(
+            async with (
+                httpx.AsyncClient(
+                    timeout=30.0,
+                    follow_redirects=True,
+                ) as client,
+                client.stream(
                     "GET",
                     url,
                     headers={"User-Agent": "Echoroo/2.0 (https://echoroo.app)"},
-                ) as xc_resp:
-                    if xc_resp.status_code == 404:
-                        raise HTTPException(
-                            status_code=status.HTTP_404_NOT_FOUND,
-                            detail=f"Xeno-canto recording {xc_id} not found",
-                        )
-                    if xc_resp.status_code != 200:
-                        raise HTTPException(
-                            status_code=status.HTTP_502_BAD_GATEWAY,
-                            detail=f"Xeno-canto returned HTTP {xc_resp.status_code}",
-                        )
+                ) as xc_resp,
+            ):
+                if xc_resp.status_code == 404:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail=f"Xeno-canto recording {xc_id} not found",
+                    )
+                if xc_resp.status_code != 200:
+                    raise HTTPException(
+                        status_code=status.HTTP_502_BAD_GATEWAY,
+                        detail=f"Xeno-canto returned HTTP {xc_resp.status_code}",
+                    )
 
-                    # Reject files that exceed the size limit based on Content-Length
-                    content_length_str = xc_resp.headers.get("content-length")
-                    if content_length_str is not None:
-                        try:
-                            content_length = int(content_length_str)
-                            if content_length > AUDIO_SIZE_LIMIT_BYTES:
-                                raise HTTPException(
-                                    status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                                    detail="Audio file exceeds 50 MB limit",
-                                )
-                        except ValueError:
-                            pass
+                # Reject files that exceed the size limit based on Content-Length
+                content_length_str = xc_resp.headers.get("content-length")
+                if content_length_str is not None:
+                    try:
+                        content_length = int(content_length_str)
+                        if content_length > AUDIO_SIZE_LIMIT_BYTES:
+                            raise HTTPException(
+                                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                                detail="Audio file exceeds 50 MB limit",
+                            )
+                    except ValueError:
+                        pass
 
-                    async for chunk in xc_resp.aiter_bytes(chunk_size=8192):
-                        yield chunk
+                async for chunk in xc_resp.aiter_bytes(chunk_size=8192):
+                    yield chunk
         except httpx.TimeoutException as exc:
             logger.warning("Xeno-canto audio proxy timed out for xc_id=%r", xc_id)
             raise HTTPException(

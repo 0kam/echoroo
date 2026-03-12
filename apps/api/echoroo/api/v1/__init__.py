@@ -17,7 +17,6 @@ from echoroo.api.v1 import (
     projects,
     recorders,
     recordings,
-    search as search_module,
     setup,
     sites,
     tags,
@@ -25,6 +24,9 @@ from echoroo.api.v1 import (
     uploads,
     users,
     xeno_canto,
+)
+from echoroo.api.v1 import (
+    search as search_module,
 )
 
 # Create main API router with /api/v1 prefix
