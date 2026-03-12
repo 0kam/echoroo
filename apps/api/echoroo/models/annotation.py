@@ -21,6 +21,7 @@ from echoroo.models.enums import DetectionSource, DetectionStatus
 if TYPE_CHECKING:
     from echoroo.models.detection_run import DetectionRun
     from echoroo.models.recording import Recording
+    from echoroo.models.search_session import SearchSession
     from echoroo.models.tag import Tag
     from echoroo.models.user import User
 
@@ -124,6 +125,13 @@ class Annotation(UUIDMixin, TimestampMixin, Base):
         nullable=True,
         doc="Timestamp of review action",
     )
+    search_session_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("search_sessions.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+        doc="Search session that created this annotation",
+    )
 
     # Relationships
     recording: Mapped[Recording] = relationship(
@@ -141,6 +149,11 @@ class Annotation(UUIDMixin, TimestampMixin, Base):
     )
     reviewed_by: Mapped[User | None] = relationship(
         "User",
+        lazy="raise",
+    )
+    search_session: Mapped[SearchSession | None] = relationship(
+        "SearchSession",
+        back_populates="annotations",
         lazy="raise",
     )
 

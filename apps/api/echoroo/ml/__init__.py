@@ -11,13 +11,12 @@ Models are automatically registered with ModelRegistry when this package
 is imported via the birdnet and perch sub-package imports below.
 """
 
-from echoroo.ml.base import InferenceEngine, InferenceResult, ModelLoader, ModelSpecification
-from echoroo.ml.birdnet_wrapper import BirdNETDetection, BirdNETWrapper
-from echoroo.ml.registry import ModelInfo, ModelNotFoundError, ModelRegistry
-
 # Import sub-packages to trigger automatic model registration
 import echoroo.ml.birdnet  # noqa: F401
 import echoroo.ml.perch  # noqa: F401
+from echoroo.ml.base import InferenceEngine, InferenceResult, ModelLoader, ModelSpecification
+from echoroo.ml.birdnet_wrapper import BirdNETDetection, BirdNETWrapper
+from echoroo.ml.registry import ModelInfo, ModelNotFoundError, ModelRegistry
 
 __all__ = [
     # Base abstractions

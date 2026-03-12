@@ -485,7 +485,11 @@ class BirdNETInference(InferenceEngine):
         kwargs = self._build_infer_kwargs()
         return self._model.encode(file_paths, **kwargs)
 
-    def predict_files_batch(self, file_paths: list[str]) -> tuple[Any, Any]:
+    def predict_files_batch(
+        self,
+        file_paths: list[str],
+        custom_species_list: list[str] | None = None,
+    ) -> tuple[Any, Any]:
         """Run encode + predict on multiple files in a single batch call.
 
         Calls model.encode() and model.predict() once each with all file paths,
@@ -497,6 +501,9 @@ class BirdNETInference(InferenceEngine):
         file_paths : list[str]
             List of absolute paths to audio files. Must be sorted by the caller
             to match BirdNET's internal alphabetical sorting of files.
+        custom_species_list : list[str] | None, optional
+            Restrict predictions to this set of species labels (geo filter).
+            None means no restriction (all species considered). Default is None.
 
         Returns
         -------
@@ -511,6 +518,8 @@ class BirdNETInference(InferenceEngine):
             "default_confidence_threshold": self._confidence_threshold,
             **kwargs,
         }
+        if custom_species_list is not None:
+            predict_kwargs["custom_species_list"] = custom_species_list
         predictions_result = self._model.predict(file_paths, **predict_kwargs)
         return embeddings_result, predictions_result
 

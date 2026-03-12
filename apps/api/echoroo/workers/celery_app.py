@@ -12,10 +12,10 @@ import multiprocessing
 # cleanly. force=True allows calling this even if already set elsewhere.
 multiprocessing.set_start_method("spawn", force=True)
 
-from celery import Celery
-from celery.schedules import crontab
+from celery import Celery  # noqa: E402
+from celery.schedules import crontab  # noqa: E402
 
-from echoroo.core.settings import get_settings
+from echoroo.core.settings import get_settings  # noqa: E402
 
 _settings = get_settings()
 

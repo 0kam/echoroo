@@ -260,6 +260,8 @@ export interface SearchJobSubmitResponse {
   job_id: string;
   /** Initial status of the job (always "pending" on submission) */
   status: string;
+  /** UUID of the search session created for this job */
+  session_id?: string;
 }
 
 /**
@@ -276,6 +278,75 @@ export interface SearchJobStatusResponse {
   results: BatchSearchResponse | null;
   /** Error message if the job failed, or null otherwise */
   error: string | null;
+  /** UUID of the search session associated with this job */
+  session_id?: string;
+}
+
+// ============================================
+// Search Session Types (Phase 5)
+// ============================================
+
+/**
+ * Full details of a persisted search session, including merged review statuses.
+ */
+export interface SearchSession {
+  id: string;
+  project_id: string;
+  user_id: string | null;
+  name: string | null;
+  status: 'pending' | 'running' | 'completed' | 'failed';
+  model_name: string;
+  parameters: {
+    min_similarity: number;
+    limit_per_species: number;
+    dataset_id: string | null;
+  } | null;
+  species_config: Array<{
+    tag_id: string | null;
+    scientific_name: string;
+    common_name: string | null;
+    sources: Array<Record<string, unknown>>;
+  }> | null;
+  results: BatchSearchResponse | null;
+  result_count: number;
+  confirmed_count: number;
+  rejected_count: number;
+  celery_job_id: string | null;
+  reference_audio_keys: string[] | null;
+  started_at: string | null;
+  completed_at: string | null;
+  error_message: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/**
+ * Summary item for listing search sessions.
+ */
+export interface SearchSessionListItem {
+  id: string;
+  name: string | null;
+  status: 'pending' | 'running' | 'completed' | 'failed';
+  model_name: string;
+  result_count: number;
+  confirmed_count: number;
+  rejected_count: number;
+  species_config: Array<{
+    tag_id: string | null;
+    scientific_name: string;
+    common_name: string | null;
+  }> | null;
+  started_at: string | null;
+  completed_at: string | null;
+  created_at: string;
+}
+
+/**
+ * Paginated list of search sessions.
+ */
+export interface SearchSessionListResponse {
+  sessions: SearchSessionListItem[];
+  total: number;
 }
 
 /**

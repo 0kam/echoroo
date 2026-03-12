@@ -1,16 +1,16 @@
 """Enum types for database models."""
 
-from enum import Enum
+from enum import StrEnum
 
 
-class ProjectVisibility(str, Enum):
+class ProjectVisibility(StrEnum):
     """Project visibility levels."""
 
     PRIVATE = "private"
     PUBLIC = "public"
 
 
-class ProjectRole(str, Enum):
+class ProjectRole(StrEnum):
     """Project member roles with different permission levels."""
 
     ADMIN = "admin"  # Full control: manage members, edit settings, edit data
@@ -18,7 +18,7 @@ class ProjectRole(str, Enum):
     VIEWER = "viewer"  # Read-only access
 
 
-class SettingType(str, Enum):
+class SettingType(StrEnum):
     """System setting value types."""
 
     STRING = "string"
@@ -27,14 +27,14 @@ class SettingType(str, Enum):
     JSON = "json"
 
 
-class DatasetVisibility(str, Enum):
+class DatasetVisibility(StrEnum):
     """Dataset visibility levels."""
 
     PRIVATE = "private"  # Only owner can access
     PUBLIC = "public"  # All authenticated users can view
 
 
-class DatasetStatus(str, Enum):
+class DatasetStatus(StrEnum):
     """Dataset import status."""
 
     PENDING = "pending"  # Created, not yet scanning
@@ -44,7 +44,7 @@ class DatasetStatus(str, Enum):
     FAILED = "failed"  # Import failed with error
 
 
-class DatetimeParseStatus(str, Enum):
+class DatetimeParseStatus(StrEnum):
     """Recording datetime parse status."""
 
     PENDING = "pending"  # Not yet attempted
@@ -52,7 +52,7 @@ class DatetimeParseStatus(str, Enum):
     FAILED = "failed"  # Parse failed
 
 
-class TagCategory(str, Enum):
+class TagCategory(StrEnum):
     """Tag classification categories."""
 
     SPECIES = "species"
@@ -60,14 +60,14 @@ class TagCategory(str, Enum):
     QUALITY = "quality"
 
 
-class AnnotationProjectVisibility(str, Enum):
+class AnnotationProjectVisibility(StrEnum):
     """Annotation project visibility levels."""
 
     PRIVATE = "private"
     PUBLIC = "public"
 
 
-class AnnotationTaskStatus(str, Enum):
+class AnnotationTaskStatus(StrEnum):
     """Annotation task workflow status."""
 
     PENDING = "pending"
@@ -76,7 +76,7 @@ class AnnotationTaskStatus(str, Enum):
     REVIEW_PENDING = "review_pending"
 
 
-class ReviewStatus(str, Enum):
+class ReviewStatus(StrEnum):
     """Clip annotation review status."""
 
     UNREVIEWED = "unreviewed"
@@ -84,21 +84,21 @@ class ReviewStatus(str, Enum):
     REJECTED = "rejected"
 
 
-class AnnotationSource(str, Enum):
+class AnnotationSource(StrEnum):
     """Source of annotation (human annotator or ML model)."""
 
     HUMAN = "human"
     MODEL = "model"
 
 
-class GeometryType(str, Enum):
+class GeometryType(StrEnum):
     """Sound event geometry types."""
 
     BOUNDING_BOX = "BoundingBox"
     TIME_INTERVAL = "TimeInterval"
 
 
-class DetectionSource(str, Enum):
+class DetectionSource(StrEnum):
     """Source of detection (ML model or human reviewer)."""
 
     BIRDNET = "birdnet"
@@ -108,7 +108,7 @@ class DetectionSource(str, Enum):
     HUMAN = "human"
 
 
-class DetectionStatus(str, Enum):
+class DetectionStatus(StrEnum):
     """Detection review status."""
 
     UNREVIEWED = "unreviewed"
@@ -116,7 +116,7 @@ class DetectionStatus(str, Enum):
     REJECTED = "rejected"
 
 
-class DetectionRunStatus(str, Enum):
+class DetectionRunStatus(StrEnum):
     """Detection run execution status."""
 
     PENDING = "pending"
@@ -125,7 +125,7 @@ class DetectionRunStatus(str, Enum):
     FAILED = "failed"
 
 
-class UploadSessionStatus(str, Enum):
+class UploadSessionStatus(StrEnum):
     """Upload session lifecycle states."""
 
     ISSUED = "issued"        # Presigned URLs generated, waiting for upload
@@ -137,7 +137,7 @@ class UploadSessionStatus(str, Enum):
     FAILED = "failed"        # Error at any stage
 
 
-class UploadFileStatus(str, Enum):
+class UploadFileStatus(StrEnum):
     """Individual file status within an upload session."""
 
     PENDING = "pending"    # Presigned URL issued, not yet uploaded
@@ -145,3 +145,12 @@ class UploadFileStatus(str, Enum):
     VALID = "valid"        # Passed ffprobe validation
     INVALID = "invalid"    # Failed validation
     IMPORTED = "imported"  # Recording record created
+
+
+class SearchSessionStatus(StrEnum):
+    """Search session execution status."""
+
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"

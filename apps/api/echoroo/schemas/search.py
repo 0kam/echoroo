@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import uuid as _uuid
+from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class SimilaritySearchRequest(BaseModel):
@@ -161,3 +163,83 @@ class BatchSearchResponse(BaseModel):
     search_duration_ms: int = Field(
         ..., description="Wall-clock search duration in milliseconds"
     )
+
+
+# ---------------------------------------------------------------------------
+# Search session persistence schemas
+# ---------------------------------------------------------------------------
+
+
+class SearchSessionResponse(BaseModel):
+    """Full search session detail including results."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: _uuid.UUID
+    project_id: _uuid.UUID
+    user_id: _uuid.UUID | None
+    name: str | None
+    status: str
+    model_name: str
+    parameters: dict[str, object] | None
+    species_config: list[object] | None
+    results: dict[str, object] | None  # BatchSearchResponse format
+    result_count: int
+    confirmed_count: int
+    rejected_count: int
+    celery_job_id: str | None
+    reference_audio_keys: list[str] | None
+    started_at: datetime | None
+    completed_at: datetime | None
+    error_message: str | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class SearchSessionListItem(BaseModel):
+    """Session list item (no results, just counts)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: _uuid.UUID
+    name: str | None
+    status: str
+    model_name: str
+    result_count: int
+    confirmed_count: int
+    rejected_count: int
+    species_config: list[object] | None  # for showing species names in list
+    started_at: datetime | None
+    completed_at: datetime | None
+    created_at: datetime
+
+
+class SearchSessionListResponse(BaseModel):
+    """Paginated list of search sessions."""
+
+    sessions: list[SearchSessionListItem]
+    total: int
+
+
+# ---------------------------------------------------------------------------
+# Job response schemas (updated to include session_id)
+# ---------------------------------------------------------------------------
+
+
+class SearchJobAcceptedResponse(BaseModel):
+    """Response returned immediately when a batch search job is queued."""
+
+    job_id: str
+    status: str
+    session_id: _uuid.UUID | None = None
+
+
+class SearchJobStatusResponse(BaseModel):
+    """Response for async batch search job status."""
+
+    job_id: str
+    status: str  # "pending" | "processing" | "completed" | "failed"
+    progress: dict[str, int] | None = None
+    results: BatchSearchResponse | None = None
+    error: str | None = None
+    session_id: _uuid.UUID | None = None

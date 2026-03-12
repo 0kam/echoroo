@@ -115,6 +115,7 @@ services:
       - S3_BUCKET=echoroo
       - CELERY_BROKER_URL=redis://redis:6379/0
       - CELERY_RESULT_BACKEND=redis://redis:6379/1
+      - XENO_CANTO_API_KEY=${XENO_CANTO_API_KEY:-}
     healthcheck:
       test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 15s

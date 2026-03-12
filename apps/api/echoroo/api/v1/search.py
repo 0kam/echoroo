@@ -10,13 +10,24 @@ import json
 import logging
 import tempfile
 import uuid as uuid_module
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated
 from uuid import UUID
 
-logger = logging.getLogger(__name__)
-
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    Request,
+    Response,
+    UploadFile,
+    status,
+)
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import String, bindparam, select, text
 from sqlalchemy.dialects.postgresql import ARRAY
@@ -32,28 +43,19 @@ from echoroo.schemas.search import (
     BatchSearchRequest,
     BatchSearchResponse,
     EmbeddingStatsResponse,
+    SearchJobAcceptedResponse,
+    SearchJobStatusResponse,
+    SearchSessionListItem,
+    SearchSessionListResponse,
+    SearchSessionResponse,
     SimilaritySearchRequest,
     SimilaritySearchResponse,
     SpeciesMatchResult,
 )
 from echoroo.services.search import SimilaritySearchService
+from echoroo.services.search_session import SearchSessionService, get_search_session_service
 
-
-class SearchJobStatusResponse(BaseModel):
-    """Response for async batch search job status."""
-
-    job_id: str
-    status: str  # "pending" | "processing" | "completed" | "failed"
-    progress: dict[str, int] | None = None
-    results: BatchSearchResponse | None = None
-    error: str | None = None
-
-
-class SearchJobAcceptedResponse(BaseModel):
-    """Response returned immediately when a batch search job is queued."""
-
-    job_id: str
-    status: str
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/projects/{project_id}/search", tags=["search"])
 
@@ -95,6 +97,189 @@ def get_search_service(db: DbSession) -> SimilaritySearchService:
 
 
 SearchServiceDep = Annotated[SimilaritySearchService, Depends(get_search_service)]
+SearchSessionServiceDep = Annotated[SearchSessionService, Depends(get_search_session_service)]
+
+
+# ---------------------------------------------------------------------------
+# Search session endpoints
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/sessions",
+    response_model=SearchSessionListResponse,
+    summary="List search sessions",
+    description="List paginated batch search sessions for a project, ordered by creation date descending.",
+)
+async def list_search_sessions(
+    project_id: UUID,
+    current_user: CurrentUser,
+    db: DbSession,
+    session_service: SearchSessionServiceDep,
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+) -> SearchSessionListResponse:
+    """List search sessions for a project.
+
+    Args:
+        project_id: Project UUID (path parameter)
+        current_user: Current authenticated user
+        db: Database session
+        session_service: Search session service
+        limit: Maximum number of results
+        offset: Number of results to skip
+
+    Returns:
+        Paginated list of search sessions
+
+    Raises:
+        403: Access denied to project
+    """
+    await check_project_access(project_id, current_user.id, db)
+    sessions, total = await session_service.list_sessions(project_id, limit, offset)
+    return SearchSessionListResponse(
+        sessions=[SearchSessionListItem.model_validate(s) for s in sessions],
+        total=total,
+    )
+
+
+@router.get(
+    "/sessions/{session_id}",
+    response_model=SearchSessionResponse,
+    summary="Get search session detail",
+    description="Get full search session detail with review status merged into results.",
+)
+async def get_search_session(
+    project_id: UUID,
+    session_id: UUID,
+    current_user: CurrentUser,
+    db: DbSession,
+    session_service: SearchSessionServiceDep,
+) -> SearchSessionResponse:
+    """Get a search session with review status merged into results.
+
+    Args:
+        project_id: Project UUID (path parameter)
+        session_id: Session UUID (path parameter)
+        current_user: Current authenticated user
+        db: Database session
+        session_service: Search session service
+
+    Returns:
+        SearchSessionResponse with live review status merged into results
+
+    Raises:
+        403: Access denied to project
+        404: Session not found
+    """
+    await check_project_access(project_id, current_user.id, db)
+    session = await session_service.get_session(session_id, project_id)
+    if not session:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Search session not found")
+
+    merged_results = await session_service.get_session_results_with_review_status(session_id, project_id)
+
+    response = SearchSessionResponse.model_validate(session)
+    if merged_results is not None:
+        response.results = merged_results
+    return response
+
+
+@router.delete(
+    "/sessions/{session_id}",
+    status_code=204,
+    summary="Delete search session",
+    description="Delete a search session. S3 reference audio files are cleaned up on a best-effort basis.",
+)
+async def delete_search_session(
+    project_id: UUID,
+    session_id: UUID,
+    current_user: CurrentUser,
+    db: DbSession,
+    session_service: SearchSessionServiceDep,
+) -> Response:
+    """Delete a search session and attempt S3 cleanup of reference audio.
+
+    Args:
+        project_id: Project UUID (path parameter)
+        session_id: Session UUID (path parameter)
+        current_user: Current authenticated user
+        db: Database session
+        session_service: Search session service
+
+    Returns:
+        204 No Content
+
+    Raises:
+        403: Access denied to project
+        404: Session not found
+    """
+    await check_project_access(project_id, current_user.id, db)
+    session = await session_service.get_session(session_id, project_id)
+    if not session:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Search session not found")
+
+    # Clean up S3 reference audio files (best effort)
+    if session.reference_audio_keys:
+        import contextlib
+
+        from echoroo.core.s3 import delete_object
+
+        for key in session.reference_audio_keys:
+            with contextlib.suppress(Exception):
+                delete_object(key)
+
+    await session_service.delete_session(session_id, project_id)
+    await db.commit()
+    return Response(status_code=204)
+
+
+@router.get(
+    "/sessions/{session_id}/export/csv",
+    summary="Export session annotations as CSV",
+    description="Export all annotations linked to a search session as a CSV file.",
+)
+async def export_search_session_csv(
+    project_id: UUID,
+    session_id: UUID,
+    current_user: CurrentUser,
+    db: DbSession,
+    session_service: SearchSessionServiceDep,
+) -> StreamingResponse:
+    """Export search session annotations as CSV.
+
+    Args:
+        project_id: Project UUID (path parameter)
+        session_id: Session UUID (path parameter)
+        current_user: Current authenticated user
+        db: Database session
+        session_service: Search session service
+
+    Returns:
+        CSV file as streaming response
+
+    Raises:
+        403: Access denied to project
+        404: Session not found
+    """
+    await check_project_access(project_id, current_user.id, db)
+    session = await session_service.get_session(session_id, project_id)
+    if not session:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Search session not found")
+
+    from echoroo.services.detection_export import DetectionExportService
+
+    export_service = DetectionExportService(db)
+    csv_content = await export_service.export_csv(project_id, search_session_id=session_id)
+
+    date_str = datetime.now(UTC).strftime("%Y%m%d")
+    safe_name = (session.name or str(session_id)).replace(" ", "_").replace("/", "-")
+    filename = f"search_session_{safe_name}_{date_str}.csv"
+    return StreamingResponse(
+        iter([csv_content]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.post(
@@ -406,7 +591,26 @@ async def batch_search(
         task_id=job_id,
     )
 
-    return SearchJobAcceptedResponse(job_id=job_id, status="pending")
+    # Create SearchSession DB record for persistence
+    session_service = SearchSessionService(db)
+    species_config_list = [sp.model_dump() for sp in batch_request.species]
+    parameters: dict[str, object] = {
+        "min_similarity": batch_request.min_similarity,
+        "limit_per_species": batch_request.limit_per_species,
+        "dataset_id": batch_request.dataset_id,
+    }
+    search_session = await session_service.create_session(
+        project_id=project_id,
+        user_id=current_user.id,
+        model_name=batch_request.model_name,
+        species_config=species_config_list,
+        parameters=parameters,
+        celery_job_id=job_id,
+        reference_audio_keys=None,
+    )
+    await db.commit()
+
+    return SearchJobAcceptedResponse(job_id=job_id, status="pending", session_id=search_session.id)
 
 
 async def _resolve_vernacular_via_gbif(
@@ -760,10 +964,9 @@ def _clamp_similarity_in_raw(raw: object) -> None:
             continue
         for match in matches:
             if isinstance(match, dict) and "similarity" in match:
-                try:
+                import contextlib
+                with contextlib.suppress(TypeError, ValueError):
                     match["similarity"] = max(0.0, min(1.0, float(match["similarity"])))
-                except (TypeError, ValueError):
-                    pass
 
 
 @router.get(
@@ -818,8 +1021,20 @@ async def get_search_job(
     result = AsyncResult(job_id, app=celery_app)
     state = result.state
 
+    # Look up the associated search session
+    from echoroo.models.search_session import SearchSession
+
+    session_result = await db.execute(
+        select(SearchSession).where(
+            SearchSession.celery_job_id == job_id,
+            SearchSession.project_id == project_id,
+        )
+    )
+    search_session = session_result.scalar_one_or_none()
+    session_id = search_session.id if search_session else None
+
     if state == "PENDING":
-        return SearchJobStatusResponse(job_id=job_id, status="pending")
+        return SearchJobStatusResponse(job_id=job_id, status="pending", session_id=session_id)
 
     if state == "PROCESSING":
         meta = result.info or {}
@@ -830,6 +1045,7 @@ async def get_search_job(
                 "species_completed": meta.get("species_completed", 0),
                 "species_total": meta.get("species_total", 0),
             },
+            session_id=session_id,
         )
 
     if state == "SUCCESS":
@@ -850,21 +1066,53 @@ async def get_search_job(
                 job_id,
                 list(raw.keys()) if isinstance(raw, dict) else type(raw).__name__,
             )
+
+        # Update session status to COMPLETED if not already done by the Celery task
+        if search_session is not None and raw is not None:
+            from echoroo.models.enums import SearchSessionStatus
+
+            if search_session.status != SearchSessionStatus.COMPLETED:
+                search_session.status = SearchSessionStatus.COMPLETED
+                search_session.results = raw if isinstance(raw, dict) else None
+                search_session.result_count = raw.get("total_matches", 0) if isinstance(raw, dict) else 0
+                search_session.completed_at = datetime.now(UTC)
+                try:
+                    await db.commit()
+                except Exception:
+                    logger.exception("Failed to update search session status for job %s", job_id)
+                    await db.rollback()
+
         return SearchJobStatusResponse(
             job_id=job_id,
             status="completed",
             results=response,
+            session_id=session_id,
         )
 
     if state == "FAILURE":
+        # Update session status to FAILED if not already done by the Celery task
+        if search_session is not None:
+            from echoroo.models.enums import SearchSessionStatus
+
+            if search_session.status != SearchSessionStatus.FAILED:
+                search_session.status = SearchSessionStatus.FAILED
+                search_session.error_message = str(result.result)
+                search_session.completed_at = datetime.now(UTC)
+                try:
+                    await db.commit()
+                except Exception:
+                    logger.exception("Failed to update search session failure status for job %s", job_id)
+                    await db.rollback()
+
         return SearchJobStatusResponse(
             job_id=job_id,
             status="failed",
             error=str(result.result),
+            session_id=session_id,
         )
 
     # STARTED, RETRY, or any other unknown state — treat as processing
-    return SearchJobStatusResponse(job_id=job_id, status="processing")
+    return SearchJobStatusResponse(job_id=job_id, status="processing", session_id=session_id)
 
 
 @router.get(
@@ -927,6 +1175,7 @@ class SearchAnnotationCreate(BaseModel):
     confidence: float | None = None
     review_status: str = "confirmed"
     source: str = "similarity_search"
+    search_session_id: uuid_module.UUID | None = None
 
 
 @annotations_router.post(
@@ -971,22 +1220,22 @@ async def create_search_annotation(
     # Validate source enum
     try:
         source = DetectionSource(request.source)
-    except ValueError:
+    except ValueError as err:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=f"Invalid source value: {request.source!r}. "
             f"Valid values: {[e.value for e in DetectionSource]}",
-        )
+        ) from err
 
     # Validate review_status enum
     try:
         ann_status = DetectionStatus(request.review_status)
-    except ValueError:
+    except ValueError as err:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=f"Invalid review_status value: {request.review_status!r}. "
             f"Valid values: {[e.value for e in DetectionStatus]}",
-        )
+        ) from err
 
     # Check for existing annotation with same recording, tag, and time range
     # (within 0.1 s tolerance to avoid floating point issues)
@@ -1024,6 +1273,7 @@ async def create_search_annotation(
         confidence=request.confidence,
         start_time=request.start_time,
         end_time=request.end_time,
+        search_session_id=request.search_session_id,
     )
     db.add(annotation)
     await db.flush()
@@ -1031,6 +1281,12 @@ async def create_search_annotation(
         annotation, ["recording", "tag", "detection_run", "reviewed_by"]
     )
     await db.commit()
+
+    # Update review counts for the linked search session
+    if request.search_session_id is not None:
+        session_svc = SearchSessionService(db)
+        await session_svc.update_review_counts(request.search_session_id)
+        await db.commit()
 
     return _annotation_to_detection_response(annotation)
 

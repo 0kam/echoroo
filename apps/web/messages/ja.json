@@ -1224,5 +1224,15 @@
   "search_rejected": "除外済み",
   "search_max_per_species": "種ごとの最大数",
   "search_no_results_above_threshold": "閾値以上の結果はありません",
+  "search_sessions": "検索履歴",
+  "search_sessions_empty": "検索セッションはまだありません",
+  "search_session_load": "読み込む",
+  "search_session_delete": "削除",
+  "search_session_delete_confirm": "この検索セッションを削除しますか？",
+  "search_export_csv": "CSVエクスポート",
+  "search_exporting": "エクスポート中...",
+  "search_results_count_session": "{count}件の結果",
+  "search_confirmed_count": "{count}件確認済み",
+  "search_rejected_count": "{count}件却下",
   "sidebar_nav_search": "検索"
 }

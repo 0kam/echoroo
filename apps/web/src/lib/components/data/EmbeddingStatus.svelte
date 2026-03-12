@@ -290,7 +290,7 @@
       <ul class="space-y-1.5">
         {#each $runsQuery.data.items as run (run.id)}
           <li class="flex items-center justify-between gap-2 text-xs text-stone-500">
-            <span class="font-medium text-stone-700">{modelDisplayName(run.model_name)} v{run.model_version}</span>
+            <span class="font-medium text-stone-700">{modelDisplayName(run.model_name)} v{run.model_version.replace(/^v/, '')}</span>
             <span class={
               run.status === 'completed' ? 'text-primary-600' :
               run.status === 'failed' ? 'text-red-500' :

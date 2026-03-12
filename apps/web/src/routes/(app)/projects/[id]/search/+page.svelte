@@ -17,10 +17,12 @@
   import { createQuery } from '@tanstack/svelte-query';
   import { localizeHref, getLocale } from '$lib/paraglide/runtime';
   import * as m from '$lib/paraglide/messages';
-  import { searchBatch, getSearchJobStatus, fetchEmbeddingStats } from '$lib/api/search';
+  import { searchBatch, getSearchJobStatus, fetchEmbeddingStats, getSearchSession } from '$lib/api/search';
   import ReferenceSoundsPanel from '$lib/components/search/ReferenceSoundsPanel.svelte';
   import SearchConfigBar from '$lib/components/search/SearchConfigBar.svelte';
   import ResultsPanel from '$lib/components/search/ResultsPanel.svelte';
+  import SearchSessionHistory from '$lib/components/search/SearchSessionHistory.svelte';
+  import SearchSessionExportButton from '$lib/components/search/SearchSessionExportButton.svelte';
   import type {
     TargetSpecies,
     SearchConfig,
@@ -52,6 +54,10 @@
   let searchJobId = $state<string | null>(null);
   let searchProgress = $state<{ species_completed: number; species_total: number } | null>(null);
   let pollingInterval = $state<ReturnType<typeof setInterval> | null>(null);
+
+  // Session persistence state
+  let searchSessionId = $state<string | null>(null);
+  let sessionRefreshTrigger = $state(0);
 
   // ============================================
   // Derived
@@ -125,13 +131,19 @@
     searchProgress = null;
 
     try {
-      const { job_id } = await searchBatch(projectId, species, config);
-      searchJobId = job_id;
+      const response = await searchBatch(projectId, species, config);
+      searchJobId = response.job_id;
+      searchSessionId = response.session_id ?? null;
 
       // Begin polling the job status endpoint every 2 seconds
       pollingInterval = setInterval(async () => {
         try {
-          const status = await getSearchJobStatus(projectId, job_id, getLocale());
+          const status = await getSearchJobStatus(projectId, response.job_id, getLocale());
+
+          // Capture session_id from polling response if not yet available
+          if (status.session_id) {
+            searchSessionId = status.session_id;
+          }
 
           if (status.status === 'processing') {
             searchProgress = status.progress;
@@ -143,6 +155,8 @@
               searchDurationMs = status.results.search_duration_ms;
             }
             isSearching = false;
+            // Trigger a refresh of the session history list
+            sessionRefreshTrigger++;
           } else if (status.status === 'failed') {
             stopPolling();
             searchError = status.error ?? m.search_failed();
@@ -157,6 +171,29 @@
     } catch (err) {
       searchError = err instanceof Error ? err.message : m.search_error_search_failed();
       isSearching = false;
+    }
+  }
+
+  async function handleLoadSession(sessionId: string) {
+    // Cancel any active search before loading a session
+    stopPolling();
+    isSearching = false;
+    searchError = undefined;
+
+    try {
+      const session = await getSearchSession(projectId, sessionId);
+      searchSessionId = session.id;
+      if (session.results) {
+        results = session.results.results ?? null;
+        totalMatches = session.results.total_matches;
+        searchDurationMs = session.results.search_duration_ms;
+      } else {
+        results = null;
+        totalMatches = 0;
+        searchDurationMs = 0;
+      }
+    } catch (e) {
+      console.error('Failed to load session:', e);
     }
   }
 </script>
@@ -198,6 +235,14 @@
     onSearch={handleSearch}
   />
 
+  <!-- [B2] Session History -->
+  <SearchSessionHistory
+    {projectId}
+    onSelectSession={handleLoadSession}
+    activeSessionId={searchSessionId ?? undefined}
+    refreshTrigger={sessionRefreshTrigger}
+  />
+
   <!-- Error display -->
   {#if searchError}
     <div class="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700 dark:border-red-800 dark:bg-red-950/30 dark:text-red-400">
@@ -216,6 +261,13 @@
     </div>
   {/if}
 
+  <!-- Export button (show when session exists and has results) -->
+  {#if searchSessionId && results}
+    <div class="flex justify-end">
+      <SearchSessionExportButton {projectId} sessionId={searchSessionId} />
+    </div>
+  {/if}
+
   <!-- [C] Results Panel (only show when searching or have results) -->
   {#if isSearching || results}
     <ResultsPanel
@@ -225,6 +277,7 @@
       {searchDurationMs}
       {isSearching}
       searchingSpecies={species}
+      searchSessionId={searchSessionId ?? undefined}
     />
   {/if}
 
