@@ -11,6 +11,7 @@ from echoroo.models.base import Base, TimestampMixin, UUIDMixin
 from echoroo.models.clip import Clip
 from echoroo.models.clip_annotation import ClipAnnotation, clip_annotation_tags
 from echoroo.models.confirmed_region import ConfirmedRegion
+from echoroo.models.custom_model import CustomModel, CustomModelStatus
 from echoroo.models.dataset import Dataset
 from echoroo.models.detection_run import DetectionRun
 from echoroo.models.embedding import Embedding
@@ -82,6 +83,8 @@ __all__ = [
     "Annotation",
     "ConfirmedRegion",
     "DetectionRun",
+    # Custom model (SVM classifier)
+    "CustomModel",
     # Search session models
     "SearchSession",
     # ML embedding models
@@ -112,6 +115,8 @@ __all__ = [
     "DetectionSource",
     "DetectionStatus",
     "DetectionRunStatus",
+    # Enums (custom model)
+    "CustomModelStatus",
     # Enums (search session)
     "SearchSessionStatus",
     # Enums (upload)

@@ -38,7 +38,18 @@ app.conf.update(
     worker_prefetch_multiplier=1,  # Fair scheduling
 )
 
-# Explicitly include task modules (autodiscover looks for 'tasks.py' by default)
+# Route GPU-intensive ML tasks to the dedicated GPU queue.
+# All other tasks fall through to the default queue.
+app.conf.task_routes = {
+    "echoroo.workers.ml_tasks.run_birdnet_detection": {"queue": "gpu"},
+    "echoroo.workers.ml_tasks.run_detection": {"queue": "gpu"},
+    "echoroo.workers.ml_tasks.run_embedding_generation": {"queue": "gpu"},
+    "echoroo.workers.search_tasks.run_batch_search": {"queue": "gpu"},
+}
+
+# Explicitly include task modules (autodiscover looks for 'tasks.py' by default).
+# model_preloader is not a task module but must be included so that its
+# worker_ready signal handler is registered in every worker process.
 app.conf.include = [
     "echoroo.workers.upload_tasks",
     "echoroo.workers.import_task",
@@ -46,6 +57,8 @@ app.conf.include = [
     "echoroo.workers.ml_tasks",
     "echoroo.workers.taxon_tasks",
     "echoroo.workers.search_tasks",
+    "echoroo.workers.classifier_tasks",
+    "echoroo.workers.model_preloader",
 ]
 
 # Periodic tasks (beat schedule)

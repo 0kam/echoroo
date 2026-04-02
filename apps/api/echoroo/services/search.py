@@ -40,16 +40,6 @@ logger = logging.getLogger(__name__)
 # mismatch error.
 _STORAGE_EMBEDDING_DIM = 1536
 
-# Module-level cache so model weights are loaded once per worker process
-# rather than on every incoming request.  Keys are model names; values are
-# (loader, engine) pairs ready for inference.
-#
-# IMPORTANT: This cache is NOT thread-safe for concurrent model initialisation.
-# Celery workers and gunicorn workers are single-process/single-thread per
-# request, so this is safe in practice.  If you move to a threaded server,
-# add a threading.Lock around the cache write.
-_model_cache: dict[str, tuple[ModelLoader, InferenceEngine]] = {}
-
 
 class SimilaritySearchService:
     """Service for vector similarity search over stored embeddings.
@@ -798,8 +788,8 @@ def _candidate_key(result: SimilarityResult) -> str:
 def _get_or_load_model(model_name: str) -> tuple[ModelLoader, InferenceEngine]:
     """Return a cached (loader, engine) pair, loading it on first call.
 
-    Model weights are expensive to load (~seconds), so we keep one instance
-    per model name alive for the lifetime of the worker process.
+    Delegates to the centralised model_preloader so that GPU workers share
+    the same pre-loaded instances rather than maintaining a separate cache.
 
     Args:
         model_name: Registered model name (e.g. "birdnet", "perch")
@@ -810,21 +800,9 @@ def _get_or_load_model(model_name: str) -> tuple[ModelLoader, InferenceEngine]:
     Raises:
         ModelNotFoundError: If model_name is not in the ModelRegistry
     """
-    # Import triggers __init__.py registration side-effects for each model package
-    import echoroo.ml.birdnet  # noqa: F401
-    import echoroo.ml.perch  # noqa: F401
-    from echoroo.ml.registry import ModelRegistry
+    from echoroo.workers.model_preloader import get_model
 
-    if model_name not in _model_cache:
-        loader_cls = ModelRegistry.get_loader_class(model_name)
-        engine_cls = ModelRegistry.get_engine_class(model_name)
-        loader = loader_cls()
-        loader.load()
-        engine = engine_cls(loader)
-        _model_cache[model_name] = (loader, engine)
-        logger.info("Loaded and cached model '%s' for similarity search", model_name)
-
-    return _model_cache[model_name]
+    return get_model(model_name)
 
 
 def _parse_vector_text(vector_text: str) -> list[float]:

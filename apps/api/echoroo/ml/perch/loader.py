@@ -29,6 +29,7 @@ from echoroo.ml.perch.constants import (
     EMBEDDING_DIM,
     SAMPLE_RATE,
     SEGMENT_DURATION,
+    SEGMENT_SAMPLES,
     VERSION,
 )
 from echoroo.ml.perch.exceptions import PerchModelNotFoundError
@@ -218,4 +219,39 @@ class PerchLoader(ModelLoader):
             self._device,
         )
 
+        # Warm up the model with a silent dummy clip so that XLA compilation
+        # and TensorFlow session initialization happen now rather than on the
+        # first real inference request.  This amortizes the cold-start overhead
+        # and prevents a surprise latency spike on the first search task.
+        self._warmup_model(model)
+
         return model
+
+    def _warmup_model(self, model: Any) -> None:
+        """Run a single silent clip through the model to trigger XLA compilation.
+
+        Uses a 5-second silent WAV at 32 kHz — the minimum input length accepted
+        by Perch V2.  Errors are caught and logged so that a warm-up failure
+        never prevents the model from being returned to callers.
+        """
+        import os
+        import tempfile
+
+        try:
+            import numpy as np
+            import soundfile as sf
+
+            silence = np.zeros(SEGMENT_SAMPLES, dtype=np.float32)
+            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+                sf.write(tmp.name, silence, SAMPLE_RATE)
+                tmp_path = tmp.name
+
+            try:
+                kwargs: dict[str, Any] = {"device": self._device}
+                model.encode(tmp_path, **kwargs)
+                logger.info("Perch V2 warm-up inference completed (XLA compiled)")
+            finally:
+                os.unlink(tmp_path)
+
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Perch V2 warm-up inference failed (non-fatal): %s", exc)
