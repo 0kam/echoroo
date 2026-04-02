@@ -36,6 +36,7 @@ app.conf.update(
     task_soft_time_limit=540,  # 9 min soft limit
     worker_max_tasks_per_child=50,  # Restart worker after 50 tasks (prevent memory leaks)
     worker_prefetch_multiplier=1,  # Fair scheduling
+    task_default_queue="default",  # Non-routed tasks go to 'default' queue
 )
 
 # Route GPU-intensive ML tasks to the dedicated GPU queue.

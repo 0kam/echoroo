@@ -350,14 +350,6 @@ async def train_custom_model(
             ),
         )
 
-    # Resolve training params
-    train_params: dict[str, object] = {}
-    if request is not None:
-        train_params = {
-            "use_unlabeled": request.use_unlabeled,
-            "max_unlabeled_samples": request.max_unlabeled_samples,
-        }
-
     # Transition to TRAINING before dispatching the task to avoid race conditions
     model.status = CustomModelStatus.TRAINING
     model.error_message = None
@@ -368,7 +360,7 @@ async def train_custom_model(
     # Lazy import to avoid circular dependency issues
     from echoroo.workers.classifier_tasks import train_custom_model as train_task  # noqa: PLC0415
 
-    train_task.delay(str(model_id), train_params)
+    train_task.delay(str(model_id))
 
     await db.refresh(model)
     return CustomModelResponse.model_validate(model)
