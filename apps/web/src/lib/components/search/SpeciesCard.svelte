@@ -18,9 +18,11 @@
     projectId: string;
     onUpdate: (species: TargetSpecies) => void;
     onRemove: () => void;
+    /** When true, hides add/remove controls and passes readonly down to SourceCards */
+    readonly?: boolean;
   }
 
-  let { species, modelName, projectId, onUpdate, onRemove }: Props = $props();
+  let { species, modelName, projectId, onUpdate, onRemove, readonly = false }: Props = $props();
 
   let showAddSource = $state(false);
 
@@ -81,40 +83,42 @@
       {/if}
     </div>
 
-    <div class="ml-2 flex shrink-0 items-center gap-2">
-      <!-- Add Source toggle -->
-      <button
-        type="button"
-        class="flex items-center rounded border border-stone-300 px-2 py-1 text-xs text-stone-700
-               transition-colors hover:border-primary-400 hover:text-primary-700
-               dark:border-stone-600 dark:text-stone-300 dark:hover:border-primary-500"
-        onclick={() => (showAddSource = !showAddSource)}
-      >
-        <!-- Plus icon -->
-        <svg class="mr-1 h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-          <path d="M12 5v14M5 12h14" stroke-linecap="round" />
-        </svg>
-        {m.search_add_source()}
-      </button>
+    {#if !readonly}
+      <div class="ml-2 flex shrink-0 items-center gap-2">
+        <!-- Add Source toggle -->
+        <button
+          type="button"
+          class="flex items-center rounded border border-stone-300 px-2 py-1 text-xs text-stone-700
+                 transition-colors hover:border-primary-400 hover:text-primary-700
+                 dark:border-stone-600 dark:text-stone-300 dark:hover:border-primary-500"
+          onclick={() => (showAddSource = !showAddSource)}
+        >
+          <!-- Plus icon -->
+          <svg class="mr-1 h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <path d="M12 5v14M5 12h14" stroke-linecap="round" />
+          </svg>
+          {m.search_add_source()}
+        </button>
 
-      <!-- Remove species -->
-      <button
-        type="button"
-        class="text-stone-300 transition-colors hover:text-stone-500 dark:text-stone-600 dark:hover:text-stone-400"
-        onclick={handleRemove}
-        aria-label="Remove species"
-        title={m.search_remove_species_confirm({ count: species.sources.length.toString() })}
-      >
-        <!-- X icon -->
-        <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-          <path d="M18 6 6 18M6 6l12 12" />
-        </svg>
-      </button>
-    </div>
+        <!-- Remove species -->
+        <button
+          type="button"
+          class="text-stone-300 transition-colors hover:text-stone-500 dark:text-stone-600 dark:hover:text-stone-400"
+          onclick={handleRemove}
+          aria-label="Remove species"
+          title={m.search_remove_species_confirm({ count: species.sources.length.toString() })}
+        >
+          <!-- X icon -->
+          <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <path d="M18 6 6 18M6 6l12 12" />
+          </svg>
+        </button>
+      </div>
+    {/if}
   </div>
 
-  <!-- Add Source Panel (collapsible) -->
-  {#if showAddSource}
+  <!-- Add Source Panel (collapsible, hidden in readonly mode) -->
+  {#if showAddSource && !readonly}
     <AddSourcePanel
       {modelName}
       {projectId}
@@ -134,11 +138,12 @@
           {modelName}
           onRemove={() => removeSource(source.id)}
           onUpdate={(updates) => updateSourceClip(source.id, updates)}
+          {readonly}
         />
       {/each}
     </div>
-  {:else if !showAddSource}
-    <!-- Empty state -->
+  {:else if !showAddSource && !readonly}
+    <!-- Empty state (not shown in readonly mode) -->
     <div class="px-3 pb-4 pt-1 text-center">
       <!-- Upload icon -->
       <svg class="mx-auto mb-2 h-8 w-8 text-stone-300 dark:text-stone-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">

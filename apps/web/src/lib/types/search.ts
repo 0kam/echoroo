@@ -97,10 +97,16 @@ export interface SimilarByAudioParams {
 export interface SoundSource {
   /** Client-generated UUID for UI state management */
   id: string;
-  /** Whether this source is an uploaded file or a remote URL */
-  origin: 'upload' | 'url';
+  /** Whether this source is an uploaded file, a remote URL, or a persisted S3 object */
+  origin: 'upload' | 'url' | 's3';
   /** Optional human-readable label for this source */
   label?: string;
+
+  // S3-specific (persisted session reference audio)
+  /** Streaming URL for persisted reference audio (set when loading from a saved session) */
+  streamUrl?: string;
+  /** Index of this source within reference_audio_keys (used to build the streaming URL) */
+  sourceIndex?: number;
 
   // Upload-specific
   /** The audio file to upload (only for origin === 'upload') */

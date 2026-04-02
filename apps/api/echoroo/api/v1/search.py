@@ -6,13 +6,14 @@ All endpoints are scoped to a project_id for data isolation.
 
 from __future__ import annotations
 
+import collections.abc
 import json
 import logging
 import tempfile
 import uuid as uuid_module
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 from uuid import UUID
 
 from fastapi import (
@@ -20,6 +21,7 @@ from fastapi import (
     Depends,
     File,
     Form,
+    Header,
     HTTPException,
     Query,
     Request,
@@ -50,7 +52,9 @@ from echoroo.schemas.search import (
     SearchSessionResponse,
     SimilaritySearchRequest,
     SimilaritySearchResponse,
+    SourceConfig,
     SpeciesMatchResult,
+    SpeciesSearchConfig,
 )
 from echoroo.services.search import SimilaritySearchService
 from echoroo.services.search_session import SearchSessionService, get_search_session_service
@@ -232,6 +236,119 @@ async def delete_search_session(
     await session_service.delete_session(session_id, project_id)
     await db.commit()
     return Response(status_code=204)
+
+
+@router.get(
+    "/sessions/{session_id}/reference-audio/{source_index}",
+    summary="Stream reference audio for a search session",
+    description=(
+        "Stream a persisted reference audio file for a search session by its index "
+        "in the reference_audio_keys list. Supports HTTP Range requests."
+    ),
+)
+async def stream_reference_audio(
+    project_id: UUID,
+    session_id: UUID,
+    source_index: int,
+    current_user: CurrentUser,
+    db: DbSession,
+    session_service: SearchSessionServiceDep,
+    range: str | None = Header(None),
+) -> StreamingResponse:
+    """Stream a reference audio file stored in S3 for a search session.
+
+    Args:
+        project_id: Project UUID (path parameter)
+        session_id: Session UUID (path parameter)
+        source_index: Index into the session's reference_audio_keys list
+        current_user: Current authenticated user
+        db: Database session
+        session_service: Search session service
+        range: Optional HTTP Range header for partial content streaming
+
+    Returns:
+        StreamingResponse with audio content
+
+    Raises:
+        403: Access denied to project
+        404: Session not found or source_index out of bounds
+        500: S3 retrieval error
+    """
+    import mimetypes
+
+    await check_project_access(project_id, current_user.id, db)
+    session = await session_service.get_session(session_id, project_id)
+    if not session:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Search session not found")
+
+    if not session.reference_audio_keys or source_index >= len(session.reference_audio_keys):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Reference audio source index {source_index} not found",
+        )
+
+    if source_index < 0:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Invalid source index",
+        )
+
+    s3_key = session.reference_audio_keys[source_index]
+
+    try:
+        from echoroo.core.s3 import get_s3_client as _get_s3_stream_client
+        from echoroo.core.settings import get_settings as _get_stream_settings
+
+        _stream_settings = _get_stream_settings()
+        _stream_client = _get_s3_stream_client()
+        s3_params: dict[str, Any] = {
+            "Bucket": _stream_settings.S3_BUCKET,
+            "Key": s3_key,
+        }
+        if range:
+            s3_params["Range"] = range
+        s3_response = _stream_client.get_object(**s3_params)
+    except Exception as exc:
+        logger.exception("Failed to stream reference audio key=%s", s3_key)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to retrieve reference audio from storage",
+        ) from exc
+
+    body = s3_response["Body"]
+    content_length = s3_response.get("ContentLength")
+
+    # Determine content type from file extension
+    suffix = Path(s3_key).suffix.lower()
+    content_type, _ = mimetypes.guess_type(f"file{suffix}")
+    if not content_type:
+        content_type = "audio/wav"
+
+    def _iter_stream() -> collections.abc.Iterator[bytes]:
+        try:
+            while True:
+                chunk = body.read(65536)
+                if not chunk:
+                    break
+                yield chunk
+        finally:
+            body.close()
+
+    response_headers: dict[str, str] = {}
+    if content_length is not None:
+        response_headers["Content-Length"] = str(content_length)
+    response_headers["Accept-Ranges"] = "bytes"
+
+    response_status = 206 if range else 200
+    if range and "ContentRange" in s3_response:
+        response_headers["Content-Range"] = s3_response["ContentRange"]
+
+    return StreamingResponse(
+        _iter_stream(),
+        status_code=response_status,
+        media_type=content_type,
+        headers=response_headers,
+    )
 
 
 @router.get(
@@ -485,6 +602,11 @@ async def batch_search(
     """
     await check_project_access(project_id, current_user.id, db)
 
+    import contextlib
+    import shutil
+
+    from echoroo.core.s3 import copy_object, delete_objects_by_prefix
+
     # Parse the metadata JSON field
     try:
         batch_request = BatchSearchRequest.model_validate(json.loads(metadata))
@@ -493,6 +615,11 @@ async def batch_search(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Invalid metadata JSON: {exc}",
         ) from exc
+
+    # Strip any client-injected s3_keys (security: s3_key is server-internal only)
+    for sp in batch_request.species:
+        for src in sp.sources:
+            src.s3_key = None
 
     # Validate constraints
     MAX_SPECIES = 20
@@ -529,9 +656,100 @@ async def batch_search(
     tmp_dir = Path(f"/data/search_tmp/{job_id}")
     tmp_dir.mkdir(parents=True, exist_ok=True)
 
+    # Handle re-execution: copy sources from parent session if source_session_id is set
+    if batch_request.source_session_id:
+        session_service_inner = SearchSessionService(db)
+        try:
+            parent_session_id = UUID(batch_request.source_session_id)
+        except ValueError as exc:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid source_session_id: {batch_request.source_session_id}",
+            ) from exc
+
+        parent_session = await session_service_inner.get_session(parent_session_id, project_id)
+        if not parent_session:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Source session not found: {batch_request.source_session_id}",
+            )
+
+        # Merge parent species configs into the current request
+        if parent_session.species_config:
+            # Build lookup for new request species by scientific_name
+            new_species_by_name: dict[str, SpeciesSearchConfig] = {
+                sp.scientific_name: sp for sp in batch_request.species
+            }
+
+            for _raw_sp in parent_session.species_config:
+                # species_config is stored as list[object] in the ORM model;
+                # we know at runtime each element is a dict from JSONB
+                parent_sp_dict: dict[str, object] = _raw_sp  # type: ignore[assignment]
+                parent_sci_name = str(parent_sp_dict.get("scientific_name", ""))
+                if not parent_sci_name:
+                    continue
+
+                # Copy each parent source with s3_key to the new job's S3 prefix
+                parent_sources_with_keys: list[SourceConfig] = []
+                raw_sources = parent_sp_dict.get("sources", [])
+                sources_list: list[dict[str, object]] = raw_sources  # type: ignore[assignment]
+                for src_dict in sources_list:
+                    old_s3_key = src_dict.get("s3_key")
+                    if not old_s3_key:
+                        continue
+                    old_s3_key_str = str(old_s3_key)
+                    # Derive new key: replace old job prefix with new job prefix
+                    # old key format: search_reference/{project_id}/{old_job_id}/{file}
+                    old_file_part = Path(old_s3_key_str).name
+                    new_s3_key = f"search_reference/{project_id}/{job_id}/{old_file_part}"
+                    try:
+                        copy_object(old_s3_key_str, new_s3_key)
+                    except Exception:
+                        logger.warning(
+                            "Failed to copy S3 object %s -> %s for re-execution, skipping",
+                            old_s3_key_str,
+                            new_s3_key,
+                        )
+                        continue
+
+                    _raw_file_key = src_dict.get("file_key")
+                    _raw_start = src_dict.get("start_time")
+                    _raw_end = src_dict.get("end_time")
+                    copied_src = SourceConfig(
+                        type="upload",
+                        file_key=str(_raw_file_key) if _raw_file_key is not None else None,
+                        start_time=float(str(_raw_start)) if _raw_start is not None else None,
+                        end_time=float(str(_raw_end)) if _raw_end is not None else None,
+                    )
+                    copied_src.s3_key = new_s3_key
+                    parent_sources_with_keys.append(copied_src)
+
+                if not parent_sources_with_keys:
+                    continue
+
+                if parent_sci_name in new_species_by_name:
+                    # Merge parent sources into existing species
+                    existing_sp = new_species_by_name[parent_sci_name]
+                    existing_sp.sources = list(existing_sp.sources) + parent_sources_with_keys
+                else:
+                    # Add parent species as a new species in the request
+                    _raw_tag_id = parent_sp_dict.get("tag_id")
+                    merged_sp = SpeciesSearchConfig(
+                        tag_id=str(_raw_tag_id) if _raw_tag_id is not None else None,
+                        scientific_name=parent_sci_name,
+                        sources=parent_sources_with_keys,
+                    )
+                    batch_request.species.append(merged_sp)
+
     # Read and persist all uploaded audio files to the job temp directory
     form = await request.form()
     audio_files: dict[str, str] = {}  # file_key -> relative path within tmp_dir
+
+    # Track uploaded file contents for S3 upload (key -> bytes)
+    uploaded_file_bytes: dict[str, bytes] = {}
+    uploaded_file_suffixes: dict[str, str] = {}
 
     try:
         for field_name, field_value in form.items():
@@ -567,19 +785,71 @@ async def batch_search(
             dest_path.write_bytes(content)
             audio_files[field_name] = file_name  # relative path
 
+            # Store bytes for S3 upload
+            uploaded_file_bytes[field_name] = content
+            uploaded_file_suffixes[field_name] = suffix
+
     except HTTPException:
         # Clean up temp dir on validation error
-        import shutil
-
         shutil.rmtree(tmp_dir, ignore_errors=True)
         raise
 
+    # Upload new files to S3 and set s3_key on each matching source
+    s3_prefix = f"search_reference/{project_id}/{job_id}"
+    uploaded_s3_keys: list[str] = []
+    try:
+        from echoroo.core.s3 import get_s3_client
+        from echoroo.core.settings import get_settings as _get_settings
+
+        s3_settings = _get_settings()
+        s3_client = get_s3_client()
+
+        for field_name, content in uploaded_file_bytes.items():
+            suffix = uploaded_file_suffixes[field_name]
+            s3_key = f"{s3_prefix}/{field_name}{suffix}"
+            s3_client.put_object(
+                Bucket=s3_settings.S3_BUCKET,
+                Key=s3_key,
+                Body=content,
+            )
+            uploaded_s3_keys.append(s3_key)
+
+            # Assign s3_key to all matching sources across species
+            for sp in batch_request.species:
+                for src in sp.sources:
+                    if src.file_key == field_name and src.s3_key is None:
+                        src.s3_key = s3_key
+
+    except Exception as _s3_exc:
+        logger.exception("Failed to upload reference audio to S3 for job %s", job_id)
+        # Roll back S3 uploads
+        with contextlib.suppress(Exception):
+            delete_objects_by_prefix(s3_prefix)
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to persist reference audio to storage",
+        ) from _s3_exc
+
+    # Collect all s3_keys (newly uploaded + copied from parent)
+    all_s3_keys: list[str] = []
+    for sp in batch_request.species:
+        for src in sp.sources:
+            if src.s3_key and src.s3_key not in all_s3_keys:
+                all_s3_keys.append(src.s3_key)
+
+    # Build enriched species config list (with s3_keys) for worker manifest and DB storage
+    species_config_with_s3 = [sp.model_dump() for sp in batch_request.species]
+
     # Write manifest JSON for the worker
+    # species_config_with_s3 is stored separately so the worker gets s3_keys intact
+    # (BatchSearchRequest validator would strip them if parsed via model_validate)
     manifest = {
-        "request": batch_request.model_dump(),
+        "request": batch_request.model_dump(exclude={"source_session_id"}),
         "audio_files": audio_files,
         "project_id": str(project_id),
         "user_id": str(current_user.id),
+        "species_config_with_s3": species_config_with_s3,
     }
     (tmp_dir / "manifest.json").write_text(json.dumps(manifest))
 
@@ -593,7 +863,6 @@ async def batch_search(
 
     # Create SearchSession DB record for persistence
     session_service = SearchSessionService(db)
-    species_config_list = [sp.model_dump() for sp in batch_request.species]
     parameters: dict[str, object] = {
         "min_similarity": batch_request.min_similarity,
         "limit_per_species": batch_request.limit_per_species,
@@ -603,10 +872,10 @@ async def batch_search(
         project_id=project_id,
         user_id=current_user.id,
         model_name=batch_request.model_name,
-        species_config=species_config_list,
+        species_config=species_config_with_s3,
         parameters=parameters,
         celery_job_id=job_id,
-        reference_audio_keys=None,
+        reference_audio_keys=all_s3_keys if all_s3_keys else None,
     )
     await db.commit()
 

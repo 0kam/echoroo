@@ -114,10 +114,19 @@ async def _run_batch_search(
         manifest = json.load(f)
 
     # Reconstruct request data from manifest
-    from echoroo.schemas.search import BatchSearchRequest
+    # Use species_config_with_s3 when available (contains s3_keys for persisted reference audio).
+    # Fall back to manifest["request"] species for backwards compatibility.
+    from echoroo.schemas.search import BatchSearchRequest, SpeciesSearchConfig
 
     batch_request = BatchSearchRequest.model_validate(manifest["request"])
     audio_files: dict[str, str] = manifest["audio_files"]  # file_key -> relative path
+
+    # Override species list with enriched config (includes s3_keys) if present
+    if "species_config_with_s3" in manifest:
+        enriched_species = []
+        for sp_dict in manifest["species_config_with_s3"]:
+            enriched_species.append(SpeciesSearchConfig.model_validate(sp_dict))
+        batch_request.species = enriched_species
 
     # Resolve relative paths to absolute paths within tmp_dir
     audio_files_abs: dict[str, str] = {}
@@ -154,6 +163,7 @@ async def _run_batch_search(
                     project_id=UUID(project_id),
                     request=batch_request,
                     audio_files=audio_files_abs,
+                    job_id=job_id,
                 )
             except Exception as e:
                 # Update session to FAILED
@@ -193,6 +203,7 @@ async def _run_batch_search_with_progress(
     project_id: UUID,
     request: Any,
     audio_files: dict[str, str],
+    job_id: str = "",
 ) -> dict[str, Any]:
     """Run batch search with per-species progress updates.
 
@@ -204,6 +215,7 @@ async def _run_batch_search_with_progress(
         project_id: Project UUID
         request: BatchSearchRequest instance
         audio_files: Mapping of file_key to absolute local file paths
+        job_id: Job ID used to locate the temp directory for S3 downloads
 
     Returns:
         Dict matching BatchSearchResponse schema with string UUIDs
@@ -325,14 +337,35 @@ async def _run_batch_search_with_progress(
 
                 continue
 
-            if source.file_key is None or source.file_key not in audio_files:
+            # If source has an s3_key and no local file, download from S3
+            if source.s3_key and (
+                source.file_key is None or source.file_key not in audio_files
+            ):
+                from echoroo.core.s3 import get_s3_client as _get_s3_client
+
+                _s3_client = _get_s3_client()
+                _s3_settings = get_settings()
+                _s3_tmp_dir = Path(f"/data/search_tmp/{job_id}") if job_id else Path("/tmp")
+                _local_path = _s3_tmp_dir / Path(source.s3_key).name
+                try:
+                    _s3_client.download_file(
+                        _s3_settings.S3_BUCKET, source.s3_key, str(_local_path)
+                    )
+                    src_path = str(_local_path)
+                except Exception:
+                    logger.exception(
+                        "Failed to download S3 reference audio key='%s', skipping",
+                        source.s3_key,
+                    )
+                    continue
+            elif source.file_key is None or source.file_key not in audio_files:
                 logger.warning(
                     "Missing audio file for key '%s', skipping source",
                     source.file_key,
                 )
                 continue
-
-            src_path = audio_files[source.file_key]
+            else:
+                src_path = audio_files[source.file_key]
 
             audio_path_for_inference = src_path
             if source.start_time is not None or source.end_time is not None:

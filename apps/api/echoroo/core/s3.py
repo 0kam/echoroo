@@ -153,6 +153,26 @@ def delete_objects_by_prefix(prefix: str, client: Any = None) -> int:
     return deleted_count
 
 
+def copy_object(source_key: str, dest_key: str, client: Any = None) -> None:
+    """Copy an S3 object to a new key without deleting the source.
+
+    Args:
+        source_key: Source S3 object key
+        dest_key: Destination S3 object key
+        client: Optional S3 client instance
+
+    Raises:
+        ClientError: If the copy operation fails
+    """
+    settings = get_settings()
+    client = client or get_s3_client()
+    client.copy_object(
+        Bucket=settings.S3_BUCKET,
+        CopySource={"Bucket": settings.S3_BUCKET, "Key": source_key},
+        Key=dest_key,
+    )
+
+
 def move_object(source_key: str, dest_key: str, client: Any = None) -> bool:
     """Move an object by copying then deleting the source."""
     settings = get_settings()

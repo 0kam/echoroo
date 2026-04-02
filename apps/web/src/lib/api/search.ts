@@ -174,11 +174,30 @@ export async function fetchXenoCantoAudio(
 }
 
 /**
+ * Build the streaming URL for a persisted reference audio file.
+ *
+ * The backend streams the audio from S3, supporting HTTP Range headers for seeking.
+ *
+ * @param projectId - Project UUID
+ * @param sessionId - Search session UUID that owns the audio
+ * @param sourceIndex - Index of the audio file within the session's reference_audio_keys list
+ * @returns Absolute URL path for the streaming endpoint
+ */
+export function getReferenceAudioUrl(
+  projectId: string,
+  sessionId: string,
+  sourceIndex: number
+): string {
+  return `${API_BASE}/projects/${projectId}/search/sessions/${sessionId}/reference-audio/${sourceIndex}`;
+}
+
+/**
  * Submit a multi-species batch similarity search job using uploaded reference sounds.
  *
  * Sends species metadata and audio files as multipart/form-data. Each
  * `SoundSource` with `origin === 'upload'` must have a `file` attached;
- * URL-based sources (Phase 2) are forwarded as metadata only.
+ * URL-based sources are forwarded as metadata only; S3-backed sources from a
+ * prior session are referenced via `sourceSessionId`.
  *
  * The API now returns 202 Accepted with a job_id immediately. Use
  * `getSearchJobStatus()` to poll for results.
@@ -186,12 +205,14 @@ export async function fetchXenoCantoAudio(
  * @param projectId - Project UUID
  * @param species - List of target species with reference sound sources
  * @param config - Search configuration (model, threshold, per-species limit)
+ * @param sourceSessionId - Optional session UUID whose persisted audio should be reused
  * @returns Job submission response containing job_id for polling
  */
 export async function searchBatch(
   projectId: string,
   species: TargetSpecies[],
-  config: SearchConfig
+  config: SearchConfig,
+  sourceSessionId?: string
 ): Promise<SearchJobSubmitResponse> {
   const formData = new FormData();
 
@@ -213,8 +234,17 @@ export async function searchBatch(
           end_time: src.end_time ?? null,
         };
       }
+      if (src.origin === 's3') {
+        // S3-backed source from a prior session — referenced by its index
+        return {
+          type: 's3' as const,
+          source_index: src.sourceIndex ?? null,
+          start_time: src.start_time ?? null,
+          end_time: src.end_time ?? null,
+        };
+      }
       return {
-        type: src.origin as 'upload' | 'url',
+        type: src.origin as 'url',
         source_url: src.source_url ?? null,
         start_time: src.start_time ?? null,
         end_time: src.end_time ?? null,
@@ -228,6 +258,7 @@ export async function searchBatch(
     min_similarity: config.min_similarity,
     limit_per_species: config.limit_per_species,
     dataset_id: config.dataset_id || null,
+    source_session_id: sourceSessionId || null,
   };
 
   formData.append('metadata', JSON.stringify(metadataObj));

@@ -6,7 +6,7 @@ import csv
 import io
 import json
 import zipfile
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import TypedDict
 from uuid import UUID
 
@@ -17,7 +17,7 @@ from sqlalchemy.orm import selectinload
 from echoroo.models.annotation import Annotation
 from echoroo.models.confirmed_region import ConfirmedRegion
 from echoroo.models.dataset import Dataset
-from echoroo.models.enums import DetectionStatus
+from echoroo.models.enums import DetectionSource, DetectionStatus
 from echoroo.models.recording import Recording
 
 
@@ -31,6 +31,61 @@ class _AnnotationEntry(TypedDict):
     species: str
     confidence: float | None
     label: str
+
+
+# CamtrapDP observations.csv columns in standard order
+_CAMTRAPDP_COLUMNS = [
+    "observationID",
+    "deploymentID",
+    "mediaID",
+    "eventID",
+    "eventStart",
+    "eventEnd",
+    "observationLevel",
+    "observationType",
+    "deviceSetupType",
+    "scientificName",
+    "count",
+    "lifeStage",
+    "sex",
+    "behavior",
+    "individualID",
+    "individualPositionRadius",
+    "individualPositionAngle",
+    "individualSpeed",
+    "bboxX",
+    "bboxY",
+    "bboxWidth",
+    "bboxHeight",
+    "frequencyLow",
+    "frequencyHigh",
+    "classificationMethod",
+    "classifiedBy",
+    "classificationTimestamp",
+    "classificationProbability",
+    "classificationConfirmation",
+    "observationTags",
+    "observationComments",
+]
+
+
+def _format_event_datetime(
+    recording_datetime: datetime | None,
+    offset_seconds: float,
+) -> str:
+    """Format an absolute ISO 8601 datetime from recording start + offset.
+
+    Args:
+        recording_datetime: Base datetime of the recording (timezone-aware or naive).
+        offset_seconds: Offset in seconds from the recording start.
+
+    Returns:
+        ISO 8601 string with Z suffix, or empty string if datetime is None.
+    """
+    if recording_datetime is None:
+        return ""
+    result = recording_datetime + timedelta(seconds=offset_seconds)
+    return result.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 class DetectionExportService:
@@ -53,10 +108,22 @@ class DetectionExportService:
         detection_run_id: UUID | None = None,
         search_session_id: UUID | None = None,
     ) -> str:
-        """Export detections as a CSV-formatted string.
+        """Export detections as a CamtrapDP observations.csv formatted string.
 
-        CSV columns: recording_filename, start_time, end_time, species,
-        confidence, source, model_name, model_version, verified, verified_by
+        Produces a 31-column CSV conforming to the CamtrapDP standard for
+        bioacoustic observations. Each annotation becomes one row.
+
+        Column mapping:
+        - observationID: annotation UUID
+        - deploymentID: dataset name
+        - mediaID: recording UUID
+        - eventID: annotation UUID (same as observationID for audio detections)
+        - eventStart/eventEnd: absolute ISO 8601 datetime (recording start + offset)
+        - classificationMethod: "machine" for ML detections, "human" for manual
+        - classifiedBy: model name for machine, user email for human
+        - classificationTimestamp: annotation creation timestamp
+        - scientificName: tag name
+        - observationComments: empty (no free-text notes in this model)
 
         Args:
             project_id: Project UUID to filter annotations by
@@ -67,7 +134,7 @@ class DetectionExportService:
             search_session_id: Optional search session UUID filter
 
         Returns:
-            CSV content as a string
+            CSV content as a string in CamtrapDP format
         """
         annotations = await self._fetch_annotations_for_export(
             project_id=project_id,
@@ -79,40 +146,83 @@ class DetectionExportService:
         )
 
         output = io.StringIO()
-        writer = csv.writer(output)
-        writer.writerow([
-            "recording_filename",
-            "start_time",
-            "end_time",
-            "species",
-            "confidence",
-            "source",
-            "model_name",
-            "model_version",
-            "verified",
-            "verified_by",
-        ])
+        writer = csv.DictWriter(output, fieldnames=_CAMTRAPDP_COLUMNS)
+        writer.writeheader()
 
         for ann in annotations:
-            if ann.status == DetectionStatus.CONFIRMED:
-                verified = "true"
-            elif ann.status == DetectionStatus.REJECTED:
-                verified = "false"
-            else:
-                verified = ""
+            recording = ann.recording
+            dataset_name = recording.dataset.name if recording and recording.dataset else ""
+            recording_uuid = str(recording.id) if recording else ""
+            recording_datetime = recording.datetime if recording else None
 
-            writer.writerow([
-                ann.recording.filename if ann.recording else "",
-                f"{ann.start_time:.3f}",
-                f"{ann.end_time:.3f}",
-                ann.tag.name if ann.tag else "",
-                f"{ann.confidence:.4f}" if ann.confidence is not None else "",
-                ann.source.value,
-                ann.detection_run.model_name if ann.detection_run else "",
-                ann.detection_run.model_version if ann.detection_run else "",
-                verified,
-                ann.reviewed_by.email if ann.reviewed_by else "",
-            ])
+            event_start = _format_event_datetime(recording_datetime, ann.start_time)
+            event_end = _format_event_datetime(recording_datetime, ann.end_time)
+
+            # Determine classification method and classified_by
+            machine_sources = {
+                DetectionSource.BIRDNET,
+                DetectionSource.PERCH,
+                DetectionSource.PERCH_SEARCH,
+                DetectionSource.SIMILARITY_SEARCH,
+            }
+            if ann.source in machine_sources:
+                classification_method = "machine"
+                if ann.detection_run:
+                    classified_by = ann.detection_run.model_name
+                    if ann.detection_run.model_version:
+                        classified_by = f"{ann.detection_run.model_name} {ann.detection_run.model_version}"
+                else:
+                    classified_by = ann.source.value
+            else:
+                classification_method = "human"
+                if ann.reviewed_by:
+                    classified_by = ann.reviewed_by.display_name or ann.reviewed_by.email
+                else:
+                    classified_by = ""
+
+            # Use reviewed_at for human annotations, created_at for machine
+            if ann.reviewed_at is not None:
+                classification_timestamp = ann.reviewed_at.strftime("%Y-%m-%dT%H:%M:%SZ")
+            elif ann.created_at is not None:
+                classification_timestamp = ann.created_at.strftime("%Y-%m-%dT%H:%M:%SZ")
+            else:
+                classification_timestamp = ""
+
+            writer.writerow({
+                "observationID": str(ann.id),
+                "deploymentID": dataset_name,
+                "mediaID": recording_uuid,
+                "eventID": str(ann.id),
+                "eventStart": event_start,
+                "eventEnd": event_end,
+                "observationLevel": "media",
+                "observationType": "audio",
+                "deviceSetupType": "",
+                "scientificName": ann.tag.name if ann.tag else "",
+                "count": "",
+                "lifeStage": "",
+                "sex": "",
+                "behavior": "",
+                "individualID": "",
+                "individualPositionRadius": "",
+                "individualPositionAngle": "",
+                "individualSpeed": "",
+                "bboxX": "",
+                "bboxY": "",
+                "bboxWidth": "",
+                "bboxHeight": "",
+                "frequencyLow": f"{ann.freq_low:.1f}" if ann.freq_low is not None else "",
+                "frequencyHigh": f"{ann.freq_high:.1f}" if ann.freq_high is not None else "",
+                "classificationMethod": classification_method,
+                "classifiedBy": classified_by,
+                "classificationTimestamp": classification_timestamp,
+                "classificationProbability": (
+                    f"{ann.confidence:.4f}" if ann.confidence is not None else ""
+                ),
+                "classificationConfirmation": "",
+                "observationTags": "",
+                "observationComments": "",
+            })
 
         return output.getvalue()
 
