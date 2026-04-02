@@ -18,9 +18,11 @@
     /** Model name forwarded to SpectrogramClipEditor for min clip duration */
     modelName: string;
     onSpeciesChange: (species: TargetSpecies[]) => void;
+    /** When true, hides add-species controls and renders SpeciesCards in readonly mode */
+    readonly?: boolean;
   }
 
-  let { projectId, species, modelName, onSpeciesChange }: Props = $props();
+  let { projectId, species, modelName, onSpeciesChange, readonly = false }: Props = $props();
 
   let showSelector = $state(false);
 
@@ -62,26 +64,28 @@
   <!-- Panel header -->
   <div class="flex items-center justify-between border-b border-stone-200 p-4 dark:border-stone-700">
     <h2 class="text-lg font-semibold text-stone-900 dark:text-stone-100">
-      {m.search_reference_sounds()}
+      {readonly ? m.search_loaded_sources() : m.search_reference_sounds()}
     </h2>
-    <button
-      type="button"
-      class="flex items-center rounded-md border border-primary-300 px-3 py-1.5 text-sm
-             text-primary-600 transition-colors hover:bg-primary-50
-             dark:border-primary-600 dark:text-primary-400 dark:hover:bg-primary-950/30"
-      onclick={() => (showSelector = !showSelector)}
-    >
-      <!-- Plus icon -->
-      <svg class="mr-1 h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-        <path d="M12 5v14M5 12h14" stroke-linecap="round" />
-      </svg>
-      {m.search_add_species()}
-    </button>
+    {#if !readonly}
+      <button
+        type="button"
+        class="flex items-center rounded-md border border-primary-300 px-3 py-1.5 text-sm
+               text-primary-600 transition-colors hover:bg-primary-50
+               dark:border-primary-600 dark:text-primary-400 dark:hover:bg-primary-950/30"
+        onclick={() => (showSelector = !showSelector)}
+      >
+        <!-- Plus icon -->
+        <svg class="mr-1 h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+          <path d="M12 5v14M5 12h14" stroke-linecap="round" />
+        </svg>
+        {m.search_add_species()}
+      </button>
+    {/if}
   </div>
 
   <div class="space-y-3 p-4">
-    <!-- Species Selector (inline, shown when Add Species clicked) -->
-    {#if showSelector}
+    <!-- Species Selector (inline, shown when Add Species clicked, hidden in readonly mode) -->
+    {#if showSelector && !readonly}
       <SpeciesSelector
         {projectId}
         addedSpeciesIds={addedTagIds}
@@ -98,11 +102,12 @@
         {projectId}
         onUpdate={(updated) => updateSpecies(sp.id, updated)}
         onRemove={() => removeSpecies(sp.id)}
+        {readonly}
       />
     {/each}
 
-    <!-- Empty state (no species yet, selector closed) -->
-    {#if species.length === 0 && !showSelector}
+    <!-- Empty state (no species yet, selector closed, not readonly) -->
+    {#if species.length === 0 && !showSelector && !readonly}
       <div class="py-8 text-center">
         <!-- Sound wave icon -->
       <svg class="mx-auto mb-3 h-12 w-12 text-stone-300 dark:text-stone-600" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">

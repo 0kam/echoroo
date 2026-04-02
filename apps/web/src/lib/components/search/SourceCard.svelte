@@ -25,9 +25,11 @@
     onRemove: () => void;
     /** Called when the user confirms a new clip range in the editor */
     onUpdate?: (updates: { start_time?: number; end_time?: number }) => void;
+    /** When true, hides remove and edit-clip controls (used for session-loaded sources) */
+    readonly?: boolean;
   }
 
-  let { source, projectId, modelName = 'perch', onRemove, onUpdate }: Props = $props();
+  let { source, projectId, modelName = 'perch', onRemove, onUpdate, readonly = false }: Props = $props();
 
   // ============================================================
   // Playback state (upload sources - Web Audio API)
@@ -39,7 +41,7 @@
   let animHandle: number | null = null;
 
   // ============================================================
-  // Playback state (URL sources - HTML Audio element)
+  // Playback state (URL / S3 sources - HTML Audio element)
   // ============================================================
   let urlAudio = $state<HTMLAudioElement | null>(null);
   let isUrlPlaying = $state(false);
@@ -139,7 +141,8 @@
     urlAudioError = false;
 
     if (!urlAudio) {
-      const url = source.source_url;
+      // Use streamUrl for S3 sources, source_url for XC/URL sources
+      const url = source.origin === 's3' ? source.streamUrl : source.source_url;
       if (!url) return;
       const audio = new Audio(url);
       audio.onended = () => {
@@ -269,6 +272,9 @@
     source.label || source.file?.name || source.xc_id || 'Reference'
   );
 
+  /** Whether this source plays via HTML Audio (URL or S3 streaming) */
+  let isStreamingSource = $derived(source.origin === 'url' || source.origin === 's3');
+
   let clipInfo = $derived(() => {
     if (source.start_time != null && source.end_time != null) {
       const dur = source.end_time - source.start_time;
@@ -304,7 +310,7 @@
   <!-- Main card row -->
   <div class="flex items-center gap-3 px-3 py-2">
     <!-- Play / Stop button -->
-    {#if source.origin === 'url'}
+    {#if isStreamingSource}
       <button
         type="button"
         class="shrink-0 transition-colors
@@ -333,7 +339,7 @@
           </svg>
         {/if}
       </button>
-      {#if source.xc_id}
+      {#if source.origin === 'url' && source.xc_id}
         <a
           href="https://xeno-canto.org/{source.xc_id}"
           target="_blank"
@@ -391,51 +397,60 @@
                    dark:bg-amber-900/30 dark:text-amber-400">
         {m.search_origin_xc()}
       </span>
+    {:else if source.origin === 's3'}
+      <span class="shrink-0 rounded bg-emerald-100 px-1.5 py-0.5 text-xs font-medium text-emerald-700
+                   dark:bg-emerald-900/30 dark:text-emerald-400">
+        {m.search_source_s3()}
+      </span>
     {:else}
       <span class="shrink-0 rounded bg-stone-100 px-1.5 py-0.5 text-xs text-stone-600 dark:bg-stone-700 dark:text-stone-300">
         {m.search_origin_upload()}
       </span>
     {/if}
 
-    <!-- Edit Clip button -->
-    <button
-      type="button"
-      class="shrink-0 transition-colors
-             {showEditor
-               ? 'text-primary-600 hover:text-primary-700 dark:text-primary-400'
-               : 'text-stone-400 hover:text-primary-600 dark:hover:text-primary-400'}"
-      onclick={showEditor ? closeEditor : openEditor}
-      disabled={isLoadingAudio}
-      aria-label={showEditor ? m.search_clip_editor_close() : m.search_edit_clip()}
-      title={showEditor ? m.search_clip_editor_close() : m.search_edit_clip()}
-    >
-      {#if isLoadingAudio}
-        <!-- Spinner -->
-        <svg class="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-          <circle cx="12" cy="12" r="10" stroke-opacity="0.25" />
-          <path d="M12 2a10 10 0 0 1 10 10" stroke-linecap="round" />
-        </svg>
-      {:else}
-        <!-- Scissors icon -->
-        <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-          <circle cx="6" cy="6" r="3" />
-          <circle cx="6" cy="18" r="3" />
-          <path d="M20 4 8.12 15.88M14.47 14.48 20 20M8.12 8.12 12 12" stroke-linecap="round" stroke-linejoin="round" />
-        </svg>
-      {/if}
-    </button>
+    <!-- Edit Clip button (hidden in readonly mode or for S3 sources) -->
+    {#if !readonly && source.origin !== 's3'}
+      <button
+        type="button"
+        class="shrink-0 transition-colors
+               {showEditor
+                 ? 'text-primary-600 hover:text-primary-700 dark:text-primary-400'
+                 : 'text-stone-400 hover:text-primary-600 dark:hover:text-primary-400'}"
+        onclick={showEditor ? closeEditor : openEditor}
+        disabled={isLoadingAudio}
+        aria-label={showEditor ? m.search_clip_editor_close() : m.search_edit_clip()}
+        title={showEditor ? m.search_clip_editor_close() : m.search_edit_clip()}
+      >
+        {#if isLoadingAudio}
+          <!-- Spinner -->
+          <svg class="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <circle cx="12" cy="12" r="10" stroke-opacity="0.25" />
+            <path d="M12 2a10 10 0 0 1 10 10" stroke-linecap="round" />
+          </svg>
+        {:else}
+          <!-- Scissors icon -->
+          <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <circle cx="6" cy="6" r="3" />
+            <circle cx="6" cy="18" r="3" />
+            <path d="M20 4 8.12 15.88M14.47 14.48 20 20M8.12 8.12 12 12" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+        {/if}
+      </button>
+    {/if}
 
-    <!-- Remove button -->
-    <button
-      type="button"
-      class="shrink-0 text-stone-300 transition-colors hover:text-stone-500"
-      onclick={onRemove}
-      aria-label="Remove source"
-    >
-      <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-        <path d="M18 6 6 18M6 6l12 12" />
-      </svg>
-    </button>
+    <!-- Remove button (hidden in readonly mode) -->
+    {#if !readonly}
+      <button
+        type="button"
+        class="shrink-0 text-stone-300 transition-colors hover:text-stone-500"
+        onclick={onRemove}
+        aria-label="Remove source"
+      >
+        <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+          <path d="M18 6 6 18M6 6l12 12" />
+        </svg>
+      </button>
+    {/if}
   </div>
 
   <!-- Loading audio indicator -->
@@ -465,7 +480,7 @@
           class="rounded bg-primary-600 px-2 py-1 text-xs font-medium text-white hover:bg-primary-700"
           onclick={confirmClip}
         >
-          {m.search_add_source()}
+          {m.search_save_clip()}
         </button>
       </div>
       <SpectrogramClipEditor

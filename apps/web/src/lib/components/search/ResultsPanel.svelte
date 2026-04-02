@@ -7,10 +7,13 @@
    * - Client-side threshold and max-per-species filter bar
    * - Spectrogram card grid for the selected species
    * - Confirm/Reject actions on each card
+   * - Keyboard shortcuts: Space=Play, C=Confirm, R=Reject, Arrow Up/Down=Navigate
    */
 
+  import { onDestroy } from 'svelte';
   import * as m from '$lib/paraglide/messages.js';
   import type { SpeciesMatchResult, TargetSpecies, SearchResultStatus, SimilarityResult } from '$lib/types/search';
+  import { createAudioPlayer } from '$lib/utils/audioPlayback.svelte';
   import SearchResultCard from './SearchResultCard.svelte';
 
   interface Props {
@@ -40,6 +43,16 @@
   // Currently selected species tab key
   let selectedTabKey = $state<string | null>(null);
 
+  // Keyboard-focused card index within filteredMatches
+  let selectedIndex = $state(0);
+
+  // Audio player for keyboard-triggered Space playback
+  const player = createAudioPlayer(projectId);
+
+  onDestroy(() => {
+    player.cleanup();
+  });
+
   // Client-side review status tracking: key = embedding_id
   let statusMap = $state<Map<string, SearchResultStatus>>(new Map());
 
@@ -54,6 +67,7 @@
     if (results !== null) {
       const keys = Object.keys(results);
       selectedTabKey = keys.length > 0 ? (keys[0] ?? null) : null;
+      selectedIndex = 0;
       const newMap = new Map<string, SearchResultStatus>();
       for (const speciesData of Object.values(results)) {
         if (speciesData?.matches) {
@@ -101,6 +115,93 @@
     statusMap = new Map(statusMap).set(embeddingId, 'rejected');
   }
 
+  // Keyboard shortcut handler
+  function handleKeydown(e: KeyboardEvent) {
+    // Skip when focus is inside an input, textarea, or select
+    const target = e.target as HTMLElement;
+    if (
+      target.tagName === 'INPUT' ||
+      target.tagName === 'TEXTAREA' ||
+      target.tagName === 'SELECT'
+    ) {
+      return;
+    }
+
+    if (filteredMatches.length === 0) return;
+
+    const selected = filteredMatches[selectedIndex];
+
+    switch (e.key) {
+      case ' ':
+        // Space: toggle audio playback for the focused card
+        if (selected) {
+          e.preventDefault();
+          player.toggle(selected.recording_id, selected.start_time, selected.end_time);
+        }
+        break;
+
+      case 'c':
+      case 'C':
+        if (selected && getStatus(selected) !== 'confirmed') {
+          e.preventDefault();
+          // Trigger the card's confirm handler via the statusMap (mirrors handleConfirm)
+          handleConfirmByIndex(selectedIndex);
+        }
+        break;
+
+      case 'r':
+      case 'R':
+        if (selected && getStatus(selected) !== 'rejected') {
+          e.preventDefault();
+          handleRejectByIndex(selectedIndex);
+        }
+        break;
+
+      case 'ArrowDown':
+        e.preventDefault();
+        player.stop();
+        selectedIndex = Math.min(selectedIndex + 1, filteredMatches.length - 1);
+        scrollSelectedIntoView();
+        break;
+
+      case 'ArrowUp':
+        e.preventDefault();
+        player.stop();
+        selectedIndex = Math.max(selectedIndex - 1, 0);
+        scrollSelectedIntoView();
+        break;
+    }
+  }
+
+  // Wrappers that trigger the card's actual confirm/reject API calls via its onConfirm/onReject props.
+  // Since SearchResultCard manages the API calls internally, we simulate a click by dispatching
+  // through the same statusMap pathway and relying on the card's own handlers for server sync.
+  // For keyboard shortcuts we call the full async handlers by finding the card element and
+  // programmatically clicking its confirm/reject buttons.
+  function handleConfirmByIndex(index: number) {
+    const cardEl = cardElements[index];
+    if (!cardEl) return;
+    const btn = cardEl.querySelector<HTMLButtonElement>('[data-action="confirm"]');
+    btn?.click();
+  }
+
+  function handleRejectByIndex(index: number) {
+    const cardEl = cardElements[index];
+    if (!cardEl) return;
+    const btn = cardEl.querySelector<HTMLButtonElement>('[data-action="reject"]');
+    btn?.click();
+  }
+
+  // DOM references for keyboard-triggered scroll + button click
+  let cardElements: (HTMLElement | null)[] = $state([]);
+
+  function scrollSelectedIntoView() {
+    // Use a microtask to let Svelte update the DOM first
+    queueMicrotask(() => {
+      cardElements[selectedIndex]?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    });
+  }
+
   function getTagId(tagKey: string, group: SpeciesMatchResult): string {
     // Use tag_id from group if present, otherwise fall back to the key
     return group.tag_id ?? tagKey;
@@ -114,6 +215,8 @@
     return group.common_name ? group.scientific_name : undefined;
   }
 </script>
+
+<svelte:window onkeydown={handleKeydown} />
 
 <div class="flex flex-col gap-4">
   <!-- Filter bar (only show after search completes) -->
@@ -153,11 +256,19 @@
       </div>
 
       <!-- Summary -->
-      <span class="ml-auto text-xs text-stone-400">
+      <span class="text-xs text-stone-400">
         {m.search_results_total({ count: totalMatches.toString() })}
         &bull;
         {m.search_search_duration({ ms: searchDurationMs.toString() })}
       </span>
+
+      <!-- Keyboard shortcuts hint -->
+      <div class="ml-auto flex items-center gap-2 text-xs text-stone-400">
+        <kbd class="rounded border border-stone-200 bg-surface-card px-1.5 py-0.5 font-mono text-xs">C</kbd> {m.search_keyboard_confirm()}
+        <kbd class="rounded border border-stone-200 bg-surface-card px-1.5 py-0.5 font-mono text-xs">R</kbd> {m.search_keyboard_reject()}
+        <kbd class="rounded border border-stone-200 bg-surface-card px-1.5 py-0.5 font-mono text-xs">Space</kbd> {m.search_keyboard_play()}
+        <kbd class="rounded border border-stone-200 bg-surface-card px-1.5 py-0.5 font-mono text-xs">&#8593;&#8595;</kbd> {m.search_keyboard_navigate()}
+      </div>
     </div>
   {/if}
 
@@ -213,7 +324,7 @@
                 {selectedTabKey === key
                   ? 'bg-primary-600 text-white shadow-sm'
                   : 'border border-stone-200 bg-stone-50 text-stone-700 hover:bg-stone-100'}"
-              onclick={() => { selectedTabKey = key; }}
+              onclick={() => { selectedTabKey = key; selectedIndex = 0; player.stop(); }}
             >
               <span class="max-w-[140px] truncate">{getDisplayName(group)}</span>
               <span
@@ -250,16 +361,19 @@
             {:else}
               <!-- Result card grid -->
               <div class="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-                {#each filteredMatches as result (result.embedding_id)}
-                  <SearchResultCard
-                    {projectId}
-                    {result}
-                    tagId={getTagId(selectedTabKey ?? '', selectedGroup)}
-                    status={getStatus(result)}
-                    {searchSessionId}
-                    onConfirm={() => handleConfirm(result.embedding_id)}
-                    onReject={() => handleReject(result.embedding_id)}
-                  />
+                {#each filteredMatches as result, i (result.embedding_id)}
+                  <div bind:this={cardElements[i]}>
+                    <SearchResultCard
+                      {projectId}
+                      {result}
+                      tagId={getTagId(selectedTabKey ?? '', selectedGroup)}
+                      status={getStatus(result)}
+                      {searchSessionId}
+                      isSelected={i === selectedIndex}
+                      onConfirm={() => handleConfirm(result.embedding_id)}
+                      onReject={() => handleReject(result.embedding_id)}
+                    />
+                  </div>
                 {/each}
               </div>
             {/if}

@@ -55,6 +55,7 @@
   <!-- Confirm button -->
   <button
     type="button"
+    data-action="confirm"
     class="inline-flex items-center gap-1 rounded px-2.5 py-1 text-xs font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-50
       {status === 'confirmed'
         ? 'bg-green-600 text-white hover:bg-green-700'
@@ -81,6 +82,7 @@
   <!-- Reject button -->
   <button
     type="button"
+    data-action="reject"
     class="inline-flex items-center gap-1 rounded px-2.5 py-1 text-xs font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-50
       {status === 'rejected'
         ? 'bg-red-600 text-white hover:bg-red-700'

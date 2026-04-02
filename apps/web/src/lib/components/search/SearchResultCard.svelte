@@ -17,11 +17,13 @@
     tagId: string;
     status: SearchResultStatus;
     searchSessionId?: string;
+    /** Highlight this card when it is keyboard-focused */
+    isSelected?: boolean;
     onConfirm: () => void;
     onReject: () => void;
   }
 
-  let { projectId, result, tagId, status, searchSessionId, onConfirm, onReject }: Props = $props();
+  let { projectId, result, tagId, status, searchSessionId, isSelected = false, onConfirm, onReject }: Props = $props();
 
   let isConfirming = $state(false);
   let isRejecting = $state(false);
@@ -89,6 +91,7 @@
   scoreLabel={m.search_similarity()}
   scoreBadgeClass={getSimilarityBadgeClass(result.similarity)}
   isLoading={isConfirming || isRejecting}
+  {isSelected}
   onConfirm={handleConfirm}
   onReject={handleReject}
 />

@@ -90,6 +90,10 @@ class SourceConfig(BaseModel):
         default=None,
         description="Clip end time in seconds (None = end of file)",
     )
+    s3_key: str | None = Field(
+        default=None,
+        description="Server-internal: S3 object key for persisted reference audio",
+    )
 
 
 class SpeciesSearchConfig(BaseModel):
@@ -129,6 +133,10 @@ class BatchSearchRequest(BaseModel):
         default=100, ge=1, le=500, description="Maximum results returned per species"
     )
     dataset_id: str | None = Field(default=None, description="Optional dataset UUID filter")
+    source_session_id: str | None = Field(
+        default=None,
+        description="Re-run: copy reference audio sources from this session ID",
+    )
 
     @field_validator("dataset_id", mode="before")
     @classmethod
