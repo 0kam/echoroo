@@ -77,7 +77,7 @@ class UnifiedClassifier:
         ClassifierType.SELF_TRAINING_SVM: {
             "class": SelfTrainingClassifier,
             "params": {
-                "base_estimator": SVC(
+                "estimator": SVC(
                     kernel="linear",
                     C=1.0,
                     probability=True,
@@ -119,7 +119,7 @@ class UnifiedClassifier:
         if custom_params and classifier_type == ClassifierType.SELF_TRAINING_SVM and "C" in custom_params:
             config = config.copy()
             config["params"] = config["params"].copy()
-            config["params"]["base_estimator"] = SVC(
+            config["params"]["estimator"] = SVC(
                 kernel="linear",
                 C=custom_params["C"],
                 probability=True,

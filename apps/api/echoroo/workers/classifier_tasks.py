@@ -111,10 +111,14 @@ async def _train_custom_model(model_id: str) -> dict[str, Any]:
             if model is None:
                 raise ValueError(f"CustomModel not found: {model_id}")
 
-            if model.status not in (CustomModelStatus.DRAFT, CustomModelStatus.FAILED):
+            if model.status not in (
+                CustomModelStatus.DRAFT,
+                CustomModelStatus.FAILED,
+                CustomModelStatus.TRAINING,
+            ):
                 raise ValueError(
                     f"Cannot train model with status '{model.status}'. "
-                    "Expected 'draft' or 'failed'."
+                    "Expected 'draft', 'failed', or 'training'."
                 )
 
             project_id = model.project_id
@@ -226,7 +230,17 @@ async def _run_training(
 
     # Build labeled arrays
     embeddings_list = positive_rows + negative_rows
-    embeddings = np.array([r["vector"] for r in embeddings_list], dtype=np.float32)
+    # r["vector"] is already a list[float] from _fetch_training_embeddings(),
+    # but we guard against any remaining non-homogeneous shapes by validating
+    # vector lengths before passing to np.array().
+    raw_vectors = [r["vector"] for r in embeddings_list]
+    vector_lengths = {len(v) for v in raw_vectors}
+    if len(vector_lengths) != 1:
+        raise ValueError(
+            f"Inhomogeneous embedding vectors detected: found lengths {vector_lengths}. "
+            "All embeddings must have the same dimension."
+        )
+    embeddings = np.array(raw_vectors, dtype=np.float32)
     labels = np.array(
         [1] * len(positive_rows) + [0] * len(negative_rows), dtype=np.int32
     )
@@ -360,7 +374,7 @@ async def _fetch_training_embeddings(
         List of dicts with keys: annotation_id, embedding_id, label (0 or 1), vector.
     """
     sql = text("""
-        SELECT
+        SELECT DISTINCT ON (a.id)
             a.id         AS annotation_id,
             e.id         AS embedding_id,
             a.status     AS annotation_status,
@@ -374,6 +388,7 @@ async def _fetch_training_embeddings(
         WHERE
             a.search_session_id = ANY(:session_ids)
             AND a.status IN ('confirmed', 'rejected')
+        ORDER BY a.id, ABS(e.start_time - a.start_time)
     """)
 
     rows = (
@@ -388,12 +403,34 @@ async def _fetch_training_embeddings(
 
     results: list[dict[str, Any]] = []
     for row in rows:
-        # pgvector returns Vector as a list-like object; convert to plain list
+        # pgvector may return a Vector object, numpy array, or list depending on
+        # the driver (asyncpg vs psycopg2) and pgvector version. Convert to a
+        # plain Python list of floats to guarantee a homogeneous shape for
+        # np.array() later.
         raw_vector = row.vector
-        if hasattr(raw_vector, "tolist"):
-            vector: list[float] = raw_vector.tolist()
+        if isinstance(raw_vector, str):
+            # asyncpg returns pgvector as a string like "[0.1,0.2,...]"
+            import json
+            vector: list[float] = [float(x) for x in json.loads(raw_vector)]
+        elif hasattr(raw_vector, "tolist"):
+            # numpy array or pgvector Vector with .tolist()
+            vector = [float(x) for x in raw_vector.tolist()]
+        elif hasattr(raw_vector, "__iter__"):
+            vector = [float(x) for x in raw_vector]
         else:
-            vector = list(raw_vector)
+            raise ValueError(
+                f"Unexpected vector type {type(raw_vector)} for "
+                f"embedding_id={row.embedding_id}"
+            )
+
+        logger.debug(
+            "Fetched embedding embedding_id=%s annotation_id=%s "
+            "vector_type=%s vector_len=%d",
+            row.embedding_id,
+            row.annotation_id,
+            type(raw_vector).__name__,
+            len(vector),
+        )
 
         label = 1 if row.annotation_status == "confirmed" else 0
         results.append(
@@ -433,8 +470,9 @@ async def _fetch_unlabeled_embeddings(
         SELECT e.vector
         FROM embeddings e
         JOIN recordings r ON r.id = e.recording_id
+        JOIN datasets d ON d.id = r.dataset_id
         WHERE
-            r.project_id = :project_id
+            d.project_id = :project_id
             AND e.model_name = :embedding_model_name
             AND NOT (e.id = ANY(:exclude_ids))
         ORDER BY RANDOM()
@@ -459,10 +497,13 @@ async def _fetch_unlabeled_embeddings(
     vectors: list[list[float]] = []
     for row in rows:
         raw_vector = row.vector
-        if hasattr(raw_vector, "tolist"):
-            vectors.append(raw_vector.tolist())
+        if isinstance(raw_vector, str):
+            import json
+            vectors.append([float(x) for x in json.loads(raw_vector)])
+        elif hasattr(raw_vector, "tolist"):
+            vectors.append([float(x) for x in raw_vector.tolist()])
         else:
-            vectors.append(list(raw_vector))
+            vectors.append([float(x) for x in raw_vector])
 
     return np.array(vectors, dtype=np.float32)
 
