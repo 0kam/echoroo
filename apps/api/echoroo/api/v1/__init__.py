@@ -10,6 +10,7 @@ from echoroo.api.v1 import (
     auth,
     clips,
     confirmed_regions,
+    custom_models,
     datasets,
     detection_runs,
     detections,
@@ -60,5 +61,7 @@ api_router.include_router(uploads.router)
 api_router.include_router(search_module.router)
 # Search annotation creation router
 api_router.include_router(search_module.annotations_router)
+# Custom model router
+api_router.include_router(custom_models.router)
 # Xeno-canto proxy router
 api_router.include_router(xeno_canto.router)

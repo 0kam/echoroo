@@ -530,11 +530,6 @@ async def _run_detection(
         Summary dict with detection_run_id, recordings_processed,
         total_annotations, status.
     """
-    # Import here to trigger model __init__.py registration side-effects
-    import echoroo.ml.birdnet  # noqa: F401
-    import echoroo.ml.perch  # noqa: F401
-    from echoroo.ml.registry import ModelRegistry
-
     settings = get_settings()
     engine, session_factory = _get_engine_and_session_factory()
 
@@ -616,12 +611,13 @@ async def _run_detection(
             s3_audio_cache_dir="/data/s3_audio_cache",
         )
 
-        loader_cls = ModelRegistry.get_loader_class(model_name)
-        engine_cls = ModelRegistry.get_engine_class(model_name)
+        from echoroo.workers.model_preloader import get_model
 
-        loader = loader_cls()
-        loader.load()
-        inference_engine = engine_cls(loader, confidence_threshold=min_conf)  # type: ignore[call-arg]
+        loader, inference_engine = get_model(model_name)
+        # Update the confidence threshold for this task invocation.
+        # BirdNETInference exposes a writable property; other engines ignore this.
+        if hasattr(inference_engine, "confidence_threshold"):
+            inference_engine.confidence_threshold = min_conf
 
         spec = inference_engine.specification
         supports_classification = spec.supports_classification
@@ -1136,11 +1132,6 @@ async def _run_embedding_generation(
         Summary dict with detection_run_id, recordings_processed,
         total_embeddings, status.
     """
-    # Import here to trigger model __init__.py registration side-effects
-    import echoroo.ml.birdnet  # noqa: F401
-    import echoroo.ml.perch  # noqa: F401
-    from echoroo.ml.registry import ModelRegistry
-
     settings = get_settings()
     engine, session_factory = _get_engine_and_session_factory()
 
@@ -1200,12 +1191,9 @@ async def _run_embedding_generation(
             s3_audio_cache_dir="/data/s3_audio_cache",
         )
 
-        loader_cls = ModelRegistry.get_loader_class(model_name)
-        engine_cls = ModelRegistry.get_engine_class(model_name)
+        from echoroo.workers.model_preloader import get_model
 
-        loader = loader_cls()
-        loader.load()
-        inference_engine = engine_cls(loader)
+        loader, inference_engine = get_model(model_name)
 
         total_embeddings = 0
         recordings_processed = 0
@@ -1237,7 +1225,7 @@ async def _run_embedding_generation(
             # Step 5: Batch encode -- call model.encode() ONCE with ALL file paths
             # ------------------------------------------------------------------
             try:
-                batch_result = inference_engine.encode_batch(file_paths)  # type: ignore[attr-defined]
+                batch_result = inference_engine.encode_batch(file_paths)
             except Exception as exc:
                 logger.exception("Batch encode failed for run %s: %s", run_uuid, exc)
                 raise

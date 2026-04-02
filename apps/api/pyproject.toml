@@ -34,6 +34,8 @@ dependencies = [
     "birdnet>=0.2.0",
     "tensorflow[and-cuda]==2.20.0",
     "pgvector>=0.3.0",
+    "scikit-learn>=1.5.0",
+    "joblib>=1.4.0",
 ]
 
 [project.optional-dependencies]
@@ -123,6 +125,12 @@ module = [
     "birdnet.*",
     "pgvector",
     "pgvector.*",
+    "sklearn",
+    "sklearn.*",
+    "joblib",
+    "joblib.*",
+    "librosa",
+    "librosa.*",
 ]
 ignore_missing_imports = true
 

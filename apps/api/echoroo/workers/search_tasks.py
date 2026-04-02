@@ -209,6 +209,10 @@ async def _run_batch_search_with_progress(
 
     Reuses SimilaritySearchService internals but adds Celery progress reporting.
 
+    For each species, audio preparation (download/clip) is separated from model
+    inference. All prepared files are passed to ``predict_files_batch()`` in a
+    single call so that XLA compilation happens only once instead of once per file.
+
     Args:
         task: Celery task for update_state calls
         service: SimilaritySearchService instance
@@ -223,6 +227,7 @@ async def _run_batch_search_with_progress(
     import contextlib
     import os
 
+    import numpy as np
     from sqlalchemy import text
 
     from echoroo.repositories.tag import TagRepository
@@ -285,9 +290,20 @@ async def _run_batch_search_with_progress(
             tag_id_key = str(tag.id)
             common_name = tag.common_name
 
-        # Collect all query vectors for this species across all sources
-        query_vectors: list[list[float]] = []
-        clipped_tmp_paths: list[str] = []
+        # ------------------------------------------------------------------
+        # Phase 1: Download / clip ALL reference audio files for this species.
+        # Each entry in reference_paths corresponds to one source; inference
+        # is deferred to Phase 2 so that all files can be submitted as a
+        # single batch call.
+        # ------------------------------------------------------------------
+        # reference_paths: list of (audio_path_for_inference, [clipped_tmp_paths])
+        reference_paths: list[str] = []
+        # Track per-source temp files for cleanup after inference
+        all_clipped_tmp_paths: list[str] = []
+        # For each reference_paths entry, record its source label for logging
+        source_labels: list[str] = []
+        # Track sources that failed during download/clip (no entry in reference_paths)
+        skipped_sources: list[str] = []
 
         for source in species_cfg.sources:
             if source.type == "url":
@@ -296,6 +312,7 @@ async def _run_batch_search_with_progress(
                         "URL source for species '%s' has no source_url, skipping",
                         species_cfg.scientific_name,
                     )
+                    skipped_sources.append("url:no_url")
                     continue
 
                 downloaded_path = await _download_audio_url_fn(source.source_url)
@@ -305,11 +322,12 @@ async def _run_batch_search_with_progress(
                         source.source_url,
                         species_cfg.scientific_name,
                     )
+                    skipped_sources.append(f"url:{source.source_url}")
                     continue
 
-                clipped_tmp_paths.append(downloaded_path)
-
+                all_clipped_tmp_paths.append(downloaded_path)
                 audio_path_for_inference = downloaded_path
+
                 if source.start_time is not None or source.end_time is not None:
                     clipped_path = _clip_audio(
                         downloaded_path,
@@ -317,27 +335,14 @@ async def _run_batch_search_with_progress(
                         end_time=source.end_time,
                     )
                     if clipped_path is not None:
-                        clipped_tmp_paths.append(clipped_path)
+                        all_clipped_tmp_paths.append(clipped_path)
                         audio_path_for_inference = clipped_path
 
-                try:
-                    inference_results = engine.predict_file(Path(audio_path_for_inference))
-                except Exception:
-                    logger.exception(
-                        "Inference failed for URL source '%s', skipping",
-                        source.source_url,
-                    )
-                    continue
-
-                for inf_res in inference_results:
-                    raw_emb: list[float] = inf_res.embedding.tolist()
-                    if len(raw_emb) < _STORAGE_EMBEDDING_DIM:
-                        raw_emb.extend([0.0] * (_STORAGE_EMBEDDING_DIM - len(raw_emb)))
-                    query_vectors.append(raw_emb[:_STORAGE_EMBEDDING_DIM])
-
+                reference_paths.append(audio_path_for_inference)
+                source_labels.append(f"url:{source.source_url}")
                 continue
 
-            # If source has an s3_key and no local file, download from S3
+            # Resolve upload / S3 source to a local file path
             if source.s3_key and (
                 source.file_key is None or source.file_key not in audio_files
             ):
@@ -357,12 +362,14 @@ async def _run_batch_search_with_progress(
                         "Failed to download S3 reference audio key='%s', skipping",
                         source.s3_key,
                     )
+                    skipped_sources.append(f"s3:{source.s3_key}")
                     continue
             elif source.file_key is None or source.file_key not in audio_files:
                 logger.warning(
                     "Missing audio file for key '%s', skipping source",
                     source.file_key,
                 )
+                skipped_sources.append(f"upload:{source.file_key}")
                 continue
             else:
                 src_path = audio_files[source.file_key]
@@ -375,26 +382,160 @@ async def _run_batch_search_with_progress(
                     end_time=source.end_time,
                 )
                 if clipped_path is not None:
-                    clipped_tmp_paths.append(clipped_path)
+                    all_clipped_tmp_paths.append(clipped_path)
                     audio_path_for_inference = clipped_path
 
-            try:
-                inference_results = engine.predict_file(Path(audio_path_for_inference))
-            except Exception:
-                logger.exception(
-                    "Inference failed for source '%s', skipping",
-                    source.file_key,
-                )
-                continue
+            reference_paths.append(audio_path_for_inference)
+            source_labels.append(f"upload:{source.file_key}")
 
-            for inf_res in inference_results:
-                upload_emb: list[float] = inf_res.embedding.tolist()
-                if len(upload_emb) < _STORAGE_EMBEDDING_DIM:
-                    upload_emb.extend([0.0] * (_STORAGE_EMBEDDING_DIM - len(upload_emb)))
-                query_vectors.append(upload_emb[:_STORAGE_EMBEDDING_DIM])
+        # ------------------------------------------------------------------
+        # Phase 2: Inference — embed all reference files to query vectors.
+        #
+        # Fast path (perch model only): use PerchDirectInference which calls
+        # the TF SavedModel directly, bypassing birdnet's multiprocess pipeline.
+        # This reduces latency from ~38s to ~0.007s per segment (warm).
+        #
+        # Fallback path 1: birdnet predict_files_batch() — single batch call.
+        # Fallback path 2: per-file predict_file() — original behaviour.
+        # ------------------------------------------------------------------
+        query_vectors: list[list[float]] = []
 
-        # Clean up clipped temp files for this source set
-        for tmp_p in clipped_tmp_paths:
+        if reference_paths:
+            from echoroo.workers.model_preloader import get_direct_perch
+
+            direct_perch = get_direct_perch()
+            used_direct = False
+
+            # Fast path: direct TF inference (perch only, engine must be loaded)
+            if direct_perch is not None and request.model_name == "perch":
+                try:
+                    for file_path in reference_paths:
+                        file_embeddings = direct_perch.encode_audio_file(str(file_path))
+                        # file_embeddings shape: (n_segments, EMBEDDING_DIM)
+                        for seg_emb in file_embeddings:
+                            emb_list: list[float] = seg_emb.tolist()
+                            if len(emb_list) < _STORAGE_EMBEDDING_DIM:
+                                emb_list.extend(
+                                    [0.0] * (_STORAGE_EMBEDDING_DIM - len(emb_list))
+                                )
+                            query_vectors.append(emb_list[:_STORAGE_EMBEDDING_DIM])
+
+                    logger.info(
+                        "Direct TF inference for species='%s': %d files -> %d query vectors",
+                        species_cfg.scientific_name,
+                        len(reference_paths),
+                        len(query_vectors),
+                    )
+                    used_direct = True
+                except Exception:
+                    logger.exception(
+                        "Direct TF inference failed for species '%s', "
+                        "falling back to birdnet pipeline",
+                        species_cfg.scientific_name,
+                    )
+                    query_vectors = []
+
+            if not used_direct:
+                # Fallback path 1: birdnet predict_files_batch() when available
+                use_batch = hasattr(engine, "predict_files_batch")
+                if use_batch:
+                    # Cast to Any so mypy does not require predict_files_batch on the
+                    # base InferenceEngine type — the hasattr guard above ensures safety.
+                    _batch_engine: Any = engine
+                    try:
+                        embeddings_result, _predictions_result = _batch_engine.predict_files_batch(
+                            reference_paths
+                        )
+                        # Extract raw embeddings array: shape (n_files, [1,] n_segments, dim)
+                        raw_emb_arr = embeddings_result.embeddings
+                        if hasattr(raw_emb_arr, "numpy"):
+                            raw_emb_arr = raw_emb_arr.numpy()
+                        all_embeddings: np.ndarray[Any, np.dtype[np.float32]] = np.asarray(
+                            raw_emb_arr, dtype=np.float32
+                        )
+
+                        # Extract optional per-element mask (Perch only)
+                        all_mask: np.ndarray[Any, Any] | None = None
+                        if hasattr(embeddings_result, "embeddings_masked"):
+                            raw_masked = embeddings_result.embeddings_masked
+                            if hasattr(raw_masked, "numpy"):
+                                raw_masked = raw_masked.numpy()
+                            all_mask = np.asarray(raw_masked)
+
+                        for file_index, _file_path in enumerate(reference_paths):
+                            # Slice this file's embeddings from the batch array.
+                            # Batch shape: (n_files, 1, n_segments, dim) or (n_files, n_segments, dim)
+                            if all_embeddings.ndim == 4:
+                                file_embeddings_b = all_embeddings[file_index, 0]  # (n_seg, dim)
+                                file_mask = (
+                                    all_mask[file_index, 0]
+                                    if all_mask is not None
+                                    else None
+                                )
+                            elif all_embeddings.ndim == 3:
+                                file_embeddings_b = all_embeddings[file_index]  # (n_seg, dim)
+                                file_mask = (
+                                    all_mask[file_index] if all_mask is not None else None
+                                )
+                            else:
+                                # Single-file fallback (should not occur in batch mode)
+                                file_embeddings_b = all_embeddings
+                                file_mask = all_mask
+
+                            # Apply masking to filter silent/invalid segments
+                            if file_mask is not None:
+                                seg_masked = (
+                                    file_mask.all(axis=1)
+                                    if file_mask.ndim == 2
+                                    else file_mask.flatten()
+                                )
+                                keep = ~seg_masked
+                                file_embeddings_b = file_embeddings_b[keep]
+
+                            # Accumulate one embedding vector per segment
+                            for seg_emb_b in file_embeddings_b:
+                                emb_list_b: list[float] = seg_emb_b.tolist()
+                                if len(emb_list_b) < _STORAGE_EMBEDDING_DIM:
+                                    emb_list_b.extend(
+                                        [0.0] * (_STORAGE_EMBEDDING_DIM - len(emb_list_b))
+                                    )
+                                query_vectors.append(emb_list_b[:_STORAGE_EMBEDDING_DIM])
+
+                        logger.info(
+                            "Batch inference for species='%s': %d files -> %d query vectors",
+                            species_cfg.scientific_name,
+                            len(reference_paths),
+                            len(query_vectors),
+                        )
+                    except Exception:
+                        logger.exception(
+                            "Batch inference failed for species '%s', falling back to per-file",
+                            species_cfg.scientific_name,
+                        )
+                        # Reset and fall through to per-file fallback
+                        query_vectors = []
+                        use_batch = False
+
+                if not use_batch:
+                    # Fallback path 2: per-file — preserved original behaviour
+                    for file_path, label in zip(reference_paths, source_labels, strict=False):
+                        try:
+                            inference_results = engine.predict_file(Path(file_path))
+                        except Exception:
+                            logger.exception(
+                                "Inference failed for source '%s', skipping", label
+                            )
+                            continue
+                        for inf_res in inference_results:
+                            emb_list_pf: list[float] = inf_res.embedding.tolist()
+                            if len(emb_list_pf) < _STORAGE_EMBEDDING_DIM:
+                                emb_list_pf.extend(
+                                    [0.0] * (_STORAGE_EMBEDDING_DIM - len(emb_list_pf))
+                                )
+                            query_vectors.append(emb_list_pf[:_STORAGE_EMBEDDING_DIM])
+
+        # Clean up all clipped/downloaded temp files for this species
+        for tmp_p in all_clipped_tmp_paths:
             with contextlib.suppress(OSError):
                 os.unlink(tmp_p)
 
