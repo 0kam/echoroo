@@ -29,7 +29,7 @@ class TemporalSummaryRow(TypedDict):
 class SpeciesSummaryRow(TypedDict):
     """Typed row for species summary query results."""
 
-    tag_id: UUID
+    tag_id: UUID | None
     tag_name: str
     scientific_name: str | None
     common_name: str | None
@@ -183,6 +183,11 @@ class AnnotationRepository:
 
         Returns count, average confidence, and status breakdown per species tag.
 
+        When filtering by a specific detection_run_id, annotations without a
+        tag_id (e.g. custom_svm source) are included and grouped by source/model.
+        When no detection_run_id filter is applied, only tagged annotations are
+        returned, grouped by tag_id across all detection runs.
+
         Args:
             project_id: Project's UUID
             dataset_id: Optional dataset filter
@@ -192,35 +197,90 @@ class AnnotationRepository:
             List of dicts with tag info and aggregated statistics
         """
         from echoroo.models.dataset import Dataset
+        from echoroo.models.detection_run import DetectionRun
         from echoroo.models.recording import Recording
 
-        query = (
+        def _agg_columns() -> list[object]:
+            return [
+                func.count(Annotation.id).label("total_count"),
+                func.avg(Annotation.confidence).label("avg_confidence"),
+                func.sum(
+                    cast(Annotation.status == DetectionStatus.UNREVIEWED, Integer)
+                ).label("unreviewed_count"),
+                func.sum(
+                    cast(Annotation.status == DetectionStatus.CONFIRMED, Integer)
+                ).label("confirmed_count"),
+                func.sum(
+                    cast(Annotation.status == DetectionStatus.REJECTED, Integer)
+                ).label("rejected_count"),
+            ]
+
+        if detection_run_id is not None:
+            # When filtering by a specific run, include tag-less annotations and
+            # group by tag_id + source + model_name so custom_svm entries appear.
+            query = (
+                select(
+                    Annotation.tag_id,
+                    Tag.name.label("tag_name"),
+                    Tag.scientific_name,
+                    Tag.common_name,
+                    Tag.taxon_id,
+                    Annotation.source.label("annotation_source"),
+                    DetectionRun.model_name.label("detection_run_model_name"),
+                    *_agg_columns(),
+                )
+                .join(Recording, Annotation.recording_id == Recording.id)
+                .join(Dataset, Recording.dataset_id == Dataset.id)
+                .outerjoin(Tag, Annotation.tag_id == Tag.id)
+                .outerjoin(DetectionRun, Annotation.detection_run_id == DetectionRun.id)
+                .where(Dataset.project_id == project_id)
+                .where(Annotation.detection_run_id == detection_run_id)
+                .group_by(
+                    Annotation.tag_id,
+                    Tag.name,
+                    Tag.scientific_name,
+                    Tag.common_name,
+                    Tag.taxon_id,
+                    Annotation.source,
+                    DetectionRun.model_name,
+                )
+                .order_by(func.count(Annotation.id).desc())
+            )
+            if dataset_id is not None:
+                query = query.where(Recording.dataset_id == dataset_id)
+
+            result = await self.db.execute(query)
+            rows = result.all()
+
+            return [
+                SpeciesSummaryRow(
+                    tag_id=row.tag_id,
+                    tag_name=(
+                        row.tag_name
+                        if row.tag_name is not None
+                        else (row.detection_run_model_name or str(row.annotation_source))
+                    ),
+                    scientific_name=row.scientific_name,
+                    common_name=row.common_name,
+                    taxon_id=row.taxon_id,
+                    total_count=row.total_count,
+                    avg_confidence=float(row.avg_confidence) if row.avg_confidence is not None else None,
+                    unreviewed_count=int(row.unreviewed_count or 0),
+                    confirmed_count=int(row.confirmed_count or 0),
+                    rejected_count=int(row.rejected_count or 0),
+                )
+                for row in rows
+            ]
+
+        # No detection_run_id filter: group by tag only, exclude tag-less annotations
+        query_no_run = (
             select(
                 Annotation.tag_id,
                 Tag.name.label("tag_name"),
                 Tag.scientific_name,
                 Tag.common_name,
                 Tag.taxon_id,
-                func.count(Annotation.id).label("total_count"),
-                func.avg(Annotation.confidence).label("avg_confidence"),
-                func.sum(
-                    cast(
-                        Annotation.status == DetectionStatus.UNREVIEWED,
-                        Integer,
-                    )
-                ).label("unreviewed_count"),
-                func.sum(
-                    cast(
-                        Annotation.status == DetectionStatus.CONFIRMED,
-                        Integer,
-                    )
-                ).label("confirmed_count"),
-                func.sum(
-                    cast(
-                        Annotation.status == DetectionStatus.REJECTED,
-                        Integer,
-                    )
-                ).label("rejected_count"),
+                *_agg_columns(),
             )
             .join(Recording, Annotation.recording_id == Recording.id)
             .join(Dataset, Recording.dataset_id == Dataset.id)
@@ -236,17 +296,13 @@ class AnnotationRepository:
             )
             .order_by(func.count(Annotation.id).desc())
         )
-
         if dataset_id is not None:
-            query = query.where(Recording.dataset_id == dataset_id)
+            query_no_run = query_no_run.where(Recording.dataset_id == dataset_id)
 
-        if detection_run_id is not None:
-            query = query.where(Annotation.detection_run_id == detection_run_id)
+        result_no_run = await self.db.execute(query_no_run)
+        rows_no_run = result_no_run.all()
 
-        result = await self.db.execute(query)
-        rows = result.all()
-
-        summary_rows: list[SpeciesSummaryRow] = [
+        return [
             SpeciesSummaryRow(
                 tag_id=row.tag_id,
                 tag_name=row.tag_name,
@@ -259,9 +315,8 @@ class AnnotationRepository:
                 confirmed_count=int(row.confirmed_count or 0),
                 rejected_count=int(row.rejected_count or 0),
             )
-            for row in rows
+            for row in rows_no_run
         ]
-        return summary_rows
 
     async def temporal_summary(
         self,

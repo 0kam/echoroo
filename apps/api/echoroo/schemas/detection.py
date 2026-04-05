@@ -77,10 +77,10 @@ class DetectionListResponse(BaseModel):
 
 
 class SpeciesSummaryItem(BaseModel):
-    """Summary statistics for a single species tag."""
+    """Summary statistics for a single species tag or detection run."""
 
-    tag_id: UUID = Field(..., description="Species tag ID")
-    tag_name: str = Field(..., description="Species tag name")
+    tag_id: UUID | None = Field(None, description="Species tag ID (None for tag-less sources like custom_svm)")
+    tag_name: str = Field(..., description="Species tag name or model name for tag-less sources")
     scientific_name: str | None = Field(None, description="Scientific name")
     common_name: str | None = Field(None, description="Common name")
     taxon_id: UUID | None = Field(None, description="Global taxon ID")

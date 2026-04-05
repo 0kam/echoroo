@@ -134,3 +134,29 @@ export async function getCustomModelStatus(
 ): Promise<CustomModel> {
   return getCustomModel(projectId, modelId);
 }
+
+/**
+ * Apply a trained custom model to all recordings in a dataset.
+ *
+ * Submits a Celery task that runs the model over every recording in the
+ * specified dataset and stores the results as detection runs.
+ *
+ * @param projectId - Project UUID
+ * @param modelId - Custom model UUID (must be in 'trained' or 'deployed' status)
+ * @param datasetId - Dataset UUID to run inference on
+ * @param threshold - Confidence threshold (0–1, default 0.5)
+ * @returns Object containing the created detection_run_id
+ */
+export async function applyCustomModel(
+  projectId: string,
+  modelId: string,
+  datasetId: string,
+  threshold: number = 0.5
+): Promise<{ detection_run_id: string }> {
+  const res = await fetch(
+    `/api/v1/projects/${projectId}/custom-models/${modelId}/apply?dataset_id=${datasetId}&threshold=${threshold}`,
+    { method: 'POST', credentials: 'include' }
+  );
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}

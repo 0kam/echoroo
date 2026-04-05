@@ -8,6 +8,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field
 
 from echoroo.models.custom_model import CustomModelStatus
+from echoroo.models.enums import DetectionRunStatus
 
 
 class CustomModelCreate(BaseModel):
@@ -101,3 +102,10 @@ class CustomModelListResponse(BaseModel):
 
     models: list[CustomModelListItem]
     total: int
+
+
+class CustomModelApplyResponse(BaseModel):
+    """Response for applying a custom model to a dataset."""
+
+    detection_run_id: UUID = Field(..., description="UUID of the created DetectionRun")
+    status: DetectionRunStatus = Field(..., description="Initial status of the detection run")

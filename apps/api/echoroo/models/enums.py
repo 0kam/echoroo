@@ -105,6 +105,7 @@ class DetectionSource(StrEnum):
     PERCH = "perch"
     PERCH_SEARCH = "perch_search"
     SIMILARITY_SEARCH = "similarity_search"
+    CUSTOM_SVM = "custom_svm"
     HUMAN = "human"
 
 
