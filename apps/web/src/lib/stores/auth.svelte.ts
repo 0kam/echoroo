@@ -68,14 +68,31 @@ function createAuthStore() {
 
     /**
      * Initialize auth state by checking current session.
-     * If the session is invalid (e.g., expired/revoked refresh token),
-     * clears the client state and redirects to the login page.
+     * On page reload the in-memory access token is lost, so we proactively
+     * attempt a token refresh before calling /users/me. This prevents child
+     * routes from receiving 401 errors while the token is being restored.
+     * If both refresh and /users/me fail, the user is redirected to login.
      */
     async initialize(): Promise<void> {
       state.isLoading = true;
       try {
-        // Try to get current user; this will attempt a token refresh internally
-        // if the access token is missing or expired.
+        // If no access token in memory (e.g., after a page reload), attempt
+        // to restore it via the refresh token cookie before fetching the user.
+        if (!apiClient.getAccessToken()) {
+          try {
+            await apiClient.refreshToken();
+          } catch {
+            // Refresh failed - no valid session exists, redirect to login.
+            state.user = null;
+            state.isAuthenticated = false;
+            apiClient.setAccessToken(null);
+            state.isLoading = false;
+            await goto(localizeHref('/login'), { replaceState: true });
+            return;
+          }
+        }
+
+        // Access token is now available; fetch the current user.
         const user = await apiClient.get<User>('/api/v1/users/me');
         state.user = user;
         state.isAuthenticated = true;

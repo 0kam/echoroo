@@ -1308,5 +1308,10 @@
   "models_page_title": "カスタムモデル",
   "models_back_to_list": "モデル一覧へ戻る",
   "models_delete_confirm": "このモデルを削除してもよいですか？",
-  "models_no_target_species": "対象種が設定されていません"
+  "models_no_target_species": "対象種が設定されていません",
+  "models_apply": "データセットに適用",
+  "models_apply_description": "データセット内の全録音にモデルを適用",
+  "models_apply_threshold": "信頼度閾値",
+  "models_apply_success": "モデルを適用しました。検出結果をご確認ください。",
+  "models_applying": "適用中..."
 }

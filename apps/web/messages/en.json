@@ -1308,5 +1308,10 @@
   "models_page_title": "Custom Models",
   "models_back_to_list": "Back to Models",
   "models_delete_confirm": "Are you sure you want to delete this model?",
-  "models_no_target_species": "No target species set"
+  "models_no_target_species": "No target species set",
+  "models_apply": "Apply to Dataset",
+  "models_apply_description": "Run this model on all recordings in a dataset",
+  "models_apply_threshold": "Confidence Threshold",
+  "models_apply_success": "Model applied successfully. View results in Detections.",
+  "models_applying": "Applying..."
 }

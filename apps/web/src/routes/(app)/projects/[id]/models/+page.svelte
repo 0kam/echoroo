@@ -21,9 +21,12 @@
     trainCustomModel,
     deleteCustomModel,
     getCustomModelStatus,
+    applyCustomModel,
   } from '$lib/api/custom-models';
   import { listSearchSessions } from '$lib/api/search';
   import { fetchTags } from '$lib/api/tags';
+  import { fetchDatasets } from '$lib/api/datasets';
+  import { toasts } from '$lib/stores/toast';
   import type { CustomModel, CustomModelListItem, CustomModelCreate } from '$lib/types/custom-model';
   import type { Tag } from '$lib/types/annotation';
 
@@ -54,6 +57,15 @@
   // ============================================
 
   let deletingModelId = $state<string | null>(null);
+
+  // ============================================
+  // Apply to Dataset dialog state
+  // ============================================
+
+  let showApplyDialog = $state(false);
+  let applyDatasetId = $state('');
+  let applyThreshold = $state(0.5);
+  let applyError = $state<string | null>(null);
 
   // ============================================
   // Training polling state
@@ -99,6 +111,14 @@
       queryKey: ['tags', projectId],
       queryFn: () => fetchTags(projectId, { page_size: 200 }),
       enabled: showCreateDialog,
+    })
+  );
+
+  const datasetsQuery = $derived(
+    createQuery({
+      queryKey: ['datasets', projectId, 'for-apply'],
+      queryFn: () => fetchDatasets(projectId, { page_size: 200 }),
+      enabled: showApplyDialog,
     })
   );
 
@@ -180,6 +200,18 @@
     },
   });
 
+  const applyMutationState = createMutation({
+    mutationFn: ({ modelId, datasetId, threshold }: { modelId: string; datasetId: string; threshold: number }) =>
+      applyCustomModel(projectId, modelId, datasetId, threshold),
+    onSuccess: () => {
+      closeApplyDialog();
+      toasts.success(m.models_apply_success());
+    },
+    onError: (err: Error) => {
+      applyError = err.message;
+    },
+  });
+
   // ============================================
   // Handlers
   // ============================================
@@ -244,6 +276,27 @@
 
   function handleDeleteCancel() {
     deletingModelId = null;
+  }
+
+  function openApplyDialog() {
+    applyDatasetId = '';
+    applyThreshold = 0.5;
+    applyError = null;
+    showApplyDialog = true;
+  }
+
+  function closeApplyDialog() {
+    showApplyDialog = false;
+  }
+
+  function handleApply() {
+    applyError = null;
+    if (!applyDatasetId) {
+      applyError = 'Select a dataset';
+      return;
+    }
+    if (!selectedModelId) return;
+    $applyMutationState.mutate({ modelId: selectedModelId, datasetId: applyDatasetId, threshold: applyThreshold });
   }
 
   function handleSelectModel(modelId: string) {
@@ -455,7 +508,8 @@
                 </div>
 
                 <!-- Right: action buttons -->
-                <div class="flex shrink-0 items-center gap-2" onclick={(e) => e.stopPropagation()}>
+                <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+                <div class="flex shrink-0 items-center gap-2" onclick={(e) => e.stopPropagation()} role="group">
                   {#if model.status === 'draft' || model.status === 'failed'}
                     <button
                       type="button"
@@ -557,7 +611,19 @@
             </div>
 
             <!-- Actions -->
-            <div class="flex shrink-0 gap-2">
+            <div class="flex shrink-0 flex-wrap gap-2">
+              {#if model.status === 'trained' || model.status === 'deployed'}
+                <button
+                  type="button"
+                  class="inline-flex items-center gap-2 rounded-lg border border-green-300 bg-green-50 px-4 py-2 text-sm font-medium text-green-700 transition-colors hover:bg-green-100 dark:border-green-700 dark:bg-green-900/20 dark:text-green-400 dark:hover:bg-green-900/40"
+                  onclick={openApplyDialog}
+                >
+                  <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  {m.models_apply()}
+                </button>
+              {/if}
               {#if model.status === 'draft' || model.status === 'failed'}
                 <button
                   type="button"
@@ -890,6 +956,118 @@
             {m.models_creating()}
           {:else}
             {m.models_create()}
+          {/if}
+        </button>
+      </div>
+    </form>
+  </div>
+{/if}
+
+<!-- ====================================================
+     Apply to Dataset Dialog
+==================================================== -->
+{#if showApplyDialog}
+  <!-- Backdrop -->
+  <div
+    class="fixed inset-0 z-40 bg-black/50 backdrop-blur-sm"
+    onclick={closeApplyDialog}
+    onkeydown={(e) => e.key === 'Escape' && closeApplyDialog()}
+    role="button"
+    tabindex="-1"
+    aria-label="Close dialog"
+  ></div>
+
+  <!-- Dialog panel -->
+  <div
+    class="fixed inset-x-0 bottom-0 z-50 mx-auto max-w-lg rounded-t-2xl border border-card bg-surface-card p-6 shadow-2xl sm:inset-x-auto sm:left-1/2 sm:top-1/2 sm:w-full sm:-translate-x-1/2 sm:-translate-y-1/2 sm:rounded-2xl sm:p-8"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="apply-dialog-title"
+  >
+    <div class="mb-6">
+      <h2 id="apply-dialog-title" class="text-lg font-semibold text-stone-900 dark:text-stone-100">
+        {m.models_apply()}
+      </h2>
+      <p class="mt-1 text-sm text-stone-500 dark:text-stone-400">
+        {m.models_apply_description()}
+      </p>
+    </div>
+
+    <form
+      class="space-y-5"
+      onsubmit={(e) => { e.preventDefault(); handleApply(); }}
+    >
+      <!-- Dataset selector -->
+      <div>
+        <label for="apply-dataset" class="block text-sm font-medium text-stone-700 dark:text-stone-300">
+          Dataset <span class="text-red-500">*</span>
+        </label>
+        <select
+          id="apply-dataset"
+          bind:value={applyDatasetId}
+          class="mt-1.5 block w-full rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm text-stone-900 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500 dark:border-stone-600 dark:bg-stone-800 dark:text-stone-100"
+        >
+          <option value="">— Select a dataset —</option>
+          {#if $datasetsQuery.isLoading}
+            <option disabled>Loading...</option>
+          {:else if $datasetsQuery.data}
+            {#each $datasetsQuery.data.items as dataset (dataset.id)}
+              <option value={dataset.id}>{dataset.name}</option>
+            {/each}
+          {/if}
+        </select>
+      </div>
+
+      <!-- Threshold slider -->
+      <div>
+        <label for="apply-threshold" class="block text-sm font-medium text-stone-700 dark:text-stone-300">
+          {m.models_apply_threshold()}
+          <span class="ml-2 font-mono text-primary-600 dark:text-primary-400">{applyThreshold.toFixed(2)}</span>
+        </label>
+        <input
+          id="apply-threshold"
+          type="range"
+          min="0"
+          max="1"
+          step="0.01"
+          bind:value={applyThreshold}
+          class="mt-2 h-2 w-full cursor-pointer appearance-none rounded-full bg-stone-200 accent-primary-500 dark:bg-stone-700"
+        />
+        <div class="mt-1 flex justify-between text-xs text-stone-400">
+          <span>0</span>
+          <span>0.5</span>
+          <span>1</span>
+        </div>
+      </div>
+
+      <!-- Error message -->
+      {#if applyError}
+        <p class="text-sm text-red-600 dark:text-red-400">{applyError}</p>
+      {/if}
+
+      <!-- Footer buttons -->
+      <div class="flex justify-end gap-3 pt-2">
+        <button
+          type="button"
+          class="rounded-lg border border-stone-300 px-4 py-2 text-sm font-medium text-stone-700 transition-colors hover:bg-stone-50 dark:border-stone-600 dark:text-stone-300 dark:hover:bg-stone-800"
+          onclick={closeApplyDialog}
+          disabled={$applyMutationState.isPending}
+        >
+          {m.models_cancel()}
+        </button>
+        <button
+          type="submit"
+          class="inline-flex items-center gap-2 rounded-lg bg-primary-500 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-primary-600 disabled:opacity-50"
+          disabled={$applyMutationState.isPending}
+        >
+          {#if $applyMutationState.isPending}
+            <svg class="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24" aria-hidden="true">
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+            </svg>
+            {m.models_applying()}
+          {:else}
+            {m.models_apply()}
           {/if}
         </button>
       </div>
