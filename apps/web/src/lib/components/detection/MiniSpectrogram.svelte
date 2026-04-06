@@ -5,29 +5,43 @@
    * Renders a small spectrogram from the backend API for the given recording
    * and time range, with a semi-transparent overlay for the detection region.
    * Uses authenticated fetch + blob URL to avoid 401 errors from direct <img> requests.
+   *
+   * NOTE: This is a detection-specific copy. The canonical version is in
+   * $lib/components/common/MiniSpectrogram.svelte.
    */
 
   import { onDestroy, onMount } from 'svelte';
   import { apiClient } from '$lib/api/client';
   import * as m from '$lib/paraglide/messages';
 
-  export let projectId: string;
-  export let recordingId: string;
-  export let startTime: number;
-  export let endTime: number;
-  export let freqLow: number | undefined = undefined;
-  export let freqHigh: number | undefined = undefined;
+  interface Props {
+    projectId: string;
+    recordingId: string;
+    startTime: number;
+    endTime: number;
+    freqLow?: number;
+    freqHigh?: number;
+  }
+
+  let {
+    projectId,
+    recordingId,
+    startTime,
+    endTime,
+    freqLow,
+    freqHigh,
+  }: Props = $props();
 
   // Add a small buffer around the detection for context
   const BUFFER_SECONDS = 0.5;
 
-  $: windowStart = Math.max(0, startTime - BUFFER_SECONDS);
-  $: windowEnd = endTime + BUFFER_SECONDS;
+  const windowStart = $derived(Math.max(0, startTime - BUFFER_SECONDS));
+  const windowEnd = $derived(endTime + BUFFER_SECONDS);
 
-  let blobUrl: string | null = null;
-  let isLoaded = false;
-  let isError = false;
-  let mounted = false;
+  let blobUrl = $state<string | null>(null);
+  let isLoaded = $state(false);
+  let isError = $state(false);
+  let mounted = $state(false);
 
   function revokeBlobUrl() {
     if (blobUrl) {
@@ -83,7 +97,11 @@
   });
 
   // Re-fetch when props change (after mount)
-  $: if (mounted) fetchSpectrogram(projectId, recordingId, windowStart, windowEnd);
+  $effect(() => {
+    if (mounted) {
+      fetchSpectrogram(projectId, recordingId, windowStart, windowEnd);
+    }
+  });
 
   onDestroy(() => {
     fetchId++; // Invalidate any in-flight fetch
@@ -97,9 +115,9 @@
   }
 
   // Calculate overlay position as percentage within the window
-  $: windowDuration = windowEnd - windowStart;
-  $: overlayLeft = windowDuration > 0 ? ((startTime - windowStart) / windowDuration) * 100 : 0;
-  $: overlayRight = windowDuration > 0 ? ((windowEnd - endTime) / windowDuration) * 100 : 0;
+  const windowDuration = $derived(windowEnd - windowStart);
+  const overlayLeft = $derived(windowDuration > 0 ? ((startTime - windowStart) / windowDuration) * 100 : 0);
+  const overlayRight = $derived(windowDuration > 0 ? ((windowEnd - endTime) / windowDuration) * 100 : 0);
 </script>
 
 <div class="relative w-full overflow-hidden rounded" style="height: 120px; background: #1c1917;">

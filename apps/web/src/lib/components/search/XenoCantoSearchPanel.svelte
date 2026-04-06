@@ -51,6 +51,42 @@
   // Multi-select state: persists across pages (keyed by xc_id)
   let selectedIds = $state<Set<string>>(new Set());
 
+  const COUNTRY_OPTIONS: { code: string; label: string }[] = [
+    { code: '', label: '' },
+    { code: 'japan', label: 'Japan' },
+    { code: 'china', label: 'China' },
+    { code: 'taiwan', label: 'Taiwan' },
+    { code: 'south korea', label: 'South Korea' },
+    { code: 'thailand', label: 'Thailand' },
+    { code: 'indonesia', label: 'Indonesia' },
+    { code: 'philippines', label: 'Philippines' },
+    { code: 'india', label: 'India' },
+    { code: 'nepal', label: 'Nepal' },
+    { code: 'australia', label: 'Australia' },
+    { code: 'new zealand', label: 'New Zealand' },
+    { code: 'united kingdom', label: 'United Kingdom' },
+    { code: 'germany', label: 'Germany' },
+    { code: 'france', label: 'France' },
+    { code: 'spain', label: 'Spain' },
+    { code: 'italy', label: 'Italy' },
+    { code: 'sweden', label: 'Sweden' },
+    { code: 'finland', label: 'Finland' },
+    { code: 'norway', label: 'Norway' },
+    { code: 'united states', label: 'United States' },
+    { code: 'canada', label: 'Canada' },
+    { code: 'brazil', label: 'Brazil' },
+    { code: 'colombia', label: 'Colombia' },
+    { code: 'peru', label: 'Peru' },
+    { code: 'ecuador', label: 'Ecuador' },
+    { code: 'mexico', label: 'Mexico' },
+    { code: 'south africa', label: 'South Africa' },
+    { code: 'kenya', label: 'Kenya' },
+    { code: 'tanzania', label: 'Tanzania' },
+    { code: 'madagascar', label: 'Madagascar' },
+    { code: 'russia', label: 'Russia' },
+    { code: 'mongolia', label: 'Mongolia' },
+  ];
+
   const AREA_OPTIONS = ['', 'africa', 'america', 'asia', 'australia', 'europe'];
   const QUALITY_OPTIONS = ['', 'A', 'B', 'C', 'D', 'E'];
   const TYPE_OPTIONS = ['', 'song', 'call', 'alarm call', 'flight call', 'nocturnal flight call', 'subsong'];
@@ -247,15 +283,16 @@
     <!-- Filter row -->
     <div class="flex flex-wrap gap-2">
       <!-- Country -->
-      <input
-        type="text"
+      <select
         bind:value={country}
-        onkeydown={handleKeydown}
-        class="w-28 rounded-md border border-stone-300 bg-white px-2 py-1 text-xs
-               placeholder-stone-400 focus:border-primary-500 focus:outline-none focus:ring-1
-               focus:ring-primary-500 dark:border-stone-600 dark:bg-stone-800 dark:text-stone-100"
-        placeholder={m.search_xc_country()}
-      />
+        class="rounded-md border border-stone-300 bg-white px-2 py-1 text-xs text-stone-700
+               focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500
+               dark:border-stone-600 dark:bg-stone-800 dark:text-stone-300"
+      >
+        {#each COUNTRY_OPTIONS as opt}
+          <option value={opt.code}>{opt.label || m.search_xc_country()}</option>
+        {/each}
+      </select>
 
       <!-- Area -->
       <select
