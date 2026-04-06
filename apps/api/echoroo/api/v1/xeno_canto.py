@@ -8,12 +8,13 @@ from __future__ import annotations
 
 import logging
 import os
+import urllib.parse
 from collections.abc import AsyncIterator
 from uuid import UUID
 
 import httpx
 from fastapi import APIRouter, HTTPException, Query, status
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 
 from echoroo.core.database import DbSession
 from echoroo.middleware.auth import CurrentUser
@@ -278,6 +279,84 @@ async def proxy_audio(
 
 
 @router.get(
+    "/sonogram",
+    summary="Proxy a Xeno-canto sonogram image",
+    description=(
+        "Fetches a Xeno-canto sonogram image and returns it from the same origin, "
+        "avoiding Chrome ORB (Opaque Response Blocking) for cross-origin images. "
+        "Only URLs under https://xeno-canto.org/ are accepted."
+    ),
+)
+async def proxy_sonogram(
+    project_id: UUID,
+    current_user: CurrentUser,
+    db: DbSession,
+    url: str = Query(..., description="Full xeno-canto.org sonogram URL to proxy"),
+) -> Response:
+    """Proxy a Xeno-canto sonogram image to avoid cross-origin ORB blocking.
+
+    Args:
+        project_id: Project UUID (path parameter, used for access control)
+        current_user: Current authenticated user
+        db: Database session
+        url: Full xeno-canto.org image URL to proxy
+
+    Returns:
+        Response with the image content and a 1-day Cache-Control header
+
+    Raises:
+        400: URL is not a xeno-canto.org URL
+        403: Access denied to project
+        502: Upstream Xeno-canto error
+        504: Request to Xeno-canto timed out
+    """
+    await _check_project_access(project_id, current_user.id, db)
+
+    if not url.startswith("https://xeno-canto.org/"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only https://xeno-canto.org/ URLs are allowed",
+        )
+
+    try:
+        async with httpx.AsyncClient(
+            timeout=10.0,
+            follow_redirects=True,
+        ) as client:
+            resp = await client.get(
+                url,
+                headers={"User-Agent": "Echoroo/2.0 (https://echoroo.app)"},
+            )
+    except httpx.TimeoutException as exc:
+        logger.warning("Xeno-canto sonogram proxy timed out for url=%r", url)
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail="Xeno-canto sonogram request timed out",
+        ) from exc
+    except httpx.RequestError as exc:
+        logger.warning("Xeno-canto sonogram proxy network error for url=%r: %s", url, exc)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Xeno-canto is unreachable",
+        ) from exc
+
+    if resp.status_code != 200:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Xeno-canto returned HTTP {resp.status_code} for sonogram",
+        )
+
+    content_type = resp.headers.get("content-type", "image/png")
+    logger.debug("Proxying Xeno-canto sonogram: url=%r content_type=%r", url, content_type)
+
+    return Response(
+        content=resp.content,
+        media_type=content_type,
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
+
+
+@router.get(
     "/search",
     response_model=XenoCantoSearchResponse,
     summary="Search Xeno-canto recordings",
@@ -405,6 +484,15 @@ async def search_xeno_canto(
 
     # Apply per_page slicing client-side (XC paginates by its own page size)
     recordings = recordings[:per_page]
+
+    # Rewrite sonogram URLs to go through our proxy (avoids ORB blocking in Chrome)
+    for rec in recordings:
+        if rec.sonogram_url:
+            proxied = (
+                f"/api/v1/projects/{project_id}/xeno-canto/sonogram"
+                f"?url={urllib.parse.quote(rec.sonogram_url, safe='')}"
+            )
+            rec.sonogram_url = proxied
 
     logger.info(
         "Xeno-canto search: query=%r page=%d total=%d species=%d returned=%d",
