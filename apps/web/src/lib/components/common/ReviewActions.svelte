@@ -47,12 +47,7 @@
 </script>
 
 <div class="flex items-center gap-2">
-  <!-- Current status badge (hidden for unreviewed to reduce clutter) -->
-  {#if status !== 'unreviewed'}
-    <span class="inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium {statusClass}">
-      {statusLabel}
-    </span>
-  {/if}
+  <!-- Status badge removed: button highlight already indicates status -->
 
   <!-- Confirm button -->
   <button
