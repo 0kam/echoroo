@@ -18,6 +18,12 @@
     projectId: string;
     isSelected?: boolean;
     isLoading?: boolean;
+    /** Whether this card's audio is currently playing (controlled by parent navigation) */
+    externalIsPlaying?: boolean;
+    /** Whether the external player is loading audio for this card */
+    externalIsLoadingAudio?: boolean;
+    /** Callback when the play button is clicked (delegates to parent's player) */
+    onPlayToggle?: () => void;
     onConfirm: (detectionId: string, startTime: number, endTime: number) => void;
     onReject: (detectionId: string) => void;
     onChangeSpecies: (detectionId: string, newTagId: string) => void;
@@ -28,6 +34,9 @@
     projectId,
     isSelected = false,
     isLoading = false,
+    externalIsPlaying,
+    externalIsLoadingAudio,
+    onPlayToggle,
     onConfirm,
     onReject,
     onChangeSpecies,
@@ -111,6 +120,9 @@
     scoreValue={null}
     {isLoading}
     {isSelected}
+    {externalIsPlaying}
+    {externalIsLoadingAudio}
+    {onPlayToggle}
     onConfirm={handleConfirm}
     onReject={handleReject}
   >

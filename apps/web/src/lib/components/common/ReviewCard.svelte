@@ -44,6 +44,21 @@
     onConfirm: () => void;
     onReject: () => void;
     /**
+     * Whether this card's audio is currently playing, controlled by a parent
+     * navigation hook. When provided, the play button reflects this state
+     * instead of the internal player's state.
+     */
+    externalIsPlaying?: boolean;
+    /**
+     * Whether the external player is loading audio for this card.
+     */
+    externalIsLoadingAudio?: boolean;
+    /**
+     * Callback when the play button is clicked. When provided, delegates
+     * playback control to the parent instead of using the internal player.
+     */
+    onPlayToggle?: () => void;
+    /**
      * Optional snippet injected at the top of the card body,
      * before recording name and time range.
      */
@@ -70,11 +85,23 @@
     isSelected = false,
     onConfirm,
     onReject,
+    externalIsPlaying,
+    externalIsLoadingAudio,
+    onPlayToggle,
     extraHeader,
     extraBody,
   }: Props = $props();
 
-  const player = createAudioPlayer(projectId);
+  // Use an internal player only when no external playback control is provided
+  const internalPlayer = onPlayToggle ? null : createAudioPlayer(projectId);
+
+  // Effective playback state: prefer external props when available
+  const effectiveIsPlaying = $derived(
+    onPlayToggle ? (externalIsPlaying ?? false) : (internalPlayer?.isPlaying ?? false)
+  );
+  const effectiveIsLoadingAudio = $derived(
+    onPlayToggle ? (externalIsLoadingAudio ?? false) : (internalPlayer?.isLoadingAudio ?? false)
+  );
 
   const scorePercent = $derived(scoreValue !== null ? Math.round(scoreValue * 100) : null);
 
@@ -98,18 +125,26 @@
     return `${formatTime(start)} \u2013 ${formatTime(end)}`;
   }
 
+  function handlePlayToggle() {
+    if (onPlayToggle) {
+      onPlayToggle();
+    } else {
+      internalPlayer?.toggle(recordingId, startTime, endTime);
+    }
+  }
+
   function handleConfirm() {
-    player.stop();
+    internalPlayer?.stop();
     onConfirm();
   }
 
   function handleReject() {
-    player.stop();
+    internalPlayer?.stop();
     onReject();
   }
 
   onDestroy(() => {
-    player.cleanup();
+    internalPlayer?.cleanup();
   });
 </script>
 
@@ -153,18 +188,18 @@
     <button
       type="button"
       class="absolute right-1 top-1 flex h-7 w-7 items-center justify-center rounded-full bg-black/50 text-white transition-colors hover:bg-black/70 focus:outline-none focus:ring-2 focus:ring-white/50 disabled:cursor-not-allowed disabled:opacity-60"
-      onclick={() => player.toggle(recordingId, startTime, endTime)}
-      disabled={player.isLoadingAudio}
-      aria-label={player.isPlaying ? m.detection_stop_audio_aria() : m.detection_play_audio_aria()}
-      title={player.isLoadingAudio
+      onclick={handlePlayToggle}
+      disabled={effectiveIsLoadingAudio}
+      aria-label={effectiveIsPlaying ? m.detection_stop_audio_aria() : m.detection_play_audio_aria()}
+      title={effectiveIsLoadingAudio
         ? m.detection_loading_audio_title()
-        : player.isPlaying
+        : effectiveIsPlaying
           ? m.detection_stop_title()
           : m.detection_play_title()}
     >
-      {#if player.isLoadingAudio}
+      {#if effectiveIsLoadingAudio}
         <div class="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/40 border-t-white"></div>
-      {:else if player.isPlaying}
+      {:else if effectiveIsPlaying}
         <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="currentColor">
           <rect x="6" y="6" width="12" height="12" rx="1" />
         </svg>

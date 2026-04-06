@@ -19,11 +19,29 @@
     searchSessionId?: string;
     /** Highlight this card when it is keyboard-focused */
     isSelected?: boolean;
+    /** Whether this card's audio is currently playing (controlled by parent navigation) */
+    externalIsPlaying?: boolean;
+    /** Whether the external player is loading audio for this card */
+    externalIsLoadingAudio?: boolean;
+    /** Callback when the play button is clicked (delegates to parent's player) */
+    onPlayToggle?: () => void;
     onConfirm: () => void;
     onReject: () => void;
   }
 
-  let { projectId, result, tagId, status, searchSessionId, isSelected = false, onConfirm, onReject }: Props = $props();
+  let {
+    projectId,
+    result,
+    tagId,
+    status,
+    searchSessionId,
+    isSelected = false,
+    externalIsPlaying,
+    externalIsLoadingAudio,
+    onPlayToggle,
+    onConfirm,
+    onReject,
+  }: Props = $props();
 
   let isConfirming = $state(false);
   let isRejecting = $state(false);
@@ -92,6 +110,9 @@
   scoreBadgeClass={getSimilarityBadgeClass(result.similarity)}
   isLoading={isConfirming || isRejecting}
   {isSelected}
+  {externalIsPlaying}
+  {externalIsLoadingAudio}
+  {onPlayToggle}
   onConfirm={handleConfirm}
   onReject={handleReject}
 />
