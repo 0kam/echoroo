@@ -18,6 +18,7 @@ from uuid import UUID
 
 from fastapi import (
     APIRouter,
+    Body,
     Depends,
     File,
     Form,
@@ -236,6 +237,48 @@ async def delete_search_session(
     await session_service.delete_session(session_id, project_id)
     await db.commit()
     return Response(status_code=204)
+
+
+@router.patch(
+    "/sessions/{session_id}",
+    response_model=SearchSessionResponse,
+    summary="Update search session",
+    description="Update a search session's name.",
+)
+async def update_search_session(
+    project_id: UUID,
+    session_id: UUID,
+    current_user: CurrentUser,
+    db: DbSession,
+    session_service: SearchSessionServiceDep,
+    name: str = Body(..., embed=True),
+) -> SearchSessionResponse:
+    """Update a search session's name.
+
+    Args:
+        project_id: Project UUID (path parameter)
+        session_id: Session UUID (path parameter)
+        current_user: Current authenticated user
+        db: Database session
+        session_service: Search session service
+        name: New session name
+
+    Returns:
+        Updated SearchSessionResponse
+
+    Raises:
+        403: Access denied to project
+        404: Session not found
+    """
+    await check_project_access(project_id, current_user.id, db)
+    session = await session_service.get_session(session_id, project_id)
+    if not session:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Search session not found")
+
+    session.name = name
+    await db.commit()
+    await db.refresh(session)
+    return SearchSessionResponse.model_validate(session)
 
 
 @router.get(

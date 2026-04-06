@@ -1257,6 +1257,12 @@
   "search_keyboard_reject": "却下",
   "search_keyboard_play": "再生",
   "search_keyboard_navigate": "移動",
+  "search_rename_session": "名前を変更",
+  "search_edit_rerun": "編集して再検索",
+  "search_session_name": "セッション名",
+  "search_rename_save": "保存",
+  "search_rename_cancel": "キャンセル",
+  "search_rename_saving": "保存中...",
 
   "sidebar_nav_models": "モデル",
 

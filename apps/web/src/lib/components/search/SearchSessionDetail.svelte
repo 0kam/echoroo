@@ -9,7 +9,7 @@
 
   import { onMount } from 'svelte';
   import * as m from '$lib/paraglide/messages';
-  import { getSearchSession, getReferenceAudioUrl } from '$lib/api/search';
+  import { getSearchSession, getReferenceAudioUrl, updateSearchSession } from '$lib/api/search';
   import { generateId } from '$lib/utils/id';
   import type { SearchSession, TargetSpecies, SoundSource } from '$lib/types/search';
   import ReferenceSoundsPanel from './ReferenceSoundsPanel.svelte';
@@ -35,6 +35,13 @@
 
   // Reconstructed TargetSpecies for the ReferenceSoundsPanel
   let reconstructedSpecies = $state<TargetSpecies[]>([]);
+
+  // Inline rename state
+  let isRenaming = $state(false);
+  let renameValue = $state('');
+  let isSavingRename = $state(false);
+  let renameError = $state<string | null>(null);
+  let renameInputEl = $state<HTMLInputElement | null>(null);
 
   // ============================================
   // Data fetching
@@ -187,6 +194,65 @@
 
     onRerun(cloned);
   }
+
+  // ============================================
+  // Rename handlers
+  // ============================================
+
+  function startRename() {
+    if (!session) return;
+    renameValue = session.name ?? sessionName();
+    renameError = null;
+    isRenaming = true;
+    // Focus the input on the next tick after it renders
+    setTimeout(() => renameInputEl?.focus(), 0);
+  }
+
+  function cancelRename() {
+    isRenaming = false;
+    renameError = null;
+  }
+
+  async function saveRename() {
+    if (!session || !renameValue.trim()) return;
+    isSavingRename = true;
+    renameError = null;
+    try {
+      const updated = await updateSearchSession(projectId, session.id, renameValue.trim());
+      session = updated;
+      isRenaming = false;
+    } catch (e) {
+      renameError = e instanceof Error ? e.message : m.search_error_search_failed();
+    } finally {
+      isSavingRename = false;
+    }
+  }
+
+  function handleRenameKeydown(e: KeyboardEvent) {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      saveRename();
+    } else if (e.key === 'Escape') {
+      cancelRename();
+    }
+  }
+
+  // ============================================
+  // Edit & Re-search handler
+  // ============================================
+
+  function handleEditRerun() {
+    if (reconstructedSpecies.length === 0) return;
+
+    // Deep-clone so edits in new-search mode don't affect this detail view
+    const cloned: TargetSpecies[] = reconstructedSpecies.map((sp) => ({
+      ...sp,
+      id: generateId(),
+      sources: sp.sources.map((src) => ({ ...src, id: generateId() })),
+    }));
+
+    onRerun(cloned);
+  }
 </script>
 
 <div class="space-y-6">
@@ -246,10 +312,67 @@
     <div class="rounded-lg border border-stone-200 bg-white p-5 shadow-sm dark:border-stone-700 dark:bg-stone-900">
       <div class="flex flex-wrap items-start justify-between gap-3">
         <div class="min-w-0 flex-1">
-          <!-- Session name and date -->
-          <h2 class="truncate text-xl font-semibold text-stone-900 dark:text-stone-100">
-            {sessionName()}
-          </h2>
+          <!-- Session name with inline rename -->
+          {#if isRenaming}
+            <div class="flex items-center gap-2">
+              <input
+                bind:this={renameInputEl}
+                bind:value={renameValue}
+                type="text"
+                aria-label={m.search_session_name()}
+                class="min-w-0 flex-1 rounded-md border border-stone-300 bg-white px-3 py-1.5 text-lg font-semibold text-stone-900
+                       shadow-sm outline-none ring-primary-500 focus:border-primary-500 focus:ring-2
+                       dark:border-stone-600 dark:bg-stone-800 dark:text-stone-100"
+                disabled={isSavingRename}
+                onkeydown={handleRenameKeydown}
+              />
+              <button
+                type="button"
+                class="shrink-0 rounded-md bg-primary-600 px-3 py-1.5 text-sm font-medium text-white
+                       transition-colors hover:bg-primary-700 disabled:opacity-50
+                       dark:bg-primary-500 dark:hover:bg-primary-600"
+                disabled={isSavingRename || !renameValue.trim()}
+                onclick={saveRename}
+              >
+                {isSavingRename ? m.search_rename_saving() : m.search_rename_save()}
+              </button>
+              <button
+                type="button"
+                class="shrink-0 rounded-md border border-stone-300 bg-white px-3 py-1.5 text-sm font-medium
+                       text-stone-700 transition-colors hover:bg-stone-50 disabled:opacity-50
+                       dark:border-stone-600 dark:bg-stone-800 dark:text-stone-300 dark:hover:bg-stone-700"
+                disabled={isSavingRename}
+                onclick={cancelRename}
+              >
+                {m.search_rename_cancel()}
+              </button>
+            </div>
+            {#if renameError}
+              <p class="mt-1 text-sm text-red-600 dark:text-red-400">{renameError}</p>
+            {/if}
+          {:else}
+            <div class="flex items-center gap-2">
+              <h2 class="truncate text-xl font-semibold text-stone-900 dark:text-stone-100">
+                {sessionName()}
+              </h2>
+              {#if session.status === 'completed'}
+                <button
+                  type="button"
+                  title={m.search_rename_session()}
+                  aria-label={m.search_rename_session()}
+                  class="shrink-0 rounded p-1 text-stone-400 transition-colors hover:text-stone-700
+                         dark:text-stone-500 dark:hover:text-stone-300"
+                  onclick={startRename}
+                >
+                  <!-- Pencil icon -->
+                  <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                    <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" stroke-linecap="round" stroke-linejoin="round" />
+                    <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" stroke-linecap="round" stroke-linejoin="round" />
+                  </svg>
+                </button>
+              {/if}
+            </div>
+          {/if}
           <p class="mt-0.5 text-sm text-stone-500 dark:text-stone-400">
             {formattedDate()}
           </p>
@@ -312,9 +435,26 @@
         readonly={true}
       />
 
-      <!-- Re-run button (only for completed sessions) -->
+      <!-- Action buttons (only for completed sessions with reference audio) -->
       {#if session.status === 'completed'}
-        <div class="flex items-center justify-end">
+        <div class="flex items-center justify-end gap-2">
+          <!-- Edit & Re-search: clone session as template and switch to new-search mode -->
+          <button
+            type="button"
+            class="inline-flex items-center gap-2 rounded-md border border-stone-300 bg-white px-4 py-2 text-sm font-medium
+                   text-stone-700 shadow-sm transition-colors hover:bg-stone-50
+                   dark:border-stone-600 dark:bg-stone-800 dark:text-stone-300 dark:hover:bg-stone-700"
+            onclick={handleEditRerun}
+          >
+            <!-- Edit icon -->
+            <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" stroke-linecap="round" stroke-linejoin="round" />
+              <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+            {m.search_edit_rerun()}
+          </button>
+
+          <!-- Re-run: use same sources exactly, pass source_session_id -->
           <button
             type="button"
             class="inline-flex items-center gap-2 rounded-md bg-primary-600 px-4 py-2 text-sm font-medium
