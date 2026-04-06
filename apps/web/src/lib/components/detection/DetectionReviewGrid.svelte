@@ -8,12 +8,15 @@
    * - Confidence slider filter
    * - Pagination controls
    * - Keyboard shortcuts: C=Confirm, R=Reject, Space=Play, Arrow=Navigate
+   * - Shared audio playback via reviewNavigation hook (syncs keyboard Space with play button)
    */
 
+  import { onDestroy } from 'svelte';
   import { createQuery, createMutation, useQueryClient } from '@tanstack/svelte-query';
   import { fetchDetections, confirmDetection, rejectDetection, changeDetectionSpecies } from '$lib/api/detections';
   import type { DetectionStatus, DetectionListResponse } from '$lib/types/detection';
   import * as m from '$lib/paraglide/messages';
+  import { createReviewNavigation } from '$lib/utils/reviewNavigation.svelte';
   import DetectionCard from './DetectionCard.svelte';
 
   export let projectId: string;
@@ -29,11 +32,11 @@
   let page = 1;
   const PAGE_SIZE = 12;
 
-  // Selected card index for keyboard navigation
-  let selectedIndex = 0;
-
   // Track which detection is currently being mutated
   let mutatingId: string | null = null;
+
+  // DOM references for card elements (scroll-into-view)
+  let cardElements: (HTMLElement | null)[] = [];
 
   // Query key includes all filter params
   $: queryKey = ['detections', projectId, tagId, statusFilter, confidenceMin, page, PAGE_SIZE, detectionRunId];
@@ -57,10 +60,37 @@
   $: totalPages = $detectionsQuery.data?.pages ?? 1;
   $: totalItems = $detectionsQuery.data?.total ?? 0;
 
-  // Status counts from current page (approximate - server should provide totals ideally)
-  $: confirmedCount = detections.filter((d) => d.status === 'confirmed').length;
-  $: rejectedCount = detections.filter((d) => d.status === 'rejected').length;
-  $: unreviewedCount = detections.filter((d) => d.status === 'unreviewed').length;
+  // Shared keyboard navigation and audio playback
+  const nav = createReviewNavigation({
+    projectId,
+    itemCount: () => detections.length,
+    onConfirm: (i) => {
+      const d = detections[i];
+      if (d && mutatingId === null) {
+        handleConfirm(d.id, d.start_time, d.end_time);
+      }
+    },
+    onReject: (i) => {
+      const d = detections[i];
+      if (d && mutatingId === null) {
+        handleReject(d.id);
+      }
+    },
+    getPlaybackInfo: (i) => {
+      const d = detections[i];
+      if (!d) return null;
+      return {
+        recordingId: d.recording_id,
+        startTime: d.start_time,
+        endTime: d.end_time,
+      };
+    },
+    getElement: (i) => cardElements[i] ?? null,
+  });
+
+  onDestroy(() => {
+    nav.cleanup();
+  });
 
   // Mutations
   const confirmMutation = createMutation({
@@ -114,73 +144,30 @@
   function handleStatusFilter(status: DetectionStatus | undefined) {
     statusFilter = status;
     page = 1;
-    selectedIndex = 0;
+    nav.select(0);
   }
 
   function handleConfidenceChange() {
     page = 1;
-    selectedIndex = 0;
+    nav.select(0);
   }
 
   function prevPage() {
     if (page > 1) {
       page -= 1;
-      selectedIndex = 0;
+      nav.select(0);
     }
   }
 
   function nextPage() {
     if (page < totalPages) {
       page += 1;
-      selectedIndex = 0;
-    }
-  }
-
-  // Keyboard shortcuts
-  function handleKeydown(e: KeyboardEvent) {
-    // Ignore if focus is on an input/button/select
-    const target = e.target as HTMLElement;
-    if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT') {
-      return;
-    }
-
-    if (detections.length === 0) return;
-
-    const selected = detections[selectedIndex];
-
-    switch (e.key) {
-      case 'c':
-      case 'C':
-        if (selected && mutatingId === null) {
-          e.preventDefault();
-          handleConfirm(selected.id, selected.start_time, selected.end_time);
-        }
-        break;
-
-      case 'r':
-      case 'R':
-        if (selected && mutatingId === null) {
-          e.preventDefault();
-          handleReject(selected.id);
-        }
-        break;
-
-      case 'ArrowRight':
-      case 'ArrowDown':
-        e.preventDefault();
-        selectedIndex = Math.min(selectedIndex + 1, detections.length - 1);
-        break;
-
-      case 'ArrowLeft':
-      case 'ArrowUp':
-        e.preventDefault();
-        selectedIndex = Math.max(selectedIndex - 1, 0);
-        break;
+      nav.select(0);
     }
   }
 </script>
 
-<svelte:window on:keydown={handleKeydown} />
+<svelte:window on:keydown={nav.handleKeydown} />
 
 <div class="flex flex-col gap-4">
   <!-- Filter bar -->
@@ -326,15 +313,20 @@
     <!-- Detection grid: responsive 1-3 columns -->
     <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
       {#each detections as detection, i (detection.id)}
-        <DetectionCard
-          {detection}
-          {projectId}
-          isSelected={i === selectedIndex}
-          isLoading={mutatingId === detection.id}
-          onConfirm={handleConfirm}
-          onReject={handleReject}
-          onChangeSpecies={handleChangeSpecies}
-        />
+        <div bind:this={cardElements[i]}>
+          <DetectionCard
+            {detection}
+            {projectId}
+            isSelected={i === nav.selectedIndex}
+            isLoading={mutatingId === detection.id}
+            externalIsPlaying={nav.playingIndex === i && nav.isPlaying}
+            externalIsLoadingAudio={nav.playingIndex === i && nav.isLoadingAudio}
+            onPlayToggle={() => nav.togglePlay(i)}
+            onConfirm={handleConfirm}
+            onReject={handleReject}
+            onChangeSpecies={handleChangeSpecies}
+          />
+        </div>
       {/each}
     </div>
 

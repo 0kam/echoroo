@@ -13,7 +13,7 @@
   import { onDestroy } from 'svelte';
   import * as m from '$lib/paraglide/messages.js';
   import type { SpeciesMatchResult, TargetSpecies, SearchResultStatus, SimilarityResult } from '$lib/types/search';
-  import { createAudioPlayer } from '$lib/utils/audioPlayback.svelte';
+  import { createReviewNavigation } from '$lib/utils/reviewNavigation.svelte';
   import SearchResultCard from './SearchResultCard.svelte';
 
   interface Props {
@@ -43,14 +43,39 @@
   // Currently selected species tab key
   let selectedTabKey = $state<string | null>(null);
 
-  // Keyboard-focused card index within filteredMatches
-  let selectedIndex = $state(0);
+  // DOM references for keyboard-triggered scroll + button click
+  let cardElements: (HTMLElement | null)[] = $state([]);
 
-  // Audio player for keyboard-triggered Space playback
-  const player = createAudioPlayer(projectId);
+  // Shared keyboard navigation and audio playback
+  const nav = createReviewNavigation({
+    projectId,
+    itemCount: () => filteredMatches.length,
+    onConfirm: (i) => {
+      const cardEl = cardElements[i];
+      if (!cardEl) return;
+      const btn = cardEl.querySelector<HTMLButtonElement>('[data-action="confirm"]');
+      btn?.click();
+    },
+    onReject: (i) => {
+      const cardEl = cardElements[i];
+      if (!cardEl) return;
+      const btn = cardEl.querySelector<HTMLButtonElement>('[data-action="reject"]');
+      btn?.click();
+    },
+    getPlaybackInfo: (i) => {
+      const match = filteredMatches[i];
+      if (!match) return null;
+      return {
+        recordingId: match.recording_id,
+        startTime: match.start_time,
+        endTime: match.end_time,
+      };
+    },
+    getElement: (i) => cardElements[i] ?? null,
+  });
 
   onDestroy(() => {
-    player.cleanup();
+    nav.cleanup();
   });
 
   // Client-side review status tracking: key = embedding_id
@@ -67,7 +92,7 @@
     if (results !== null) {
       const keys = Object.keys(results);
       selectedTabKey = keys.length > 0 ? (keys[0] ?? null) : null;
-      selectedIndex = 0;
+      nav.select(0);
       const newMap = new Map<string, SearchResultStatus>();
       for (const speciesData of Object.values(results)) {
         if (speciesData?.matches) {
@@ -115,93 +140,6 @@
     statusMap = new Map(statusMap).set(embeddingId, 'rejected');
   }
 
-  // Keyboard shortcut handler
-  function handleKeydown(e: KeyboardEvent) {
-    // Skip when focus is inside an input, textarea, or select
-    const target = e.target as HTMLElement;
-    if (
-      target.tagName === 'INPUT' ||
-      target.tagName === 'TEXTAREA' ||
-      target.tagName === 'SELECT'
-    ) {
-      return;
-    }
-
-    if (filteredMatches.length === 0) return;
-
-    const selected = filteredMatches[selectedIndex];
-
-    switch (e.key) {
-      case ' ':
-        // Space: toggle audio playback for the focused card
-        if (selected) {
-          e.preventDefault();
-          player.toggle(selected.recording_id, selected.start_time, selected.end_time);
-        }
-        break;
-
-      case 'c':
-      case 'C':
-        if (selected && getStatus(selected) !== 'confirmed') {
-          e.preventDefault();
-          // Trigger the card's confirm handler via the statusMap (mirrors handleConfirm)
-          handleConfirmByIndex(selectedIndex);
-        }
-        break;
-
-      case 'r':
-      case 'R':
-        if (selected && getStatus(selected) !== 'rejected') {
-          e.preventDefault();
-          handleRejectByIndex(selectedIndex);
-        }
-        break;
-
-      case 'ArrowDown':
-        e.preventDefault();
-        player.stop();
-        selectedIndex = Math.min(selectedIndex + 1, filteredMatches.length - 1);
-        scrollSelectedIntoView();
-        break;
-
-      case 'ArrowUp':
-        e.preventDefault();
-        player.stop();
-        selectedIndex = Math.max(selectedIndex - 1, 0);
-        scrollSelectedIntoView();
-        break;
-    }
-  }
-
-  // Wrappers that trigger the card's actual confirm/reject API calls via its onConfirm/onReject props.
-  // Since SearchResultCard manages the API calls internally, we simulate a click by dispatching
-  // through the same statusMap pathway and relying on the card's own handlers for server sync.
-  // For keyboard shortcuts we call the full async handlers by finding the card element and
-  // programmatically clicking its confirm/reject buttons.
-  function handleConfirmByIndex(index: number) {
-    const cardEl = cardElements[index];
-    if (!cardEl) return;
-    const btn = cardEl.querySelector<HTMLButtonElement>('[data-action="confirm"]');
-    btn?.click();
-  }
-
-  function handleRejectByIndex(index: number) {
-    const cardEl = cardElements[index];
-    if (!cardEl) return;
-    const btn = cardEl.querySelector<HTMLButtonElement>('[data-action="reject"]');
-    btn?.click();
-  }
-
-  // DOM references for keyboard-triggered scroll + button click
-  let cardElements: (HTMLElement | null)[] = $state([]);
-
-  function scrollSelectedIntoView() {
-    // Use a microtask to let Svelte update the DOM first
-    queueMicrotask(() => {
-      cardElements[selectedIndex]?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-    });
-  }
-
   function getTagId(tagKey: string, group: SpeciesMatchResult): string {
     // Use tag_id from group if present, otherwise fall back to the key
     return group.tag_id ?? tagKey;
@@ -216,7 +154,7 @@
   }
 </script>
 
-<svelte:window onkeydown={handleKeydown} />
+<svelte:window onkeydown={nav.handleKeydown} />
 
 <div class="flex flex-col gap-4">
   <!-- Filter bar (only show after search completes) -->
@@ -324,7 +262,7 @@
                 {selectedTabKey === key
                   ? 'bg-primary-600 text-white shadow-sm'
                   : 'border border-stone-200 bg-stone-50 text-stone-700 hover:bg-stone-100'}"
-              onclick={() => { selectedTabKey = key; selectedIndex = 0; player.stop(); }}
+              onclick={() => { selectedTabKey = key; nav.select(0); }}
             >
               <span class="max-w-[140px] truncate">{getDisplayName(group)}</span>
               <span
@@ -369,7 +307,10 @@
                       tagId={getTagId(selectedTabKey ?? '', selectedGroup)}
                       status={getStatus(result)}
                       {searchSessionId}
-                      isSelected={i === selectedIndex}
+                      isSelected={i === nav.selectedIndex}
+                      externalIsPlaying={nav.playingIndex === i && nav.isPlaying}
+                      externalIsLoadingAudio={nav.playingIndex === i && nav.isLoadingAudio}
+                      onPlayToggle={() => nav.togglePlay(i)}
                       onConfirm={() => handleConfirm(result.embedding_id)}
                       onReject={() => handleReject(result.embedding_id)}
                     />
