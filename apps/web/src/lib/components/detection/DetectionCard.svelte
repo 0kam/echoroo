@@ -1,15 +1,16 @@
 <script lang="ts">
   /**
-   * DetectionCard - Compact card showing a single detection with review actions.
+   * DetectionCard - Compact card showing a single detection with voting review actions.
    *
    * Wraps ReviewCard (shared component) and adds detection-specific features:
-   * species name/confidence header, source badge, reviewed_at metadata,
+   * species name/confidence header, source badge, vote summary display,
    * and SpeciesCorrector for reassigning the species tag.
    */
 
-  import type { Detection } from '$lib/types/detection';
+  import type { Detection, VoteSummary, VoteValue } from '$lib/types/detection';
   import * as m from '$lib/paraglide/messages';
   import { getLocale } from '$lib/paraglide/runtime';
+  import { getConsensusStatusBadgeClass, getConsensusStatusLabel } from '$lib/utils/statusFormatters';
   import ReviewCard from '$lib/components/common/ReviewCard.svelte';
   import SpeciesCorrector from './SpeciesCorrector.svelte';
 
@@ -18,14 +19,16 @@
     projectId: string;
     isSelected?: boolean;
     isLoading?: boolean;
+    /** Vote summary for this detection (loaded by parent or lazy-loaded) */
+    voteSummary?: VoteSummary | null;
     /** Whether this card's audio is currently playing (controlled by parent navigation) */
     externalIsPlaying?: boolean;
     /** Whether the external player is loading audio for this card */
     externalIsLoadingAudio?: boolean;
     /** Callback when the play button is clicked (delegates to parent's player) */
     onPlayToggle?: () => void;
-    onConfirm: (detectionId: string, startTime: number, endTime: number) => void;
-    onReject: (detectionId: string) => void;
+    onVote: (detectionId: string, vote: VoteValue) => void;
+    onRemoveVote: (detectionId: string) => void;
     onChangeSpecies: (detectionId: string, newTagId: string) => void;
   }
 
@@ -34,11 +37,12 @@
     projectId,
     isSelected = false,
     isLoading = false,
+    voteSummary = null,
     externalIsPlaying,
     externalIsLoadingAudio,
     onPlayToggle,
-    onConfirm,
-    onReject,
+    onVote,
+    onRemoveVote,
     onChangeSpecies,
   }: Props = $props();
 
@@ -89,12 +93,12 @@
     }
   }
 
-  function handleConfirm() {
-    onConfirm(detection.id, detection.start_time, detection.end_time);
+  function handleVote(vote: VoteValue) {
+    onVote(detection.id, vote);
   }
 
-  function handleReject() {
-    onReject(detection.id);
+  function handleRemoveVote() {
+    onRemoveVote(detection.id);
   }
 
   function handleChangeSpecies(newTagId: string) {
@@ -120,11 +124,12 @@
     scoreValue={null}
     {isLoading}
     {isSelected}
+    {voteSummary}
     {externalIsPlaying}
     {externalIsLoadingAudio}
     {onPlayToggle}
-    onConfirm={handleConfirm}
-    onReject={handleReject}
+    onVote={handleVote}
+    onRemoveVote={handleRemoveVote}
   >
     {#snippet extraHeader()}
       <!-- Tag name and confidence badge -->
@@ -144,6 +149,22 @@
     {/snippet}
 
     {#snippet extraBody()}
+      <!-- Vote summary indicator -->
+      {#if voteSummary && voteSummary.total_votes > 0}
+        <div class="flex items-center gap-1.5">
+          <!-- Consensus badge -->
+          <span
+            class="rounded border px-1.5 py-0.5 text-xs font-medium {getConsensusStatusBadgeClass(voteSummary.consensus)}"
+          >
+            {getConsensusStatusLabel(voteSummary.consensus)}
+          </span>
+          <!-- Vote ratio -->
+          <span class="text-xs text-stone-400">
+            {m.vote_summary_ratio({ agree: voteSummary.agree_count, total: voteSummary.total_votes })}
+          </span>
+        </div>
+      {/if}
+
       <!-- Source badge and reviewed_at -->
       <div class="flex items-center gap-1">
         <span class="rounded bg-stone-100 px-1.5 py-0.5 text-xs text-stone-500">

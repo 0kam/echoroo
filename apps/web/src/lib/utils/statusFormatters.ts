@@ -11,7 +11,7 @@
  * (e.g. in unit tests or plain TypeScript modules).
  */
 
-import type { DetectionStatus } from '$lib/types/detection';
+import type { DetectionStatus, ConsensusStatus } from '$lib/types/detection';
 import type { DatasetStatus } from '$lib/types/data';
 import type { AnnotationTaskStatus, ReviewStatus } from '$lib/types/annotation';
 import type { CustomModelStatus } from '$lib/types/custom-model';
@@ -73,6 +73,67 @@ export function getReviewStatusLabel(
       return t?.rejected() ?? 'Rejected';
     default:
       return t?.unreviewed() ?? 'Unreviewed';
+  }
+}
+
+// ============================================
+// Vote consensus status
+// Covers: ConsensusStatus ('needs_votes' | 'agreed' | 'disputed' | 'rejected')
+// ============================================
+
+/**
+ * CSS class string for a consensus-status badge.
+ * Used on detection cards to show the team's voting outcome.
+ */
+export function getConsensusStatusBadgeClass(consensus: ConsensusStatus): string {
+  switch (consensus) {
+    case 'agreed':
+      return 'bg-green-100 text-green-800 border-green-200';
+    case 'disputed':
+      return 'bg-orange-100 text-orange-800 border-orange-200';
+    case 'rejected':
+      return 'bg-red-100 text-red-800 border-red-200';
+    default:
+      return 'bg-stone-100 text-stone-600 border-stone-200';
+  }
+}
+
+/**
+ * CSS class string for the card border based on consensus status.
+ */
+export function getConsensusCardBorderClass(
+  consensus: ConsensusStatus,
+  isSelected = false,
+): string {
+  if (consensus === 'agreed') return 'border-green-400 ring-1 ring-green-300';
+  if (consensus === 'rejected') return 'border-red-400 ring-1 ring-red-300';
+  if (consensus === 'disputed') return 'border-orange-400 ring-1 ring-orange-300';
+  return isSelected
+    ? 'border-primary-400 ring-1 ring-primary-300'
+    : 'border-stone-200';
+}
+
+/**
+ * Human-readable label for a consensus status.
+ */
+export function getConsensusStatusLabel(
+  consensus: ConsensusStatus,
+  t?: {
+    needs_votes: () => string;
+    agreed: () => string;
+    disputed: () => string;
+    rejected: () => string;
+  },
+): string {
+  switch (consensus) {
+    case 'agreed':
+      return t?.agreed() ?? 'Agreed';
+    case 'disputed':
+      return t?.disputed() ?? 'Disputed';
+    case 'rejected':
+      return t?.rejected() ?? 'Rejected';
+    default:
+      return t?.needs_votes() ?? 'Needs Votes';
   }
 }
 

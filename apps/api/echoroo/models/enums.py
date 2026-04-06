@@ -117,6 +117,23 @@ class DetectionStatus(StrEnum):
     REJECTED = "rejected"
 
 
+class VoteType(StrEnum):
+    """Vote type for annotation voting."""
+
+    AGREE = "agree"
+    DISAGREE = "disagree"
+    UNSURE = "unsure"
+
+
+class ConsensusStatus(StrEnum):
+    """Consensus status computed from annotation votes."""
+
+    NEEDS_VOTES = "needs_votes"  # Not enough votes yet (agree + disagree < min_votes)
+    AGREED = "agreed"            # Score > threshold AND agree >= min_votes
+    REJECTED = "rejected"        # Score <= (1 - threshold) AND disagree >= min_votes
+    DISPUTED = "disputed"        # Has enough votes but no clear consensus
+
+
 class DetectionRunStatus(StrEnum):
     """Detection run execution status."""
 

@@ -1320,5 +1320,39 @@
   "models_apply_description": "データセット内の全録音にモデルを適用",
   "models_apply_threshold": "信頼度閾値",
   "models_apply_success": "モデルを適用しました。検出結果をご確認ください。",
-  "models_applying": "適用中..."
+  "models_applying": "適用中...",
+
+  "vote_agree_button": "同意",
+  "vote_disagree_button": "不同意",
+  "vote_unsure_button": "不明",
+  "vote_agree_title": "同意 (A)",
+  "vote_disagree_title": "不同意 (D)",
+  "vote_unsure_title": "不明 (U)",
+  "vote_agree_aria": "この検出に同意",
+  "vote_disagree_aria": "この検出に不同意",
+  "vote_unsure_aria": "この検出について不明",
+  "vote_count_agree": "同意 ({count})",
+  "vote_count_disagree": "不同意 ({count})",
+  "vote_count_unsure": "不明 ({count})",
+  "vote_summary_ratio": "{agree}/{total}件が同意",
+  "vote_removing": "投票を削除中...",
+  "vote_casting": "投票中...",
+
+  "consensus_needs_votes": "投票待ち",
+  "consensus_agreed": "同意済み",
+  "consensus_disputed": "未解決",
+  "consensus_rejected": "却下済み",
+
+  "detection_filter_needs_votes": "投票待ち",
+  "detection_filter_agreed": "同意済み",
+  "detection_filter_disputed": "未解決",
+  "detection_keyboard_agree": "同意",
+  "detection_keyboard_disagree": "不同意",
+  "detection_keyboard_unsure": "不明",
+
+  "vote_disagree_reason_title": "不同意の理由",
+  "vote_disagree_reason_noise": "ノイズ / 誤検出",
+  "vote_disagree_reason_wrong_species": "種の誤判定",
+  "vote_disagree_reason_no_reason": "理由なし",
+  "vote_disagree_reason_cancel": "キャンセル"
 }

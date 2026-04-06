@@ -1320,5 +1320,39 @@
   "models_apply_description": "Run this model on all recordings in a dataset",
   "models_apply_threshold": "Confidence Threshold",
   "models_apply_success": "Model applied successfully. View results in Detections.",
-  "models_applying": "Applying..."
+  "models_applying": "Applying...",
+
+  "vote_agree_button": "Agree",
+  "vote_disagree_button": "Disagree",
+  "vote_unsure_button": "Unsure",
+  "vote_agree_title": "Agree (A)",
+  "vote_disagree_title": "Disagree (D)",
+  "vote_unsure_title": "Unsure (U)",
+  "vote_agree_aria": "Vote agree on this detection",
+  "vote_disagree_aria": "Vote disagree on this detection",
+  "vote_unsure_aria": "Vote unsure on this detection",
+  "vote_count_agree": "Agree ({count})",
+  "vote_count_disagree": "Disagree ({count})",
+  "vote_count_unsure": "Unsure ({count})",
+  "vote_summary_ratio": "{agree}/{total} agree",
+  "vote_removing": "Removing vote...",
+  "vote_casting": "Casting vote...",
+
+  "consensus_needs_votes": "Needs Votes",
+  "consensus_agreed": "Agreed",
+  "consensus_disputed": "Disputed",
+  "consensus_rejected": "Rejected",
+
+  "detection_filter_needs_votes": "Needs Votes",
+  "detection_filter_agreed": "Agreed",
+  "detection_filter_disputed": "Disputed",
+  "detection_keyboard_agree": "Agree",
+  "detection_keyboard_disagree": "Disagree",
+  "detection_keyboard_unsure": "Unsure",
+
+  "vote_disagree_reason_title": "Reason for disagreement",
+  "vote_disagree_reason_noise": "Noise / False positive",
+  "vote_disagree_reason_wrong_species": "Wrong species",
+  "vote_disagree_reason_no_reason": "Just disagree",
+  "vote_disagree_reason_cancel": "Cancel"
 }
