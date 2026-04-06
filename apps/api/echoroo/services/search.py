@@ -9,6 +9,7 @@ All queries are scoped to a project_id to enforce data isolation.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import tempfile
 import time
@@ -595,21 +596,27 @@ class SimilaritySearchService:
                 )
                 continue
 
-            # Search using each query vector and aggregate by max similarity
-            # candidate_key -> best SimilarityResult seen so far
+            # Search using all query vectors concurrently and aggregate by max similarity.
+            # asyncio.gather() parallelises the pgvector queries instead of
+            # issuing them sequentially (N+1 fix).
             best_by_candidate: dict[str, SimilarityResult] = {}
 
-            for qv in query_vectors:
-                vec_results = await self.search_by_vector(
-                    project_id=project_id,
-                    query_vector=qv,
-                    model_name=request.model_name,
-                    # Fetch more candidates than needed to ensure coverage
-                    # after deduplication
-                    limit=request.limit_per_species * 3,
-                    min_similarity=request.min_similarity,
-                    dataset_id=dataset_id,
-                )
+            per_vector_results: list[list[SimilarityResult]] = await asyncio.gather(
+                *[
+                    self.search_by_vector(
+                        project_id=project_id,
+                        query_vector=qv,
+                        model_name=request.model_name,
+                        # Fetch more candidates than needed to ensure coverage
+                        # after deduplication
+                        limit=request.limit_per_species * 3,
+                        min_similarity=request.min_similarity,
+                        dataset_id=dataset_id,
+                    )
+                    for qv in query_vectors
+                ]
+            )
+            for vec_results in per_vector_results:
                 for sim_result in vec_results:
                     candidate_key = _candidate_key(sim_result)
                     existing = best_by_candidate.get(candidate_key)

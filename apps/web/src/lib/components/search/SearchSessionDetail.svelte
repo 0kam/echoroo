@@ -15,6 +15,11 @@
   import ReferenceSoundsPanel from './ReferenceSoundsPanel.svelte';
   import ResultsPanel from './ResultsPanel.svelte';
   import SearchSessionExportButton from './SearchSessionExportButton.svelte';
+  import {
+    getSearchSessionStatusLabel,
+    getSearchSessionStatusTextClass,
+    getSearchSessionStatusDetailDotClass,
+  } from '$lib/utils/statusFormatters';
 
   interface Props {
     projectId: string;
@@ -138,35 +143,22 @@
 
   const statusLabel = $derived(() => {
     if (!session) return '';
-    switch (session.status) {
-      case 'completed': return m.search_session_status_completed();
-      case 'running':   return m.search_session_status_running();
-      case 'failed':    return m.search_session_status_failed();
-      case 'pending':   return m.search_session_status_pending();
-      default:          return session.status;
-    }
+    return getSearchSessionStatusLabel(session.status, {
+      completed: m.search_session_status_completed,
+      running: m.search_session_status_running,
+      failed: m.search_session_status_failed,
+      pending: m.search_session_status_pending,
+    });
   });
 
   const statusColor = $derived(() => {
     if (!session) return 'text-stone-500';
-    switch (session.status) {
-      case 'completed': return 'text-emerald-600 dark:text-emerald-400';
-      case 'running':   return 'text-blue-600 dark:text-blue-400';
-      case 'failed':    return 'text-red-600 dark:text-red-400';
-      case 'pending':   return 'text-amber-600 dark:text-amber-400';
-      default:          return 'text-stone-500';
-    }
+    return getSearchSessionStatusTextClass(session.status);
   });
 
   const statusDotColor = $derived(() => {
     if (!session) return 'bg-stone-400';
-    switch (session.status) {
-      case 'completed': return 'bg-emerald-500';
-      case 'running':   return 'bg-blue-500 animate-pulse';
-      case 'failed':    return 'bg-red-500';
-      case 'pending':   return 'bg-amber-500';
-      default:          return 'bg-stone-400';
-    }
+    return getSearchSessionStatusDetailDotClass(session.status);
   });
 
   const sessionName = $derived(() => {

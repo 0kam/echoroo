@@ -56,7 +56,6 @@ export class ApiClient {
 
   /**
    * Public method to trigger a token refresh.
-   * Used by fetchWithErrorHandling in errors.ts to retry on 401.
    * Deduplicates concurrent refresh attempts via the shared refreshPromise.
    */
   async refreshToken(): Promise<void> {
@@ -229,8 +228,82 @@ export class ApiClient {
     });
   }
 
+  async put<T>(
+    endpoint: string,
+    data?: unknown,
+    options?: RequestInit
+  ): Promise<T> {
+    return this.request<T>(endpoint, {
+      ...options,
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  }
+
   async delete<T>(endpoint: string, options?: RequestInit): Promise<T> {
     return this.request<T>(endpoint, { ...options, method: 'DELETE' });
+  }
+
+  /**
+   * Send a request and return the raw Response without automatic JSON parsing.
+   * Useful for file downloads (blob/arrayBuffer) or multipart/form-data uploads
+   * where automatic Content-Type injection must be avoided.
+   * Handles 401 token refresh and retry automatically.
+   */
+  async requestRaw(
+    endpoint: string,
+    options: RequestInit = {},
+    retry = true
+  ): Promise<Response> {
+    const url = `${this.baseUrl}${endpoint}`;
+
+    const headers: Record<string, string> = {};
+
+    if (this.accessToken) {
+      headers['Authorization'] = `Bearer ${this.accessToken}`;
+    }
+
+    // Merge with provided headers (allows caller to set Content-Type or omit it)
+    if (options.headers) {
+      const providedHeaders = new Headers(options.headers);
+      providedHeaders.forEach((value, key) => {
+        headers[key] = value;
+      });
+    }
+
+    const config: RequestInit = {
+      ...options,
+      credentials: 'include',
+      headers,
+    };
+
+    let response = await fetch(url, config);
+
+    if (response.status === 401 && retry) {
+      try {
+        await this.refreshAccessToken();
+
+        const retryHeaders: Record<string, string> = {};
+        if (this.accessToken) {
+          retryHeaders['Authorization'] = `Bearer ${this.accessToken}`;
+        }
+        if (options.headers) {
+          const providedHeaders = new Headers(options.headers);
+          providedHeaders.forEach((value, key) => {
+            retryHeaders[key] = value;
+          });
+        }
+
+        response = await fetch(url, {
+          ...config,
+          headers: retryHeaders,
+        });
+      } catch {
+        // Refresh failed, return original 401 response
+      }
+    }
+
+    return response;
   }
 
   /**

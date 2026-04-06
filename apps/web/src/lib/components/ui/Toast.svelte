@@ -2,10 +2,17 @@
   import { fly } from 'svelte/transition';
   import { onMount } from 'svelte';
 
-  export let message: string;
-  export let type: 'success' | 'error' | 'warning' | 'info' = 'info';
-  export let duration: number = 5000;
-  export let onClose: () => void;
+  let {
+    message,
+    type = 'info' as 'success' | 'error' | 'warning' | 'info',
+    duration = 5000,
+    onClose,
+  }: {
+    message: string;
+    type?: 'success' | 'error' | 'warning' | 'info';
+    duration?: number;
+    onClose: () => void;
+  } = $props();
 
   const icons = {
     success: '✓',
@@ -36,7 +43,7 @@
 >
   <span class="toast-icon">{icons[type]}</span>
   <p class="toast-message">{message}</p>
-  <button type="button" on:click={onClose} class="toast-close" aria-label="Close">
+  <button type="button" onclick={onClose} class="toast-close" aria-label="Close">
     ✕
   </button>
 </div>

@@ -9,7 +9,7 @@ import type {
   CreateUploadSessionResponse,
   UploadSessionStatusResponse,
 } from '$lib/types/data';
-import { fetchWithErrorHandling, handleApiResponse } from './errors';
+import { apiClient } from './client';
 
 const API_BASE = '/api/v1';
 
@@ -22,16 +22,10 @@ export async function createUploadSession(
   datasetId: string,
   data: CreateUploadSessionRequest
 ): Promise<CreateUploadSessionResponse> {
-  const response = await fetchWithErrorHandling(
+  return apiClient.post<CreateUploadSessionResponse>(
     `${API_BASE}/projects/${projectId}/datasets/${datasetId}/upload-sessions`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify(data),
-    }
+    data
   );
-  return handleApiResponse<CreateUploadSessionResponse>(response);
 }
 
 /**
@@ -42,14 +36,9 @@ export async function completeUploadSession(
   datasetId: string,
   sessionId: string
 ): Promise<CompleteUploadResponse> {
-  const response = await fetchWithErrorHandling(
-    `${API_BASE}/projects/${projectId}/datasets/${datasetId}/upload-sessions/${sessionId}/complete`,
-    {
-      method: 'POST',
-      credentials: 'include',
-    }
+  return apiClient.post<CompleteUploadResponse>(
+    `${API_BASE}/projects/${projectId}/datasets/${datasetId}/upload-sessions/${sessionId}/complete`
   );
-  return handleApiResponse<CompleteUploadResponse>(response);
 }
 
 /**
@@ -61,11 +50,9 @@ export async function fetchUploadSessionStatus(
   datasetId: string,
   sessionId: string
 ): Promise<UploadSessionStatusResponse> {
-  const response = await fetchWithErrorHandling(
-    `${API_BASE}/projects/${projectId}/datasets/${datasetId}/upload-sessions/${sessionId}`,
-    { credentials: 'include' }
+  return apiClient.get<UploadSessionStatusResponse>(
+    `${API_BASE}/projects/${projectId}/datasets/${datasetId}/upload-sessions/${sessionId}`
   );
-  return handleApiResponse<UploadSessionStatusResponse>(response);
 }
 
 /**

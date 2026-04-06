@@ -2,26 +2,20 @@
 
 from uuid import UUID
 
-from sqlalchemy import delete, func, or_, select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import selectinload
 
 from echoroo.models.clip_annotation import clip_annotation_tags
 from echoroo.models.enums import TagCategory
 from echoroo.models.sound_event_annotation import sound_event_annotation_tags
 from echoroo.models.tag import Tag
+from echoroo.repositories.base import BaseRepository
 
 
-class TagRepository:
+class TagRepository(BaseRepository[Tag]):
     """Repository for Tag entity operations."""
 
-    def __init__(self, db: AsyncSession) -> None:
-        """Initialize repository with database session.
-
-        Args:
-            db: SQLAlchemy async session
-        """
-        self.db = db
+    model = Tag
 
     async def get_by_id(self, tag_id: UUID) -> Tag | None:
         """Get tag by ID with project and children relationships loaded.
@@ -121,14 +115,6 @@ class TagRepository:
         await self.db.refresh(tag, ["project"])
         return tag
 
-    async def delete(self, tag_id: UUID) -> None:
-        """Delete a tag by ID.
-
-        Args:
-            tag_id: Tag's UUID
-        """
-        await self.db.execute(delete(Tag).where(Tag.id == tag_id))
-        await self.db.flush()
 
     async def get_or_create_species(
         self,

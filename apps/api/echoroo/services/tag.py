@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import math
 from uuid import UUID
 
 from fastapi import HTTPException, status
 
+from echoroo.core.pagination import paginate
 from echoroo.models.enums import TagCategory
 from echoroo.models.tag import Tag
 from echoroo.repositories.tag import TagRepository
@@ -58,27 +58,22 @@ class TagService:
         Returns:
             Paginated tag list response
         """
-        if page < 1:
-            page = 1
-        if page_size < 1 or page_size > 200:
-            page_size = 50
+        pagination = paginate(page, page_size)
 
         tags, total = await self.tag_repo.list_by_project(
             project_id=project_id,
             category=category,
             search=search,
-            page=page,
-            page_size=page_size,
+            page=pagination.page,
+            page_size=pagination.page_size,
         )
-
-        pages = math.ceil(total / page_size) if total > 0 else 1
 
         return TagListResponse(
             items=[TagResponse.model_validate(t) for t in tags],
             total=total,
-            page=page,
-            page_size=page_size,
-            pages=pages,
+            page=pagination.page,
+            page_size=pagination.page_size,
+            pages=pagination.total_pages(total),
         )
 
     async def create(self, project_id: UUID, request: TagCreate) -> TagResponse:

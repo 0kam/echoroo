@@ -4,7 +4,6 @@ from typing import Any
 from uuid import UUID
 
 from sqlalchemy import Row, delete, func, or_, select
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from echoroo.models.dataset import Dataset
@@ -12,18 +11,13 @@ from echoroo.models.enums import ProjectRole
 from echoroo.models.project import Project, ProjectMember
 from echoroo.models.recording import Recording
 from echoroo.models.site import Site
+from echoroo.repositories.base import BaseRepository
 
 
-class ProjectRepository:
+class ProjectRepository(BaseRepository[Project]):
     """Repository for Project entity operations."""
 
-    def __init__(self, db: AsyncSession) -> None:
-        """Initialize repository with database session.
-
-        Args:
-            db: SQLAlchemy async session
-        """
-        self.db = db
+    model = Project
 
     async def get_by_id(self, project_id: UUID) -> Project | None:
         """Get project by ID with owner relationship loaded.
@@ -120,14 +114,6 @@ class ProjectRepository:
         await self.db.refresh(project, ["owner"])
         return project
 
-    async def delete(self, project_id: UUID) -> None:
-        """Delete a project by ID.
-
-        Args:
-            project_id: Project's UUID
-        """
-        await self.db.execute(delete(Project).where(Project.id == project_id))
-        await self.db.flush()
 
     async def get_member(self, project_id: UUID, user_id: UUID) -> ProjectMember | None:
         """Get a project member by project and user ID.

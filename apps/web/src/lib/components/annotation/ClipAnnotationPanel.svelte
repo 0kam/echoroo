@@ -3,32 +3,42 @@
   import { getLocale } from '$lib/paraglide/runtime';
   import * as m from '$lib/paraglide/messages';
 
-  export let projectId: string;
-  export let clipAnnotationId: string | null = null;
-  /** Currently applied clip-level tags. Rendered as removable chips. */
-  export let clipTags: TagSummary[] = [];
-  /** Full list of tags available for this annotation project. */
-  export let availableTags: TagSummary[] = [];
-  /** Existing notes on the clip annotation (optional; for display only). */
-  export let notes: Note[] = [];
-  export let onAddTag: (tagId: string) => void;
-  export let onRemoveTag: (tagId: string) => void;
-  export let onAddNote: (content: string) => void;
+  let {
+    projectId,
+    clipAnnotationId = null,
+    /** Currently applied clip-level tags. Rendered as removable chips. */
+    clipTags = [] as TagSummary[],
+    /** Full list of tags available for this annotation project. */
+    availableTags = [] as TagSummary[],
+    /** Existing notes on the clip annotation (optional; for display only). */
+    notes = [] as Note[],
+    onAddTag,
+    onRemoveTag,
+    onAddNote,
+  }: {
+    projectId: string;
+    clipAnnotationId?: string | null;
+    clipTags?: TagSummary[];
+    availableTags?: TagSummary[];
+    notes?: Note[];
+    onAddTag: (tagId: string) => void;
+    onRemoveTag: (tagId: string) => void;
+    onAddNote: (content: string) => void;
+  } = $props();
 
-  // Suppress unused variable warning - projectId and clipAnnotationId are
-  // exposed as props for parent components that may need them for API calls.
-  $: void projectId;
-  $: void clipAnnotationId;
+  // projectId and clipAnnotationId are exposed as props for parent components that may need them for API calls.
+  void projectId;
+  void clipAnnotationId;
 
-  let noteInput = '';
+  let noteInput = $state('');
 
   // Group available tags by category for the Quick Tags section
-  $: speciesTags = availableTags.filter((t) => t.category === 'species');
-  $: soundTypeTags = availableTags.filter((t) => t.category === 'sound_type');
-  $: qualityTags = availableTags.filter((t) => t.category === 'quality');
+  const speciesTags = $derived(availableTags.filter((t) => t.category === 'species'));
+  const soundTypeTags = $derived(availableTags.filter((t) => t.category === 'sound_type'));
+  const qualityTags = $derived(availableTags.filter((t) => t.category === 'quality'));
 
   // Set of active tag IDs for O(1) membership checks
-  $: activeTagIds = new Set(clipTags.map((t) => t.id));
+  const activeTagIds = $derived(new Set(clipTags.map((t) => t.id)));
 
   function handleTagToggle(tagId: string) {
     if (activeTagIds.has(tagId)) {
@@ -73,7 +83,7 @@
           <button
             type="button"
             class="tag-chip tag-chip--{tag.category} tag-chip--removable"
-            on:click={() => onRemoveTag(tag.id)}
+            onclick={() => onRemoveTag(tag.id)}
             title="Remove {tag.name}"
             aria-label="Remove tag {tag.name}"
           >
@@ -104,7 +114,7 @@
                 type="button"
                 class="tag-btn tag-btn--species"
                 class:tag-btn--active={activeTagIds.has(tag.id)}
-                on:click={() => handleTagToggle(tag.id)}
+                onclick={() => handleTagToggle(tag.id)}
                 aria-pressed={activeTagIds.has(tag.id)}
                 title={activeTagIds.has(tag.id) ? `Remove ${tag.name}` : `Add ${tag.name}`}
               >
@@ -125,7 +135,7 @@
                 type="button"
                 class="tag-btn tag-btn--sound_type"
                 class:tag-btn--active={activeTagIds.has(tag.id)}
-                on:click={() => handleTagToggle(tag.id)}
+                onclick={() => handleTagToggle(tag.id)}
                 aria-pressed={activeTagIds.has(tag.id)}
                 title={activeTagIds.has(tag.id) ? `Remove ${tag.name}` : `Add ${tag.name}`}
               >
@@ -146,7 +156,7 @@
                 type="button"
                 class="tag-btn tag-btn--quality"
                 class:tag-btn--active={activeTagIds.has(tag.id)}
-                on:click={() => handleTagToggle(tag.id)}
+                onclick={() => handleTagToggle(tag.id)}
                 aria-pressed={activeTagIds.has(tag.id)}
                 title={activeTagIds.has(tag.id) ? `Remove ${tag.name}` : `Add ${tag.name}`}
               >
@@ -171,14 +181,14 @@
         class="note-textarea"
         placeholder="Add a note... (Ctrl+Enter to submit)"
         bind:value={noteInput}
-        on:keydown={handleNoteKeydown}
+        onkeydown={handleNoteKeydown}
         rows={2}
         aria-label="Note content"
       ></textarea>
       <button
         type="button"
         class="add-note-btn"
-        on:click={handleAddNote}
+        onclick={handleAddNote}
         disabled={noteInput.trim() === ''}
         aria-label="Add note"
       >

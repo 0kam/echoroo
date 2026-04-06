@@ -5,6 +5,7 @@ from uuid import UUID
 
 from fastapi import HTTPException, status
 
+from echoroo.core.pagination import paginate
 from echoroo.models.project import Project, ProjectMember
 from echoroo.repositories.project import ProjectRepository
 from echoroo.repositories.user import UserRepository
@@ -50,18 +51,17 @@ class ProjectService:
             ProjectListResponse with paginated projects
         """
         # Validate pagination parameters
-        if page < 1:
-            page = 1
-        if limit < 1 or limit > 100:
-            limit = 20
+        pagination = paginate(page, limit, default_page_size=20, max_page_size=100)
 
-        projects, total = await self.project_repo.get_accessible_projects(user_id, page, limit)
+        projects, total = await self.project_repo.get_accessible_projects(
+            user_id, pagination.page, pagination.page_size
+        )
 
         return ProjectListResponse(
             items=[ProjectResponse.model_validate(p) for p in projects],
             total=total,
-            page=page,
-            limit=limit,
+            page=pagination.page,
+            limit=pagination.page_size,
         )
 
     async def create_project(

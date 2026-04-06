@@ -2,23 +2,17 @@
 
 from uuid import UUID
 
-from sqlalchemy import delete, func, select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 
 from echoroo.models.site import Site
+from echoroo.repositories.base import BaseRepository
 
 
-class SiteRepository:
+class SiteRepository(BaseRepository[Site]):
     """Repository for Site entity operations."""
 
-    def __init__(self, db: AsyncSession) -> None:
-        """Initialize repository with database session.
-
-        Args:
-            db: SQLAlchemy async session
-        """
-        self.db = db
+    model = Site
 
     async def get_by_id(self, site_id: UUID) -> Site | None:
         """Get site by ID.
@@ -139,11 +133,3 @@ class SiteRepository:
         await self.db.refresh(site)
         return site
 
-    async def delete(self, site_id: UUID) -> None:
-        """Delete a site by ID.
-
-        Args:
-            site_id: Site's UUID
-        """
-        await self.db.execute(delete(Site).where(Site.id == site_id))
-        await self.db.flush()

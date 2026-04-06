@@ -19,46 +19,54 @@
   import { createReviewNavigation } from '$lib/utils/reviewNavigation.svelte';
   import DetectionCard from './DetectionCard.svelte';
 
-  export let projectId: string;
-  export let tagId: string;
-  export let detectionRunId: string | undefined = undefined;
+  let {
+    projectId,
+    tagId,
+    detectionRunId = undefined,
+  }: {
+    projectId: string;
+    tagId: string;
+    detectionRunId?: string;
+  } = $props();
 
   const queryClient = useQueryClient();
 
   // Filter state
-  let statusFilter: DetectionStatus | undefined = undefined;
-  let confidenceMin = 0;
-  let confidenceMax = 1;
-  let page = 1;
+  let statusFilter: DetectionStatus | undefined = $state(undefined);
+  let confidenceMin = $state(0);
+  let confidenceMax = $state(1);
+  let page = $state(1);
   const PAGE_SIZE = 12;
 
   // Track which detection is currently being mutated
-  let mutatingId: string | null = null;
+  let mutatingId: string | null = $state(null);
 
   // DOM references for card elements (scroll-into-view)
-  let cardElements: (HTMLElement | null)[] = [];
+  let cardElements: (HTMLElement | null)[] = $state([]);
 
   // Query key includes all filter params
-  $: queryKey = ['detections', projectId, tagId, statusFilter, confidenceMin, page, PAGE_SIZE, detectionRunId];
+  const detectionsQueryKey = $derived(['detections', projectId, tagId, statusFilter, confidenceMin, page, PAGE_SIZE, detectionRunId]);
 
-  $: detectionsQuery = createQuery({
-    queryKey: queryKey,
-    queryFn: () =>
-      fetchDetections(projectId, {
-        tag_id: tagId,
-        status: statusFilter,
-        confidence_min: confidenceMin > 0 ? confidenceMin : undefined,
-        confidence_max: confidenceMax < 1 ? confidenceMax : undefined,
-        page,
-        page_size: PAGE_SIZE,
-        detection_run_id: detectionRunId,
-      }),
-    placeholderData: (prev: DetectionListResponse | undefined) => prev,
-  });
+  const detectionsQuery = $derived(
+    createQuery({
+      queryKey: detectionsQueryKey,
+      queryFn: () =>
+        fetchDetections(projectId, {
+          tag_id: tagId,
+          status: statusFilter,
+          confidence_min: confidenceMin > 0 ? confidenceMin : undefined,
+          confidence_max: confidenceMax < 1 ? confidenceMax : undefined,
+          page,
+          page_size: PAGE_SIZE,
+          detection_run_id: detectionRunId,
+        }),
+      placeholderData: (prev: DetectionListResponse | undefined) => prev,
+    })
+  );
 
-  $: detections = $detectionsQuery.data?.items ?? [];
-  $: totalPages = $detectionsQuery.data?.pages ?? 1;
-  $: totalItems = $detectionsQuery.data?.total ?? 0;
+  const detections = $derived($detectionsQuery.data?.items ?? []);
+  const totalPages = $derived($detectionsQuery.data?.pages ?? 1);
+  const totalItems = $derived($detectionsQuery.data?.total ?? 0);
 
   // Shared keyboard navigation and audio playback
   const nav = createReviewNavigation({
@@ -167,7 +175,7 @@
   }
 </script>
 
-<svelte:window on:keydown={nav.handleKeydown} />
+<svelte:window onkeydown={nav.handleKeydown} />
 
 <div class="flex flex-col gap-4">
   <!-- Filter bar -->
@@ -181,7 +189,7 @@
           {statusFilter === undefined
             ? 'bg-stone-700 text-white'
             : 'border border-stone-300 bg-surface-card text-stone-600 hover:bg-stone-100'}"
-        on:click={() => handleStatusFilter(undefined)}
+        onclick={() => handleStatusFilter(undefined)}
       >
         {m.detection_filter_all()}
         {#if totalItems > 0}
@@ -194,7 +202,7 @@
           {statusFilter === 'unreviewed'
             ? 'bg-stone-700 text-white'
             : 'border border-stone-300 bg-surface-card text-stone-600 hover:bg-stone-100'}"
-        on:click={() => handleStatusFilter('unreviewed')}
+        onclick={() => handleStatusFilter('unreviewed')}
       >
         {m.detection_filter_unreviewed()}
       </button>
@@ -204,7 +212,7 @@
           {statusFilter === 'confirmed'
             ? 'bg-green-600 text-white'
             : 'border border-green-200 bg-green-50 text-green-700 hover:bg-green-100'}"
-        on:click={() => handleStatusFilter('confirmed')}
+        onclick={() => handleStatusFilter('confirmed')}
       >
         {m.detection_filter_confirmed()}
       </button>
@@ -214,7 +222,7 @@
           {statusFilter === 'rejected'
             ? 'bg-red-600 text-white'
             : 'border border-red-200 bg-red-50 text-red-700 hover:bg-red-100'}"
-        on:click={() => handleStatusFilter('rejected')}
+        onclick={() => handleStatusFilter('rejected')}
       >
         {m.detection_filter_rejected()}
       </button>
@@ -231,7 +239,7 @@
         max="1"
         step="0.05"
         bind:value={confidenceMin}
-        on:change={handleConfidenceChange}
+        onchange={handleConfidenceChange}
         class="w-24 accent-primary-500"
         aria-label={m.detection_filter_confidence_aria()}
       />
@@ -283,7 +291,7 @@
       </p>
       <button
         type="button"
-        on:click={() => $detectionsQuery.refetch()}
+        onclick={() => $detectionsQuery.refetch()}
         class="mt-3 rounded-md bg-red-100 px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-200"
       >
         {m.detection_retry()}
@@ -336,7 +344,7 @@
         <button
           type="button"
           class="rounded border border-stone-300 bg-surface-card px-3 py-1.5 text-sm text-stone-600 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-40"
-          on:click={prevPage}
+          onclick={prevPage}
           disabled={page === 1}
         >
           {m.detection_previous()}
@@ -347,7 +355,7 @@
         <button
           type="button"
           class="rounded border border-stone-300 bg-surface-card px-3 py-1.5 text-sm text-stone-600 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-40"
-          on:click={nextPage}
+          onclick={nextPage}
           disabled={page === totalPages}
         >
           {m.detection_next()}

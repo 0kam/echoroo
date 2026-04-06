@@ -2,19 +2,15 @@
 
 from __future__ import annotations
 
+from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Query, status
-from sqlalchemy import func, select
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from echoroo.core.database import DbSession
-from echoroo.core.s3 import get_s3_client
-from echoroo.core.settings import get_settings
+from echoroo.core.permissions import check_project_access
 from echoroo.middleware.auth import CurrentUser
 from echoroo.models.custom_model import CustomModel, CustomModelStatus
-from echoroo.models.detection_run import DetectionRun
-from echoroo.models.enums import DetectionRunStatus
-from echoroo.repositories.project import ProjectRepository
 from echoroo.schemas.custom_model import (
     CustomModelApplyResponse,
     CustomModelCreate,
@@ -23,37 +19,37 @@ from echoroo.schemas.custom_model import (
     CustomModelTrainRequest,
     CustomModelUpdate,
 )
+from echoroo.services.custom_model import CustomModelService
 
 router = APIRouter(prefix="/projects/{project_id}/custom-models", tags=["custom-models"])
 
 
-async def check_project_access(project_id: UUID, user_id: UUID, db: DbSession) -> None:
-    """Check if user has access to the project.
+def get_custom_model_service(db: DbSession) -> CustomModelService:
+    """Get CustomModelService instance.
 
     Args:
-        project_id: Project's UUID
-        user_id: User's UUID
         db: Database session
 
-    Raises:
-        HTTPException: 403 if user doesn't have access
+    Returns:
+        CustomModelService instance
     """
-    project_repo = ProjectRepository(db)
-    has_access = await project_repo.has_project_access(project_id, user_id)
-    if not has_access:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Access denied to project",
-        )
+    return CustomModelService(db)
 
 
-async def get_model_or_404(model_id: UUID, project_id: UUID, db: DbSession) -> CustomModel:
+CustomModelServiceDep = Annotated[CustomModelService, Depends(get_custom_model_service)]
+
+
+async def get_model_or_404(
+    model_id: UUID,
+    project_id: UUID,
+    service: CustomModelService,
+) -> CustomModel:
     """Fetch a CustomModel by ID, scoped to the given project.
 
     Args:
         model_id: CustomModel's UUID
         project_id: Project's UUID (used for scoping)
-        db: Database session
+        service: CustomModelService instance
 
     Returns:
         CustomModel instance
@@ -61,13 +57,7 @@ async def get_model_or_404(model_id: UUID, project_id: UUID, db: DbSession) -> C
     Raises:
         HTTPException: 404 if model not found in project
     """
-    result = await db.execute(
-        select(CustomModel).where(
-            CustomModel.id == model_id,
-            CustomModel.project_id == project_id,
-        )
-    )
-    model = result.scalar_one_or_none()
+    model = await service.get_model(model_id, project_id)
     if model is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -86,6 +76,7 @@ async def list_custom_models(
     project_id: UUID,
     current_user: CurrentUser,
     db: DbSession,
+    service: CustomModelServiceDep,
     limit: int = 50,
     offset: int = 0,
     tag_id: UUID | None = None,
@@ -96,6 +87,7 @@ async def list_custom_models(
         project_id: Project's UUID
         current_user: Current authenticated user
         db: Database session
+        service: CustomModelService instance
         limit: Maximum number of results to return (default: 50)
         offset: Number of results to skip (default: 0)
         tag_id: Optional target tag filter
@@ -108,21 +100,12 @@ async def list_custom_models(
         403: Access denied
     """
     await check_project_access(project_id, current_user.id, db)
-
-    query = select(CustomModel).where(CustomModel.project_id == project_id)
-    count_query = select(func.count()).select_from(CustomModel).where(CustomModel.project_id == project_id)
-
-    if tag_id is not None:
-        query = query.where(CustomModel.target_tag_id == tag_id)
-        count_query = count_query.where(CustomModel.target_tag_id == tag_id)
-
-    total_result = await db.execute(count_query)
-    total = total_result.scalar_one()
-
-    query = query.order_by(CustomModel.created_at.desc()).offset(offset).limit(limit)
-    result = await db.execute(query)
-    models = list(result.scalars().all())
-
+    models, total = await service.list_models(
+        project_id=project_id,
+        limit=limit,
+        offset=offset,
+        tag_id=tag_id,
+    )
     return CustomModelListResponse(models=models, total=total)
 
 
@@ -138,6 +121,7 @@ async def create_custom_model(
     request: CustomModelCreate,
     current_user: CurrentUser,
     db: DbSession,
+    service: CustomModelServiceDep,
 ) -> CustomModelResponse:
     """Create a new custom model.
 
@@ -146,6 +130,7 @@ async def create_custom_model(
         request: Custom model creation data
         current_user: Current authenticated user
         db: Database session
+        service: CustomModelService instance
 
     Returns:
         Created custom model with DRAFT status
@@ -156,20 +141,11 @@ async def create_custom_model(
         422: Validation error
     """
     await check_project_access(project_id, current_user.id, db)
-
-    model = CustomModel(
+    model = await service.create_model(
         project_id=project_id,
         user_id=current_user.id,
-        name=request.name,
-        description=request.description,
-        target_tag_id=request.target_tag_id,
-        training_session_ids=[str(sid) for sid in request.training_session_ids],
-        embedding_model_name=request.embedding_model_name,
-        status=CustomModelStatus.DRAFT,
+        request=request,
     )
-    db.add(model)
-    await db.flush()
-    await db.refresh(model)
     return CustomModelResponse.model_validate(model)
 
 
@@ -184,6 +160,7 @@ async def get_custom_model(
     model_id: UUID,
     current_user: CurrentUser,
     db: DbSession,
+    service: CustomModelServiceDep,
 ) -> CustomModelResponse:
     """Get custom model by ID.
 
@@ -192,6 +169,7 @@ async def get_custom_model(
         model_id: CustomModel's UUID
         current_user: Current authenticated user
         db: Database session
+        service: CustomModelService instance
 
     Returns:
         Custom model detail
@@ -202,7 +180,7 @@ async def get_custom_model(
         404: Model not found
     """
     await check_project_access(project_id, current_user.id, db)
-    model = await get_model_or_404(model_id, project_id, db)
+    model = await get_model_or_404(model_id, project_id, service)
     return CustomModelResponse.model_validate(model)
 
 
@@ -218,6 +196,7 @@ async def update_custom_model(
     request: CustomModelUpdate,
     current_user: CurrentUser,
     db: DbSession,
+    service: CustomModelServiceDep,
 ) -> CustomModelResponse:
     """Update custom model metadata.
 
@@ -229,6 +208,7 @@ async def update_custom_model(
         request: Fields to update (name, description)
         current_user: Current authenticated user
         db: Database session
+        service: CustomModelService instance
 
     Returns:
         Updated custom model
@@ -240,7 +220,7 @@ async def update_custom_model(
         409: Model is not in DRAFT status
     """
     await check_project_access(project_id, current_user.id, db)
-    model = await get_model_or_404(model_id, project_id, db)
+    model = await get_model_or_404(model_id, project_id, service)
 
     if model.status != CustomModelStatus.DRAFT:
         raise HTTPException(
@@ -248,14 +228,12 @@ async def update_custom_model(
             detail=f"Cannot update model with status '{model.status}'. Only DRAFT models can be updated.",
         )
 
-    if request.name is not None:
-        model.name = request.name
-    if request.description is not None:
-        model.description = request.description
-
-    await db.flush()
-    await db.refresh(model)
-    return CustomModelResponse.model_validate(model)
+    updated = await service.update_model(
+        model=model,
+        name=request.name,
+        description=request.description,
+    )
+    return CustomModelResponse.model_validate(updated)
 
 
 @router.delete(
@@ -269,6 +247,7 @@ async def delete_custom_model(
     model_id: UUID,
     current_user: CurrentUser,
     db: DbSession,
+    service: CustomModelServiceDep,
 ) -> None:
     """Delete a custom model.
 
@@ -279,6 +258,7 @@ async def delete_custom_model(
         model_id: CustomModel's UUID
         current_user: Current authenticated user
         db: Database session
+        service: CustomModelService instance
 
     Raises:
         401: Not authenticated
@@ -286,25 +266,8 @@ async def delete_custom_model(
         404: Model not found
     """
     await check_project_access(project_id, current_user.id, db)
-    model = await get_model_or_404(model_id, project_id, db)
-
-    # Delete S3 artifact if it exists
-    if model.model_artifact_key:
-        try:
-            settings = get_settings()
-            s3 = get_s3_client()
-            s3.delete_object(Bucket=settings.S3_BUCKET, Key=model.model_artifact_key)
-        except Exception:
-            # Non-fatal: log but do not block deletion
-            import logging
-
-            logging.getLogger(__name__).warning(
-                "Failed to delete S3 artifact for custom model %s (key=%s)",
-                model_id,
-                model.model_artifact_key,
-            )
-
-    await db.delete(model)
+    model = await get_model_or_404(model_id, project_id, service)
+    await service.delete_model(model)
 
 
 @router.post(
@@ -318,6 +281,7 @@ async def train_custom_model(
     model_id: UUID,
     current_user: CurrentUser,
     db: DbSession,
+    service: CustomModelServiceDep,
     request: CustomModelTrainRequest | None = None,
 ) -> CustomModelResponse:
     """Start training for a custom model.
@@ -330,6 +294,7 @@ async def train_custom_model(
         model_id: CustomModel's UUID
         current_user: Current authenticated user
         db: Database session
+        service: CustomModelService instance
         request: Optional training parameters
 
     Returns:
@@ -342,7 +307,7 @@ async def train_custom_model(
         409: Model is not in DRAFT or FAILED status
     """
     await check_project_access(project_id, current_user.id, db)
-    model = await get_model_or_404(model_id, project_id, db)
+    model = await get_model_or_404(model_id, project_id, service)
 
     if model.status not in (CustomModelStatus.DRAFT, CustomModelStatus.FAILED):
         raise HTTPException(
@@ -353,20 +318,8 @@ async def train_custom_model(
             ),
         )
 
-    # Transition to TRAINING before dispatching the task to avoid race conditions
-    model.status = CustomModelStatus.TRAINING
-    model.error_message = None
-
-    # Commit status change before dispatching Celery task so the worker sees it
-    await db.flush()
-
-    # Lazy import to avoid circular dependency issues
-    from echoroo.workers.classifier_tasks import train_custom_model as train_task  # noqa: PLC0415
-
-    train_task.delay(str(model_id))
-
-    await db.refresh(model)
-    return CustomModelResponse.model_validate(model)
+    updated = await service.start_training(model)
+    return CustomModelResponse.model_validate(updated)
 
 
 @router.get(
@@ -380,6 +333,7 @@ async def get_custom_model_status(
     model_id: UUID,
     current_user: CurrentUser,
     db: DbSession,
+    service: CustomModelServiceDep,
 ) -> CustomModelResponse:
     """Get current training status of a custom model.
 
@@ -391,6 +345,7 @@ async def get_custom_model_status(
         model_id: CustomModel's UUID
         current_user: Current authenticated user
         db: Database session
+        service: CustomModelService instance
 
     Returns:
         Custom model with current status
@@ -401,7 +356,7 @@ async def get_custom_model_status(
         404: Model not found
     """
     await check_project_access(project_id, current_user.id, db)
-    model = await get_model_or_404(model_id, project_id, db)
+    model = await get_model_or_404(model_id, project_id, service)
     return CustomModelResponse.model_validate(model)
 
 
@@ -420,6 +375,7 @@ async def apply_custom_model(
     model_id: UUID,
     current_user: CurrentUser,
     db: DbSession,
+    service: CustomModelServiceDep,
     dataset_id: UUID = Query(..., description="Dataset UUID to apply the model to"),
     threshold: float = Query(0.5, ge=0.0, le=1.0, description="Confidence threshold (0.0-1.0)"),
 ) -> CustomModelApplyResponse:
@@ -436,6 +392,7 @@ async def apply_custom_model(
         model_id: CustomModel's UUID
         current_user: Current authenticated user
         db: Database session
+        service: CustomModelService instance
         dataset_id: Dataset to run inference on
         threshold: Minimum confidence score for annotation creation (default: 0.5)
 
@@ -449,7 +406,7 @@ async def apply_custom_model(
         409: Model is not in TRAINED or DEPLOYED status, or lacks a model artifact
     """
     await check_project_access(project_id, current_user.id, db)
-    model = await get_model_or_404(model_id, project_id, db)
+    model = await get_model_or_404(model_id, project_id, service)
 
     if model.status not in (CustomModelStatus.TRAINED, CustomModelStatus.DEPLOYED):
         raise HTTPException(
@@ -466,28 +423,13 @@ async def apply_custom_model(
             detail="Model has no artifact. Please retrain before applying.",
         )
 
-    # Create a DetectionRun to track the inference job
-    detection_run = DetectionRun(
+    detection_run = await service.create_detection_run(
         project_id=project_id,
         dataset_id=dataset_id,
-        model_name="custom_svm",
-        model_version=str(model.id),
-        parameters={
-            "custom_model_id": str(model_id),
-            "threshold": threshold,
-            "embedding_model_name": model.embedding_model_name,
-        },
-        status=DetectionRunStatus.PENDING,
-        annotation_count=0,
+        model=model,
+        threshold=threshold,
     )
-    db.add(detection_run)
-    await db.flush()
-    await db.refresh(detection_run)
-
     detection_run_id = detection_run.id
-
-    # Commit before dispatching the Celery task so the worker can load the run
-    await db.commit()
 
     # Lazy import to avoid circular dependency issues
     from echoroo.workers.classifier_tasks import run_custom_model_inference  # noqa: PLC0415
@@ -498,6 +440,8 @@ async def apply_custom_model(
         str(dataset_id),
         threshold,
     )
+
+    from echoroo.models.enums import DetectionRunStatus  # noqa: PLC0415
 
     return CustomModelApplyResponse(
         detection_run_id=detection_run_id,

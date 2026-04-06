@@ -6,7 +6,6 @@
  */
 
 import type {
-  BatchSearchResponse,
   EmbeddingStats,
   SearchConfig,
   SearchJobStatusResponse,
@@ -19,7 +18,8 @@ import type {
   TargetSpecies,
   XenoCantoSearchResponse,
 } from '$lib/types/search';
-import { fetchWithErrorHandling, handleApiResponse } from './errors';
+import { apiClient } from './client';
+import { ApiError } from './client';
 
 const API_BASE = '/api/v1';
 
@@ -34,16 +34,10 @@ export async function searchSimilarByEmbedding(
   projectId: string,
   request: SimilarByEmbeddingRequest
 ): Promise<SimilaritySearchResponse> {
-  const response = await fetchWithErrorHandling(
+  return apiClient.post<SimilaritySearchResponse>(
     `${API_BASE}/projects/${projectId}/search/similar`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify(request),
-    }
+    request
   );
-  return handleApiResponse<SimilaritySearchResponse>(response);
 }
 
 /**
@@ -77,16 +71,26 @@ export async function searchSimilarByAudio(
     formData.append('dataset_id', params.dataset_id);
   }
 
-  const response = await fetchWithErrorHandling(
+  // Use requestRaw to avoid automatic Content-Type injection (browser sets multipart boundary)
+  const response = await apiClient.requestRaw(
     `${API_BASE}/projects/${projectId}/search/similar-by-audio`,
     {
       method: 'POST',
-      credentials: 'include',
       // Do not set Content-Type header — browser sets it with the correct boundary
       body: formData,
     }
   );
-  return handleApiResponse<SimilaritySearchResponse>(response);
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({ detail: 'An error occurred' }));
+    throw new ApiError(
+      errorData.detail || 'Request failed',
+      response.status,
+      errorData.detail
+    );
+  }
+
+  return response.json() as Promise<SimilaritySearchResponse>;
 }
 
 /**
@@ -108,11 +112,9 @@ export async function fetchEmbeddingStats(
     params.set('dataset_id', datasetId);
   }
   const qs = params.toString() ? `?${params.toString()}` : '';
-  const response = await fetchWithErrorHandling(
-    `${API_BASE}/projects/${projectId}/search/embedding-stats${qs}`,
-    { credentials: 'include' }
+  return apiClient.get<EmbeddingStats>(
+    `${API_BASE}/projects/${projectId}/search/embedding-stats${qs}`
   );
-  return handleApiResponse<EmbeddingStats>(response);
 }
 
 /**
@@ -143,11 +145,9 @@ export async function searchXenoCanto(
   if (params.page !== undefined) qs.set('page', String(params.page));
   if (params.per_page !== undefined) qs.set('per_page', String(params.per_page));
 
-  const response = await fetchWithErrorHandling(
-    `${API_BASE}/projects/${projectId}/xeno-canto/search?${qs.toString()}`,
-    { credentials: 'include' }
+  return apiClient.get<XenoCantoSearchResponse>(
+    `${API_BASE}/projects/${projectId}/xeno-canto/search?${qs.toString()}`
   );
-  return handleApiResponse<XenoCantoSearchResponse>(response);
 }
 
 /**
@@ -163,9 +163,8 @@ export async function fetchXenoCantoAudio(
   projectId: string,
   xcId: string
 ): Promise<ArrayBuffer> {
-  const response = await fetchWithErrorHandling(
-    `${API_BASE}/projects/${projectId}/xeno-canto/audio/${xcId}`,
-    { credentials: 'include' }
+  const response = await apiClient.requestRaw(
+    `${API_BASE}/projects/${projectId}/xeno-canto/audio/${xcId}`
   );
   if (!response.ok) {
     throw new Error(`Failed to fetch Xeno-canto audio: ${response.status} ${response.statusText}`);
@@ -263,16 +262,26 @@ export async function searchBatch(
 
   formData.append('metadata', JSON.stringify(metadataObj));
 
-  const response = await fetchWithErrorHandling(
+  // Use requestRaw to avoid automatic Content-Type injection (browser sets multipart boundary)
+  const response = await apiClient.requestRaw(
     `${API_BASE}/projects/${projectId}/search/batch`,
     {
       method: 'POST',
-      credentials: 'include',
       // Do not set Content-Type — browser sets it with the correct multipart boundary
       body: formData,
     }
   );
-  return handleApiResponse<SearchJobSubmitResponse>(response);
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({ detail: 'An error occurred' }));
+    throw new ApiError(
+      errorData.detail || 'Request failed',
+      response.status,
+      errorData.detail
+    );
+  }
+
+  return response.json() as Promise<SearchJobSubmitResponse>;
 }
 
 /**
@@ -292,11 +301,9 @@ export async function getSearchJobStatus(
   locale?: string
 ): Promise<SearchJobStatusResponse> {
   const params = locale ? `?locale=${locale}` : '';
-  const response = await fetchWithErrorHandling(
-    `${API_BASE}/projects/${projectId}/search/jobs/${jobId}${params}`,
-    { credentials: 'include' }
+  return apiClient.get<SearchJobStatusResponse>(
+    `${API_BASE}/projects/${projectId}/search/jobs/${jobId}${params}`
   );
-  return handleApiResponse<SearchJobStatusResponse>(response);
 }
 
 /**
@@ -320,20 +327,11 @@ export async function createAnnotationFromSearch(
     search_session_id?: string;
   }
 ): Promise<unknown> {
-  const response = await fetchWithErrorHandling(
-    `${API_BASE}/projects/${projectId}/annotations`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify({
-        ...data,
-        review_status: data.review_status ?? 'confirmed',
-        source: data.source ?? 'similarity_search',
-      }),
-    }
-  );
-  return handleApiResponse<unknown>(response);
+  return apiClient.post<unknown>(`${API_BASE}/projects/${projectId}/annotations`, {
+    ...data,
+    review_status: data.review_status ?? 'confirmed',
+    source: data.source ?? 'similarity_search',
+  });
 }
 
 /**
@@ -353,20 +351,11 @@ export async function rejectSearchResult(
     search_session_id?: string;
   }
 ): Promise<unknown> {
-  const response = await fetchWithErrorHandling(
-    `${API_BASE}/projects/${projectId}/annotations`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify({
-        ...data,
-        source: 'similarity_search',
-        review_status: 'rejected',
-      }),
-    }
-  );
-  return handleApiResponse<unknown>(response);
+  return apiClient.post<unknown>(`${API_BASE}/projects/${projectId}/annotations`, {
+    ...data,
+    source: 'similarity_search',
+    review_status: 'rejected',
+  });
 }
 
 /**
@@ -383,11 +372,9 @@ export async function listSearchSessions(
   offset = 0
 ): Promise<SearchSessionListResponse> {
   const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
-  const response = await fetchWithErrorHandling(
-    `${API_BASE}/projects/${projectId}/search/sessions?${params}`,
-    { credentials: 'include' }
+  return apiClient.get<SearchSessionListResponse>(
+    `${API_BASE}/projects/${projectId}/search/sessions?${params}`
   );
-  return handleApiResponse<SearchSessionListResponse>(response);
 }
 
 /**
@@ -401,11 +388,9 @@ export async function getSearchSession(
   projectId: string,
   sessionId: string
 ): Promise<SearchSession> {
-  const response = await fetchWithErrorHandling(
-    `${API_BASE}/projects/${projectId}/search/sessions/${sessionId}`,
-    { credentials: 'include' }
+  return apiClient.get<SearchSession>(
+    `${API_BASE}/projects/${projectId}/search/sessions/${sessionId}`
   );
-  return handleApiResponse<SearchSession>(response);
 }
 
 /**
@@ -418,14 +403,9 @@ export async function deleteSearchSession(
   projectId: string,
   sessionId: string
 ): Promise<void> {
-  const response = await fetchWithErrorHandling(
-    `${API_BASE}/projects/${projectId}/search/sessions/${sessionId}`,
-    {
-      method: 'DELETE',
-      credentials: 'include',
-    }
+  return apiClient.delete<void>(
+    `${API_BASE}/projects/${projectId}/search/sessions/${sessionId}`
   );
-  await handleApiResponse<unknown>(response);
 }
 
 /**
@@ -441,16 +421,10 @@ export async function updateSearchSession(
   sessionId: string,
   name: string
 ): Promise<SearchSession> {
-  const response = await fetchWithErrorHandling(
+  return apiClient.patch<SearchSession>(
     `${API_BASE}/projects/${projectId}/search/sessions/${sessionId}`,
-    {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify({ name }),
-    }
+    { name }
   );
-  return handleApiResponse<SearchSession>(response);
 }
 
 /**
@@ -521,15 +495,25 @@ export async function rerunSearchSession(
 
   formData.append('metadata', JSON.stringify(metadataObj));
 
-  const response = await fetchWithErrorHandling(
+  // Use requestRaw to avoid automatic Content-Type injection (browser sets multipart boundary)
+  const response = await apiClient.requestRaw(
     `${API_BASE}/projects/${projectId}/search/sessions/${sessionId}/rerun`,
     {
       method: 'PUT',
-      credentials: 'include',
       body: formData,
     }
   );
-  return handleApiResponse<SearchJobSubmitResponse>(response);
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({ detail: 'An error occurred' }));
+    throw new ApiError(
+      errorData.detail || 'Request failed',
+      response.status,
+      errorData.detail
+    );
+  }
+
+  return response.json() as Promise<SearchJobSubmitResponse>;
 }
 
 /**
@@ -542,9 +526,8 @@ export async function exportSearchSessionCSV(
   projectId: string,
   sessionId: string
 ): Promise<void> {
-  const response = await fetchWithErrorHandling(
-    `${API_BASE}/projects/${projectId}/search/sessions/${sessionId}/export/csv`,
-    { credentials: 'include' }
+  const response = await apiClient.requestRaw(
+    `${API_BASE}/projects/${projectId}/search/sessions/${sessionId}/export/csv`
   );
 
   if (!response.ok) {

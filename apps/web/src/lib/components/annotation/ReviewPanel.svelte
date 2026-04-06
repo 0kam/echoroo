@@ -2,27 +2,37 @@
   import type { Note } from '$lib/types/annotation';
   import { getLocale } from '$lib/paraglide/runtime';
   import * as m from '$lib/paraglide/messages';
+  import { getAnnotationReviewStatusLabel } from '$lib/utils/statusFormatters';
 
-  export let clipAnnotationId: string;
-  export let reviewStatus: string;  // 'unreviewed' | 'approved' | 'rejected'
-  export let reviewedById: string | null = null;
-  export let reviewedAt: string | null = null;
-  export let notes: Note[] = [];
-  export let onApprove: (comment?: string) => void;
-  export let onReject: (comment: string) => void;
+  let {
+    clipAnnotationId,
+    reviewStatus,
+    reviewedById = null,
+    reviewedAt = null,
+    notes = [] as Note[],
+    onApprove,
+    onReject,
+  }: {
+    clipAnnotationId: string;
+    reviewStatus: string; // 'unreviewed' | 'approved' | 'rejected'
+    reviewedById?: string | null;
+    reviewedAt?: string | null;
+    notes?: Note[];
+    onApprove: (comment?: string) => void;
+    onReject: (comment: string) => void;
+  } = $props();
 
-  // Suppress unused variable warning - clipAnnotationId is exposed as a prop
-  // for parent components that may need it for API calls or context.
-  $: void clipAnnotationId;
+  // clipAnnotationId is exposed as a prop for parent components that may need it for API calls or context.
+  void clipAnnotationId;
 
-  let comment = '';
-  let rejectError = '';
+  let comment = $state('');
+  let rejectError = $state('');
 
-  $: isApproved = reviewStatus === 'approved';
-  $: isRejected = reviewStatus === 'rejected';
-  $: isReviewed = isApproved || isRejected;
+  const isApproved = $derived(reviewStatus === 'approved');
+  const isRejected = $derived(reviewStatus === 'rejected');
+  const isReviewed = $derived(isApproved || isRejected);
 
-  $: reviewNotes = notes.filter((n) => n.is_review);
+  const reviewNotes = $derived(notes.filter((n) => n.is_review));
 
   function handleApprove() {
     rejectError = '';
@@ -51,14 +61,11 @@
   }
 
   function getStatusLabel(status: string): string {
-    switch (status) {
-      case 'approved':
-        return m.annotation_review_panel_status_approved();
-      case 'rejected':
-        return m.annotation_review_panel_status_rejected();
-      default:
-        return m.annotation_review_panel_status_unreviewed();
-    }
+    return getAnnotationReviewStatusLabel(status, {
+      approved: m.annotation_review_panel_status_approved,
+      rejected: m.annotation_review_panel_status_rejected,
+      unreviewed: m.annotation_review_panel_status_unreviewed,
+    });
   }
 
   function truncateId(id: string): string {
@@ -153,7 +160,7 @@
     <button
       type="button"
       class="btn btn--approve"
-      on:click={handleApprove}
+      onclick={handleApprove}
       disabled={isApproved}
       aria-label={isApproved ? m.annotation_review_panel_already_approved_aria() : m.annotation_review_panel_approve_aria()}
     >
@@ -173,7 +180,7 @@
     <button
       type="button"
       class="btn btn--reject"
-      on:click={handleReject}
+      onclick={handleReject}
       disabled={isApproved}
       aria-label={m.annotation_review_panel_reject_aria()}
     >

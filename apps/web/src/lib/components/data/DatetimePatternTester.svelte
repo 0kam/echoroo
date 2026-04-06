@@ -1,10 +1,26 @@
 <script lang="ts">
-  export let pattern: string = '';
-  export let format: string = '';
+  let {
+    pattern: patternProp = '',
+    format: formatProp = '',
+  }: {
+    pattern?: string;
+    format?: string;
+  } = $props();
 
-  let testFilename = '';
+  // Internal state that can be overridden by examples
+  let pattern = $state(patternProp);
+  let format = $state(formatProp);
+  let testFilename = $state('');
   let testResult: { success: boolean; matched: string | null; error: string | null } | null =
-    null;
+    $state(null);
+
+  // Sync internal state when props change
+  $effect(() => {
+    pattern = patternProp;
+  });
+  $effect(() => {
+    format = formatProp;
+  });
 
   function testPattern() {
     if (!testFilename.trim()) {
@@ -47,9 +63,11 @@
   }
 
   // Auto-test when inputs change
-  $: if (testFilename && pattern) {
-    testPattern();
-  }
+  $effect(() => {
+    if (testFilename && pattern) {
+      testPattern();
+    }
+  });
 
   // Common examples
   const examples = [
@@ -126,7 +144,7 @@
     <h4>Common Patterns</h4>
     <div class="example-list">
       {#each examples as example}
-        <button class="example-item" on:click={() => useExample(example)}>
+        <button class="example-item" onclick={() => useExample(example)}>
           <div class="example-name">{example.name}</div>
           <div class="example-details">
             <div class="example-field">

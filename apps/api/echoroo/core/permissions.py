@@ -7,11 +7,13 @@ on projects based on their role (admin, member, viewer).
 from enum import StrEnum
 from uuid import UUID
 
+from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from echoroo.models.enums import ProjectRole
 from echoroo.models.project import Project, ProjectMember
+from echoroo.repositories.project import ProjectRepository
 
 
 class Permission(StrEnum):
@@ -133,3 +135,26 @@ async def check_project_permission(
     # Check if role has the required permission
     role_perms = ROLE_PERMISSIONS.get(role, set())
     return permission in role_perms
+
+
+async def check_project_access(project_id: UUID, user_id: UUID, db: AsyncSession) -> None:
+    """Verify that the current user has access to the given project.
+
+    This is a shared utility used across multiple routers to enforce project-level
+    access control. Raises HTTP 403 if the user is not a member or owner.
+
+    Args:
+        project_id: Project UUID to check access for
+        user_id: Current user's UUID
+        db: Database session
+
+    Raises:
+        HTTPException: 403 if the user does not have access to the project
+    """
+    project_repo = ProjectRepository(db)
+    has_access = await project_repo.has_project_access(project_id, user_id)
+    if not has_access:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied to project",
+        )

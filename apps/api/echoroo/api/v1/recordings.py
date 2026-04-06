@@ -11,10 +11,10 @@ from fastapi.responses import StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from echoroo.core.database import DbSession
+from echoroo.core.permissions import check_project_access
 from echoroo.core.settings import get_settings
 from echoroo.middleware.auth import API_TOKEN_PREFIX, CurrentUser
 from echoroo.models.user import User
-from echoroo.repositories.project import ProjectRepository
 from echoroo.schemas.recording import (
     RecordingDetailResponse,
     RecordingListResponse,
@@ -133,25 +133,6 @@ def get_recording_service(
 AudioServiceDep = Annotated[AudioService, Depends(get_audio_service)]
 RecordingServiceDep = Annotated[RecordingService, Depends(get_recording_service)]
 
-
-async def check_project_access(project_id: UUID, user_id: UUID, db: DbSession) -> None:
-    """Check if user has access to project.
-
-    Args:
-        project_id: Project's UUID
-        user_id: User's UUID
-        db: Database session
-
-    Raises:
-        HTTPException: If user doesn't have access to project
-    """
-    project_repo = ProjectRepository(db)
-    has_access = await project_repo.has_project_access(project_id, user_id)
-    if not has_access:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Access denied to project",
-        )
 
 
 # T060: List and search endpoints

@@ -16,10 +16,11 @@ from uuid import UUID, uuid4
 
 import numpy as np
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from echoroo.core.settings import get_settings
 from echoroo.workers.celery_app import app
+from echoroo.workers.db_utils import get_worker_engine_and_session_factory
 
 logger = logging.getLogger(__name__)
 
@@ -29,26 +30,6 @@ _MIN_NEGATIVE_SAMPLES = 5
 
 # Maximum number of unlabeled embeddings to fetch for semi-supervised training
 _MAX_UNLABELED_SAMPLES = 2000
-
-
-# ---------------------------------------------------------------------------
-# Async session factory (same pattern as search_tasks.py / ml_tasks.py)
-# ---------------------------------------------------------------------------
-
-
-def _get_engine_and_session_factory() -> tuple[Any, async_sessionmaker[AsyncSession]]:
-    """Create a fresh async engine and session factory for each task invocation.
-
-    Each Celery task calls ``asyncio.run()`` which creates a new event loop.
-    Reusing a cached engine across loops causes "Future attached to a different
-    loop" errors, so we create a fresh engine every time.
-
-    Returns the engine separately so the caller can dispose it in a finally
-    block after the task completes, releasing all pooled connections.
-    """
-    settings = get_settings()
-    engine = create_async_engine(settings.DATABASE_URL, echo=False, pool_pre_ping=True)
-    return engine, async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 
 # ---------------------------------------------------------------------------
@@ -95,7 +76,7 @@ async def _train_custom_model(model_id: str) -> dict[str, Any]:
     """
     from echoroo.models.custom_model import CustomModel, CustomModelStatus
 
-    engine, session_factory = _get_engine_and_session_factory()
+    engine, session_factory = get_worker_engine_and_session_factory()
     try:
         async with session_factory() as db:
             # ------------------------------------------------------------------
@@ -633,7 +614,7 @@ async def _run_custom_model_inference(
     from echoroo.models.enums import DetectionRunStatus, DetectionSource, DetectionStatus
     from echoroo.repositories.detection_run import DetectionRunRepository
 
-    engine, session_factory = _get_engine_and_session_factory()
+    engine, session_factory = get_worker_engine_and_session_factory()
     try:
         # ------------------------------------------------------------------
         # Step 1: Mark DetectionRun as RUNNING

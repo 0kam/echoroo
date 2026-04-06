@@ -12,6 +12,11 @@
   import * as m from '$lib/paraglide/messages';
   import type { SearchSessionListItem } from '$lib/types/search';
   import { listSearchSessions, deleteSearchSession } from '$lib/api/search';
+  import {
+    getSearchSessionStatusDotClass,
+    getSearchSessionStatusLabel,
+    isSearchSessionStatusAnimated,
+  } from '$lib/utils/statusFormatters';
 
   interface Props {
     projectId: string;
@@ -73,40 +78,6 @@
       hour: '2-digit',
       minute: '2-digit',
     });
-  }
-
-  function getStatusDotClass(status: string): string {
-    switch (status) {
-      case 'completed':
-        return 'bg-emerald-500';
-      case 'running':
-      case 'pending':
-        return 'bg-amber-500';
-      case 'failed':
-        return 'bg-red-500';
-      default:
-        return 'bg-stone-300';
-    }
-  }
-
-  function getStatusLabel(status: string): string {
-    // Status labels: use inline strings since the paraglide keys are not yet compiled
-    switch (status) {
-      case 'completed':
-        return 'Completed';
-      case 'running':
-        return 'Running';
-      case 'pending':
-        return 'Pending';
-      case 'failed':
-        return 'Failed';
-      default:
-        return status;
-    }
-  }
-
-  function isAnimated(status: string): boolean {
-    return status === 'running' || status === 'pending';
   }
 
   function getSpeciesCount(session: SearchSessionListItem): number {
@@ -196,10 +167,10 @@
             >
               <!-- Status indicator dot -->
               <span
-                class="mt-1.5 h-2 w-2 shrink-0 rounded-full {getStatusDotClass(session.status)}
-                  {isAnimated(session.status) ? 'animate-pulse' : ''}"
-                title={getStatusLabel(session.status)}
-                aria-label={getStatusLabel(session.status)}
+                class="mt-1.5 h-2 w-2 shrink-0 rounded-full {getSearchSessionStatusDotClass(session.status)}
+                  {isSearchSessionStatusAnimated(session.status) ? 'animate-pulse' : ''}"
+                title={getSearchSessionStatusLabel(session.status)}
+                aria-label={getSearchSessionStatusLabel(session.status)}
               ></span>
 
               <!-- Session info -->

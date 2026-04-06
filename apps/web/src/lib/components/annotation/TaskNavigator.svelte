@@ -2,20 +2,34 @@
   import { onMount, onDestroy } from 'svelte';
   import * as m from '$lib/paraglide/messages';
 
-  export let projectId: string;
-  export let annotationProjectId: string;
-  // currentTaskId is exposed for parent components to identify the active task
-  export let currentTaskId: string;
-  $: void currentTaskId; // suppress unused export warning
-  export let totalTasks: number = 0;
-  export let completedTasks: number = 0;
-  export let hasUnsavedChanges: boolean = false;
-  export let onComplete: () => void;
-  export let onNavigateNext: () => void;
-  export let onNavigatePrevious: (() => void) | null = null;
+  let {
+    projectId,
+    annotationProjectId,
+    // currentTaskId is exposed for parent components to identify the active task
+    currentTaskId,
+    totalTasks = 0,
+    completedTasks = 0,
+    hasUnsavedChanges = false,
+    onComplete,
+    onNavigateNext,
+    onNavigatePrevious = null,
+  }: {
+    projectId: string;
+    annotationProjectId: string;
+    currentTaskId: string;
+    totalTasks?: number;
+    completedTasks?: number;
+    hasUnsavedChanges?: boolean;
+    onComplete: () => void;
+    onNavigateNext: () => void;
+    onNavigatePrevious?: (() => void) | null;
+  } = $props();
 
-  $: backHref = `/projects/${projectId}/annotations/${annotationProjectId}`;
-  $: progressPercent = totalTasks > 0 ? (completedTasks / totalTasks) * 100 : 0;
+  // currentTaskId is exposed for parent components that may need to identify the active task.
+  void currentTaskId;
+
+  const backHref = $derived(`/projects/${projectId}/annotations/${annotationProjectId}`);
+  const progressPercent = $derived(totalTasks > 0 ? (completedTasks / totalTasks) * 100 : 0);
 
   function handleKeyDown(event: KeyboardEvent) {
     // Ctrl+Enter (or Cmd+Enter on Mac) to complete task
@@ -72,7 +86,7 @@
       disabled={!onNavigatePrevious}
       title={m.annotation_navigator_previous_title()}
       aria-label={m.annotation_navigator_previous_aria()}
-      on:click={() => onNavigatePrevious && onNavigatePrevious()}
+      onclick={() => onNavigatePrevious && onNavigatePrevious()}
     >
       <svg viewBox="0 0 20 20" fill="currentColor" class="arrow-icon">
         <path fill-rule="evenodd" clip-rule="evenodd"
@@ -85,7 +99,7 @@
       class="nav-arrow-btn"
       title={m.annotation_navigator_next_title()}
       aria-label={m.annotation_navigator_next_aria()}
-      on:click={onNavigateNext}
+      onclick={onNavigateNext}
     >
       <svg viewBox="0 0 20 20" fill="currentColor" class="arrow-icon">
         <path fill-rule="evenodd" clip-rule="evenodd"
@@ -98,7 +112,7 @@
       class="complete-btn"
       title={m.annotation_navigator_complete_title()}
       aria-label={m.annotation_navigator_complete_aria()}
-      on:click={onComplete}
+      onclick={onComplete}
     >
       <svg viewBox="0 0 20 20" fill="currentColor" class="complete-icon">
         <path fill-rule="evenodd" clip-rule="evenodd"

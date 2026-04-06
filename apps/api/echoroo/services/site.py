@@ -4,6 +4,7 @@ from uuid import UUID
 
 from fastapi import HTTPException, status
 
+from echoroo.core.pagination import paginate
 from echoroo.models.site import Site
 from echoroo.repositories.project import ProjectRepository
 from echoroo.repositories.site import SiteRepository
@@ -63,20 +64,16 @@ class SiteService:
             )
 
         # Validate pagination
-        if page < 1:
-            page = 1
-        if page_size < 1 or page_size > 100:
-            page_size = 20
+        pagination = paginate(page, page_size, default_page_size=20, max_page_size=100)
 
-        sites, total = await self.site_repo.list_by_project(project_id, page, page_size)
-        pages = (total + page_size - 1) // page_size
+        sites, total = await self.site_repo.list_by_project(project_id, pagination.page, pagination.page_size)
 
         return SiteListResponse(
             items=[SiteResponse.model_validate(s) for s in sites],
             total=total,
-            page=page,
-            page_size=page_size,
-            pages=pages,
+            page=pagination.page,
+            page_size=pagination.page_size,
+            pages=pagination.total_pages(total),
         )
 
     async def create_site(

@@ -6,8 +6,9 @@
   import { localizeHref } from '$lib/paraglide/runtime';
   import * as m from '$lib/paraglide/messages';
   import { fetchAnnotationProject, generateTasks } from '$lib/api/annotation-projects';
-  import { fetchWithErrorHandling, handleApiResponse } from '$lib/api/errors';
+  import { apiClient } from '$lib/api/client';
   import type { AnnotationTaskStatus, AnnotationTask, AnnotationProjectDetail } from '$lib/types/annotation';
+  import { getAnnotationTaskStatusClass, getAnnotationTaskStatusLabel } from '$lib/utils/statusFormatters';
   import ExportDialog from '$lib/components/annotation/ExportDialog.svelte';
 
   const queryClient = useQueryClient();
@@ -115,33 +116,16 @@
   }
 
   function getStatusBadgeClass(status: AnnotationTaskStatus): string {
-    switch (status) {
-      case 'pending':
-        return 'badge badge-pending';
-      case 'in_progress':
-        return 'badge badge-in-progress';
-      case 'completed':
-        return 'badge badge-completed';
-      case 'review_pending':
-        return 'badge badge-review-pending';
-      default:
-        return 'badge';
-    }
+    return getAnnotationTaskStatusClass(status);
   }
 
   function getStatusLabel(status: AnnotationTaskStatus): string {
-    switch (status) {
-      case 'pending':
-        return m.annotation_task_status_pending();
-      case 'in_progress':
-        return m.annotation_task_status_in_progress();
-      case 'completed':
-        return m.annotation_task_status_completed();
-      case 'review_pending':
-        return m.annotation_task_status_review_pending();
-      default:
-        return status;
-    }
+    return getAnnotationTaskStatusLabel(status, {
+      pending: m.annotation_task_status_pending,
+      in_progress: m.annotation_task_status_in_progress,
+      completed: m.annotation_task_status_completed,
+      review_pending: m.annotation_task_status_review_pending,
+    });
   }
 
   function formatTime(seconds: number): string {
@@ -210,16 +194,10 @@
     batchTagError = '';
 
     try {
-      const response = await fetchWithErrorHandling(
+      await apiClient.post(
         `/api/v1/projects/${projectId}/clip-annotations/batch-tag`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'include',
-          body: JSON.stringify({ task_ids: selectedTaskIds, tag_id: batchTagId }),
-        }
+        { task_ids: selectedTaskIds, tag_id: batchTagId }
       );
-      await handleApiResponse(response);
 
       // Invalidate queries to refresh task list
       queryClient.invalidateQueries({ queryKey: ['annotation-tasks', projectId, annotationProjectId] });

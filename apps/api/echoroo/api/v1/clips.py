@@ -1,5 +1,6 @@
 """Clips API endpoints."""
 
+import asyncio
 from typing import Annotated
 from uuid import UUID
 
@@ -370,12 +371,15 @@ async def get_clip_audio(
         raise HTTPException(status_code=404, detail="Recording not found")
 
     try:
-        data, samplerate = audio_service.resample_for_playback(
-            recording.path,
-            target_samplerate=48000,
-            speed=speed,
-            start=clip.start_time,
-            end=clip.end_time,
+        audio_svc = audio_service
+        data, samplerate = await asyncio.to_thread(
+            lambda: audio_svc.resample_for_playback(
+                recording.path,
+                target_samplerate=48000,
+                speed=speed,
+                start=clip.start_time,
+                end=clip.end_time,
+            )
         )
 
         wav_bytes = audio_service.audio_to_wav_bytes(data, samplerate)
@@ -446,19 +450,22 @@ async def get_clip_spectrogram(
         raise HTTPException(status_code=404, detail="Recording not found")
 
     try:
-        png_bytes = audio_service.generate_spectrogram(
-            recording.path,
-            start=clip.start_time,
-            end=clip.end_time,
-            n_fft=n_fft,
-            hop_length=hop_length,
-            freq_min=freq_min,
-            freq_max=freq_max,
-            colormap=colormap,
-            pcen=pcen,
-            channel=channel,
-            width=width,
-            height=height,
+        audio_svc = audio_service
+        png_bytes = await asyncio.to_thread(
+            lambda: audio_svc.generate_spectrogram(
+                recording.path,
+                start=clip.start_time,
+                end=clip.end_time,
+                n_fft=n_fft,
+                hop_length=hop_length,
+                freq_min=freq_min,
+                freq_max=freq_max,
+                colormap=colormap,
+                pcen=pcen,
+                channel=channel,
+                width=width,
+                height=height,
+            )
         )
         return Response(content=png_bytes, media_type="image/png")
     except Exception as e:
@@ -505,10 +512,13 @@ async def download_clip(
         raise HTTPException(status_code=404, detail="Recording not found")
 
     try:
-        data, samplerate = audio_service.read_audio(
-            recording.path,
-            start=clip.start_time,
-            end=clip.end_time,
+        audio_svc = audio_service
+        data, samplerate = await asyncio.to_thread(
+            lambda: audio_svc.read_audio(
+                recording.path,
+                start=clip.start_time,
+                end=clip.end_time,
+            )
         )
 
         wav_bytes = audio_service.audio_to_wav_bytes(data, samplerate)

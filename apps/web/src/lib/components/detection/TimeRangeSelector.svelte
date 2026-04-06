@@ -6,20 +6,27 @@
    * The user drags the handles to adjust the time range of a detection.
    */
 
-  export let duration: number;
-  export let initialStart: number;
-  export let initialEnd: number;
-  export let onChange: (start: number, end: number) => void;
+  let {
+    duration,
+    initialStart,
+    initialEnd,
+    onChange,
+  }: {
+    duration: number;
+    initialStart: number;
+    initialEnd: number;
+    onChange: (start: number, end: number) => void;
+  } = $props();
 
-  let containerEl: HTMLDivElement;
-  let startTime = initialStart;
-  let endTime = initialEnd;
+  let containerEl: HTMLDivElement | undefined = $state(undefined);
+  let startTime = $state(initialStart);
+  let endTime = $state(initialEnd);
 
   // Which handle is being dragged: 'start' | 'end' | null
-  let dragging: 'start' | 'end' | null = null;
+  let dragging: 'start' | 'end' | null = $state(null);
 
-  $: startPercent = duration > 0 ? (startTime / duration) * 100 : 0;
-  $: endPercent = duration > 0 ? (endTime / duration) * 100 : 100;
+  const startPercent = $derived(duration > 0 ? (startTime / duration) * 100 : 0);
+  const endPercent = $derived(duration > 0 ? (endTime / duration) * 100 : 100);
 
   function formatTime(seconds: number): string {
     const mins = Math.floor(seconds / 60);
@@ -29,7 +36,7 @@
 
   function getTimeFromClientX(clientX: number): number {
     if (!containerEl) return 0;
-    const rect = containerEl.getBoundingClientRect();
+    const rect = (containerEl as HTMLDivElement).getBoundingClientRect();
     const fraction = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
     return fraction * duration;
   }
@@ -82,9 +89,9 @@
 </script>
 
 <svelte:window
-  on:mousemove={handleMouseMove}
-  on:mouseup={handleMouseUp}
-  on:touchend={handleTouchEnd}
+  onmousemove={handleMouseMove}
+  onmouseup={handleMouseUp}
+  ontouchend={handleTouchEnd}
 />
 
 <div
@@ -92,7 +99,7 @@
   class="relative h-full w-full select-none"
   role="group"
   aria-label="Time range selector"
-  on:touchmove|passive={handleTouchMove}
+  ontouchmove={handleTouchMove}
 >
   <!-- Selection highlight -->
   <div
@@ -106,8 +113,8 @@
     class="absolute inset-y-0 z-10 flex cursor-ew-resize items-center justify-center"
     style="left: calc({startPercent}% - 8px); width: 16px;"
     aria-label="Start time: {formatTime(startTime)}"
-    on:mousedown={handleMouseDown('start')}
-    on:touchstart|passive={() => (dragging = 'start')}
+    onmousedown={handleMouseDown('start')}
+    ontouchstart={() => (dragging = 'start')}
   >
     <div class="h-full w-0.5 bg-primary-500 opacity-90"></div>
     <!-- Handle grip indicator -->
@@ -130,8 +137,8 @@
     class="absolute inset-y-0 z-10 flex cursor-ew-resize items-center justify-center"
     style="left: calc({endPercent}% - 8px); width: 16px;"
     aria-label="End time: {formatTime(endTime)}"
-    on:mousedown={handleMouseDown('end')}
-    on:touchstart|passive={() => (dragging = 'end')}
+    onmousedown={handleMouseDown('end')}
+    ontouchstart={() => (dragging = 'end')}
   >
     <div class="h-full w-0.5 bg-primary-500 opacity-90"></div>
     <!-- Handle grip indicator -->

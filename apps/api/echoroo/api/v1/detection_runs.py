@@ -5,13 +5,13 @@ from __future__ import annotations
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, status
 
 from echoroo.core.database import DbSession
+from echoroo.core.permissions import check_project_access
 from echoroo.middleware.auth import CurrentUser
 from echoroo.repositories.annotation import AnnotationRepository
 from echoroo.repositories.detection_run import DetectionRunRepository
-from echoroo.repositories.project import ProjectRepository
 from echoroo.schemas.detection_run import (
     AvailableModelsResponse,
     DetectionRunCreate,
@@ -26,25 +26,6 @@ router = APIRouter(prefix="/projects/{project_id}/detection-runs", tags=["detect
 # Router for model discovery (no project_id prefix needed)
 models_router = APIRouter(prefix="/detection-runs", tags=["detection-runs"])
 
-
-async def check_project_access(project_id: UUID, user_id: UUID, db: DbSession) -> None:
-    """Check if user has access to project.
-
-    Args:
-        project_id: Project's UUID
-        user_id: User's UUID
-        db: Database session
-
-    Raises:
-        HTTPException: If user doesn't have access to project
-    """
-    project_repo = ProjectRepository(db)
-    has_access = await project_repo.has_project_access(project_id, user_id)
-    if not has_access:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Access denied to project",
-        )
 
 
 def get_detection_run_service(db: DbSession) -> DetectionRunService:

@@ -10,6 +10,19 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
+class SearchAnnotationCreate(BaseModel):
+    """Request schema for creating an annotation from a search match."""
+
+    recording_id: UUID
+    tag_id: UUID
+    start_time: float
+    end_time: float
+    confidence: float | None = None
+    review_status: str = "confirmed"
+    source: str = "similarity_search"
+    search_session_id: _uuid.UUID | None = None
+
+
 class SimilaritySearchRequest(BaseModel):
     """Search for similar sounds using an existing embedding."""
 

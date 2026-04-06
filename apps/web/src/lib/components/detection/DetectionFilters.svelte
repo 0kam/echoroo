@@ -7,21 +7,26 @@
   import type { DetectionFilters, DetectionStatus } from '$lib/types/detection';
   import * as m from '$lib/paraglide/messages';
 
-  export let filters: DetectionFilters;
-  export let onFilterChange: (filters: DetectionFilters) => void;
+  let {
+    filters,
+    onFilterChange,
+  }: {
+    filters: DetectionFilters;
+    onFilterChange: (filters: DetectionFilters) => void;
+  } = $props();
 
   // Local editable copies of filter values
-  let statusValue: DetectionStatus | '' = filters.status ?? '';
-  let confidenceMin: number = filters.confidence_min !== undefined ? Math.round(filters.confidence_min * 100) : 0;
-  let confidenceMax: number = filters.confidence_max !== undefined ? Math.round(filters.confidence_max * 100) : 100;
-  let searchValue: string = '';
+  let statusValue: DetectionStatus | '' = $state(filters.status ?? '');
+  let confidenceMin: number = $state(filters.confidence_min !== undefined ? Math.round(filters.confidence_min * 100) : 0);
+  let confidenceMax: number = $state(filters.confidence_max !== undefined ? Math.round(filters.confidence_max * 100) : 100);
+  let searchValue: string = $state('');
 
-  $: statusOptions = [
+  const statusOptions = $derived([
     { value: '' as DetectionStatus | '', label: m.detection_filter_all_statuses() },
     { value: 'unreviewed' as DetectionStatus, label: m.detection_filter_unreviewed() },
     { value: 'confirmed' as DetectionStatus, label: m.detection_filter_confirmed() },
     { value: 'rejected' as DetectionStatus, label: m.detection_filter_rejected() },
-  ];
+  ]);
 
   function emitChange() {
     const updated: DetectionFilters = { ...filters };
@@ -69,8 +74,9 @@
     onFilterChange({});
   }
 
-  $: hasActiveFilters =
-    statusValue !== '' || confidenceMin > 0 || confidenceMax < 100 || searchValue !== '';
+  const hasActiveFilters = $derived(
+    statusValue !== '' || confidenceMin > 0 || confidenceMax < 100 || searchValue !== ''
+  );
 </script>
 
 <div class="flex flex-wrap items-end gap-3 rounded-lg border border-card bg-surface-card p-4">
@@ -84,7 +90,7 @@
       type="text"
       placeholder={m.detection_filter_search_species_placeholder()}
       value={searchValue}
-      on:input={handleSearchInput}
+      oninput={handleSearchInput}
       class="w-full rounded-md border border-stone-300 px-3 py-1.5 text-sm text-stone-900 placeholder-stone-400
         focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
     />
@@ -98,7 +104,7 @@
     <select
       id="status-filter"
       value={statusValue}
-      on:change={handleStatusChange}
+      onchange={handleStatusChange}
       class="w-full rounded-md border border-stone-300 px-3 py-1.5 text-sm text-stone-900
         focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
     >
@@ -120,7 +126,7 @@
         min="0"
         max="100"
         value={confidenceMin}
-        on:input={handleConfidenceMinChange}
+        oninput={handleConfidenceMinChange}
         class="h-1.5 w-full cursor-pointer accent-primary-600"
         aria-label={m.detection_filter_min_confidence_aria()}
       />
@@ -129,7 +135,7 @@
         min="0"
         max="100"
         value={confidenceMax}
-        on:input={handleConfidenceMaxChange}
+        oninput={handleConfidenceMaxChange}
         class="h-1.5 w-full cursor-pointer accent-primary-600"
         aria-label={m.detection_filter_max_confidence_aria()}
       />
@@ -141,7 +147,7 @@
     <div>
       <button
         type="button"
-        on:click={handleReset}
+        onclick={handleReset}
         class="rounded-md border border-stone-300 bg-surface-card px-3 py-1.5 text-sm text-stone-600
           hover:bg-stone-50 focus:outline-none focus:ring-2 focus:ring-primary-500"
       >

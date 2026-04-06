@@ -174,7 +174,7 @@
   // Event handlers
   // ============================================================
 
-  function handleCanvasCreate(event: CustomEvent<{ geometry: Geometry }>) {
+  function handleCanvasCreate(event: { detail: { geometry: Geometry } }) {
     if (!clipAnnotation) return;
     $createSoundEventMutation.mutate({
       clipAnnotationId: clipAnnotation.id,
@@ -182,11 +182,11 @@
     });
   }
 
-  function handleCanvasSelect(event: CustomEvent<{ id: string }>) {
+  function handleCanvasSelect(event: { detail: { id: string } }) {
     selectedAnnotationId = event.detail.id;
   }
 
-  function handleCanvasDelete(event: CustomEvent<{ id: string }>) {
+  function handleCanvasDelete(event: { detail: { id: string } }) {
     $deleteSoundEventMutation.mutate(event.detail.id);
   }
 
@@ -385,9 +385,9 @@
               {selectedAnnotationId}
               mode={drawMode}
               {projectTags}
-              on:create={handleCanvasCreate}
-              on:select={handleCanvasSelect}
-              on:delete={handleCanvasDelete}
+              oncreate={(detail) => handleCanvasCreate({ detail })}
+              onselect={(detail) => handleCanvasSelect({ detail })}
+              ondelete={(detail) => handleCanvasDelete({ detail })}
             />
           </div>
         </div>

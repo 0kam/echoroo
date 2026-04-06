@@ -7,21 +7,28 @@
   } from '$lib/types/annotation';
   import * as m from '$lib/paraglide/messages';
 
-  export let projectId: string;
-  export let project: AnnotationProjectDetail | null = null;
-  export let onSubmit: (data: AnnotationProjectCreate | AnnotationProjectUpdate) => Promise<void>;
-  export let onCancel: () => void = () => {};
+  let {
+    projectId,
+    project = null,
+    onSubmit,
+    onCancel = () => {},
+  }: {
+    projectId: string;
+    project?: AnnotationProjectDetail | null;
+    onSubmit: (data: AnnotationProjectCreate | AnnotationProjectUpdate) => Promise<void>;
+    onCancel?: () => void;
+  } = $props();
 
   const isEdit = !!project;
 
   // Form fields
-  let name = project?.name ?? '';
-  let description = project?.description ?? '';
-  let instructions = project?.instructions ?? '';
-  let visibility: AnnotationProjectVisibility = project?.visibility ?? 'private';
+  let name = $state(project?.name ?? '');
+  let description = $state(project?.description ?? '');
+  let instructions = $state(project?.instructions ?? '');
+  let visibility: AnnotationProjectVisibility = $state(project?.visibility ?? 'private');
 
-  let isSubmitting = false;
-  let error = '';
+  let isSubmitting = $state(false);
+  let error = $state('');
 
   async function handleSubmit() {
     if (!name.trim()) {
@@ -58,10 +65,10 @@
   }
 
   // projectId is reserved for future use (e.g., fetching datasets/tags for the picker)
-  $: void projectId;
+  void projectId;
 </script>
 
-<form class="annotation-project-form" on:submit|preventDefault={handleSubmit}>
+<form class="annotation-project-form" onsubmit={(e) => { e.preventDefault(); handleSubmit(); }}>
   <div class="form-row">
     <div class="form-group full-width">
       <label for="name">{m.annotation_form_name_label()}</label>
@@ -121,7 +128,7 @@
   {/if}
 
   <div class="form-actions">
-    <button type="button" class="btn-secondary" on:click={onCancel} disabled={isSubmitting}>
+    <button type="button" class="btn-secondary" onclick={onCancel} disabled={isSubmitting}>
       {m.annotation_form_cancel()}
     </button>
     <button type="submit" class="btn-primary" disabled={isSubmitting || !name.trim()}>

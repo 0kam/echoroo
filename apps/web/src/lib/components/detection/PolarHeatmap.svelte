@@ -26,11 +26,19 @@
     count: number;
   }
 
-  export let data: DataPoint[];
-  export let scientificName: string;
-  export let commonName: string | null;
-  export let totalDetections: number;
-  export let size: number = 280;
+  let {
+    data,
+    scientificName,
+    commonName,
+    totalDetections,
+    size = 280,
+  }: {
+    data: DataPoint[];
+    scientificName: string;
+    commonName: string | null;
+    totalDetections: number;
+    size?: number;
+  } = $props();
 
   // ============================================================================
   // Color Scale
@@ -140,35 +148,35 @@
   // Data Processing (reactive)
   // ============================================================================
 
-  $: dates = (() => {
+  const dates = $derived((() => {
     if (!data || data.length === 0) return [] as string[];
     const dateSet = new Set(data.map((d) => d.date));
     return Array.from(dateSet).sort(
       (a, b) => new Date(a).getTime() - new Date(b).getTime(),
     );
-  })();
+  })());
 
-  $: maxCount = data && data.length > 0 ? Math.max(...data.map((d) => d.count), 1) : 1;
+  const maxCount = $derived(data && data.length > 0 ? Math.max(...data.map((d) => d.count), 1) : 1);
 
-  $: grid = (() => {
-    const m = new Map<string, number>();
+  const grid = $derived((() => {
+    const gridMap = new Map<string, number>();
     if (data) {
-      data.forEach((d) => m.set(`${d.date}-${d.hour}`, d.count));
+      data.forEach((d) => gridMap.set(`${d.date}-${d.hour}`, d.count));
     }
-    return m;
-  })();
+    return gridMap;
+  })());
 
   // ============================================================================
   // Layout Calculations (reactive)
   // ============================================================================
 
-  $: cx = size / 2;
-  $: cy = size / 2;
-  $: outerRadius = size / 2 - 30;  // Room for hour labels
-  $: innerRadius = Math.max(20, size * 0.09);  // Small hole in center
-  $: ringCount = dates.length;
-  $: ringWidth = ringCount > 0 ? (outerRadius - innerRadius) / ringCount : 0;
-  $: ringGap = 1; // 1px gap between rings
+  const cx = $derived(size / 2);
+  const cy = $derived(size / 2);
+  const outerRadius = $derived(size / 2 - 30); // Room for hour labels
+  const innerRadius = $derived(Math.max(20, size * 0.09)); // Small hole in center
+  const ringCount = $derived(dates.length);
+  const ringWidth = $derived(ringCount > 0 ? (outerRadius - innerRadius) / ringCount : 0);
+  const ringGap = 1; // 1px gap between rings
 
   // Major hour labels (every 3 hours)
   const majorHours = [0, 3, 6, 9, 12, 15, 18, 21];
@@ -176,7 +184,7 @@
   const gridHours = [0, 6, 12, 18];
 
   // Precompute wedge paths and colors for rendering
-  $: wedges = (() => {
+  const wedges = $derived((() => {
     const result: Array<{
       path: string;
       fill: string;
@@ -209,22 +217,22 @@
       }
     }
     return result;
-  })();
+  })());
 
   // ============================================================================
   // Tooltip State
   // ============================================================================
 
-  let tooltip: TooltipState = {
+  let tooltip: TooltipState = $state({
     visible: false,
     x: 0,
     y: 0,
     date: '',
     hour: 0,
     count: 0,
-  };
+  });
 
-  let svgEl: SVGSVGElement | null = null;
+  let svgEl: SVGSVGElement | null = $state(null);
 
   function handleMouseEnter(event: MouseEvent, date: string, hour: number, count: number) {
     const rect = svgEl?.getBoundingClientRect();
@@ -298,7 +306,7 @@
         class="overflow-visible"
         role="img"
         aria-label="Polar heatmap of detections by hour and date for {commonName ?? scientificName}"
-        on:mousemove={handleMouseMove}
+        onmousemove={handleMouseMove}
       >
         <!-- Background outline circle -->
         <circle
@@ -333,8 +341,8 @@
             stroke="white"
             stroke-width="0.3"
             class="cursor-pointer"
-            on:mouseenter={(e) => handleMouseEnter(e, wedge.date, wedge.hour, wedge.count)}
-            on:mouseleave={handleMouseLeave}
+            onmouseenter={(e) => handleMouseEnter(e, wedge.date, wedge.hour, wedge.count)}
+            onmouseleave={handleMouseLeave}
             role="img"
             aria-label="{formatDate(wedge.date)} {formatHour(wedge.hour)}: {wedge.count} detections"
           />

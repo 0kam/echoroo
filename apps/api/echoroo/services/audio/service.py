@@ -1,20 +1,9 @@
-"""Audio processing service for metadata extraction and spectrogram generation.
+"""AudioService: main service class for audio file processing.
 
-Spectrogram computation uses PyTorch and torchaudio for scientific-quality
-acoustic analysis, including:
-- torchaudio.functional.spectrogram for FFT (sinc-accurate STFT)
-- 13 window functions via torch native and scipy.signal fallback
-- PSD normalization: divide by (samplerate * window_energy)
-- One-sided spectrum correction (double non-DC/Nyquist bins)
-- PCEN: IIR smoothing in linear domain (soundevent-compatible parameters)
-- dB conversion: 10*log10 with configurable floor/ceiling (power spectrum)
-- PIL-based image rendering (no matplotlib figure overhead)
-
-Audio resampling uses:
-- torchaudio.functional.resample (windowed sinc / Kaiser filter)
-
-Audio filtering uses:
-- torchaudio.functional.highpass_biquad / lowpass_biquad (Q=0.707)
+Spectrogram computation is backed by PyTorch + torchaudio for
+scientific-quality output (PSD normalization, PCEN, 13 window types).
+Audio resampling uses torchaudio sinc interpolation. Filtering uses
+torchaudio biquad (Q=0.707).
 """
 
 from __future__ import annotations
@@ -22,15 +11,22 @@ from __future__ import annotations
 import hashlib
 import io
 import math
-import struct
 from dataclasses import dataclass
 from pathlib import Path
 
-import mutagen
 import numpy as np
 import soundfile as sf
 import torch
 from torchaudio import functional as taF
+
+from echoroo.services.audio._spectrogram import (
+    _apply_colormap,
+    _apply_pcen,
+    _compute_spectrogram_tensor,
+    _get_colormap_lut,
+    _to_db,
+)
+from echoroo.services.audio._wav import CHUNK_SIZE, HEADER_SIZE, generate_wav_header
 
 # ---------------------------------------------------------------------------
 # Data classes
@@ -49,302 +45,6 @@ class AudioMetadata:
     channels: int
     bit_depth: int | None
     format: str
-
-
-# ---------------------------------------------------------------------------
-# Window builder (supports 13 named windows)
-# ---------------------------------------------------------------------------
-
-
-def _build_window(
-    window_type: str,
-    length: int,
-    device: torch.device,
-) -> torch.Tensor:
-    """Create a window tensor for use with torchaudio spectrogram.
-
-    Supports hann, hamming, bartlett, blackman natively via torch.
-    All other named windows (boxcar, triang, flattop, parzen, bohman,
-    blackmanharris, nuttall, barthann, kaiser) are delegated to
-    scipy.signal.get_window.
-
-    Args:
-        window_type: Name of the window function (case-insensitive).
-        length: Number of samples in the window.
-        device: Torch device to place the tensor on.
-
-    Returns:
-        1-D float32 tensor of the specified window.
-    """
-    if length <= 0:
-        return torch.ones(1, device=device)
-
-    wtype = window_type.lower()
-
-    if wtype == "hann":
-        return torch.hann_window(length, periodic=True, device=device)
-    if wtype == "hamming":
-        return torch.hamming_window(length, periodic=True, device=device)
-    if wtype == "bartlett":
-        return torch.bartlett_window(length, periodic=True, device=device)
-    if wtype == "blackman":
-        return torch.blackman_window(length, periodic=True, device=device)
-    if wtype == "boxcar":
-        return torch.ones(length, dtype=torch.float32, device=device)
-
-    # scipy.signal fallback for remaining window types
-    try:
-        from scipy.signal import get_window
-
-        win_np: np.ndarray = get_window(wtype, length, fftbins=True)
-        win_tensor: torch.Tensor = torch.from_numpy(win_np.astype(np.float32)).to(device)
-        return win_tensor
-    except Exception:
-        # Final fallback: hann
-        return torch.hann_window(length, periodic=True, device=device)
-
-
-# ---------------------------------------------------------------------------
-# PCEN (Per-Channel Energy Normalization)
-# ---------------------------------------------------------------------------
-
-
-def _apply_pcen(spec: torch.Tensor) -> torch.Tensor:
-    """Apply PCEN normalization in the linear power domain.
-
-    Implements the IIR smoothing variant used by soundevent / librosa:
-        M[t] = s * X[t] + (1 - s) * M[t-1]
-        PCEN = (bias^power) * expm1(power * log1p(X * smooth_factor / bias))
-
-    Parameters are fixed to the reference values:
-        smooth=0.025, gain=0.98, bias=2.0, power=0.5, eps=1e-6
-
-    Args:
-        spec: Power spectrogram tensor with time on the last axis.
-
-    Returns:
-        PCEN-normalized tensor with the same shape.
-    """
-    if spec.numel() == 0:
-        return spec
-
-    smooth: float = 0.025
-    gain: float = 0.98
-    bias: float = 2.0
-    power: float = 0.5
-    eps: float = 1e-6
-
-    device = spec.device
-    dtype = spec.dtype
-
-    smoothing = torch.zeros_like(spec)
-    smoothing[..., 0] = spec[..., 0]
-
-    s_t = torch.tensor(smooth, device=device, dtype=dtype)
-    one_minus_s = 1.0 - s_t
-
-    for idx in range(1, spec.shape[-1]):
-        smoothing[..., idx] = (
-            s_t * spec[..., idx] + one_minus_s * smoothing[..., idx - 1]
-        )
-
-    eps_t = torch.tensor(eps, device=device, dtype=dtype)
-    smooth_factor = torch.exp(
-        -gain * (torch.log(eps_t) + torch.log1p(smoothing / eps_t))
-    )
-    bias_power = torch.tensor(bias**power, device=device, dtype=dtype)
-    pcen: torch.Tensor = bias_power * torch.expm1(
-        power * torch.log1p(spec * smooth_factor / bias)
-    )
-    return pcen
-
-
-# ---------------------------------------------------------------------------
-# dB conversion
-# ---------------------------------------------------------------------------
-
-
-def _to_db(
-    spec: torch.Tensor,
-    min_db: float = -100.0,
-    max_db: float = 0.0,
-) -> torch.Tensor:
-    """Convert a power spectrogram to decibels with clamping.
-
-    Uses 10*log10 (power convention) which is equivalent to 20*log10 of amplitude.
-
-    Args:
-        spec: Power spectrogram tensor (values >= 0).
-        min_db: Floor value in dB (default -100 dB).
-        max_db: Ceiling value in dB (default 0 dB).
-
-    Returns:
-        Spectrogram in dB scale clamped to [min_db, max_db].
-    """
-    log_spec = 10.0 * torch.log10(spec.clamp(min=1e-10))
-    return log_spec.clamp(min=min_db, max=max_db)
-
-
-# ---------------------------------------------------------------------------
-# Colormap lookup table (PIL-based rendering)
-# ---------------------------------------------------------------------------
-
-
-def _get_colormap_lut(name: str) -> np.ndarray:
-    """Return a 256x3 uint8 RGB lookup table for the given colormap name.
-
-    For gray we build the LUT directly. For other colormaps we sample
-    matplotlib's registry (only 256 evaluations, no figure rendering).
-
-    Args:
-        name: Colormap name string.
-
-    Returns:
-        Array of shape (256, 3) with uint8 RGB values.
-    """
-    if name == "gray":
-        ramp = np.arange(256, dtype=np.uint8)
-        return np.stack([ramp, ramp, ramp], axis=-1)
-
-    try:
-        import matplotlib.cm as cm
-
-        cmap = cm.get_cmap(name, 256)
-        lut_f: np.ndarray = np.array(cmap(np.linspace(0.0, 1.0, 256)))[:, :3]
-        lut: np.ndarray = (lut_f * 255).clip(0, 255).astype(np.uint8)
-        return lut
-    except Exception:
-        ramp = np.arange(256, dtype=np.uint8)
-        return np.stack([ramp, ramp, ramp], axis=-1)
-
-
-def _apply_colormap(data_uint8: np.ndarray, lut: np.ndarray) -> np.ndarray:
-    """Map a 2-D uint8 array through a 256x3 LUT to produce an RGB image.
-
-    Args:
-        data_uint8: 2-D uint8 array used as indices into the LUT.
-        lut: (256, 3) uint8 RGB lookup table.
-
-    Returns:
-        (H, W, 3) uint8 RGB array.
-    """
-    rgb: np.ndarray = lut[data_uint8]
-    return rgb
-
-
-# ---------------------------------------------------------------------------
-# Core spectrogram computation
-# ---------------------------------------------------------------------------
-
-
-def _compute_spectrogram_tensor(
-    waveform: torch.Tensor,
-    samplerate: int,
-    window_size: float,
-    overlap: float,
-    window_type: str,
-) -> tuple[torch.Tensor, int, int, int]:
-    """Compute a PSD-normalized power spectrogram using torchaudio.
-
-    PSD normalization:  spec = |STFT|^2 / (fs * sum(window^2))
-    One-sided correction: double all bins except DC and Nyquist.
-
-    Args:
-        waveform: Audio tensor of shape (1, samples) - single channel.
-        samplerate: Sample rate in Hz.
-        window_size: FFT window duration in seconds.
-        overlap: Window overlap as fraction of window_size (0 < overlap < 1).
-        window_type: Window function name.
-
-    Returns:
-        Tuple of (spec, win_length, hop_length, n_fft) where spec has shape
-        (freq_bins, time_frames).
-    """
-    hop_size = max((1.0 - overlap) * window_size, 1.0 / samplerate)
-    win_length = max(1, int(round(window_size * samplerate)))
-    hop_length = max(1, int(round(hop_size * samplerate)))
-    n_fft = max(2, win_length)
-
-    device = waveform.device
-    window_tensor = _build_window(window_type, win_length, device)
-
-    spec = taF.spectrogram(
-        waveform,
-        pad=0,
-        window=window_tensor,
-        n_fft=n_fft,
-        hop_length=hop_length,
-        win_length=win_length,
-        power=2.0,
-        normalized=False,
-        center=True,
-        pad_mode="constant",
-        onesided=True,
-    )
-    # spec: (1, freq_bins, time_frames) -> squeeze channel dim
-    spec = spec.squeeze(0)  # (freq_bins, time_frames)
-
-    # PSD normalization
-    window_energy = window_tensor.pow(2).sum()
-    if samplerate > 0 and window_energy > 0:
-        spec = spec / (samplerate * window_energy)
-
-    # One-sided correction: double all bins except DC (index 0) and Nyquist
-    if n_fft % 2 == 0 and spec.shape[0] > 2:
-        spec[1:-1] *= 2.0
-    elif spec.shape[0] > 1:
-        spec[1:] *= 2.0
-
-    return spec, win_length, hop_length, n_fft
-
-
-# ---------------------------------------------------------------------------
-# WAV header generation and streaming constants
-# ---------------------------------------------------------------------------
-
-CHUNK_SIZE = 512 * 1024
-HEADER_FORMAT = "<4si4s4sihhiihh4si"
-HEADER_SIZE = struct.calcsize(HEADER_FORMAT)
-
-
-def generate_wav_header(
-    samplerate: int,
-    channels: int,
-    data_size: int,
-    bit_depth: int = 16,
-) -> bytes:
-    """Generate a standard WAV PCM header.
-
-    See http://soundfile.sapp.org/doc/WaveFormat/ for the format specification.
-
-    Args:
-        samplerate: Sample rate in Hz.
-        channels: Number of audio channels.
-        data_size: Size of the PCM data chunk in bytes.
-        bit_depth: Bits per sample (default 16).
-
-    Returns:
-        44-byte WAV header as bytes.
-    """
-    byte_rate = samplerate * channels * bit_depth // 8
-    block_align = channels * bit_depth // 8
-
-    return struct.pack(
-        HEADER_FORMAT,
-        b"RIFF",
-        data_size + 36,
-        b"WAVE",
-        b"fmt ",
-        16,
-        1,
-        channels,
-        samplerate,
-        byte_rate,
-        block_align,
-        bit_depth,
-        b"data",
-        data_size,
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -539,6 +239,8 @@ class AudioService:
             FileNotFoundError: If the file does not exist.
             ValueError: If the file format is not supported.
         """
+        import mutagen
+
         file_path = self.get_absolute_path(relative_path)
 
         if not file_path.exists():
@@ -1118,5 +820,3 @@ class AudioService:
         actual_end = byte_start + len(audio_bytes)
 
         return audio_bytes, actual_start, actual_end, total_filesize
-
-

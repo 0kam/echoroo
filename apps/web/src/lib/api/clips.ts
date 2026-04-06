@@ -3,7 +3,6 @@
  */
 
 import type {
-  Clip,
   ClipCreate,
   ClipDetail,
   ClipGenerateRequest,
@@ -11,7 +10,7 @@ import type {
   ClipListResponse,
   ClipUpdate,
 } from '$lib/types/data';
-import { fetchWithErrorHandling, handleApiResponse } from './errors';
+import { apiClient } from './client';
 
 const API_BASE = '/api/v1';
 
@@ -35,8 +34,7 @@ export async function listClips(params: ListClipsParams): Promise<ClipListRespon
   if (params.sortOrder) searchParams.append('sort_order', params.sortOrder);
 
   const url = `${API_BASE}/projects/${params.projectId}/recordings/${params.recordingId}/clips?${searchParams}`;
-  const response = await fetchWithErrorHandling(url, { credentials: 'include' });
-  return handleApiResponse<ClipListResponse>(response);
+  return apiClient.get<ClipListResponse>(url);
 }
 
 /**
@@ -47,11 +45,9 @@ export async function getClip(
   recordingId: string,
   clipId: string
 ): Promise<ClipDetail> {
-  const response = await fetchWithErrorHandling(
-    `${API_BASE}/projects/${projectId}/recordings/${recordingId}/clips/${clipId}`,
-    { credentials: 'include' }
+  return apiClient.get<ClipDetail>(
+    `${API_BASE}/projects/${projectId}/recordings/${recordingId}/clips/${clipId}`
   );
-  return handleApiResponse<ClipDetail>(response);
 }
 
 /**
@@ -62,16 +58,10 @@ export async function createClip(
   recordingId: string,
   data: ClipCreate
 ): Promise<ClipDetail> {
-  const response = await fetchWithErrorHandling(
+  return apiClient.post<ClipDetail>(
     `${API_BASE}/projects/${projectId}/recordings/${recordingId}/clips`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify(data),
-    }
+    data
   );
-  return handleApiResponse<ClipDetail>(response);
 }
 
 /**
@@ -83,16 +73,10 @@ export async function updateClip(
   clipId: string,
   data: ClipUpdate
 ): Promise<ClipDetail> {
-  const response = await fetchWithErrorHandling(
+  return apiClient.patch<ClipDetail>(
     `${API_BASE}/projects/${projectId}/recordings/${recordingId}/clips/${clipId}`,
-    {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify(data),
-    }
+    data
   );
-  return handleApiResponse<ClipDetail>(response);
 }
 
 /**
@@ -103,17 +87,9 @@ export async function deleteClip(
   recordingId: string,
   clipId: string
 ): Promise<void> {
-  const response = await fetchWithErrorHandling(
-    `${API_BASE}/projects/${projectId}/recordings/${recordingId}/clips/${clipId}`,
-    {
-      method: 'DELETE',
-      credentials: 'include',
-    }
+  return apiClient.delete<void>(
+    `${API_BASE}/projects/${projectId}/recordings/${recordingId}/clips/${clipId}`
   );
-
-  if (!response.ok) {
-    await handleApiResponse(response);
-  }
 }
 
 /**
@@ -124,16 +100,10 @@ export async function generateClips(
   recordingId: string,
   request: ClipGenerateRequest
 ): Promise<ClipGenerateResponse> {
-  const response = await fetchWithErrorHandling(
+  return apiClient.post<ClipGenerateResponse>(
     `${API_BASE}/projects/${projectId}/recordings/${recordingId}/clips/generate`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify(request),
-    }
+    request
   );
-  return handleApiResponse<ClipGenerateResponse>(response);
 }
 
 /**

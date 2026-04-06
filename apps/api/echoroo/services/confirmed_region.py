@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import math
 from uuid import UUID
 
 from fastapi import HTTPException, status
 
+from echoroo.core.pagination import paginate
 from echoroo.models.confirmed_region import ConfirmedRegion
 from echoroo.repositories.confirmed_region import ConfirmedRegionRepository
 from echoroo.schemas.confirmed_region import (
@@ -43,25 +43,20 @@ class ConfirmedRegionService:
         Returns:
             Paginated confirmed region list response
         """
-        if page < 1:
-            page = 1
-        if page_size < 1 or page_size > 200:
-            page_size = 50
+        pagination = paginate(page, page_size)
 
         regions, total = await self.confirmed_region_repo.list_by_recording(
             recording_id=recording_id,
-            page=page,
-            page_size=page_size,
+            page=pagination.page,
+            page_size=pagination.page_size,
         )
-
-        pages = math.ceil(total / page_size) if total > 0 else 1
 
         return ConfirmedRegionListResponse(
             items=[ConfirmedRegionResponse.model_validate(r) for r in regions],
             total=total,
-            page=page,
-            page_size=page_size,
-            pages=pages,
+            page=pagination.page,
+            page_size=pagination.page_size,
+            pages=pagination.total_pages(total),
         )
 
     async def create(

@@ -17,6 +17,7 @@ from echoroo.core.exceptions import (
 )
 from echoroo.core.redis import close_redis_connection, get_redis_connection
 from echoroo.core.settings import get_settings
+from echoroo.middleware.logging import RequestLoggingMiddleware
 from echoroo.middleware.rate_limit import close_rate_limiter, init_rate_limiter
 from echoroo.middleware.security import (
     SecurityHeadersMiddleware,
@@ -66,10 +67,8 @@ def create_app() -> FastAPI:
         debug=settings.DEBUG,
     )
 
-    # Request logging middleware
-    # TODO: Add RequestLoggingMiddleware here
-    # from echoroo.middleware.logging import RequestLoggingMiddleware
-    # app.add_middleware(RequestLoggingMiddleware)
+    # Request logging middleware - structured logging with correlation IDs
+    app.add_middleware(RequestLoggingMiddleware)
 
     # Security headers middleware
     security_config = get_security_config_for_environment(settings.ENVIRONMENT)

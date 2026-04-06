@@ -1,5 +1,16 @@
 <script lang="ts">
-  import { createQuery, createMutation, useQueryClient } from '@tanstack/svelte-query';
+  /**
+   * FileUpload - Multi-step audio file upload workflow.
+   *
+   * Steps: select → hashing → creating → uploading → completing → polling → done | error
+   *
+   * Sub-components:
+   * - FileDropZone: drag-and-drop area
+   * - SelectedFileList: list of queued files
+   * - UploadProgressPanel: per-file upload progress
+   */
+
+  import { createQuery, useQueryClient } from '@tanstack/svelte-query';
   import * as m from '$lib/paraglide/messages';
   import {
     createUploadSession,
@@ -14,6 +25,9 @@
     UploadFilePresignedResponse,
     CreateUploadSessionResponse,
   } from '$lib/types/data';
+  import FileDropZone from './FileDropZone.svelte';
+  import SelectedFileList from './SelectedFileList.svelte';
+  import UploadProgressPanel from './UploadProgressPanel.svelte';
 
   interface Props {
     projectId: string;
@@ -25,27 +39,17 @@
 
   const queryClient = useQueryClient();
 
-  // -----------------------------------------------
-  // Constants
-  // -----------------------------------------------
+  // ── Constants ──────────────────────────────────────────────────────────────
   const ACCEPTED_EXTENSIONS = ['.wav', '.flac', '.mp3', '.ogg', '.opus'];
   const ACCEPTED_MIME_TYPES = [
-    'audio/wav',
-    'audio/x-wav',
-    'audio/flac',
-    'audio/x-flac',
-    'audio/mpeg',
-    'audio/mp3',
-    'audio/ogg',
-    'audio/opus',
+    'audio/wav', 'audio/x-wav', 'audio/flac', 'audio/x-flac',
+    'audio/mpeg', 'audio/mp3', 'audio/ogg', 'audio/opus',
   ];
   const MAX_FILE_SIZE_BYTES = 1 * 1024 * 1024 * 1024; // 1 GB
   const MAX_FILE_COUNT = 500;
   const UPLOAD_CONCURRENCY = 3;
 
-  // -----------------------------------------------
-  // Upload workflow steps
-  // -----------------------------------------------
+  // ── Workflow step ──────────────────────────────────────────────────────────
   type WorkflowStep =
     | 'select'      // Selecting files
     | 'hashing'     // Computing SHA-256 checksums
@@ -56,27 +60,19 @@
     | 'done'        // All done (imported)
     | 'error';      // Terminal error
 
-  // -----------------------------------------------
-  // State
-  // -----------------------------------------------
+  // ── State ──────────────────────────────────────────────────────────────────
   let step = $state<WorkflowStep>('select');
   let isDragOver = $state(false);
   let selectedFiles = $state<File[]>([]);
   let errorMessage = $state<string | null>(null);
 
-  // Hashing progress
-  let hashingProgress = $state(0); // 0-100
-
-  // Per-file upload progress (keyed by file index)
+  let hashingProgress = $state(0);
   let fileUploadProgress = $state<Record<number, number>>({});
 
-  // Active session
   let sessionId = $state<string | null>(null);
   let sessionData = $state<CreateUploadSessionResponse | null>(null);
 
-  // -----------------------------------------------
-  // Derived values
-  // -----------------------------------------------
+  // ── Derived values ─────────────────────────────────────────────────────────
   const totalBytes = $derived(selectedFiles.reduce((sum, f) => sum + f.size, 0));
 
   const overallUploadPercent = $derived(() => {
@@ -85,7 +81,6 @@
     return Math.round(total / selectedFiles.length);
   });
 
-  // Polling query - active only during validating/importing phases
   const isPolling = $derived(step === 'polling');
 
   const statusQuery = $derived(
@@ -97,7 +92,6 @@
     })
   );
 
-  // Track whether we've already triggered import for this session
   let importTriggered = $state(false);
 
   // Watch polling results: trigger import when validated, finish when imported
@@ -125,9 +119,8 @@
     }
   });
 
-  // -----------------------------------------------
-  // File validation helpers
-  // -----------------------------------------------
+  // ── File validation ────────────────────────────────────────────────────────
+
   function isAcceptedFile(file: File): boolean {
     const lowerName = file.name.toLowerCase();
     const hasValidExt = ACCEPTED_EXTENSIONS.some((ext) => lowerName.endsWith(ext));
@@ -158,17 +151,12 @@
   function addFiles(incoming: File[]) {
     const { valid, errors } = validateFiles(incoming);
 
-    if (errors.length > 0) {
-      errorMessage = errors.join('\n');
-    } else {
-      errorMessage = null;
-    }
+    errorMessage = errors.length > 0 ? errors.join('\n') : null;
 
-    // Deduplicate by name
     const existingNames = new Set(selectedFiles.map((f) => f.name));
     const newFiles = valid.filter((f) => !existingNames.has(f.name));
-
     const combined = [...selectedFiles, ...newFiles];
+
     if (combined.length > MAX_FILE_COUNT) {
       errorMessage = `You may upload at most ${MAX_FILE_COUNT} files at once. Only the first ${MAX_FILE_COUNT} will be used.`;
       selectedFiles = combined.slice(0, MAX_FILE_COUNT);
@@ -181,36 +169,8 @@
     selectedFiles = selectedFiles.filter((_, i) => i !== index);
   }
 
-  // -----------------------------------------------
-  // Drag-and-drop handlers
-  // -----------------------------------------------
-  function handleDragOver(event: DragEvent) {
-    event.preventDefault();
-    isDragOver = true;
-  }
+  // ── Upload workflow ────────────────────────────────────────────────────────
 
-  function handleDragLeave() {
-    isDragOver = false;
-  }
-
-  function handleDrop(event: DragEvent) {
-    event.preventDefault();
-    isDragOver = false;
-    const files = Array.from(event.dataTransfer?.files ?? []);
-    addFiles(files);
-  }
-
-  function handleFileInputChange(event: Event) {
-    const input = event.target as HTMLInputElement;
-    const files = Array.from(input.files ?? []);
-    addFiles(files);
-    // Reset input so same files can be re-added if removed
-    input.value = '';
-  }
-
-  // -----------------------------------------------
-  // Main upload workflow
-  // -----------------------------------------------
   async function startUpload() {
     if (selectedFiles.length === 0) return;
 
@@ -239,22 +199,20 @@
       sessionId = session.session_id;
       sessionData = session;
 
-      // Build a map from filename to presigned URL entry
       const presignedMap = new Map<string, UploadFilePresignedResponse>(
         session.files.map((f) => [f.original_filename, f])
       );
 
-      // Phase 3: Upload files to presigned URLs (concurrent, limited to UPLOAD_CONCURRENCY)
+      // Phase 3: Upload files to presigned URLs
       step = 'uploading';
       fileUploadProgress = {};
-
       await uploadFilesConcurrently(selectedFiles, presignedMap);
 
-      // Phase 4: Signal completion to backend (triggers async validation)
+      // Phase 4: Signal completion
       step = 'completing';
       await completeUploadSession(projectId, datasetId, session.session_id);
 
-      // Phase 5: Poll for validation, then trigger import when validated
+      // Phase 5: Poll for validation + import
       step = 'polling';
     } catch (e) {
       step = 'error';
@@ -262,15 +220,11 @@
     }
   }
 
-  /**
-   * Upload files with limited concurrency.
-   * UPLOAD_CONCURRENCY files are uploaded simultaneously.
-   */
   async function uploadFilesConcurrently(
     files: File[],
     presignedMap: Map<string, UploadFilePresignedResponse>
   ): Promise<void> {
-    const queue = [...files.entries()]; // [index, file] pairs
+    const queue = [...files.entries()];
     const inFlight: Set<Promise<void>> = new Set();
 
     function startNext(): Promise<void> | null {
@@ -280,7 +234,6 @@
 
       const presigned = presignedMap.get(file.name);
       if (!presigned) {
-        // File was not included in the session (unexpected)
         fileUploadProgress[index] = 100;
         return Promise.resolve();
       }
@@ -295,12 +248,10 @@
       return promise;
     }
 
-    // Fill the initial concurrency slots
     for (let i = 0; i < UPLOAD_CONCURRENCY && queue.length > 0; i++) {
       startNext();
     }
 
-    // Process remaining files as slots free up
     while (inFlight.size > 0) {
       await Promise.race(inFlight);
       while (inFlight.size < UPLOAD_CONCURRENCY && queue.length > 0) {
@@ -309,20 +260,6 @@
     }
   }
 
-  // -----------------------------------------------
-  // Utility: human-readable file size
-  // -----------------------------------------------
-  function formatBytes(bytes: number): string {
-    if (bytes === 0) return '0 B';
-    if (bytes < 1024) return `${bytes} B`;
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-    if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-    return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
-  }
-
-  // -----------------------------------------------
-  // Session status helpers
-  // -----------------------------------------------
   function getSessionStatusLabel(status: UploadSessionStatus): string {
     switch (status) {
       case 'issued':     return m.upload_status_issued();
@@ -369,57 +306,20 @@
 <div class="rounded-lg border border-card bg-surface-card p-6">
   <h3 class="mb-4 text-base font-semibold text-stone-900">Upload Audio Files</h3>
 
-  <!-- ============================================ -->
-  <!-- Step: File Selection                         -->
-  <!-- ============================================ -->
+  <!-- ── Step: File Selection ─────────────────────────────────────────────── -->
   {#if step === 'select'}
-    <!-- Drop zone -->
-    <!-- svelte-ignore a11y_interactive_supports_focus -->
-    <div
-      class="mb-4 flex min-h-40 cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed p-8 text-center transition-colors
-        {isDragOver
-          ? 'border-primary-400 bg-primary-50'
-          : 'border-stone-300 hover:border-stone-400 hover:bg-stone-50'}"
-      role="button"
-      aria-label="Drop audio files here or click to browse"
-      ondragover={handleDragOver}
-      ondragleave={handleDragLeave}
-      ondrop={handleDrop}
-      onclick={() => document.getElementById('file-input')?.click()}
-      onkeydown={(e) => e.key === 'Enter' && document.getElementById('file-input')?.click()}
-    >
-      <svg
-        class="mb-3 h-10 w-10 {isDragOver ? 'text-primary-400' : 'text-stone-300'}"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-      >
-        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
-          d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
-      </svg>
-      <p class="mb-1 text-sm font-medium text-stone-700">
-        {isDragOver ? 'Release to add files' : 'Drag and drop audio files here'}
-      </p>
-      <p class="text-xs text-stone-400">
-        or <span class="text-primary-600 underline">browse</span> &mdash;
-        WAV, FLAC, MP3, OGG, OPUS &bull; max 1 GB per file &bull; up to 500 files
-      </p>
-    </div>
-
-    <input
-      id="file-input"
-      type="file"
-      multiple
-      accept=".wav,.flac,.mp3,.ogg,.opus,audio/*"
-      class="hidden"
-      onchange={handleFileInputChange}
+    <FileDropZone
+      {isDragOver}
+      onFilesAdded={addFiles}
+      onDragOver={() => { isDragOver = true; }}
+      onDragLeave={() => { isDragOver = false; }}
     />
 
     <!-- Validation error banner -->
     {#if errorMessage}
       <div class="mb-4 rounded-md border border-red-200 bg-red-50 p-3">
         <div class="flex items-start gap-2">
-          <svg class="mt-0.5 h-4 w-4 flex-shrink-0 text-red-500" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+          <svg class="mt-0.5 h-4 w-4 flex-shrink-0 text-red-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
               d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
           </svg>
@@ -428,64 +328,22 @@
       </div>
     {/if}
 
-    <!-- Selected file list -->
     {#if selectedFiles.length > 0}
-      <div class="mb-4">
-        <div class="mb-2 flex items-center justify-between">
-          <span class="text-sm font-medium text-stone-700">
-            {selectedFiles.length} file{selectedFiles.length !== 1 ? 's' : ''} selected
-            <span class="font-normal text-stone-400">({formatBytes(totalBytes)})</span>
-          </span>
-          <button
-            onclick={() => (selectedFiles = [])}
-            class="text-xs text-stone-400 underline hover:text-stone-600"
-          >
-            Clear all
-          </button>
-        </div>
-
-        <ul class="max-h-60 divide-y divide-stone-100 overflow-y-auto rounded-md border border-stone-200">
-          {#each selectedFiles as file, i}
-            <li class="flex items-center gap-3 px-3 py-2">
-              <svg class="h-4 w-4 flex-shrink-0 text-stone-400" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                  d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3" />
-              </svg>
-              <span class="min-w-0 flex-1 truncate text-sm text-stone-700">{file.name}</span>
-              <span class="flex-shrink-0 text-xs text-stone-400">{formatBytes(file.size)}</span>
-              <button
-                onclick={() => removeFile(i)}
-                class="flex-shrink-0 rounded p-0.5 text-stone-300 hover:bg-stone-100 hover:text-stone-500"
-                aria-label="Remove {file.name}"
-              >
-                <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                  <line x1="18" y1="6" x2="6" y2="18" stroke-width="2.5" />
-                  <line x1="6" y1="6" x2="18" y2="18" stroke-width="2.5" />
-                </svg>
-              </button>
-            </li>
-          {/each}
-        </ul>
-      </div>
-
-      <div class="flex justify-end">
-        <button
-          onclick={startUpload}
-          class="rounded-md bg-primary-600 px-5 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-700"
-        >
-          Upload {selectedFiles.length} File{selectedFiles.length !== 1 ? 's' : ''}
-        </button>
-      </div>
+      <SelectedFileList
+        files={selectedFiles}
+        {totalBytes}
+        onRemove={removeFile}
+        onClearAll={() => { selectedFiles = []; }}
+        onUpload={startUpload}
+      />
     {/if}
   {/if}
 
-  <!-- ============================================ -->
-  <!-- Step: Hashing                                -->
-  <!-- ============================================ -->
+  <!-- ── Step: Hashing ────────────────────────────────────────────────────── -->
   {#if step === 'hashing'}
     <div class="space-y-3">
       <div class="flex items-center gap-3">
-        <svg class="h-5 w-5 animate-spin text-primary-600" fill="none" viewBox="0 0 24 24">
+        <svg class="h-5 w-5 animate-spin text-primary-600" fill="none" viewBox="0 0 24 24" aria-hidden="true">
           <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
           <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
         </svg>
@@ -493,10 +351,7 @@
         <span class="ml-auto text-sm text-stone-500">{hashingProgress}%</span>
       </div>
       <div class="h-2 overflow-hidden rounded-full bg-stone-200">
-        <div
-          class="h-full bg-primary-600 transition-all duration-200"
-          style="width: {hashingProgress}%"
-        ></div>
+        <div class="h-full bg-primary-600 transition-all duration-200" style="width: {hashingProgress}%"></div>
       </div>
       <p class="text-xs text-stone-400">
         Verifying integrity of {selectedFiles.length} file{selectedFiles.length !== 1 ? 's' : ''}.
@@ -505,12 +360,10 @@
     </div>
   {/if}
 
-  <!-- ============================================ -->
-  <!-- Step: Creating session                       -->
-  <!-- ============================================ -->
+  <!-- ── Step: Creating session ───────────────────────────────────────────── -->
   {#if step === 'creating'}
     <div class="flex items-center gap-3">
-      <svg class="h-5 w-5 animate-spin text-primary-600" fill="none" viewBox="0 0 24 24">
+      <svg class="h-5 w-5 animate-spin text-primary-600" fill="none" viewBox="0 0 24 24" aria-hidden="true">
         <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
         <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
       </svg>
@@ -518,68 +371,19 @@
     </div>
   {/if}
 
-  <!-- ============================================ -->
-  <!-- Step: Uploading files                        -->
-  <!-- ============================================ -->
+  <!-- ── Step: Uploading files ────────────────────────────────────────────── -->
   {#if step === 'uploading'}
-    <div class="space-y-4">
-      <!-- Overall progress -->
-      <div>
-        <div class="mb-1.5 flex justify-between text-sm text-stone-600">
-          <span class="font-medium">Uploading files</span>
-          <span>{overallUploadPercent()}%</span>
-        </div>
-        <div class="h-2 overflow-hidden rounded-full bg-stone-200">
-          <div
-            class="h-full bg-primary-600 transition-all duration-300"
-            style="width: {overallUploadPercent()}%"
-          ></div>
-        </div>
-        <p class="mt-1 text-xs text-stone-400">
-          Uploading {selectedFiles.length} file{selectedFiles.length !== 1 ? 's' : ''}
-          &mdash; up to {UPLOAD_CONCURRENCY} at a time
-        </p>
-      </div>
-
-      <!-- Per-file progress list -->
-      <ul class="max-h-64 divide-y divide-stone-100 overflow-y-auto rounded-md border border-stone-200">
-        {#each selectedFiles as file, i}
-          {@const pct = fileUploadProgress[i] ?? 0}
-          <li class="px-3 py-2">
-            <div class="mb-1 flex items-center gap-2">
-              {#if pct >= 100}
-                <svg class="h-3.5 w-3.5 flex-shrink-0 text-green-500" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7" />
-                </svg>
-              {:else if pct > 0}
-                <svg class="h-3.5 w-3.5 flex-shrink-0 animate-spin text-primary-500" fill="none" viewBox="0 0 24 24">
-                  <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                  <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
-                </svg>
-              {:else}
-                <div class="h-3.5 w-3.5 flex-shrink-0 rounded-full border-2 border-stone-200"></div>
-              {/if}
-              <span class="min-w-0 flex-1 truncate text-xs text-stone-700">{file.name}</span>
-              <span class="flex-shrink-0 text-xs text-stone-400">{pct}%</span>
-            </div>
-            <div class="h-1 overflow-hidden rounded-full bg-stone-100">
-              <div
-                class="h-full transition-all duration-200 {pct >= 100 ? 'bg-green-500' : 'bg-primary-500'}"
-                style="width: {pct}%"
-              ></div>
-            </div>
-          </li>
-        {/each}
-      </ul>
-    </div>
+    <UploadProgressPanel
+      files={selectedFiles}
+      {fileUploadProgress}
+      overallPercent={overallUploadPercent()}
+    />
   {/if}
 
-  <!-- ============================================ -->
-  <!-- Step: Completing                             -->
-  <!-- ============================================ -->
+  <!-- ── Step: Completing ─────────────────────────────────────────────────── -->
   {#if step === 'completing'}
     <div class="flex items-center gap-3">
-      <svg class="h-5 w-5 animate-spin text-primary-600" fill="none" viewBox="0 0 24 24">
+      <svg class="h-5 w-5 animate-spin text-primary-600" fill="none" viewBox="0 0 24 24" aria-hidden="true">
         <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
         <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
       </svg>
@@ -587,15 +391,13 @@
     </div>
   {/if}
 
-  <!-- ============================================ -->
-  <!-- Step: Polling (validating / importing)       -->
-  <!-- ============================================ -->
+  <!-- ── Step: Polling (validating / importing) ───────────────────────────── -->
   {#if step === 'polling'}
     {@const status = $statusQuery.data}
     <div class="space-y-4">
       <div class="flex items-center justify-between">
         <div class="flex items-center gap-3">
-          <svg class="h-5 w-5 animate-spin text-primary-600" fill="none" viewBox="0 0 24 24">
+          <svg class="h-5 w-5 animate-spin text-primary-600" fill="none" viewBox="0 0 24 24" aria-hidden="true">
             <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
             <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
           </svg>
@@ -611,7 +413,6 @@
       </div>
 
       {#if status}
-        <!-- Progress bar -->
         <div>
           <div class="mb-1.5 flex justify-between text-sm text-stone-500">
             {#if status.status === 'validating' || status.status === 'validated'}
@@ -649,15 +450,13 @@
     </div>
   {/if}
 
-  <!-- ============================================ -->
-  <!-- Step: Done                                   -->
-  <!-- ============================================ -->
+  <!-- ── Step: Done ───────────────────────────────────────────────────────── -->
   {#if step === 'done'}
     {@const status = $statusQuery.data}
     <div class="space-y-4">
       <div class="flex items-center gap-3 rounded-md border border-green-200 bg-green-50 p-4">
         <div class="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-green-600 text-white">
-          <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+          <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7" />
           </svg>
         </div>
@@ -671,7 +470,6 @@
         </div>
       </div>
 
-      <!-- Show any invalid files even in done state -->
       {#if status?.files.some((f) => f.status === 'invalid')}
         <div class="rounded-md border border-amber-200 bg-amber-50 p-3">
           <p class="mb-1.5 text-xs font-medium text-amber-800">
@@ -701,14 +499,12 @@
     </div>
   {/if}
 
-  <!-- ============================================ -->
-  <!-- Step: Error                                  -->
-  <!-- ============================================ -->
+  <!-- ── Step: Error ──────────────────────────────────────────────────────── -->
   {#if step === 'error'}
     <div class="space-y-4">
       <div class="rounded-md border border-red-200 bg-red-50 p-4">
         <div class="mb-2 flex items-center gap-2">
-          <svg class="h-4 w-4 flex-shrink-0 text-red-500" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+          <svg class="h-4 w-4 flex-shrink-0 text-red-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
               d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
           </svg>

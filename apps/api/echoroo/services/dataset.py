@@ -9,6 +9,7 @@ from fastapi import HTTPException, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from echoroo.core.pagination import paginate
 from echoroo.models.dataset import Dataset
 from echoroo.models.enums import DatasetStatus, DatasetVisibility
 from echoroo.models.recording import Recording
@@ -142,14 +143,11 @@ class DatasetService:
             )
 
         # Validate pagination
-        if page < 1:
-            page = 1
-        if page_size < 1 or page_size > 100:
-            page_size = 20
+        pagination = paginate(page, page_size, default_page_size=20, max_page_size=100)
 
         # Delegate to repository
         datasets, total = await self.dataset_repo.list_by_project(
-            project_id, page, page_size, site_id, status_filter, visibility, search
+            project_id, pagination.page, pagination.page_size, site_id, status_filter, visibility, search
         )
 
         return datasets, total

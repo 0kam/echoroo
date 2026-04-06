@@ -4,23 +4,17 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from sqlalchemy import delete, func, select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 
 from echoroo.models.confirmed_region import ConfirmedRegion
+from echoroo.repositories.base import BaseRepository
 
 
-class ConfirmedRegionRepository:
+class ConfirmedRegionRepository(BaseRepository[ConfirmedRegion]):
     """Repository for ConfirmedRegion entity operations."""
 
-    def __init__(self, db: AsyncSession) -> None:
-        """Initialize repository with database session.
-
-        Args:
-            db: SQLAlchemy async session
-        """
-        self.db = db
+    model = ConfirmedRegion
 
     async def get_by_id(self, region_id: UUID) -> ConfirmedRegion | None:
         """Get confirmed region by ID with relationships loaded.
@@ -94,11 +88,3 @@ class ConfirmedRegionRepository:
         await self.db.refresh(region, ["recording", "reviewed_by"])
         return region
 
-    async def delete(self, region_id: UUID) -> None:
-        """Delete a confirmed region by ID.
-
-        Args:
-            region_id: ConfirmedRegion's UUID
-        """
-        await self.db.execute(delete(ConfirmedRegion).where(ConfirmedRegion.id == region_id))
-        await self.db.flush()

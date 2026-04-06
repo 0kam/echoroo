@@ -1,13 +1,30 @@
 <script lang="ts">
-  import { fetchWithErrorHandling } from '$lib/api/errors';
+  /**
+   * ExportDialog - Export dialog for annotation projects.
+   *
+   * Supports JSON, CSV (Raven-compatible), and AOEF formats.
+   * Uses the Svelte 5 $props() pattern.
+   */
+
+  import { apiClient } from '$lib/api/client';
   import type { ExportFormat } from '$lib/types/annotation';
   import * as m from '$lib/paraglide/messages';
 
-  export let isOpen: boolean = false;
-  export let projectId: string;
-  export let annotationProjectId: string;
-  export let annotationProjectName: string = '';
-  export let onClose: () => void;
+  interface Props {
+    projectId: string;
+    annotationProjectId: string;
+    annotationProjectName?: string;
+    isOpen?: boolean;
+    onClose: () => void;
+  }
+
+  let {
+    projectId,
+    annotationProjectId,
+    annotationProjectName = '',
+    isOpen = false,
+    onClose,
+  }: Props = $props();
 
   interface FormatOption {
     value: ExportFormat;
@@ -33,9 +50,9 @@
     },
   ];
 
-  let selectedFormat: ExportFormat = 'json';
-  let isExporting = false;
-  let exportError = '';
+  let selectedFormat = $state<ExportFormat>('json');
+  let isExporting = $state(false);
+  let exportError = $state('');
 
   function handleOverlayClick(event: MouseEvent) {
     if (event.target === event.currentTarget) {
@@ -61,7 +78,7 @@
 
     try {
       const url = `/api/v1/projects/${projectId}/annotation-projects/${annotationProjectId}/export?format=${selectedFormat}`;
-      const response = await fetchWithErrorHandling(url, { credentials: 'include' });
+      const response = await apiClient.requestRaw(url);
 
       let blob: Blob;
       let filename: string;
@@ -91,15 +108,15 @@
   }
 </script>
 
-<svelte:window on:keydown={handleKeydown} />
+<svelte:window onkeydown={handleKeydown} />
 
 {#if isOpen}
-  <!-- svelte-ignore a11y-click-events-have-key-events -->
-  <!-- svelte-ignore a11y-no-static-element-interactions -->
+  <!-- svelte-ignore a11y_click_events_have_key_events -->
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
   <!-- svelte-ignore a11y_interactive_supports_focus -->
   <div
     class="overlay"
-    on:click={handleOverlayClick}
+    onclick={handleOverlayClick}
     role="dialog"
     aria-modal="true"
     aria-labelledby="export-dialog-title"
@@ -112,7 +129,7 @@
         <button
           type="button"
           class="close-btn"
-          on:click={handleClose}
+          onclick={handleClose}
           disabled={isExporting}
           aria-label={m.annotation_export_close_aria()}
         >
@@ -181,7 +198,7 @@
         <button
           type="button"
           class="btn btn--cancel"
-          on:click={handleClose}
+          onclick={handleClose}
           disabled={isExporting}
         >
           {m.annotation_export_cancel()}
@@ -189,7 +206,7 @@
         <button
           type="button"
           class="btn btn--export"
-          on:click={handleExport}
+          onclick={handleExport}
           disabled={isExporting}
           aria-busy={isExporting}
         >

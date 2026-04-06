@@ -8,13 +8,13 @@ from uuid import UUID
 
 from sqlalchemy import Integer, delete, func, select
 from sqlalchemy.engine import CursorResult
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlalchemy.sql.expression import cast
 
 from echoroo.models.annotation import Annotation
 from echoroo.models.enums import DetectionStatus
 from echoroo.models.tag import Tag
+from echoroo.repositories.base import BaseRepository
 
 
 class TemporalSummaryRow(TypedDict):
@@ -41,16 +41,10 @@ class SpeciesSummaryRow(TypedDict):
     rejected_count: int
 
 
-class AnnotationRepository:
+class AnnotationRepository(BaseRepository[Annotation]):
     """Repository for Annotation entity operations."""
 
-    def __init__(self, db: AsyncSession) -> None:
-        """Initialize repository with database session.
-
-        Args:
-            db: SQLAlchemy async session
-        """
-        self.db = db
+    model = Annotation
 
     async def get_by_id(self, annotation_id: UUID) -> Annotation | None:
         """Get annotation by ID with all relationships loaded.
@@ -425,14 +419,6 @@ class AnnotationRepository:
         await self.db.refresh(annotation, ["recording", "tag", "detection_run", "reviewed_by"])
         return annotation
 
-    async def delete(self, annotation_id: UUID) -> None:
-        """Delete an annotation by ID.
-
-        Args:
-            annotation_id: Annotation's UUID
-        """
-        await self.db.execute(delete(Annotation).where(Annotation.id == annotation_id))
-        await self.db.flush()
 
     async def delete_by_detection_run(self, detection_run_id: UUID) -> int:
         """Delete all annotations belonging to a detection run.

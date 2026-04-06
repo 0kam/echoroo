@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
-import math
 from datetime import UTC, datetime
 from uuid import UUID
 
 from fastapi import HTTPException, status
 
+from echoroo.core.pagination import paginate
+from echoroo.models.taxon import Taxon
 from echoroo.repositories.taxon import TaxonRepository
 from echoroo.schemas.taxon import (
     TaxonDetailResponse,
@@ -18,6 +20,10 @@ from echoroo.schemas.taxon import (
     VernacularNameResponse,
 )
 from echoroo.services.gbif import GBIFService
+
+# Maximum number of concurrent GBIF HTTP calls during batch resolution.
+# GBIF rate limit is 10 req/s; keeping concurrency below that avoids 429s.
+_GBIF_BATCH_CONCURRENCY = 8
 
 logger = logging.getLogger(__name__)
 
@@ -40,25 +46,21 @@ class TaxonService:
         page: int = 1,
         page_size: int = 50,
     ) -> TaxonListResponse:
-        if page < 1:
-            page = 1
-        if page_size < 1 or page_size > 200:
-            page_size = 50
+        pagination = paginate(page, page_size)
 
         taxa, total = await self.taxon_repo.list_taxa(
             search=search,
             is_non_biological=is_non_biological,
-            page=page,
-            page_size=page_size,
+            page=pagination.page,
+            page_size=pagination.page_size,
         )
-        pages = math.ceil(total / page_size) if total > 0 else 1
 
         return TaxonListResponse(
             items=[TaxonResponse.model_validate(t) for t in taxa],
             total=total,
-            page=page,
-            page_size=page_size,
-            pages=pages,
+            page=pagination.page,
+            page_size=pagination.page_size,
+            pages=pagination.total_pages(total),
         )
 
     async def get_detail(self, taxon_id: UUID) -> TaxonDetailResponse:
@@ -113,23 +115,33 @@ class TaxonService:
         return TaxonResponse.model_validate(taxon)
 
     async def resolve_gbif_batch(self, limit: int = 100) -> int:
-        """Resolve GBIF data for unresolved taxa. Returns count of resolved."""
-        unresolved = await self.taxon_repo.get_unresolved(limit=limit)
-        resolved_count = 0
+        """Resolve GBIF data for unresolved taxa. Returns count of resolved.
 
-        for taxon in unresolved:
-            result = await self.gbif_service.resolve_taxon(taxon.scientific_name)
-            if result is None:
-                # Mark as attempted even if not found
+        Fetches GBIF data for all unresolved taxa concurrently (up to
+        _GBIF_BATCH_CONCURRENCY parallel requests) instead of sequentially,
+        which eliminates the N+1 HTTP call pattern.
+        """
+        unresolved = await self.taxon_repo.get_unresolved(limit=limit)
+        if not unresolved:
+            return 0
+
+        semaphore = asyncio.Semaphore(_GBIF_BATCH_CONCURRENCY)
+
+        async def resolve_one(taxon: Taxon) -> bool:
+            """Resolve a single taxon; return True if GBIF data was found."""
+            async with semaphore:
+                result = await self.gbif_service.resolve_taxon(taxon.scientific_name)
+                if result is None:
+                    taxon.gbif_resolved_at = datetime.now(UTC)
+                    await self.taxon_repo.update(taxon)
+                    return False
+
+                taxon.gbif_taxon_key = result.taxon_key
+                taxon.rank = result.rank
+                taxon.gbif_metadata = result.metadata
                 taxon.gbif_resolved_at = datetime.now(UTC)
                 await self.taxon_repo.update(taxon)
-                continue
+                return True
 
-            taxon.gbif_taxon_key = result.taxon_key
-            taxon.rank = result.rank
-            taxon.gbif_metadata = result.metadata
-            taxon.gbif_resolved_at = datetime.now(UTC)
-            await self.taxon_repo.update(taxon)
-            resolved_count += 1
-
-        return resolved_count
+        results = await asyncio.gather(*[resolve_one(t) for t in unresolved])
+        return sum(1 for r in results if r)

@@ -1,23 +1,34 @@
 <script lang="ts">
   import * as m from '$lib/paraglide/messages';
 
-  export let isOpen: boolean = false;
-  export let title: string = 'Confirm Delete';
-  export let message: string = 'Are you sure you want to delete this item?';
-  export let warnings: string[] = [];
-  export let confirmText: string = 'Delete';
-  export let isDeleting: boolean = false;
-  export let onConfirm: () => void;
-  export let onCancel: () => void;
+  let {
+    isOpen = false,
+    title = 'Confirm Delete',
+    message = 'Are you sure you want to delete this item?',
+    warnings = [] as string[],
+    confirmText = 'Delete',
+    isDeleting = false,
+    onConfirm,
+    onCancel,
+  }: {
+    isOpen?: boolean;
+    title?: string;
+    message?: string;
+    warnings?: string[];
+    confirmText?: string;
+    isDeleting?: boolean;
+    onConfirm: () => void;
+    onCancel: () => void;
+  } = $props();
 </script>
 
 {#if isOpen}
   <!-- svelte-ignore a11y_click_events_have_key_events -->
   <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class="modal-overlay" on:click={onCancel}>
+  <div class="modal-overlay" onclick={onCancel}>
     <!-- svelte-ignore a11y_click_events_have_key_events -->
     <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <div class="modal" on:click|stopPropagation>
+    <div class="modal" onclick={(e) => e.stopPropagation()}>
       <h3 class="modal-title">{title}</h3>
       <p class="modal-message">{message}</p>
 
@@ -35,7 +46,7 @@
       <div class="modal-actions">
         <button
           type="button"
-          on:click={onCancel}
+          onclick={onCancel}
           disabled={isDeleting}
           class="btn-cancel"
         >
@@ -43,7 +54,7 @@
         </button>
         <button
           type="button"
-          on:click={onConfirm}
+          onclick={onConfirm}
           disabled={isDeleting}
           class="btn-confirm"
         >

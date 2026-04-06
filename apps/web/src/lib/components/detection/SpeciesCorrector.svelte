@@ -11,24 +11,34 @@
   import type { Tag } from '$lib/types/annotation';
   import * as m from '$lib/paraglide/messages';
 
-  export let currentTagId: string | null;
-  export let projectId: string;
-  export let onChangeSpecies: (newTagId: string) => void;
+  let {
+    currentTagId,
+    projectId,
+    onChangeSpecies,
+  }: {
+    currentTagId: string | null;
+    projectId: string;
+    onChangeSpecies: (newTagId: string) => void;
+  } = $props();
 
-  let searchQuery = '';
-  let isOpen = false;
-  let inputEl: HTMLInputElement;
+  let searchQuery = $state('');
+  let isOpen = $state(false);
+  let inputEl: HTMLInputElement | undefined = $state(undefined);
 
   // Fetch all tags for this project (load all, filter client-side for responsiveness)
-  $: tagsQuery = createQuery({
-    queryKey: ['tags', projectId],
-    queryFn: () => fetchTags(projectId, { page_size: 500 }),
-  });
+  const tagsQueryKey = $derived(['tags', projectId]);
 
-  $: allTags = $tagsQuery.data?.items ?? [];
+  const tagsQuery = $derived(
+    createQuery({
+      queryKey: tagsQueryKey,
+      queryFn: () => fetchTags(projectId, { page_size: 500 }),
+    })
+  );
+
+  const allTags = $derived($tagsQuery.data?.items ?? []);
 
   // Filter tags by search query, exclude the current tag
-  $: filteredTags = allTags.filter((tag: Tag) => {
+  const filteredTags = $derived(allTags.filter((tag: Tag) => {
     if (tag.id === currentTagId) return false;
     if (!searchQuery) return true;
     const q = searchQuery.toLowerCase();
@@ -36,9 +46,9 @@
       tag.name.toLowerCase().includes(q) ||
       (tag.scientific_name != null && tag.scientific_name.toLowerCase().includes(q))
     );
-  });
+  }));
 
-  $: currentTag = allTags.find((t: Tag) => t.id === currentTagId) ?? null;
+  const currentTag = $derived(allTags.find((t: Tag) => t.id === currentTagId) ?? null);
 
   function handleInputFocus() {
     isOpen = true;
@@ -85,9 +95,9 @@
         placeholder={m.detection_species_change_placeholder()}
         bind:value={searchQuery}
         class="w-36 rounded border border-stone-300 px-2 py-0.5 text-xs focus:border-primary-400 focus:outline-none focus:ring-1 focus:ring-primary-400"
-        on:focus={handleInputFocus}
-        on:blur={handleInputBlur}
-        on:keydown={handleKeydown}
+        onfocus={handleInputFocus}
+        onblur={handleInputBlur}
+        onkeydown={handleKeydown}
         autocomplete="off"
         role="combobox"
         aria-label={m.detection_species_search_aria()}
@@ -114,7 +124,7 @@
                 class="flex cursor-pointer flex-col gap-0.5 px-3 py-1.5 hover:bg-stone-50"
                 role="option"
                 aria-selected="false"
-                on:click={() => handleSelect(tag)}
+                onclick={() => handleSelect(tag)}
               >
                 <span class="text-xs font-medium text-stone-800">{tag.name}</span>
                 {#if tag.scientific_name}

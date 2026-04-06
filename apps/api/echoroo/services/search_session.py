@@ -5,9 +5,11 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 from typing import Annotated
+from uuid import UUID
 
 from fastapi import Depends
-from sqlalchemy import func, select, update
+from sqlalchemy import bindparam, func, select, text, update
+from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from echoroo.core.database import get_db
@@ -256,6 +258,145 @@ class SearchSessionService:
             .values(confirmed_count=row.confirmed, rejected_count=row.rejected)
         )
         await self.db.flush()
+
+
+    async def update_name(
+        self,
+        session: SearchSession,
+        name: str,
+    ) -> SearchSession:
+        """Update the name of a search session.
+
+        Args:
+            session: SearchSession instance to update
+            name: New name for the session
+
+        Returns:
+            Updated and refreshed SearchSession instance
+        """
+        session.name = name
+        await self.db.flush()
+        await self.db.refresh(session)
+        return session
+
+    async def get_by_job_id(
+        self,
+        job_id: str,
+        project_id: UUID,
+    ) -> SearchSession | None:
+        """Find a session by its Celery job ID, scoped to the given project.
+
+        Args:
+            job_id: Celery task ID string
+            project_id: Project UUID for access scoping
+
+        Returns:
+            SearchSession if found, None otherwise
+        """
+        result = await self.db.execute(
+            select(SearchSession).where(
+                SearchSession.celery_job_id == job_id,
+                SearchSession.project_id == project_id,
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def mark_completed(
+        self,
+        session: SearchSession,
+        raw_results: dict[str, object],
+    ) -> None:
+        """Transition a session to COMPLETED status and persist results.
+
+        Args:
+            session: SearchSession instance to update
+            raw_results: Raw Celery task result dict to store
+        """
+        session.status = SearchSessionStatus.COMPLETED
+        session.results = raw_results
+        session.result_count = (
+            raw_results.get("total_matches", 0) if isinstance(raw_results, dict) else 0
+        )
+        session.completed_at = datetime.now(UTC)
+        await self.db.flush()
+
+    async def mark_failed(
+        self,
+        session: SearchSession,
+        error_message: str,
+    ) -> None:
+        """Transition a session to FAILED status and record the error.
+
+        Args:
+            session: SearchSession instance to update
+            error_message: Description of the failure
+        """
+        session.status = SearchSessionStatus.FAILED
+        session.error_message = error_message
+        session.completed_at = datetime.now(UTC)
+        await self.db.flush()
+
+    async def reset_for_rerun(
+        self,
+        session: SearchSession,
+        job_id: str,
+        model_name: str,
+        parameters: dict[str, object],
+        species_config: list[dict[str, object]],
+        reference_audio_keys: list[str] | None,
+    ) -> SearchSession:
+        """Reset a session's fields for a re-run and delete its existing annotations.
+
+        Clears results, counters, error state, and prior annotations linked to
+        this session.  Updates the session with the new job ID, model, parameters,
+        and species configuration, then auto-generates a new name.
+
+        Args:
+            session: SearchSession instance to reset
+            job_id: New Celery job ID for the re-run
+            model_name: ML model name for the new run
+            parameters: Updated search parameters dict
+            species_config: Updated species configuration list (with s3_keys)
+            reference_audio_keys: Updated list of S3 keys for reference audio
+
+        Returns:
+            Updated SearchSession (not yet committed)
+        """
+        # Delete existing annotations linked to this session
+        await self.db.execute(
+            text("DELETE FROM annotations WHERE search_session_id = :sid").bindparams(
+                bindparam("sid", value=session.id, type_=PGUUID())
+            )
+        )
+
+        session.status = SearchSessionStatus.PENDING
+        session.results = None
+        session.result_count = 0
+        session.confirmed_count = 0
+        session.rejected_count = 0
+        session.error_message = None
+        session.started_at = None
+        session.completed_at = None
+        session.celery_job_id = job_id
+        session.model_name = model_name
+        session.parameters = parameters
+        session.species_config = species_config
+        session.reference_audio_keys = reference_audio_keys if reference_audio_keys else None
+
+        # Auto-generate a new name from species config
+        species_names: list[str] = []
+        for sp_cfg in species_config:
+            raw_label = sp_cfg.get("common_name") or sp_cfg.get("scientific_name", "Unknown")
+            label = str(raw_label) if raw_label is not None else "Unknown"
+            species_names.append(label)
+        date_str = datetime.now(UTC).strftime("%Y-%m-%d")
+        if len(species_names) > 3:
+            session.name = f"{', '.join(species_names[:3])}... - {date_str}"
+        else:
+            session.name = f"{', '.join(species_names)} - {date_str}"
+
+        await self.db.flush()
+        return session
 
 
 async def get_search_session_service(

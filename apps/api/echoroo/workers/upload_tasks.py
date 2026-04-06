@@ -21,8 +21,6 @@ from os.path import splitext
 from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-
 from echoroo.core.s3 import (
     delete_objects_by_prefix,
     get_object_stream,
@@ -30,7 +28,6 @@ from echoroo.core.s3 import (
     move_object,
     verify_object_exists,
 )
-from echoroo.core.settings import get_settings
 from echoroo.models.enums import DatetimeParseStatus, UploadFileStatus, UploadSessionStatus
 from echoroo.models.recording import Recording
 from echoroo.models.upload import UploadFile, UploadSession
@@ -38,6 +35,7 @@ from echoroo.repositories.dataset import DatasetRepository
 from echoroo.repositories.recording import RecordingRepository
 from echoroo.repositories.upload import UploadFileRepository, UploadSessionRepository
 from echoroo.workers.celery_app import app
+from echoroo.workers.db_utils import get_worker_engine_and_session_factory
 
 logger = logging.getLogger(__name__)
 
@@ -53,28 +51,6 @@ _AUDIO_MAGIC: dict[str, list[bytes]] = {
 }
 
 _BATCH_SIZE = 100  # Number of recordings to insert per batch
-
-
-# ---------------------------------------------------------------------------
-# Async session factory for worker use
-# ---------------------------------------------------------------------------
-
-
-def _get_session_factory() -> async_sessionmaker[AsyncSession]:
-    """Create a fresh async session factory for each task invocation.
-
-    Each Celery task calls ``asyncio.run()`` which creates a new event loop.
-    Reusing a cached engine across loops causes "Future attached to a different
-    loop" errors, so we create a fresh engine every time.
-
-    TODO: expose the engine so callers can dispose it in a finally block after
-    the task completes (same pattern as ml_tasks._get_engine_and_session_factory).
-    Currently the engine is leaked to GC, which is acceptable for short-lived
-    tasks but should be cleaned up for consistency.
-    """
-    settings = get_settings()
-    engine = create_async_engine(settings.DATABASE_URL, echo=False, pool_pre_ping=True)
-    return async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 
 # ---------------------------------------------------------------------------
@@ -226,203 +202,206 @@ def _build_recording_s3_key(
 
 async def _run_validate(session_id: str) -> dict[str, Any]:
     """Async implementation of upload session validation."""
-    session_factory = _get_session_factory()
+    engine, session_factory = get_worker_engine_and_session_factory()
     s3 = get_s3_client()
 
-    async with session_factory() as db:
-        session_repo = UploadSessionRepository(db)
-        file_repo = UploadFileRepository(db)
+    try:
+        async with session_factory() as db:
+            session_repo = UploadSessionRepository(db)
+            file_repo = UploadFileRepository(db)
 
-        # Load upload session
-        upload_session: UploadSession | None = await session_repo.get_by_id(UUID(session_id))
-        if upload_session is None:
-            raise ValueError(f"Upload session not found: {session_id}")
+            # Load upload session
+            upload_session: UploadSession | None = await session_repo.get_by_id(UUID(session_id))
+            if upload_session is None:
+                raise ValueError(f"Upload session not found: {session_id}")
 
-        # Guard: only transition from UPLOADED state
-        if upload_session.status != UploadSessionStatus.UPLOADED:
-            raise ValueError(
-                f"Session {session_id} is in {upload_session.status.value}, expected UPLOADED"
+            # Guard: only transition from UPLOADED state
+            if upload_session.status != UploadSessionStatus.UPLOADED:
+                raise ValueError(
+                    f"Session {session_id} is in {upload_session.status.value}, expected UPLOADED"
+                )
+
+            # CAS transition: UPLOADED -> VALIDATING
+            transitioned = await session_repo.update_status(
+                upload_session.id,
+                UploadSessionStatus.VALIDATING,
+                expected_status=UploadSessionStatus.UPLOADED,
             )
+            if not transitioned:
+                raise ValueError(f"Session {session_id} state changed concurrently, aborting validation")
+            await db.commit()
 
-        # CAS transition: UPLOADED -> VALIDATING
-        transitioned = await session_repo.update_status(
-            upload_session.id,
-            UploadSessionStatus.VALIDATING,
-            expected_status=UploadSessionStatus.UPLOADED,
-        )
-        if not transitioned:
-            raise ValueError(f"Session {session_id} state changed concurrently, aborting validation")
-        await db.commit()
+            valid_count = 0
+            invalid_count = 0
 
-        valid_count = 0
-        invalid_count = 0
+            # Process each uploaded file
+            files = upload_session.files
+            for file in files:
+                if file.status != UploadFileStatus.UPLOADED:
+                    continue
 
-        # Process each uploaded file
-        files = upload_session.files
-        for file in files:
-            if file.status != UploadFileStatus.UPLOADED:
-                continue
+                file_ext = splitext(file.original_filename)[1].lower() or ".bin"
 
-            file_ext = splitext(file.original_filename)[1].lower() or ".bin"
+                # --- Step 1: Check magic bytes ---
+                try:
+                    stream = get_object_stream(file.object_key, byte_range="bytes=0-65535", client=s3)
+                    header = stream.read(65536)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("Failed to read S3 header for %s: %s", file.object_key, exc)
+                    await file_repo.update_status(
+                        file.id,
+                        UploadFileStatus.INVALID,
+                        validation_error=f"Failed to read file from storage: {exc}",
+                    )
+                    await db.commit()
+                    invalid_count += 1
+                    continue
 
-            # --- Step 1: Check magic bytes ---
-            try:
-                stream = get_object_stream(file.object_key, byte_range="bytes=0-65535", client=s3)
-                header = stream.read(65536)
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("Failed to read S3 header for %s: %s", file.object_key, exc)
-                await file_repo.update_status(
-                    file.id,
-                    UploadFileStatus.INVALID,
-                    validation_error=f"Failed to read file from storage: {exc}",
-                )
-                await db.commit()
-                invalid_count += 1
-                continue
+                detected_format = _detect_audio_format(header)
+                if detected_format is None:
+                    logger.info("Invalid audio magic bytes for file %s", file.original_filename)
+                    await file_repo.update_status(
+                        file.id,
+                        UploadFileStatus.INVALID,
+                        validation_error="Invalid audio file format",
+                    )
+                    await db.commit()
+                    invalid_count += 1
+                    continue
 
-            detected_format = _detect_audio_format(header)
-            if detected_format is None:
-                logger.info("Invalid audio magic bytes for file %s", file.original_filename)
-                await file_repo.update_status(
-                    file.id,
-                    UploadFileStatus.INVALID,
-                    validation_error="Invalid audio file format",
-                )
-                await db.commit()
-                invalid_count += 1
-                continue
-
-            # --- Step 2: ffprobe metadata extraction ---
-            probe_data: dict[str, Any] | None = None
-            tmp_path: str | None = None
-            checksum_ok = True
-            try:
-                with tempfile.NamedTemporaryFile(suffix=file_ext, delete=False) as tmp:
-                    tmp_path = tmp.name
-                    # Download full file to temp location for ffprobe.
-                    # Read in chunks to enforce a size limit (M4) and compute
-                    # SHA-256 for integrity verification (M3 / H4 TOCTOU).
-                    full_stream = get_object_stream(file.object_key, client=s3)
-                    max_bytes = file.file_size + 1024  # small margin for headers
-                    bytes_written = 0
-                    while True:
-                        chunk = full_stream.read(65536)
-                        if not chunk:
-                            break
-                        bytes_written += len(chunk)
-                        if bytes_written > max_bytes:
-                            raise ValueError(
-                                f"File exceeds expected size of {file.file_size} bytes"
-                            )
-                        tmp.write(chunk)
-                    tmp.flush()
-
-                    # Verify SHA-256 checksum to detect corruption or TOCTOU replacement
-                    # Skip verification if no checksum was provided (e.g. HTTP without crypto.subtle)
-                    if file.checksum_sha256 is not None:
-                        tmp.seek(0)
-                        hasher = hashlib.sha256()
+                # --- Step 2: ffprobe metadata extraction ---
+                probe_data: dict[str, Any] | None = None
+                tmp_path: str | None = None
+                checksum_ok = True
+                try:
+                    with tempfile.NamedTemporaryFile(suffix=file_ext, delete=False) as tmp:
+                        tmp_path = tmp.name
+                        # Download full file to temp location for ffprobe.
+                        # Read in chunks to enforce a size limit (M4) and compute
+                        # SHA-256 for integrity verification (M3 / H4 TOCTOU).
+                        full_stream = get_object_stream(file.object_key, client=s3)
+                        max_bytes = file.file_size + 1024  # small margin for headers
+                        bytes_written = 0
                         while True:
-                            read_chunk = tmp.read(65536)
-                            if not read_chunk:
+                            chunk = full_stream.read(65536)
+                            if not chunk:
                                 break
-                            hasher.update(read_chunk)
-                        actual_hash = hasher.hexdigest()
-                        if not hmac.compare_digest(actual_hash, file.checksum_sha256):
-                            checksum_ok = False
-                            logger.warning(
-                                "Checksum mismatch for file %s: expected %s..., got %s...",
-                                file.original_filename,
-                                file.checksum_sha256[:16],
-                                actual_hash[:16],
-                            )
-                            await file_repo.update_status(
-                                file.id,
-                                UploadFileStatus.INVALID,
-                                validation_error=(
-                                    f"Checksum mismatch: expected {file.checksum_sha256[:16]}..., "
-                                    f"got {actual_hash[:16]}..."
-                                ),
-                            )
-                            await db.commit()
-                            invalid_count += 1
+                            bytes_written += len(chunk)
+                            if bytes_written > max_bytes:
+                                raise ValueError(
+                                    f"File exceeds expected size of {file.file_size} bytes"
+                                )
+                            tmp.write(chunk)
+                        tmp.flush()
 
-                if checksum_ok:
-                    probe_data = _run_ffprobe(tmp_path)
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("Error downloading/validating file %s: %s", file.original_filename, exc)
+                        # Verify SHA-256 checksum to detect corruption or TOCTOU replacement
+                        # Skip verification if no checksum was provided (e.g. HTTP without crypto.subtle)
+                        if file.checksum_sha256 is not None:
+                            tmp.seek(0)
+                            hasher = hashlib.sha256()
+                            while True:
+                                read_chunk = tmp.read(65536)
+                                if not read_chunk:
+                                    break
+                                hasher.update(read_chunk)
+                            actual_hash = hasher.hexdigest()
+                            if not hmac.compare_digest(actual_hash, file.checksum_sha256):
+                                checksum_ok = False
+                                logger.warning(
+                                    "Checksum mismatch for file %s: expected %s..., got %s...",
+                                    file.original_filename,
+                                    file.checksum_sha256[:16],
+                                    actual_hash[:16],
+                                )
+                                await file_repo.update_status(
+                                    file.id,
+                                    UploadFileStatus.INVALID,
+                                    validation_error=(
+                                        f"Checksum mismatch: expected {file.checksum_sha256[:16]}..., "
+                                        f"got {actual_hash[:16]}..."
+                                    ),
+                                )
+                                await db.commit()
+                                invalid_count += 1
+
+                    if checksum_ok:
+                        probe_data = _run_ffprobe(tmp_path)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("Error downloading/validating file %s: %s", file.original_filename, exc)
+                    await file_repo.update_status(
+                        file.id,
+                        UploadFileStatus.INVALID,
+                        validation_error=f"Validation error: {exc}",
+                    )
+                    await db.commit()
+                    invalid_count += 1
+                    checksum_ok = False  # Prevent further processing
+                finally:
+                    if tmp_path is not None:
+                        with contextlib.suppress(OSError):
+                            os.unlink(tmp_path)
+
+                if not checksum_ok:
+                    continue
+
+                if probe_data is None:
+                    await file_repo.update_status(
+                        file.id,
+                        UploadFileStatus.INVALID,
+                        validation_error="Could not extract audio metadata (ffprobe failed)",
+                    )
+                    await db.commit()
+                    invalid_count += 1
+                    continue
+
+                metadata = _extract_audio_metadata(probe_data)
+
+                # Require at minimum a duration and samplerate
+                if metadata["duration"] is None or metadata["samplerate"] is None:
+                    await file_repo.update_status(
+                        file.id,
+                        UploadFileStatus.INVALID,
+                        validation_error="Could not determine audio duration or sample rate",
+                    )
+                    await db.commit()
+                    invalid_count += 1
+                    continue
+
+                # Mark file as valid with extracted metadata
                 await file_repo.update_status(
                     file.id,
-                    UploadFileStatus.INVALID,
-                    validation_error=f"Validation error: {exc}",
+                    UploadFileStatus.VALID,
+                    duration=metadata["duration"],
+                    samplerate=metadata["samplerate"],
+                    channels=metadata["channels"],
+                    bit_depth=metadata["bit_depth"],
                 )
                 await db.commit()
-                invalid_count += 1
-                checksum_ok = False  # Prevent further processing
-            finally:
-                if tmp_path is not None:
-                    with contextlib.suppress(OSError):
-                        os.unlink(tmp_path)
+                valid_count += 1
 
-            if not checksum_ok:
-                continue
-
-            if probe_data is None:
-                await file_repo.update_status(
-                    file.id,
-                    UploadFileStatus.INVALID,
-                    validation_error="Could not extract audio metadata (ffprobe failed)",
+                # Update validated_files counter (valid+invalid = processed for progress)
+                await session_repo.update_progress(
+                    upload_session.id, validated_files=valid_count + invalid_count,
                 )
                 await db.commit()
-                invalid_count += 1
-                continue
 
-            metadata = _extract_audio_metadata(probe_data)
-
-            # Require at minimum a duration and samplerate
-            if metadata["duration"] is None or metadata["samplerate"] is None:
-                await file_repo.update_status(
-                    file.id,
-                    UploadFileStatus.INVALID,
-                    validation_error="Could not determine audio duration or sample rate",
-                )
-                await db.commit()
-                invalid_count += 1
-                continue
-
-            # Mark file as valid with extracted metadata
-            await file_repo.update_status(
-                file.id,
-                UploadFileStatus.VALID,
-                duration=metadata["duration"],
-                samplerate=metadata["samplerate"],
-                channels=metadata["channels"],
-                bit_depth=metadata["bit_depth"],
-            )
+            # Mark session as validated regardless of per-file errors
+            await session_repo.update_status(upload_session.id, UploadSessionStatus.VALIDATED)
             await db.commit()
-            valid_count += 1
 
-            # Update validated_files counter (valid+invalid = processed for progress)
-            await session_repo.update_progress(
-                upload_session.id, validated_files=valid_count + invalid_count,
+            logger.info(
+                "Validation complete for session %s: %d valid, %d invalid",
+                session_id,
+                valid_count,
+                invalid_count,
             )
-            await db.commit()
-
-        # Mark session as validated regardless of per-file errors
-        await session_repo.update_status(upload_session.id, UploadSessionStatus.VALIDATED)
-        await db.commit()
-
-        logger.info(
-            "Validation complete for session %s: %d valid, %d invalid",
-            session_id,
-            valid_count,
-            invalid_count,
-        )
-        return {
-            "session_id": session_id,
-            "valid_files": valid_count,
-            "invalid_files": invalid_count,
-        }
+            return {
+                "session_id": session_id,
+                "valid_files": valid_count,
+                "invalid_files": invalid_count,
+            }
+    finally:
+        await engine.dispose()
 
 
 async def _run_import(
@@ -432,245 +411,254 @@ async def _run_import(
     datetime_timezone: str | None = None,
 ) -> dict[str, Any]:
     """Async implementation of import from upload session."""
-    session_factory = _get_session_factory()
+    engine, session_factory = get_worker_engine_and_session_factory()
     s3 = get_s3_client()
 
-    async with session_factory() as db:
-        session_repo = UploadSessionRepository(db)
-        file_repo = UploadFileRepository(db)
-        recording_repo = RecordingRepository(db)
+    try:
+        async with session_factory() as db:
+            session_repo = UploadSessionRepository(db)
+            file_repo = UploadFileRepository(db)
+            recording_repo = RecordingRepository(db)
 
-        # Load upload session
-        upload_session: UploadSession | None = await session_repo.get_by_id(UUID(session_id))
-        if upload_session is None:
-            raise ValueError(f"Upload session not found: {session_id}")
+            # Load upload session
+            upload_session: UploadSession | None = await session_repo.get_by_id(UUID(session_id))
+            if upload_session is None:
+                raise ValueError(f"Upload session not found: {session_id}")
 
-        if upload_session.status != UploadSessionStatus.VALIDATED:
-            raise ValueError(
-                f"Session {session_id} is in status {upload_session.status.value}, "
-                "expected VALIDATED"
+            if upload_session.status != UploadSessionStatus.VALIDATED:
+                raise ValueError(
+                    f"Session {session_id} is in status {upload_session.status.value}, "
+                    "expected VALIDATED"
+                )
+
+            # CAS transition: VALIDATED -> IMPORTING
+            transitioned = await session_repo.update_status(
+                upload_session.id,
+                UploadSessionStatus.IMPORTING,
+                expected_status=UploadSessionStatus.VALIDATED,
+            )
+            if not transitioned:
+                raise ValueError(f"Session {session_id} state changed concurrently, aborting import")
+            await db.commit()
+
+            dataset = upload_session.dataset
+            project_id = dataset.project_id
+            dataset_id = dataset.id
+
+            # Resolve datetime pattern/format/timezone: prefer task arguments, fall back to dataset settings
+            effective_pattern = datetime_pattern or dataset.datetime_pattern
+            effective_format = datetime_format or dataset.datetime_format
+            effective_timezone = datetime_timezone or dataset.datetime_timezone
+
+            imported_count = 0
+            failed_count = 0
+            pending_recordings: list[Recording] = []
+            pending_file_ids: list[UUID] = []
+
+            async def _flush_batch() -> None:
+                """Commit accumulated recording batch and update file statuses."""
+                nonlocal imported_count
+                if not pending_recordings:
+                    return
+                created = await recording_repo.create_many(pending_recordings)
+                await db.commit()
+                for rec, file_id in zip(created, pending_file_ids, strict=False):
+                    await file_repo.update_status(
+                        file_id,
+                        UploadFileStatus.IMPORTED,
+                        recording_id=rec.id,
+                    )
+                await db.commit()
+                imported_count += len(created)
+                await session_repo.update_progress(upload_session.id, imported_files=imported_count)
+                await db.commit()
+                pending_recordings.clear()
+                pending_file_ids.clear()
+
+            valid_files: list[UploadFile] = await file_repo.get_valid_files(upload_session.id)
+
+            for file in valid_files:
+                recording_id = uuid4()
+                file_ext = splitext(file.original_filename)[1].lower() or ""
+
+                # Build destination S3 key
+                dest_key = _build_recording_s3_key(project_id, dataset_id, recording_id, file_ext)
+
+                # Re-verify S3 object existence and size before moving to guard
+                # against TOCTOU: another process may have removed or replaced the
+                # object between validation and import (H4).
+                obj_info = verify_object_exists(file.object_key, expected_size=file.file_size, client=s3)
+                if not obj_info["exists"] or not obj_info["size_match"]:
+                    logger.error(
+                        "File %s missing or size changed before import, skipping",
+                        file.object_key,
+                    )
+                    failed_count += 1
+                    continue
+
+                # Move S3 object from uploads prefix to recordings prefix
+                moved = move_object(file.object_key, dest_key, client=s3)
+                if not moved:
+                    logger.error(
+                        "Failed to move S3 object %s -> %s for file %s",
+                        file.object_key,
+                        dest_key,
+                        file.id,
+                    )
+                    failed_count += 1
+                    continue
+
+                # Parse datetime from original filename
+                parsed_dt, parse_error = _parse_datetime_from_filename(
+                    file.original_filename,
+                    effective_pattern,
+                    effective_format,
+                    effective_timezone,
+                )
+
+                if parse_error is not None:
+                    dt_status = DatetimeParseStatus.FAILED
+                elif parsed_dt is not None:
+                    dt_status = DatetimeParseStatus.SUCCESS
+                else:
+                    dt_status = DatetimeParseStatus.PENDING
+
+                recording = Recording(
+                    id=recording_id,
+                    dataset_id=dataset_id,
+                    filename=file.original_filename,
+                    path=dest_key,
+                    hash=file.checksum_sha256,
+                    duration=file.duration or 0.0,
+                    samplerate=file.samplerate or 0,
+                    channels=file.channels or 1,
+                    bit_depth=file.bit_depth,
+                    datetime=parsed_dt,
+                    datetime_parse_status=dt_status,
+                    datetime_parse_error=parse_error,
+                    time_expansion=1.0,
+                )
+
+                pending_recordings.append(recording)
+                pending_file_ids.append(file.id)
+
+                # Flush in batches to avoid large transactions
+                if len(pending_recordings) >= _BATCH_SIZE:
+                    await _flush_batch()
+
+            # Flush any remaining recordings
+            await _flush_batch()
+
+            # Mark session as fully imported
+            await session_repo.update_status(upload_session.id, UploadSessionStatus.IMPORTED)
+            await db.commit()
+
+            logger.info(
+                "Import complete for session %s: %d imported, %d failed",
+                session_id,
+                imported_count,
+                failed_count,
             )
 
-        # CAS transition: VALIDATED -> IMPORTING
-        transitioned = await session_repo.update_status(
-            upload_session.id,
-            UploadSessionStatus.IMPORTING,
-            expected_status=UploadSessionStatus.VALIDATED,
-        )
-        if not transitioned:
-            raise ValueError(f"Session {session_id} state changed concurrently, aborting import")
-        await db.commit()
+            # Note: automatic BirdNET detection after import has been removed.
+            # Detection runs are now created explicitly via the API (DetectionRunService),
+            # which ensures a DetectionRun record is committed to the database before
+            # the Celery task is dispatched (avoiding a race condition).
 
-        dataset = upload_session.dataset
-        project_id = dataset.project_id
-        dataset_id = dataset.id
-
-        # Resolve datetime pattern/format/timezone: prefer task arguments, fall back to dataset settings
-        effective_pattern = datetime_pattern or dataset.datetime_pattern
-        effective_format = datetime_format or dataset.datetime_format
-        effective_timezone = datetime_timezone or dataset.datetime_timezone
-
-        imported_count = 0
-        failed_count = 0
-        pending_recordings: list[Recording] = []
-        pending_file_ids: list[UUID] = []
-
-        async def _flush_batch() -> None:
-            """Commit accumulated recording batch and update file statuses."""
-            nonlocal imported_count
-            if not pending_recordings:
-                return
-            created = await recording_repo.create_many(pending_recordings)
-            await db.commit()
-            for rec, file_id in zip(created, pending_file_ids, strict=False):
-                await file_repo.update_status(
-                    file_id,
-                    UploadFileStatus.IMPORTED,
-                    recording_id=rec.id,
-                )
-            await db.commit()
-            imported_count += len(created)
-            await session_repo.update_progress(upload_session.id, imported_files=imported_count)
-            await db.commit()
-            pending_recordings.clear()
-            pending_file_ids.clear()
-
-        valid_files: list[UploadFile] = await file_repo.get_valid_files(upload_session.id)
-
-        for file in valid_files:
-            recording_id = uuid4()
-            file_ext = splitext(file.original_filename)[1].lower() or ""
-
-            # Build destination S3 key
-            dest_key = _build_recording_s3_key(project_id, dataset_id, recording_id, file_ext)
-
-            # Re-verify S3 object existence and size before moving to guard
-            # against TOCTOU: another process may have removed or replaced the
-            # object between validation and import (H4).
-            obj_info = verify_object_exists(file.object_key, expected_size=file.file_size, client=s3)
-            if not obj_info["exists"] or not obj_info["size_match"]:
-                logger.error(
-                    "File %s missing or size changed before import, skipping",
-                    file.object_key,
-                )
-                failed_count += 1
-                continue
-
-            # Move S3 object from uploads prefix to recordings prefix
-            moved = move_object(file.object_key, dest_key, client=s3)
-            if not moved:
-                logger.error(
-                    "Failed to move S3 object %s -> %s for file %s",
-                    file.object_key,
-                    dest_key,
-                    file.id,
-                )
-                failed_count += 1
-                continue
-
-            # Parse datetime from original filename
-            parsed_dt, parse_error = _parse_datetime_from_filename(
-                file.original_filename,
-                effective_pattern,
-                effective_format,
-                effective_timezone,
-            )
-
-            if parse_error is not None:
-                dt_status = DatetimeParseStatus.FAILED
-            elif parsed_dt is not None:
-                dt_status = DatetimeParseStatus.SUCCESS
-            else:
-                dt_status = DatetimeParseStatus.PENDING
-
-            recording = Recording(
-                id=recording_id,
-                dataset_id=dataset_id,
-                filename=file.original_filename,
-                path=dest_key,
-                hash=file.checksum_sha256,
-                duration=file.duration or 0.0,
-                samplerate=file.samplerate or 0,
-                channels=file.channels or 1,
-                bit_depth=file.bit_depth,
-                datetime=parsed_dt,
-                datetime_parse_status=dt_status,
-                datetime_parse_error=parse_error,
-                time_expansion=1.0,
-            )
-
-            pending_recordings.append(recording)
-            pending_file_ids.append(file.id)
-
-            # Flush in batches to avoid large transactions
-            if len(pending_recordings) >= _BATCH_SIZE:
-                await _flush_batch()
-
-        # Flush any remaining recordings
-        await _flush_batch()
-
-        # Mark session as fully imported
-        await session_repo.update_status(upload_session.id, UploadSessionStatus.IMPORTED)
-        await db.commit()
-
-        logger.info(
-            "Import complete for session %s: %d imported, %d failed",
-            session_id,
-            imported_count,
-            failed_count,
-        )
-
-        # Note: automatic BirdNET detection after import has been removed.
-        # Detection runs are now created explicitly via the API (DetectionRunService),
-        # which ensures a DetectionRun record is committed to the database before
-        # the Celery task is dispatched (avoiding a race condition).
-
-        return {
-            "session_id": session_id,
-            "imported_files": imported_count,
-            "failed_files": failed_count,
-        }
+            return {
+                "session_id": session_id,
+                "imported_files": imported_count,
+                "failed_files": failed_count,
+            }
+    finally:
+        await engine.dispose()
 
 
 async def _run_cleanup() -> dict[str, Any]:
     """Async implementation of orphan upload cleanup."""
-    session_factory = _get_session_factory()
+    engine, session_factory = get_worker_engine_and_session_factory()
     s3 = get_s3_client()
 
-    async with session_factory() as db:
-        session_repo = UploadSessionRepository(db)
+    try:
+        async with session_factory() as db:
+            session_repo = UploadSessionRepository(db)
 
-        expired_count = 0
-        stale_count = 0
+            expired_count = 0
+            stale_count = 0
 
-        # --- Cleanup expired ISSUED sessions ---
-        expired_sessions: list[UploadSession] = await session_repo.get_expired_sessions()
-        for upload_session in expired_sessions:
-            dataset = upload_session.dataset
-            prefix = f"uploads/{dataset.project_id}/{dataset.id}/{upload_session.id}/"
-            try:
-                deleted = delete_objects_by_prefix(prefix, client=s3)
-                logger.info(
-                    "Deleted %d S3 objects for expired session %s",
-                    deleted,
+            # --- Cleanup expired ISSUED sessions ---
+            expired_sessions: list[UploadSession] = await session_repo.get_expired_sessions()
+            for upload_session in expired_sessions:
+                dataset = upload_session.dataset
+                prefix = f"uploads/{dataset.project_id}/{dataset.id}/{upload_session.id}/"
+                try:
+                    deleted = delete_objects_by_prefix(prefix, client=s3)
+                    logger.info(
+                        "Deleted %d S3 objects for expired session %s",
+                        deleted,
+                        upload_session.id,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("S3 cleanup failed for expired session %s: %s", upload_session.id, exc)
+
+                await session_repo.update_status(
                     upload_session.id,
+                    UploadSessionStatus.FAILED,
+                    error="Session expired",
                 )
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("S3 cleanup failed for expired session %s: %s", upload_session.id, exc)
+                await db.commit()
+                expired_count += 1
 
-            await session_repo.update_status(
-                upload_session.id,
-                UploadSessionStatus.FAILED,
-                error="Session expired",
-            )
-            await db.commit()
-            expired_count += 1
+            # --- Cleanup stale mid-processing sessions ---
+            stale_sessions: list[UploadSession] = await session_repo.get_stale_sessions(max_age_hours=24)
+            for upload_session in stale_sessions:
+                dataset = upload_session.dataset
+                prefix = f"uploads/{dataset.project_id}/{dataset.id}/{upload_session.id}/"
+                try:
+                    deleted = delete_objects_by_prefix(prefix, client=s3)
+                    logger.info(
+                        "Deleted %d S3 objects for stale session %s",
+                        deleted,
+                        upload_session.id,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("S3 cleanup failed for stale session %s: %s", upload_session.id, exc)
 
-        # --- Cleanup stale mid-processing sessions ---
-        stale_sessions: list[UploadSession] = await session_repo.get_stale_sessions(max_age_hours=24)
-        for upload_session in stale_sessions:
-            dataset = upload_session.dataset
-            prefix = f"uploads/{dataset.project_id}/{dataset.id}/{upload_session.id}/"
-            try:
-                deleted = delete_objects_by_prefix(prefix, client=s3)
-                logger.info(
-                    "Deleted %d S3 objects for stale session %s",
-                    deleted,
+                await session_repo.update_status(
                     upload_session.id,
+                    UploadSessionStatus.FAILED,
+                    error="Session timed out",
                 )
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("S3 cleanup failed for stale session %s: %s", upload_session.id, exc)
+                await db.commit()
+                stale_count += 1
 
-            await session_repo.update_status(
-                upload_session.id,
-                UploadSessionStatus.FAILED,
-                error="Session timed out",
+            logger.info(
+                "Cleanup complete: %d expired sessions, %d stale sessions removed",
+                expired_count,
+                stale_count,
             )
-            await db.commit()
-            stale_count += 1
-
-        logger.info(
-            "Cleanup complete: %d expired sessions, %d stale sessions removed",
-            expired_count,
-            stale_count,
-        )
-        return {
-            "expired_sessions_cleaned": expired_count,
-            "stale_sessions_cleaned": stale_count,
-        }
+            return {
+                "expired_sessions_cleaned": expired_count,
+                "stale_sessions_cleaned": stale_count,
+            }
+    finally:
+        await engine.dispose()
 
 
 async def _mark_session_failed(session_id: str, error: str) -> None:
     """Mark an upload session as FAILED with an error message."""
-    session_factory = _get_session_factory()
-    async with session_factory() as db:
-        session_repo = UploadSessionRepository(db)
-        await session_repo.update_status(
-            UUID(session_id),
-            UploadSessionStatus.FAILED,
-            error=error,
-        )
-        await db.commit()
+    engine, session_factory = get_worker_engine_and_session_factory()
+    try:
+        async with session_factory() as db:
+            session_repo = UploadSessionRepository(db)
+            await session_repo.update_status(
+                UUID(session_id),
+                UploadSessionStatus.FAILED,
+                error=error,
+            )
+            await db.commit()
+    finally:
+        await engine.dispose()
 
 
 # ---------------------------------------------------------------------------
@@ -750,73 +738,76 @@ async def _run_reparse_datetimes(
     timezone: str | None = None,
 ) -> dict[str, Any]:
     """Async implementation of datetime re-parsing for all recordings in a dataset."""
-    session_factory = _get_session_factory()
+    engine, session_factory = get_worker_engine_and_session_factory()
     uuid_dataset_id = UUID(dataset_id)
 
-    async with session_factory() as db:
-        recording_repo = RecordingRepository(db)
-        dataset_repo = DatasetRepository(db)
+    try:
+        async with session_factory() as db:
+            recording_repo = RecordingRepository(db)
+            dataset_repo = DatasetRepository(db)
 
-        total = await recording_repo.count_by_dataset(uuid_dataset_id)
-        updated = 0
-        failed = 0
+            total = await recording_repo.count_by_dataset(uuid_dataset_id)
+            updated = 0
+            failed = 0
 
-        # Update dataset's datetime_timezone field when saving
-        dataset = await dataset_repo.get_by_id(uuid_dataset_id)
-        if dataset is not None:
-            dataset.datetime_timezone = timezone
-            await dataset_repo.update(dataset)
-            await db.commit()
+            # Update dataset's datetime_timezone field when saving
+            dataset = await dataset_repo.get_by_id(uuid_dataset_id)
+            if dataset is not None:
+                dataset.datetime_timezone = timezone
+                await dataset_repo.update(dataset)
+                await db.commit()
 
-        # Process in batches of 100
-        page = 1
-        while True:
-            recordings_page, _ = await recording_repo.list_by_dataset(
-                uuid_dataset_id,
-                page=page,
-                page_size=_BATCH_SIZE,
-                sort_by="id",
-                sort_order="asc",
-            )
-            if not recordings_page:
-                break
-
-            for recording in recordings_page:
-                parsed_dt, parse_error = _parse_datetime_from_filename(
-                    recording.filename, pattern, format_str, timezone
+            # Process in batches of 100
+            page = 1
+            while True:
+                recordings_page, _ = await recording_repo.list_by_dataset(
+                    uuid_dataset_id,
+                    page=page,
+                    page_size=_BATCH_SIZE,
+                    sort_by="id",
+                    sort_order="asc",
                 )
+                if not recordings_page:
+                    break
 
-                if parse_error is not None:
-                    recording.datetime_parse_status = DatetimeParseStatus.FAILED
-                    recording.datetime_parse_error = parse_error
-                    recording.datetime = None
-                    failed += 1
-                elif parsed_dt is not None:
-                    recording.datetime_parse_status = DatetimeParseStatus.SUCCESS
-                    recording.datetime_parse_error = None
-                    recording.datetime = parsed_dt
-                    updated += 1
-                else:
-                    recording.datetime_parse_status = DatetimeParseStatus.PENDING
-                    recording.datetime_parse_error = None
-                    recording.datetime = None
+                for recording in recordings_page:
+                    parsed_dt, parse_error = _parse_datetime_from_filename(
+                        recording.filename, pattern, format_str, timezone
+                    )
 
-            await db.commit()
-            page += 1
+                    if parse_error is not None:
+                        recording.datetime_parse_status = DatetimeParseStatus.FAILED
+                        recording.datetime_parse_error = parse_error
+                        recording.datetime = None
+                        failed += 1
+                    elif parsed_dt is not None:
+                        recording.datetime_parse_status = DatetimeParseStatus.SUCCESS
+                        recording.datetime_parse_error = None
+                        recording.datetime = parsed_dt
+                        updated += 1
+                    else:
+                        recording.datetime_parse_status = DatetimeParseStatus.PENDING
+                        recording.datetime_parse_error = None
+                        recording.datetime = None
 
-        logger.info(
-            "Re-parse complete for dataset %s: %d total, %d updated, %d failed",
-            dataset_id,
-            total,
-            updated,
-            failed,
-        )
-        return {
-            "dataset_id": dataset_id,
-            "total": total,
-            "updated": updated,
-            "failed": failed,
-        }
+                await db.commit()
+                page += 1
+
+            logger.info(
+                "Re-parse complete for dataset %s: %d total, %d updated, %d failed",
+                dataset_id,
+                total,
+                updated,
+                failed,
+            )
+            return {
+                "dataset_id": dataset_id,
+                "total": total,
+                "updated": updated,
+                "failed": failed,
+            }
+    finally:
+        await engine.dispose()
 
 
 @app.task(  # type: ignore[untyped-decorator]

@@ -17,32 +17,12 @@ from typing import Any
 from uuid import UUID
 
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from echoroo.core.settings import get_settings
 from echoroo.workers.celery_app import app
+from echoroo.workers.db_utils import get_worker_engine_and_session_factory
 
 logger = logging.getLogger(__name__)
-
-
-# ---------------------------------------------------------------------------
-# Async session factory
-# ---------------------------------------------------------------------------
-
-
-def _get_engine_and_session_factory() -> tuple[Any, async_sessionmaker[AsyncSession]]:
-    """Create a fresh async engine and session factory for each task invocation.
-
-    Each Celery task calls ``asyncio.run()`` which creates a new event loop.
-    Reusing a cached engine across loops causes "Future attached to a different
-    loop" errors, so we create a fresh engine every time.
-
-    Returns the engine separately so the caller can dispose it in a finally
-    block after the task completes, releasing all pooled connections.
-    """
-    settings = get_settings()
-    engine = create_async_engine(settings.DATABASE_URL, echo=False, pool_pre_ping=True)
-    return engine, async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 
 # ---------------------------------------------------------------------------
@@ -135,7 +115,7 @@ async def _run_batch_search(
         audio_files_abs[key] = abs_path
 
     # Create DB session
-    engine, session_factory = _get_engine_and_session_factory()
+    engine, session_factory = get_worker_engine_and_session_factory()
 
     try:
         async with session_factory() as db:
