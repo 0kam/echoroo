@@ -454,6 +454,85 @@ export async function updateSearchSession(
 }
 
 /**
+ * Re-run an existing search session with updated reference sources.
+ *
+ * Updates the session's species_config, clears old results/annotations,
+ * and dispatches a new search task on the same session record.
+ *
+ * @param projectId - Project UUID
+ * @param sessionId - Search session UUID to re-run
+ * @param species - Updated list of target species with reference sound sources
+ * @param config - Search configuration (model, threshold, per-species limit)
+ * @param sourceSessionId - Optional session UUID whose persisted audio should be reused
+ * @returns Job submission response containing job_id for polling
+ */
+export async function rerunSearchSession(
+  projectId: string,
+  sessionId: string,
+  species: TargetSpecies[],
+  config: SearchConfig,
+  sourceSessionId?: string
+): Promise<SearchJobSubmitResponse> {
+  const formData = new FormData();
+
+  // Assign file_keys sequentially across all species / sources
+  let fileIndex = 0;
+
+  const speciesData = species.map((sp) => ({
+    tag_id: sp.tag_id,
+    scientific_name: sp.scientific_name,
+    sources: sp.sources.map((src) => {
+      if (src.origin === 'upload' && src.file) {
+        const fileKey = `source_${fileIndex}`;
+        formData.append(fileKey, src.file);
+        fileIndex++;
+        return {
+          type: 'upload' as const,
+          file_key: fileKey,
+          start_time: src.start_time ?? null,
+          end_time: src.end_time ?? null,
+        };
+      }
+      if (src.origin === 's3') {
+        return {
+          type: 's3' as const,
+          source_index: src.sourceIndex ?? null,
+          start_time: src.start_time ?? null,
+          end_time: src.end_time ?? null,
+        };
+      }
+      return {
+        type: src.origin as 'url',
+        source_url: src.source_url ?? null,
+        start_time: src.start_time ?? null,
+        end_time: src.end_time ?? null,
+      };
+    }),
+  }));
+
+  const metadataObj = {
+    species: speciesData,
+    model_name: config.model_name,
+    min_similarity: config.min_similarity,
+    limit_per_species: config.limit_per_species,
+    dataset_id: config.dataset_id || null,
+    source_session_id: sourceSessionId || null,
+  };
+
+  formData.append('metadata', JSON.stringify(metadataObj));
+
+  const response = await fetchWithErrorHandling(
+    `${API_BASE}/projects/${projectId}/search/sessions/${sessionId}/rerun`,
+    {
+      method: 'PUT',
+      credentials: 'include',
+      body: formData,
+    }
+  );
+  return handleApiResponse<SearchJobSubmitResponse>(response);
+}
+
+/**
  * Export a search session's results as a CSV file and trigger a browser download.
  *
  * @param projectId - Project UUID

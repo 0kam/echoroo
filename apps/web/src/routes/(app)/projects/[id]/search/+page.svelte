@@ -16,7 +16,7 @@
   import { createQuery } from '@tanstack/svelte-query';
   import { localizeHref, getLocale } from '$lib/paraglide/runtime';
   import * as m from '$lib/paraglide/messages';
-  import { searchBatch, getSearchJobStatus, fetchEmbeddingStats } from '$lib/api/search';
+  import { searchBatch, rerunSearchSession, getSearchJobStatus, fetchEmbeddingStats } from '$lib/api/search';
   import ReferenceSoundsPanel from '$lib/components/search/ReferenceSoundsPanel.svelte';
   import SearchConfigBar from '$lib/components/search/SearchConfigBar.svelte';
   import ResultsPanel from '$lib/components/search/ResultsPanel.svelte';
@@ -71,6 +71,9 @@
   let rerunSourceSessionId = $state<string | null>(null);
   /** Whether the current search is a re-run using S3 sources from a prior session */
   let isRerunMode = $state(false);
+
+  /** Session ID being edited in-place (rerun). null = creating a new session. */
+  let editingSessionId = $state<string | null>(null);
 
   // ============================================
   // Derived
@@ -144,7 +147,12 @@
     searchProgress = null;
 
     try {
-      const response = await searchBatch(projectId, species, config, rerunSourceSessionId ?? undefined);
+      // Use the rerun endpoint if editing an existing session in-place,
+      // otherwise create a new session via the standard batch endpoint
+      const response = editingSessionId
+        ? await rerunSearchSession(projectId, editingSessionId, species, config, rerunSourceSessionId ?? undefined)
+        : await searchBatch(projectId, species, config, rerunSourceSessionId ?? undefined);
+      editingSessionId = null;
       rerunSourceSessionId = null;
       isRerunMode = false;
       searchJobId = response.job_id;
@@ -215,6 +223,7 @@
     searchSessionId = null;
     isRerunMode = false;
     rerunSourceSessionId = null;
+    editingSessionId = null;
     viewMode = 'new-search';
   }
 
@@ -238,12 +247,17 @@
   /**
    * Transition: detail -> new-search
    * Pre-populates search state with species from the session being re-run.
+   *
+   * @param rerunSpecies - Pre-populated species list
+   * @param editSessionId - If non-null, the existing session will be updated in-place (rerun).
+   *                        If null, a brand-new session is created (fork).
    */
-  function handleRerunFromDetail(rerunSpecies: TargetSpecies[]) {
+  function handleRerunFromDetail(rerunSpecies: TargetSpecies[], editSessionId: string | null) {
     const sessionIdForRerun = selectedSessionId;
     species = rerunSpecies;
     isRerunMode = true;
     rerunSourceSessionId = sessionIdForRerun;
+    editingSessionId = editSessionId;
     results = null;
     totalMatches = 0;
     searchDurationMs = 0;

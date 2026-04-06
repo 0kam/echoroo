@@ -1259,6 +1259,7 @@
   "search_keyboard_navigate": "Navigate",
   "search_rename_session": "Rename",
   "search_edit_rerun": "Edit & Re-search",
+  "search_fork_session": "Fork as New Session",
   "search_session_name": "Session Name",
   "search_rename_save": "Save",
   "search_rename_cancel": "Cancel",

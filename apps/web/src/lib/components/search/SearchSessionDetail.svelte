@@ -20,7 +20,7 @@
     projectId: string;
     sessionId: string;
     onBack: () => void;
-    onRerun: (species: TargetSpecies[]) => void;
+    onRerun: (species: TargetSpecies[], editingSessionId: string | null) => void;
   }
 
   let { projectId, sessionId, onBack, onRerun }: Props = $props();
@@ -201,22 +201,6 @@
   });
 
   // ============================================
-  // Handlers
-  // ============================================
-
-  function handleRerun() {
-    if (reconstructedSpecies.length === 0) return;
-
-    // Deep-clone so edits don't affect the readonly display
-    const cloned: TargetSpecies[] = reconstructedSpecies.map((sp) => ({
-      ...sp,
-      sources: [...sp.sources],
-    }));
-
-    onRerun(cloned);
-  }
-
-  // ============================================
   // Rename handlers
   // ============================================
 
@@ -259,11 +243,11 @@
   }
 
   // ============================================
-  // Edit & Re-search handler
+  // Edit & Re-search handler (updates existing session in-place)
   // ============================================
 
   function handleEditRerun() {
-    if (reconstructedSpecies.length === 0) return;
+    if (reconstructedSpecies.length === 0 || !session) return;
 
     // Deep-clone so edits in new-search mode don't affect this detail view
     const cloned: TargetSpecies[] = reconstructedSpecies.map((sp) => ({
@@ -272,7 +256,25 @@
       sources: sp.sources.map((src) => ({ ...src, id: generateId() })),
     }));
 
-    onRerun(cloned);
+    // Pass the session ID so the parent knows to call the rerun endpoint
+    onRerun(cloned, session.id);
+  }
+
+  // ============================================
+  // Fork handler (creates a brand-new session)
+  // ============================================
+
+  function handleFork() {
+    if (reconstructedSpecies.length === 0) return;
+
+    // Deep-clone — pass null session ID to signal "create new"
+    const cloned: TargetSpecies[] = reconstructedSpecies.map((sp) => ({
+      ...sp,
+      id: generateId(),
+      sources: sp.sources.map((src) => ({ ...src, id: generateId() })),
+    }));
+
+    onRerun(cloned, null);
   }
 </script>
 
@@ -458,25 +460,40 @@
     {/if}
 
     <!-- Action buttons (for completed sessions) -->
-    {#if session.status === 'completed'}
+    {#if session.status === 'completed' && reconstructedSpecies.length > 0}
       <div class="flex items-center justify-end gap-2">
-        <!-- Edit & Re-search: clone session as template and switch to new-search mode -->
-        {#if reconstructedSpecies.length > 0}
-          <button
-            type="button"
-            class="inline-flex items-center gap-2 rounded-md border border-stone-300 bg-white px-4 py-2 text-sm font-medium
-                   text-stone-700 shadow-sm transition-colors hover:bg-stone-50
-                   dark:border-stone-600 dark:bg-stone-800 dark:text-stone-300 dark:hover:bg-stone-700"
-            onclick={handleEditRerun}
-          >
-            <!-- Edit icon -->
-            <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-              <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" stroke-linecap="round" stroke-linejoin="round" />
-              <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" stroke-linecap="round" stroke-linejoin="round" />
-            </svg>
-            {m.search_edit_rerun()}
-          </button>
-        {/if}
+        <!-- Fork: create a brand-new session preserving old results -->
+        <button
+          type="button"
+          class="inline-flex items-center gap-2 rounded-md border border-stone-300 bg-white px-4 py-2 text-sm font-medium
+                 text-stone-500 shadow-sm transition-colors hover:bg-stone-50 hover:text-stone-700
+                 dark:border-stone-600 dark:bg-stone-800 dark:text-stone-400 dark:hover:bg-stone-700 dark:hover:text-stone-300"
+          onclick={handleFork}
+        >
+          <!-- Fork icon (git-branch) -->
+          <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <circle cx="18" cy="18" r="3" stroke-linecap="round" stroke-linejoin="round" />
+            <circle cx="6" cy="6" r="3" stroke-linecap="round" stroke-linejoin="round" />
+            <path d="M13 6h3a2 2 0 0 1 2 2v7M6 9v12" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+          {m.search_fork_session()}
+        </button>
+
+        <!-- Edit & Re-search: update existing session in-place -->
+        <button
+          type="button"
+          class="inline-flex items-center gap-2 rounded-md border border-stone-300 bg-white px-4 py-2 text-sm font-medium
+                 text-stone-700 shadow-sm transition-colors hover:bg-stone-50
+                 dark:border-stone-600 dark:bg-stone-800 dark:text-stone-300 dark:hover:bg-stone-700"
+          onclick={handleEditRerun}
+        >
+          <!-- Edit icon -->
+          <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" stroke-linecap="round" stroke-linejoin="round" />
+            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+          {m.search_edit_rerun()}
+        </button>
       </div>
     {/if}
 
