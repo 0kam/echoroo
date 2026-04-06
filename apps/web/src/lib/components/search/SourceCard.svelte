@@ -15,6 +15,7 @@
   import type { SoundSource } from '$lib/types/search';
   import { fetchXenoCantoAudio } from '$lib/api/search';
   import SpectrogramClipEditor from './SpectrogramClipEditor.svelte';
+  import SpectrogramViewer from './SpectrogramViewer.svelte';
 
   interface Props {
     source: SoundSource;
@@ -59,6 +60,22 @@
   let editorDuration = $state(0);
   /** Sample rate for the editor */
   let editorSampleRate = $state(48000);
+
+  // ============================================================
+  // Readonly spectrogram viewer state
+  // ============================================================
+  /** Whether the inline spectrogram viewer is expanded (readonly mode only) */
+  let showSpectrogram = $state(false);
+  /** Audio data loaded for readonly spectrogram display */
+  let spectrogramAudioData = $state<ArrayBuffer | null>(null);
+  /** Duration reported from decoded audio for the viewer */
+  let spectrogramDuration = $state(0);
+  /** Sample rate for the spectrogram viewer */
+  let spectrogramSampleRate = $state(48000);
+  /** Whether we are currently fetching audio for the readonly viewer */
+  let isLoadingSpectrogram = $state(false);
+  /** Error message if spectrogram audio could not be loaded */
+  let spectrogramLoadError = $state<string | null>(null);
 
   // Local mutable clip times that reflect pending edits before confirmation
   let editorStart = $state(source.start_time ?? 0);
@@ -174,6 +191,71 @@
     }
     sourceNode = null;
     isPlaying = false;
+  }
+
+  // ============================================================
+  // Readonly spectrogram helpers
+  // ============================================================
+
+  /**
+   * Toggle the readonly spectrogram viewer. On first open, fetch the audio
+   * from the appropriate source and decode it to get duration/sampleRate.
+   */
+  async function toggleSpectrogram() {
+    if (showSpectrogram) {
+      showSpectrogram = false;
+      return;
+    }
+
+    // If audio is already loaded, just show it
+    if (spectrogramAudioData) {
+      showSpectrogram = true;
+      return;
+    }
+
+    spectrogramLoadError = null;
+    isLoadingSpectrogram = true;
+
+    try {
+      let arrayBuffer: ArrayBuffer;
+
+      if (source.origin === 'upload') {
+        // Uploaded file: use audio_data or read from File object
+        if (source.audio_data) {
+          arrayBuffer = source.audio_data;
+        } else if (source.file) {
+          arrayBuffer = await source.file.arrayBuffer();
+        } else {
+          throw new Error('No audio data available');
+        }
+      } else if (source.origin === 's3' && source.streamUrl) {
+        // S3-persisted source: fetch the stream URL
+        const response = await fetch(source.streamUrl, { credentials: 'include' });
+        if (!response.ok) {
+          throw new Error(`Failed to fetch audio: ${response.status}`);
+        }
+        arrayBuffer = await response.arrayBuffer();
+      } else if (source.origin === 'url' && source.xc_id) {
+        // Xeno-canto source: fetch via backend proxy
+        arrayBuffer = await fetchXenoCantoAudio(projectId, source.xc_id);
+      } else {
+        throw new Error('No audio source available');
+      }
+
+      // Decode to extract duration and sample rate
+      const ctx = new AudioContext();
+      const decoded = await ctx.decodeAudioData(arrayBuffer.slice(0));
+      spectrogramDuration = decoded.duration;
+      spectrogramSampleRate = decoded.sampleRate;
+      await ctx.close();
+
+      spectrogramAudioData = arrayBuffer;
+      showSpectrogram = true;
+    } catch (err) {
+      spectrogramLoadError = err instanceof Error ? err.message : 'Failed to load audio';
+    } finally {
+      isLoadingSpectrogram = false;
+    }
   }
 
   // ============================================================
@@ -438,6 +520,38 @@
       </button>
     {/if}
 
+    <!-- Spectrogram toggle button (readonly mode only) -->
+    {#if readonly}
+      <button
+        type="button"
+        class="shrink-0 transition-colors
+               {showSpectrogram
+                 ? 'text-primary-600 hover:text-primary-700 dark:text-primary-400'
+                 : 'text-stone-400 hover:text-primary-600 dark:hover:text-primary-400'}"
+        onclick={toggleSpectrogram}
+        disabled={isLoadingSpectrogram}
+        aria-label={showSpectrogram ? 'Hide spectrogram' : 'Show spectrogram'}
+        title={showSpectrogram ? 'Hide spectrogram' : 'Show spectrogram'}
+      >
+        {#if isLoadingSpectrogram}
+          <!-- Loading spinner -->
+          <svg class="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <circle cx="12" cy="12" r="10" stroke-opacity="0.25" />
+            <path d="M12 2a10 10 0 0 1 10 10" stroke-linecap="round" />
+          </svg>
+        {:else}
+          <!-- Spectrogram / waveform icon -->
+          <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <rect x="3" y="8" width="2" height="8" rx="1" />
+            <rect x="7" y="5" width="2" height="14" rx="1" />
+            <rect x="11" y="3" width="2" height="18" rx="1" />
+            <rect x="15" y="6" width="2" height="12" rx="1" />
+            <rect x="19" y="9" width="2" height="6" rx="1" />
+          </svg>
+        {/if}
+      </button>
+    {/if}
+
     <!-- Remove button (hidden in readonly mode) -->
     {#if !readonly}
       <button
@@ -493,5 +607,26 @@
         onRangeChange={handleEditorRangeChange}
       />
     </div>
+  {/if}
+
+  <!-- Readonly spectrogram viewer (shown when spectrogram toggle is active) -->
+  {#if readonly}
+    {#if spectrogramLoadError}
+      <div class="border-t border-stone-200 px-3 py-2 dark:border-stone-700">
+        <p class="text-xs text-red-500 dark:text-red-400">{spectrogramLoadError}</p>
+      </div>
+    {/if}
+    {#if showSpectrogram && spectrogramAudioData}
+      <div class="border-t border-stone-200 px-3 pt-2 pb-3 dark:border-stone-700">
+        <SpectrogramViewer
+          audioData={spectrogramAudioData}
+          duration={spectrogramDuration}
+          sampleRate={spectrogramSampleRate}
+          startTime={source.start_time ?? 0}
+          endTime={source.end_time ?? spectrogramDuration}
+          height={100}
+        />
+      </div>
+    {/if}
   {/if}
 </div>

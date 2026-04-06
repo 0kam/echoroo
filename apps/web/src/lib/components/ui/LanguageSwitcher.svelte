@@ -1,12 +1,12 @@
 <script lang="ts">
   /**
    * Language switcher component.
-   * Navigates to the same page with a different locale prefix,
-   * triggering a full page reload so paraglide picks up the new locale.
+   * Sets the locale cookie via setLocale() then performs a hard navigation so
+   * that Paraglide picks up the new locale on both server and client.
    */
 
   import { page } from '$app/stores';
-  import { locales, getLocale, localizeHref, deLocalizeHref } from '$lib/paraglide/runtime';
+  import { locales, getLocale, setLocale, localizeHref, deLocalizeHref } from '$lib/paraglide/runtime';
   import * as m from '$lib/paraglide/messages';
 
   // Language display names keyed by locale code
@@ -27,6 +27,17 @@
     const basePath = deLocalizeHref(currentPath);
     return localizeHref(basePath, { locale: targetLocale as 'en' | 'ja' });
   }
+
+  /**
+   * Switch locale: persist via cookie then hard-navigate to the localized URL.
+   * We use setLocale() with reload:false to write the cookie without triggering
+   * Paraglide's own reload, then manually navigate so SvelteKit's server hook
+   * reads the correct locale on the next request.
+   */
+  function switchLocale(targetLocale: string) {
+    setLocale(targetLocale as 'en' | 'ja', { reload: false });
+    window.location.href = getLocaleHref(targetLocale);
+  }
 </script>
 
 <div class="flex items-center gap-1" aria-label={m.language_switcher_label()}>
@@ -39,13 +50,13 @@
         {languageNames[locale] ?? locale}
       </span>
     {:else}
-      <a
-        href={getLocaleHref(locale)}
-        data-sveltekit-reload
+      <button
+        type="button"
+        onclick={() => switchLocale(locale)}
         class="rounded px-2 py-1 text-xs font-medium text-stone-500 hover:bg-stone-100 hover:text-stone-800 transition-colors"
       >
         {languageNames[locale] ?? locale}
-      </a>
+      </button>
     {/if}
   {/each}
 </div>
