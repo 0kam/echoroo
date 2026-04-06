@@ -91,15 +91,15 @@
   }
 
   .bg-primary-100 {
-    background-color: #FFF3EB;
+    background-color: rgb(var(--primary-100));
   }
 
   .border-primary-500 {
-    border-color: #FF5A00;
+    border-color: rgb(var(--primary-500));
   }
 
   .text-primary-800 {
-    color: #993500;
+    color: rgb(var(--primary-800));
   }
 
   .toast-icon {

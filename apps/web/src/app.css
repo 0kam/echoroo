@@ -30,6 +30,19 @@
     --stone-900: 32 28 25;
     --stone-950: 18 15 13;
 
+    /* Secondary (Warm Stone - mirrors stone palette for semantic use) */
+    --secondary-50: 252 250 248;
+    --secondary-100: 247 244 241;
+    --secondary-200: 236 231 226;
+    --secondary-300: 220 213 207;
+    --secondary-400: 180 172 165;
+    --secondary-500: 133 125 118;
+    --secondary-600: 95 88 82;
+    --secondary-700: 72 66 61;
+    --secondary-800: 48 43 39;
+    --secondary-900: 32 28 25;
+    --secondary-950: 18 15 13;
+
     /* Semantic */
     --color-page-bg: 251 247 241;
     --color-card-bg: 255 255 255;
@@ -64,6 +77,19 @@
     --stone-800: 224 226 230;
     --stone-900: 240 241 244;
     --stone-950: 250 250 252;
+
+    /* Secondary (Warm Stone - Dark Mode: FLIPPED) */
+    --secondary-50: 18 20 24;
+    --secondary-100: 26 28 33;
+    --secondary-200: 38 41 48;
+    --secondary-300: 54 58 66;
+    --secondary-400: 100 104 112;
+    --secondary-500: 140 143 150;
+    --secondary-600: 172 175 181;
+    --secondary-700: 200 202 207;
+    --secondary-800: 224 226 230;
+    --secondary-900: 240 241 244;
+    --secondary-950: 250 250 252;
 
     /* Semantic */
     --color-page-bg: 14 16 20;
