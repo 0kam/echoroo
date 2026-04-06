@@ -85,12 +85,18 @@
               }
             } else if (sourceUrl || xcId) {
               // URL-based source (Xeno-Canto)
+              // Extract XC ID from URL if not explicitly provided
+              let resolvedXcId = xcId as string | undefined;
+              if (!resolvedXcId && sourceUrl) {
+                const xcMatch = sourceUrl.match(/xeno-canto\.org\/(\d+)/);
+                if (xcMatch) resolvedXcId = xcMatch[1];
+              }
               acc.push({
                 id: generateId(),
                 origin: 'url' as const,
-                label: xcId ? `XC${xcId}` : (sourceUrl ?? 'URL source'),
+                label: resolvedXcId ? `XC${resolvedXcId}` : (sourceUrl ?? 'URL source'),
                 source_url: sourceUrl,
-                xc_id: xcId as string | undefined,
+                xc_id: resolvedXcId,
                 start_time: src['start_time'] as number | undefined,
                 end_time: src['end_time'] as number | undefined,
               });
@@ -344,8 +350,8 @@
               <button
                 type="button"
                 class="shrink-0 rounded-md bg-primary-600 px-3 py-1.5 text-sm font-medium text-white
-                       transition-colors hover:bg-primary-700 disabled:opacity-50
-                       dark:bg-primary-500 dark:hover:bg-primary-600"
+                       transition-colors hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2
+                       disabled:opacity-50"
                 disabled={isSavingRename || !renameValue.trim()}
                 onclick={saveRename}
               >
@@ -471,22 +477,6 @@
             {m.search_edit_rerun()}
           </button>
         {/if}
-
-        <!-- Re-run: use same sources exactly, pass source_session_id -->
-        <button
-          type="button"
-          class="inline-flex items-center gap-2 rounded-md bg-primary-600 px-4 py-2 text-sm font-medium
-                 text-white shadow-sm transition-colors hover:bg-primary-700
-                 dark:bg-primary-500 dark:hover:bg-primary-600"
-          onclick={handleRerun}
-        >
-          <!-- Refresh icon -->
-          <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-            <path d="M1 4v6h6M23 20v-6h-6" stroke-linecap="round" stroke-linejoin="round" />
-            <path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4-4.64 4.36A9 9 0 0 1 3.51 15" stroke-linecap="round" stroke-linejoin="round" />
-          </svg>
-          {m.search_add_sources_rerun()}
-        </button>
       </div>
     {/if}
 
