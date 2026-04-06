@@ -1259,6 +1259,7 @@
   "search_keyboard_navigate": "移動",
   "search_rename_session": "名前を変更",
   "search_edit_rerun": "編集して再検索",
+  "search_fork_session": "新規セッションとしてフォーク",
   "search_session_name": "セッション名",
   "search_rename_save": "保存",
   "search_rename_cancel": "キャンセル",
