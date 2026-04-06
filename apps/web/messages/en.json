@@ -1257,6 +1257,12 @@
   "search_keyboard_reject": "Reject",
   "search_keyboard_play": "Play",
   "search_keyboard_navigate": "Navigate",
+  "search_rename_session": "Rename",
+  "search_edit_rerun": "Edit & Re-search",
+  "search_session_name": "Session Name",
+  "search_rename_save": "Save",
+  "search_rename_cancel": "Cancel",
+  "search_rename_saving": "Saving...",
 
   "sidebar_nav_models": "Models",
 

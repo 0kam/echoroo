@@ -429,6 +429,31 @@ export async function deleteSearchSession(
 }
 
 /**
+ * Update a search session's mutable fields (currently only the name).
+ *
+ * @param projectId - Project UUID
+ * @param sessionId - Search session UUID to update
+ * @param name - New display name for the session
+ * @returns Updated search session
+ */
+export async function updateSearchSession(
+  projectId: string,
+  sessionId: string,
+  name: string
+): Promise<SearchSession> {
+  const response = await fetchWithErrorHandling(
+    `${API_BASE}/projects/${projectId}/search/sessions/${sessionId}`,
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ name }),
+    }
+  );
+  return handleApiResponse<SearchSession>(response);
+}
+
+/**
  * Export a search session's results as a CSV file and trigger a browser download.
  *
  * @param projectId - Project UUID
