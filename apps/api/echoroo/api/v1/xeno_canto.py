@@ -289,16 +289,16 @@ async def proxy_audio(
 )
 async def proxy_sonogram(
     project_id: UUID,
-    current_user: CurrentUser,
-    db: DbSession,
     url: str = Query(..., description="Full xeno-canto.org sonogram URL to proxy"),
 ) -> Response:
     """Proxy a Xeno-canto sonogram image to avoid cross-origin ORB blocking.
 
+    No authentication required — sonograms are publicly available data from
+    xeno-canto.org.  The project_id path parameter is kept for URL consistency
+    but is not validated.
+
     Args:
-        project_id: Project UUID (path parameter, used for access control)
-        current_user: Current authenticated user
-        db: Database session
+        project_id: Project UUID (path parameter, kept for URL structure)
         url: Full xeno-canto.org image URL to proxy
 
     Returns:
@@ -306,11 +306,9 @@ async def proxy_sonogram(
 
     Raises:
         400: URL is not a xeno-canto.org URL
-        403: Access denied to project
         502: Upstream Xeno-canto error
         504: Request to Xeno-canto timed out
     """
-    await _check_project_access(project_id, current_user.id, db)
 
     if not url.startswith("https://xeno-canto.org/"):
         raise HTTPException(
