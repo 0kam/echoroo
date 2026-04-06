@@ -90,14 +90,18 @@
 
   onMount(() => {
     mounted = true;
-    fetchSpectrogram(projectId, recordingId, windowStart, windowEnd);
   });
 
-  // Re-fetch when props change (after mount)
+  // Fetch on mount and re-fetch when props change.
+  // Uses a local copy of props to avoid double-fetching from $effect
+  // re-running when mounted transitions to true.
+  let prevKey = '';
   $effect(() => {
-    if (mounted) {
-      fetchSpectrogram(projectId, recordingId, windowStart, windowEnd);
-    }
+    if (!mounted) return;
+    const key = `${projectId}|${recordingId}|${windowStart}|${windowEnd}`;
+    if (key === prevKey) return;
+    prevKey = key;
+    fetchSpectrogram(projectId, recordingId, windowStart, windowEnd);
   });
 
   onDestroy(() => {
