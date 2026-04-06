@@ -456,7 +456,21 @@
 
     <!-- Info -->
     <div class="min-w-0 flex-1">
-      <p class="truncate text-sm text-stone-900 dark:text-stone-100">{displayName}</p>
+      {#if readonly}
+        <button
+          type="button"
+          class="truncate text-sm font-medium transition-colors
+                 {showSpectrogram ? 'text-primary-600 dark:text-primary-400' : 'text-stone-900 hover:text-primary-600 dark:text-stone-100 dark:hover:text-primary-400'}
+                 {isLoadingSpectrogram ? 'animate-pulse' : ''}"
+          onclick={toggleSpectrogram}
+          disabled={isLoadingSpectrogram}
+          title={showSpectrogram ? 'Hide spectrogram' : 'Show spectrogram'}
+        >
+          {displayName}
+        </button>
+      {:else}
+        <p class="truncate text-sm text-stone-900 dark:text-stone-100">{displayName}</p>
+      {/if}
       {#if source.origin === 'url'}
         <p class="truncate text-xs text-stone-400">
           {[source.recording_type, source.quality ? `Q:${source.quality}` : null, source.recordist, source.location]
@@ -520,8 +534,8 @@
       </button>
     {/if}
 
-    <!-- Spectrogram toggle button (readonly mode only) -->
-    {#if readonly}
+    <!-- Spectrogram toggle button (readonly mode only) - REMOVED, use displayName click instead -->
+    {#if readonly && false}
       <button
         type="button"
         class="shrink-0 transition-colors
