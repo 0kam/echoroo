@@ -625,6 +625,12 @@
 
   <!-- Readonly spectrogram viewer (shown when spectrogram toggle is active) -->
   {#if readonly}
+    {#if isLoadingSpectrogram}
+      <div class="flex items-center gap-2 border-t border-stone-200 px-3 py-3 dark:border-stone-700">
+        <div class="h-4 w-4 animate-spin rounded-full border-2 border-stone-300 border-t-primary-600"></div>
+        <span class="text-xs text-stone-400">Loading spectrogram...</span>
+      </div>
+    {/if}
     {#if spectrogramLoadError}
       <div class="border-t border-stone-200 px-3 py-2 dark:border-stone-700">
         <p class="text-xs text-red-500 dark:text-red-400">{spectrogramLoadError}</p>
