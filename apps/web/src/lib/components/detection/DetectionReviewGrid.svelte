@@ -4,17 +4,19 @@
    *
    * Features:
    * - TanStack Query for data fetching and mutations
-   * - Status filter bar (All / Unreviewed / Confirmed / Rejected)
+   * - Status filter bar (All / Needs Votes / Agreed / Disputed / Rejected)
    * - Confidence slider filter
    * - Pagination controls
-   * - Keyboard shortcuts: C=Confirm, R=Reject, Space=Play, Arrow=Navigate
-   * - Shared audio playback via reviewNavigation hook (syncs keyboard Space with play button)
+   * - Keyboard shortcuts: A=Agree, D=Disagree, U=Unsure, Space=Play, Arrow=Navigate
+   * - Vote summaries per detection card
+   * - Shared audio playback via reviewNavigation hook
    */
 
   import { onDestroy } from 'svelte';
   import { createQuery, createMutation, useQueryClient } from '@tanstack/svelte-query';
-  import { fetchDetections, confirmDetection, rejectDetection, changeDetectionSpecies } from '$lib/api/detections';
-  import type { DetectionStatus, DetectionListResponse } from '$lib/types/detection';
+  import { fetchDetections, changeDetectionSpecies } from '$lib/api/detections';
+  import { castVote, deleteVote, getVotes } from '$lib/api/votes';
+  import type { DetectionStatus, DetectionListResponse, VoteSummary, VoteValue } from '$lib/types/detection';
   import * as m from '$lib/paraglide/messages';
   import { createReviewNavigation } from '$lib/utils/reviewNavigation.svelte';
   import DetectionCard from './DetectionCard.svelte';
@@ -31,15 +33,19 @@
 
   const queryClient = useQueryClient();
 
-  // Filter state
+  // Filter state — use legacy DetectionStatus type for API compatibility
+  // but also support consensus-based filter labels in UI
   let statusFilter: DetectionStatus | undefined = $state(undefined);
   let confidenceMin = $state(0);
   let confidenceMax = $state(1);
   let page = $state(1);
   const PAGE_SIZE = 12;
 
-  // Track which detection is currently being mutated
+  // Track which detection is currently being mutated (voting)
   let mutatingId: string | null = $state(null);
+
+  // Vote summaries keyed by detection ID
+  let voteSummaries: Record<string, VoteSummary> = $state({});
 
   // DOM references for card elements (scroll-into-view)
   let cardElements: (HTMLElement | null)[] = $state([]);
@@ -68,20 +74,51 @@
   const totalPages = $derived($detectionsQuery.data?.pages ?? 1);
   const totalItems = $derived($detectionsQuery.data?.total ?? 0);
 
+  // Load vote summaries whenever detections change
+  $effect(() => {
+    const currentDetections = detections;
+    if (currentDetections.length === 0) return;
+
+    // Fetch vote summaries for all detections in background
+    for (const detection of currentDetections) {
+      if (!(detection.id in voteSummaries)) {
+        getVotes(projectId, detection.id)
+          .then((summary) => {
+            voteSummaries = { ...voteSummaries, [detection.id]: summary };
+          })
+          .catch(() => {
+            // Silently ignore vote fetch errors — votes are optional enhancement
+          });
+      }
+    }
+  });
+
   // Shared keyboard navigation and audio playback
   const nav = createReviewNavigation({
     projectId,
     itemCount: () => detections.length,
-    onConfirm: (i) => {
+    onConfirm: () => {
+      // Legacy confirm — no-op in voting mode
+    },
+    onReject: () => {
+      // Legacy reject — no-op in voting mode
+    },
+    onAgree: (i) => {
       const d = detections[i];
       if (d && mutatingId === null) {
-        handleConfirm(d.id, d.start_time, d.end_time);
+        handleVote(d.id, 'agree');
       }
     },
-    onReject: (i) => {
+    onDisagree: (i) => {
       const d = detections[i];
       if (d && mutatingId === null) {
-        handleReject(d.id);
+        handleVote(d.id, 'disagree');
+      }
+    },
+    onUnsure: (i) => {
+      const d = detections[i];
+      if (d && mutatingId === null) {
+        handleVote(d.id, 'unsure');
       }
     },
     getPlaybackInfo: (i) => {
@@ -100,12 +137,16 @@
     nav.cleanup();
   });
 
-  // Mutations
-  const confirmMutation = createMutation({
-    mutationFn: ({ detectionId }: { detectionId: string; startTime: number; endTime: number }) =>
-      confirmDetection(projectId, detectionId),
+  // Vote mutation
+  const voteMutation = createMutation({
+    mutationFn: ({ detectionId, vote }: { detectionId: string; vote: VoteValue }) =>
+      castVote(projectId, detectionId, vote),
     onMutate: ({ detectionId }) => {
       mutatingId = detectionId;
+    },
+    onSuccess: (summary, { detectionId }) => {
+      // Update the local vote summary immediately
+      voteSummaries = { ...voteSummaries, [detectionId]: summary };
     },
     onSettled: () => {
       mutatingId = null;
@@ -113,11 +154,25 @@
     },
   });
 
-  const rejectMutation = createMutation({
+  // Remove vote mutation
+  const removeVoteMutation = createMutation({
     mutationFn: ({ detectionId }: { detectionId: string }) =>
-      rejectDetection(projectId, detectionId),
+      deleteVote(projectId, detectionId),
     onMutate: ({ detectionId }) => {
       mutatingId = detectionId;
+    },
+    onSuccess: (_, { detectionId }) => {
+      // Refresh vote summary for this detection after removal
+      getVotes(projectId, detectionId)
+        .then((summary) => {
+          voteSummaries = { ...voteSummaries, [detectionId]: summary };
+        })
+        .catch(() => {
+          // Remove from local cache so it reloads
+          const updated = { ...voteSummaries };
+          delete updated[detectionId];
+          voteSummaries = updated;
+        });
     },
     onSettled: () => {
       mutatingId = null;
@@ -137,12 +192,12 @@
     },
   });
 
-  function handleConfirm(detectionId: string, startTime: number, endTime: number) {
-    $confirmMutation.mutate({ detectionId, startTime, endTime });
+  function handleVote(detectionId: string, vote: VoteValue) {
+    $voteMutation.mutate({ detectionId, vote });
   }
 
-  function handleReject(detectionId: string) {
-    $rejectMutation.mutate({ detectionId });
+  function handleRemoveVote(detectionId: string) {
+    $removeVoteMutation.mutate({ detectionId });
   }
 
   function handleChangeSpecies(detectionId: string, newTagId: string) {
@@ -180,7 +235,7 @@
 <div class="flex flex-col gap-4">
   <!-- Filter bar -->
   <div class="flex flex-wrap items-center gap-3 rounded-lg border border-stone-200 bg-stone-50 p-3">
-    <!-- Status filters -->
+    <!-- Status filters: updated to reflect consensus-based labels -->
     <div class="flex items-center gap-1">
       <span class="mr-1 text-xs font-medium text-stone-500">{m.detection_filter_status_label()}</span>
       <button
@@ -204,7 +259,7 @@
             : 'border border-stone-300 bg-surface-card text-stone-600 hover:bg-stone-100'}"
         onclick={() => handleStatusFilter('unreviewed')}
       >
-        {m.detection_filter_unreviewed()}
+        {m.detection_filter_needs_votes()}
       </button>
       <button
         type="button"
@@ -214,7 +269,7 @@
             : 'border border-green-200 bg-green-50 text-green-700 hover:bg-green-100'}"
         onclick={() => handleStatusFilter('confirmed')}
       >
-        {m.detection_filter_confirmed()}
+        {m.detection_filter_agreed()}
       </button>
       <button
         type="button"
@@ -247,8 +302,9 @@
 
     <!-- Keyboard shortcuts hint -->
     <div class="ml-auto flex items-center gap-2 text-xs text-stone-400">
-      <kbd class="rounded border border-stone-200 bg-surface-card px-1.5 py-0.5 font-mono text-xs">C</kbd> {m.detection_keyboard_confirm()}
-      <kbd class="rounded border border-stone-200 bg-surface-card px-1.5 py-0.5 font-mono text-xs">R</kbd> {m.detection_keyboard_reject()}
+      <kbd class="rounded border border-stone-200 bg-surface-card px-1.5 py-0.5 font-mono text-xs">A</kbd> {m.detection_keyboard_agree()}
+      <kbd class="rounded border border-stone-200 bg-surface-card px-1.5 py-0.5 font-mono text-xs">D</kbd> {m.detection_keyboard_disagree()}
+      <kbd class="rounded border border-stone-200 bg-surface-card px-1.5 py-0.5 font-mono text-xs">U</kbd> {m.detection_keyboard_unsure()}
       <kbd class="rounded border border-stone-200 bg-surface-card px-1.5 py-0.5 font-mono text-xs">Space</kbd> {m.detection_keyboard_play()}
       <kbd class="rounded border border-stone-200 bg-surface-card px-1.5 py-0.5 font-mono text-xs">Arrows</kbd> {m.detection_keyboard_navigate()}
     </div>
@@ -273,8 +329,12 @@
             <div class="h-3 w-4/5 rounded bg-stone-100"></div>
             <!-- Time range line -->
             <div class="h-3 w-1/2 rounded bg-stone-100"></div>
-            <!-- Source badge placeholder -->
-            <div class="h-5 w-16 rounded bg-stone-100"></div>
+            <!-- Vote buttons placeholder -->
+            <div class="flex gap-1.5">
+              <div class="h-6 w-14 rounded bg-green-100"></div>
+              <div class="h-6 w-14 rounded bg-red-100"></div>
+              <div class="h-6 w-14 rounded bg-yellow-100"></div>
+            </div>
           </div>
         </div>
       {/each}
@@ -327,11 +387,12 @@
             {projectId}
             isSelected={i === nav.selectedIndex}
             isLoading={mutatingId === detection.id}
+            voteSummary={voteSummaries[detection.id] ?? null}
             externalIsPlaying={nav.playingIndex === i && nav.isPlaying}
             externalIsLoadingAudio={nav.playingIndex === i && nav.isLoadingAudio}
             onPlayToggle={() => nav.togglePlay(i)}
-            onConfirm={handleConfirm}
-            onReject={handleReject}
+            onVote={handleVote}
+            onRemoveVote={handleRemoveVote}
             onChangeSpecies={handleChangeSpecies}
           />
         </div>

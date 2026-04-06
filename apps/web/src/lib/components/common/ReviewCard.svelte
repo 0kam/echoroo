@@ -12,9 +12,10 @@
    */
 
   import { onDestroy, type Snippet } from 'svelte';
-  import type { DetectionStatus } from '$lib/types/detection';
+  import type { DetectionStatus, VoteSummary, VoteValue } from '$lib/types/detection';
   import * as m from '$lib/paraglide/messages';
   import { createAudioPlayer } from '$lib/utils/audioPlayback.svelte';
+  import { getConsensusCardBorderClass } from '$lib/utils/statusFormatters';
   import MiniSpectrogram from './MiniSpectrogram.svelte';
   import ReviewActions from './ReviewActions.svelte';
 
@@ -41,8 +42,14 @@
     isLoading?: boolean;
     /** Highlight the card (e.g. keyboard-focused item in a list) */
     isSelected?: boolean;
-    onConfirm: () => void;
-    onReject: () => void;
+    /** Vote summary for the voting-based review UI */
+    voteSummary?: VoteSummary | null;
+    onVote?: (vote: VoteValue) => void;
+    onRemoveVote?: () => void;
+    /** Legacy: kept for backward compatibility with non-voting usage */
+    onConfirm?: () => void;
+    /** Legacy: kept for backward compatibility with non-voting usage */
+    onReject?: () => void;
     /**
      * Whether this card's audio is currently playing, controlled by a parent
      * navigation hook. When provided, the play button reflects this state
@@ -83,6 +90,9 @@
     scoreBadgeClass = 'bg-stone-100 text-stone-600',
     isLoading = false,
     isSelected = false,
+    voteSummary = null,
+    onVote,
+    onRemoveVote,
     onConfirm,
     onReject,
     externalIsPlaying,
@@ -106,13 +116,17 @@
   const scorePercent = $derived(scoreValue !== null ? Math.round(scoreValue * 100) : null);
 
   const borderClass = $derived(
-    status === 'confirmed'
-      ? 'border-green-400 ring-1 ring-green-300'
-      : status === 'rejected'
-        ? 'border-red-400 ring-1 ring-red-300'
-        : isSelected
-          ? 'border-primary-400 ring-1 ring-primary-300'
-          : 'border-stone-200'
+    // When vote summary is present, use consensus-based border
+    voteSummary
+      ? getConsensusCardBorderClass(voteSummary.consensus, isSelected)
+      // Legacy: fall back to detection status-based border
+      : status === 'confirmed'
+        ? 'border-green-400 ring-1 ring-green-300'
+        : status === 'rejected'
+          ? 'border-red-400 ring-1 ring-red-300'
+          : isSelected
+            ? 'border-primary-400 ring-1 ring-primary-300'
+            : 'border-stone-200'
   );
 
   function formatTime(seconds: number): string {
@@ -133,14 +147,24 @@
     }
   }
 
+  function handleVote(vote: VoteValue) {
+    internalPlayer?.stop();
+    onVote?.(vote);
+  }
+
+  function handleRemoveVote() {
+    internalPlayer?.stop();
+    onRemoveVote?.();
+  }
+
   function handleConfirm() {
     internalPlayer?.stop();
-    onConfirm();
+    onConfirm?.();
   }
 
   function handleReject() {
     internalPlayer?.stop();
-    onReject();
+    onReject?.();
   }
 
   onDestroy(() => {
@@ -232,12 +256,15 @@
       {@render extraBody()}
     {/if}
 
-    <!-- Review actions -->
+    <!-- Review actions: voting mode when onVote is provided, legacy confirm/reject otherwise -->
     <ReviewActions
-      {status}
+      {voteSummary}
       {isLoading}
-      onConfirm={handleConfirm}
-      onReject={handleReject}
+      onVote={onVote ? handleVote : undefined}
+      onRemoveVote={onVote ? handleRemoveVote : undefined}
+      onConfirm={onConfirm ? handleConfirm : undefined}
+      onReject={onReject ? handleReject : undefined}
+      legacyStatus={status}
     />
   </div>
 </div>

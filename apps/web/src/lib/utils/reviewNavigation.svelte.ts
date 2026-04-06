@@ -21,10 +21,16 @@ export interface ReviewNavigationOptions {
   projectId: string;
   /** Total number of items in the current list */
   itemCount: () => number;
-  /** Called when confirm is triggered (keyboard C) on the selected item */
+  /** Called when confirm is triggered (keyboard C) on the selected item (legacy) */
   onConfirm: (index: number) => void;
-  /** Called when reject is triggered (keyboard R) on the selected item */
+  /** Called when reject is triggered (keyboard R) on the selected item (legacy) */
   onReject: (index: number) => void;
+  /** Called when agree vote is triggered (keyboard A) on the selected item */
+  onAgree?: (index: number) => void;
+  /** Called when disagree vote is triggered (keyboard D) on the selected item */
+  onDisagree?: (index: number) => void;
+  /** Called when unsure vote is triggered (keyboard U) on the selected item */
+  onUnsure?: (index: number) => void;
   /** Return recording info for the item at `index` to play audio, or null to skip */
   getPlaybackInfo: (index: number) => PlaybackInfo | null;
   /** Return the DOM element for the item at `index` (for scroll-into-view) */
@@ -155,6 +161,24 @@ export function createReviewNavigation(options: ReviewNavigationOptions): Review
       case 'R':
         e.preventDefault();
         options.onReject(selectedIndex);
+        break;
+
+      case 'a':
+      case 'A':
+        e.preventDefault();
+        options.onAgree?.(selectedIndex);
+        break;
+
+      case 'd':
+      case 'D':
+        e.preventDefault();
+        options.onDisagree?.(selectedIndex);
+        break;
+
+      case 'u':
+      case 'U':
+        e.preventDefault();
+        options.onUnsure?.(selectedIndex);
         break;
 
       case 'ArrowDown':

@@ -10,11 +10,14 @@ from sqlalchemy import select as sa_select
 
 from echoroo.core.pagination import paginate
 from echoroo.models.annotation import Annotation
+from echoroo.models.annotation_vote import AnnotationVote
 from echoroo.models.confirmed_region import ConfirmedRegion
-from echoroo.models.enums import DetectionStatus
+from echoroo.models.enums import DetectionStatus, VoteType
 from echoroo.models.taxon_vernacular_name import TaxonVernacularName
 from echoroo.repositories.annotation import AnnotationRepository, TemporalSummaryRow
+from echoroo.repositories.annotation_vote import AnnotationVoteRepository
 from echoroo.repositories.confirmed_region import ConfirmedRegionRepository
+from echoroo.schemas.annotation_vote import DetectionVoteCounts
 from echoroo.schemas.detection import (
     ChangeSpeciesRequest,
     ConfirmRequest,
@@ -37,15 +40,18 @@ class DetectionService:
         self,
         annotation_repo: AnnotationRepository,
         confirmed_region_repo: ConfirmedRegionRepository,
+        vote_repo: AnnotationVoteRepository | None = None,
     ) -> None:
         """Initialize service with repositories.
 
         Args:
             annotation_repo: Annotation repository instance
             confirmed_region_repo: ConfirmedRegion repository instance
+            vote_repo: Optional AnnotationVoteRepository for loading vote counts
         """
         self.annotation_repo = annotation_repo
         self.confirmed_region_repo = confirmed_region_repo
+        self.vote_repo = vote_repo
 
     async def list_detections(
         self,
@@ -59,6 +65,7 @@ class DetectionService:
         detection_run_id: UUID | None = None,
         page: int = 1,
         page_size: int = 50,
+        current_user_id: UUID | None = None,
     ) -> DetectionListResponse:
         """List detections for a project with optional filtering and pagination.
 
@@ -73,6 +80,7 @@ class DetectionService:
             detection_run_id: Optional detection run filter
             page: Page number (1-indexed)
             page_size: Items per page
+            current_user_id: Optional current user ID for including their vote
 
         Returns:
             Paginated detection list response
@@ -92,7 +100,13 @@ class DetectionService:
             page_size=pagination.page_size,
         )
 
-        items = [self._to_response(a) for a in annotations]
+        # Batch-load vote counts for all annotations in one query
+        vote_counts_map = await self._batch_load_vote_counts(
+            [a.id for a in annotations],
+            current_user_id=current_user_id,
+        )
+
+        items = [self._to_response(a, vote_counts_map.get(a.id)) for a in annotations]
 
         return DetectionListResponse(
             items=items,
@@ -304,11 +318,16 @@ class DetectionService:
             species=species_list,
         )
 
-    async def get(self, detection_id: UUID) -> DetectionResponse:
+    async def get(
+        self,
+        detection_id: UUID,
+        current_user_id: UUID | None = None,
+    ) -> DetectionResponse:
         """Get a detection annotation by ID.
 
         Args:
             detection_id: Annotation's UUID
+            current_user_id: Optional current user ID for including their vote
 
         Returns:
             Detection response
@@ -322,7 +341,11 @@ class DetectionService:
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Detection not found",
             )
-        return self._to_response(annotation)
+        vote_counts_map = await self._batch_load_vote_counts(
+            [annotation.id],
+            current_user_id=current_user_id,
+        )
+        return self._to_response(annotation, vote_counts_map.get(annotation.id))
 
     async def create(
         self,
@@ -351,7 +374,7 @@ class DetectionService:
         )
 
         created = await self.annotation_repo.create(annotation)
-        return self._to_response(created)
+        return self._to_response(created, None)
 
     async def confirm(
         self,
@@ -413,7 +436,8 @@ class DetectionService:
         )
         await self.confirmed_region_repo.create(confirmed_region)
 
-        return self._to_response(updated)
+        vote_counts_map = await self._batch_load_vote_counts([updated.id])
+        return self._to_response(updated, vote_counts_map.get(updated.id))
 
     async def reject(
         self,
@@ -444,7 +468,8 @@ class DetectionService:
         annotation.reviewed_at = datetime.now(UTC)
 
         updated = await self.annotation_repo.update(annotation)
-        return self._to_response(updated)
+        vote_counts_map = await self._batch_load_vote_counts([updated.id])
+        return self._to_response(updated, vote_counts_map.get(updated.id))
 
     async def change_species(
         self,
@@ -484,7 +509,8 @@ class DetectionService:
             annotation.end_time = request.end_time
 
         updated = await self.annotation_repo.update(annotation)
-        return self._to_response(updated)
+        vote_counts_map = await self._batch_load_vote_counts([updated.id])
+        return self._to_response(updated, vote_counts_map.get(updated.id))
 
     async def delete(self, detection_id: UUID) -> None:
         """Delete a detection annotation.
@@ -504,12 +530,78 @@ class DetectionService:
 
         await self.annotation_repo.delete(detection_id)
 
+    async def _batch_load_vote_counts(
+        self,
+        annotation_ids: list[UUID],
+        current_user_id: UUID | None = None,
+    ) -> dict[UUID, DetectionVoteCounts]:
+        """Batch-load vote counts for a list of annotations in one query.
+
+        Args:
+            annotation_ids: List of annotation UUIDs
+            current_user_id: Optional user ID to include their vote per annotation
+
+        Returns:
+            Mapping of annotation_id to DetectionVoteCounts
+        """
+        if not annotation_ids or self.vote_repo is None:
+            return {}
+
+        from echoroo.services.annotation_vote import AnnotationVoteService
+
+        votes_result = await self.annotation_repo.db.execute(
+            sa_select(AnnotationVote).where(
+                AnnotationVote.annotation_id.in_(annotation_ids)
+            )
+        )
+        all_votes = list(votes_result.scalars().all())
+
+        # Group votes by annotation_id
+        grouped: dict[UUID, list[AnnotationVote]] = {aid: [] for aid in annotation_ids}
+        for vote in all_votes:
+            if vote.annotation_id in grouped:
+                grouped[vote.annotation_id].append(vote)
+
+        result: dict[UUID, DetectionVoteCounts] = {}
+        for annotation_id, votes in grouped.items():
+            agree_count = sum(1 for v in votes if v.vote == VoteType.AGREE)
+            disagree_count = sum(1 for v in votes if v.vote == VoteType.DISAGREE)
+            unsure_count = sum(1 for v in votes if v.vote == VoteType.UNSURE)
+
+            user_vote: VoteType | None = None
+            if current_user_id is not None:
+                for v in votes:
+                    if v.user_id == current_user_id:
+                        user_vote = v.vote
+                        break
+
+            consensus_status = AnnotationVoteService.compute_consensus_status(
+                agree_count=agree_count,
+                disagree_count=disagree_count,
+                min_votes=2,
+                threshold=0.667,
+            )
+
+            result[annotation_id] = DetectionVoteCounts(
+                agree_count=agree_count,
+                disagree_count=disagree_count,
+                unsure_count=unsure_count,
+                user_vote=user_vote,
+                consensus_status=consensus_status,
+            )
+
+        return result
+
     @staticmethod
-    def _to_response(annotation: Annotation) -> DetectionResponse:
+    def _to_response(
+        annotation: Annotation,
+        vote_counts: DetectionVoteCounts | None = None,
+    ) -> DetectionResponse:
         """Convert an Annotation model to a DetectionResponse schema.
 
         Args:
             annotation: Annotation model instance
+            vote_counts: Optional pre-loaded vote counts for this annotation
 
         Returns:
             DetectionResponse instance
@@ -535,4 +627,5 @@ class DetectionService:
             created_at=annotation.created_at,
             updated_at=annotation.updated_at,
             tag=tag_response,
+            votes=vote_counts if vote_counts is not None else DetectionVoteCounts(),
         )
