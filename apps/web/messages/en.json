@@ -1197,7 +1197,7 @@
   "search_xc_search": "Search Xeno-canto",
   "search_xc_country": "Country",
   "search_xc_area": "Area",
-  "search_xc_quality_min": "Min. Quality",
+  "search_xc_quality_min": "Quality",
   "search_xc_recording_type": "Type",
   "search_xc_no_results": "No recordings found",
   "search_xc_total_results": "{count} recordings found",

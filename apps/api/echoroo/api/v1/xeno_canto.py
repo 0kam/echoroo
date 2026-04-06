@@ -99,7 +99,7 @@ def _build_xc_query(
         query: Base search query (species name, etc.)
         country: Country filter value (e.g. "japan")
         area: Continent/area filter (e.g. "asia")
-        quality_min: Minimum quality rating ("A"-"E")
+        quality_min: Exact quality rating filter ("A"-"E")
         recording_type: Recording type filter (e.g. "song", "call")
 
     Returns:
@@ -114,8 +114,8 @@ def _build_xc_query(
     if area:
         parts.append(f"area:{area.strip()}")
     if quality_min:
-        # q_gt:B returns recordings with quality B or better (A)
-        parts.append(f"q_gt:{quality_min.strip().upper()}")
+        # XC API v3 uses exact quality match with q: tag
+        parts.append(f"q:{quality_min.strip().upper()}")
     if recording_type:
         parts.append(f"type:{recording_type.strip()}")
 
@@ -299,7 +299,7 @@ async def search_xeno_canto(
     ),
     quality_min: str | None = Query(
         default=None,
-        description="Minimum quality rating (A=best, E=worst); returns this grade or better",
+        description="Exact quality rating filter (A=best, E=worst)",
     ),
     recording_type: str | None = Query(
         default=None,
@@ -326,7 +326,7 @@ async def search_xeno_canto(
         query: Base search query string
         country: Optional country filter
         area: Optional continent/area filter
-        quality_min: Optional minimum quality rating ("A"-"E")
+        quality_min: Optional exact quality rating filter ("A"-"E")
         recording_type: Optional recording type filter
         page: Page number for pagination
         per_page: Number of results per page
