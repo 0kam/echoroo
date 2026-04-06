@@ -9,6 +9,7 @@ from uuid import UUID
 from pydantic import BaseModel, Field, model_validator
 
 from echoroo.models.enums import DetectionSource, DetectionStatus
+from echoroo.schemas.annotation_vote import DetectionVoteCounts
 from echoroo.schemas.tag import TagResponse
 
 
@@ -62,6 +63,10 @@ class DetectionResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     tag: TagResponse | None = None
+    votes: DetectionVoteCounts = Field(
+        default_factory=DetectionVoteCounts,
+        description="Aggregate vote counts and consensus status for this detection",
+    )
 
     model_config = {"from_attributes": True}
 

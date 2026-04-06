@@ -23,6 +23,78 @@ export type DetectionSource = 'birdnet' | 'perch' | 'perch_search' | 'human';
  */
 export type DetectionStatus = 'unreviewed' | 'confirmed' | 'rejected';
 
+// ============================================
+// Vote Types
+// ============================================
+
+/**
+ * A user's vote on a detection
+ */
+export type VoteValue = 'agree' | 'disagree' | 'unsure';
+
+/**
+ * Consensus status derived from all votes on a detection
+ */
+export type ConsensusStatus = 'needs_votes' | 'agreed' | 'disputed' | 'rejected';
+
+/**
+ * A single vote cast by a user on a detection
+ */
+export interface DetectionVote {
+  /** Unique identifier */
+  id: string;
+  /** Detection this vote belongs to */
+  detection_id: string;
+  /** User who cast the vote */
+  user_id: string;
+  /** Display name of the voter */
+  user_display_name: string | null;
+  /** The vote value */
+  vote: VoteValue;
+  /** Optional suggested tag (species) if vote is 'disagree' with species suggestion */
+  suggested_tag_id: string | null;
+  /** Optional reason note */
+  note: string | null;
+  /** ISO 8601 creation timestamp */
+  created_at: string;
+  /** ISO 8601 last-update timestamp */
+  updated_at: string;
+}
+
+/**
+ * Aggregated vote summary for a detection
+ */
+export interface VoteSummary {
+  /** Detection identifier */
+  detection_id: string;
+  /** Number of agree votes */
+  agree_count: number;
+  /** Number of disagree votes */
+  disagree_count: number;
+  /** Number of unsure votes */
+  unsure_count: number;
+  /** Total number of votes */
+  total_votes: number;
+  /** Derived consensus status */
+  consensus: ConsensusStatus;
+  /** The current user's vote, if they have voted */
+  my_vote: VoteValue | null;
+  /** All votes with voter info */
+  votes: DetectionVote[];
+}
+
+/**
+ * Request body to cast or update a vote
+ */
+export interface CastVoteRequest {
+  /** The vote value */
+  vote: VoteValue;
+  /** Optional suggested species tag ID (for disagree with wrong species) */
+  suggested_tag_id?: string;
+  /** Optional note */
+  note?: string;
+}
+
 /**
  * Lifecycle status of an automated detection run
  */

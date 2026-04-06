@@ -7,6 +7,7 @@ from echoroo.models.annotation_project import (
     annotation_project_tags,
 )
 from echoroo.models.annotation_task import AnnotationTask
+from echoroo.models.annotation_vote import AnnotationVote
 from echoroo.models.base import Base, TimestampMixin, UUIDMixin
 from echoroo.models.clip import Clip
 from echoroo.models.clip_annotation import ClipAnnotation, clip_annotation_tags
@@ -19,6 +20,7 @@ from echoroo.models.enums import (
     AnnotationProjectVisibility,
     AnnotationSource,
     AnnotationTaskStatus,
+    ConsensusStatus,
     DatasetStatus,
     DatasetVisibility,
     DatetimeParseStatus,
@@ -34,6 +36,7 @@ from echoroo.models.enums import (
     TagCategory,
     UploadFileStatus,
     UploadSessionStatus,
+    VoteType,
 )
 from echoroo.models.license import License
 from echoroo.models.note import Note
@@ -81,6 +84,7 @@ __all__ = [
     "TaxonVernacularName",
     # Detection review models (003-detection-review)
     "Annotation",
+    "AnnotationVote",
     "ConfirmedRegion",
     "DetectionRun",
     # Custom model (SVM classifier)
@@ -115,6 +119,8 @@ __all__ = [
     "DetectionSource",
     "DetectionStatus",
     "DetectionRunStatus",
+    "VoteType",
+    "ConsensusStatus",
     # Enums (custom model)
     "CustomModelStatus",
     # Enums (search session)

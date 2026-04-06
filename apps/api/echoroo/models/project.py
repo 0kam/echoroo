@@ -6,7 +6,17 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from sqlalchemy import DateTime, Enum, ForeignKey, Index, String, Text, UniqueConstraint
+from sqlalchemy import (
+    DateTime,
+    Enum,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -71,6 +81,18 @@ class Project(UUIDMixin, TimestampMixin, Base):
         nullable=False,
         index=True,
         doc="Project owner user ID",
+    )
+    review_min_votes: Mapped[int] = mapped_column(
+        Integer,
+        default=2,
+        nullable=False,
+        doc="Minimum number of agree+disagree votes required before consensus is evaluated",
+    )
+    review_consensus_threshold: Mapped[float] = mapped_column(
+        Float,
+        default=0.667,
+        nullable=False,
+        doc="Fraction of agree/(agree+disagree) votes required to reach 'agreed' consensus",
     )
 
     # Relationships
