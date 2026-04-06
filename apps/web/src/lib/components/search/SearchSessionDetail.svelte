@@ -58,39 +58,54 @@
       session = data;
 
       // Reconstruct reference audio sources from persisted session data
-      if (data.species_config && data.reference_audio_keys && data.reference_audio_keys.length > 0) {
+      if (data.species_config) {
         const loaded: TargetSpecies[] = [];
 
         for (const spConfig of data.species_config) {
           const speciesSources = (spConfig.sources ?? []).reduce<SoundSource[]>((acc, srcConfig) => {
-            const s3Key = (srcConfig as Record<string, unknown>)['s3_key'] as string | undefined;
-            if (s3Key) {
-              const keyIndex = data.reference_audio_keys!.indexOf(s3Key);
+            const src = srcConfig as Record<string, unknown>;
+            const s3Key = src['s3_key'] as string | undefined;
+            const sourceUrl = src['source_url'] as string | undefined;
+            const xcId = src['xc_id'] as string | undefined;
+
+            if (s3Key && data.reference_audio_keys) {
+              // S3-persisted source (uploaded files)
+              const keyIndex = data.reference_audio_keys.indexOf(s3Key);
               if (keyIndex >= 0) {
-                const fileKey = (srcConfig as Record<string, unknown>)['file_key'] as string | undefined;
+                const fileKey = src['file_key'] as string | undefined;
                 acc.push({
                   id: generateId(),
                   origin: 's3' as const,
                   label: fileKey ?? `Source ${keyIndex + 1}`,
                   streamUrl: getReferenceAudioUrl(pid, sid, keyIndex),
                   sourceIndex: keyIndex,
-                  start_time: (srcConfig as Record<string, unknown>)['start_time'] as number | undefined,
-                  end_time: (srcConfig as Record<string, unknown>)['end_time'] as number | undefined,
+                  start_time: src['start_time'] as number | undefined,
+                  end_time: src['end_time'] as number | undefined,
                 });
               }
+            } else if (sourceUrl || xcId) {
+              // URL-based source (Xeno-Canto)
+              acc.push({
+                id: generateId(),
+                origin: 'url' as const,
+                label: xcId ? `XC${xcId}` : (sourceUrl ?? 'URL source'),
+                source_url: sourceUrl,
+                xc_id: xcId as string | undefined,
+                start_time: src['start_time'] as number | undefined,
+                end_time: src['end_time'] as number | undefined,
+              });
             }
             return acc;
           }, []);
 
-          if (speciesSources.length > 0) {
-            loaded.push({
-              id: generateId(),
-              tag_id: spConfig.tag_id,
-              scientific_name: spConfig.scientific_name,
-              common_name: spConfig.common_name ?? undefined,
-              sources: speciesSources,
-            });
-          }
+          // Include species even if no sources could be reconstructed
+          loaded.push({
+            id: generateId(),
+            tag_id: spConfig.tag_id,
+            scientific_name: spConfig.scientific_name,
+            common_name: spConfig.common_name ?? undefined,
+            sources: speciesSources,
+          });
         }
 
         reconstructedSpecies = loaded;
@@ -434,11 +449,13 @@
         onSpeciesChange={() => {}}
         readonly={true}
       />
+    {/if}
 
-      <!-- Action buttons (only for completed sessions with reference audio) -->
-      {#if session.status === 'completed'}
-        <div class="flex items-center justify-end gap-2">
-          <!-- Edit & Re-search: clone session as template and switch to new-search mode -->
+    <!-- Action buttons (for completed sessions) -->
+    {#if session.status === 'completed'}
+      <div class="flex items-center justify-end gap-2">
+        <!-- Edit & Re-search: clone session as template and switch to new-search mode -->
+        {#if reconstructedSpecies.length > 0}
           <button
             type="button"
             class="inline-flex items-center gap-2 rounded-md border border-stone-300 bg-white px-4 py-2 text-sm font-medium
@@ -453,24 +470,24 @@
             </svg>
             {m.search_edit_rerun()}
           </button>
+        {/if}
 
-          <!-- Re-run: use same sources exactly, pass source_session_id -->
-          <button
-            type="button"
-            class="inline-flex items-center gap-2 rounded-md bg-primary-600 px-4 py-2 text-sm font-medium
-                   text-white shadow-sm transition-colors hover:bg-primary-700
-                   dark:bg-primary-500 dark:hover:bg-primary-600"
-            onclick={handleRerun}
-          >
-            <!-- Refresh icon -->
-            <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-              <path d="M1 4v6h6M23 20v-6h-6" stroke-linecap="round" stroke-linejoin="round" />
-              <path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4-4.64 4.36A9 9 0 0 1 3.51 15" stroke-linecap="round" stroke-linejoin="round" />
-            </svg>
-            {m.search_add_sources_rerun()}
-          </button>
-        </div>
-      {/if}
+        <!-- Re-run: use same sources exactly, pass source_session_id -->
+        <button
+          type="button"
+          class="inline-flex items-center gap-2 rounded-md bg-primary-600 px-4 py-2 text-sm font-medium
+                 text-white shadow-sm transition-colors hover:bg-primary-700
+                 dark:bg-primary-500 dark:hover:bg-primary-600"
+          onclick={handleRerun}
+        >
+          <!-- Refresh icon -->
+          <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <path d="M1 4v6h6M23 20v-6h-6" stroke-linecap="round" stroke-linejoin="round" />
+            <path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4-4.64 4.36A9 9 0 0 1 3.51 15" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+          {m.search_add_sources_rerun()}
+        </button>
+      </div>
     {/if}
 
     <!-- Results section -->
