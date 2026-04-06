@@ -6,19 +6,18 @@ from typing import Any
 from uuid import UUID
 
 from sqlalchemy import func, or_, select
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlalchemy.sql.elements import ColumnElement
 
 from echoroo.models.taxon import Taxon
 from echoroo.models.taxon_vernacular_name import TaxonVernacularName
+from echoroo.repositories.base import BaseRepository
 
 
-class TaxonRepository:
+class TaxonRepository(BaseRepository[Taxon]):
     """Repository for Taxon entity operations."""
 
-    def __init__(self, db: AsyncSession) -> None:
-        self.db = db
+    model = Taxon
 
     async def get_by_id(self, taxon_id: UUID) -> Taxon | None:
         result = await self.db.execute(

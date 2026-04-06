@@ -4,23 +4,17 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from sqlalchemy import delete, func, select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 
 from echoroo.models.detection_run import DetectionRun
+from echoroo.repositories.base import BaseRepository
 
 
-class DetectionRunRepository:
+class DetectionRunRepository(BaseRepository[DetectionRun]):
     """Repository for DetectionRun entity operations."""
 
-    def __init__(self, db: AsyncSession) -> None:
-        """Initialize repository with database session.
-
-        Args:
-            db: SQLAlchemy async session
-        """
-        self.db = db
+    model = DetectionRun
 
     async def get_by_id(self, run_id: UUID) -> DetectionRun | None:
         """Get detection run by ID with relationships loaded.
@@ -111,11 +105,3 @@ class DetectionRunRepository:
         await self.db.refresh(run, ["project", "dataset"])
         return run
 
-    async def delete(self, run_id: UUID) -> None:
-        """Delete a detection run by ID.
-
-        Args:
-            run_id: DetectionRun's UUID
-        """
-        await self.db.execute(delete(DetectionRun).where(DetectionRun.id == run_id))
-        await self.db.flush()

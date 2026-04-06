@@ -14,32 +14,41 @@
   import DetectionFiltersComponent from './DetectionFilters.svelte';
   import DetectionExportDialog from './DetectionExportDialog.svelte';
 
-  export let projectId: string;
-  export let detectionRunId: string | undefined = undefined;
+  let {
+    projectId,
+    detectionRunId = undefined,
+  }: {
+    projectId: string;
+    detectionRunId?: string;
+  } = $props();
 
-  let filters: DetectionFilters = {};
-  let searchText: string = '';
-  let isExportDialogOpen: boolean = false;
+  let filters: DetectionFilters = $state({});
+  let searchText: string = $state('');
+  let isExportDialogOpen: boolean = $state(false);
 
-  $: locale = getLocale();
+  const locale = $derived(getLocale());
 
-  $: speciesSummaryQuery = createQuery({
-    queryKey: ['species-summary', projectId, searchText, locale, detectionRunId],
-    queryFn: () =>
-      fetchSpeciesSummary(projectId, {
-        search: searchText || undefined,
-        locale,
-        detection_run_id: detectionRunId,
-      }),
-    enabled: !!projectId,
-  });
+  const speciesSummaryQueryKey = $derived(['species-summary', projectId, searchText, locale, detectionRunId]);
+
+  const speciesSummaryQuery = $derived(
+    createQuery({
+      queryKey: speciesSummaryQueryKey,
+      queryFn: () =>
+        fetchSpeciesSummary(projectId, {
+          search: searchText || undefined,
+          locale,
+          detection_run_id: detectionRunId,
+        }),
+      enabled: !!projectId,
+    })
+  );
 
   function handleFilterChange(newFilters: DetectionFilters) {
     filters = newFilters;
   }
 
   // Client-side filter by status so we can also use confidence range from filters
-  $: filteredItems = (() => {
+  const filteredItems = $derived((() => {
     const items = $speciesSummaryQuery.data?.items ?? [];
     return items.filter((species) => {
       if (filters.status) {
@@ -56,7 +65,7 @@
       }
       return true;
     });
-  })();
+  })());
 
   // Extract search text from the filter change callback
   function handleFilterChangeWithSearch(newFilters: DetectionFilters & { _search?: string }) {
@@ -98,7 +107,7 @@
     <!-- Export button -->
     <button
       type="button"
-      on:click={openExportDialog}
+      onclick={openExportDialog}
       class="flex items-center gap-1.5 rounded-md border border-card bg-surface-card px-3 py-1.5 text-sm font-medium text-stone-600 hover:bg-stone-50 hover:border-stone-300 transition-colors"
       aria-label={m.detection_export_aria()}
     >
@@ -150,7 +159,7 @@
       </p>
       <button
         type="button"
-        on:click={() => $speciesSummaryQuery.refetch()}
+        onclick={() => $speciesSummaryQuery.refetch()}
         class="mt-3 rounded-md bg-red-100 px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-200"
       >
         {m.detection_retry()}

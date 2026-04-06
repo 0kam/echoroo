@@ -29,6 +29,11 @@
     bounds: SpectrogramWindow;
     currentTime: number;
     interactionMode: InteractionMode;
+    /**
+     * When true, all mouse interaction (pan, zoom, seek, crosshair) is disabled.
+     * The spectrogram renders identically but the user cannot navigate or seek.
+     */
+    readonly?: boolean;
     onViewportChange?: (viewport: SpectrogramWindow) => void;
     onViewportSave?: () => void;
     onSeek?: (time: number) => void;
@@ -43,6 +48,7 @@
     bounds,
     currentTime,
     interactionMode,
+    readonly = false,
     onViewportChange,
     onViewportSave,
     onSeek,
@@ -662,6 +668,7 @@
   }
 
   function handleMouseMove(e: MouseEvent) {
+    if (readonly) return;
     const { x, y } = getCanvasPos(e);
     mousePos = pixelsToPosition(x, y, canvasWidth, canvasHeight, viewport);
 
@@ -689,7 +696,7 @@
   }
 
   function handleMouseDown(e: MouseEvent) {
-    if (e.button !== 0) return;
+    if (readonly || e.button !== 0) return;
     const { x, y } = getCanvasPos(e);
     const pos = pixelsToPosition(x, y, canvasWidth, canvasHeight, viewport);
     isDragging = true;
@@ -741,12 +748,14 @@
   }
 
   function handleDoubleClick(e: MouseEvent) {
+    if (readonly) return;
     const { x, y } = getCanvasPos(e);
     const pos = pixelsToPosition(x, y, canvasWidth, canvasHeight, viewport);
     onSeek?.(pos.time);
   }
 
   function handleWheel(e: WheelEvent) {
+    if (readonly) return;
     e.preventDefault();
     const { x, y } = getCanvasPos(e);
     const pos = pixelsToPosition(x, y, canvasWidth, canvasHeight, viewport);
@@ -790,7 +799,8 @@
   }
 
   function handleKeyDown(e: KeyboardEvent) {
-    // Only handle if canvas is focused
+    // Only handle if canvas is focused and not in readonly mode
+    if (readonly) return;
     if (document.activeElement !== canvas && document.activeElement !== containerEl) return;
 
     switch (e.key.toLowerCase()) {
@@ -838,11 +848,11 @@
     width={canvasWidth}
     height={spectrogramSettings.height}
     class="spectrogram-canvas"
-    class:cursor-crosshair={interactionMode === 'idle'}
-    class:cursor-grab={interactionMode === 'panning' && !isDragging}
-    class:cursor-grabbing={interactionMode === 'panning' && isDragging}
-    class:cursor-crosshair-zoom={interactionMode === 'zooming'}
-    tabindex="0"
+    class:cursor-crosshair={!readonly && interactionMode === 'idle'}
+    class:cursor-grab={!readonly && interactionMode === 'panning' && !isDragging}
+    class:cursor-grabbing={!readonly && interactionMode === 'panning' && isDragging}
+    class:cursor-crosshair-zoom={!readonly && interactionMode === 'zooming'}
+    tabindex={readonly ? undefined : 0}
     role="img"
     aria-label="Spectrogram visualization"
     onmousemove={handleMouseMove}

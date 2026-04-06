@@ -11,7 +11,7 @@ import type {
   DetectionFilters,
   DetectionTemporalDataResponse,
 } from '$lib/types/detection';
-import { fetchWithErrorHandling, handleApiResponse } from './errors';
+import { apiClient } from './client';
 
 const API_BASE = '/api/v1';
 
@@ -52,11 +52,9 @@ export async function fetchSpeciesSummary(
   if (params?.locale) query.set('locale', params.locale);
   if (params?.detection_run_id) query.set('detection_run_id', params.detection_run_id);
   const qs = query.toString() ? `?${query.toString()}` : '';
-  const response = await fetchWithErrorHandling(
-    `${API_BASE}/projects/${projectId}/detections/species-summary${qs}`,
-    { credentials: 'include' }
+  return apiClient.get<SpeciesSummaryResponse>(
+    `${API_BASE}/projects/${projectId}/detections/species-summary${qs}`
   );
-  return handleApiResponse<SpeciesSummaryResponse>(response);
 }
 
 // ============================================
@@ -71,11 +69,9 @@ export async function fetchDetections(
   params?: DetectionFilters & { page?: number; page_size?: number; detection_run_id?: string }
 ): Promise<DetectionListResponse> {
   const qs = buildDetectionParams(params);
-  const response = await fetchWithErrorHandling(
-    `${API_BASE}/projects/${projectId}/detections${qs}`,
-    { credentials: 'include' }
+  return apiClient.get<DetectionListResponse>(
+    `${API_BASE}/projects/${projectId}/detections${qs}`
   );
-  return handleApiResponse<DetectionListResponse>(response);
 }
 
 // ============================================
@@ -94,19 +90,10 @@ export async function confirmDetection(
   detectionId: string,
   timeRange?: { start_time: number; end_time: number }
 ): Promise<Detection> {
-  const options: RequestInit = {
-    method: 'POST',
-    credentials: 'include',
-  };
-  if (timeRange) {
-    options.headers = { 'Content-Type': 'application/json' };
-    options.body = JSON.stringify(timeRange);
-  }
-  const response = await fetchWithErrorHandling(
+  return apiClient.post<Detection>(
     `${API_BASE}/projects/${projectId}/detections/${detectionId}/confirm`,
-    options
+    timeRange
   );
-  return handleApiResponse<Detection>(response);
 }
 
 /**
@@ -116,14 +103,9 @@ export async function rejectDetection(
   projectId: string,
   detectionId: string
 ): Promise<Detection> {
-  const response = await fetchWithErrorHandling(
-    `${API_BASE}/projects/${projectId}/detections/${detectionId}/reject`,
-    {
-      method: 'POST',
-      credentials: 'include',
-    }
+  return apiClient.post<Detection>(
+    `${API_BASE}/projects/${projectId}/detections/${detectionId}/reject`
   );
-  return handleApiResponse<Detection>(response);
 }
 
 /**
@@ -134,16 +116,10 @@ export async function changeDetectionSpecies(
   detectionId: string,
   data: ChangeSpeciesRequest
 ): Promise<Detection> {
-  const response = await fetchWithErrorHandling(
+  return apiClient.post<Detection>(
     `${API_BASE}/projects/${projectId}/detections/${detectionId}/change-species`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify(data),
-    }
+    data
   );
-  return handleApiResponse<Detection>(response);
 }
 
 /**
@@ -153,16 +129,10 @@ export async function createDetection(
   projectId: string,
   data: DetectionCreateRequest
 ): Promise<Detection> {
-  const response = await fetchWithErrorHandling(
+  return apiClient.post<Detection>(
     `${API_BASE}/projects/${projectId}/detections`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify(data),
-    }
+    data
   );
-  return handleApiResponse<Detection>(response);
 }
 
 // ============================================
@@ -184,11 +154,9 @@ export async function fetchTemporalData(
   if (locale) params.set('locale', locale);
   if (detectionRunId) params.set('detection_run_id', detectionRunId);
   const qs = params.toString() ? `?${params.toString()}` : '';
-  const response = await fetchWithErrorHandling(
-    `${API_BASE}/projects/${projectId}/detections/temporal-data${qs}`,
-    { credentials: 'include' }
+  return apiClient.get<DetectionTemporalDataResponse>(
+    `${API_BASE}/projects/${projectId}/detections/temporal-data${qs}`
   );
-  return handleApiResponse<DetectionTemporalDataResponse>(response);
 }
 
 /**
@@ -198,15 +166,7 @@ export async function deleteDetection(
   projectId: string,
   detectionId: string
 ): Promise<void> {
-  const response = await fetchWithErrorHandling(
-    `${API_BASE}/projects/${projectId}/detections/${detectionId}`,
-    {
-      method: 'DELETE',
-      credentials: 'include',
-    }
+  return apiClient.delete<void>(
+    `${API_BASE}/projects/${projectId}/detections/${detectionId}`
   );
-  if (response.ok) {
-    return;
-  }
-  await handleApiResponse(response);
 }

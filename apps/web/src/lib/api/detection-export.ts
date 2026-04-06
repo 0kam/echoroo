@@ -2,7 +2,7 @@
  * Detection export API client for downloading CSV and ML datasets.
  */
 
-import { fetchWithErrorHandling } from './errors';
+import { apiClient } from './client';
 
 const API_BASE = '/api/v1';
 
@@ -33,9 +33,8 @@ export async function exportDetectionsCSV(
   params?: { status?: string; tag_id?: string; dataset_id?: string; detection_run_id?: string }
 ): Promise<void> {
   const qs = buildExportParams(params);
-  const response = await fetchWithErrorHandling(
-    `${API_BASE}/projects/${projectId}/detections/export/csv${qs}`,
-    { credentials: 'include' }
+  const response = await apiClient.requestRaw(
+    `${API_BASE}/projects/${projectId}/detections/export/csv${qs}`
   );
   if (!response.ok) {
     throw new Error(`Export failed: ${response.statusText}`);
@@ -52,9 +51,8 @@ export async function exportMLDataset(
   params?: { dataset_id?: string; detection_run_id?: string }
 ): Promise<void> {
   const qs = buildExportParams(params);
-  const response = await fetchWithErrorHandling(
-    `${API_BASE}/projects/${projectId}/detections/export/ml-dataset${qs}`,
-    { credentials: 'include' }
+  const response = await apiClient.requestRaw(
+    `${API_BASE}/projects/${projectId}/detections/export/ml-dataset${qs}`
   );
   if (!response.ok) {
     throw new Error(`Export failed: ${response.statusText}`);

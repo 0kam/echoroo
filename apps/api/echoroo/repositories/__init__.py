@@ -2,6 +2,7 @@
 
 from echoroo.repositories.annotation_project import AnnotationProjectRepository
 from echoroo.repositories.annotation_task import AnnotationTaskRepository
+from echoroo.repositories.base import BaseRepository
 from echoroo.repositories.clip import ClipRepository
 from echoroo.repositories.clip_annotation import ClipAnnotationRepository
 from echoroo.repositories.dataset import DatasetRepository
@@ -21,6 +22,7 @@ from echoroo.repositories.user import UserRepository
 __all__ = [
     "AnnotationProjectRepository",
     "AnnotationTaskRepository",
+    "BaseRepository",
     "ClipAnnotationRepository",
     "ClipRepository",
     "DatasetRepository",

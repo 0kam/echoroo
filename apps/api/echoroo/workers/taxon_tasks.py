@@ -9,34 +9,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any
 
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-
-from echoroo.core.settings import get_settings
 from echoroo.workers.celery_app import app
+from echoroo.workers.db_utils import get_worker_engine_and_session_factory
 
 logger = logging.getLogger(__name__)
 
 # Delay between GBIF requests to avoid rate limiting (seconds)
 _GBIF_REQUEST_DELAY = 0.15
-
-
-# ---------------------------------------------------------------------------
-# Async session factory (same pattern as ml_tasks.py)
-# ---------------------------------------------------------------------------
-
-
-def _get_engine_and_session_factory() -> tuple[Any, async_sessionmaker[AsyncSession]]:
-    """Create a fresh async engine and session factory for each task invocation.
-
-    Each Celery task calls ``asyncio.run()`` which creates a new event loop.
-    Reusing a cached engine across loops causes "Future attached to a different
-    loop" errors, so we create a fresh engine every time.
-    """
-    settings = get_settings()
-    engine = create_async_engine(settings.DATABASE_URL, echo=False, pool_pre_ping=True)
-    return engine, async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 
 # ---------------------------------------------------------------------------
@@ -48,7 +28,7 @@ async def _run_seed_birdnet_taxa() -> dict[str, object]:
     """Async implementation of BirdNET taxa seeding."""
     from echoroo.services.taxon_seeder import seed_birdnet_taxa
 
-    engine, session_factory = _get_engine_and_session_factory()
+    engine, session_factory = get_worker_engine_and_session_factory()
     try:
         async with session_factory() as db:
             created = await seed_birdnet_taxa(db)
@@ -63,7 +43,7 @@ async def _run_resolve_gbif_batch(batch_size: int) -> dict[str, object]:
     from echoroo.repositories.taxon import TaxonRepository
     from echoroo.services.taxon import TaxonService
 
-    engine, session_factory = _get_engine_and_session_factory()
+    engine, session_factory = get_worker_engine_and_session_factory()
     try:
         async with session_factory() as db:
             repo = TaxonRepository(db)
@@ -95,7 +75,7 @@ async def _run_fetch_vernacular_names_batch(
     from echoroo.repositories.taxon import TaxonRepository
     from echoroo.services.gbif import GBIFService
 
-    engine, session_factory = _get_engine_and_session_factory()
+    engine, session_factory = get_worker_engine_and_session_factory()
     try:
         async with session_factory() as db:
             # Fetch resolved taxa that have a GBIF key
@@ -214,7 +194,7 @@ async def _run_fetch_japanese_vernacular_names(  # pyright: ignore[reportUnusedF
     from echoroo.repositories.taxon import TaxonRepository
     from echoroo.services.gbif import GBIFService
 
-    engine, session_factory = _get_engine_and_session_factory()
+    engine, session_factory = get_worker_engine_and_session_factory()
     try:
         # Count total qualifying taxa upfront for progress logging
         async with session_factory() as db:

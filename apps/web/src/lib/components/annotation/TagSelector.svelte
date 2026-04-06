@@ -3,31 +3,40 @@
   import { fetchGBIFSuggestions } from '$lib/api/tags';
   import * as m from '$lib/paraglide/messages';
 
-  export let projectId: string;
-  export let selectedTagIds: string[] = [];
-  export let availableTags: Tag[] = [];
-  export let onTagSelect: (tagId: string) => void;
-  export let onTagRemove: (tagId: string) => void;
-  export let showGBIF: boolean = false;
+  let {
+    projectId,
+    selectedTagIds = [] as string[],
+    availableTags = [] as Tag[],
+    onTagSelect,
+    onTagRemove,
+    showGBIF = false,
+  }: {
+    projectId: string;
+    selectedTagIds?: string[];
+    availableTags?: Tag[];
+    onTagSelect: (tagId: string) => void;
+    onTagRemove: (tagId: string) => void;
+    showGBIF?: boolean;
+  } = $props();
 
-  let searchQuery = '';
-  let isDropdownOpen = false;
-  let gbifSuggestions: GBIFSuggestion[] = [];
-  let isLoadingGBIF = false;
-  let gbifDebounceTimer: ReturnType<typeof setTimeout> | null = null;
-  let inputElement: HTMLInputElement;
+  let searchQuery = $state('');
+  let isDropdownOpen = $state(false);
+  let gbifSuggestions: GBIFSuggestion[] = $state([]);
+  let isLoadingGBIF = $state(false);
+  let gbifDebounceTimer: ReturnType<typeof setTimeout> | null = $state(null);
+  let inputElement: HTMLInputElement | undefined = $state(undefined);
 
   // Selected tag objects for display
-  $: selectedTags = availableTags.filter((t) => selectedTagIds.includes(t.id));
+  const selectedTags = $derived(availableTags.filter((t) => selectedTagIds.includes(t.id)));
 
   // Filter available tags by search query (excluding already selected)
-  $: filteredTags = availableTags.filter(
+  const filteredTags = $derived(availableTags.filter(
     (t) =>
       !selectedTagIds.includes(t.id) &&
       (searchQuery === '' ||
         t.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
         (t.scientific_name && t.scientific_name.toLowerCase().includes(searchQuery.toLowerCase())))
-  );
+  ));
 
   function openDropdown() {
     isDropdownOpen = true;
@@ -128,7 +137,7 @@
           <button
             type="button"
             class="tag-chip__remove"
-            on:click={() => handleTagRemove(tag.id)}
+            onclick={() => handleTagRemove(tag.id)}
             aria-label="Remove {tag.name}"
           >
             &times;
@@ -146,10 +155,10 @@
       class="search-input"
       placeholder={m.annotation_tag_selector_search_placeholder()}
       bind:value={searchQuery}
-      on:input={handleSearchInput}
-      on:focus={handleInputFocus}
-      on:blur={handleInputBlur}
-      on:keydown={handleKeydown}
+      oninput={handleSearchInput}
+      onfocus={handleInputFocus}
+      onblur={handleInputBlur}
+      onkeydown={handleKeydown}
       autocomplete="off"
     />
 
@@ -167,7 +176,7 @@
                 class="dropdown-item"
                 role="option"
                 aria-selected="false"
-                on:click={() => handleTagSelect(tag.id)}
+                onclick={() => handleTagSelect(tag.id)}
               >
                 <span class="dropdown-item__shortcut">{index < 9 ? index + 1 : ''}</span>
                 <span class="dropdown-item__content">
@@ -202,10 +211,10 @@
                   class="dropdown-item dropdown-item--gbif"
                   role="option"
                   aria-selected="false"
-                  on:click={() => {
+                  onclick={() => {
                     // Dispatch GBIF selection to parent for tag creation form auto-fill
                     const event = new CustomEvent('gbifSelect', { detail: suggestion, bubbles: true });
-                    inputElement.dispatchEvent(event);
+                    inputElement?.dispatchEvent(event);
                     closeDropdown();
                     searchQuery = '';
                   }}

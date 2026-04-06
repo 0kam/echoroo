@@ -10,7 +10,8 @@ import type {
   AnnotationTaskListParams,
   TaskCompletionResponse,
 } from '$lib/types/annotation';
-import { fetchWithErrorHandling, handleApiResponse } from './errors';
+import { apiClient } from './client';
+import { ApiError } from './client';
 
 const API_BASE = '/api/v1';
 
@@ -31,8 +32,7 @@ export async function fetchAnnotationTasks(
   if (params.sort_order) searchParams.set('sort_order', params.sort_order);
 
   const url = `${API_BASE}/projects/${projectId}/annotation-projects/${annotationProjectId}/tasks?${searchParams}`;
-  const response = await fetchWithErrorHandling(url, { credentials: 'include' });
-  return handleApiResponse<AnnotationTaskListResponse>(response);
+  return apiClient.get<AnnotationTaskListResponse>(url);
 }
 
 /**
@@ -43,11 +43,9 @@ export async function fetchAnnotationTask(
   annotationProjectId: string,
   taskId: string
 ): Promise<AnnotationTaskDetail> {
-  const response = await fetchWithErrorHandling(
-    `${API_BASE}/projects/${projectId}/annotation-projects/${annotationProjectId}/tasks/${taskId}`,
-    { credentials: 'include' }
+  return apiClient.get<AnnotationTaskDetail>(
+    `${API_BASE}/projects/${projectId}/annotation-projects/${annotationProjectId}/tasks/${taskId}`
   );
-  return handleApiResponse<AnnotationTaskDetail>(response);
 }
 
 /**
@@ -59,16 +57,10 @@ export async function updateAnnotationTask(
   taskId: string,
   data: AnnotationTaskUpdate
 ): Promise<AnnotationTask> {
-  const response = await fetchWithErrorHandling(
+  return apiClient.patch<AnnotationTask>(
     `${API_BASE}/projects/${projectId}/annotation-projects/${annotationProjectId}/tasks/${taskId}`,
-    {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify(data),
-    }
+    data
   );
-  return handleApiResponse<AnnotationTask>(response);
 }
 
 /**
@@ -79,14 +71,9 @@ export async function completeAnnotationTask(
   annotationProjectId: string,
   taskId: string
 ): Promise<TaskCompletionResponse> {
-  const response = await fetchWithErrorHandling(
-    `${API_BASE}/projects/${projectId}/annotation-projects/${annotationProjectId}/tasks/${taskId}/complete`,
-    {
-      method: 'POST',
-      credentials: 'include',
-    }
+  return apiClient.post<TaskCompletionResponse>(
+    `${API_BASE}/projects/${projectId}/annotation-projects/${annotationProjectId}/tasks/${taskId}/complete`
   );
-  return handleApiResponse<TaskCompletionResponse>(response);
 }
 
 /**
@@ -97,12 +84,19 @@ export async function fetchNextAnnotationTask(
   projectId: string,
   annotationProjectId: string
 ): Promise<AnnotationTaskDetail | null> {
-  const response = await fetchWithErrorHandling(
-    `${API_BASE}/projects/${projectId}/annotation-projects/${annotationProjectId}/tasks/next`,
-    { credentials: 'include' }
+  const response = await apiClient.requestRaw(
+    `${API_BASE}/projects/${projectId}/annotation-projects/${annotationProjectId}/tasks/next`
   );
   if (response.status === 204) {
     return null;
   }
-  return handleApiResponse<AnnotationTaskDetail>(response);
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({ detail: 'An error occurred' }));
+    throw new ApiError(
+      errorData.detail || 'Request failed',
+      response.status,
+      errorData.detail
+    );
+  }
+  return response.json() as Promise<AnnotationTaskDetail>;
 }

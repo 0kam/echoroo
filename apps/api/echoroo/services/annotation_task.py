@@ -1,10 +1,10 @@
 """AnnotationTask service for business logic."""
 
-import math
 from uuid import UUID
 
 from fastapi import HTTPException, status
 
+from echoroo.core.pagination import paginate
 from echoroo.models.annotation_task import AnnotationTask
 from echoroo.models.enums import AnnotationTaskStatus
 from echoroo.repositories.annotation_project import AnnotationProjectRepository
@@ -151,31 +151,26 @@ class AnnotationTaskService:
         Returns:
             Paginated AnnotationTaskListResponse
         """
-        if page < 1:
-            page = 1
-        if page_size < 1 or page_size > 200:
-            page_size = 50
+        pagination = paginate(page, page_size)
 
         tasks, total = await self.task_repo.list_by_project(
             annotation_project_id=annotation_project_id,
             status=status,
             assigned_to_id=assigned_to_id,
-            page=page,
-            page_size=page_size,
+            page=pagination.page,
+            page_size=pagination.page_size,
             sort_by=sort_by,
             sort_order=sort_order,
         )
-
-        pages = math.ceil(total / page_size) if total > 0 else 0
 
         items = [AnnotationTaskResponse.model_validate(t) for t in tasks]
 
         return AnnotationTaskListResponse(
             items=items,
             total=total,
-            page=page,
-            page_size=page_size,
-            pages=pages,
+            page=pagination.page,
+            page_size=pagination.page_size,
+            pages=pagination.total_pages(total),
         )
 
     async def get_detail(self, task_id: UUID) -> AnnotationTaskDetailResponse:

@@ -3,24 +3,18 @@
 from uuid import UUID
 
 from sqlalchemy import func, or_, select
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from echoroo.models.annotation_project import AnnotationProject
 from echoroo.models.annotation_task import AnnotationTask
 from echoroo.models.enums import AnnotationTaskStatus
+from echoroo.repositories.base import BaseRepository
 
 
-class AnnotationTaskRepository:
+class AnnotationTaskRepository(BaseRepository[AnnotationTask]):
     """Repository for AnnotationTask entity operations."""
 
-    def __init__(self, db: AsyncSession) -> None:
-        """Initialize repository with database session.
-
-        Args:
-            db: SQLAlchemy async session
-        """
-        self.db = db
+    model = AnnotationTask
 
     async def get_by_id(self, task_id: UUID) -> AnnotationTask | None:
         """Get annotation task by ID with clip, clip_annotation, and annotation_project loaded.
@@ -202,3 +196,40 @@ class AnnotationTaskRepository:
             counts[row.status.value] = row.cnt
 
         return counts
+
+    async def count_by_status_batch(
+        self, annotation_project_ids: list[UUID]
+    ) -> dict[UUID, dict[str, int]]:
+        """Count annotation tasks grouped by status for multiple projects in one query.
+
+        Replaces the N+1 pattern of calling count_by_status() in a loop.
+
+        Args:
+            annotation_project_ids: List of AnnotationProject UUIDs
+
+        Returns:
+            Mapping of annotation_project_id -> {status_value: count}
+        """
+        if not annotation_project_ids:
+            return {}
+
+        result = await self.db.execute(
+            select(
+                AnnotationTask.annotation_project_id,
+                AnnotationTask.status,
+                func.count().label("cnt"),
+            )
+            .where(AnnotationTask.annotation_project_id.in_(annotation_project_ids))
+            .group_by(AnnotationTask.annotation_project_id, AnnotationTask.status)
+        )
+        rows = result.all()
+
+        # Build a mapping: project_id -> {status: count}, initialised with zeros
+        zero_counts: dict[str, int] = {s.value: 0 for s in AnnotationTaskStatus}
+        batch: dict[UUID, dict[str, int]] = {
+            pid: dict(zero_counts) for pid in annotation_project_ids
+        }
+        for row in rows:
+            batch[row.annotation_project_id][row.status.value] = row.cnt
+
+        return batch

@@ -29,6 +29,7 @@
   import { toasts } from '$lib/stores/toast';
   import type { CustomModel, CustomModelListItem, CustomModelCreate } from '$lib/types/custom-model';
   import type { Tag } from '$lib/types/annotation';
+  import { getCustomModelStatusClass, getCustomModelStatusLabel } from '$lib/utils/statusFormatters';
 
   const projectId = $derived($page.params.id as string);
   const queryClient = useQueryClient();
@@ -316,37 +317,17 @@
   // ============================================
 
   function statusLabel(status: string): string {
-    switch (status) {
-      case 'draft':
-        return m.models_status_draft();
-      case 'training':
-        return m.models_status_training();
-      case 'trained':
-        return m.models_status_trained();
-      case 'deployed':
-        return m.models_status_deployed();
-      case 'failed':
-        return m.models_status_failed();
-      default:
-        return status;
-    }
+    return getCustomModelStatusLabel(status, {
+      draft: m.models_status_draft,
+      training: m.models_status_training,
+      trained: m.models_status_trained,
+      deployed: m.models_status_deployed,
+      failed: m.models_status_failed,
+    });
   }
 
   function statusClasses(status: string): string {
-    switch (status) {
-      case 'draft':
-        return 'bg-stone-100 text-stone-600 dark:bg-stone-800 dark:text-stone-400';
-      case 'training':
-        return 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400';
-      case 'trained':
-        return 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400';
-      case 'deployed':
-        return 'bg-primary-100 text-primary-700 dark:bg-primary-900/30 dark:text-primary-400';
-      case 'failed':
-        return 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400';
-      default:
-        return 'bg-stone-100 text-stone-600';
-    }
+    return getCustomModelStatusClass(status);
   }
 
   function formatDuration(seconds: number): string {

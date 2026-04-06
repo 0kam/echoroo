@@ -3,10 +3,17 @@
   import { getLocale } from '$lib/paraglide/runtime';
   import * as m from '$lib/paraglide/messages';
 
-  export let annotations: SoundEventAnnotation[] = [];
-  export let selectedAnnotationId: string | null = null;
-  export let onSelect: (id: string) => void;
-  export let onDelete: (id: string) => void;
+  let {
+    annotations = [] as SoundEventAnnotation[],
+    selectedAnnotationId = null,
+    onSelect,
+    onDelete,
+  }: {
+    annotations?: SoundEventAnnotation[];
+    selectedAnnotationId?: string | null;
+    onSelect: (id: string) => void;
+    onDelete: (id: string) => void;
+  } = $props();
 
   // ============================================================
   // Helpers
@@ -57,11 +64,11 @@
   }
 
   // Sort annotations by start time
-  $: sortedAnnotations = [...annotations].sort((a, b) => {
+  const sortedAnnotations = $derived([...annotations].sort((a, b) => {
     const aTime = getTimeRange(a).start;
     const bTime = getTimeRange(b).start;
     return aTime - bTime;
-  });
+  }));
 </script>
 
 <div class="annotation-list">
@@ -87,7 +94,7 @@
           class:selected={isSelected}
           role="option"
           aria-selected={isSelected}
-          on:click={() => onSelect(annotation.id)}
+          onclick={() => onSelect(annotation.id)}
         >
           <!-- Left: geometry icon -->
           <div class="icon-col" aria-hidden="true">
@@ -144,7 +151,7 @@
             class="delete-btn"
             title={m.annotation_list_delete_title()}
             aria-label={m.annotation_list_delete_aria()}
-            on:click|stopPropagation={() => onDelete(annotation.id)}
+            onclick={(e) => { e.stopPropagation(); onDelete(annotation.id); }}
           >
             <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" class="delete-icon">
               <path stroke-linecap="round" d="M4 4l8 8M12 4l-8 8"/>

@@ -9,15 +9,18 @@
   import PolarHeatmap from './PolarHeatmap.svelte';
   import * as m from '$lib/paraglide/messages';
 
-  export let species: SpeciesTemporalData[];
+  let {
+    species,
+  }: {
+    species: SpeciesTemporalData[];
+  } = $props();
 
   const DEFAULT_VISIBLE = 12;
 
-  let showAll = false;
+  let showAll = $state(false);
 
-  $: visibleSpecies = showAll ? species : species.slice(0, DEFAULT_VISIBLE);
-  $: hasMore = species.length > DEFAULT_VISIBLE;
-  $: hiddenCount = species.length - DEFAULT_VISIBLE;
+  const visibleSpecies = $derived(showAll ? species : species.slice(0, DEFAULT_VISIBLE));
+  const hasMore = $derived(species.length > DEFAULT_VISIBLE);
 </script>
 
 <div class="space-y-6">
@@ -72,7 +75,7 @@
       <div class="flex justify-center">
         <button
           type="button"
-          on:click={() => (showAll = !showAll)}
+          onclick={() => (showAll = !showAll)}
           class="inline-flex items-center gap-1.5 rounded-md border border-stone-300 bg-surface-card px-4 py-2 text-sm font-medium text-stone-600 hover:bg-stone-50 focus:outline-none focus:ring-2 focus:ring-emerald-400 transition-colors"
         >
           {#if showAll}

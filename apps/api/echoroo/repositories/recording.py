@@ -3,24 +3,18 @@
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import case, delete, func, select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import case, func, select
 from sqlalchemy.orm import selectinload
 
 from echoroo.models.enums import DatetimeParseStatus
 from echoroo.models.recording import Recording
+from echoroo.repositories.base import BaseRepository
 
 
-class RecordingRepository:
+class RecordingRepository(BaseRepository[Recording]):
     """Repository for Recording entity operations."""
 
-    def __init__(self, db: AsyncSession) -> None:
-        """Initialize repository with database session.
-
-        Args:
-            db: SQLAlchemy async session
-        """
-        self.db = db
+    model = Recording
 
     async def get_by_id(self, recording_id: UUID) -> Recording | None:
         """Get recording by ID with relationships loaded.
@@ -226,14 +220,6 @@ class RecordingRepository:
         await self.db.refresh(recording)
         return recording
 
-    async def delete(self, recording_id: UUID) -> None:
-        """Delete a recording by ID.
-
-        Args:
-            recording_id: Recording's UUID
-        """
-        await self.db.execute(delete(Recording).where(Recording.id == recording_id))
-        await self.db.flush()
 
     async def count_by_dataset(self, dataset_id: UUID) -> int:
         """Count recordings in a dataset.

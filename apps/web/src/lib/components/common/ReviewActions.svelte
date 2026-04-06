@@ -8,8 +8,10 @@
    */
 
   import * as m from '$lib/paraglide/messages';
+  import { getReviewStatusBadgeClass, getReviewStatusLabel } from '$lib/utils/statusFormatters';
+  import type { DetectionStatus } from '$lib/types/detection';
 
-  type ReviewStatus = 'unreviewed' | 'confirmed' | 'rejected';
+  type ReviewStatus = DetectionStatus;
 
   interface Props {
     status: ReviewStatus;
@@ -20,30 +22,14 @@
 
   let { status, isLoading = false, onConfirm, onReject }: Props = $props();
 
-  const statusLabel = $derived(getStatusLabel(status));
-  const statusClass = $derived(getStatusClass(status));
-
-  function getStatusLabel(s: ReviewStatus): string {
-    switch (s) {
-      case 'confirmed':
-        return m.detection_status_confirmed();
-      case 'rejected':
-        return m.detection_status_rejected();
-      default:
-        return m.detection_status_unreviewed();
-    }
-  }
-
-  function getStatusClass(s: ReviewStatus): string {
-    switch (s) {
-      case 'confirmed':
-        return 'bg-green-100 text-green-800 border-green-200';
-      case 'rejected':
-        return 'bg-red-100 text-red-800 border-red-200';
-      default:
-        return 'bg-stone-100 text-stone-600 border-stone-200';
-    }
-  }
+  const statusLabel = $derived(
+    getReviewStatusLabel(status, {
+      confirmed: m.detection_status_confirmed,
+      rejected: m.detection_status_rejected,
+      unreviewed: m.detection_status_unreviewed,
+    }),
+  );
+  const statusClass = $derived(getReviewStatusBadgeClass(status));
 </script>
 
 <div class="flex items-center gap-2">

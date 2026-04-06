@@ -9,20 +9,31 @@
   import { localizeHref } from '$lib/paraglide/runtime';
   import * as m from '$lib/paraglide/messages';
 
-  export let species: SpeciesSummary;
-  export let projectId: string;
-  export let isSelected: boolean = false;
-  export let detectionRunId: string | undefined = undefined;
+  let {
+    species,
+    projectId,
+    isSelected = false,
+    detectionRunId = undefined,
+  }: {
+    species: SpeciesSummary;
+    projectId: string;
+    isSelected?: boolean;
+    detectionRunId?: string;
+  } = $props();
 
-  $: confirmedPct =
-    species.total_count > 0 ? (species.confirmed_count / species.total_count) * 100 : 0;
-  $: rejectedPct =
-    species.total_count > 0 ? (species.rejected_count / species.total_count) * 100 : 0;
-  $: unreviewedPct =
-    species.total_count > 0 ? (species.unreviewed_count / species.total_count) * 100 : 0;
+  const confirmedPct = $derived(
+    species.total_count > 0 ? (species.confirmed_count / species.total_count) * 100 : 0
+  );
+  const rejectedPct = $derived(
+    species.total_count > 0 ? (species.rejected_count / species.total_count) * 100 : 0
+  );
+  const unreviewedPct = $derived(
+    species.total_count > 0 ? (species.unreviewed_count / species.total_count) * 100 : 0
+  );
 
-  $: avgConfidencePct =
-    species.avg_confidence !== null ? Math.round(species.avg_confidence * 100) : null;
+  const avgConfidencePct = $derived(
+    species.avg_confidence !== null ? Math.round(species.avg_confidence * 100) : null
+  );
 
   function handleClick() {
     const base = `/projects/${projectId}/detections/${species.tag_id}`;
@@ -45,8 +56,8 @@
     {isSelected
     ? 'border-primary-300 bg-primary-50'
     : 'border-card bg-surface-card hover:border-stone-300 hover:bg-stone-50'}"
-  on:click={handleClick}
-  on:keydown={handleKeydown}
+  onclick={handleClick}
+  onkeydown={handleKeydown}
 >
   <!-- Species names -->
   <div class="min-w-0 flex-1">

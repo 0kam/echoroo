@@ -3,7 +3,7 @@
  */
 
 import type { DetectionRun, DetectionRunListResponse } from '$lib/types/detection';
-import { fetchWithErrorHandling, handleApiResponse } from './errors';
+import { apiClient } from './client';
 
 const API_BASE = '/api/v1';
 
@@ -24,8 +24,7 @@ export async function fetchDetectionRuns(
   if (datasetId) {
     url.searchParams.set('dataset_id', datasetId);
   }
-  const response = await fetchWithErrorHandling(url.toString(), { credentials: 'include' });
-  return handleApiResponse<DetectionRunListResponse>(response);
+  return apiClient.get<DetectionRunListResponse>(url.pathname + url.search);
 }
 
 /**
@@ -40,32 +39,24 @@ export async function createDetectionRun(
   embeddingOnly: boolean = false
 ): Promise<DetectionRun> {
   const modelVersion = MODEL_VERSIONS[modelName] ?? '1.0';
-  const response = await fetchWithErrorHandling(
+  return apiClient.post<DetectionRun>(
     `${API_BASE}/projects/${projectId}/detection-runs`,
     {
-      method: 'POST',
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        dataset_id: datasetId,
-        model_name: modelName,
-        model_version: modelVersion,
-        embedding_only: embeddingOnly,
-      }),
+      dataset_id: datasetId,
+      model_name: modelName,
+      model_version: modelVersion,
+      embedding_only: embeddingOnly,
     }
   );
-  return handleApiResponse<DetectionRun>(response);
 }
 
 /**
  * Fetch the list of available ML model names from the server.
  */
 export async function fetchAvailableModels(): Promise<string[]> {
-  const response = await fetchWithErrorHandling(
-    `${API_BASE}/detection-runs/available-models`,
-    { credentials: 'include' }
+  const data = await apiClient.get<{ models: string[] }>(
+    `${API_BASE}/detection-runs/available-models`
   );
-  const data = await handleApiResponse<{ models: string[] }>(response);
   return data.models;
 }
 
@@ -76,11 +67,9 @@ export async function retryDetectionRun(
   projectId: string,
   runId: string
 ): Promise<DetectionRun> {
-  const response = await fetchWithErrorHandling(
-    `${API_BASE}/projects/${projectId}/detection-runs/${runId}/retry`,
-    { method: 'POST', credentials: 'include' }
+  return apiClient.post<DetectionRun>(
+    `${API_BASE}/projects/${projectId}/detection-runs/${runId}/retry`
   );
-  return handleApiResponse<DetectionRun>(response);
 }
 
 /**
@@ -90,9 +79,7 @@ export async function cancelDetectionRun(
   projectId: string,
   runId: string
 ): Promise<DetectionRun> {
-  const response = await fetchWithErrorHandling(
-    `${API_BASE}/projects/${projectId}/detection-runs/${runId}/cancel`,
-    { method: 'POST', credentials: 'include' }
+  return apiClient.post<DetectionRun>(
+    `${API_BASE}/projects/${projectId}/detection-runs/${runId}/cancel`
   );
-  return handleApiResponse<DetectionRun>(response);
 }

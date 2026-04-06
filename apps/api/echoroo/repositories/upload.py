@@ -5,13 +5,13 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
-from sqlalchemy import delete, func, select, update
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import selectinload
 
 from echoroo.models.dataset import Dataset
 from echoroo.models.enums import UploadFileStatus, UploadSessionStatus
 from echoroo.models.upload import UploadFile, UploadSession
+from echoroo.repositories.base import BaseRepository
 
 # Statuses that indicate an active (in-progress) session
 _ACTIVE_STATUSES = (
@@ -31,16 +31,10 @@ _STALE_STATUSES = (
 )
 
 
-class UploadSessionRepository:
+class UploadSessionRepository(BaseRepository[UploadSession]):
     """Repository for UploadSession entity operations."""
 
-    def __init__(self, db: AsyncSession) -> None:
-        """Initialize repository with database session.
-
-        Args:
-            db: SQLAlchemy async session
-        """
-        self.db = db
+    model = UploadSession
 
     async def create(self, session: UploadSession) -> UploadSession:
         """Persist a new upload session (with its files pre-attached).
@@ -225,26 +219,12 @@ class UploadSessionRepository:
         )
         return int(result.scalar_one())
 
-    async def delete(self, session_id: UUID) -> None:
-        """Delete an upload session and cascade-delete its files.
-
-        Args:
-            session_id: Upload session UUID
-        """
-        await self.db.execute(delete(UploadSession).where(UploadSession.id == session_id))
-        await self.db.flush()
 
 
-class UploadFileRepository:
+class UploadFileRepository(BaseRepository[UploadFile]):
     """Repository for UploadFile entity operations."""
 
-    def __init__(self, db: AsyncSession) -> None:
-        """Initialize repository with database session.
-
-        Args:
-            db: SQLAlchemy async session
-        """
-        self.db = db
+    model = UploadFile
 
     async def create_many(self, files: list[UploadFile]) -> list[UploadFile]:
         """Bulk-insert upload file records.

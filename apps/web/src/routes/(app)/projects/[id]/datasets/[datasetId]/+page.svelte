@@ -6,6 +6,7 @@
   import { localizeHref, getLocale } from '$lib/paraglide/runtime';
   import * as m from '$lib/paraglide/messages';
   import type { DatasetUpdate } from '$lib/types/data';
+  import { getDatasetStatusClass } from '$lib/utils/statusFormatters';
   import DatasetForm from '$lib/components/data/DatasetForm.svelte';
   import DatasetStatistics from '$lib/components/data/DatasetStatistics.svelte';
   import ImportProgress from '$lib/components/data/ImportProgress.svelte';
@@ -71,16 +72,7 @@
       : []
   );
 
-  function getStatusClasses(status: string): string {
-    switch (status) {
-      case 'pending': return 'bg-yellow-100 text-yellow-800';
-      case 'scanning':
-      case 'processing': return 'bg-primary-100 text-primary-800';
-      case 'completed': return 'bg-green-100 text-green-800';
-      case 'failed': return 'bg-red-100 text-red-800';
-      default: return 'bg-stone-100 text-stone-800';
-    }
-  }
+
 </script>
 
 <svelte:head>
@@ -169,7 +161,7 @@
 
         <div class="flex flex-col gap-1">
           <span class="text-xs font-medium uppercase tracking-wider text-stone-400">{m.dataset_detail_status_label()}</span>
-          <span class="inline-flex w-fit items-center rounded px-2 py-0.5 text-xs font-medium capitalize {getStatusClasses(dataset.status)}">
+          <span class="inline-flex w-fit items-center rounded px-2 py-0.5 text-xs font-medium capitalize {getDatasetStatusClass(dataset.status)}">
             {dataset.status}
           </span>
         </div>

@@ -4,7 +4,6 @@
 
 import type { Recorder, RecorderCreateRequest, RecorderUpdateRequest, RecorderListResponse } from '$lib/types';
 import { apiClient } from './client';
-import { fetchWithErrorHandling, handleApiResponse } from './errors';
 
 const API_BASE = '/api/v1';
 
@@ -17,10 +16,7 @@ export async function fetchRecorders(params?: { page?: number; limit?: number })
   if (params?.limit) searchParams.set('limit', params.limit.toString());
   const query = searchParams.toString();
 
-  const response = await fetchWithErrorHandling(`${API_BASE}/recorders${query ? `?${query}` : ''}`, {
-    credentials: 'include',
-  });
-  return handleApiResponse<RecorderListResponse>(response);
+  return apiClient.get<RecorderListResponse>(`${API_BASE}/recorders${query ? `?${query}` : ''}`);
 }
 
 export const recorderApi = {

@@ -11,7 +11,7 @@ import type {
   NoteCreate,
   AddTagRequest,
 } from '$lib/types/annotation';
-import { fetchWithErrorHandling, handleApiResponse } from './errors';
+import { apiClient } from './client';
 
 const API_BASE = '/api/v1';
 
@@ -22,11 +22,9 @@ export async function getOrCreateClipAnnotation(
   projectId: string,
   taskId: string
 ): Promise<ClipAnnotationDetail> {
-  const response = await fetchWithErrorHandling(
-    `${API_BASE}/projects/${projectId}/annotation-tasks/${taskId}/clip-annotation`,
-    { credentials: 'include' }
+  return apiClient.get<ClipAnnotationDetail>(
+    `${API_BASE}/projects/${projectId}/annotation-tasks/${taskId}/clip-annotation`
   );
-  return handleApiResponse<ClipAnnotationDetail>(response);
 }
 
 /**
@@ -38,16 +36,10 @@ export async function addClipTag(
   tagId: string
 ): Promise<ClipAnnotationDetail> {
   const body: AddTagRequest = { tag_id: tagId };
-  const response = await fetchWithErrorHandling(
+  return apiClient.post<ClipAnnotationDetail>(
     `${API_BASE}/projects/${projectId}/clip-annotations/${clipAnnotationId}/tags`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify(body),
-    }
+    body
   );
-  return handleApiResponse<ClipAnnotationDetail>(response);
 }
 
 /**
@@ -58,17 +50,9 @@ export async function removeClipTag(
   clipAnnotationId: string,
   tagId: string
 ): Promise<void> {
-  const response = await fetchWithErrorHandling(
-    `${API_BASE}/projects/${projectId}/clip-annotations/${clipAnnotationId}/tags/${tagId}`,
-    {
-      method: 'DELETE',
-      credentials: 'include',
-    }
+  return apiClient.delete<void>(
+    `${API_BASE}/projects/${projectId}/clip-annotations/${clipAnnotationId}/tags/${tagId}`
   );
-  if (response.ok) {
-    return;
-  }
-  await handleApiResponse(response);
 }
 
 /**
@@ -78,11 +62,9 @@ export async function listSoundEvents(
   projectId: string,
   clipAnnotationId: string
 ): Promise<SoundEventAnnotation[]> {
-  const response = await fetchWithErrorHandling(
-    `${API_BASE}/projects/${projectId}/clip-annotations/${clipAnnotationId}/sound-events`,
-    { credentials: 'include' }
+  return apiClient.get<SoundEventAnnotation[]>(
+    `${API_BASE}/projects/${projectId}/clip-annotations/${clipAnnotationId}/sound-events`
   );
-  return handleApiResponse<SoundEventAnnotation[]>(response);
 }
 
 /**
@@ -93,16 +75,10 @@ export async function createSoundEvent(
   clipAnnotationId: string,
   data: SoundEventAnnotationCreate
 ): Promise<SoundEventAnnotation> {
-  const response = await fetchWithErrorHandling(
+  return apiClient.post<SoundEventAnnotation>(
     `${API_BASE}/projects/${projectId}/clip-annotations/${clipAnnotationId}/sound-events`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify(data),
-    }
+    data
   );
-  return handleApiResponse<SoundEventAnnotation>(response);
 }
 
 /**
@@ -113,16 +89,10 @@ export async function updateSoundEvent(
   soundEventId: string,
   data: SoundEventAnnotationUpdate
 ): Promise<SoundEventAnnotation> {
-  const response = await fetchWithErrorHandling(
+  return apiClient.patch<SoundEventAnnotation>(
     `${API_BASE}/projects/${projectId}/sound-events/${soundEventId}`,
-    {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify(data),
-    }
+    data
   );
-  return handleApiResponse<SoundEventAnnotation>(response);
 }
 
 /**
@@ -132,17 +102,9 @@ export async function deleteSoundEvent(
   projectId: string,
   soundEventId: string
 ): Promise<void> {
-  const response = await fetchWithErrorHandling(
-    `${API_BASE}/projects/${projectId}/sound-events/${soundEventId}`,
-    {
-      method: 'DELETE',
-      credentials: 'include',
-    }
+  return apiClient.delete<void>(
+    `${API_BASE}/projects/${projectId}/sound-events/${soundEventId}`
   );
-  if (response.ok) {
-    return;
-  }
-  await handleApiResponse(response);
 }
 
 /**
@@ -154,16 +116,10 @@ export async function addSoundEventTag(
   tagId: string
 ): Promise<SoundEventAnnotation> {
   const body: AddTagRequest = { tag_id: tagId };
-  const response = await fetchWithErrorHandling(
+  return apiClient.post<SoundEventAnnotation>(
     `${API_BASE}/projects/${projectId}/sound-events/${soundEventId}/tags`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify(body),
-    }
+    body
   );
-  return handleApiResponse<SoundEventAnnotation>(response);
 }
 
 /**
@@ -174,17 +130,9 @@ export async function removeSoundEventTag(
   soundEventId: string,
   tagId: string
 ): Promise<void> {
-  const response = await fetchWithErrorHandling(
-    `${API_BASE}/projects/${projectId}/sound-events/${soundEventId}/tags/${tagId}`,
-    {
-      method: 'DELETE',
-      credentials: 'include',
-    }
+  return apiClient.delete<void>(
+    `${API_BASE}/projects/${projectId}/sound-events/${soundEventId}/tags/${tagId}`
   );
-  if (response.ok) {
-    return;
-  }
-  await handleApiResponse(response);
 }
 
 /**
@@ -196,16 +144,10 @@ export async function reviewClipAnnotation(
   status: 'approved' | 'rejected',
   comment?: string
 ): Promise<ClipAnnotationDetail> {
-  const response = await fetchWithErrorHandling(
+  return apiClient.post<ClipAnnotationDetail>(
     `${API_BASE}/projects/${projectId}/clip-annotations/${clipAnnotationId}/review`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify({ status, comment }),
-    }
+    { status, comment }
   );
-  return handleApiResponse<ClipAnnotationDetail>(response);
 }
 
 /**
@@ -216,16 +158,10 @@ export async function addNote(
   clipAnnotationId: string,
   data: NoteCreate
 ): Promise<Note> {
-  const response = await fetchWithErrorHandling(
+  return apiClient.post<Note>(
     `${API_BASE}/projects/${projectId}/clip-annotations/${clipAnnotationId}/notes`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify(data),
-    }
+    data
   );
-  return handleApiResponse<Note>(response);
 }
 
 /**
@@ -238,16 +174,8 @@ export async function batchTagClips(
   taskIds: string[],
   tagId: string
 ): Promise<{ updated_count: number; clip_annotations: ClipAnnotationDetail[] }> {
-  const response = await fetchWithErrorHandling(
+  return apiClient.post<{ updated_count: number; clip_annotations: ClipAnnotationDetail[] }>(
     `${API_BASE}/projects/${projectId}/clip-annotations/batch-tag`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify({ task_ids: taskIds, tag_id: tagId }),
-    }
-  );
-  return handleApiResponse<{ updated_count: number; clip_annotations: ClipAnnotationDetail[] }>(
-    response
+    { task_ids: taskIds, tag_id: tagId }
   );
 }

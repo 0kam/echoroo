@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-import math
 from datetime import UTC, datetime
 from uuid import UUID
 
 from fastapi import HTTPException, status
 from sqlalchemy import select as sa_select
 
+from echoroo.core.pagination import paginate
 from echoroo.models.annotation import Annotation
 from echoroo.models.confirmed_region import ConfirmedRegion
 from echoroo.models.enums import DetectionStatus
@@ -77,10 +77,7 @@ class DetectionService:
         Returns:
             Paginated detection list response
         """
-        if page < 1:
-            page = 1
-        if page_size < 1 or page_size > 200:
-            page_size = 50
+        pagination = paginate(page, page_size)
 
         annotations, total = await self.annotation_repo.list_annotations(
             project_id=project_id,
@@ -91,20 +88,18 @@ class DetectionService:
             dataset_id=dataset_id,
             recording_id=recording_id,
             detection_run_id=detection_run_id,
-            page=page,
-            page_size=page_size,
+            page=pagination.page,
+            page_size=pagination.page_size,
         )
-
-        pages = math.ceil(total / page_size) if total > 0 else 1
 
         items = [self._to_response(a) for a in annotations]
 
         return DetectionListResponse(
             items=items,
             total=total,
-            page=page,
-            page_size=page_size,
-            pages=pages,
+            page=pagination.page,
+            page_size=pagination.page_size,
+            pages=pagination.total_pages(total),
         )
 
     async def _resolve_vernacular_names(

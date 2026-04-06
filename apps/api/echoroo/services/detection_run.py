@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-import math
 from datetime import UTC, datetime
 from uuid import UUID
 
 from fastapi import HTTPException, status
 from sqlalchemy import select
 
+from echoroo.core.pagination import paginate
 from echoroo.models.dataset import Dataset
 from echoroo.models.detection_run import DetectionRun
 from echoroo.models.enums import DetectionRunStatus
@@ -57,26 +57,21 @@ class DetectionRunService:
         Returns:
             Paginated detection run list response
         """
-        if page < 1:
-            page = 1
-        if page_size < 1 or page_size > 200:
-            page_size = 50
+        pagination = paginate(page, page_size)
 
         runs, total = await self.detection_run_repo.list_by_project(
             project_id=project_id,
-            page=page,
-            page_size=page_size,
+            page=pagination.page,
+            page_size=pagination.page_size,
             dataset_id=dataset_id,
         )
-
-        pages = math.ceil(total / page_size) if total > 0 else 1
 
         return DetectionRunListResponse(
             items=[DetectionRunResponse.model_validate(r) for r in runs],
             total=total,
-            page=page,
-            page_size=page_size,
-            pages=pages,
+            page=pagination.page,
+            page_size=pagination.page_size,
+            pages=pagination.total_pages(total),
         )
 
     async def get(self, run_id: UUID, project_id: UUID | None = None) -> DetectionRunResponse:

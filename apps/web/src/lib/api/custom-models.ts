@@ -11,7 +11,7 @@ import type {
   CustomModelListResponse,
   CustomModelTrainRequest,
 } from '$lib/types/custom-model';
-import { fetchWithErrorHandling, handleApiResponse } from './errors';
+import { apiClient } from './client';
 
 const API_BASE = '/api/v1';
 
@@ -31,11 +31,9 @@ export async function fetchCustomModels(
   if (params?.offset !== undefined) qs.set('offset', String(params.offset));
   const queryString = qs.toString() ? `?${qs.toString()}` : '';
 
-  const response = await fetchWithErrorHandling(
-    `${API_BASE}/projects/${projectId}/custom-models${queryString}`,
-    { credentials: 'include' }
+  return apiClient.get<CustomModelListResponse>(
+    `${API_BASE}/projects/${projectId}/custom-models${queryString}`
   );
-  return handleApiResponse<CustomModelListResponse>(response);
 }
 
 /**
@@ -49,13 +47,7 @@ export async function createCustomModel(
   projectId: string,
   data: CustomModelCreate
 ): Promise<CustomModel> {
-  const response = await fetchWithErrorHandling(`${API_BASE}/projects/${projectId}/custom-models`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    credentials: 'include',
-    body: JSON.stringify(data),
-  });
-  return handleApiResponse<CustomModel>(response);
+  return apiClient.post<CustomModel>(`${API_BASE}/projects/${projectId}/custom-models`, data);
 }
 
 /**
@@ -66,11 +58,9 @@ export async function createCustomModel(
  * @returns Full model details including metrics if trained
  */
 export async function getCustomModel(projectId: string, modelId: string): Promise<CustomModel> {
-  const response = await fetchWithErrorHandling(
-    `${API_BASE}/projects/${projectId}/custom-models/${modelId}`,
-    { credentials: 'include' }
+  return apiClient.get<CustomModel>(
+    `${API_BASE}/projects/${projectId}/custom-models/${modelId}`
   );
-  return handleApiResponse<CustomModel>(response);
 }
 
 /**
@@ -89,16 +79,10 @@ export async function trainCustomModel(
   modelId: string,
   params?: CustomModelTrainRequest
 ): Promise<CustomModel> {
-  const response = await fetchWithErrorHandling(
+  return apiClient.post<CustomModel>(
     `${API_BASE}/projects/${projectId}/custom-models/${modelId}/train`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify(params ?? {}),
-    }
+    params ?? {}
   );
-  return handleApiResponse<CustomModel>(response);
 }
 
 /**
@@ -108,14 +92,9 @@ export async function trainCustomModel(
  * @param modelId - Custom model UUID to delete
  */
 export async function deleteCustomModel(projectId: string, modelId: string): Promise<void> {
-  const response = await fetchWithErrorHandling(
-    `${API_BASE}/projects/${projectId}/custom-models/${modelId}`,
-    {
-      method: 'DELETE',
-      credentials: 'include',
-    }
+  return apiClient.delete<void>(
+    `${API_BASE}/projects/${projectId}/custom-models/${modelId}`
   );
-  await handleApiResponse<unknown>(response);
 }
 
 /**
@@ -153,10 +132,7 @@ export async function applyCustomModel(
   datasetId: string,
   threshold: number = 0.5
 ): Promise<{ detection_run_id: string }> {
-  const res = await fetch(
-    `/api/v1/projects/${projectId}/custom-models/${modelId}/apply?dataset_id=${datasetId}&threshold=${threshold}`,
-    { method: 'POST', credentials: 'include' }
+  return apiClient.post<{ detection_run_id: string }>(
+    `${API_BASE}/projects/${projectId}/custom-models/${modelId}/apply?dataset_id=${datasetId}&threshold=${threshold}`
   );
-  if (!res.ok) throw new Error(await res.text());
-  return res.json();
 }

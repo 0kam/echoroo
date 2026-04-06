@@ -3,9 +3,15 @@
   import { getLocale } from '$lib/paraglide/runtime';
   import * as m from '$lib/paraglide/messages';
 
-  export let projects: AnnotationProjectDetail[] = [];
-  export let onSelect: (project: AnnotationProjectDetail) => void = () => {};
-  export let onDelete: (project: AnnotationProjectDetail) => void = () => {};
+  let {
+    projects = [] as AnnotationProjectDetail[],
+    onSelect = () => {},
+    onDelete = () => {},
+  }: {
+    projects?: AnnotationProjectDetail[];
+    onSelect?: (project: AnnotationProjectDetail) => void;
+    onDelete?: (project: AnnotationProjectDetail) => void;
+  } = $props();
 
   function formatDate(dateStr: string): string {
     return new Date(dateStr).toLocaleDateString(getLocale());
@@ -40,8 +46,8 @@
           class="project-item"
           role="button"
           tabindex="0"
-          on:click={() => onSelect(project)}
-          on:keydown={(e) => e.key === 'Enter' && onSelect(project)}
+          onclick={() => onSelect(project)}
+          onkeydown={(e) => e.key === 'Enter' && onSelect(project)}
         >
           <div class="project-info">
             <div class="project-header">
@@ -107,7 +113,7 @@
           <div class="project-actions">
             <button
               class="delete-btn"
-              on:click|stopPropagation={() => onDelete(project)}
+              onclick={(e) => { e.stopPropagation(); onDelete(project); }}
               aria-label={m.annotation_project_delete_button()}
             >
               {m.annotation_project_delete_button()}

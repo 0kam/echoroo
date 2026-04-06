@@ -4,24 +4,18 @@ from uuid import UUID
 
 from sqlalchemy import delete, select
 from sqlalchemy.dialects.postgresql import insert
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlalchemy.sql.selectable import Select
 
 from echoroo.models.clip_annotation import ClipAnnotation, clip_annotation_tags
 from echoroo.models.sound_event_annotation import SoundEventAnnotation
+from echoroo.repositories.base import BaseRepository
 
 
-class ClipAnnotationRepository:
+class ClipAnnotationRepository(BaseRepository[ClipAnnotation]):
     """Repository for ClipAnnotation entity operations."""
 
-    def __init__(self, db: AsyncSession) -> None:
-        """Initialize repository with database session.
-
-        Args:
-            db: SQLAlchemy async session
-        """
-        self.db = db
+    model = ClipAnnotation
 
     def _base_query(self) -> Select[tuple[ClipAnnotation]]:
         """Build a base select query with all standard relationships loaded.

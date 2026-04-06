@@ -2,6 +2,7 @@
   import { createQuery, createMutation, useQueryClient } from '@tanstack/svelte-query';
   import { fetchImportStatus, startImport, rescanDataset } from '$lib/api/datasets';
   import type { DatasetStatus } from '$lib/types/data';
+  import { getDatasetStatusClass, getDatasetStatusMessage } from '$lib/utils/statusFormatters';
 
   interface Props {
     projectId: string;
@@ -52,34 +53,13 @@
   const processedFiles = $derived(statusData?.processed_files ?? 0);
   const errorMessage = $derived(statusData?.error ?? null);
 
-  function getStatusMessage(status: DatasetStatus): string {
-    switch (status) {
-      case 'pending': return 'Ready to start import';
-      case 'scanning': return 'Scanning directory for audio files...';
-      case 'processing': return 'Processing audio files...';
-      case 'completed': return 'Import completed successfully';
-      case 'failed': return 'Import failed';
-      default: return status;
-    }
-  }
-
-  function getStatusClasses(status: DatasetStatus): string {
-    switch (status) {
-      case 'pending': return 'bg-yellow-100 text-yellow-800';
-      case 'scanning':
-      case 'processing': return 'bg-primary-100 text-primary-800';
-      case 'completed': return 'bg-green-100 text-green-800';
-      case 'failed': return 'bg-red-100 text-red-800';
-      default: return 'bg-stone-100 text-stone-800';
-    }
-  }
 </script>
 
 <div class="rounded-lg border border-card bg-surface-card p-6">
   <div class="mb-4 flex items-center justify-between">
     <h3 class="m-0 text-base font-semibold text-stone-900">Import Status</h3>
-    <span class="rounded-md px-3 py-1 text-sm font-medium {getStatusClasses(currentStatus)}">
-      {getStatusMessage(currentStatus)}
+    <span class="rounded-md px-3 py-1 text-sm font-medium {getDatasetStatusClass(currentStatus)}">
+      {getDatasetStatusMessage(currentStatus)}
     </span>
   </div>
 

@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { Dataset, DatasetStatus, DatasetVisibility } from '$lib/types/data';
   import { getLocale } from '$lib/paraglide/runtime';
+  import { getDatasetStatusClass, getDatasetStatusLabel } from '$lib/utils/statusFormatters';
 
   interface Props {
     datasets: Dataset[];
@@ -26,33 +27,6 @@
 
   function formatDate(dateStr: string): string {
     return new Date(dateStr).toLocaleDateString(getLocale());
-  }
-
-  function getStatusClasses(status: DatasetStatus): string {
-    switch (status) {
-      case 'pending':
-        return 'bg-yellow-100 text-yellow-800';
-      case 'scanning':
-      case 'processing':
-        return 'bg-primary-100 text-primary-800';
-      case 'completed':
-        return 'bg-green-100 text-green-800';
-      case 'failed':
-        return 'bg-red-100 text-red-800';
-      default:
-        return 'bg-stone-100 text-stone-800';
-    }
-  }
-
-  function getStatusLabel(status: DatasetStatus): string {
-    switch (status) {
-      case 'pending': return 'Pending';
-      case 'scanning': return 'Scanning';
-      case 'processing': return 'Processing';
-      case 'completed': return 'Ready';
-      case 'failed': return 'Failed';
-      default: return status;
-    }
   }
 </script>
 
@@ -114,8 +88,8 @@
           <div class="min-w-0 flex-1">
             <div class="mb-2 flex items-center gap-2">
               <h3 class="m-0 text-base font-semibold text-stone-900">{dataset.name}</h3>
-              <span class="inline-flex items-center rounded px-2 py-0.5 text-xs font-medium {getStatusClasses(dataset.status)}">
-                {getStatusLabel(dataset.status)}
+              <span class="inline-flex items-center rounded px-2 py-0.5 text-xs font-medium {getDatasetStatusClass(dataset.status)}">
+                {getDatasetStatusLabel(dataset.status)}
               </span>
               <span class="inline-flex items-center rounded px-2 py-0.5 text-xs font-medium {dataset.visibility === 'public' ? 'bg-green-100 text-green-700' : 'bg-stone-100 text-stone-600'}">
                 {dataset.visibility}

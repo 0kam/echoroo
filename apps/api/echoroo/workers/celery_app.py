@@ -53,8 +53,6 @@ app.conf.task_routes = {
 # worker_ready signal handler is registered in every worker process.
 app.conf.include = [
     "echoroo.workers.upload_tasks",
-    "echoroo.workers.import_task",
-    "echoroo.workers.annotation_tasks",
     "echoroo.workers.ml_tasks",
     "echoroo.workers.taxon_tasks",
     "echoroo.workers.search_tasks",

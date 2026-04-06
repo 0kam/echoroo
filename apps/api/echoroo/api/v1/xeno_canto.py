@@ -17,8 +17,8 @@ from fastapi import APIRouter, HTTPException, Query, status
 from fastapi.responses import Response, StreamingResponse
 
 from echoroo.core.database import DbSession
+from echoroo.core.permissions import check_project_access
 from echoroo.middleware.auth import CurrentUser
-from echoroo.repositories.project import ProjectRepository
 from echoroo.schemas.xeno_canto import XenoCantoRecording, XenoCantoSearchResponse
 
 logger = logging.getLogger(__name__)
@@ -46,24 +46,6 @@ def _get_api_key() -> str:
     return os.environ.get("XENO_CANTO_API_KEY", "demo")
 
 
-async def _check_project_access(project_id: UUID, user_id: UUID, db: DbSession) -> None:
-    """Verify that the current user has access to the given project.
-
-    Args:
-        project_id: Project UUID to check
-        user_id: Current user's UUID
-        db: Database session
-
-    Raises:
-        HTTPException: 403 if the user does not have access to the project
-    """
-    project_repo = ProjectRepository(db)
-    has_access = await project_repo.has_project_access(project_id, user_id)
-    if not has_access:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Access denied to project",
-        )
 
 
 def _parse_float(value: str) -> float | None:
@@ -209,7 +191,7 @@ async def proxy_audio(
         502: Upstream Xeno-canto error
         504: Request to Xeno-canto timed out
     """
-    await _check_project_access(project_id, current_user.id, db)
+    await check_project_access(project_id, current_user.id, db)
 
     url = f"https://xeno-canto.org/{xc_id}/download"
 
@@ -415,7 +397,7 @@ async def search_xeno_canto(
         403: Access denied to project
         502: Upstream Xeno-canto API error
     """
-    await _check_project_access(project_id, current_user.id, db)
+    await check_project_access(project_id, current_user.id, db)
 
     xc_query = _build_xc_query(query, country, area, quality_min, recording_type)
     api_key = _get_api_key()
