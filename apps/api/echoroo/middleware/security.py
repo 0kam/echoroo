@@ -81,7 +81,7 @@ class SecurityHeadersConfig:
         if self.environment == "development":
             base_csp["script-src"] = ["'self'"]
             base_csp["style-src"] = ["'self'", "'unsafe-inline'"]
-            base_csp["img-src"] = ["'self'", "data:"]
+            base_csp["img-src"] = ["'self'", "data:", "https://xeno-canto.org"]
             base_csp["connect-src"] = ["'self'"]
 
         return base_csp
