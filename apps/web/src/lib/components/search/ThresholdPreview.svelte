@@ -44,21 +44,25 @@
   /** Debounced values used as the actual query key — updated after 400ms idle */
   let debouncedMin = $state(minSimilarity);
   let debouncedMax = $state(maxSimilarity);
-  let debounceTimer = $state<ReturnType<typeof setTimeout> | null>(null);
+
+  // Plain variable — NOT $state — to avoid the debounce timer becoming a
+  // reactive dependency of the $effect below, which would cause an infinite
+  // loop (effect reads timer → writes timer → effect re-runs → ...).
+  let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 
   /** Resample counter — incrementing this forces a re-fetch with the same range */
   let resampleCounter = $state(0);
 
   $effect(() => {
     // Track changes to min/max and debounce the query
-    void minSimilarity;
-    void maxSimilarity;
+    const currentMin = minSimilarity;
+    const currentMax = maxSimilarity;
     if (debounceTimer !== null) {
       clearTimeout(debounceTimer);
     }
     debounceTimer = setTimeout(() => {
-      debouncedMin = minSimilarity;
-      debouncedMax = maxSimilarity;
+      debouncedMin = currentMin;
+      debouncedMax = currentMax;
     }, 400);
   });
 
