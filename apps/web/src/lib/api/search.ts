@@ -12,6 +12,8 @@ import type {
   SearchJobSubmitResponse,
   SearchSession,
   SearchSessionListResponse,
+  SessionDistributionResponse,
+  SessionSampleResponse,
   SimilarByAudioParams,
   SimilarByEmbeddingRequest,
   SimilaritySearchResponse,
@@ -254,8 +256,6 @@ export async function searchBatch(
   const metadataObj = {
     species: speciesData,
     model_name: config.model_name,
-    min_similarity: config.min_similarity,
-    limit_per_species: config.limit_per_species,
     dataset_id: config.dataset_id || null,
     source_session_id: sourceSessionId || null,
   };
@@ -487,8 +487,6 @@ export async function rerunSearchSession(
   const metadataObj = {
     species: speciesData,
     model_name: config.model_name,
-    min_similarity: config.min_similarity,
-    limit_per_species: config.limit_per_species,
     dataset_id: config.dataset_id || null,
     source_session_id: sourceSessionId || null,
   };
@@ -548,6 +546,56 @@ export async function exportSearchSessionCSV(
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
+}
+
+/**
+ * Fetch the similarity score distribution for a search session.
+ *
+ * Returns pre-computed histogram bins showing how many results fall into each
+ * similarity range. Used to render the SimilarityHistogram without transferring
+ * all individual results to the client.
+ *
+ * @param projectId - Project UUID
+ * @param sessionId - Search session UUID
+ * @returns Distribution bins with counts per similarity range
+ */
+export async function getSessionDistribution(
+  projectId: string,
+  sessionId: string
+): Promise<SessionDistributionResponse> {
+  return apiClient.get<SessionDistributionResponse>(
+    `${API_BASE}/projects/${projectId}/search-sessions/${sessionId}/distribution`
+  );
+}
+
+/**
+ * Fetch a random sample of results within a similarity range from a search session.
+ *
+ * Used by ThresholdPreview to show representative spectrograms for a given
+ * similarity band without loading all results.
+ *
+ * @param projectId - Project UUID
+ * @param sessionId - Search session UUID
+ * @param minSimilarity - Lower bound of the similarity range (inclusive, 0.0–1.0)
+ * @param maxSimilarity - Upper bound of the similarity range (inclusive, 0.0–1.0)
+ * @param limit - Maximum number of results to return (default 20)
+ * @returns Randomly sampled results within the requested range
+ */
+export async function getSessionSample(
+  projectId: string,
+  sessionId: string,
+  minSimilarity: number,
+  maxSimilarity: number,
+  limit = 20
+): Promise<SessionSampleResponse> {
+  const params = new URLSearchParams({
+    min_similarity: String(minSimilarity),
+    max_similarity: String(maxSimilarity),
+    limit: String(limit),
+  });
+  return apiClient.get<SessionSampleResponse>(
+    `${API_BASE}/projects/${projectId}/search-sessions/${sessionId}/sample?${params}`
+  );
 }
 
 /**

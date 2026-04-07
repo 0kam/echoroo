@@ -2,27 +2,27 @@
   /**
    * SimilarityHistogram - SVG-based histogram of similarity score distribution.
    *
-   * Displays how many search results fall into each 5%-wide similarity bin,
+   * Displays how many search results fall into each similarity bin,
    * with a draggable threshold line to filter results interactively.
    *
-   * - X-axis: similarity percentage (0–100%), 5% bins
+   * - X-axis: similarity percentage (0–100%)
    * - Y-axis: count of results in each bin
    * - Draggable red threshold line
    * - Count summary above/below threshold
+   *
+   * Accepts pre-computed bins from the server-side distribution API
+   * instead of binning individual results client-side.
    */
 
   import * as m from '$lib/paraglide/messages.js';
-
-  interface Result {
-    similarity: number;
-  }
+  import type { DistributionBin } from '$lib/types/search';
 
   let {
-    results,
+    bins,
     threshold = $bindable(),
     onThresholdChange,
   }: {
-    results: Result[];
+    bins: DistributionBin[];
     threshold: number;
     onThresholdChange: (value: number) => void;
   } = $props();
@@ -36,36 +36,26 @@
   const MARGIN = { top: 12, right: 12, bottom: 28, left: 36 };
   const CHART_W = WIDTH - MARGIN.left - MARGIN.right;
   const CHART_H = HEIGHT - MARGIN.top - MARGIN.bottom;
-  const NUM_BINS = 20; // 5% intervals
 
   // ============================================================================
   // Data processing
   // ============================================================================
 
-  /** Build histogram bins (each bin covers 5% similarity range). */
-  const bins = $derived((() => {
-    const counts = new Array<number>(NUM_BINS).fill(0);
-    for (const r of results) {
-      const idx = Math.min(Math.floor(r.similarity * NUM_BINS), NUM_BINS - 1);
-      const safeIdx = idx >= 0 && idx < NUM_BINS ? idx : 0;
-      counts[safeIdx] = (counts[safeIdx] ?? 0) + 1;
-    }
-    return counts;
-  })());
+  const maxCount = $derived(Math.max(...bins.map((b) => b.count), 1));
 
-  const maxCount = $derived(Math.max(...bins, 1));
+  const totalCount = $derived(bins.reduce((sum, b) => sum + b.count, 0));
 
   /** Bar geometry for each bin. */
   const bars = $derived(
-    bins.map((count, i) => {
-      const x = (i / NUM_BINS) * CHART_W;
-      const w = CHART_W / NUM_BINS - 1;
-      const barH = (count / maxCount) * CHART_H;
+    bins.map((bin) => {
+      const x = bin.lower * CHART_W;
+      const w = Math.max(1, (bin.upper - bin.lower) * CHART_W - 1);
+      const barH = (bin.count / maxCount) * CHART_H;
       const y = CHART_H - barH;
       // Color: lighter orange for low similarity, richer orange for high
-      const t = i / (NUM_BINS - 1);
-      const alpha = 0.3 + t * 0.7;
-      return { x, y, w, h: barH, count, alpha, binStart: i / NUM_BINS };
+      const midpoint = (bin.lower + bin.upper) / 2;
+      const alpha = 0.3 + midpoint * 0.7;
+      return { x, y, w, h: barH, count: bin.count, alpha, binStart: bin.lower };
     }),
   );
 
@@ -74,8 +64,14 @@
   // ============================================================================
 
   const thresholdX = $derived(threshold * CHART_W);
-  const countAbove = $derived(results.filter((r) => r.similarity >= threshold).length);
-  const countBelow = $derived(results.length - countAbove);
+
+  const countAbove = $derived(
+    bins
+      .filter((b) => b.lower >= threshold)
+      .reduce((sum, b) => sum + b.count, 0)
+  );
+
+  const countBelow = $derived(totalCount - countAbove);
 
   // ============================================================================
   // X-axis labels (every 20%)

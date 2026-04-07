@@ -4,16 +4,19 @@
    *
    * Features:
    * - Species tabs at the top (one per species)
-   * - Client-side threshold and max-per-species filter bar
+   * - Similarity histogram (pre-computed distribution bins from API)
    * - Spectrogram preview card grid for the selected species
+   * - ThresholdPreview with random sampling API integration
    * - Audio playback (Space to play, Arrow keys to navigate)
    *
    * No voting or review actions — this panel is for exploration only.
    */
 
   import { onDestroy } from 'svelte';
+  import { createQuery } from '@tanstack/svelte-query';
   import * as m from '$lib/paraglide/messages.js';
-  import type { SimilarityResult, SpeciesMatchResult, TargetSpecies } from '$lib/types/search';
+  import type { DistributionBin, SimilarityResult, SpeciesMatchResult, TargetSpecies } from '$lib/types/search';
+  import { getSessionDistribution } from '$lib/api/search';
   import { createReviewNavigation } from '$lib/utils/reviewNavigation.svelte';
   import SearchPreviewCard from './SearchPreviewCard.svelte';
   import SimilarityHistogram from './SimilarityHistogram.svelte';
@@ -27,6 +30,8 @@
     searchDurationMs: number;
     isSearching: boolean;
     searchingSpecies: TargetSpecies[];
+    /** Session ID for distribution and sampling APIs */
+    sessionId?: string | null;
   }
 
   let {
@@ -36,17 +41,17 @@
     searchDurationMs,
     isSearching,
     searchingSpecies,
+    sessionId = null,
   }: Props = $props();
-
-  // Client-side filter state
-  let filterThreshold = $state(0.1);
-  let filterMaxPerSpecies = $state(20);
 
   // ThresholdPreview independent range (not tied to the main filter threshold)
   let previewMin = $state(0.3);
   let previewMax = $state(0.7);
 
-  // Flat array of all results across all species (for histogram + spiral + preview)
+  // Main threshold for histogram (controls card grid display)
+  let filterThreshold = $state(0.5);
+
+  // Flat array of all results across all species (for spiral view only)
   const allMatches = $derived<SimilarityResult[]>(
     results !== null
       ? Object.values(results).flatMap((group) => group.matches)
@@ -81,6 +86,45 @@
     nav.cleanup();
   });
 
+  // ============================================================================
+  // Distribution query (TanStack Query)
+  // ============================================================================
+
+  const distributionQuery = $derived(
+    createQuery({
+      queryKey: ['session-distribution', projectId, sessionId],
+      queryFn: () => getSessionDistribution(projectId, sessionId!),
+      enabled: !!sessionId,
+    })
+  );
+
+  /** Pre-computed distribution bins from the API, or empty array if not loaded */
+  const distributionBins = $derived<DistributionBin[]>(
+    $distributionQuery.data?.bins ?? []
+  );
+
+  /** Fallback: generate bins client-side from stored results when API data is unavailable */
+  const fallbackBins = $derived<DistributionBin[]>((() => {
+    if (allMatches.length === 0) return [];
+    const NUM_BINS = 20;
+    const counts = new Array<number>(NUM_BINS).fill(0);
+    for (const r of allMatches) {
+      const idx = Math.min(Math.floor(r.similarity * NUM_BINS), NUM_BINS - 1);
+      const safeIdx = idx >= 0 && idx < NUM_BINS ? idx : 0;
+      counts[safeIdx] = (counts[safeIdx] ?? 0) + 1;
+    }
+    return counts.map((count, i) => ({
+      lower: i / NUM_BINS,
+      upper: (i + 1) / NUM_BINS,
+      count,
+    }));
+  })());
+
+  /** Bins to display: prefer API distribution, fall back to client-side */
+  const binsToDisplay = $derived<DistributionBin[]>(
+    distributionBins.length > 0 ? distributionBins : fallbackBins
+  );
+
   // Species entry list derived from results
   const speciesEntries = $derived(
     results !== null ? Object.entries(results) : []
@@ -102,17 +146,13 @@
 
   const filteredMatches = $derived(
     selectedGroup !== null && selectedGroup !== undefined
-      ? selectedGroup.matches
-          .filter((r) => r.similarity >= filterThreshold)
-          .slice(0, filterMaxPerSpecies)
+      ? selectedGroup.matches.filter((r) => r.similarity >= filterThreshold)
       : []
   );
 
   // Filtered count per species tab (for badges)
   function getFilteredCount(group: SpeciesMatchResult): number {
-    return group.matches
-      .filter((r) => r.similarity >= filterThreshold)
-      .slice(0, filterMaxPerSpecies).length;
+    return group.matches.filter((r) => r.similarity >= filterThreshold).length;
   }
 
   function getDisplayName(group: SpeciesMatchResult): string {
@@ -127,42 +167,9 @@
 <svelte:window onkeydown={nav.handleKeydown} />
 
 <div class="flex flex-col gap-4">
-  <!-- Filter bar (only show after search completes) -->
+  <!-- Summary bar (only show after search completes) -->
   {#if results !== null && !isSearching}
     <div class="flex flex-wrap items-center gap-4 rounded-lg border border-stone-200 bg-stone-50 p-3">
-      <!-- Threshold slider -->
-      <div class="flex items-center gap-2">
-        <label for="rf-threshold" class="text-xs font-medium whitespace-nowrap text-stone-600">
-          {m.search_threshold()} {Math.round(filterThreshold * 100)}%
-        </label>
-        <input
-          id="rf-threshold"
-          type="range"
-          min="0"
-          max="1"
-          step="0.05"
-          bind:value={filterThreshold}
-          class="w-28 accent-primary-500"
-          aria-label={m.search_threshold()}
-        />
-      </div>
-
-      <!-- Max per species -->
-      <div class="flex items-center gap-2">
-        <label for="rf-max" class="text-xs font-medium whitespace-nowrap text-stone-600">
-          {m.search_max_per_species()}
-        </label>
-        <input
-          id="rf-max"
-          type="number"
-          min="1"
-          max="200"
-          bind:value={filterMaxPerSpecies}
-          class="w-16 rounded-md border border-stone-300 bg-surface-card px-2 py-1 text-xs focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
-          aria-label={m.search_max_per_species()}
-        />
-      </div>
-
       <!-- Summary -->
       <span class="text-xs text-stone-400">
         {m.search_results_total({ count: totalMatches.toString() })}
@@ -224,19 +231,28 @@
       <!-- Top section: SimilarityHistogram + SimilaritySpiral side by side -->
       <!-- ================================================================ -->
       <div class="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <!-- Histogram (left) — threshold synced with filterThreshold -->
+        <!-- Histogram (left) — uses pre-computed distribution bins from API -->
         <div class="rounded-lg border border-card bg-surface-card p-4 shadow-sm">
           <h4 class="mb-3 text-xs font-semibold uppercase tracking-wide text-stone-500">
             {m.search_score_distribution()}
           </h4>
-          <SimilarityHistogram
-            results={allMatches}
-            bind:threshold={filterThreshold}
-            onThresholdChange={(v) => { filterThreshold = v; }}
-          />
+          {#if $distributionQuery.isLoading && sessionId}
+            <div class="flex h-[140px] items-center justify-center">
+              <svg class="h-5 w-5 animate-spin text-stone-300" fill="none" viewBox="0 0 24 24" aria-hidden="true">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+              </svg>
+            </div>
+          {:else}
+            <SimilarityHistogram
+              bins={binsToDisplay}
+              bind:threshold={filterThreshold}
+              onThresholdChange={(v) => { filterThreshold = v; }}
+            />
+          {/if}
         </div>
 
-        <!-- Spiral (right) — time-of-day view -->
+        <!-- Spiral (right) — time-of-day view using stored top results -->
         <div class="rounded-lg border border-card bg-surface-card p-4 shadow-sm">
           <h4 class="mb-3 text-xs font-semibold uppercase tracking-wide text-stone-500">
             {m.search_time_distribution()}
@@ -249,15 +265,15 @@
       </div>
 
       <!-- ================================================================ -->
-      <!-- Middle section: ThresholdPreview (independent range slider)      -->
+      <!-- Middle section: ThresholdPreview (random sampling API)           -->
       <!-- ================================================================ -->
       <div class="rounded-lg border border-card bg-surface-card p-4 shadow-sm">
         <h4 class="mb-3 text-xs font-semibold uppercase tracking-wide text-stone-500">
           {m.search_range_preview()}
         </h4>
         <ThresholdPreview
-          results={allMatches}
           {projectId}
+          {sessionId}
           bind:minSimilarity={previewMin}
           bind:maxSimilarity={previewMax}
         />

@@ -3,13 +3,18 @@
    * ThresholdPreview - Spectrogram grid for results within a similarity range.
    *
    * Renders a two-handle range slider allowing the user to define a min/max
-   * similarity band, then shows spectrogram thumbnails (via MiniSpectrogram)
-   * for results within that band. Supports pagination (max 20 per page)
-   * and audio playback on click.
+   * similarity band, then fetches randomly sampled spectrogram thumbnails
+   * from the sampling API for the selected range.
+   *
+   * - Uses GET /search-sessions/{id}/sample to retrieve random samples
+   * - Debounces slider changes to avoid excessive API calls
+   * - "Resample" button fetches a different random set
    */
 
+  import { createQuery } from '@tanstack/svelte-query';
   import * as m from '$lib/paraglide/messages.js';
   import type { SimilarityResult } from '$lib/types/search';
+  import { getSessionSample } from '$lib/api/search';
   import MiniSpectrogram from '$lib/components/common/MiniSpectrogram.svelte';
 
   // ============================================================================
@@ -17,64 +22,76 @@
   // ============================================================================
 
   let {
-    results,
     projectId,
+    sessionId,
     minSimilarity = $bindable(),
     maxSimilarity = $bindable(),
+    limit = 20,
   }: {
-    results: SimilarityResult[];
     projectId: string;
+    /** Session ID for the sampling API. When null/undefined, shows a placeholder. */
+    sessionId: string | null | undefined;
     minSimilarity: number;
     maxSimilarity: number;
+    /** Maximum number of samples to fetch (default 20) */
+    limit?: number;
   } = $props();
 
   // ============================================================================
-  // Range slider state
+  // Debouncing state for API calls
   // ============================================================================
 
-  const PAGE_SIZE = 20;
-  let currentPage = $state(0);
+  /** Debounced values used as the actual query key — updated after 400ms idle */
+  let debouncedMin = $state(minSimilarity);
+  let debouncedMax = $state(maxSimilarity);
+  let debounceTimer = $state<ReturnType<typeof setTimeout> | null>(null);
 
-  // Reset page when range changes
+  /** Resample counter — incrementing this forces a re-fetch with the same range */
+  let resampleCounter = $state(0);
+
   $effect(() => {
-    // Depend on range values so page resets when they change
+    // Track changes to min/max and debounce the query
     void minSimilarity;
     void maxSimilarity;
-    currentPage = 0;
+    if (debounceTimer !== null) {
+      clearTimeout(debounceTimer);
+    }
+    debounceTimer = setTimeout(() => {
+      debouncedMin = minSimilarity;
+      debouncedMax = maxSimilarity;
+    }, 400);
   });
 
   // ============================================================================
-  // Filtered & paginated results
+  // Sampling query
   // ============================================================================
 
-  const filtered = $derived(
-    results
-      .filter((r) => r.similarity >= minSimilarity && r.similarity <= maxSimilarity)
-      .sort((a, b) => b.similarity - a.similarity),
+  const sampleQuery = $derived(
+    createQuery({
+      queryKey: ['session-sample', projectId, sessionId, debouncedMin, debouncedMax, limit, resampleCounter],
+      queryFn: () =>
+        getSessionSample(projectId, sessionId!, debouncedMin, debouncedMax, limit),
+      enabled: !!sessionId,
+    })
   );
 
-  const totalPages = $derived(Math.max(1, Math.ceil(filtered.length / PAGE_SIZE)));
-
-  const pageResults = $derived(
-    filtered.slice(currentPage * PAGE_SIZE, (currentPage + 1) * PAGE_SIZE),
+  const results = $derived<SimilarityResult[]>(
+    $sampleQuery.data?.results ?? []
   );
+
+  const totalInRange = $derived($sampleQuery.data?.total_in_range ?? 0);
 
   // ============================================================================
   // Audio playback state
   // ============================================================================
 
   let playingId = $state<string | null>(null);
-  let audioEl = $state<HTMLAudioElement | null>(null);
 
   function handleCardClick(result: SimilarityResult) {
     if (playingId === result.embedding_id) {
-      audioEl?.pause();
       playingId = null;
     } else {
       playingId = result.embedding_id;
-      // Audio playback is handled via the browser's native audio where available;
-      // here we just track the selected card for visual feedback.
-      // Full audio integration with apiClient can be added during ResultsPanel integration.
     }
   }
 
@@ -144,7 +161,11 @@
         –
         <span class="font-semibold text-stone-700">{formatPct(maxSimilarity)}</span>
       </span>
-      <span class="text-stone-400">{m.search_threshold_results_count({ count: filtered.length.toLocaleString() })}</span>
+      {#if $sampleQuery.data}
+        <span class="text-stone-400">
+          {m.search_threshold_results_count({ count: totalInRange.toLocaleString() })}
+        </span>
+      {/if}
     </div>
 
     <!-- Two-handle slider track -->
@@ -208,15 +229,69 @@
     </div>
   </div>
 
-  <!-- Results grid -->
-  {#if filtered.length === 0}
+  <!-- Loading state -->
+  {#if $sampleQuery.isLoading}
+    <div class="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
+      {#each { length: 6 } as _}
+        <div class="animate-pulse overflow-hidden rounded-lg border border-stone-200 bg-surface-card">
+          <div class="h-[80px] bg-stone-200"></div>
+          <div class="p-1.5">
+            <div class="h-3 w-3/4 rounded bg-stone-100"></div>
+          </div>
+        </div>
+      {/each}
+    </div>
+
+  <!-- Error state -->
+  {:else if $sampleQuery.isError}
+    <div class="flex flex-col items-center justify-center rounded-lg border border-stone-200 bg-stone-50 py-8 text-center">
+      <p class="text-sm text-stone-400">{m.search_no_results_in_range()}</p>
+    </div>
+
+  <!-- No session yet -->
+  {:else if !sessionId}
     <div class="flex flex-col items-center justify-center rounded-lg border border-stone-200 bg-stone-50 py-10 text-center">
       <p class="text-sm text-stone-400">{m.search_no_results_in_range()}</p>
       <p class="mt-1 text-xs text-stone-300">{m.search_no_results_in_range_hint()}</p>
     </div>
+
+  <!-- Empty range -->
+  {:else if results.length === 0}
+    <div class="flex flex-col items-center justify-center rounded-lg border border-stone-200 bg-stone-50 py-10 text-center">
+      <p class="text-sm text-stone-400">{m.search_no_results_in_range()}</p>
+      <p class="mt-1 text-xs text-stone-300">{m.search_no_results_in_range_hint()}</p>
+    </div>
+
   {:else}
+    <!-- Resample button + count -->
+    <div class="flex items-center justify-between">
+      <p class="text-xs text-stone-400">
+        {results.length} / {totalInRange.toLocaleString()} samples shown
+      </p>
+      <button
+        type="button"
+        class="flex items-center gap-1.5 rounded-md border border-stone-200 bg-surface-card px-3 py-1.5 text-xs font-medium text-stone-600 transition-colors hover:border-primary-300 hover:text-primary-700 disabled:opacity-50"
+        disabled={$sampleQuery.isFetching}
+        onclick={() => { resampleCounter++; }}
+      >
+        {#if $sampleQuery.isFetching}
+          <svg class="h-3.5 w-3.5 animate-spin" fill="none" viewBox="0 0 24 24" aria-hidden="true">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+          </svg>
+        {:else}
+          <!-- Refresh icon -->
+          <svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+          </svg>
+        {/if}
+        Resample
+      </button>
+    </div>
+
+    <!-- Results grid -->
     <div class="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
-      {#each pageResults as result (result.embedding_id)}
+      {#each results as result (result.embedding_id)}
         <!-- svelte-ignore a11y_click_events_have_key_events -->
         <div
           class="group flex cursor-pointer flex-col gap-1 rounded-lg border p-1 transition-all
@@ -276,28 +351,5 @@
         </div>
       {/each}
     </div>
-
-    <!-- Pagination -->
-    {#if totalPages > 1}
-      <div class="flex items-center justify-center gap-2">
-        <button
-          class="rounded px-2 py-1 text-xs text-stone-500 disabled:opacity-30 enabled:hover:bg-stone-100"
-          disabled={currentPage === 0}
-          onclick={() => { currentPage = Math.max(0, currentPage - 1); }}
-        >
-          {m.search_previous()}
-        </button>
-        <span class="text-xs text-stone-500">
-          {currentPage + 1} / {totalPages}
-        </span>
-        <button
-          class="rounded px-2 py-1 text-xs text-stone-500 disabled:opacity-30 enabled:hover:bg-stone-100"
-          disabled={currentPage >= totalPages - 1}
-          onclick={() => { currentPage = Math.min(totalPages - 1, currentPage + 1); }}
-        >
-          {m.search_next()}
-        </button>
-      </div>
-    {/if}
   {/if}
 </div>

@@ -7,6 +7,7 @@ as well as streaming reference audio and exporting session annotations as CSV.
 from __future__ import annotations
 
 import collections.abc
+import contextlib
 import json
 import logging
 import uuid as uuid_module
@@ -41,6 +42,8 @@ from echoroo.schemas.search import (
     SearchSessionListItem,
     SearchSessionListResponse,
     SearchSessionResponse,
+    SimilarityDistributionResponse,
+    SimilaritySearchResponse,
     SourceConfig,
     SpeciesSearchConfig,
 )
@@ -887,3 +890,235 @@ async def export_search_session_csv(
         media_type="text/csv",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+# ---------------------------------------------------------------------------
+# Similarity distribution and random sampling endpoints
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/sessions/{session_id}/distribution",
+    response_model=SimilarityDistributionResponse,
+    summary="Get similarity distribution for a search session",
+    description=(
+        "Compute a histogram of cosine similarities for all project embeddings "
+        "against the session's reference vectors. Uses SQL aggregation for efficiency "
+        "— individual vectors are never loaded into Python. "
+        "Query vectors are derived from the top stored matches for each species."
+    ),
+)
+async def get_session_similarity_distribution(
+    project_id: UUID,
+    session_id: UUID,
+    current_user: CurrentUser,
+    db: DbSession,
+    session_service: SearchSessionServiceDep,
+    bin_width: float = Query(default=0.05, ge=0.01, le=0.5, description="Histogram bin width"),
+) -> SimilarityDistributionResponse:
+    """Get a similarity histogram for all project embeddings vs. the session's reference vectors.
+
+    Retrieves the stored top-match embedding vectors from the session results and
+    uses them as query vectors to compute a full-space similarity distribution.
+    This approach avoids re-running model inference.
+
+    Args:
+        project_id: Project UUID (path parameter)
+        session_id: Session UUID (path parameter)
+        current_user: Current authenticated user
+        db: Database session
+        session_service: Search session service
+        bin_width: Histogram bin width (default 0.05 = 20 bins from 0.0 to 1.0)
+
+    Returns:
+        SimilarityDistributionResponse with histogram bins and total count
+
+    Raises:
+        403: Access denied to project
+        404: Session not found or has no results
+    """
+    await check_project_access(project_id, current_user.id, db)
+    session = await session_service.get_session(session_id, project_id)
+    if not session:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Search session not found")
+
+    query_vectors = await _get_query_vectors_from_session(session, db)
+    if not query_vectors:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Session has no results to compute distribution from",
+        )
+
+    dataset_id: UUID | None = None
+    if session.parameters and session.parameters.get("dataset_id"):
+        with contextlib.suppress(ValueError):
+            dataset_id = UUID(str(session.parameters["dataset_id"]))
+
+    from echoroo.services.search import SimilaritySearchService
+
+    search_service = SimilaritySearchService(db)
+    return await search_service.get_similarity_distribution(
+        project_id=project_id,
+        query_vectors=query_vectors,
+        model_name=session.model_name,
+        bin_width=bin_width,
+        dataset_id=dataset_id,
+    )
+
+
+@router.get(
+    "/sessions/{session_id}/sample",
+    response_model=SimilaritySearchResponse,
+    summary="Randomly sample embeddings within a similarity range",
+    description=(
+        "Return a random sample of embeddings whose cosine similarity to the "
+        "session's reference vectors falls within [min_similarity, max_similarity]. "
+        "Useful for exploring which sounds exist in a specific similarity band."
+    ),
+)
+async def sample_session_similarity_range(
+    project_id: UUID,
+    session_id: UUID,
+    current_user: CurrentUser,
+    db: DbSession,
+    session_service: SearchSessionServiceDep,
+    min_similarity: float = Query(default=0.0, ge=0.0, le=1.0, description="Lower bound (inclusive)"),
+    max_similarity: float = Query(default=1.0, ge=0.0, le=1.0, description="Upper bound (inclusive)"),
+    limit: int = Query(default=20, ge=1, le=200, description="Maximum number of results to return"),
+) -> SimilaritySearchResponse:
+    """Return a random sample of embeddings within a given similarity range.
+
+    Args:
+        project_id: Project UUID (path parameter)
+        session_id: Session UUID (path parameter)
+        current_user: Current authenticated user
+        db: Database session
+        session_service: Search session service
+        min_similarity: Lower bound of similarity range
+        max_similarity: Upper bound of similarity range
+        limit: Maximum number of randomly sampled results
+
+    Returns:
+        SimilaritySearchResponse with randomly sampled SimilarityResult items
+
+    Raises:
+        400: min_similarity > max_similarity
+        403: Access denied to project
+        404: Session not found or has no results
+    """
+    if min_similarity > max_similarity:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"min_similarity ({min_similarity}) must be <= max_similarity ({max_similarity})",
+        )
+
+    await check_project_access(project_id, current_user.id, db)
+    session = await session_service.get_session(session_id, project_id)
+    if not session:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Search session not found")
+
+    query_vectors = await _get_query_vectors_from_session(session, db)
+    if not query_vectors:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Session has no results to sample from",
+        )
+
+    dataset_id: UUID | None = None
+    if session.parameters and session.parameters.get("dataset_id"):
+        with contextlib.suppress(ValueError):
+            dataset_id = UUID(str(session.parameters["dataset_id"]))
+
+    from echoroo.services.search import SimilaritySearchService
+
+    search_service = SimilaritySearchService(db)
+    results = await search_service.sample_by_similarity_range(
+        project_id=project_id,
+        query_vectors=query_vectors,
+        model_name=session.model_name,
+        min_similarity=min_similarity,
+        max_similarity=max_similarity,
+        limit=limit,
+        dataset_id=dataset_id,
+    )
+
+    return SimilaritySearchResponse(
+        results=results,
+        query_model=session.model_name,
+        total_results=len(results),
+    )
+
+
+async def _get_query_vectors_from_session(
+    session: Any,
+    db: Any,
+) -> list[list[float]]:
+    """Extract query vectors from a completed session's stored match embeddings.
+
+    Retrieves the embedding_id of the best (highest similarity) match per species
+    from the stored session results, then fetches the corresponding stored vectors
+    from the embeddings table. This avoids re-running model inference.
+
+    For multi-species sessions, one representative vector per species is returned
+    so the distribution reflects similarity to any of the searched species.
+
+    Args:
+        session: SearchSession ORM instance with populated results field
+        db: SQLAlchemy async session
+
+    Returns:
+        List of float vectors (each of length _STORAGE_EMBEDDING_DIM), one per species.
+        Empty list if session has no results or no valid embedding IDs can be resolved.
+    """
+    from sqlalchemy import text as _text
+
+    if not session.results:
+        return []
+
+    raw_results = session.results.get("results")
+    if not isinstance(raw_results, dict):
+        return []
+
+    # Collect the best embedding_id per species (highest similarity match)
+    best_embedding_ids: list[str] = []
+    for _species_key, species_data in raw_results.items():
+        if not isinstance(species_data, dict):
+            continue
+        matches = species_data.get("matches", [])
+        if not isinstance(matches, list) or not matches:
+            continue
+        # Matches are stored in descending similarity order; take the first one
+        best_match = matches[0]
+        if isinstance(best_match, dict) and best_match.get("embedding_id"):
+            best_embedding_ids.append(str(best_match["embedding_id"]))
+
+    if not best_embedding_ids:
+        return []
+
+    # Fetch vectors from the embeddings table for all collected IDs.
+    # Use != ALL with an inverted query is not needed here — instead use a
+    # parameterised IN list to avoid the asyncpg ::uuid[] cast syntax issue.
+    # Build a parameterised set of bind variables for the IN clause.
+    in_params: dict[str, str] = {f"eid_{i}": eid for i, eid in enumerate(best_embedding_ids)}
+    in_clause = ", ".join(f":eid_{i}" for i in range(len(best_embedding_ids)))
+    fetch_sql = _text(
+        f"""
+        SELECT e.vector::text AS vector_text
+        FROM embeddings e
+        WHERE e.id IN ({in_clause})
+        """
+    )
+    rows = (
+        await db.execute(fetch_sql, in_params)
+    ).fetchall()
+
+    from echoroo.services.search import _parse_vector_text
+
+    query_vectors: list[list[float]] = []
+    for row in rows:
+        try:
+            query_vectors.append(_parse_vector_text(row.vector_text))
+        except ValueError:
+            logger.warning("Failed to parse vector text for session query vector, skipping")
+
+    return query_vectors

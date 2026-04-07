@@ -24,6 +24,8 @@ from echoroo.schemas.search import (
     BatchSearchRequest,
     BatchSearchResponse,
     EmbeddingStatsResponse,
+    SimilarityBin,
+    SimilarityDistributionResponse,
     SimilarityResult,
     SimilaritySearchResponse,
     SpeciesMatchResult,
@@ -400,6 +402,241 @@ class SimilaritySearchService:
             by_model=by_model,
             by_dataset=by_dataset,
         )
+
+    async def get_similarity_distribution(
+        self,
+        project_id: UUID,
+        query_vectors: list[list[float]],
+        model_name: str,
+        bin_width: float = 0.05,
+        dataset_id: UUID | None = None,
+    ) -> SimilarityDistributionResponse:
+        """Compute a histogram of cosine similarities for all embeddings against query vectors.
+
+        For each embedding in the project, computes the maximum cosine similarity
+        across all provided query vectors, then bins the result into a histogram.
+        Uses SQL aggregation so no individual vectors are loaded into Python.
+
+        Args:
+            project_id: Project UUID for access scoping
+            query_vectors: List of query vectors to compute similarities against
+            model_name: Model name filter
+            bin_width: Histogram bin width (default 0.05 gives 20 bins from 0 to 1)
+            dataset_id: Optional dataset filter
+
+        Returns:
+            SimilarityDistributionResponse with histogram bins and total count
+        """
+        if not query_vectors:
+            return SimilarityDistributionResponse(bins=[], total=0, bin_width=bin_width)
+
+        dataset_filter = ""
+        base_params: dict[str, object] = {
+            "project_id": str(project_id),
+            "model_name": model_name,
+        }
+        if dataset_id is not None:
+            dataset_filter = "AND d.id = :dataset_id"
+            base_params["dataset_id"] = str(dataset_id)
+
+        # Build a UNION ALL CTE that computes similarity for each query vector,
+        # then take the max similarity per embedding_id across all query vectors.
+        # NOTE: vector literals are constructed from float values only (no user input),
+        # so there is no SQL injection risk.
+        union_parts: list[str] = []
+        params: dict[str, object] = dict(base_params)
+
+        for idx, qv in enumerate(query_vectors):
+            vec_literal = "[" + ",".join(str(v) for v in qv) + "]"
+            param_key = f"qv_{idx}"
+            params[param_key] = vec_literal
+            union_parts.append(
+                f"""
+                SELECT
+                    e.id AS embedding_id,
+                    1 - (e.vector <=> CAST(:{param_key} AS vector)) AS similarity
+                FROM embeddings e
+                JOIN recordings r ON e.recording_id = r.id
+                JOIN datasets d   ON r.dataset_id   = d.id
+                WHERE d.project_id = :project_id
+                  AND e.model_name  = :model_name
+                  {dataset_filter}
+                """
+            )
+
+        union_sql = " UNION ALL ".join(union_parts)
+        params["bin_width"] = bin_width
+
+        dist_sql = text(
+            f"""
+            WITH all_similarities AS (
+                {union_sql}
+            ),
+            max_similarities AS (
+                SELECT embedding_id, MAX(similarity) AS similarity
+                FROM all_similarities
+                GROUP BY embedding_id
+            )
+            SELECT
+                FLOOR(similarity / :bin_width) * :bin_width AS bin_lower,
+                COUNT(*) AS cnt
+            FROM max_similarities
+            GROUP BY bin_lower
+            ORDER BY bin_lower
+            """
+        )
+
+        rows = (await self.db.execute(dist_sql, params)).fetchall()
+
+        # Count total embeddings (sum of all bins)
+        total = sum(int(row.cnt) for row in rows)
+
+        # Build complete bin list covering [0, 1] in steps of bin_width,
+        # filling in zero-count bins for ranges with no results.
+        n_bins = round(1.0 / bin_width)
+        bin_counts: dict[int, int] = {}
+        for row in rows:
+            # Use integer index to avoid floating-point key comparison issues
+            bin_idx = round(float(row.bin_lower) / bin_width)
+            bin_counts[bin_idx] = int(row.cnt)
+
+        bins: list[SimilarityBin] = []
+        for i in range(n_bins):
+            lower = round(i * bin_width, 10)
+            upper = round((i + 1) * bin_width, 10)
+            bins.append(
+                SimilarityBin(
+                    lower=lower,
+                    upper=upper,
+                    count=bin_counts.get(i, 0),
+                )
+            )
+
+        return SimilarityDistributionResponse(bins=bins, total=total, bin_width=bin_width)
+
+    async def sample_by_similarity_range(
+        self,
+        project_id: UUID,
+        query_vectors: list[list[float]],
+        model_name: str,
+        min_similarity: float,
+        max_similarity: float,
+        limit: int = 20,
+        dataset_id: UUID | None = None,
+    ) -> list[SimilarityResult]:
+        """Randomly sample embeddings within a similarity range against query vectors.
+
+        For each embedding, the max similarity across all query vectors is computed.
+        Only embeddings whose max similarity falls within [min_similarity, max_similarity]
+        are considered. A random sample of up to `limit` results is returned.
+
+        Args:
+            project_id: Project UUID for access scoping
+            query_vectors: List of query vectors to compute similarities against
+            model_name: Model name filter
+            min_similarity: Lower bound of similarity range (inclusive)
+            max_similarity: Upper bound of similarity range (inclusive)
+            limit: Maximum number of randomly sampled results to return
+            dataset_id: Optional dataset filter
+
+        Returns:
+            List of SimilarityResult (randomly sampled, unordered)
+        """
+        if not query_vectors:
+            return []
+
+        dataset_filter = ""
+        base_params: dict[str, object] = {
+            "project_id": str(project_id),
+            "model_name": model_name,
+        }
+        if dataset_id is not None:
+            dataset_filter = "AND d.id = :dataset_id"
+            base_params["dataset_id"] = str(dataset_id)
+
+        # Build UNION ALL across all query vectors to get similarity per embedding_id.
+        # NOTE: vector literals are constructed from float values only — no injection risk.
+        union_parts: list[str] = []
+        params: dict[str, object] = dict(base_params)
+
+        for idx, qv in enumerate(query_vectors):
+            vec_literal = "[" + ",".join(str(v) for v in qv) + "]"
+            param_key = f"qv_{idx}"
+            params[param_key] = vec_literal
+            union_parts.append(
+                f"""
+                SELECT
+                    e.id AS embedding_id,
+                    e.recording_id,
+                    r.filename    AS recording_filename,
+                    r.datetime    AS recording_datetime,
+                    r.dataset_id,
+                    e.start_time,
+                    e.end_time,
+                    1 - (e.vector <=> CAST(:{param_key} AS vector)) AS similarity
+                FROM embeddings e
+                JOIN recordings r ON e.recording_id = r.id
+                JOIN datasets d   ON r.dataset_id   = d.id
+                WHERE d.project_id = :project_id
+                  AND e.model_name  = :model_name
+                  {dataset_filter}
+                """
+            )
+
+        union_sql = " UNION ALL ".join(union_parts)
+        params["min_similarity"] = min_similarity
+        params["max_similarity"] = max_similarity
+        params["limit"] = limit
+
+        sample_sql = text(
+            f"""
+            WITH all_similarities AS (
+                {union_sql}
+            ),
+            max_similarities AS (
+                SELECT
+                    embedding_id,
+                    recording_id,
+                    recording_filename,
+                    recording_datetime,
+                    dataset_id,
+                    start_time,
+                    end_time,
+                    MAX(similarity) AS similarity
+                FROM all_similarities
+                GROUP BY
+                    embedding_id,
+                    recording_id,
+                    recording_filename,
+                    recording_datetime,
+                    dataset_id,
+                    start_time,
+                    end_time
+            )
+            SELECT *
+            FROM max_similarities
+            WHERE similarity >= :min_similarity
+              AND similarity <= :max_similarity
+            ORDER BY RANDOM()
+            LIMIT :limit
+            """
+        )
+
+        rows = (await self.db.execute(sample_sql, params)).fetchall()
+
+        return [
+            SimilarityResult(
+                embedding_id=row.embedding_id,
+                recording_id=row.recording_id,
+                recording_filename=row.recording_filename,
+                recording_datetime=row.recording_datetime,
+                dataset_id=row.dataset_id,
+                start_time=float(row.start_time),
+                end_time=float(row.end_time),
+                similarity=float(row.similarity),
+            )
+            for row in rows
+        ]
 
     async def batch_search(
         self,

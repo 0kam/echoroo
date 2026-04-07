@@ -46,9 +46,6 @@
   let species = $state<TargetSpecies[]>([]);
   let config = $state<SearchConfig>({
     model_name: 'perch',
-    // Use a low backend threshold to fetch all results; client-side filtering applied in ResultsPanel
-    min_similarity: 0.1,
-    limit_per_species: 200,
     dataset_id: undefined,
   });
   let results = $state<Record<string, SpeciesMatchResult> | null>(null);
@@ -436,6 +433,7 @@
           {searchDurationMs}
           {isSearching}
           searchingSpecies={species}
+          sessionId={searchSessionId}
         />
       {/if}
     </div>

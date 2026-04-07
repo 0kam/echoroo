@@ -165,12 +165,48 @@ export interface TargetSpecies {
 export interface SearchConfig {
   /** Name of the embedding model to use (e.g. "perch", "birdnet") */
   model_name: string;
-  /** Minimum cosine similarity threshold (0.0–1.0) */
-  min_similarity: number;
-  /** Maximum number of results to return per species */
-  limit_per_species: number;
   /** Optional dataset to restrict the search to */
   dataset_id?: string;
+}
+
+// ============================================
+// Distribution & Sampling Types
+// ============================================
+
+/**
+ * A single bin in a similarity score distribution histogram.
+ */
+export interface DistributionBin {
+  /** Lower bound of this bin (inclusive), e.g. 0.3 */
+  lower: number;
+  /** Upper bound of this bin (exclusive), e.g. 0.35 */
+  upper: number;
+  /** Number of results falling within this bin */
+  count: number;
+}
+
+/**
+ * Response from the session distribution endpoint.
+ */
+export interface SessionDistributionResponse {
+  /** Session UUID */
+  session_id: string;
+  /** Pre-computed histogram bins */
+  bins: DistributionBin[];
+  /** Total number of results across all bins */
+  total_count: number;
+}
+
+/**
+ * Response from the session sample endpoint.
+ */
+export interface SessionSampleResponse {
+  /** Session UUID */
+  session_id: string;
+  /** Randomly sampled results within the requested similarity range */
+  results: SimilarityResult[];
+  /** Total number of results in the requested range (before sampling) */
+  total_in_range: number;
 }
 
 /**
@@ -305,8 +341,8 @@ export interface SearchSession {
   status: 'pending' | 'running' | 'completed' | 'failed';
   model_name: string;
   parameters: {
-    min_similarity: number;
-    limit_per_species: number;
+    min_similarity?: number;
+    limit_per_species?: number;
     dataset_id: string | null;
   } | null;
   species_config: Array<{

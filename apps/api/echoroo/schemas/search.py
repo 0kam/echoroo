@@ -267,3 +267,26 @@ class SearchJobStatusResponse(BaseModel):
     results: BatchSearchResponse | None = None
     error: str | None = None
     session_id: _uuid.UUID | None = None
+
+
+# ---------------------------------------------------------------------------
+# Similarity distribution and random sampling schemas
+# ---------------------------------------------------------------------------
+
+
+class SimilarityBin(BaseModel):
+    """A single histogram bin for the similarity distribution."""
+
+    lower: float = Field(..., description="Lower bound of the bin (inclusive)")
+    upper: float = Field(..., description="Upper bound of the bin (exclusive)")
+    count: int = Field(..., description="Number of embeddings in this bin")
+
+
+class SimilarityDistributionResponse(BaseModel):
+    """Histogram of cosine similarity values for all embeddings in the project."""
+
+    bins: list[SimilarityBin] = Field(
+        ..., description="Histogram bins ordered by lower bound ascending"
+    )
+    total: int = Field(..., description="Total number of embeddings considered")
+    bin_width: float = Field(..., description="Width of each histogram bin")
