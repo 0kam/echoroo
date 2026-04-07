@@ -6,13 +6,16 @@
    * - Species tabs at the top (one per species)
    * - Client-side threshold and max-per-species filter bar
    * - Spectrogram card grid for the selected species
-   * - Confirm/Reject actions on each card
-   * - Keyboard shortcuts: Space=Play, C=Confirm, R=Reject, Arrow Up/Down=Navigate
+   * - Voting actions (Agree/Disagree/Unsure) on each card
+   * - Keyboard shortcuts: Space=Play, A=Agree, D=Disagree, U=Unsure, Arrow Up/Down=Navigate
    */
 
   import { onDestroy } from 'svelte';
+  import { createMutation } from '@tanstack/svelte-query';
   import * as m from '$lib/paraglide/messages.js';
-  import type { SpeciesMatchResult, TargetSpecies, SearchResultStatus, SimilarityResult } from '$lib/types/search';
+  import type { SpeciesMatchResult, TargetSpecies, SimilarityResult } from '$lib/types/search';
+  import type { VoteSummary, VoteValue } from '$lib/types/detection';
+  import { castVote, deleteVote, getVotes } from '$lib/api/votes';
   import { createReviewNavigation } from '$lib/utils/reviewNavigation.svelte';
   import SearchResultCard from './SearchResultCard.svelte';
 
@@ -43,24 +46,88 @@
   // Currently selected species tab key
   let selectedTabKey = $state<string | null>(null);
 
-  // DOM references for keyboard-triggered scroll + button click
+  // DOM references for scroll-into-view
   let cardElements: (HTMLElement | null)[] = $state([]);
+
+  // Track which embedding is currently being mutated (voting)
+  let mutatingId: string | null = $state(null);
+
+  // Vote summaries keyed by embedding_id
+  let voteSummaries = $state<Record<string, VoteSummary>>({});
+
+  // Vote mutation
+  const voteMutation = createMutation({
+    mutationFn: ({ embeddingId, vote }: { embeddingId: string; vote: VoteValue }) =>
+      castVote(projectId, embeddingId, vote),
+    onMutate: ({ embeddingId }) => {
+      mutatingId = embeddingId;
+    },
+    onSuccess: (summary, { embeddingId }) => {
+      voteSummaries = { ...voteSummaries, [embeddingId]: summary };
+    },
+    onSettled: () => {
+      mutatingId = null;
+    },
+  });
+
+  // Remove vote mutation
+  const removeVoteMutation = createMutation({
+    mutationFn: ({ embeddingId }: { embeddingId: string }) =>
+      deleteVote(projectId, embeddingId),
+    onMutate: ({ embeddingId }) => {
+      mutatingId = embeddingId;
+    },
+    onSuccess: (_, { embeddingId }) => {
+      getVotes(projectId, embeddingId)
+        .then((summary) => {
+          voteSummaries = { ...voteSummaries, [embeddingId]: summary };
+        })
+        .catch(() => {
+          const updated = { ...voteSummaries };
+          delete updated[embeddingId];
+          voteSummaries = updated;
+        });
+    },
+    onSettled: () => {
+      mutatingId = null;
+    },
+  });
+
+  function handleVote(embeddingId: string, vote: VoteValue) {
+    $voteMutation.mutate({ embeddingId, vote });
+  }
+
+  function handleRemoveVote(embeddingId: string) {
+    $removeVoteMutation.mutate({ embeddingId });
+  }
 
   // Shared keyboard navigation and audio playback
   const nav = createReviewNavigation({
     projectId,
     itemCount: () => filteredMatches.length,
-    onConfirm: (i) => {
-      const cardEl = cardElements[i];
-      if (!cardEl) return;
-      const btn = cardEl.querySelector<HTMLButtonElement>('[data-action="confirm"]');
-      btn?.click();
+    onConfirm: () => {
+      // No-op: voting mode does not use legacy confirm
     },
-    onReject: (i) => {
-      const cardEl = cardElements[i];
-      if (!cardEl) return;
-      const btn = cardEl.querySelector<HTMLButtonElement>('[data-action="reject"]');
-      btn?.click();
+    onReject: () => {
+      // No-op: voting mode does not use legacy reject
+    },
+    onAgree: (i) => {
+      const match = filteredMatches[i];
+      if (match && mutatingId === null) {
+        handleVote(match.embedding_id, 'agree');
+      }
+    },
+    onDisagree: (i) => {
+      const match = filteredMatches[i];
+      if (match && mutatingId === null) {
+        handleVote(match.embedding_id, 'disagree');
+      }
+    },
+    onUnsure: (i) => {
+      const match = filteredMatches[i];
+      if (match && mutatingId === null) {
+        handleVote(match.embedding_id, 'unsure');
+      }
     },
     getPlaybackInfo: (i) => {
       const match = filteredMatches[i];
@@ -78,33 +145,37 @@
     nav.cleanup();
   });
 
-  // Client-side review status tracking: key = embedding_id
-  let statusMap = $state<Map<string, SearchResultStatus>>(new Map());
-
   // Species entry list derived from results
   const speciesEntries = $derived(
     results !== null ? Object.entries(results) : []
   );
 
   // When results change (new search or session load), reset the tab selection
-  // and initialize the status map from any server-side review_status values.
+  // and clear the vote summary cache.
   $effect(() => {
     if (results !== null) {
       const keys = Object.keys(results);
       selectedTabKey = keys.length > 0 ? (keys[0] ?? null) : null;
       nav.select(0);
-      const newMap = new Map<string, SearchResultStatus>();
-      for (const speciesData of Object.values(results)) {
-        if (speciesData?.matches) {
-          for (const match of speciesData.matches) {
-            const reviewStatus = (match as SimilarityResult & { review_status?: string }).review_status;
-            if (reviewStatus && reviewStatus !== 'unreviewed') {
-              newMap.set(match.embedding_id, reviewStatus as SearchResultStatus);
-            }
-          }
-        }
+      voteSummaries = {};
+    }
+  });
+
+  // Load vote summaries for the currently visible filtered matches
+  $effect(() => {
+    const matches = filteredMatches;
+    if (matches.length === 0) return;
+
+    for (const match of matches) {
+      if (!(match.embedding_id in voteSummaries)) {
+        getVotes(projectId, match.embedding_id)
+          .then((summary) => {
+            voteSummaries = { ...voteSummaries, [match.embedding_id]: summary };
+          })
+          .catch(() => {
+            // Silently ignore — vote summaries are optional enhancement
+          });
       }
-      statusMap = newMap;
     }
   });
 
@@ -126,18 +197,6 @@
     return group.matches
       .filter((r) => r.similarity >= filterThreshold)
       .slice(0, filterMaxPerSpecies).length;
-  }
-
-  function getStatus(result: SimilarityResult): SearchResultStatus {
-    return statusMap.get(result.embedding_id) ?? 'unreviewed';
-  }
-
-  function handleConfirm(embeddingId: string) {
-    statusMap = new Map(statusMap).set(embeddingId, 'confirmed');
-  }
-
-  function handleReject(embeddingId: string) {
-    statusMap = new Map(statusMap).set(embeddingId, 'rejected');
   }
 
   function getTagId(tagKey: string, group: SpeciesMatchResult): string {
@@ -202,8 +261,9 @@
 
       <!-- Keyboard shortcuts hint -->
       <div class="ml-auto flex items-center gap-2 text-xs text-stone-400">
-        <kbd class="rounded border border-stone-200 bg-surface-card px-1.5 py-0.5 font-mono text-xs">C</kbd> {m.search_keyboard_confirm()}
-        <kbd class="rounded border border-stone-200 bg-surface-card px-1.5 py-0.5 font-mono text-xs">R</kbd> {m.search_keyboard_reject()}
+        <kbd class="rounded border border-stone-200 bg-surface-card px-1.5 py-0.5 font-mono text-xs">A</kbd> {m.vote_agree_button()}
+        <kbd class="rounded border border-stone-200 bg-surface-card px-1.5 py-0.5 font-mono text-xs">D</kbd> {m.vote_disagree_button()}
+        <kbd class="rounded border border-stone-200 bg-surface-card px-1.5 py-0.5 font-mono text-xs">U</kbd> {m.vote_unsure_button()}
         <kbd class="rounded border border-stone-200 bg-surface-card px-1.5 py-0.5 font-mono text-xs">Space</kbd> {m.search_keyboard_play()}
         <kbd class="rounded border border-stone-200 bg-surface-card px-1.5 py-0.5 font-mono text-xs">&#8593;&#8595;</kbd> {m.search_keyboard_navigate()}
       </div>
@@ -304,15 +364,15 @@
                     <SearchResultCard
                       {projectId}
                       {result}
-                      tagId={getTagId(selectedTabKey ?? '', selectedGroup)}
-                      status={getStatus(result)}
                       {searchSessionId}
                       isSelected={i === nav.selectedIndex}
                       externalIsPlaying={nav.playingIndex === i && nav.isPlaying}
                       externalIsLoadingAudio={nav.playingIndex === i && nav.isLoadingAudio}
                       onPlayToggle={() => nav.togglePlay(i)}
-                      onConfirm={() => handleConfirm(result.embedding_id)}
-                      onReject={() => handleReject(result.embedding_id)}
+                      voteSummary={voteSummaries[result.embedding_id] ?? null}
+                      isVoting={mutatingId === result.embedding_id}
+                      onVote={(vote) => handleVote(result.embedding_id, vote)}
+                      onRemoveVote={() => handleRemoveVote(result.embedding_id)}
                     />
                   </div>
                 {/each}

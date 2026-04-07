@@ -2,20 +2,19 @@
   /**
    * SearchResultCard - Displays a single similarity search result with spectrogram.
    *
-   * Wraps ReviewCard (shared component). On confirm, creates an annotation via
-   * the search API. Reject is client-side state only.
+   * Wraps ReviewCard (shared component). Voting (Agree/Disagree/Unsure) is
+   * handled by the parent ResultsPanel via TanStack Query mutations; this card
+   * only forwards vote callbacks and displays the vote summary.
    */
 
   import * as m from '$lib/paraglide/messages.js';
-  import { createAnnotationFromSearch, rejectSearchResult } from '$lib/api/search';
-  import type { SimilarityResult, SearchResultStatus } from '$lib/types/search';
+  import type { SimilarityResult } from '$lib/types/search';
+  import type { VoteSummary, VoteValue } from '$lib/types/detection';
   import ReviewCard from '$lib/components/common/ReviewCard.svelte';
 
   interface Props {
     projectId: string;
     result: SimilarityResult;
-    tagId: string;
-    status: SearchResultStatus;
     searchSessionId?: string;
     /** Highlight this card when it is keyboard-focused */
     isSelected?: boolean;
@@ -25,26 +24,29 @@
     externalIsLoadingAudio?: boolean;
     /** Callback when the play button is clicked (delegates to parent's player) */
     onPlayToggle?: () => void;
-    onConfirm: () => void;
-    onReject: () => void;
+    /** Current vote summary (null when not yet loaded) */
+    voteSummary: VoteSummary | null;
+    /** Whether a vote mutation is in flight for this card */
+    isVoting?: boolean;
+    /** Called when the user casts a vote */
+    onVote: (vote: VoteValue) => void;
+    /** Called when the user removes their current vote */
+    onRemoveVote: () => void;
   }
 
   let {
     projectId,
     result,
-    tagId,
-    status,
-    searchSessionId,
+    searchSessionId: _searchSessionId,
     isSelected = false,
     externalIsPlaying,
     externalIsLoadingAudio,
     onPlayToggle,
-    onConfirm,
-    onReject,
+    voteSummary,
+    isVoting = false,
+    onVote,
+    onRemoveVote,
   }: Props = $props();
-
-  let isConfirming = $state(false);
-  let isRejecting = $state(false);
 
   const recordingName = $derived(result.recording_filename ?? result.recording_id.slice(0, 8) + '...');
 
@@ -54,48 +56,6 @@
     if (similarity >= 0.5) return 'bg-yellow-100 text-yellow-700';
     return 'bg-stone-100 text-stone-600';
   }
-
-  async function handleConfirm() {
-    if (isConfirming || status === 'confirmed') return;
-    isConfirming = true;
-    try {
-      await createAnnotationFromSearch(projectId, {
-        recording_id: result.recording_id,
-        tag_id: tagId,
-        start_time: result.start_time,
-        end_time: result.end_time,
-        confidence: result.similarity,
-        search_session_id: searchSessionId,
-      });
-      onConfirm();
-    } catch {
-      // Silently fail — user can retry
-    } finally {
-      isConfirming = false;
-    }
-  }
-
-  async function handleReject() {
-    if (isRejecting || status === 'rejected') return;
-    isRejecting = true;
-    try {
-      await rejectSearchResult(projectId, {
-        recording_id: result.recording_id,
-        tag_id: tagId,
-        start_time: result.start_time,
-        end_time: result.end_time,
-        confidence: result.similarity,
-        search_session_id: searchSessionId,
-      });
-      onReject();
-    } catch (err) {
-      console.error('Failed to reject:', err);
-      // Still update UI even if API call fails
-      onReject();
-    } finally {
-      isRejecting = false;
-    }
-  }
 </script>
 
 <ReviewCard
@@ -104,15 +64,16 @@
   {recordingName}
   startTime={result.start_time}
   endTime={result.end_time}
-  status={status as 'unreviewed' | 'confirmed' | 'rejected'}
+  status="unreviewed"
   scoreValue={result.similarity}
   scoreLabel={m.search_similarity()}
   scoreBadgeClass={getSimilarityBadgeClass(result.similarity)}
-  isLoading={isConfirming || isRejecting}
+  isLoading={isVoting}
   {isSelected}
   {externalIsPlaying}
   {externalIsLoadingAudio}
   {onPlayToggle}
-  onConfirm={handleConfirm}
-  onReject={handleReject}
+  {voteSummary}
+  {onVote}
+  {onRemoveVote}
 />

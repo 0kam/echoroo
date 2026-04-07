@@ -46,10 +46,6 @@
     voteSummary?: VoteSummary | null;
     onVote?: (vote: VoteValue) => void;
     onRemoveVote?: () => void;
-    /** Legacy: kept for backward compatibility with non-voting usage */
-    onConfirm?: () => void;
-    /** Legacy: kept for backward compatibility with non-voting usage */
-    onReject?: () => void;
     /**
      * Whether this card's audio is currently playing, controlled by a parent
      * navigation hook. When provided, the play button reflects this state
@@ -93,8 +89,6 @@
     voteSummary = null,
     onVote,
     onRemoveVote,
-    onConfirm,
-    onReject,
     externalIsPlaying,
     externalIsLoadingAudio,
     onPlayToggle,
@@ -116,10 +110,10 @@
   const scorePercent = $derived(scoreValue !== null ? Math.round(scoreValue * 100) : null);
 
   const borderClass = $derived(
-    // When vote summary is present, use consensus-based border
+    // Use consensus-based border when vote summary is available
     voteSummary
       ? getConsensusCardBorderClass(voteSummary.consensus, isSelected)
-      // Legacy: fall back to detection status-based border
+      // Fall back to detection status-based border (used by DetectionCard)
       : status === 'confirmed'
         ? 'border-green-400 ring-1 ring-green-300'
         : status === 'rejected'
@@ -155,16 +149,6 @@
   function handleRemoveVote() {
     internalPlayer?.stop();
     onRemoveVote?.();
-  }
-
-  function handleConfirm() {
-    internalPlayer?.stop();
-    onConfirm?.();
-  }
-
-  function handleReject() {
-    internalPlayer?.stop();
-    onReject?.();
   }
 
   onDestroy(() => {
@@ -256,15 +240,12 @@
       {@render extraBody()}
     {/if}
 
-    <!-- Review actions: voting mode when onVote is provided, legacy confirm/reject otherwise -->
+    <!-- Review actions: Agree / Disagree / Unsure voting buttons -->
     <ReviewActions
       {voteSummary}
       {isLoading}
-      onVote={onVote ? handleVote : undefined}
-      onRemoveVote={onVote ? handleRemoveVote : undefined}
-      onConfirm={onConfirm ? handleConfirm : undefined}
-      onReject={onReject ? handleReject : undefined}
-      legacyStatus={status}
+      onVote={handleVote}
+      onRemoveVote={handleRemoveVote}
     />
   </div>
 </div>
