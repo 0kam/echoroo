@@ -15,6 +15,13 @@ RUN npm ci
 # Copy source files
 COPY . .
 
+# Ensure the built-in 'node' user (uid=1000) owns /app so
+# npm / Vite / Paraglide can write caches and generated files
+# without creating root-owned files on bind-mounted host volumes.
+RUN chown -R node:node /app
+
+USER node
+
 EXPOSE 5173
 
 # Run SvelteKit dev server

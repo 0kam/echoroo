@@ -95,7 +95,7 @@ services:
       # Persistent data
       - backend-data:/data
       # ML model cache (shared with worker)
-      - ml-models-data:/root/.local/share/birdnet
+      - ml-models-data:/home/appuser/.local/share/birdnet
     environment:
       - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-echoroo}
       - REDIS_URL=redis://redis:6379/0
@@ -157,7 +157,7 @@ services:
       - ./apps/api:/app
       - backend-data:/data
       - ${ECHOROO_AUDIO_DIR:-/tmp/echoroo-audio}:/data/audio:ro
-      - ml-models-data:/root/.local/share/birdnet
+      - ml-models-data:/home/appuser/.local/share/birdnet
     depends_on:
       db:
         condition: service_healthy
@@ -190,7 +190,7 @@ services:
       - ./apps/api:/app
       - backend-data:/data
       - ${ECHOROO_AUDIO_DIR:-/tmp/echoroo-audio}:/data/audio:ro
-      - ml-models-data:/root/.local/share/birdnet
+      - ml-models-data:/home/appuser/.local/share/birdnet
     depends_on:
       db:
         condition: service_healthy

@@ -16,6 +16,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Install uv for fast dependency management
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
+# Place the virtual environment outside /app so it is not shadowed
+# by the bind-mount (./apps/api:/app) used by worker / beat services.
+ENV UV_PROJECT_ENVIRONMENT=/opt/venv
+
 # Copy dependency files
 COPY pyproject.toml uv.lock ./
 
@@ -28,8 +32,17 @@ COPY . .
 # Install the project itself
 RUN uv sync --frozen --no-install-project
 
-# Create data directories
-RUN mkdir -p /data/audio /data/cache
+# Create a non-root user (uid=1000) matching the typical host user.
+# This prevents root-owned files from appearing on bind-mounted host
+# directories (e.g. celerybeat-schedule, __pycache__).
+RUN groupadd -g 1000 appuser \
+    && useradd -u 1000 -g appuser -m appuser
+
+# Create data directories and set ownership
+RUN mkdir -p /data/audio /data/cache /home/appuser/.local/share/birdnet \
+    && chown -R appuser:appuser /data /opt/venv /home/appuser
+
+USER appuser
 
 EXPOSE 8000
 

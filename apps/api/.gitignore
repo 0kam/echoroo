@@ -1,3 +1,6 @@
+# Celery
+celerybeat-schedule
+
 # Python
 __pycache__/
 *.py[cod]
