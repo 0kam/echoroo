@@ -1,14 +1,32 @@
 /**
- * Detection votes API client.
+ * Annotation votes API client.
  *
  * Provides functions to cast, update, delete, and retrieve votes
- * on detections as part of the voting review system.
+ * on annotations as part of the voting review system.
+ *
+ * Two URL patterns are supported:
+ * - `/detections/{id}/votes` for detection review grids (backward compatibility)
+ * - `/annotations/{id}/votes` for generic annotations (search results, etc.)
  */
 
 import type { VoteSummary, CastVoteRequest, VoteValue, SignalQuality } from '$lib/types/detection';
 import { apiClient } from './client';
 
 const API_BASE = '/api/v1';
+
+/**
+ * Build the vote URL for a detection (legacy path).
+ */
+function detectionVoteUrl(projectId: string, detectionId: string): string {
+  return `${API_BASE}/projects/${projectId}/detections/${detectionId}/votes`;
+}
+
+/**
+ * Build the vote URL for a generic annotation.
+ */
+function annotationVoteUrl(projectId: string, annotationId: string): string {
+  return `${API_BASE}/projects/${projectId}/annotations/${annotationId}/votes`;
+}
 
 /**
  * Cast or update a vote on a detection.
@@ -31,7 +49,7 @@ export async function castVote(
   if (note !== undefined) body.note = note;
 
   return apiClient.post<VoteSummary>(
-    `${API_BASE}/projects/${projectId}/detections/${detectionId}/votes`,
+    detectionVoteUrl(projectId, detectionId),
     body
   );
 }
@@ -44,7 +62,7 @@ export async function deleteVote(
   detectionId: string
 ): Promise<void> {
   return apiClient.delete<void>(
-    `${API_BASE}/projects/${projectId}/detections/${detectionId}/votes/me`
+    `${detectionVoteUrl(projectId, detectionId)}/me`
   );
 }
 
@@ -57,6 +75,58 @@ export async function getVotes(
   detectionId: string
 ): Promise<VoteSummary> {
   return apiClient.get<VoteSummary>(
-    `${API_BASE}/projects/${projectId}/detections/${detectionId}/votes`
+    detectionVoteUrl(projectId, detectionId)
+  );
+}
+
+// ============================================================
+// Generic annotation vote functions (for search results, etc.)
+// ============================================================
+
+/**
+ * Cast or update a vote on an annotation (generic path).
+ * Works with any annotation ID, including those from search results.
+ */
+export async function castAnnotationVote(
+  projectId: string,
+  annotationId: string,
+  vote: VoteValue,
+  signalQuality?: SignalQuality,
+  suggestedTagId?: string,
+  note?: string
+): Promise<VoteSummary> {
+  const body: CastVoteRequest = { vote };
+  if (signalQuality !== undefined) body.signal_quality = signalQuality;
+  if (suggestedTagId !== undefined) body.suggested_tag_id = suggestedTagId;
+  if (note !== undefined) body.note = note;
+
+  return apiClient.post<VoteSummary>(
+    annotationVoteUrl(projectId, annotationId),
+    body
+  );
+}
+
+/**
+ * Delete the current user's vote on an annotation (generic path).
+ */
+export async function deleteAnnotationVote(
+  projectId: string,
+  annotationId: string
+): Promise<VoteSummary> {
+  return apiClient.delete<VoteSummary>(
+    annotationVoteUrl(projectId, annotationId)
+  );
+}
+
+/**
+ * Retrieve the vote summary for an annotation (generic path).
+ * Works with any annotation ID, including those from search results.
+ */
+export async function getAnnotationVotes(
+  projectId: string,
+  annotationId: string
+): Promise<VoteSummary> {
+  return apiClient.get<VoteSummary>(
+    annotationVoteUrl(projectId, annotationId)
   );
 }

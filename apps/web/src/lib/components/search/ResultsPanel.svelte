@@ -15,7 +15,8 @@
   import * as m from '$lib/paraglide/messages.js';
   import type { SpeciesMatchResult, TargetSpecies, SimilarityResult } from '$lib/types/search';
   import type { VoteSummary, VoteValue, SignalQuality } from '$lib/types/detection';
-  import { castVote, deleteVote, getVotes } from '$lib/api/votes';
+  import { castAnnotationVote, deleteAnnotationVote, getAnnotationVotes } from '$lib/api/votes';
+  import { createAnnotationFromSearch } from '$lib/api/search';
   import { createReviewNavigation } from '$lib/utils/reviewNavigation.svelte';
   import SearchResultCard from './SearchResultCard.svelte';
 
@@ -55,17 +56,73 @@
   // Vote summaries keyed by embedding_id
   let voteSummaries = $state<Record<string, VoteSummary>>({});
 
-  // Vote mutation
+  // Mapping from embedding_id to annotation_id (created on first vote)
+  let annotationIds = $state<Record<string, string>>({});
+
+  // In-flight annotation creation promises to avoid duplicate requests
+  const pendingAnnotations = new Map<string, Promise<string>>();
+
+  /**
+   * Ensure an annotation record exists for the given search result.
+   * Creates one via the search annotation endpoint if not already tracked.
+   * Returns the annotation ID.
+   */
+  async function ensureAnnotation(match: SimilarityResult): Promise<string> {
+    // Already resolved
+    const existing = annotationIds[match.embedding_id];
+    if (existing) return existing;
+
+    // Already in-flight
+    const pending = pendingAnnotations.get(match.embedding_id);
+    if (pending) return pending;
+
+    // Determine the tag_id from the currently selected species group
+    const tagId = selectedTabKey !== null && selectedGroup
+      ? getTagId(selectedTabKey, selectedGroup)
+      : null;
+    if (!tagId) {
+      throw new Error('No tag available for annotation creation');
+    }
+
+    const promise = createAnnotationFromSearch(projectId, {
+      recording_id: match.recording_id,
+      tag_id: tagId,
+      start_time: match.start_time,
+      end_time: match.end_time,
+      confidence: match.similarity,
+      review_status: 'unreviewed',
+      source: 'similarity_search',
+      search_session_id: searchSessionId,
+    }).then((response) => {
+      const annId = (response as { id: string }).id;
+      annotationIds = { ...annotationIds, [match.embedding_id]: annId };
+      pendingAnnotations.delete(match.embedding_id);
+      return annId;
+    }).catch((err) => {
+      pendingAnnotations.delete(match.embedding_id);
+      throw err;
+    });
+
+    pendingAnnotations.set(match.embedding_id, promise);
+    return promise;
+  }
+
+  // Vote mutation: ensures annotation exists, then casts the vote
   const voteMutation = createMutation({
-    mutationFn: ({
+    mutationFn: async ({
       embeddingId,
+      match,
       vote,
       signalQuality,
     }: {
       embeddingId: string;
+      match: SimilarityResult;
       vote: VoteValue;
       signalQuality?: SignalQuality;
-    }) => castVote(projectId, embeddingId, vote, signalQuality),
+    }) => {
+      const annotationId = await ensureAnnotation(match);
+      return castAnnotationVote(projectId, annotationId, vote, signalQuality);
+    },
     onMutate: ({ embeddingId }) => {
       mutatingId = embeddingId;
     },
@@ -77,35 +134,32 @@
     },
   });
 
-  // Remove vote mutation
+  // Remove vote mutation: uses the annotation ID we already tracked
   const removeVoteMutation = createMutation({
-    mutationFn: ({ embeddingId }: { embeddingId: string }) =>
-      deleteVote(projectId, embeddingId),
+    mutationFn: async ({ embeddingId }: { embeddingId: string }) => {
+      const annotationId = annotationIds[embeddingId];
+      if (!annotationId) {
+        throw new Error('No annotation found for this result');
+      }
+      return deleteAnnotationVote(projectId, annotationId);
+    },
     onMutate: ({ embeddingId }) => {
       mutatingId = embeddingId;
     },
-    onSuccess: (_, { embeddingId }) => {
-      getVotes(projectId, embeddingId)
-        .then((summary) => {
-          voteSummaries = { ...voteSummaries, [embeddingId]: summary };
-        })
-        .catch(() => {
-          const updated = { ...voteSummaries };
-          delete updated[embeddingId];
-          voteSummaries = updated;
-        });
+    onSuccess: (summary, { embeddingId }) => {
+      voteSummaries = { ...voteSummaries, [embeddingId]: summary };
     },
     onSettled: () => {
       mutatingId = null;
     },
   });
 
-  function handleAgree(embeddingId: string, signalQuality: SignalQuality) {
-    $voteMutation.mutate({ embeddingId, vote: 'agree', signalQuality });
+  function handleAgree(match: SimilarityResult, signalQuality: SignalQuality) {
+    $voteMutation.mutate({ embeddingId: match.embedding_id, match, vote: 'agree', signalQuality });
   }
 
-  function handleVote(embeddingId: string, vote: VoteValue) {
-    $voteMutation.mutate({ embeddingId, vote });
+  function handleVote(match: SimilarityResult, vote: VoteValue) {
+    $voteMutation.mutate({ embeddingId: match.embedding_id, match, vote });
   }
 
   function handleRemoveVote(embeddingId: string) {
@@ -126,19 +180,19 @@
       const match = filteredMatches[i];
       if (match && mutatingId === null) {
         // Keyboard shortcut A defaults to Solo (fastest/most common quality)
-        handleAgree(match.embedding_id, 'solo');
+        handleAgree(match, 'solo');
       }
     },
     onDisagree: (i) => {
       const match = filteredMatches[i];
       if (match && mutatingId === null) {
-        handleVote(match.embedding_id, 'disagree');
+        handleVote(match, 'disagree');
       }
     },
     onUnsure: (i) => {
       const match = filteredMatches[i];
       if (match && mutatingId === null) {
-        handleVote(match.embedding_id, 'unsure');
+        handleVote(match, 'unsure');
       }
     },
     getPlaybackInfo: (i) => {
@@ -163,30 +217,37 @@
   );
 
   // When results change (new search or session load), reset the tab selection
-  // and clear the vote summary cache.
+  // and clear the vote summary and annotation ID caches.
   $effect(() => {
     if (results !== null) {
       const keys = Object.keys(results);
       selectedTabKey = keys.length > 0 ? (keys[0] ?? null) : null;
       nav.select(0);
       voteSummaries = {};
+      annotationIds = {};
+      pendingAnnotations.clear();
     }
   });
 
-  // Load vote summaries for the currently visible filtered matches
+  // Load vote summaries for the currently visible filtered matches.
+  // Only loads votes for results that already have a tracked annotation ID.
   $effect(() => {
     const matches = filteredMatches;
     if (matches.length === 0) return;
 
     for (const match of matches) {
       if (!(match.embedding_id in voteSummaries)) {
-        getVotes(projectId, match.embedding_id)
-          .then((summary) => {
-            voteSummaries = { ...voteSummaries, [match.embedding_id]: summary };
-          })
-          .catch(() => {
-            // Silently ignore — vote summaries are optional enhancement
-          });
+        const annId = annotationIds[match.embedding_id];
+        if (annId) {
+          getAnnotationVotes(projectId, annId)
+            .then((summary) => {
+              voteSummaries = { ...voteSummaries, [match.embedding_id]: summary };
+            })
+            .catch(() => {
+              // Silently ignore — vote summaries are optional enhancement
+            });
+        }
+        // If no annotation exists yet, votes will be loaded after first vote
       }
     }
   });
@@ -383,8 +444,8 @@
                       onPlayToggle={() => nav.togglePlay(i)}
                       voteSummary={voteSummaries[result.embedding_id] ?? null}
                       isVoting={mutatingId === result.embedding_id}
-                      onAgree={(q) => handleAgree(result.embedding_id, q)}
-                      onVote={(vote) => handleVote(result.embedding_id, vote)}
+                      onAgree={(q) => handleAgree(result, q)}
+                      onVote={(vote) => handleVote(result, vote)}
                       onRemoveVote={() => handleRemoveVote(result.embedding_id)}
                     />
                   </div>

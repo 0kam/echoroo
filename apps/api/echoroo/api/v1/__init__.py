@@ -6,6 +6,7 @@ from echoroo.api.v1 import (
     admin,
     annotation_projects,
     annotation_tasks,
+    annotation_votes,
     annotations,
     auth,
     clips,
@@ -59,6 +60,9 @@ api_router.include_router(detection_runs.models_router)
 api_router.include_router(uploads.router)
 # Similarity search router
 api_router.include_router(search_module.router)
+# Generic annotation vote endpoints (must be before search annotations_router
+# to avoid route conflicts on /projects/{project_id}/annotations/{id}/votes)
+api_router.include_router(annotation_votes.router)
 # Search annotation creation router
 api_router.include_router(search_module.annotations_router)
 # Custom model router
