@@ -179,7 +179,7 @@
       viewBox="0 0 {SIZE} {SIZE}"
       class="overflow-visible"
       role="img"
-      aria-label="Similarity results plotted by time of day"
+      aria-label={m.search_aria_spiral()}
       onmousemove={handleMouseMove}
     >
       <!-- Background circle -->

@@ -152,7 +152,7 @@
       bind:this={sliderEl}
       class="relative h-5 cursor-pointer select-none"
       role="group"
-      aria-label="Similarity range selector"
+      aria-label={m.search_aria_range_selector()}
     >
       <!-- Track background -->
       <div class="absolute inset-x-0 top-1/2 h-1.5 -translate-y-1/2 rounded-full bg-stone-200"></div>
@@ -169,7 +169,7 @@
         class="absolute top-1/2 h-4 w-4 -translate-x-1/2 -translate-y-1/2 cursor-ew-resize rounded-full border-2 border-primary-500 bg-white shadow-sm transition-shadow hover:shadow-md"
         style="left: {minSimilarity * 100}%;"
         role="slider"
-        aria-label="Minimum similarity"
+        aria-label={m.search_aria_min_similarity()}
         aria-valuenow={Math.round(minSimilarity * 100)}
         aria-valuemin={0}
         aria-valuemax={Math.round(maxSimilarity * 100)}
@@ -187,7 +187,7 @@
         class="absolute top-1/2 h-4 w-4 -translate-x-1/2 -translate-y-1/2 cursor-ew-resize rounded-full border-2 border-primary-500 bg-white shadow-sm transition-shadow hover:shadow-md"
         style="left: {maxSimilarity * 100}%;"
         role="slider"
-        aria-label="Maximum similarity"
+        aria-label={m.search_aria_max_similarity()}
         aria-valuenow={Math.round(maxSimilarity * 100)}
         aria-valuemin={Math.round(minSimilarity * 100)}
         aria-valuemax={100}
@@ -225,7 +225,7 @@
               : 'border-stone-200 bg-white hover:border-primary-300 hover:shadow-sm'}"
           role="button"
           tabindex="0"
-          aria-label="Play {result.recording_filename} at {formatTime(result.start_time)}, similarity {formatPct(result.similarity)}"
+          aria-label={m.search_aria_play_result({ filename: result.recording_filename, time: formatTime(result.start_time), similarity: formatPct(result.similarity) })}
           onclick={() => handleCardClick(result)}
           onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleCardClick(result); } }}
         >

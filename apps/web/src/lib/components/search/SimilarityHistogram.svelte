@@ -153,7 +153,7 @@
     class="w-full cursor-crosshair select-none overflow-visible"
     style="max-width: {WIDTH}px;"
     role="img"
-    aria-label="Similarity score distribution histogram"
+    aria-label={m.search_aria_histogram()}
     onclick={handleSvgClick}
   >
     <g transform="translate({MARGIN.left},{MARGIN.top})">
@@ -256,7 +256,7 @@
         onmousedown={handleMouseDown}
         role="slider"
         tabindex="0"
-        aria-label="Threshold: {formatPct(threshold)}"
+        aria-label={m.search_aria_threshold({ value: formatPct(threshold) })}
         aria-valuenow={Math.round(threshold * 100)}
         aria-valuemin={0}
         aria-valuemax={100}

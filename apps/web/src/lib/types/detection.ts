@@ -46,17 +46,26 @@ export type SignalQuality = 'solo' | 'dominant' | 'mixed';
 export type ConsensusStatus = 'needs_votes' | 'agreed' | 'disputed' | 'rejected';
 
 /**
- * A single vote cast by a user on a detection
+ * Minimal user info embedded in vote responses.
+ * Mirrors the backend VoteUserInfo Pydantic schema.
+ */
+export interface VoteUserInfo {
+  id: string;
+  email: string;
+  display_name: string | null;
+}
+
+/**
+ * A single vote cast by a user on a detection.
+ * Mirrors the backend VoteResponse Pydantic schema.
  */
 export interface DetectionVote {
   /** Unique identifier */
   id: string;
-  /** Detection this vote belongs to */
-  detection_id: string;
+  /** Annotation this vote belongs to */
+  annotation_id: string;
   /** User who cast the vote */
   user_id: string;
-  /** Display name of the voter */
-  user_display_name: string | null;
   /** The vote value */
   vote: VoteValue;
   /** Signal quality assessment — only present on agree votes */
@@ -67,8 +76,8 @@ export interface DetectionVote {
   note: string | null;
   /** ISO 8601 creation timestamp */
   created_at: string;
-  /** ISO 8601 last-update timestamp */
-  updated_at: string;
+  /** User info (id, email, display_name) */
+  user: VoteUserInfo;
 }
 
 /**

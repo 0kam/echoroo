@@ -1279,6 +1279,15 @@
   "search_similarity_score": "類似度スコア",
   "search_previous": "前へ",
   "search_next": "次へ",
+  "search_loading_stats": "読み込み中...",
+  "search_stats_error": "埋め込み統計の読み込みに失敗しました。",
+  "search_aria_histogram": "類似度スコア分布ヒストグラム",
+  "search_aria_threshold": "閾値: {value}",
+  "search_aria_range_selector": "類似度範囲セレクター",
+  "search_aria_min_similarity": "最小類似度",
+  "search_aria_max_similarity": "最大類似度",
+  "search_aria_play_result": "{filename}を{time}で再生、類似度{similarity}",
+  "search_aria_spiral": "時間帯別の類似度結果プロット",
 
   "sidebar_nav_models": "モデル",
 

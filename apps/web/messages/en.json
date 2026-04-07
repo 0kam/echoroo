@@ -1279,6 +1279,15 @@
   "search_similarity_score": "Similarity score",
   "search_previous": "Previous",
   "search_next": "Next",
+  "search_loading_stats": "Loading...",
+  "search_stats_error": "Failed to load embedding statistics.",
+  "search_aria_histogram": "Similarity score distribution histogram",
+  "search_aria_threshold": "Threshold: {value}",
+  "search_aria_range_selector": "Similarity range selector",
+  "search_aria_min_similarity": "Minimum similarity",
+  "search_aria_max_similarity": "Maximum similarity",
+  "search_aria_play_result": "Play {filename} at {time}, similarity {similarity}",
+  "search_aria_spiral": "Similarity results plotted by time of day",
 
   "sidebar_nav_models": "Models",
 
