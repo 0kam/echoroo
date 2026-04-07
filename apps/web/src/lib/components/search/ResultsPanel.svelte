@@ -67,11 +67,11 @@
   // Shared keyboard navigation and audio playback (arrows + space only)
   const nav = createReviewNavigation({
     projectId,
-    itemCount: () => filteredMatches.length,
+    itemCount: () => paginatedMatches.length,
     onConfirm: () => { /* no-op: no review actions in search */ },
     onReject: () => { /* no-op: no review actions in search */ },
     getPlaybackInfo: (i) => {
-      const match = filteredMatches[i];
+      const match = paginatedMatches[i];
       if (!match) return null;
       return {
         recordingId: match.recording_id,
@@ -139,6 +139,10 @@
     }
   });
 
+  // Pagination
+  const PAGE_SIZE = 20;
+  let page = $state(1);
+
   // Filtered matches for the currently selected species
   const selectedGroup = $derived(
     selectedTabKey !== null && results !== null ? results[selectedTabKey] : null
@@ -150,9 +154,38 @@
       : []
   );
 
+  // Paginated subset of filtered matches
+  const totalPages = $derived(Math.max(1, Math.ceil(filteredMatches.length / PAGE_SIZE)));
+  const paginatedMatches = $derived(
+    filteredMatches.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
+  );
+
+  // Reset page when species tab or threshold changes
+  $effect(() => {
+    // Track dependencies
+    selectedTabKey;
+    filterThreshold;
+    // Reset to page 1
+    page = 1;
+  });
+
   // Filtered count per species tab (for badges)
   function getFilteredCount(group: SpeciesMatchResult): number {
     return group.matches.filter((r) => r.similarity >= filterThreshold).length;
+  }
+
+  function prevPage() {
+    if (page > 1) {
+      page -= 1;
+      nav.select(0);
+    }
+  }
+
+  function nextPage() {
+    if (page < totalPages) {
+      page += 1;
+      nav.select(0);
+    }
   }
 
   function getDisplayName(group: SpeciesMatchResult): string {
@@ -328,9 +361,9 @@
                 <p class="text-sm text-stone-500">{m.search_no_results_above_threshold()}</p>
               </div>
             {:else}
-              <!-- Preview card grid -->
+              <!-- Preview card grid (paginated) -->
               <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                {#each filteredMatches as result, i (result.embedding_id)}
+                {#each paginatedMatches as result, i (result.embedding_id)}
                   <div
                     bind:this={cardElements[i]}
                     class="transition-transform duration-300 ease-in-out"
@@ -350,6 +383,31 @@
                   </div>
                 {/each}
               </div>
+
+              <!-- Pagination controls -->
+              {#if totalPages > 1}
+                <div class="flex items-center justify-center gap-3 py-2">
+                  <button
+                    type="button"
+                    class="rounded border border-stone-300 bg-surface-card px-3 py-1.5 text-sm text-stone-600 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-40"
+                    onclick={prevPage}
+                    disabled={page === 1}
+                  >
+                    {m.search_previous()}
+                  </button>
+                  <span class="text-sm text-stone-500">
+                    {m.search_page_of({ page, total: totalPages })}
+                  </span>
+                  <button
+                    type="button"
+                    class="rounded border border-stone-300 bg-surface-card px-3 py-1.5 text-sm text-stone-600 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-40"
+                    onclick={nextPage}
+                    disabled={page === totalPages}
+                  >
+                    {m.search_next()}
+                  </button>
+                </div>
+              {/if}
             {/if}
           </div>
         {/if}

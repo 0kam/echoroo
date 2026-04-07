@@ -1279,6 +1279,7 @@
   "search_similarity_score": "Similarity score",
   "search_previous": "Previous",
   "search_next": "Next",
+  "search_page_of": "Page {page} of {total}",
   "search_loading_stats": "Loading...",
   "search_stats_error": "Failed to load embedding statistics.",
   "search_aria_histogram": "Similarity score distribution histogram",

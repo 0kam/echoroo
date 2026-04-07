@@ -7,7 +7,6 @@
    * the full results panel.
    */
 
-  import { onMount } from 'svelte';
   import * as m from '$lib/paraglide/messages';
   import { getSearchSession, getReferenceAudioUrl, updateSearchSession, exportSearchSessionRecordingsCSV } from '$lib/api/search';
   import { generateId } from '$lib/utils/id';
@@ -143,11 +142,7 @@
     }
   }
 
-  onMount(() => {
-    loadSession(projectId, sessionId);
-  });
-
-  // Reload when sessionId changes
+  // Load session on mount and reload when sessionId changes
   $effect(() => {
     loadSession(projectId, sessionId);
   });
@@ -522,6 +517,7 @@
     {#if session.status === 'completed' && session.results}
       <ResultsPanel
         {projectId}
+        sessionId={session.id}
         results={session.results.results}
         totalMatches={totalMatches()}
         searchDurationMs={searchDuration()}

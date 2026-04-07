@@ -164,7 +164,10 @@ class SearchSessionService:
         return True
 
     async def get_session_results_with_review_status(
-        self, session_id: uuid.UUID, project_id: uuid.UUID
+        self,
+        session_id: uuid.UUID,
+        project_id: uuid.UUID,
+        session: SearchSession | None = None,
     ) -> dict[str, object] | None:
         """Get results JSONB merged with annotation review statuses.
 
@@ -175,12 +178,15 @@ class SearchSessionService:
         Args:
             session_id: Session UUID to retrieve
             project_id: Project UUID for access scoping
+            session: Optional pre-fetched SearchSession to avoid a redundant
+                database query when the caller already has the object
 
         Returns:
             Results dict with review_status and annotation_id fields injected
             into each match, or None if session not found or has no results
         """
-        session = await self.get_session(session_id, project_id)
+        if session is None:
+            session = await self.get_session(session_id, project_id)
         if not session or not session.results:
             return None
 

@@ -130,7 +130,9 @@ async def get_search_session(
     if not session:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Search session not found")
 
-    merged_results = await session_service.get_session_results_with_review_status(session_id, project_id)
+    merged_results = await session_service.get_session_results_with_review_status(
+        session_id, project_id, session=session
+    )
 
     response = SearchSessionResponse.model_validate(session)
     if merged_results is not None:
