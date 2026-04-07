@@ -62,10 +62,10 @@
     confidencePercent == null
       ? 'bg-stone-100 text-stone-600'
       : confidencePercent >= 80
-        ? 'bg-green-100 text-green-700'
+        ? 'bg-success-light text-success'
         : confidencePercent >= 50
-          ? 'bg-yellow-100 text-yellow-700'
-          : 'bg-red-100 text-red-700'
+          ? 'bg-warning-light text-warning'
+          : 'bg-danger-light text-danger'
   );
 
   // Brief scale animation when a mutation completes (isLoading transitions true -> false)
@@ -157,17 +157,17 @@
 
     {#snippet extraBody()}
       <!-- Vote summary indicator -->
-      {#if voteSummary && voteSummary.total_votes > 0}
+      {#if voteSummary && (voteSummary.agree_count + voteSummary.disagree_count + voteSummary.unsure_count) > 0}
         <div class="flex flex-wrap items-center gap-1.5">
           <!-- Consensus badge -->
           <span
-            class="rounded border px-1.5 py-0.5 text-xs font-medium {getConsensusStatusBadgeClass(voteSummary.consensus)}"
+            class="rounded border px-1.5 py-0.5 text-xs font-medium {getConsensusStatusBadgeClass(voteSummary.consensus_status)}"
           >
-            {getConsensusStatusLabel(voteSummary.consensus)}
+            {getConsensusStatusLabel(voteSummary.consensus_status)}
           </span>
           <!-- Vote ratio -->
           <span class="text-xs text-stone-400">
-            {m.vote_summary_ratio({ agree: voteSummary.agree_count, total: voteSummary.total_votes })}
+            {m.vote_summary_ratio({ agree: voteSummary.agree_count, total: voteSummary.agree_count + voteSummary.disagree_count + voteSummary.unsure_count })}
           </span>
           <!-- Signal quality breakdown (only when there are agree votes with quality data) -->
           {#if voteSummary.agree_count > 0 && voteSummary.signal_quality_counts}
@@ -176,7 +176,7 @@
               <div class="flex items-center gap-0.5">
                 {#if sq.solo > 0}
                   <span
-                    class="rounded bg-green-100 px-1 py-0.5 text-[10px] font-medium text-green-700"
+                    class="rounded bg-success-light px-1 py-0.5 text-[10px] font-medium text-success"
                     title={m.signal_quality_solo()}
                   >
                     {sq.solo}{m.signal_quality_solo_abbr()}
@@ -184,7 +184,7 @@
                 {/if}
                 {#if sq.dominant > 0}
                   <span
-                    class="rounded bg-yellow-100 px-1 py-0.5 text-[10px] font-medium text-yellow-700"
+                    class="rounded bg-warning-light px-1 py-0.5 text-[10px] font-medium text-warning"
                     title={m.signal_quality_dominant()}
                   >
                     {sq.dominant}{m.signal_quality_dominant_abbr()}

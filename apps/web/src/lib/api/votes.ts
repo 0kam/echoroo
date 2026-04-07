@@ -60,9 +60,9 @@ export async function castVote(
 export async function deleteVote(
   projectId: string,
   detectionId: string
-): Promise<void> {
-  return apiClient.delete<void>(
-    `${detectionVoteUrl(projectId, detectionId)}/me`
+): Promise<VoteSummary> {
+  return apiClient.delete<VoteSummary>(
+    detectionVoteUrl(projectId, detectionId)
   );
 }
 

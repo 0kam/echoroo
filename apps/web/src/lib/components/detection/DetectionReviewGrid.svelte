@@ -15,7 +15,7 @@
   import { onDestroy } from 'svelte';
   import { createQuery, createMutation, useQueryClient } from '@tanstack/svelte-query';
   import { fetchDetections, changeDetectionSpecies } from '$lib/api/detections';
-  import { castVote, deleteVote, getVotes } from '$lib/api/votes';
+  import { castVote, deleteVote } from '$lib/api/votes';
   import type { DetectionStatus, DetectionListResponse, VoteSummary, VoteValue, SignalQuality } from '$lib/types/detection';
   import * as m from '$lib/paraglide/messages';
   import { createReviewNavigation } from '$lib/utils/reviewNavigation.svelte';
@@ -74,22 +74,32 @@
   const totalPages = $derived($detectionsQuery.data?.pages ?? 1);
   const totalItems = $derived($detectionsQuery.data?.total ?? 0);
 
-  // Load vote summaries whenever detections change
+  // Populate vote summaries from the inline votes data returned with each detection.
+  // This avoids N+1 API calls — the backend already includes vote counts in the response.
   $effect(() => {
     const currentDetections = detections;
     if (currentDetections.length === 0) return;
 
-    // Fetch vote summaries for all detections in background
+    const newSummaries: Record<string, VoteSummary> = { ...voteSummaries };
+    let changed = false;
     for (const detection of currentDetections) {
-      if (!(detection.id in voteSummaries)) {
-        getVotes(projectId, detection.id)
-          .then((summary) => {
-            voteSummaries = { ...voteSummaries, [detection.id]: summary };
-          })
-          .catch(() => {
-            // Silently ignore vote fetch errors — votes are optional enhancement
-          });
+      if (!(detection.id in newSummaries) && detection.votes) {
+        newSummaries[detection.id] = {
+          annotation_id: detection.id,
+          agree_count: detection.votes.agree_count,
+          disagree_count: detection.votes.disagree_count,
+          unsure_count: detection.votes.unsure_count,
+          user_vote: detection.votes.user_vote,
+          user_signal_quality: detection.votes.user_signal_quality,
+          signal_quality_counts: detection.votes.signal_quality_counts ?? { solo: 0, dominant: 0, mixed: 0 },
+          consensus_status: detection.votes.consensus_status,
+          votes: [],
+        };
+        changed = true;
       }
+    }
+    if (changed) {
+      voteSummaries = newSummaries;
     }
   });
 
@@ -180,18 +190,9 @@
     onMutate: ({ detectionId }) => {
       mutatingId = detectionId;
     },
-    onSuccess: (_, { detectionId }) => {
-      // Refresh vote summary for this detection after removal
-      getVotes(projectId, detectionId)
-        .then((summary) => {
-          voteSummaries = { ...voteSummaries, [detectionId]: summary };
-        })
-        .catch(() => {
-          // Remove from local cache so it reloads
-          const updated = { ...voteSummaries };
-          delete updated[detectionId];
-          voteSummaries = updated;
-        });
+    onSuccess: (summary, { detectionId }) => {
+      // Update the local vote summary immediately from the response
+      voteSummaries = { ...voteSummaries, [detectionId]: summary };
     },
     onSettled: () => {
       mutatingId = null;
@@ -288,8 +289,8 @@
         type="button"
         class="rounded px-2.5 py-1 text-xs font-medium transition-colors
           {statusFilter === 'confirmed'
-            ? 'bg-green-600 text-white'
-            : 'border border-green-200 bg-green-50 text-green-700 hover:bg-green-100'}"
+            ? 'bg-success text-white'
+            : 'border border-success/40 bg-success-light text-success hover:bg-success/20'}"
         onclick={() => handleStatusFilter('confirmed')}
       >
         {m.detection_filter_agreed()}
@@ -298,8 +299,8 @@
         type="button"
         class="rounded px-2.5 py-1 text-xs font-medium transition-colors
           {statusFilter === 'rejected'
-            ? 'bg-red-600 text-white'
-            : 'border border-red-200 bg-red-50 text-red-700 hover:bg-red-100'}"
+            ? 'bg-danger text-white'
+            : 'border border-danger/40 bg-danger-light text-danger hover:bg-danger/20'}"
         onclick={() => handleStatusFilter('rejected')}
       >
         {m.detection_filter_rejected()}
@@ -356,9 +357,9 @@
             <div class="h-3 w-1/2 rounded bg-stone-100"></div>
             <!-- Vote buttons placeholder -->
             <div class="flex gap-1.5">
-              <div class="h-6 w-14 rounded bg-green-100"></div>
-              <div class="h-6 w-14 rounded bg-red-100"></div>
-              <div class="h-6 w-14 rounded bg-yellow-100"></div>
+              <div class="h-6 w-14 rounded bg-success-light"></div>
+              <div class="h-6 w-14 rounded bg-danger-light"></div>
+              <div class="h-6 w-14 rounded bg-warning-light"></div>
             </div>
           </div>
         </div>
@@ -366,18 +367,18 @@
     </div>
   {:else if $detectionsQuery.isError}
     <!-- Error state with retry button -->
-    <div class="rounded-lg border border-red-200 bg-red-50 px-4 py-6 text-center">
-      <svg class="mx-auto mb-2 h-8 w-8 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+    <div class="rounded-lg border border-danger/30 bg-danger-light px-4 py-6 text-center">
+      <svg class="mx-auto mb-2 h-8 w-8 text-danger" fill="none" viewBox="0 0 24 24" stroke="currentColor">
         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
       </svg>
-      <p class="text-sm font-medium text-red-700">{m.detection_load_detections_error()}</p>
-      <p class="mt-1 text-xs text-red-500">
+      <p class="text-sm font-medium text-danger">{m.detection_load_detections_error()}</p>
+      <p class="mt-1 text-xs text-danger/80">
         {$detectionsQuery.error?.message ?? m.common_error_unexpected()}
       </p>
       <button
         type="button"
         onclick={() => $detectionsQuery.refetch()}
-        class="mt-3 rounded-md bg-red-100 px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-200"
+        class="mt-3 rounded-md bg-danger-light px-3 py-1.5 text-xs font-medium text-danger hover:bg-danger/20 border border-danger/30"
       >
         {m.detection_retry()}
       </button>

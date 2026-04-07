@@ -121,12 +121,12 @@
   const borderClass = $derived(
     // Use consensus-based border when vote summary is available
     voteSummary
-      ? getConsensusCardBorderClass(voteSummary.consensus, isSelected)
+      ? getConsensusCardBorderClass(voteSummary.consensus_status, isSelected)
       // Fall back to detection status-based border (used by DetectionCard)
       : status === 'confirmed'
-        ? 'border-green-400 ring-1 ring-green-300'
+        ? 'border-success ring-1 ring-success/50'
         : status === 'rejected'
-          ? 'border-red-400 ring-1 ring-red-300'
+          ? 'border-danger ring-1 ring-danger/50'
           : isSelected
             ? 'border-primary-400 ring-1 ring-primary-300'
             : 'border-stone-200'

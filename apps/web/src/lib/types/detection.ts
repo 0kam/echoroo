@@ -72,29 +72,42 @@ export interface DetectionVote {
 }
 
 /**
- * Aggregated vote summary for a detection
+ * Aggregated vote summary for a detection.
+ * Mirrors the backend VoteSummaryResponse Pydantic schema.
  */
 export interface VoteSummary {
-  /** Detection identifier */
-  detection_id: string;
+  /** Annotation identifier */
+  annotation_id: string;
   /** Number of agree votes */
   agree_count: number;
   /** Number of disagree votes */
   disagree_count: number;
   /** Number of unsure votes */
   unsure_count: number;
-  /** Total number of votes */
-  total_votes: number;
   /** Derived consensus status */
-  consensus: ConsensusStatus;
+  consensus_status: ConsensusStatus;
   /** The current user's vote, if they have voted */
-  my_vote: VoteValue | null;
+  user_vote: VoteValue | null;
   /** The current user's signal quality selection (only present on agree votes) */
-  my_signal_quality: SignalQuality | null;
+  user_signal_quality: SignalQuality | null;
   /** Breakdown of agree votes by signal quality */
   signal_quality_counts: { solo: number; dominant: number; mixed: number };
   /** All votes with voter info */
   votes: DetectionVote[];
+}
+
+/**
+ * Compact vote counts embedded in detection list/detail responses.
+ * Mirrors the backend DetectionVoteCounts Pydantic schema.
+ */
+export interface DetectionVoteCounts {
+  agree_count: number;
+  disagree_count: number;
+  unsure_count: number;
+  user_vote: VoteValue | null;
+  user_signal_quality: SignalQuality | null;
+  signal_quality_counts: { solo: number; dominant: number; mixed: number };
+  consensus_status: ConsensusStatus;
 }
 
 /**
@@ -159,6 +172,8 @@ export interface Detection {
   recording?: Recording;
   /** Expanded tag entity (optional, included when requested) */
   tag?: Tag;
+  /** Aggregate vote counts and consensus status (always included from backend) */
+  votes?: DetectionVoteCounts;
 }
 
 /**

@@ -183,11 +183,11 @@
   // ============================================
 
   const agreeCount = $derived(
-    allLaneResults.filter((r) => r.voteSummary?.my_vote === 'agree').length
+    allLaneResults.filter((r) => r.voteSummary?.user_vote === 'agree').length
   );
 
   const disagreeCount = $derived(
-    allLaneResults.filter((r) => r.voteSummary?.my_vote === 'disagree').length
+    allLaneResults.filter((r) => r.voteSummary?.user_vote === 'disagree').length
   );
 
   // ============================================
@@ -309,14 +309,14 @@
 
   async function handleMarkAllPositive(results: LaneResult[]) {
     for (const result of results) {
-      if (result.voteSummary?.my_vote === 'agree') continue;
+      if (result.voteSummary?.user_vote === 'agree') continue;
       await handleVote(result.embeddingId, result.annotationId, 'agree', 'dominant');
     }
   }
 
   async function handleMarkAllNegative(results: LaneResult[]) {
     for (const result of results) {
-      if (result.voteSummary?.my_vote === 'disagree') continue;
+      if (result.voteSummary?.user_vote === 'disagree') continue;
       await handleVote(result.embeddingId, result.annotationId, 'disagree');
     }
   }

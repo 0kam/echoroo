@@ -66,6 +66,8 @@ class DetectionService:
         page: int = 1,
         page_size: int = 50,
         current_user_id: UUID | None = None,
+        min_votes: int = 2,
+        threshold: float = 0.667,
     ) -> DetectionListResponse:
         """List detections for a project with optional filtering and pagination.
 
@@ -81,6 +83,8 @@ class DetectionService:
             page: Page number (1-indexed)
             page_size: Items per page
             current_user_id: Optional current user ID for including their vote
+            min_votes: Minimum votes required for consensus (from project settings)
+            threshold: Consensus agreement threshold (from project settings)
 
         Returns:
             Paginated detection list response
@@ -104,6 +108,8 @@ class DetectionService:
         vote_counts_map = await self._batch_load_vote_counts(
             [a.id for a in annotations],
             current_user_id=current_user_id,
+            min_votes=min_votes,
+            threshold=threshold,
         )
 
         items = [self._to_response(a, vote_counts_map.get(a.id)) for a in annotations]
@@ -322,12 +328,16 @@ class DetectionService:
         self,
         detection_id: UUID,
         current_user_id: UUID | None = None,
+        min_votes: int = 2,
+        threshold: float = 0.667,
     ) -> DetectionResponse:
         """Get a detection annotation by ID.
 
         Args:
             detection_id: Annotation's UUID
             current_user_id: Optional current user ID for including their vote
+            min_votes: Minimum votes required for consensus (from project settings)
+            threshold: Consensus agreement threshold (from project settings)
 
         Returns:
             Detection response
@@ -344,6 +354,8 @@ class DetectionService:
         vote_counts_map = await self._batch_load_vote_counts(
             [annotation.id],
             current_user_id=current_user_id,
+            min_votes=min_votes,
+            threshold=threshold,
         )
         return self._to_response(annotation, vote_counts_map.get(annotation.id))
 
@@ -534,6 +546,8 @@ class DetectionService:
         self,
         annotation_ids: list[UUID],
         current_user_id: UUID | None = None,
+        min_votes: int = 2,
+        threshold: float = 0.667,
     ) -> dict[UUID, DetectionVoteCounts]:
         """Batch-load vote counts for a list of annotations in one query.
 
@@ -586,8 +600,8 @@ class DetectionService:
             consensus_status = AnnotationVoteService.compute_consensus_status(
                 agree_count=agree_count,
                 disagree_count=disagree_count,
-                min_votes=2,
-                threshold=0.667,
+                min_votes=min_votes,
+                threshold=threshold,
             )
 
             result[annotation_id] = DetectionVoteCounts(

@@ -11,6 +11,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import select as sa_select
 
 from echoroo.core.database import DbSession
+from echoroo.core.permissions import check_project_access
 from echoroo.middleware.auth import CurrentUser
 from echoroo.models.enums import DetectionStatus
 from echoroo.models.project import Project
@@ -80,6 +81,7 @@ async def list_detections(
     project_id: UUID,
     current_user: CurrentUser,
     service: DetectionServiceDep,
+    db: DbSession,
     tag_id: UUID | None = None,
     status: DetectionStatus | None = None,
     confidence_min: float | None = None,
@@ -96,6 +98,7 @@ async def list_detections(
         project_id: Project's UUID
         current_user: Current authenticated user
         service: Detection service instance
+        db: Database session
         tag_id: Optional tag filter
         status: Optional review status filter
         confidence_min: Optional minimum confidence filter
@@ -112,6 +115,12 @@ async def list_detections(
     Raises:
         401: Not authenticated
     """
+    # Load project settings for consensus thresholds
+    project_result = await db.execute(sa_select(Project).where(Project.id == project_id))
+    project = project_result.scalar_one_or_none()
+    min_votes = project.review_min_votes if project else 2
+    threshold = project.review_consensus_threshold if project else 0.667
+
     return await service.list_detections(
         project_id=project_id,
         tag_id=tag_id,
@@ -124,6 +133,8 @@ async def list_detections(
         page=page,
         page_size=page_size,
         current_user_id=current_user.id,
+        min_votes=min_votes,
+        threshold=threshold,
     )
 
 
@@ -315,6 +326,7 @@ async def get_detection(
     detection_id: UUID,
     current_user: CurrentUser,
     service: DetectionServiceDep,
+    db: DbSession,
 ) -> DetectionResponse:
     """Get detection by ID.
 
@@ -323,6 +335,7 @@ async def get_detection(
         detection_id: Detection's UUID
         current_user: Current authenticated user
         service: Detection service instance
+        db: Database session
 
     Returns:
         Detection annotation detail
@@ -331,7 +344,18 @@ async def get_detection(
         401: Not authenticated
         404: Detection not found
     """
-    return await service.get(detection_id=detection_id, current_user_id=current_user.id)
+    # Load project settings for consensus thresholds
+    project_result = await db.execute(sa_select(Project).where(Project.id == project_id))
+    project = project_result.scalar_one_or_none()
+    min_votes = project.review_min_votes if project else 2
+    threshold = project.review_consensus_threshold if project else 0.667
+
+    return await service.get(
+        detection_id=detection_id,
+        current_user_id=current_user.id,
+        min_votes=min_votes,
+        threshold=threshold,
+    )
 
 
 @router.post(
@@ -502,6 +526,7 @@ async def get_votes(
     detection_id: UUID,
     current_user: CurrentUser,
     vote_service: VoteServiceDep,
+    db: DbSession,
 ) -> VoteSummaryResponse:
     """Get vote summary for a detection annotation.
 
@@ -515,14 +540,17 @@ async def get_votes(
         detection_id: Detection's UUID
         current_user: Current authenticated user
         vote_service: Vote service instance
+        db: Database session
 
     Returns:
         Vote summary response
 
     Raises:
         401: Not authenticated
+        403: Access denied to project
         404: Detection not found
     """
+    await check_project_access(project_id, current_user.id, db)
     return await vote_service.get_vote_summary(
         annotation_id=detection_id,
         current_user_id=current_user.id,
@@ -563,9 +591,12 @@ async def cast_vote(
 
     Raises:
         401: Not authenticated
+        403: Access denied to project
         404: Detection not found
         422: Validation error
     """
+    await check_project_access(project_id, current_user.id, db)
+
     # Retrieve project settings for consensus thresholds
     project_result = await db.execute(sa_select(Project).where(Project.id == project_id))
     project = project_result.scalar_one_or_none()
@@ -613,8 +644,11 @@ async def delete_vote(
 
     Raises:
         401: Not authenticated
+        403: Access denied to project
         404: Detection not found or no vote to delete
     """
+    await check_project_access(project_id, current_user.id, db)
+
     project_result = await db.execute(sa_select(Project).where(Project.id == project_id))
     project = project_result.scalar_one_or_none()
     min_votes = project.review_min_votes if project else 2

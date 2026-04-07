@@ -832,7 +832,7 @@ async def export_search_session_recordings_csv(
 
     csv_content = output.getvalue()
     date_str = datetime.now(UTC).strftime("%Y%m%d")
-    safe_name = (session.name or str(session_id)).replace(" ", "_").replace("/", "-")
+    safe_name = (session.name or str(session_id)).replace('"', '_').replace('\n', '_').replace('\r', '_').replace(' ', '_').replace('/', '-')
     filename = f"recordings_{safe_name}_{date_str}.csv"
     return StreamingResponse(
         iter([csv_content]),
@@ -880,7 +880,7 @@ async def export_search_session_csv(
     csv_content = await export_service.export_csv(project_id, search_session_id=session_id)
 
     date_str = datetime.now(UTC).strftime("%Y%m%d")
-    safe_name = (session.name or str(session_id)).replace(" ", "_").replace("/", "-")
+    safe_name = (session.name or str(session_id)).replace('"', '_').replace('\n', '_').replace('\r', '_').replace(' ', '_').replace('/', '-')
     filename = f"search_session_{safe_name}_{date_str}.csv"
     return StreamingResponse(
         iter([csv_content]),

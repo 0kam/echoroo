@@ -45,8 +45,8 @@
     compact = false,
   }: Props = $props();
 
-  const myVote = $derived(voteSummary?.my_vote ?? null);
-  const mySignalQuality = $derived(voteSummary?.my_signal_quality ?? null);
+  const myVote = $derived(voteSummary?.user_vote ?? null);
+  const mySignalQuality = $derived(voteSummary?.user_signal_quality ?? null);
   const agreeCount = $derived(voteSummary?.agree_count ?? 0);
   const disagreeCount = $derived(voteSummary?.disagree_count ?? 0);
   const unsureCount = $derived(voteSummary?.unsure_count ?? 0);
@@ -140,13 +140,13 @@
   function qualityButtonClass(color: string, selected: boolean): string {
     const base = 'flex items-start gap-2 rounded px-2 py-1.5 text-xs text-left transition-colors w-full';
     if (color === 'green') {
-      return `${base} ${selected ? 'bg-green-600 text-white' : 'bg-green-50 text-green-700 hover:bg-green-100 border border-green-200'}`;
+      return `${base} ${selected ? 'bg-success text-white' : 'bg-success-light text-success hover:bg-success/20 border border-success/30'}`;
     }
     if (color === 'yellow') {
-      return `${base} ${selected ? 'bg-yellow-500 text-white' : 'bg-yellow-50 text-yellow-700 hover:bg-yellow-100 border border-yellow-200'}`;
+      return `${base} ${selected ? 'bg-warning text-white' : 'bg-warning-light text-warning hover:bg-warning/20 border border-warning/30'}`;
     }
     // orange
-    return `${base} ${selected ? 'bg-orange-500 text-white' : 'bg-orange-50 text-orange-700 hover:bg-orange-100 border border-orange-200'}`;
+    return `${base} ${selected ? 'bg-primary-500 dark:bg-primary-300 text-white' : 'bg-primary-50 text-primary-700 hover:bg-primary-100 border border-primary-200 dark:bg-primary-900/20 dark:text-primary-300 dark:border-primary-700 dark:hover:bg-primary-900/40'}`;
   }
 
   /** Outside-click handler to close the popover */
@@ -168,10 +168,10 @@
     <button
       type="button"
       data-action="agree"
-      class="inline-flex items-center gap-1 rounded px-2 py-1 text-xs font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-50
+      class="inline-flex items-center gap-1 rounded px-2 py-1 text-xs font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-success focus:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-50
         {myVote === 'agree'
-          ? 'bg-green-600 text-white hover:bg-green-700'
-          : 'border border-green-300 bg-green-50 text-green-700 hover:bg-green-100'}"
+          ? 'bg-success text-white hover:bg-success/90'
+          : 'border border-success/40 bg-success-light text-success hover:bg-success/20'}"
       onclick={handleAgreeButtonClick}
       disabled={isLoading}
       title={myVote === 'agree' ? m.vote_agree_title_active() : m.vote_agree_title()}
@@ -262,10 +262,10 @@
   <button
     type="button"
     data-action="disagree"
-    class="inline-flex items-center gap-1 rounded px-2 py-1 text-xs font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-50
+    class="inline-flex items-center gap-1 rounded px-2 py-1 text-xs font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-danger focus:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-50
       {myVote === 'disagree'
-        ? 'bg-red-600 text-white hover:bg-red-700'
-        : 'border border-red-300 bg-red-50 text-red-700 hover:bg-red-100'}"
+        ? 'bg-danger text-white hover:bg-danger/90'
+        : 'border border-danger/40 bg-danger-light text-danger hover:bg-danger/20'}"
     onclick={() => handleVoteClick('disagree')}
     disabled={isLoading}
     title={m.vote_disagree_title()}
@@ -292,10 +292,10 @@
   <button
     type="button"
     data-action="unsure"
-    class="inline-flex items-center gap-1 rounded px-2 py-1 text-xs font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-yellow-500 focus:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-50
+    class="inline-flex items-center gap-1 rounded px-2 py-1 text-xs font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-warning focus:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-50
       {myVote === 'unsure'
-        ? 'bg-yellow-500 text-white hover:bg-yellow-600'
-        : 'border border-yellow-300 bg-yellow-50 text-yellow-700 hover:bg-yellow-100'}"
+        ? 'bg-warning text-white hover:bg-warning/90'
+        : 'border border-warning/40 bg-warning-light text-warning hover:bg-warning/20'}"
     onclick={() => handleVoteClick('unsure')}
     disabled={isLoading}
     title={m.vote_unsure_title()}

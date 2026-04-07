@@ -15,6 +15,7 @@ from fastapi import APIRouter, Depends, status
 from sqlalchemy import select as sa_select
 
 from echoroo.core.database import DbSession
+from echoroo.core.permissions import check_project_access
 from echoroo.middleware.auth import CurrentUser
 from echoroo.models.project import Project
 from echoroo.repositories.annotation import AnnotationRepository
@@ -57,6 +58,7 @@ async def get_annotation_votes(
     annotation_id: UUID,
     current_user: CurrentUser,
     vote_service: VoteServiceDep,
+    db: DbSession,
 ) -> VoteSummaryResponse:
     """Get vote summary for an annotation.
 
@@ -68,14 +70,17 @@ async def get_annotation_votes(
         annotation_id: Annotation's UUID
         current_user: Current authenticated user
         vote_service: Vote service instance
+        db: Database session
 
     Returns:
         Vote summary response
 
     Raises:
         401: Not authenticated
+        403: Access denied to project
         404: Annotation not found
     """
+    await check_project_access(project_id, current_user.id, db)
     return await vote_service.get_vote_summary(
         annotation_id=annotation_id,
         current_user_id=current_user.id,
@@ -116,9 +121,12 @@ async def cast_annotation_vote(
 
     Raises:
         401: Not authenticated
+        403: Access denied to project
         404: Annotation not found
         422: Validation error
     """
+    await check_project_access(project_id, current_user.id, db)
+
     project_result = await db.execute(
         sa_select(Project).where(Project.id == project_id)
     )
@@ -167,8 +175,11 @@ async def delete_annotation_vote(
 
     Raises:
         401: Not authenticated
+        403: Access denied to project
         404: Annotation not found or no vote to delete
     """
+    await check_project_access(project_id, current_user.id, db)
+
     project_result = await db.execute(
         sa_select(Project).where(Project.id == project_id)
     )
