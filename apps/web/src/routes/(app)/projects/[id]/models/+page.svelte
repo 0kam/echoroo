@@ -30,6 +30,7 @@
   import type { CustomModel, CustomModelListItem, CustomModelCreate } from '$lib/types/custom-model';
   import type { Tag } from '$lib/types/annotation';
   import { getCustomModelStatusClass, getCustomModelStatusLabel } from '$lib/utils/statusFormatters';
+  import ReviewTab from '$lib/components/models/ReviewTab.svelte';
 
   const projectId = $derived($page.params.id as string);
   const queryClient = useQueryClient();
@@ -37,6 +38,9 @@
   // ============================================
   // View state
   // ============================================
+
+  /** Top-level tab: 'models' shows the model list/detail, 'review' shows the review interface */
+  let activeTab = $state<'models' | 'review'>('models');
 
   let viewMode = $state<'list' | 'detail'>('list');
   let selectedModelId = $state<string | null>(null);
@@ -103,7 +107,8 @@
     createQuery({
       queryKey: ['search-sessions', projectId, 'for-models'],
       queryFn: () => listSearchSessions(projectId, 100, 0),
-      enabled: showCreateDialog,
+      // Load when create dialog is open (for session picker) or always for the review tab
+      enabled: showCreateDialog || !!projectId,
     })
   );
 
@@ -217,14 +222,19 @@
   // Handlers
   // ============================================
 
-  function openCreateDialog() {
+  function openCreateDialog(preselectedSessionId?: string) {
     createName = '';
     createDescription = '';
     createTargetTagId = '';
-    createSessionIds = [];
+    createSessionIds = preselectedSessionId ? [preselectedSessionId] : [];
     createEmbeddingModel = 'perch';
     createError = null;
     showCreateDialog = true;
+  }
+
+  /** Called from ReviewTab when user clicks "Train Custom Model" */
+  function handleReviewTrainRequest(sessionId: string) {
+    openCreateDialog(sessionId);
   }
 
   function closeCreateDialog() {
@@ -364,12 +374,12 @@
 <div class="mx-auto max-w-5xl px-4 py-6">
 
   <!-- Breadcrumb (always visible) -->
-  <nav class="mb-6 flex items-center gap-2 text-sm text-stone-500 dark:text-stone-400">
+  <nav class="mb-4 flex items-center gap-2 text-sm text-stone-500">
     <a href={localizeHref(`/projects/${projectId}`)} class="hover:text-stone-900 dark:hover:text-stone-200">
       {m.search_breadcrumb_project()}
     </a>
     <span>/</span>
-    {#if viewMode === 'detail' && displayedModel}
+    {#if activeTab === 'models' && viewMode === 'detail' && displayedModel}
       <button
         type="button"
         class="hover:text-stone-900 dark:hover:text-stone-200"
@@ -378,11 +388,61 @@
         {m.models_title()}
       </button>
       <span>/</span>
-      <span class="font-medium text-stone-900 dark:text-stone-100">{displayedModel.name}</span>
+      <span class="font-medium text-stone-900">{displayedModel.name}</span>
     {:else}
-      <span class="font-medium text-stone-900 dark:text-stone-100">{m.models_title()}</span>
+      <span class="font-medium text-stone-900">{m.models_title()}</span>
     {/if}
   </nav>
+
+  <!-- Tab bar -->
+  {#if !(activeTab === 'models' && viewMode === 'detail')}
+    <div class="mb-6 flex border-b border-stone-200 dark:border-stone-700">
+      <button
+        type="button"
+        class="relative px-4 py-2.5 text-sm font-medium transition-colors focus:outline-none
+          {activeTab === 'models'
+            ? 'text-primary-600 dark:text-primary-400'
+            : 'text-stone-500 hover:text-stone-800 dark:hover:text-stone-200'}"
+        onclick={() => { activeTab = 'models'; }}
+        aria-selected={activeTab === 'models'}
+        role="tab"
+      >
+        {m.models_tab_models()}
+        {#if activeTab === 'models'}
+          <span class="absolute bottom-0 left-0 right-0 h-0.5 rounded-t bg-primary-500"></span>
+        {/if}
+      </button>
+      <button
+        type="button"
+        class="relative px-4 py-2.5 text-sm font-medium transition-colors focus:outline-none
+          {activeTab === 'review'
+            ? 'text-primary-600 dark:text-primary-400'
+            : 'text-stone-500 hover:text-stone-800 dark:hover:text-stone-200'}"
+        onclick={() => { activeTab = 'review'; }}
+        aria-selected={activeTab === 'review'}
+        role="tab"
+      >
+        {m.models_tab_review()}
+        {#if activeTab === 'review'}
+          <span class="absolute bottom-0 left-0 right-0 h-0.5 rounded-t bg-primary-500"></span>
+        {/if}
+      </button>
+    </div>
+  {/if}
+
+  <!-- ====================================================
+       Tab: Review
+  ==================================================== -->
+  {#if activeTab === 'review'}
+    <ReviewTab
+      {projectId}
+      onTrainRequest={handleReviewTrainRequest}
+    />
+
+  <!-- ====================================================
+       Tab: Models
+  ==================================================== -->
+  {:else}
 
   <!-- ====================================================
        Mode: list
@@ -393,13 +453,13 @@
       <!-- Page header -->
       <div class="flex items-start justify-between">
         <div>
-          <h1 class="text-2xl font-bold text-stone-900 dark:text-stone-100">{m.models_title()}</h1>
-          <p class="mt-1 text-sm text-stone-500 dark:text-stone-400">{m.models_description()}</p>
+          <h1 class="text-2xl font-bold text-stone-900">{m.models_title()}</h1>
+          <p class="mt-1 text-sm text-stone-500">{m.models_description()}</p>
         </div>
         <button
           type="button"
-          class="inline-flex items-center gap-2 rounded-lg bg-primary-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2"
-          onclick={openCreateDialog}
+          class="inline-flex items-center gap-2 rounded-lg bg-primary-600 dark:bg-primary-300 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-primary-700 dark:hover:bg-primary-200 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2"
+          onclick={() => openCreateDialog()}
         >
           <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
@@ -426,15 +486,15 @@
       {:else if $modelsQuery.data && $modelsQuery.data.models.length === 0}
         <!-- Empty state -->
         <div class="rounded-xl border-2 border-dashed border-stone-200 bg-surface-card p-12 text-center dark:border-stone-700">
-          <svg class="mx-auto h-12 w-12 text-stone-300 dark:text-stone-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+          <svg class="mx-auto h-12 w-12 text-stone-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
           </svg>
-          <h2 class="mt-4 text-base font-semibold text-stone-700 dark:text-stone-300">{m.models_no_models()}</h2>
-          <p class="mt-1 text-sm text-stone-500 dark:text-stone-400">{m.models_description()}</p>
+          <h2 class="mt-4 text-base font-semibold text-stone-700">{m.models_no_models()}</h2>
+          <p class="mt-1 text-sm text-stone-500">{m.models_description()}</p>
           <button
             type="button"
-            class="mt-6 inline-flex items-center gap-2 rounded-lg bg-primary-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-primary-700"
-            onclick={openCreateDialog}
+            class="mt-6 inline-flex items-center gap-2 rounded-lg bg-primary-600 dark:bg-primary-300 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-primary-700 dark:hover:bg-primary-200"
+            onclick={() => openCreateDialog()}
           >
             <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
@@ -457,7 +517,7 @@
                 <!-- Left: name + description + tags -->
                 <div class="min-w-0 flex-1">
                   <div class="flex flex-wrap items-center gap-2">
-                    <h2 class="text-base font-semibold text-stone-900 dark:text-stone-100">
+                    <h2 class="text-base font-semibold text-stone-900">
                       {model.name}
                     </h2>
                     <!-- Status badge -->
@@ -471,16 +531,16 @@
                       {statusLabel(model.status)}
                     </span>
                     <!-- Embedding model -->
-                    <span class="rounded-full bg-stone-100 px-2 py-0.5 text-xs text-stone-500 dark:bg-stone-800 dark:text-stone-400">
+                    <span class="rounded-full bg-stone-100 px-2 py-0.5 text-xs text-stone-500 dark:bg-stone-800">
                       {model.embedding_model_name}
                     </span>
                   </div>
 
                   {#if model.description}
-                    <p class="mt-1 text-sm text-stone-500 dark:text-stone-400 line-clamp-2">{model.description}</p>
+                    <p class="mt-1 text-sm text-stone-500 line-clamp-2">{model.description}</p>
                   {/if}
 
-                  <p class="mt-1.5 text-xs text-stone-400 dark:text-stone-500">
+                  <p class="mt-1.5 text-xs text-stone-400">
                     {m.models_created_at()} {formatDate(model.created_at)}
                     {#if model.completed_at}
                       &middot; {m.models_trained_at()} {formatDate(model.completed_at)}
@@ -531,7 +591,7 @@
       <!-- Back link -->
       <button
         type="button"
-        class="inline-flex items-center gap-1.5 text-sm text-stone-500 transition-colors hover:text-stone-900 dark:text-stone-400 dark:hover:text-stone-100"
+        class="inline-flex items-center gap-1.5 text-sm text-stone-500 transition-colors hover:text-stone-900 dark:hover:text-stone-100"
         onclick={handleBackToList}
       >
         <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
@@ -557,7 +617,7 @@
           <div class="flex items-start justify-between gap-4">
             <div class="min-w-0 flex-1">
               <div class="flex flex-wrap items-center gap-2">
-                <h1 class="text-2xl font-bold text-stone-900 dark:text-stone-100">{model.name}</h1>
+                <h1 class="text-2xl font-bold text-stone-900">{model.name}</h1>
                 <span class="inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-medium {statusClasses(model.status)}">
                   {#if model.status === 'training'}
                     <svg class="h-3 w-3 animate-spin" fill="none" viewBox="0 0 24 24" aria-hidden="true">
@@ -570,7 +630,7 @@
               </div>
 
               {#if model.description}
-                <p class="mt-2 text-sm text-stone-500 dark:text-stone-400">{model.description}</p>
+                <p class="mt-2 text-sm text-stone-500">{model.description}</p>
               {/if}
 
               <dl class="mt-3 flex flex-wrap gap-x-6 gap-y-1 text-xs text-stone-400">
@@ -596,7 +656,7 @@
               {#if model.status === 'trained' || model.status === 'deployed'}
                 <button
                   type="button"
-                  class="inline-flex items-center gap-2 rounded-lg border border-green-300 bg-green-50 px-4 py-2 text-sm font-medium text-green-700 transition-colors hover:bg-green-100 dark:border-green-700 dark:bg-green-900/20 dark:text-green-400 dark:hover:bg-green-900/40"
+                  class="inline-flex items-center gap-2 rounded-lg border border-success/40 bg-success-light px-4 py-2 text-sm font-medium text-success transition-colors hover:bg-success/20"
                   onclick={openApplyDialog}
                 >
                   <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
@@ -625,7 +685,7 @@
               {/if}
               <button
                 type="button"
-                class="inline-flex items-center gap-2 rounded-lg border border-red-300 px-4 py-2 text-sm font-medium text-red-600 transition-colors hover:bg-red-50 dark:border-red-700 dark:text-red-400 dark:hover:bg-red-950/30"
+                class="inline-flex items-center gap-2 rounded-lg border border-danger/40 px-4 py-2 text-sm font-medium text-danger transition-colors hover:bg-danger-light"
                 onclick={() => handleDeleteRequest(model.id)}
               >
                 {m.models_delete()}
@@ -656,7 +716,7 @@
         {#if model.metrics}
           {@const metrics = model.metrics}
           <div class="rounded-xl border border-card bg-surface-card p-6 shadow-sm">
-            <h2 class="mb-5 text-sm font-semibold uppercase tracking-wider text-stone-500 dark:text-stone-400">
+            <h2 class="mb-5 text-sm font-semibold uppercase tracking-wider text-stone-500">
               Metrics
             </h2>
 
@@ -672,8 +732,8 @@
               ] as metric}
                 <div>
                   <div class="mb-1 flex items-center justify-between text-sm">
-                    <span class="font-medium text-stone-700 dark:text-stone-300">{metric.label}</span>
-                    <span class="font-mono text-stone-900 dark:text-stone-100">{formatPercent(metric.value)}</span>
+                    <span class="font-medium text-stone-700">{metric.label}</span>
+                    <span class="font-mono text-stone-900">{formatPercent(metric.value)}</span>
                   </div>
                   <div class="h-2 w-full overflow-hidden rounded-full bg-stone-100 dark:bg-stone-800">
                     <div
@@ -690,7 +750,7 @@
           <div class="grid gap-4 sm:grid-cols-2">
             <!-- Confusion matrix -->
             <div class="rounded-xl border border-card bg-surface-card p-6 shadow-sm">
-              <h2 class="mb-4 text-sm font-semibold uppercase tracking-wider text-stone-500 dark:text-stone-400">
+              <h2 class="mb-4 text-sm font-semibold uppercase tracking-wider text-stone-500">
                 {m.models_detail_confusion_matrix()}
               </h2>
               <div class="grid grid-cols-2 gap-2 text-center text-sm">
@@ -715,21 +775,21 @@
 
             <!-- Hyperparameters -->
             <div class="rounded-xl border border-card bg-surface-card p-6 shadow-sm">
-              <h2 class="mb-4 text-sm font-semibold uppercase tracking-wider text-stone-500 dark:text-stone-400">
+              <h2 class="mb-4 text-sm font-semibold uppercase tracking-wider text-stone-500">
                 {m.models_detail_hyperparameters()}
               </h2>
               <dl class="space-y-2 text-sm">
                 <div class="flex items-center justify-between">
-                  <dt class="text-stone-500 dark:text-stone-400">{m.models_detail_best_c()}</dt>
-                  <dd class="font-mono font-semibold text-stone-900 dark:text-stone-100">{metrics.best_c}</dd>
+                  <dt class="text-stone-500">{m.models_detail_best_c()}</dt>
+                  <dd class="font-mono font-semibold text-stone-900">{metrics.best_c}</dd>
                 </div>
               </dl>
               {#if model.hyperparameters}
                 {#each Object.entries(model.hyperparameters).filter(([k]) => k !== 'best_c') as [key, value]}
                   <dl class="mt-2 space-y-2 text-sm">
                     <div class="flex items-center justify-between">
-                      <dt class="text-stone-500 dark:text-stone-400">{key}</dt>
-                      <dd class="font-mono font-semibold text-stone-900 dark:text-stone-100">{String(value)}</dd>
+                      <dt class="text-stone-500">{key}</dt>
+                      <dd class="font-mono font-semibold text-stone-900">{String(value)}</dd>
                     </div>
                   </dl>
                 {/each}
@@ -742,25 +802,25 @@
         {#if model.training_stats}
           {@const stats = model.training_stats}
           <div class="rounded-xl border border-card bg-surface-card p-6 shadow-sm">
-            <h2 class="mb-4 text-sm font-semibold uppercase tracking-wider text-stone-500 dark:text-stone-400">
+            <h2 class="mb-4 text-sm font-semibold uppercase tracking-wider text-stone-500">
               {m.models_detail_training_stats()}
             </h2>
             <div class="flex flex-wrap gap-6">
               <div>
                 <p class="text-xs font-medium uppercase tracking-wider text-stone-400">{m.models_detail_positive()}</p>
-                <p class="mt-1 text-2xl font-bold text-stone-900 dark:text-stone-100">{stats.positive_count.toLocaleString()}</p>
+                <p class="mt-1 text-2xl font-bold text-stone-900">{stats.positive_count.toLocaleString()}</p>
               </div>
               <div>
                 <p class="text-xs font-medium uppercase tracking-wider text-stone-400">{m.models_detail_negative()}</p>
-                <p class="mt-1 text-2xl font-bold text-stone-900 dark:text-stone-100">{stats.negative_count.toLocaleString()}</p>
+                <p class="mt-1 text-2xl font-bold text-stone-900">{stats.negative_count.toLocaleString()}</p>
               </div>
               <div>
                 <p class="text-xs font-medium uppercase tracking-wider text-stone-400">{m.models_detail_unlabeled()}</p>
-                <p class="mt-1 text-2xl font-bold text-stone-900 dark:text-stone-100">{stats.unlabeled_count.toLocaleString()}</p>
+                <p class="mt-1 text-2xl font-bold text-stone-900">{stats.unlabeled_count.toLocaleString()}</p>
               </div>
               <div>
                 <p class="text-xs font-medium uppercase tracking-wider text-stone-400">{m.models_detail_duration()}</p>
-                <p class="mt-1 text-2xl font-bold text-stone-900 dark:text-stone-100">{formatDuration(stats.training_duration_seconds)}</p>
+                <p class="mt-1 text-2xl font-bold text-stone-900">{formatDuration(stats.training_duration_seconds)}</p>
               </div>
             </div>
           </div>
@@ -768,6 +828,8 @@
       {/if}
     </div>
   {/if}
+
+  {/if}<!-- end activeTab === 'review' / else -->
 
 </div>
 
@@ -793,10 +855,10 @@
     aria-labelledby="create-dialog-title"
   >
     <div class="mb-6">
-      <h2 id="create-dialog-title" class="text-lg font-semibold text-stone-900 dark:text-stone-100">
+      <h2 id="create-dialog-title" class="text-lg font-semibold text-stone-900">
         {m.models_create_dialog_title()}
       </h2>
-      <p class="mt-1 text-sm text-stone-500 dark:text-stone-400">
+      <p class="mt-1 text-sm text-stone-500">
         {m.models_create_dialog_subtitle()}
       </p>
     </div>
@@ -807,14 +869,14 @@
     >
       <!-- Model name -->
       <div>
-        <label for="model-name" class="block text-sm font-medium text-stone-700 dark:text-stone-300">
-          {m.models_name()} <span class="text-red-500">*</span>
+        <label for="model-name" class="block text-sm font-medium text-stone-700">
+          {m.models_name()} <span class="text-danger">*</span>
         </label>
         <input
           id="model-name"
           type="text"
           bind:value={createName}
-          class="mt-1.5 block w-full rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm text-stone-900 placeholder:text-stone-400 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500 dark:border-stone-600 dark:bg-stone-800 dark:text-stone-100"
+          class="mt-1.5 block w-full rounded-lg border border-stone-300 bg-surface-card px-3 py-2 text-sm text-stone-900 placeholder:text-stone-400 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500 dark:border-stone-600"
           placeholder="e.g. Robin detector v1"
           required
         />
@@ -822,27 +884,27 @@
 
       <!-- Description -->
       <div>
-        <label for="model-description" class="block text-sm font-medium text-stone-700 dark:text-stone-300">
+        <label for="model-description" class="block text-sm font-medium text-stone-700">
           {m.models_description_label()}
         </label>
         <textarea
           id="model-description"
           bind:value={createDescription}
           rows="2"
-          class="mt-1.5 block w-full rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm text-stone-900 placeholder:text-stone-400 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500 dark:border-stone-600 dark:bg-stone-800 dark:text-stone-100"
+          class="mt-1.5 block w-full rounded-lg border border-stone-300 bg-surface-card px-3 py-2 text-sm text-stone-900 placeholder:text-stone-400 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500 dark:border-stone-600"
           placeholder="Optional description..."
         ></textarea>
       </div>
 
       <!-- Target species tag -->
       <div>
-        <label for="model-tag" class="block text-sm font-medium text-stone-700 dark:text-stone-300">
+        <label for="model-tag" class="block text-sm font-medium text-stone-700">
           {m.models_target_species()}
         </label>
         <select
           id="model-tag"
           bind:value={createTargetTagId}
-          class="mt-1.5 block w-full rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm text-stone-900 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500 dark:border-stone-600 dark:bg-stone-800 dark:text-stone-100"
+          class="mt-1.5 block w-full rounded-lg border border-stone-300 bg-surface-card px-3 py-2 text-sm text-stone-900 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500 dark:border-stone-600"
         >
           <option value="">{m.models_no_target_species()}</option>
           {#if $tagsQuery.data}
@@ -858,13 +920,13 @@
 
       <!-- Embedding model -->
       <div>
-        <label for="model-embedding" class="block text-sm font-medium text-stone-700 dark:text-stone-300">
+        <label for="model-embedding" class="block text-sm font-medium text-stone-700">
           {m.models_embedding_model()}
         </label>
         <select
           id="model-embedding"
           bind:value={createEmbeddingModel}
-          class="mt-1.5 block w-full rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm text-stone-900 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500 dark:border-stone-600 dark:bg-stone-800 dark:text-stone-100"
+          class="mt-1.5 block w-full rounded-lg border border-stone-300 bg-surface-card px-3 py-2 text-sm text-stone-900 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500 dark:border-stone-600"
         >
           <option value="perch">perch</option>
           <option value="birdnet">birdnet</option>
@@ -873,10 +935,10 @@
 
       <!-- Search sessions selector -->
       <div>
-        <p class="text-sm font-medium text-stone-700 dark:text-stone-300">
-          {m.models_training_sessions()} <span class="text-red-500">*</span>
+        <p class="text-sm font-medium text-stone-700">
+          {m.models_training_sessions()} <span class="text-danger">*</span>
         </p>
-        <p class="mt-0.5 text-xs text-stone-400 dark:text-stone-500">{m.models_min_samples()}</p>
+        <p class="mt-0.5 text-xs text-stone-400">{m.models_min_samples()}</p>
 
         <div class="mt-2 max-h-48 space-y-1.5 overflow-y-auto rounded-lg border border-stone-200 p-2 dark:border-stone-700">
           {#if $sessionsQuery.isLoading}
@@ -896,7 +958,7 @@
                   class="mt-0.5 h-4 w-4 rounded border-stone-300 text-primary-500 focus:ring-primary-500"
                 />
                 <div class="min-w-0 flex-1">
-                  <p class="text-sm font-medium text-stone-800 dark:text-stone-200">
+                  <p class="text-sm font-medium text-stone-800">
                     {session.name ?? session.id.slice(0, 8)}
                   </p>
                   <p class="text-xs text-stone-400">
@@ -918,7 +980,7 @@
       <div class="flex justify-end gap-3 pt-2">
         <button
           type="button"
-          class="rounded-lg border border-stone-300 px-4 py-2 text-sm font-medium text-stone-700 transition-colors hover:bg-stone-50 dark:border-stone-600 dark:text-stone-300 dark:hover:bg-stone-800"
+          class="rounded-lg border border-stone-300 px-4 py-2 text-sm font-medium text-stone-700 transition-colors hover:bg-stone-50 dark:border-stone-600 dark:hover:bg-stone-800"
           onclick={closeCreateDialog}
           disabled={$createMutationState.isPending}
         >
@@ -966,10 +1028,10 @@
     aria-labelledby="apply-dialog-title"
   >
     <div class="mb-6">
-      <h2 id="apply-dialog-title" class="text-lg font-semibold text-stone-900 dark:text-stone-100">
+      <h2 id="apply-dialog-title" class="text-lg font-semibold text-stone-900">
         {m.models_apply()}
       </h2>
-      <p class="mt-1 text-sm text-stone-500 dark:text-stone-400">
+      <p class="mt-1 text-sm text-stone-500">
         {m.models_apply_description()}
       </p>
     </div>
@@ -980,13 +1042,13 @@
     >
       <!-- Dataset selector -->
       <div>
-        <label for="apply-dataset" class="block text-sm font-medium text-stone-700 dark:text-stone-300">
-          Dataset <span class="text-red-500">*</span>
+        <label for="apply-dataset" class="block text-sm font-medium text-stone-700">
+          Dataset <span class="text-danger">*</span>
         </label>
         <select
           id="apply-dataset"
           bind:value={applyDatasetId}
-          class="mt-1.5 block w-full rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm text-stone-900 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500 dark:border-stone-600 dark:bg-stone-800 dark:text-stone-100"
+          class="mt-1.5 block w-full rounded-lg border border-stone-300 bg-surface-card px-3 py-2 text-sm text-stone-900 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500 dark:border-stone-600"
         >
           <option value="">— Select a dataset —</option>
           {#if $datasetsQuery.isLoading}
@@ -1001,7 +1063,7 @@
 
       <!-- Threshold slider -->
       <div>
-        <label for="apply-threshold" class="block text-sm font-medium text-stone-700 dark:text-stone-300">
+        <label for="apply-threshold" class="block text-sm font-medium text-stone-700">
           {m.models_apply_threshold()}
           <span class="ml-2 font-mono text-primary-600 dark:text-primary-400">{applyThreshold.toFixed(2)}</span>
         </label>
@@ -1030,7 +1092,7 @@
       <div class="flex justify-end gap-3 pt-2">
         <button
           type="button"
-          class="rounded-lg border border-stone-300 px-4 py-2 text-sm font-medium text-stone-700 transition-colors hover:bg-stone-50 dark:border-stone-600 dark:text-stone-300 dark:hover:bg-stone-800"
+          class="rounded-lg border border-stone-300 px-4 py-2 text-sm font-medium text-stone-700 transition-colors hover:bg-stone-50 dark:border-stone-600 dark:hover:bg-stone-800"
           onclick={closeApplyDialog}
           disabled={$applyMutationState.isPending}
         >
@@ -1075,21 +1137,21 @@
     aria-modal="true"
     aria-labelledby="delete-dialog-title"
   >
-    <h2 id="delete-dialog-title" class="text-base font-semibold text-stone-900 dark:text-stone-100">
+    <h2 id="delete-dialog-title" class="text-base font-semibold text-stone-900">
       {m.models_delete()}
     </h2>
-    <p class="mt-2 text-sm text-stone-500 dark:text-stone-400">{m.models_delete_confirm()}</p>
+    <p class="mt-2 text-sm text-stone-500">{m.models_delete_confirm()}</p>
     <div class="mt-5 flex justify-end gap-3">
       <button
         type="button"
-        class="rounded-lg border border-stone-300 px-4 py-2 text-sm font-medium text-stone-700 transition-colors hover:bg-stone-50 dark:border-stone-600 dark:text-stone-300 dark:hover:bg-stone-800"
+        class="rounded-lg border border-stone-300 px-4 py-2 text-sm font-medium text-stone-700 transition-colors hover:bg-stone-50 dark:border-stone-600 dark:hover:bg-stone-800"
         onclick={handleDeleteCancel}
       >
         {m.models_cancel()}
       </button>
       <button
         type="button"
-        class="inline-flex items-center gap-2 rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-red-700 disabled:opacity-50"
+        class="inline-flex items-center gap-2 rounded-lg bg-danger px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-danger/90 disabled:opacity-50"
         onclick={handleDeleteConfirm}
         disabled={$deleteMutationState.isPending}
       >
