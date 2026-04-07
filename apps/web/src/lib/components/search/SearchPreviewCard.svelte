@@ -7,6 +7,7 @@
    * No voting or review actions — this is an exploration-only component.
    */
 
+  import * as m from '$lib/paraglide/messages.js';
   import MiniSpectrogram from '$lib/components/common/MiniSpectrogram.svelte';
 
   interface Props {
@@ -82,7 +83,7 @@
     <!-- Similarity badge overlaid on spectrogram -->
     <span
       class="absolute right-1.5 top-1.5 rounded px-1.5 py-0.5 text-xs font-medium {similarityBadgeClass}"
-      title="Similarity score"
+      title={m.search_similarity_score()}
     >
       {similarityPercent}%
     </span>
@@ -94,7 +95,7 @@
              bg-black/50 text-white opacity-0 transition-opacity group-hover:opacity-100
              {isPlaying || isLoadingAudio ? 'opacity-100' : ''}"
       onclick={(e) => { e.stopPropagation(); onPlayToggle?.(); }}
-      aria-label={isPlaying ? 'Pause' : 'Play'}
+      aria-label={isPlaying ? m.common_pause() : m.common_play()}
     >
       {#if isLoadingAudio}
         <!-- Spinner -->

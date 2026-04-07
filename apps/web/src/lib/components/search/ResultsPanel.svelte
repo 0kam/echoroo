@@ -27,7 +27,6 @@
     searchDurationMs: number;
     isSearching: boolean;
     searchingSpecies: TargetSpecies[];
-    searchSessionId?: string;
   }
 
   let {
@@ -228,7 +227,7 @@
         <!-- Histogram (left) — threshold synced with filterThreshold -->
         <div class="rounded-lg border border-card bg-surface-card p-4 shadow-sm">
           <h4 class="mb-3 text-xs font-semibold uppercase tracking-wide text-stone-500">
-            Score Distribution
+            {m.search_score_distribution()}
           </h4>
           <SimilarityHistogram
             results={allMatches}
@@ -240,7 +239,7 @@
         <!-- Spiral (right) — time-of-day view -->
         <div class="rounded-lg border border-card bg-surface-card p-4 shadow-sm">
           <h4 class="mb-3 text-xs font-semibold uppercase tracking-wide text-stone-500">
-            Time of Day Distribution
+            {m.search_time_distribution()}
           </h4>
           <SimilaritySpiral
             results={allMatches}
@@ -254,7 +253,7 @@
       <!-- ================================================================ -->
       <div class="rounded-lg border border-card bg-surface-card p-4 shadow-sm">
         <h4 class="mb-3 text-xs font-semibold uppercase tracking-wide text-stone-500">
-          Range Preview
+          {m.search_range_preview()}
         </h4>
         <ThresholdPreview
           results={allMatches}

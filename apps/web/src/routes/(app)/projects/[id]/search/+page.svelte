@@ -275,12 +275,12 @@
 <div class="mx-auto max-w-5xl px-4 py-6">
 
   <!-- Breadcrumb (always visible) -->
-  <nav class="mb-6 flex items-center gap-2 text-sm text-stone-500 dark:text-stone-400">
+  <nav class="mb-6 flex items-center gap-2 text-sm text-stone-500">
     <a href={localizeHref(`/projects/${projectId}`)} class="hover:text-stone-900 dark:hover:text-stone-200">
       {m.search_breadcrumb_project()}
     </a>
     <span>/</span>
-    <span class="font-medium text-stone-900 dark:text-stone-100">{m.search_title()}</span>
+    <span class="font-medium text-stone-900">{m.search_title()}</span>
   </nav>
 
   <!-- Mode: list -->
@@ -288,8 +288,8 @@
     <div class="space-y-6">
       <!-- Page header -->
       <div>
-        <h1 class="text-2xl font-bold text-stone-900 dark:text-stone-100">{m.search_title()}</h1>
-        <p class="mt-1 text-sm text-stone-500 dark:text-stone-400">{m.search_description()}</p>
+        <h1 class="text-2xl font-bold text-stone-900">{m.search_title()}</h1>
+        <p class="mt-1 text-sm text-stone-500">{m.search_description()}</p>
       </div>
 
       <!-- Session list (full-width) -->
@@ -303,7 +303,7 @@
 
       <!-- Embedding stats section -->
       <div class="rounded-lg border border-card bg-surface-card p-6 shadow-sm">
-        <h2 class="mb-4 text-sm font-semibold uppercase tracking-wider text-stone-500 dark:text-stone-400">
+        <h2 class="mb-4 text-sm font-semibold uppercase tracking-wider text-stone-500">
           {m.search_embedding_stats()}
         </h2>
 
@@ -316,7 +316,7 @@
             Loading...
           </div>
         {:else if $statsQuery.isError}
-          <p class="text-sm text-red-500">Failed to load embedding statistics.</p>
+          <p class="text-sm text-danger">Failed to load embedding statistics.</p>
         {:else if $statsQuery.data}
           {@const stats = $statsQuery.data as EmbeddingStats}
           {#if stats.total_count === 0}
@@ -327,10 +327,10 @@
             <div class="flex flex-wrap gap-6">
               <!-- Total count -->
               <div>
-                <p class="text-xs font-medium uppercase tracking-wider text-stone-400 dark:text-stone-500">
+                <p class="text-xs font-medium uppercase tracking-wider text-stone-400">
                   {m.search_total_embeddings()}
                 </p>
-                <p class="mt-1 text-2xl font-bold text-stone-900 dark:text-stone-100">
+                <p class="mt-1 text-2xl font-bold text-stone-900">
                   {stats.total_count.toLocaleString()}
                 </p>
               </div>
@@ -338,12 +338,12 @@
               <!-- By model -->
               {#if Object.keys(stats.by_model).length > 0}
                 <div>
-                  <p class="text-xs font-medium uppercase tracking-wider text-stone-400 dark:text-stone-500">
+                  <p class="text-xs font-medium uppercase tracking-wider text-stone-400">
                     {m.search_stats_by_model()}
                   </p>
                   <div class="mt-1 flex flex-wrap gap-2">
                     {#each Object.entries(stats.by_model) as [model, count] (model)}
-                      <span class="inline-flex items-center gap-1 rounded-full bg-primary-100 px-2.5 py-0.5 text-xs font-medium text-primary-800 dark:bg-primary-900/30 dark:text-primary-300">
+                      <span class="inline-flex items-center gap-1 rounded-full bg-stone-100 px-2.5 py-0.5 text-xs font-medium text-stone-700 dark:bg-stone-800">
                         {model}: {count.toLocaleString()}
                       </span>
                     {/each}
@@ -371,7 +371,7 @@
       <!-- Back link -->
       <button
         type="button"
-        class="inline-flex items-center gap-1.5 text-sm text-stone-500 transition-colors hover:text-stone-900 dark:text-stone-400 dark:hover:text-stone-100"
+        class="inline-flex items-center gap-1.5 text-sm text-stone-500 transition-colors hover:text-stone-900 dark:hover:text-stone-100"
         onclick={handleBackToList}
       >
         <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
@@ -381,7 +381,7 @@
       </button>
 
       <!-- Page heading -->
-      <h1 class="text-2xl font-bold text-stone-900 dark:text-stone-100">{m.search_new_search()}</h1>
+      <h1 class="text-2xl font-bold text-stone-900">{m.search_new_search()}</h1>
 
       <!-- Reference Sounds Panel (editable) -->
       <ReferenceSoundsPanel
@@ -411,7 +411,7 @@
 
       <!-- Search progress indicator (shown while async job is running) -->
       {#if isSearching && !results}
-        <div class="flex items-center gap-3 rounded-lg border border-card bg-surface-card p-4 text-sm text-stone-600 dark:text-stone-400">
+        <div class="flex items-center gap-3 rounded-lg border border-card bg-surface-card p-4 text-sm text-stone-600">
           <svg class="h-4 w-4 shrink-0 animate-spin text-primary-500" fill="none" viewBox="0 0 24 24" aria-hidden="true">
             <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
             <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
@@ -436,7 +436,6 @@
           {searchDurationMs}
           {isSearching}
           searchingSpecies={species}
-          searchSessionId={searchSessionId ?? undefined}
         />
       {/if}
     </div>

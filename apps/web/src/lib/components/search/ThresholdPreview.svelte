@@ -8,6 +8,7 @@
    * and audio playback on click.
    */
 
+  import * as m from '$lib/paraglide/messages.js';
   import type { SimilarityResult } from '$lib/types/search';
   import MiniSpectrogram from '$lib/components/common/MiniSpectrogram.svelte';
 
@@ -138,12 +139,12 @@
   <div class="flex flex-col gap-1.5">
     <div class="flex items-center justify-between text-xs text-stone-500">
       <span>
-        Similarity range:
+        {m.search_threshold_range()}
         <span class="font-semibold text-stone-700">{formatPct(minSimilarity)}</span>
         –
         <span class="font-semibold text-stone-700">{formatPct(maxSimilarity)}</span>
       </span>
-      <span class="text-stone-400">{filtered.length.toLocaleString()} results</span>
+      <span class="text-stone-400">{m.search_threshold_results_count({ count: filtered.length.toLocaleString() })}</span>
     </div>
 
     <!-- Two-handle slider track -->
@@ -210,8 +211,8 @@
   <!-- Results grid -->
   {#if filtered.length === 0}
     <div class="flex flex-col items-center justify-center rounded-lg border border-stone-200 bg-stone-50 py-10 text-center">
-      <p class="text-sm text-stone-400">No results in this range</p>
-      <p class="mt-1 text-xs text-stone-300">Adjust the similarity range slider above</p>
+      <p class="text-sm text-stone-400">{m.search_no_results_in_range()}</p>
+      <p class="mt-1 text-xs text-stone-300">{m.search_no_results_in_range_hint()}</p>
     </div>
   {:else}
     <div class="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
@@ -284,7 +285,7 @@
           disabled={currentPage === 0}
           onclick={() => { currentPage = Math.max(0, currentPage - 1); }}
         >
-          Previous
+          {m.search_previous()}
         </button>
         <span class="text-xs text-stone-500">
           {currentPage + 1} / {totalPages}
@@ -294,7 +295,7 @@
           disabled={currentPage >= totalPages - 1}
           onclick={() => { currentPage = Math.min(totalPages - 1, currentPage + 1); }}
         >
-          Next
+          {m.search_next()}
         </button>
       </div>
     {/if}

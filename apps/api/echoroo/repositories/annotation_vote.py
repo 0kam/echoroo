@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import selectinload
 
 from echoroo.models.annotation_vote import AnnotationVote
@@ -144,18 +144,25 @@ class AnnotationVoteRepository(BaseRepository[AnnotationVote]):
     async def count_by_annotation(self, annotation_id: UUID) -> dict[str, int]:
         """Count votes by type for an annotation.
 
+        Uses a GROUP BY query instead of loading full vote objects,
+        avoiding unnecessary joins on user and suggested_tag relations.
+
         Args:
             annotation_id: Annotation's UUID
 
         Returns:
             Dict with keys 'agree', 'disagree', 'unsure' and their counts
         """
-        votes = await self.list_by_annotation(annotation_id)
+        result = await self.db.execute(
+            select(AnnotationVote.vote, func.count())
+            .where(AnnotationVote.annotation_id == annotation_id)
+            .group_by(AnnotationVote.vote)
+        )
         counts: dict[str, int] = {
             VoteType.AGREE: 0,
             VoteType.DISAGREE: 0,
             VoteType.UNSURE: 0,
         }
-        for v in votes:
-            counts[v.vote] += 1
+        for vote_type, count in result.all():
+            counts[vote_type] = count
         return counts

@@ -11,6 +11,8 @@
    * - Radius: scaled by similarity score within the chart area
    */
 
+  import * as m from '$lib/paraglide/messages.js';
+
   interface Result {
     similarity: number;
     recording_datetime: string | null;
@@ -159,12 +161,12 @@
     <span class="flex items-center gap-1">
       <span class="inline-block h-2 w-2 rounded-full bg-primary-500"></span>
       <span class="font-semibold text-stone-700">{aboveCount}</span>
-      <span class="text-stone-500">above threshold</span>
+      <span class="text-stone-500">{m.search_spiral_above()}</span>
     </span>
     <span class="flex items-center gap-1">
       <span class="inline-block h-2 w-2 rounded-full bg-stone-300"></span>
       <span class="font-semibold text-stone-700">{belowCount}</span>
-      <span class="text-stone-500">below</span>
+      <span class="text-stone-500">{m.search_spiral_below()}</span>
     </span>
   </div>
 
@@ -318,6 +320,6 @@
 
   <!-- Legend: radius scale explanation -->
   <div class="text-center text-[10px] text-stone-400">
-    Radius = similarity score (center = 0%, edge = 100%)
+    {m.search_spiral_radius_legend()}
   </div>
 </div>

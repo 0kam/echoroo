@@ -11,6 +11,8 @@
    * - Count summary above/below threshold
    */
 
+  import * as m from '$lib/paraglide/messages.js';
+
   interface Result {
     similarity: number;
   }
@@ -135,9 +137,9 @@
   <div class="flex items-center justify-between px-1 text-xs text-stone-500">
     <span>
       <span class="font-semibold text-stone-700">{countAbove.toLocaleString()}</span>
-      above {formatPct(threshold)}
+      {m.search_histogram_above({ threshold: formatPct(threshold) })}
     </span>
-    <span class="text-stone-400">{countBelow.toLocaleString()} below</span>
+    <span class="text-stone-400">{countBelow.toLocaleString()} {m.search_histogram_below()}</span>
   </div>
 
   <!-- SVG Histogram -->

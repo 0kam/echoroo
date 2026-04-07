@@ -56,6 +56,10 @@ export async function castVote(
 
 /**
  * Delete the current user's vote on a detection (toggle off).
+ *
+ * Returns the updated VoteSummary (with recomputed consensus) from the backend.
+ * Callers should use the returned summary to update local state directly
+ * instead of making a separate getVotes call.
  */
 export async function deleteVote(
   projectId: string,
@@ -108,6 +112,10 @@ export async function castAnnotationVote(
 
 /**
  * Delete the current user's vote on an annotation (generic path).
+ *
+ * Returns the updated VoteSummary (with recomputed consensus) from the backend.
+ * Callers should use the returned summary to update local state directly
+ * instead of making a separate getAnnotationVotes call.
  */
 export async function deleteAnnotationVote(
   projectId: string,

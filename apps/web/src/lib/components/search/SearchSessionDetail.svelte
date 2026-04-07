@@ -527,7 +527,6 @@
         searchDurationMs={searchDuration()}
         isSearching={false}
         searchingSpecies={reconstructedSpecies}
-        searchSessionId={session.id}
       />
     {:else if session.status === 'failed'}
       <!-- Failed state - no results -->
