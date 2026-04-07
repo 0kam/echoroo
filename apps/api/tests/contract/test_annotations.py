@@ -3,7 +3,6 @@
 Tests verify that endpoints conform to the annotation specification.
 """
 
-import json
 from typing import TYPE_CHECKING
 
 import pytest
@@ -710,11 +709,11 @@ class TestBatchClipTagEndpoint:
     ) -> None:
         """Test POST batch tags multiple tasks (200)."""
         # Create a second clip with its recording (reuse the existing site/dataset by creating another recording)
-        from echoroo.models.dataset import Dataset
-        from echoroo.models.recording import Recording
-
         # Fetch an existing dataset to reuse
         from sqlalchemy import select
+
+        from echoroo.models.dataset import Dataset
+        from echoroo.models.recording import Recording
 
         dataset_result = await db_session.execute(select(Dataset).limit(1))
         dataset = dataset_result.scalar_one()

@@ -71,10 +71,10 @@ class TestSetupFlow:
         assert not user.hashed_password.startswith("Super")  # Not plain text
 
         # Step 5: Verify system settings updated
-        result = await db_session.execute(
+        setting_result = await db_session.execute(
             select(SystemSetting).where(SystemSetting.key == "setup_completed")
         )
-        setting = result.scalar_one_or_none()
+        setting = setting_result.scalar_one_or_none()
         assert setting is not None
         assert setting.value == "true"
 

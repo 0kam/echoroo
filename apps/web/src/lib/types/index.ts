@@ -88,8 +88,6 @@ export type {
   RecordingsByDate,
   RecordingsByHour,
   DatasetStatistics,
-  DirectoryInfo,
-  DirectoryListResponse,
   ExportRequest,
   RecordingDetail,
   RecordingUpdate,
@@ -117,6 +115,18 @@ export type {
   Recording,
   Clip,
 } from './data';
+
+// Re-export detection review types
+export * from './detection';
+
+// Re-export global taxon types
+export type {
+  VernacularName,
+  Taxon,
+  TaxonDetail,
+  TaxonListResponse,
+  TaxonSearchResult,
+} from './taxon';
 
 // Annotation-scoped DatasetSummary (used in annotation contexts)
 // Both data.ts and annotation.ts define DatasetSummary with the same shape
@@ -365,6 +375,47 @@ export interface ProjectListResponse extends PaginationMeta {
 }
 
 // ============================================
+// Project Overview Types
+// ============================================
+
+/**
+ * A site entry in the project overview
+ */
+export interface ProjectOverviewSite {
+  id: string;
+  name: string;
+  h3_index: string;
+  latitude: number | null;
+  longitude: number | null;
+  recording_count: number;
+  dataset_count: number;
+}
+
+/**
+ * A calendar entry for recording activity by month
+ */
+export interface RecordingCalendarEntry {
+  year: number;
+  month: number;
+  /** Number of sites with recordings in this month */
+  site_count: number;
+  /** Total recordings in this month */
+  recording_count: number;
+}
+
+/**
+ * Project overview response from GET /projects/{project_id}/overview
+ */
+export interface ProjectOverviewResponse {
+  sites: ProjectOverviewSite[];
+  recording_calendar: RecordingCalendarEntry[];
+  total_recordings: number;
+  total_sites: number;
+  /** Total duration in seconds */
+  total_duration: number;
+}
+
+// ============================================
 // Project Member Types
 // ============================================
 
@@ -450,12 +501,19 @@ export interface SystemSetting {
 export type SystemSettingResponse = SystemSetting;
 
 /**
+ * BirdNET species filter mode
+ */
+export type BirdnetSpeciesFilter = 'none' | 'birdnet_geo';
+
+/**
  * System settings update request
  */
 export interface SystemSettingsUpdateRequest {
   registration_mode?: 'open' | 'invitation';
   allow_registration?: boolean;
   session_timeout_minutes?: number;
+  birdnet_species_filter?: BirdnetSpeciesFilter;
+  birdnet_min_conf?: number;
 }
 
 // ============================================

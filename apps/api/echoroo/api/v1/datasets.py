@@ -1,5 +1,6 @@
 """Datasets API endpoints."""
 
+import re as _re
 from typing import Annotated
 from uuid import UUID
 
@@ -9,11 +10,12 @@ from fastapi.responses import StreamingResponse
 from echoroo.core.database import DbSession
 from echoroo.core.settings import get_settings
 from echoroo.middleware.auth import CurrentUser
-from echoroo.models.enums import DatasetStatus, DatasetVisibility
+from echoroo.models.enums import DatasetStatus, DatasetVisibility, UploadSessionStatus
 from echoroo.repositories.dataset import DatasetRepository
 from echoroo.repositories.project import ProjectRepository
 from echoroo.repositories.recording import RecordingRepository
 from echoroo.repositories.site import SiteRepository
+from echoroo.repositories.upload import UploadSessionRepository
 from echoroo.schemas.dataset import (
     DatasetCreate,
     DatasetDetailResponse,
@@ -21,7 +23,13 @@ from echoroo.schemas.dataset import (
     DatasetResponse,
     DatasetStatisticsResponse,
     DatasetUpdate,
-    DirectoryListResponse,
+    DatetimeApplyRequest,
+    DatetimeApplyResponse,
+    DatetimeAutoDetectResponse,
+    DatetimeConfigResponse,
+    DatetimeParseSummary,
+    DatetimeTestRequest,
+    DatetimeTestResult,
     ImportRequest,
     ImportStatusResponse,
 )
@@ -43,14 +51,11 @@ def get_audio_service() -> AudioService:
     return AudioService(settings.AUDIO_ROOT, settings.AUDIO_CACHE_DIR)
 
 
-def get_dataset_service(
-    db: DbSession, audio_service: AudioService = Depends(get_audio_service)
-) -> DatasetService:
+def get_dataset_service(db: DbSession) -> DatasetService:
     """Get DatasetService instance.
 
     Args:
         db: Database session
-        audio_service: Audio service instance
 
     Returns:
         DatasetService instance
@@ -60,7 +65,6 @@ def get_dataset_service(
         SiteRepository(db),
         ProjectRepository(db),
         RecordingRepository(db),
-        audio_service,
     )
 
 
@@ -166,7 +170,6 @@ async def create_dataset(
         site_id=request.site_id,
         name=request.name,
         description=request.description,
-        audio_dir=request.audio_dir,
         visibility=request.visibility,
         recorder_id=request.recorder_id,
         license_id=request.license_id,
@@ -175,6 +178,7 @@ async def create_dataset(
         note=request.note,
         datetime_pattern=request.datetime_pattern,
         datetime_format=request.datetime_format,
+        datetime_timezone=request.datetime_timezone,
     )
     await db.commit()
 
@@ -283,6 +287,7 @@ async def update_dataset(
         note=request.note,
         datetime_pattern=request.datetime_pattern,
         datetime_format=request.datetime_format,
+        datetime_timezone=request.datetime_timezone,
     )
     await db.commit()
 
@@ -336,7 +341,7 @@ async def delete_dataset(
     "/{dataset_id}/import",
     response_model=ImportStatusResponse,
     summary="Start dataset import",
-    description="Start importing recordings from audio directory",
+    description="Start importing recordings from a validated upload session",
 )
 async def start_import(
     project_id: UUID,
@@ -346,12 +351,15 @@ async def start_import(
     service: DatasetServiceDep,
     db: DbSession,
 ) -> ImportStatusResponse:
-    """Start dataset import.
+    """Start dataset import from a validated upload session.
+
+    The source field must be an 'upload-session://<session_id>' URI.
+    Dispatches an async Celery task to perform the import.
 
     Args:
         project_id: Project's UUID
         dataset_id: Dataset's UUID
-        request: Import request with optional datetime patterns
+        request: Import request with upload-session source and optional datetime patterns
         current_user: Current authenticated user
         service: Dataset service instance
         db: Database session
@@ -360,84 +368,85 @@ async def start_import(
         Import status
 
     Raises:
+        400: Invalid source URI or upload session ID
         401: Not authenticated
         403: Access denied
-        404: Dataset not found
+        404: Dataset or upload session not found
+        409: Upload session not in validated state
     """
-    # Get dataset to verify access
-    dataset = await service.get_by_id(current_user.id, project_id, dataset_id)
+    # Verify dataset access
+    await service.get_by_id(current_user.id, project_id, dataset_id)
 
-    # Start import (synchronous for now, should be async with Celery in production)
-    await service.start_import(
-        db,
-        dataset_id,
+    # Admin check
+    project_repo = ProjectRepository(db)
+    is_admin = await project_repo.is_project_admin(project_id, current_user.id)
+    if not is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only project admins can import from upload sessions",
+        )
+
+    upload_session_repo = UploadSessionRepository(db)
+    source = request.source
+
+    if source:
+        # Explicit source provided
+        if not source.startswith("upload-session://"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="source must be an 'upload-session://<session_id>' URI",
+            )
+
+        session_id_str = source.removeprefix("upload-session://")
+        try:
+            session_uuid = UUID(session_id_str)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Invalid upload session ID") from exc
+
+        upload_session = await upload_session_repo.get_by_id(session_uuid)
+        if not upload_session or upload_session.dataset_id != dataset_id:
+            raise HTTPException(status_code=404, detail="Upload session not found")
+        if upload_session.created_by_id != current_user.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You do not own this upload session",
+            )
+    else:
+        # No source: auto-find the latest validated upload session for this dataset
+        upload_session = await upload_session_repo.get_active_by_dataset(dataset_id)
+        if not upload_session:
+            raise HTTPException(
+                status_code=404,
+                detail="No upload session found for this dataset. Please upload files first.",
+            )
+        if upload_session.created_by_id != current_user.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You do not own this upload session",
+            )
+
+    if upload_session.status != UploadSessionStatus.VALIDATED:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Upload session is in '{upload_session.status.value}' state, must be 'validated'",
+        )
+
+    # Dispatch async import task
+    from echoroo.workers.upload_tasks import import_from_upload_session
+
+    import_from_upload_session.delay(
+        str(upload_session.id),
         request.datetime_pattern,
         request.datetime_format,
+        request.datetime_timezone,
     )
 
-    # Refresh dataset to get updated status
-    await db.refresh(dataset)
-
-    # Get import status
-    status_dict = service.get_import_status(dataset)
-
     return ImportStatusResponse(
-        status=status_dict["status"],
-        total_files=status_dict["total_files"],
-        processed_files=status_dict["processed_files"],
-        progress_percent=status_dict["progress_percent"],
-        error=status_dict["error"],
-    )
-
-
-@router.post(
-    "/{dataset_id}/rescan",
-    response_model=ImportStatusResponse,
-    summary="Rescan dataset directory",
-    description="Rescan directory for new audio files and add them to dataset",
-)
-async def rescan_dataset(
-    project_id: UUID,
-    dataset_id: UUID,
-    current_user: CurrentUser,
-    service: DatasetServiceDep,
-    db: DbSession,
-) -> ImportStatusResponse:
-    """Rescan directory for new files.
-
-    Args:
-        project_id: Project's UUID
-        dataset_id: Dataset's UUID
-        current_user: Current authenticated user
-        service: Dataset service instance
-        db: Database session
-
-    Returns:
-        Import status
-
-    Raises:
-        401: Not authenticated
-        403: Access denied
-        404: Dataset not found
-    """
-    # Get dataset to verify access
-    dataset = await service.get_by_id(current_user.id, project_id, dataset_id)
-
-    # Start rescan
-    await service.rescan(db, dataset_id)
-
-    # Refresh dataset to get updated status
-    await db.refresh(dataset)
-
-    # Get import status
-    status_dict = service.get_import_status(dataset)
-
-    return ImportStatusResponse(
-        status=status_dict["status"],
-        total_files=status_dict["total_files"],
-        processed_files=status_dict["processed_files"],
-        progress_percent=status_dict["progress_percent"],
-        error=status_dict["error"],
+        status=DatasetStatus.PROCESSING,
+        total_files=upload_session.total_files,
+        processed_files=0,
+        progress_percent=0.0,
+        error=None,
     )
 
 
@@ -530,40 +539,6 @@ async def get_dataset_statistics(
     )
 
 
-# T047: Directory listing endpoint
-@router.get(
-    "/directories/list",
-    response_model=DirectoryListResponse,
-    summary="List audio directories",
-    description="List available audio directories for import",
-)
-async def list_directories(
-    project_id: UUID,
-    current_user: CurrentUser,
-    audio_service: AudioServiceDep,
-    path: str = "",
-) -> DirectoryListResponse:
-    """List audio directories for import.
-
-    Args:
-        project_id: Project's UUID (for auth check)
-        current_user: Current authenticated user
-        audio_service: Audio service instance
-        path: Relative path to list (default: root)
-
-    Returns:
-        Directory listing
-
-    Raises:
-        401: Not authenticated
-        403: Access denied
-    """
-    # List directories
-    directories = audio_service.list_directories(path)
-
-    return DirectoryListResponse(path=path, directories=directories)
-
-
 # T106: Export endpoint
 @router.get(
     "/{dataset_id}/export",
@@ -621,8 +596,16 @@ async def export_dataset(
         if dataset.project_id != project_id:
             raise HTTPException(status_code=404, detail="Dataset not found")
 
-        # Generate safe filename
-        safe_name = dataset.name.replace(" ", "_").replace("/", "_")
+        project_repo = ProjectRepository(db)
+        has_access = await project_repo.has_project_access(project_id, current_user.id)
+        if not has_access:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied to project",
+            )
+
+        # Generate safe filename (strip characters that break Content-Disposition header)
+        safe_name = _re.sub(r'[^a-zA-Z0-9_\-]', '_', dataset.name)
         filename = f"{safe_name}_export.zip"
 
         return StreamingResponse(
@@ -631,4 +614,194 @@ async def export_dataset(
             headers={"Content-Disposition": f'attachment; filename="{filename}"'},
         )
     except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+        raise HTTPException(status_code=404, detail=str(e)) from e
+
+
+# Datetime configuration endpoints
+
+
+@router.get(
+    "/{dataset_id}/datetime-config",
+    response_model=DatetimeConfigResponse,
+    summary="Get datetime config",
+    description="Get datetime parsing configuration and parse status summary for a dataset",
+)
+async def get_datetime_config(
+    project_id: UUID,
+    dataset_id: UUID,
+    current_user: CurrentUser,
+    service: DatasetServiceDep,
+) -> DatetimeConfigResponse:
+    """Get datetime parsing configuration and status for a dataset.
+
+    Args:
+        project_id: Project's UUID
+        dataset_id: Dataset's UUID
+        current_user: Current authenticated user
+        service: Dataset service instance
+
+    Returns:
+        Datetime config with sample filenames and parse summary
+
+    Raises:
+        401: Not authenticated
+        403: Access denied
+        404: Dataset not found
+    """
+    # Verify access
+    await service.get_by_id(current_user.id, project_id, dataset_id)
+
+    config = await service.get_datetime_config(dataset_id)
+    summary_data = config["parse_summary"]
+    assert isinstance(summary_data, dict)
+    sample_filenames = config["sample_filenames"]
+    assert isinstance(sample_filenames, list)
+
+    return DatetimeConfigResponse(
+        datetime_pattern=config["datetime_pattern"] if isinstance(config["datetime_pattern"], str) else None,
+        datetime_format=config["datetime_format"] if isinstance(config["datetime_format"], str) else None,
+        datetime_timezone=config["datetime_timezone"] if isinstance(config["datetime_timezone"], str) else None,
+        sample_filenames=sample_filenames,
+        parse_summary=DatetimeParseSummary(**summary_data),
+    )
+
+
+@router.post(
+    "/{dataset_id}/datetime-config/auto-detect",
+    response_model=DatetimeAutoDetectResponse,
+    summary="Auto-detect datetime pattern",
+    description="Auto-detect datetime pattern from sample filenames in the dataset",
+)
+async def auto_detect_datetime(
+    project_id: UUID,
+    dataset_id: UUID,
+    current_user: CurrentUser,
+    service: DatasetServiceDep,
+) -> DatetimeAutoDetectResponse:
+    """Auto-detect datetime pattern from sample filenames.
+
+    Args:
+        project_id: Project's UUID
+        dataset_id: Dataset's UUID
+        current_user: Current authenticated user
+        service: Dataset service instance
+
+    Returns:
+        Auto-detection result with pattern, format, and test results
+
+    Raises:
+        401: Not authenticated
+        403: Access denied
+        404: Dataset not found
+    """
+    # Verify access
+    await service.get_by_id(current_user.id, project_id, dataset_id)
+
+    result = await service.auto_detect_datetime_pattern(dataset_id)
+    raw_results = result.get("results", [])
+    assert isinstance(raw_results, list)
+    pattern_val = result.get("pattern")
+    format_str_val = result.get("format_str")
+    preset_name_val = result.get("preset_name")
+
+    return DatetimeAutoDetectResponse(
+        detected=bool(result["detected"]),
+        pattern=pattern_val if isinstance(pattern_val, str) else None,
+        format_str=format_str_val if isinstance(format_str_val, str) else None,
+        preset_name=preset_name_val if isinstance(preset_name_val, str) else None,
+        results=[DatetimeTestResult(**r) for r in raw_results],
+    )
+
+
+@router.post(
+    "/{dataset_id}/datetime-config/test",
+    response_model=list[DatetimeTestResult],
+    summary="Test datetime pattern",
+    description="Test a datetime pattern against sample filenames from the dataset",
+)
+async def test_datetime_pattern(
+    project_id: UUID,
+    dataset_id: UUID,
+    body: DatetimeTestRequest,
+    current_user: CurrentUser,
+    service: DatasetServiceDep,
+) -> list[DatetimeTestResult]:
+    """Test a datetime pattern against sample filenames.
+
+    Args:
+        project_id: Project's UUID
+        dataset_id: Dataset's UUID
+        body: Pattern and format string to test
+        current_user: Current authenticated user
+        service: Dataset service instance
+
+    Returns:
+        List of test results per sample filename
+
+    Raises:
+        401: Not authenticated
+        403: Access denied
+        404: Dataset not found
+    """
+    # Verify access
+    await service.get_by_id(current_user.id, project_id, dataset_id)
+
+    sample_filenames = await service.recording_repo.get_sample_filenames(dataset_id)
+    results = await service.test_datetime_pattern_bulk(sample_filenames, body.pattern, body.format_str, body.timezone)
+
+    return [DatetimeTestResult(**r) for r in results]
+
+
+@router.post(
+    "/{dataset_id}/datetime-config/apply",
+    response_model=DatetimeApplyResponse,
+    summary="Apply datetime pattern",
+    description="Apply a datetime pattern to all recordings in the dataset (admin only)",
+)
+async def apply_datetime_pattern(
+    project_id: UUID,
+    dataset_id: UUID,
+    body: DatetimeApplyRequest,
+    current_user: CurrentUser,
+    service: DatasetServiceDep,
+    db: DbSession,
+) -> DatetimeApplyResponse:
+    """Apply a datetime pattern to all recordings in the dataset.
+
+    Saves the pattern to the dataset and dispatches a Celery task to
+    re-parse datetimes for all recordings.
+
+    Args:
+        project_id: Project's UUID
+        dataset_id: Dataset's UUID
+        body: Pattern and format string to apply
+        current_user: Current authenticated user
+        service: Dataset service instance
+        db: Database session
+
+    Returns:
+        Task ID and total recording count
+
+    Raises:
+        401: Not authenticated
+        403: Not project admin
+        404: Dataset not found
+    """
+    # Verify dataset access (also checks project membership)
+    await service.get_by_id(current_user.id, project_id, dataset_id)
+
+    # Admin check
+    project_repo = ProjectRepository(db)
+    is_admin = await project_repo.is_project_admin(project_id, current_user.id)
+    if not is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only project admins can apply datetime patterns",
+        )
+
+    task_id, total_recordings = await service.apply_datetime_pattern(
+        dataset_id, body.pattern, body.format_str, body.timezone
+    )
+    await db.commit()
+
+    return DatetimeApplyResponse(task_id=task_id, total_recordings=total_recordings)

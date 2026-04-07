@@ -88,7 +88,12 @@ case $COMMAND in
     start)
         check_env
         info "Starting $ENV environment..."
-        $COMPOSE up -d --build
+        if [ "${ECHOROO_BUILD:-0}" = "1" ]; then
+            info "ECHOROO_BUILD=1 detected, rebuilding images..."
+            $COMPOSE up -d --build
+        else
+            $COMPOSE up -d
+        fi
         success "Environment started"
         info "Frontend: http://localhost:${ECHOROO_FRONTEND_PORT:-5173}"
         info "Backend:  http://localhost:${ECHOROO_API_PORT:-8002}"
@@ -106,7 +111,12 @@ case $COMMAND in
             info "Restarting $ENV environment..."
             $COMPOSE down
             check_env
-            $COMPOSE up -d --build
+            if [ "${ECHOROO_BUILD:-0}" = "1" ]; then
+                info "ECHOROO_BUILD=1 detected, rebuilding images..."
+                $COMPOSE up -d --build
+            else
+                $COMPOSE up -d
+            fi
         fi
         success "Restart complete"
         ;;

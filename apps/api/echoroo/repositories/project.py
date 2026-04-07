@@ -1,25 +1,23 @@
 """Project repository for database operations."""
 
+from typing import Any
 from uuid import UUID
 
-from sqlalchemy import delete, func, or_, select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import Row, delete, func, or_, select
 from sqlalchemy.orm import selectinload
 
+from echoroo.models.dataset import Dataset
 from echoroo.models.enums import ProjectRole
 from echoroo.models.project import Project, ProjectMember
+from echoroo.models.recording import Recording
+from echoroo.models.site import Site
+from echoroo.repositories.base import BaseRepository
 
 
-class ProjectRepository:
+class ProjectRepository(BaseRepository[Project]):
     """Repository for Project entity operations."""
 
-    def __init__(self, db: AsyncSession) -> None:
-        """Initialize repository with database session.
-
-        Args:
-            db: SQLAlchemy async session
-        """
-        self.db = db
+    model = Project
 
     async def get_by_id(self, project_id: UUID) -> Project | None:
         """Get project by ID with owner relationship loaded.
@@ -116,14 +114,6 @@ class ProjectRepository:
         await self.db.refresh(project, ["owner"])
         return project
 
-    async def delete(self, project_id: UUID) -> None:
-        """Delete a project by ID.
-
-        Args:
-            project_id: Project's UUID
-        """
-        await self.db.execute(delete(Project).where(Project.id == project_id))
-        await self.db.flush()
 
     async def get_member(self, project_id: UUID, user_id: UUID) -> ProjectMember | None:
         """Get a project member by project and user ID.
@@ -203,6 +193,94 @@ class ProjectRepository:
             )
         )
         await self.db.flush()
+
+    async def get_overview_sites(
+        self, project_id: UUID
+    ) -> list[Row[Any]]:
+        """Get site summaries for project overview.
+
+        Returns site id, name, h3_index, dataset_count, recording_count per site.
+
+        Args:
+            project_id: Project's UUID
+
+        Returns:
+            List of tuples: (id, name, h3_index, dataset_count, recording_count)
+        """
+        result = await self.db.execute(
+            select(
+                Site.id,
+                Site.name,
+                Site.h3_index,
+                func.count(func.distinct(Dataset.id)).label("dataset_count"),
+                func.count(Recording.id).label("recording_count"),
+            )
+            .select_from(Site)
+            .outerjoin(Dataset, Dataset.site_id == Site.id)
+            .outerjoin(Recording, Recording.dataset_id == Dataset.id)
+            .where(Site.project_id == project_id)
+            .group_by(Site.id, Site.name, Site.h3_index)
+            .order_by(Site.name)
+        )
+        return list(result.all())
+
+    async def get_recording_calendar(
+        self, project_id: UUID
+    ) -> list[Row[Any]]:
+        """Get monthly recording activity for a project.
+
+        Args:
+            project_id: Project's UUID
+
+        Returns:
+            List of tuples: (year, month, site_count, recording_count)
+        """
+        year_col = func.extract("year", Recording.datetime).label("year")
+        month_col = func.extract("month", Recording.datetime).label("month")
+
+        result = await self.db.execute(
+            select(
+                year_col,
+                month_col,
+                func.count(func.distinct(Site.id)).label("site_count"),
+                func.count(Recording.id).label("recording_count"),
+            )
+            .select_from(Recording)
+            .join(Dataset, Recording.dataset_id == Dataset.id)
+            .join(Site, Dataset.site_id == Site.id)
+            .where(
+                Dataset.project_id == project_id,
+                Recording.datetime.is_not(None),
+            )
+            .group_by(year_col, month_col)
+            .order_by(year_col, month_col)
+        )
+        return list(result.all())
+
+    async def get_overview_totals(
+        self, project_id: UUID
+    ) -> tuple[int, int, float]:
+        """Get aggregate totals for a project overview.
+
+        Args:
+            project_id: Project's UUID
+
+        Returns:
+            Tuple of (total_recordings, total_sites, total_duration)
+        """
+        result = await self.db.execute(
+            select(
+                func.count(Recording.id).label("total_recordings"),
+                func.count(func.distinct(Site.id)).label("total_sites"),
+                func.coalesce(func.sum(Recording.duration), 0.0).label("total_duration"),
+            )
+            .select_from(Recording)
+            .join(Dataset, Recording.dataset_id == Dataset.id)
+            .join(Site, Dataset.site_id == Site.id)
+            .where(Dataset.project_id == project_id)
+        )
+        row = result.one()
+        return int(row.total_recordings), int(row.total_sites), float(row.total_duration)
 
     async def is_project_admin(self, project_id: UUID, user_id: UUID) -> bool:
         """Check if a user is a project admin (owner or admin role).

@@ -12,7 +12,7 @@ import type {
   TagStatistic,
   TagUpdate,
 } from '$lib/types/annotation';
-import { fetchWithErrorHandling, handleApiResponse } from './errors';
+import { apiClient } from './client';
 
 const API_BASE = '/api/v1';
 
@@ -30,32 +30,21 @@ export async function fetchTags(
   if (params.search) searchParams.set('search', params.search);
 
   const url = `${API_BASE}/projects/${projectId}/tags?${searchParams}`;
-  const response = await fetchWithErrorHandling(url, { credentials: 'include' });
-  return handleApiResponse<TagListResponse>(response);
+  return apiClient.get<TagListResponse>(url);
 }
 
 /**
  * Fetch a single tag by ID.
  */
 export async function fetchTag(projectId: string, tagId: string): Promise<TagDetail> {
-  const response = await fetchWithErrorHandling(
-    `${API_BASE}/projects/${projectId}/tags/${tagId}`,
-    { credentials: 'include' }
-  );
-  return handleApiResponse<TagDetail>(response);
+  return apiClient.get<TagDetail>(`${API_BASE}/projects/${projectId}/tags/${tagId}`);
 }
 
 /**
  * Create a new tag.
  */
 export async function createTag(projectId: string, data: TagCreate): Promise<Tag> {
-  const response = await fetchWithErrorHandling(`${API_BASE}/projects/${projectId}/tags`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    credentials: 'include',
-    body: JSON.stringify(data),
-  });
-  return handleApiResponse<Tag>(response);
+  return apiClient.post<Tag>(`${API_BASE}/projects/${projectId}/tags`, data);
 }
 
 /**
@@ -66,33 +55,14 @@ export async function updateTag(
   tagId: string,
   data: TagUpdate
 ): Promise<Tag> {
-  const response = await fetchWithErrorHandling(
-    `${API_BASE}/projects/${projectId}/tags/${tagId}`,
-    {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify(data),
-    }
-  );
-  return handleApiResponse<Tag>(response);
+  return apiClient.patch<Tag>(`${API_BASE}/projects/${projectId}/tags/${tagId}`, data);
 }
 
 /**
  * Delete a tag by ID.
  */
 export async function deleteTag(projectId: string, tagId: string): Promise<void> {
-  const response = await fetchWithErrorHandling(
-    `${API_BASE}/projects/${projectId}/tags/${tagId}`,
-    {
-      method: 'DELETE',
-      credentials: 'include',
-    }
-  );
-
-  if (!response.ok) {
-    await handleApiResponse(response);
-  }
+  return apiClient.delete<void>(`${API_BASE}/projects/${projectId}/tags/${tagId}`);
 }
 
 /**
@@ -104,20 +74,14 @@ export async function fetchGBIFSuggestions(
   limit: number = 10
 ): Promise<GBIFSuggestion[]> {
   const searchParams = new URLSearchParams({ q: query, limit: limit.toString() });
-  const response = await fetchWithErrorHandling(
-    `${API_BASE}/projects/${projectId}/tags/gbif-suggestions?${searchParams}`,
-    { credentials: 'include' }
+  return apiClient.get<GBIFSuggestion[]>(
+    `${API_BASE}/projects/${projectId}/tags/gbif-suggest?${searchParams}`
   );
-  return handleApiResponse<GBIFSuggestion[]>(response);
 }
 
 /**
  * Fetch tag usage statistics for a project.
  */
 export async function fetchTagStatistics(projectId: string): Promise<TagStatistic[]> {
-  const response = await fetchWithErrorHandling(
-    `${API_BASE}/projects/${projectId}/tags/statistics`,
-    { credentials: 'include' }
-  );
-  return handleApiResponse<TagStatistic[]>(response);
+  return apiClient.get<TagStatistic[]>(`${API_BASE}/projects/${projectId}/tags/statistics`);
 }

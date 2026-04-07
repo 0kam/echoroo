@@ -62,23 +62,23 @@
         {disabled}
         maxlength={maxLength}
         rows="3"
-        class="w-full resize-none rounded-lg border border-blue-500 px-3 py-2 font-inherit text-sm leading-relaxed focus:outline-none focus:ring-2 focus:ring-blue-200"
+        class="w-full resize-none rounded-lg border border-primary-500 px-3 py-2 font-inherit text-sm leading-relaxed focus:outline-none focus:ring-2 focus:ring-primary-200"
         onkeydown={handleKeydown}
       ></textarea>
       <div class="flex items-center justify-between">
-        <span class="text-xs text-gray-400">{editValue.length}/{maxLength}</span>
+        <span class="text-xs text-stone-400">{editValue.length}/{maxLength}</span>
         <div class="flex gap-2">
           <button
             type="button"
             onclick={cancel}
-            class="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50"
+            class="rounded-md border border-stone-300 bg-surface-card px-3 py-1.5 text-xs font-medium text-stone-700 transition-colors hover:bg-stone-50"
           >
             Cancel
           </button>
           <button
             type="button"
             onclick={save}
-            class="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-blue-700"
+            class="rounded-md bg-primary-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-primary-700"
           >
             Save
           </button>
@@ -90,15 +90,15 @@
       type="button"
       onclick={startEdit}
       {disabled}
-      class="relative flex min-h-[60px] w-full flex-col rounded-lg border border-gray-200 bg-white p-3 text-left transition-all hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60 {value ? '' : ''}"
+      class="relative flex min-h-[60px] w-full flex-col rounded-lg border border-card bg-surface-card p-3 text-left transition-all hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-60 {value ? '' : ''}"
     >
       {#if value}
-        <p class="m-0 whitespace-pre-wrap break-words text-sm leading-relaxed text-gray-700">{value}</p>
+        <p class="m-0 whitespace-pre-wrap break-words text-sm leading-relaxed text-stone-700">{value}</p>
       {:else}
-        <p class="m-0 text-sm italic text-gray-400">{placeholder}</p>
+        <p class="m-0 text-sm italic text-stone-400">{placeholder}</p>
       {/if}
       {#if !disabled}
-        <span class="absolute bottom-2 right-2 text-[11px] text-gray-300 opacity-0 transition-opacity group-hover:opacity-100">
+        <span class="absolute bottom-2 right-2 text-[11px] text-stone-300 opacity-0 transition-opacity group-hover:opacity-100">
           Click to edit
         </span>
       {/if}

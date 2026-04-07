@@ -3,18 +3,20 @@
  */
 
 import type {
-  Dataset,
   DatasetCreate,
   DatasetDetail,
   DatasetListParams,
   DatasetListResponse,
   DatasetStatistics,
   DatasetUpdate,
-  DirectoryListResponse,
+  DatetimeApplyResult,
+  DatetimeAutoDetectResult,
+  DatetimeConfig,
+  DatetimeTestResult,
   ImportRequest,
   ImportStatusResponse,
 } from '$lib/types/data';
-import { fetchWithErrorHandling, handleApiResponse } from './errors';
+import { apiClient } from './client';
 
 const API_BASE = '/api/v1';
 
@@ -34,8 +36,7 @@ export async function fetchDatasets(
   if (params.search) searchParams.set('search', params.search);
 
   const url = `${API_BASE}/projects/${projectId}/datasets?${searchParams}`;
-  const response = await fetchWithErrorHandling(url, { credentials: 'include' });
-  return handleApiResponse<DatasetListResponse>(response);
+  return apiClient.get<DatasetListResponse>(url);
 }
 
 /**
@@ -45,10 +46,9 @@ export async function fetchDataset(
   projectId: string,
   datasetId: string
 ): Promise<DatasetDetail> {
-  const response = await fetchWithErrorHandling(`${API_BASE}/projects/${projectId}/datasets/${datasetId}`, {
-    credentials: 'include',
-  });
-  return handleApiResponse<DatasetDetail>(response);
+  return apiClient.get<DatasetDetail>(
+    `${API_BASE}/projects/${projectId}/datasets/${datasetId}`
+  );
 }
 
 /**
@@ -58,13 +58,7 @@ export async function createDataset(
   projectId: string,
   data: DatasetCreate
 ): Promise<DatasetDetail> {
-  const response = await fetchWithErrorHandling(`${API_BASE}/projects/${projectId}/datasets`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    credentials: 'include',
-    body: JSON.stringify(data),
-  });
-  return handleApiResponse<DatasetDetail>(response);
+  return apiClient.post<DatasetDetail>(`${API_BASE}/projects/${projectId}/datasets`, data);
 }
 
 /**
@@ -75,27 +69,17 @@ export async function updateDataset(
   datasetId: string,
   data: DatasetUpdate
 ): Promise<DatasetDetail> {
-  const response = await fetchWithErrorHandling(`${API_BASE}/projects/${projectId}/datasets/${datasetId}`, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    credentials: 'include',
-    body: JSON.stringify(data),
-  });
-  return handleApiResponse<DatasetDetail>(response);
+  return apiClient.patch<DatasetDetail>(
+    `${API_BASE}/projects/${projectId}/datasets/${datasetId}`,
+    data
+  );
 }
 
 /**
  * Delete a dataset.
  */
 export async function deleteDataset(projectId: string, datasetId: string): Promise<void> {
-  const response = await fetchWithErrorHandling(`${API_BASE}/projects/${projectId}/datasets/${datasetId}`, {
-    method: 'DELETE',
-    credentials: 'include',
-  });
-
-  if (!response.ok) {
-    await handleApiResponse(response);
-  }
+  return apiClient.delete<void>(`${API_BASE}/projects/${projectId}/datasets/${datasetId}`);
 }
 
 /**
@@ -106,16 +90,10 @@ export async function startImport(
   datasetId: string,
   data: ImportRequest = {}
 ): Promise<ImportStatusResponse> {
-  const response = await fetchWithErrorHandling(
+  return apiClient.post<ImportStatusResponse>(
     `${API_BASE}/projects/${projectId}/datasets/${datasetId}/import`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify(data),
-    }
+    data
   );
-  return handleApiResponse<ImportStatusResponse>(response);
 }
 
 /**
@@ -125,14 +103,9 @@ export async function rescanDataset(
   projectId: string,
   datasetId: string
 ): Promise<ImportStatusResponse> {
-  const response = await fetchWithErrorHandling(
-    `${API_BASE}/projects/${projectId}/datasets/${datasetId}/rescan`,
-    {
-      method: 'POST',
-      credentials: 'include',
-    }
+  return apiClient.post<ImportStatusResponse>(
+    `${API_BASE}/projects/${projectId}/datasets/${datasetId}/rescan`
   );
-  return handleApiResponse<ImportStatusResponse>(response);
 }
 
 /**
@@ -142,11 +115,9 @@ export async function fetchImportStatus(
   projectId: string,
   datasetId: string
 ): Promise<ImportStatusResponse> {
-  const response = await fetchWithErrorHandling(
-    `${API_BASE}/projects/${projectId}/datasets/${datasetId}/import-status`,
-    { credentials: 'include' }
+  return apiClient.get<ImportStatusResponse>(
+    `${API_BASE}/projects/${projectId}/datasets/${datasetId}/import-status`
   );
-  return handleApiResponse<ImportStatusResponse>(response);
 }
 
 /**
@@ -156,20 +127,63 @@ export async function fetchDatasetStatistics(
   projectId: string,
   datasetId: string
 ): Promise<DatasetStatistics> {
-  const response = await fetchWithErrorHandling(
-    `${API_BASE}/projects/${projectId}/datasets/${datasetId}/statistics`,
-    { credentials: 'include' }
+  return apiClient.get<DatasetStatistics>(
+    `${API_BASE}/projects/${projectId}/datasets/${datasetId}/statistics`
   );
-  return handleApiResponse<DatasetStatistics>(response);
 }
 
 /**
- * List directories available for dataset creation.
+ * Get datetime parsing configuration for a dataset.
  */
-export async function fetchDirectories(path?: string): Promise<DirectoryListResponse> {
-  const searchParams = path ? new URLSearchParams({ path }) : '';
-  const url = `${API_BASE}/datasets/directories${searchParams ? '?' + searchParams : ''}`;
+export async function fetchDatetimeConfig(
+  projectId: string,
+  datasetId: string
+): Promise<DatetimeConfig> {
+  return apiClient.get<DatetimeConfig>(
+    `${API_BASE}/projects/${projectId}/datasets/${datasetId}/datetime-config`
+  );
+}
 
-  const response = await fetchWithErrorHandling(url, { credentials: 'include' });
-  return handleApiResponse<DirectoryListResponse>(response);
+/**
+ * Auto-detect datetime pattern from sample filenames.
+ */
+export async function autoDetectDatetime(
+  projectId: string,
+  datasetId: string
+): Promise<DatetimeAutoDetectResult> {
+  return apiClient.post<DatetimeAutoDetectResult>(
+    `${API_BASE}/projects/${projectId}/datasets/${datasetId}/datetime-config/auto-detect`
+  );
+}
+
+/**
+ * Test a datetime pattern against sample filenames.
+ */
+export async function testDatetimePattern(
+  projectId: string,
+  datasetId: string,
+  pattern: string,
+  formatStr: string,
+  timezone?: string
+): Promise<DatetimeTestResult[]> {
+  return apiClient.post<DatetimeTestResult[]>(
+    `${API_BASE}/projects/${projectId}/datasets/${datasetId}/datetime-config/test`,
+    { pattern, format_str: formatStr, timezone: timezone || null }
+  );
+}
+
+/**
+ * Apply a datetime pattern to all recordings in a dataset.
+ */
+export async function applyDatetimePattern(
+  projectId: string,
+  datasetId: string,
+  pattern: string,
+  formatStr: string,
+  timezone?: string
+): Promise<DatetimeApplyResult> {
+  return apiClient.post<DatetimeApplyResult>(
+    `${API_BASE}/projects/${projectId}/datasets/${datasetId}/datetime-config/apply`,
+    { pattern, format_str: formatStr, timezone: timezone || null }
+  );
 }

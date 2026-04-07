@@ -3,7 +3,10 @@
 Tests verify that endpoints conform to the data management specification.
 """
 
-from datetime import datetime, timezone
+from __future__ import annotations
+
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
 import pytest
 from httpx import AsyncClient
@@ -13,11 +16,15 @@ from echoroo.models.dataset import Dataset
 from echoroo.models.recording import Recording
 from echoroo.models.site import Site
 
+if TYPE_CHECKING:
+    from echoroo.models.project import Project
+    from echoroo.models.user import User
+
 
 @pytest.fixture
 async def test_site_for_recordings(
     db_session: AsyncSession,
-    test_project: "Project",  # noqa: F821
+    test_project: Project,  # noqa: F821
 ) -> Site:
     """Create a test site for recording tests.
 
@@ -42,9 +49,9 @@ async def test_site_for_recordings(
 @pytest.fixture
 async def test_dataset_for_recordings(
     db_session: AsyncSession,
-    test_project: "Project",  # noqa: F821
+    test_project: Project,  # noqa: F821
     test_site_for_recordings: Site,
-    test_user: "User",  # noqa: F821
+    test_user: User,  # noqa: F821
 ) -> Dataset:
     """Create a test dataset for recording tests.
 
@@ -95,7 +102,7 @@ async def test_recording(
         samplerate=44100,
         channels=1,
         bit_depth=16,
-        datetime=datetime.now(timezone.utc),
+        datetime=datetime.now(UTC),
         datetime_parse_status="success",
         time_expansion=1.0,
     )

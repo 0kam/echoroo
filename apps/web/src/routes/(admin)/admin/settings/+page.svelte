@@ -5,7 +5,10 @@
 
   import { adminApi } from '$lib/api/admin';
   import type { SystemSetting } from '$lib/api/admin';
+  import type { BirdnetSpeciesFilter } from '$lib/types';
   import { ApiError } from '$lib/api/client';
+  import { getLocale } from '$lib/paraglide/runtime';
+  import * as m from '$lib/paraglide/messages';
 
   // State
   let settings = $state<Record<string, SystemSetting>>({});
@@ -14,10 +17,14 @@
   let error = $state<string | null>(null);
   let successMessage = $state<string | null>(null);
 
-  // Form state
+  // Form state - registration
   let registrationMode = $state<'open' | 'invitation'>('open');
   let allowRegistration = $state(true);
+  // Form state - session
   let sessionTimeoutMinutes = $state(60);
+  // Form state - detection
+  let birdnetSpeciesFilter = $state<BirdnetSpeciesFilter>('none');
+  let birdnetMinConf = $state(0.25);
 
   /**
    * Load system settings
@@ -39,11 +46,17 @@
       if (settings.session_timeout_minutes) {
         sessionTimeoutMinutes = settings.session_timeout_minutes.value as number;
       }
+      if (settings.birdnet_species_filter) {
+        birdnetSpeciesFilter = settings.birdnet_species_filter.value as BirdnetSpeciesFilter;
+      }
+      if (settings.birdnet_min_conf) {
+        birdnetMinConf = settings.birdnet_min_conf.value as number;
+      }
     } catch (err) {
       if (err instanceof ApiError) {
         error = err.detail || err.message;
       } else {
-        error = 'Failed to load system settings';
+        error = m.admin_settings_error_load();
       }
     } finally {
       isLoading = false;
@@ -70,9 +83,11 @@
         registration_mode: registrationMode,
         allow_registration: allowRegistration,
         session_timeout_minutes: sessionTimeoutMinutes,
+        birdnet_species_filter: birdnetSpeciesFilter,
+        birdnet_min_conf: birdnetMinConf,
       });
 
-      successMessage = 'Settings saved successfully';
+      successMessage = m.admin_settings_success();
 
       // Reload settings to get updated values
       await loadSettings();
@@ -85,7 +100,7 @@
       if (err instanceof ApiError) {
         error = err.detail || err.message;
       } else {
-        error = 'Failed to save settings';
+        error = m.admin_settings_error_save();
       }
     } finally {
       isSaving = false;
@@ -116,22 +131,38 @@
   }
 
   /**
+   * Handle BirdNET species filter change
+   */
+  function handleSpeciesFilterChange(event: Event) {
+    const target = event.target as HTMLSelectElement;
+    birdnetSpeciesFilter = target.value as BirdnetSpeciesFilter;
+  }
+
+  /**
+   * Handle BirdNET min confidence change
+   */
+  function handleMinConfChange(event: Event) {
+    const target = event.target as HTMLInputElement;
+    birdnetMinConf = parseFloat(target.value);
+  }
+
+  /**
    * Format date
    */
   function formatDate(dateString: string): string {
-    return new Date(dateString).toLocaleString();
+    return new Date(dateString).toLocaleString(getLocale());
   }
 </script>
 
 <svelte:head>
-  <title>System Settings - Admin - Echoroo</title>
+  <title>{m.admin_settings_page_title()}</title>
 </svelte:head>
 
 <div class="px-8 py-6">
   <!-- Header -->
   <div class="mb-6">
-    <h1 class="text-3xl font-bold text-gray-900">System Settings</h1>
-    <p class="mt-2 text-sm text-gray-600">Configure global system settings</p>
+    <h1 class="text-3xl font-bold text-stone-900">{m.admin_settings_heading()}</h1>
+    <p class="mt-2 text-sm text-stone-600">{m.admin_settings_description()}</p>
   </div>
 
   <!-- Success Message -->
@@ -188,7 +219,7 @@
     <!-- Loading State -->
     <div class="flex items-center justify-center py-12">
       <svg
-        class="h-8 w-8 animate-spin text-blue-600"
+        class="h-8 w-8 animate-spin text-primary-600"
         xmlns="http://www.w3.org/2000/svg"
         fill="none"
         viewBox="0 0 24 24"
@@ -206,35 +237,35 @@
     <!-- Settings Form -->
     <form onsubmit={handleSave} class="space-y-6">
       <!-- Registration Settings Card -->
-      <div class="overflow-hidden rounded-lg bg-white shadow">
-        <div class="border-b border-gray-200 px-6 py-4">
-          <h2 class="text-lg font-medium text-gray-900">Registration Settings</h2>
-          <p class="mt-1 text-sm text-gray-500">
-            Control how new users can register for the system
+      <div class="overflow-hidden rounded-lg bg-surface-card shadow">
+        <div class="border-b border-stone-200 px-6 py-4">
+          <h2 class="text-lg font-medium text-stone-900">{m.admin_settings_registration_heading()}</h2>
+          <p class="mt-1 text-sm text-stone-500">
+            {m.admin_settings_registration_description()}
           </p>
         </div>
 
         <div class="space-y-6 px-6 py-5">
           <!-- Registration Mode -->
           <div>
-            <label for="registration-mode" class="block text-sm font-medium text-gray-700">
-              Registration Mode
+            <label for="registration-mode" class="block text-sm font-medium text-stone-700">
+              {m.admin_settings_registration_mode_label()}
             </label>
             <select
               id="registration-mode"
               value={registrationMode}
               onchange={handleRegistrationModeChange}
-              class="mt-1 block w-full rounded-md border border-gray-300 bg-white px-3 py-2 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 sm:text-sm"
+              class="mt-1 block w-full rounded-md border border-stone-300 bg-surface-card px-3 py-2 shadow-sm focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500 sm:text-sm"
             >
-              <option value="open">Open - Anyone can register</option>
-              <option value="invitation">Invitation Only - Requires an invite code</option>
+              <option value="open">{m.admin_settings_registration_mode_open()}</option>
+              <option value="invitation">{m.admin_settings_registration_mode_invitation()}</option>
             </select>
             {#if settings.registration_mode?.description}
-              <p class="mt-2 text-sm text-gray-500">{settings.registration_mode.description}</p>
+              <p class="mt-2 text-sm text-stone-500">{settings.registration_mode.description}</p>
             {/if}
             {#if settings.registration_mode?.updated_at}
-              <p class="mt-1 text-xs text-gray-400">
-                Last updated: {formatDate(settings.registration_mode.updated_at)}
+              <p class="mt-1 text-xs text-stone-400">
+                {m.admin_settings_last_updated({ date: formatDate(settings.registration_mode.updated_at) })}
               </p>
             {/if}
           </div>
@@ -243,13 +274,13 @@
           <div>
             <div class="flex items-center justify-between">
               <div class="flex-1">
-                <label for="allow-registration" class="block text-sm font-medium text-gray-700">
-                  Allow Registration
+                <label for="allow-registration" class="block text-sm font-medium text-stone-700">
+                  {m.admin_settings_allow_registration_label()}
                 </label>
-                <p class="text-sm text-gray-500">Enable or disable new user registrations</p>
+                <p class="text-sm text-stone-500">{m.admin_settings_allow_registration_description()}</p>
                 {#if settings.allow_registration?.updated_at}
-                  <p class="mt-1 text-xs text-gray-400">
-                    Last updated: {formatDate(settings.allow_registration.updated_at)}
+                  <p class="mt-1 text-xs text-stone-400">
+                    {m.admin_settings_last_updated({ date: formatDate(settings.allow_registration.updated_at) })}
                   </p>
                 {/if}
               </div>
@@ -257,16 +288,16 @@
                 type="button"
                 id="allow-registration"
                 onclick={handleAllowRegistrationToggle}
-                class="relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 {allowRegistration
-                  ? 'bg-blue-600'
-                  : 'bg-gray-200'}"
+                class="relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 {allowRegistration
+                  ? 'bg-primary-600'
+                  : 'bg-stone-200'}"
                 role="switch"
                 aria-checked={allowRegistration}
               >
-                <span class="sr-only">Allow registration</span>
+                <span class="sr-only">{m.admin_settings_allow_registration_sr()}</span>
                 <span
                   aria-hidden="true"
-                  class="pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out {allowRegistration
+                  class="pointer-events-none inline-block h-5 w-5 transform rounded-full bg-surface-card shadow ring-0 transition duration-200 ease-in-out {allowRegistration
                     ? 'translate-x-5'
                     : 'translate-x-0'}"
                 ></span>
@@ -277,17 +308,17 @@
       </div>
 
       <!-- Session Settings Card -->
-      <div class="overflow-hidden rounded-lg bg-white shadow">
-        <div class="border-b border-gray-200 px-6 py-4">
-          <h2 class="text-lg font-medium text-gray-900">Session Settings</h2>
-          <p class="mt-1 text-sm text-gray-500">Configure user session behavior</p>
+      <div class="overflow-hidden rounded-lg bg-surface-card shadow">
+        <div class="border-b border-stone-200 px-6 py-4">
+          <h2 class="text-lg font-medium text-stone-900">{m.admin_settings_session_heading()}</h2>
+          <p class="mt-1 text-sm text-stone-500">{m.admin_settings_session_description()}</p>
         </div>
 
         <div class="space-y-6 px-6 py-5">
           <!-- Session Timeout -->
           <div>
-            <label for="session-timeout" class="block text-sm font-medium text-gray-700">
-              Session Timeout (minutes)
+            <label for="session-timeout" class="block text-sm font-medium text-stone-700">
+              {m.admin_settings_session_timeout_label()}
             </label>
             <input
               type="number"
@@ -296,14 +327,73 @@
               oninput={handleSessionTimeoutChange}
               min="1"
               max="10080"
-              class="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 sm:text-sm"
+              class="mt-1 block w-full rounded-md border border-stone-300 px-3 py-2 shadow-sm focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500 sm:text-sm"
             />
-            <p class="mt-2 text-sm text-gray-500">
-              How long a user session remains active without activity (1-10080 minutes)
+            <p class="mt-2 text-sm text-stone-500">
+              {m.admin_settings_session_timeout_hint()}
             </p>
             {#if settings.session_timeout_minutes?.updated_at}
-              <p class="mt-1 text-xs text-gray-400">
-                Last updated: {formatDate(settings.session_timeout_minutes.updated_at)}
+              <p class="mt-1 text-xs text-stone-400">
+                {m.admin_settings_last_updated({ date: formatDate(settings.session_timeout_minutes.updated_at) })}
+              </p>
+            {/if}
+          </div>
+        </div>
+      </div>
+
+      <!-- Detection Settings Card -->
+      <div class="overflow-hidden rounded-lg bg-surface-card shadow">
+        <div class="border-b border-stone-200 px-6 py-4">
+          <h2 class="text-lg font-medium text-stone-900">{m.admin_settings_detection_heading()}</h2>
+          <p class="mt-1 text-sm text-stone-500">{m.admin_settings_detection_description()}</p>
+        </div>
+
+        <div class="space-y-6 px-6 py-5">
+          <!-- Species Filter -->
+          <div>
+            <label for="species-filter" class="block text-sm font-medium text-stone-700">
+              {m.admin_settings_detection_species_filter_label()}
+            </label>
+            <select
+              id="species-filter"
+              value={birdnetSpeciesFilter}
+              onchange={handleSpeciesFilterChange}
+              class="mt-1 block w-full rounded-md border border-stone-300 bg-surface-card px-3 py-2 shadow-sm focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500 sm:text-sm"
+            >
+              <option value="none">{m.admin_settings_detection_species_filter_none()}</option>
+              <option value="birdnet_geo">{m.admin_settings_detection_species_filter_birdnet_geo()}</option>
+            </select>
+            <p class="mt-2 text-sm text-stone-500">
+              {m.admin_settings_detection_species_filter_hint()}
+            </p>
+            {#if settings.birdnet_species_filter?.updated_at}
+              <p class="mt-1 text-xs text-stone-400">
+                {m.admin_settings_last_updated({ date: formatDate(settings.birdnet_species_filter.updated_at) })}
+              </p>
+            {/if}
+          </div>
+
+          <!-- Min Confidence -->
+          <div>
+            <label for="min-confidence" class="block text-sm font-medium text-stone-700">
+              {m.admin_settings_detection_min_conf_label()}
+            </label>
+            <input
+              type="number"
+              id="min-confidence"
+              value={birdnetMinConf}
+              oninput={handleMinConfChange}
+              min="0"
+              max="1"
+              step="0.01"
+              class="mt-1 block w-full rounded-md border border-stone-300 px-3 py-2 shadow-sm focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500 sm:text-sm"
+            />
+            <p class="mt-2 text-sm text-stone-500">
+              {m.admin_settings_detection_min_conf_hint()}
+            </p>
+            {#if settings.birdnet_min_conf?.updated_at}
+              <p class="mt-1 text-xs text-stone-400">
+                {m.admin_settings_last_updated({ date: formatDate(settings.birdnet_min_conf.updated_at) })}
               </p>
             {/if}
           </div>
@@ -316,14 +406,14 @@
           type="button"
           onclick={() => loadSettings()}
           disabled={isSaving}
-          class="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+          class="rounded-md border border-stone-300 bg-surface-card px-4 py-2 text-sm font-medium text-stone-700 shadow-sm hover:bg-stone-50 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
         >
-          Reset
+          {m.admin_settings_reset()}
         </button>
         <button
           type="submit"
           disabled={isSaving}
-          class="inline-flex items-center rounded-md border border-transparent bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+          class="inline-flex items-center rounded-md border border-transparent bg-primary-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {#if isSaving}
             <svg
@@ -346,9 +436,9 @@
                 d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
               ></path>
             </svg>
-            Saving...
+            {m.admin_settings_saving()}
           {:else}
-            Save Settings
+            {m.admin_settings_save()}
           {/if}
         </button>
       </div>

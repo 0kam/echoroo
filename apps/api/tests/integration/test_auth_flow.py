@@ -62,6 +62,7 @@ async def test_full_registration_and_login_flow(
 
     # 5. Refresh token
     refresh_token = login_response.cookies.get("refresh_token")
+    assert refresh_token is not None
     refresh_response = await client.post(
         "/api/v1/auth/refresh",
         cookies={"refresh_token": refresh_token},
@@ -228,6 +229,7 @@ async def test_token_refresh_rotation(client: AsyncClient, db_session: AsyncSess
         },
     )
     first_refresh_token = login_response.cookies.get("refresh_token")
+    assert first_refresh_token is not None
 
     # First refresh should work
     refresh_response = await client.post(
@@ -236,6 +238,7 @@ async def test_token_refresh_rotation(client: AsyncClient, db_session: AsyncSess
     )
     assert refresh_response.status_code == 200
     second_refresh_token = refresh_response.cookies.get("refresh_token")
+    assert second_refresh_token is not None
 
     # Tokens should be different (rotation)
     assert first_refresh_token != second_refresh_token

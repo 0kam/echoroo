@@ -46,9 +46,9 @@
   }
 </script>
 
-<div class="overflow-hidden rounded-lg border border-gray-200 bg-white">
+<div class="overflow-hidden rounded-lg border border-card bg-surface-card">
   <!-- Spectrogram -->
-  <div class="w-full bg-gray-900">
+  <div class="w-full bg-stone-900">
     <img
       src={getClipSpectrogramUrl(projectId, recordingId, clip.id, { width: 600, height: 200 })}
       alt="Clip spectrogram"
@@ -59,15 +59,15 @@
   <!-- Controls -->
   <div class="flex flex-wrap items-center justify-between gap-4 p-4">
     <div class="flex items-center gap-2 text-sm">
-      <span class="font-medium text-gray-500">Time range:</span>
-      <span class="font-mono font-semibold text-gray-900">{formatTime(clip.start_time)} - {formatTime(clip.end_time)}</span>
-      <span class="text-xs text-gray-500">({clip.duration.toFixed(2)}s)</span>
+      <span class="font-medium text-stone-500">Time range:</span>
+      <span class="font-mono font-semibold text-stone-900">{formatTime(clip.start_time)} - {formatTime(clip.end_time)}</span>
+      <span class="text-xs text-stone-500">({clip.duration.toFixed(2)}s)</span>
     </div>
 
     <div class="flex gap-3">
       <button
         onclick={togglePlay}
-        class="flex items-center gap-2 rounded-md border border-blue-600 bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700"
+        class="flex items-center gap-2 rounded-md border border-primary-600 bg-primary-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-700"
       >
         {#if isPlaying}
           <svg class="h-4 w-4" viewBox="0 0 24 24" fill="currentColor">
@@ -86,7 +86,7 @@
       <a
         href={getClipDownloadUrl(projectId, recordingId, clip.id)}
         download
-        class="flex items-center gap-2 rounded-md border border-gray-300 bg-gray-100 px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-200 no-underline"
+        class="flex items-center gap-2 rounded-md border border-stone-300 bg-stone-100 px-4 py-2 text-sm font-medium text-stone-700 transition-colors hover:bg-stone-200 no-underline"
       >
         <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
           <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" stroke-width="2" />
@@ -99,7 +99,7 @@
   </div>
 
   <!-- Notes -->
-  <div class="border-t border-gray-200 bg-gray-50 p-4">
+  <div class="border-t border-stone-200 bg-stone-50 p-4">
     <NoteEditor
       value={clip.note ?? ''}
       placeholder="Add a note about this clip..."

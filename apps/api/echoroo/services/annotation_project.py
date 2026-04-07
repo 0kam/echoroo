@@ -1,11 +1,11 @@
 """AnnotationProject service for business logic."""
 
-import math
 from uuid import UUID, uuid4
 
 from fastapi import HTTPException, status
 from sqlalchemy import select
 
+from echoroo.core.pagination import paginate
 from echoroo.models.annotation_project import AnnotationProject
 from echoroo.models.annotation_task import AnnotationTask
 from echoroo.models.clip import Clip
@@ -112,29 +112,29 @@ class AnnotationProjectService:
         Returns:
             Paginated AnnotationProjectListResponse
         """
-        if page < 1:
-            page = 1
-        if page_size < 1 or page_size > 100:
-            page_size = 20
+        pagination = paginate(page, page_size, default_page_size=20, max_page_size=100)
 
         annotation_projects, total = await self.annotation_project_repo.list_by_project(
-            project_id, page, page_size
+            project_id, pagination.page, pagination.page_size
         )
 
-        pages = math.ceil(total / page_size) if total > 0 else 0
+        # Fetch task status counts for all projects in a single batch query
+        # instead of issuing one query per project (N+1 fix).
+        ap_ids = [ap.id for ap in annotation_projects]
+        counts_by_project = await self.annotation_task_repo.count_by_status_batch(ap_ids)
 
         items = []
         for ap in annotation_projects:
-            counts = await self.annotation_task_repo.count_by_status(ap.id)
+            counts = counts_by_project.get(ap.id, {})
             progress = self._build_progress(counts)
             items.append(self._build_detail_response(ap, progress))
 
         return AnnotationProjectListResponse(
             items=items,
             total=total,
-            page=page,
-            page_size=page_size,
-            pages=pages,
+            page=pagination.page,
+            page_size=pagination.page_size,
+            pages=pagination.total_pages(total),
         )
 
     async def create(
@@ -153,9 +153,10 @@ class AnnotationProjectService:
         Returns:
             Created annotation project with detail response
         """
+        from sqlalchemy import select
+
         from echoroo.models.dataset import Dataset
         from echoroo.models.tag import Tag
-        from sqlalchemy import select
 
         annotation_project = AnnotationProject(
             project_id=project_id,
@@ -237,9 +238,10 @@ class AnnotationProjectService:
         Raises:
             HTTPException: 404 if annotation project not found
         """
+        from sqlalchemy import select
+
         from echoroo.models.dataset import Dataset
         from echoroo.models.tag import Tag
-        from sqlalchemy import select
 
         annotation_project = await self.annotation_project_repo.get_by_id(annotation_project_id)
         if not annotation_project:

@@ -15,6 +15,7 @@ from echoroo.schemas.project import (
     ProjectMemberAddRequest,
     ProjectMemberResponse,
     ProjectMemberUpdateRequest,
+    ProjectOverviewResponse,
     ProjectResponse,
     ProjectUpdateRequest,
 )
@@ -198,6 +199,35 @@ async def delete_project(
     """
     await service.delete_project(current_user.id, project_id)
     await db.commit()
+
+
+@router.get(
+    "/{project_id}/overview",
+    response_model=ProjectOverviewResponse,
+    summary="Get project overview",
+    description="Get aggregated statistics for a project: sites, recording calendar, and totals",
+)
+async def get_project_overview(
+    project_id: UUID,
+    current_user: CurrentUser,
+    service: ProjectServiceDep,
+) -> ProjectOverviewResponse:
+    """Get aggregated project overview data.
+
+    Args:
+        project_id: Project's UUID
+        current_user: Current authenticated user
+        service: Project service instance
+
+    Returns:
+        Project overview with sites, recording calendar, and totals
+
+    Raises:
+        401: Not authenticated
+        403: Access denied
+        404: Project not found
+    """
+    return await service.get_project_overview(current_user.id, project_id)
 
 
 @router.get(

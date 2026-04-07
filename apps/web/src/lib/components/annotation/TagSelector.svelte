@@ -1,32 +1,42 @@
 <script lang="ts">
   import type { Tag, GBIFSuggestion } from '$lib/types/annotation';
   import { fetchGBIFSuggestions } from '$lib/api/tags';
+  import * as m from '$lib/paraglide/messages';
 
-  export let projectId: string;
-  export let selectedTagIds: string[] = [];
-  export let availableTags: Tag[] = [];
-  export let onTagSelect: (tagId: string) => void;
-  export let onTagRemove: (tagId: string) => void;
-  export let showGBIF: boolean = false;
+  let {
+    projectId,
+    selectedTagIds = [] as string[],
+    availableTags = [] as Tag[],
+    onTagSelect,
+    onTagRemove,
+    showGBIF = false,
+  }: {
+    projectId: string;
+    selectedTagIds?: string[];
+    availableTags?: Tag[];
+    onTagSelect: (tagId: string) => void;
+    onTagRemove: (tagId: string) => void;
+    showGBIF?: boolean;
+  } = $props();
 
-  let searchQuery = '';
-  let isDropdownOpen = false;
-  let gbifSuggestions: GBIFSuggestion[] = [];
-  let isLoadingGBIF = false;
-  let gbifDebounceTimer: ReturnType<typeof setTimeout> | null = null;
-  let inputElement: HTMLInputElement;
+  let searchQuery = $state('');
+  let isDropdownOpen = $state(false);
+  let gbifSuggestions: GBIFSuggestion[] = $state([]);
+  let isLoadingGBIF = $state(false);
+  let gbifDebounceTimer: ReturnType<typeof setTimeout> | null = $state(null);
+  let inputElement: HTMLInputElement | undefined = $state(undefined);
 
   // Selected tag objects for display
-  $: selectedTags = availableTags.filter((t) => selectedTagIds.includes(t.id));
+  const selectedTags = $derived(availableTags.filter((t) => selectedTagIds.includes(t.id)));
 
   // Filter available tags by search query (excluding already selected)
-  $: filteredTags = availableTags.filter(
+  const filteredTags = $derived(availableTags.filter(
     (t) =>
       !selectedTagIds.includes(t.id) &&
       (searchQuery === '' ||
         t.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
         (t.scientific_name && t.scientific_name.toLowerCase().includes(searchQuery.toLowerCase())))
-  );
+  ));
 
   function openDropdown() {
     isDropdownOpen = true;
@@ -106,11 +116,11 @@
   function getCategoryLabel(category: string): string {
     switch (category) {
       case 'species':
-        return 'Species';
+        return m.annotation_tag_filter_species();
       case 'sound_type':
-        return 'Sound Type';
+        return m.annotation_tag_filter_sound_type();
       case 'quality':
-        return 'Quality';
+        return m.annotation_tag_filter_quality();
       default:
         return category;
     }
@@ -127,7 +137,7 @@
           <button
             type="button"
             class="tag-chip__remove"
-            on:click={() => handleTagRemove(tag.id)}
+            onclick={() => handleTagRemove(tag.id)}
             aria-label="Remove {tag.name}"
           >
             &times;
@@ -143,12 +153,12 @@
       bind:this={inputElement}
       type="text"
       class="search-input"
-      placeholder="Search tags..."
+      placeholder={m.annotation_tag_selector_search_placeholder()}
       bind:value={searchQuery}
-      on:input={handleSearchInput}
-      on:focus={handleInputFocus}
-      on:blur={handleInputBlur}
-      on:keydown={handleKeydown}
+      oninput={handleSearchInput}
+      onfocus={handleInputFocus}
+      onblur={handleInputBlur}
+      onkeydown={handleKeydown}
       autocomplete="off"
     />
 
@@ -158,7 +168,7 @@
         <!-- Local tags -->
         {#if filteredTags.length > 0}
           <div class="dropdown-section">
-            <div class="dropdown-section__header">Tags</div>
+            <div class="dropdown-section__header">{m.annotation_tag_selector_tags_header()}</div>
             {#each filteredTags as tag, index}
               <!-- svelte-ignore a11y_click_events_have_key_events -->
               <!-- svelte-ignore a11y_interactive_supports_focus -->
@@ -166,7 +176,7 @@
                 class="dropdown-item"
                 role="option"
                 aria-selected="false"
-                on:click={() => handleTagSelect(tag.id)}
+                onclick={() => handleTagSelect(tag.id)}
               >
                 <span class="dropdown-item__shortcut">{index < 9 ? index + 1 : ''}</span>
                 <span class="dropdown-item__content">
@@ -182,17 +192,17 @@
             {/each}
           </div>
         {:else if searchQuery === ''}
-          <div class="dropdown-empty">Type to search tags</div>
+          <div class="dropdown-empty">{m.annotation_tag_selector_type_to_search()}</div>
         {:else}
-          <div class="dropdown-empty">No matching tags found</div>
+          <div class="dropdown-empty">{m.annotation_tag_selector_no_match()}</div>
         {/if}
 
         <!-- GBIF suggestions -->
         {#if showGBIF && searchQuery.length >= 2}
           <div class="dropdown-section">
-            <div class="dropdown-section__header">GBIF Species Suggestions</div>
+            <div class="dropdown-section__header">{m.annotation_tag_selector_gbif_header()}</div>
             {#if isLoadingGBIF}
-              <div class="dropdown-loading">Searching GBIF...</div>
+              <div class="dropdown-loading">{m.annotation_tag_selector_gbif_searching()}</div>
             {:else if gbifSuggestions.length > 0}
               {#each gbifSuggestions as suggestion}
                 <!-- svelte-ignore a11y_click_events_have_key_events -->
@@ -201,10 +211,10 @@
                   class="dropdown-item dropdown-item--gbif"
                   role="option"
                   aria-selected="false"
-                  on:click={() => {
+                  onclick={() => {
                     // Dispatch GBIF selection to parent for tag creation form auto-fill
                     const event = new CustomEvent('gbifSelect', { detail: suggestion, bubbles: true });
-                    inputElement.dispatchEvent(event);
+                    inputElement?.dispatchEvent(event);
                     closeDropdown();
                     searchQuery = '';
                   }}
@@ -217,7 +227,7 @@
                 </div>
               {/each}
             {:else}
-              <div class="dropdown-empty">No GBIF results</div>
+              <div class="dropdown-empty">{m.annotation_tag_selector_gbif_no_results()}</div>
             {/if}
           </div>
         {/if}

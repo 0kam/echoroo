@@ -3,6 +3,8 @@
   import { goto } from '$app/navigation';
   import { createQuery, createMutation, useQueryClient } from '@tanstack/svelte-query';
   import { fetchAnnotationTask, completeAnnotationTask, fetchNextAnnotationTask } from '$lib/api/annotation-tasks';
+  import { localizeHref } from '$lib/paraglide/runtime';
+  import * as m from '$lib/paraglide/messages';
   import {
     getOrCreateClipAnnotation,
     createSoundEvent,
@@ -160,10 +162,10 @@
     onSuccess: (result) => {
       if (result.next_task) {
         goto(
-          `/projects/${projectId}/annotations/${annotationProjectId}/tasks/${result.next_task.id}`
+          localizeHref(`/projects/${projectId}/annotations/${annotationProjectId}/tasks/${result.next_task.id}`)
         );
       } else {
-        goto(`/projects/${projectId}/annotations/${annotationProjectId}`);
+        goto(localizeHref(`/projects/${projectId}/annotations/${annotationProjectId}`));
       }
     },
   });
@@ -172,7 +174,7 @@
   // Event handlers
   // ============================================================
 
-  function handleCanvasCreate(event: CustomEvent<{ geometry: Geometry }>) {
+  function handleCanvasCreate(event: { detail: { geometry: Geometry } }) {
     if (!clipAnnotation) return;
     $createSoundEventMutation.mutate({
       clipAnnotationId: clipAnnotation.id,
@@ -180,11 +182,11 @@
     });
   }
 
-  function handleCanvasSelect(event: CustomEvent<{ id: string }>) {
+  function handleCanvasSelect(event: { detail: { id: string } }) {
     selectedAnnotationId = event.detail.id;
   }
 
-  function handleCanvasDelete(event: CustomEvent<{ id: string }>) {
+  function handleCanvasDelete(event: { detail: { id: string } }) {
     $deleteSoundEventMutation.mutate(event.detail.id);
   }
 
@@ -223,7 +225,7 @@
   async function handleNavigateNext() {
     const nextTask = await fetchNextAnnotationTask(projectId, annotationProjectId);
     if (nextTask) {
-      goto(`/projects/${projectId}/annotations/${annotationProjectId}/tasks/${nextTask.id}`);
+      goto(localizeHref(`/projects/${projectId}/annotations/${annotationProjectId}/tasks/${nextTask.id}`));
     }
   }
 
@@ -264,7 +266,7 @@
 </script>
 
 <svelte:head>
-  <title>Annotation Workspace | Task</title>
+  <title>{m.annotation_workspace_page_title()}</title>
 </svelte:head>
 
 <svelte:window on:keydown={handleKeydown} />
@@ -273,13 +275,13 @@
   {#if $taskQuery.isLoading}
     <div class="loading">
       <div class="spinner"></div>
-      <span>Loading task...</span>
+      <span>{m.annotation_workspace_loading()}</span>
     </div>
   {:else if $taskQuery.isError}
     <div class="error">
-      <p>Error loading task: {$taskQuery.error?.message ?? 'Unknown error'}</p>
-      <a href="/projects/{projectId}/annotations/{annotationProjectId}" class="back-link">
-        Back to task list
+      <p>{m.annotation_workspace_error_load({ message: $taskQuery.error?.message ?? '' })}</p>
+      <a href={localizeHref(`/projects/${projectId}/annotations/${annotationProjectId}`)} class="back-link">
+        {m.annotation_workspace_back_link()}
       </a>
     </div>
   {:else if task}
@@ -304,33 +306,33 @@
             class="toolbar-btn"
             class:active={drawMode === 'select'}
             on:click={() => (drawMode = 'select')}
-            title="Select mode (V)"
+            title={m.annotation_workspace_tool_select_title()}
             aria-pressed={drawMode === 'select'}
           >
             <svg class="tool-icon" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
               <path d="M6.3 2.841A1.5 1.5 0 004 4.11V15.89a1.5 1.5 0 002.3 1.269l9.344-5.89a1.5 1.5 0 000-2.538L6.3 2.84z" />
             </svg>
-            Select
+            {m.annotation_workspace_tool_select()}
             <kbd class="shortcut">V</kbd>
           </button>
           <button
             class="toolbar-btn"
             class:active={drawMode === 'bbox'}
             on:click={() => (drawMode = 'bbox')}
-            title="Draw bounding box (B)"
+            title={m.annotation_workspace_tool_bbox_title()}
             aria-pressed={drawMode === 'bbox'}
           >
             <svg class="tool-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
               <rect x="3" y="5" width="14" height="10" rx="1" />
             </svg>
-            Bounding Box
+            {m.annotation_workspace_tool_bbox()}
             <kbd class="shortcut">B</kbd>
           </button>
           <button
             class="toolbar-btn"
             class:active={drawMode === 'timeinterval'}
             on:click={() => (drawMode = 'timeinterval')}
-            title="Draw time interval (T)"
+            title={m.annotation_workspace_tool_timeinterval_title()}
             aria-pressed={drawMode === 'timeinterval'}
           >
             <svg class="tool-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
@@ -338,7 +340,7 @@
               <line x1="3" y1="10" x2="17" y2="10" />
               <line x1="3" y1="15" x2="17" y2="15" />
             </svg>
-            Time Interval
+            {m.annotation_workspace_tool_timeinterval()}
             <kbd class="shortcut">T</kbd>
           </button>
 
@@ -353,7 +355,7 @@
 
           <!-- Clip annotation loading state -->
           {#if $clipAnnotationQuery.isLoading}
-            <span class="status-text">Loading annotations...</span>
+            <span class="status-text">{m.annotation_workspace_loading_annotations()}</span>
           {/if}
         </div>
 
@@ -369,7 +371,7 @@
             />
           {:else}
             <div class="spectrogram-placeholder">
-              <span>No recording available</span>
+              <span>{m.annotation_workspace_no_recording()}</span>
             </div>
           {/if}
 
@@ -383,9 +385,9 @@
               {selectedAnnotationId}
               mode={drawMode}
               {projectTags}
-              on:create={handleCanvasCreate}
-              on:select={handleCanvasSelect}
-              on:delete={handleCanvasDelete}
+              oncreate={(detail) => handleCanvasCreate({ detail })}
+              onselect={(detail) => handleCanvasSelect({ detail })}
+              ondelete={(detail) => handleCanvasDelete({ detail })}
             />
           </div>
         </div>
@@ -397,9 +399,9 @@
         <div class="sidebar-section">
           <h3 class="sidebar-heading">
             {#if selectedAnnotationId}
-              Sound Event Tags
+              {m.annotation_workspace_tags_sound_event()}
             {:else}
-              Clip Tags
+              {m.annotation_workspace_tags_clip()}
             {/if}
           </h3>
 
@@ -414,10 +416,10 @@
                 onTagRemove={handleTagRemove}
               />
             {:else}
-              <p class="sidebar-hint">Selection not found. Click an annotation to select it.</p>
+              <p class="sidebar-hint">{m.annotation_workspace_selection_not_found()}</p>
             {/if}
           {:else}
-            <p class="sidebar-hint">Select an annotation to tag it, or tag the whole clip below.</p>
+            <p class="sidebar-hint">{m.annotation_workspace_select_annotation_hint()}</p>
             <TagSelector
               {projectId}
               selectedTagIds={clipTags.map((t) => t.id)}
@@ -431,7 +433,7 @@
         <!-- Annotation List section -->
         <div class="sidebar-section sidebar-section--grow">
           <h3 class="sidebar-heading">
-            Sound Events
+            {m.annotation_workspace_sound_events()}
             <span class="count-badge">{soundEvents.length}</span>
           </h3>
           <AnnotationList
@@ -446,7 +448,7 @@
         {#if notes.length > 0}
           <div class="sidebar-section">
             <h3 class="sidebar-heading">
-              Notes
+              {m.annotation_workspace_notes()}
               <span class="count-badge">{notes.length}</span>
             </h3>
             <ul class="notes-list">
@@ -454,7 +456,7 @@
                 <li class="note-item" class:note-item--review={note.is_review}>
                   <p class="note-content">{note.content}</p>
                   {#if note.is_review}
-                    <span class="note-badge">Review</span>
+                    <span class="note-badge">{m.annotation_workspace_note_review_badge()}</span>
                   {/if}
                 </li>
               {/each}
@@ -485,7 +487,7 @@
               d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z"
             />
           </svg>
-          {showInstructions ? 'Hide' : 'Show'} Instructions
+          {showInstructions ? m.annotation_workspace_hide_instructions() : m.annotation_workspace_show_instructions()} {m.annotation_workspace_instructions_label()}
         </button>
         {#if showInstructions}
           <div class="instructions-content">

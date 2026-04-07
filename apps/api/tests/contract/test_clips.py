@@ -3,7 +3,7 @@
 Tests verify that endpoints conform to the data management specification.
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 import pytest
@@ -102,7 +102,7 @@ async def test_recording_for_clips(
         samplerate=44100,
         channels=1,
         bit_depth=16,
-        datetime=datetime.now(timezone.utc),
+        datetime=datetime.now(UTC),
         datetime_parse_status=DatetimeParseStatus.SUCCESS,
         time_expansion=1.0,
     )

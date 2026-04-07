@@ -67,6 +67,8 @@ export interface Tag {
   scientific_name?: string | null;
   /** Common / vernacular name (species tags only) */
   common_name?: string | null;
+  /** Global taxon identifier linking this tag to the taxa table */
+  taxon_id?: string | null;
   /** ISO 8601 creation timestamp */
   created_at: string;
   /** ISO 8601 last-update timestamp */

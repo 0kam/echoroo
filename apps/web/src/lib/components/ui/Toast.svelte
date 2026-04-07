@@ -2,10 +2,17 @@
   import { fly } from 'svelte/transition';
   import { onMount } from 'svelte';
 
-  export let message: string;
-  export let type: 'success' | 'error' | 'warning' | 'info' = 'info';
-  export let duration: number = 5000;
-  export let onClose: () => void;
+  let {
+    message,
+    type = 'info' as 'success' | 'error' | 'warning' | 'info',
+    duration = 5000,
+    onClose,
+  }: {
+    message: string;
+    type?: 'success' | 'error' | 'warning' | 'info';
+    duration?: number;
+    onClose: () => void;
+  } = $props();
 
   const icons = {
     success: '✓',
@@ -18,7 +25,7 @@
     success: 'bg-green-100 border-green-500 text-green-800',
     error: 'bg-red-100 border-red-500 text-red-800',
     warning: 'bg-amber-100 border-amber-500 text-amber-800',
-    info: 'bg-blue-100 border-blue-500 text-blue-800',
+    info: 'bg-primary-100 border-primary-500 text-primary-800',
   };
 
   onMount(() => {
@@ -36,7 +43,7 @@
 >
   <span class="toast-icon">{icons[type]}</span>
   <p class="toast-message">{message}</p>
-  <button type="button" on:click={onClose} class="toast-close" aria-label="Close">
+  <button type="button" onclick={onClose} class="toast-close" aria-label="Close">
     ✕
   </button>
 </div>
@@ -90,16 +97,16 @@
     color: #92400e;
   }
 
-  .bg-blue-100 {
-    background-color: #dbeafe;
+  .bg-primary-100 {
+    background-color: rgb(var(--primary-100));
   }
 
-  .border-blue-500 {
-    border-color: #3b82f6;
+  .border-primary-500 {
+    border-color: rgb(var(--primary-500));
   }
 
-  .text-blue-800 {
-    color: #1e40af;
+  .text-primary-800 {
+    color: rgb(var(--primary-800));
   }
 
   .toast-icon {

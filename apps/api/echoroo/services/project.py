@@ -5,6 +5,7 @@ from uuid import UUID
 
 from fastapi import HTTPException, status
 
+from echoroo.core.pagination import paginate
 from echoroo.models.project import Project, ProjectMember
 from echoroo.repositories.project import ProjectRepository
 from echoroo.repositories.user import UserRepository
@@ -14,9 +15,13 @@ from echoroo.schemas.project import (
     ProjectMemberAddRequest,
     ProjectMemberResponse,
     ProjectMemberUpdateRequest,
+    ProjectOverviewResponse,
+    ProjectOverviewSite,
     ProjectResponse,
     ProjectUpdateRequest,
+    RecordingCalendarEntry,
 )
+from echoroo.services.h3_utils import h3_to_center
 
 
 class ProjectService:
@@ -46,18 +51,17 @@ class ProjectService:
             ProjectListResponse with paginated projects
         """
         # Validate pagination parameters
-        if page < 1:
-            page = 1
-        if limit < 1 or limit > 100:
-            limit = 20
+        pagination = paginate(page, limit, default_page_size=20, max_page_size=100)
 
-        projects, total = await self.project_repo.get_accessible_projects(user_id, page, limit)
+        projects, total = await self.project_repo.get_accessible_projects(
+            user_id, pagination.page, pagination.page_size
+        )
 
         return ProjectListResponse(
             items=[ProjectResponse.model_validate(p) for p in projects],
             total=total,
-            page=page,
-            limit=limit,
+            page=pagination.page,
+            limit=pagination.page_size,
         )
 
     async def create_project(
@@ -352,6 +356,79 @@ class ProjectService:
         member.role = request.role
         updated_member = await self.project_repo.update_member(member)
         return ProjectMemberResponse.model_validate(updated_member)
+
+    async def get_project_overview(
+        self, user_id: UUID, project_id: UUID
+    ) -> ProjectOverviewResponse:
+        """Get aggregated overview data for a project.
+
+        Args:
+            user_id: Current user's UUID
+            project_id: Project's UUID
+
+        Returns:
+            ProjectOverviewResponse with sites, calendar, and totals
+
+        Raises:
+            HTTPException: If project not found or access denied
+        """
+        project = await self.project_repo.get_by_id(project_id)
+        if not project:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Project not found",
+            )
+
+        has_access = await self.project_repo.has_project_access(project_id, user_id)
+        if not has_access:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied",
+            )
+
+        site_rows = await self.project_repo.get_overview_sites(project_id)
+        calendar_rows = await self.project_repo.get_recording_calendar(project_id)
+        total_recordings, total_sites, total_duration = (
+            await self.project_repo.get_overview_totals(project_id)
+        )
+
+        sites: list[ProjectOverviewSite] = []
+        for row in site_rows:
+            m = row._mapping
+            h3_index: str = m["h3_index"]
+            try:
+                lat, lng = h3_to_center(h3_index)
+            except Exception:
+                lat, lng = None, None
+            sites.append(
+                ProjectOverviewSite(
+                    id=m["id"],
+                    name=m["name"],
+                    h3_index=h3_index,
+                    latitude=lat,
+                    longitude=lng,
+                    dataset_count=int(m["dataset_count"]),
+                    recording_count=int(m["recording_count"]),
+                )
+            )
+
+        calendar: list[RecordingCalendarEntry] = [
+            RecordingCalendarEntry(
+                year=int(row._mapping["year"]),
+                month=int(row._mapping["month"]),
+                site_count=int(row._mapping["site_count"]),
+                recording_count=int(row._mapping["recording_count"]),
+            )
+            for row in calendar_rows
+        ]
+
+        return ProjectOverviewResponse(
+            sites=sites,
+            recording_calendar=calendar,
+            total_recordings=total_recordings,
+            total_sites=total_sites,
+            total_duration=total_duration,
+        )
 
     async def remove_member(
         self, user_id: UUID, project_id: UUID, member_user_id: UUID

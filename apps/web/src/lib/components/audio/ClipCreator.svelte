@@ -3,15 +3,23 @@
   import { createClip } from '$lib/api/clips';
   import type { ClipDetail } from '$lib/types/data';
 
-  export let projectId: string;
-  export let recordingId: string;
-  export let duration: number;
-  export let currentTime: number = 0;
-  export let onCreated: ((clip: ClipDetail) => void) | undefined = undefined;
+  let {
+    projectId,
+    recordingId,
+    duration,
+    currentTime = 0,
+    onCreated = undefined,
+  }: {
+    projectId: string;
+    recordingId: string;
+    duration: number;
+    currentTime?: number;
+    onCreated?: ((clip: ClipDetail) => void) | undefined;
+  } = $props();
 
-  let startTime = 0;
-  let endTime = Math.min(10, duration);
-  let note = '';
+  let startTime = $state(0);
+  let endTime = $state(Math.min(10, duration));
+  let note = $state('');
 
   const queryClient = useQueryClient();
   const createMut = createMutation({
@@ -47,8 +55,8 @@
     endTime = parseFloat(end.toFixed(2));
   }
 
-  $: clipDuration = endTime - startTime;
-  $: isValid = endTime > startTime && startTime >= 0 && endTime <= duration;
+  const clipDuration = $derived(endTime - startTime);
+  const isValid = $derived(endTime > startTime && startTime >= 0 && endTime <= duration);
 
   function formatTime(seconds: number): string {
     const mins = Math.floor(seconds / 60);
@@ -67,7 +75,7 @@
 <div class="clip-creator">
   <h3 class="title">Create Clip</h3>
 
-  <form on:submit={handleSubmit} class="form">
+  <form onsubmit={handleSubmit} class="form">
     <div class="time-inputs">
       <div class="time-field">
         <label for="start-time" class="label">Start Time (s)</label>
@@ -83,7 +91,7 @@
           />
           <button
             type="button"
-            on:click={setStartFromCurrent}
+            onclick={setStartFromCurrent}
             class="btn-from-current"
             aria-label="Set start time from current position"
           >
@@ -110,7 +118,7 @@
           />
           <button
             type="button"
-            on:click={setEndFromCurrent}
+            onclick={setEndFromCurrent}
             class="btn-from-current"
             aria-label="Set end time from current position"
           >
@@ -147,7 +155,7 @@
       </div>
 
       <div class="actions">
-        <button type="button" on:click={resetSelection} class="btn-reset">Reset</button>
+        <button type="button" onclick={resetSelection} class="btn-reset">Reset</button>
         <button type="submit" disabled={$createMut.isPending || !isValid} class="btn-create">
           {$createMut.isPending ? 'Creating...' : 'Create Clip'}
         </button>

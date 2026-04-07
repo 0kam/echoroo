@@ -8,6 +8,8 @@ from echoroo.schemas.annotation import (
     SoundEventAnnotationCreate,
     SoundEventAnnotationResponse,
     SoundEventAnnotationUpdate,
+)
+from echoroo.schemas.annotation import (
     TagSummary as AnnotationTagSummary,
 )
 from echoroo.schemas.annotation_project import (
@@ -49,8 +51,6 @@ from echoroo.schemas.dataset import (
     DatasetResponse,
     DatasetStatisticsResponse,
     DatasetUpdate,
-    DirectoryInfo,
-    DirectoryListResponse,
     ExportRequest,
     ImportRequest,
     ImportStatusResponse,
@@ -62,6 +62,8 @@ from echoroo.schemas.dataset import (
 from echoroo.schemas.note import NoteCreate, NoteResponse
 from echoroo.schemas.recording import (
     DatasetSummary as RecordingDatasetSummary,
+)
+from echoroo.schemas.recording import (
     PlaybackParams,
     RecordingDetailResponse,
     RecordingListResponse,
@@ -90,6 +92,16 @@ from echoroo.schemas.tag import (
     TagStatistic,
     TagUpdate,
 )
+from echoroo.schemas.upload import (
+    CompleteUploadRequest,
+    CompleteUploadResponse,
+    CreateUploadSessionRequest,
+    CreateUploadSessionResponse,
+    UploadFilePresignedResponse,
+    UploadFileRequest,
+    UploadFileStatusResponse,
+    UploadSessionStatusResponse,
+)
 
 __all__ = [
     # Clip schemas
@@ -108,8 +120,6 @@ __all__ = [
     "DatasetResponse",
     "DatasetStatisticsResponse",
     "DatasetUpdate",
-    "DirectoryInfo",
-    "DirectoryListResponse",
     "ExportRequest",
     "ImportRequest",
     "ImportStatusResponse",
@@ -176,4 +186,13 @@ __all__ = [
     # Note schemas
     "NoteCreate",
     "NoteResponse",
+    # Upload schemas
+    "CompleteUploadRequest",
+    "CompleteUploadResponse",
+    "CreateUploadSessionRequest",
+    "CreateUploadSessionResponse",
+    "UploadFilePresignedResponse",
+    "UploadFileRequest",
+    "UploadFileStatusResponse",
+    "UploadSessionStatusResponse",
 ]

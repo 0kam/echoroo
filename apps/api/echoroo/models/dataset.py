@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 
 
 class Dataset(UUIDMixin, TimestampMixin, Base):
-    """Collection of audio recordings imported from a directory.
+    """Collection of audio recordings imported via upload sessions.
 
     Attributes:
         id: Unique identifier (UUID)
@@ -34,7 +34,7 @@ class Dataset(UUIDMixin, TimestampMixin, Base):
         created_by_id: User who created dataset
         name: Dataset name (max 200 chars)
         description: Optional description
-        audio_dir: Relative path to audio directory
+        audio_dir: Deprecated - was used for local directory scanning
         visibility: Dataset visibility (private/public)
         status: Import status
         doi: Optional Digital Object Identifier
@@ -89,10 +89,10 @@ class Dataset(UUIDMixin, TimestampMixin, Base):
         nullable=True,
         doc="Dataset description",
     )
-    audio_dir: Mapped[str] = mapped_column(
+    audio_dir: Mapped[str | None] = mapped_column(
         String(500),
-        nullable=False,
-        doc="Relative path to audio directory",
+        nullable=True,
+        doc="Deprecated: was used for local directory scanning",
     )
     visibility: Mapped[DatasetVisibility] = mapped_column(
         Enum(
@@ -140,6 +140,11 @@ class Dataset(UUIDMixin, TimestampMixin, Base):
         String(100),
         nullable=True,
         doc="strftime format string",
+    )
+    datetime_timezone: Mapped[str | None] = mapped_column(
+        String(50),
+        nullable=True,
+        doc="IANA timezone for datetime parsing (e.g., 'Asia/Tokyo', 'UTC')",
     )
     total_files: Mapped[int] = mapped_column(
         Integer,

@@ -1,5 +1,6 @@
 """User profile service with business logic."""
 
+import logging
 from uuid import UUID
 
 from fastapi import HTTPException, status
@@ -9,6 +10,8 @@ from echoroo.core.security import hash_password, verify_password
 from echoroo.models.user import User
 from echoroo.repositories.user import UserRepository
 from echoroo.schemas.user import PasswordChangeRequest, UserUpdateRequest
+
+logger = logging.getLogger(__name__)
 
 
 class UserService:
@@ -22,6 +25,11 @@ class UserService:
         """
         self.db = db
         self.user_repo = UserRepository(db)
+
+        # Import here to avoid circular imports between user and auth services
+        from echoroo.services.auth import AuthService  # noqa: PLC0415
+
+        self._auth_service = AuthService(db)
 
     async def get_current_user(self, user_id: UUID) -> User:
         """Get current user by ID.
@@ -111,3 +119,7 @@ class UserService:
         user.hashed_password = hash_password(request.new_password)
         await self.user_repo.update(user)
         await self.db.commit()
+
+        # Revoke all existing tokens so that other active sessions are invalidated
+        logger.info("Password changed for user %s; revoking all tokens", user_id)
+        await self._auth_service.revoke_user_tokens(user_id)

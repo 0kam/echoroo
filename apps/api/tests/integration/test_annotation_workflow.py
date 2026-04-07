@@ -4,7 +4,7 @@ Tests the complete lifecycle:
 create project -> generate tasks -> annotate -> complete -> review
 """
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pytest
 from httpx import AsyncClient
@@ -34,7 +34,7 @@ async def workflow_setup(
     db_session: AsyncSession,
     test_project: "Project",
     test_user: "User",
-) -> dict:
+) -> dict[str, Any]:
     """Set up test data for the annotation workflow.
 
     Creates a site, dataset, recording, clip, annotation project, and tag.
@@ -129,7 +129,7 @@ class TestAnnotationWorkflow:
         client: AsyncClient,
         auth_headers: dict[str, str],
         test_project_id: str,
-        workflow_setup: dict,
+        workflow_setup: dict[str, Any],
     ) -> None:
         """Test the complete annotation workflow end-to-end.
 

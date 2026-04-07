@@ -5,6 +5,20 @@
 import type { Recorder, RecorderCreateRequest, RecorderUpdateRequest, RecorderListResponse } from '$lib/types';
 import { apiClient } from './client';
 
+const API_BASE = '/api/v1';
+
+/**
+ * Fetch all recorders (public, authenticated endpoint).
+ */
+export async function fetchRecorders(params?: { page?: number; limit?: number }): Promise<RecorderListResponse> {
+  const searchParams = new URLSearchParams();
+  if (params?.page) searchParams.set('page', params.page.toString());
+  if (params?.limit) searchParams.set('limit', params.limit.toString());
+  const query = searchParams.toString();
+
+  return apiClient.get<RecorderListResponse>(`${API_BASE}/recorders${query ? `?${query}` : ''}`);
+}
+
 export const recorderApi = {
   /**
    * List all recorders (superuser only)

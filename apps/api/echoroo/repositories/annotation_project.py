@@ -2,25 +2,19 @@
 
 from uuid import UUID
 
-from sqlalchemy import delete, func, select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 
 from echoroo.models.annotation_project import AnnotationProject
 from echoroo.models.annotation_task import AnnotationTask
 from echoroo.models.enums import AnnotationTaskStatus
+from echoroo.repositories.base import BaseRepository
 
 
-class AnnotationProjectRepository:
+class AnnotationProjectRepository(BaseRepository[AnnotationProject]):
     """Repository for AnnotationProject entity operations."""
 
-    def __init__(self, db: AsyncSession) -> None:
-        """Initialize repository with database session.
-
-        Args:
-            db: SQLAlchemy async session
-        """
-        self.db = db
+    model = AnnotationProject
 
     async def get_by_id(self, annotation_project_id: UUID) -> AnnotationProject | None:
         """Get annotation project by ID with datasets and tags relationships loaded.
@@ -109,16 +103,6 @@ class AnnotationProjectRepository:
         await self.db.refresh(annotation_project, ["datasets", "tags"])
         return annotation_project
 
-    async def delete(self, annotation_project_id: UUID) -> None:
-        """Delete an annotation project by ID.
-
-        Args:
-            annotation_project_id: AnnotationProject's UUID
-        """
-        await self.db.execute(
-            delete(AnnotationProject).where(AnnotationProject.id == annotation_project_id)
-        )
-        await self.db.flush()
 
     async def get_progress(self, annotation_project_id: UUID) -> dict[str, int]:
         """Get task progress statistics for an annotation project.

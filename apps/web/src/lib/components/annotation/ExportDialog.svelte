@@ -1,12 +1,30 @@
 <script lang="ts">
-  import { fetchWithErrorHandling } from '$lib/api/errors';
-  import type { ExportFormat } from '$lib/types/annotation';
+  /**
+   * ExportDialog - Export dialog for annotation projects.
+   *
+   * Supports JSON, CSV (Raven-compatible), and AOEF formats.
+   * Uses the Svelte 5 $props() pattern.
+   */
 
-  export let isOpen: boolean = false;
-  export let projectId: string;
-  export let annotationProjectId: string;
-  export let annotationProjectName: string = '';
-  export let onClose: () => void;
+  import { apiClient } from '$lib/api/client';
+  import type { ExportFormat } from '$lib/types/annotation';
+  import * as m from '$lib/paraglide/messages';
+
+  interface Props {
+    projectId: string;
+    annotationProjectId: string;
+    annotationProjectName?: string;
+    isOpen?: boolean;
+    onClose: () => void;
+  }
+
+  let {
+    projectId,
+    annotationProjectId,
+    annotationProjectName = '',
+    isOpen = false,
+    onClose,
+  }: Props = $props();
 
   interface FormatOption {
     value: ExportFormat;
@@ -32,9 +50,9 @@
     },
   ];
 
-  let selectedFormat: ExportFormat = 'json';
-  let isExporting = false;
-  let exportError = '';
+  let selectedFormat = $state<ExportFormat>('json');
+  let isExporting = $state(false);
+  let exportError = $state('');
 
   function handleOverlayClick(event: MouseEvent) {
     if (event.target === event.currentTarget) {
@@ -60,7 +78,7 @@
 
     try {
       const url = `/api/v1/projects/${projectId}/annotation-projects/${annotationProjectId}/export?format=${selectedFormat}`;
-      const response = await fetchWithErrorHandling(url, { credentials: 'include' });
+      const response = await apiClient.requestRaw(url);
 
       let blob: Blob;
       let filename: string;
@@ -83,22 +101,22 @@
 
       handleClose();
     } catch (error) {
-      exportError = error instanceof Error ? error.message : 'Export failed';
+      exportError = error instanceof Error ? error.message : m.annotation_export_error();
     } finally {
       isExporting = false;
     }
   }
 </script>
 
-<svelte:window on:keydown={handleKeydown} />
+<svelte:window onkeydown={handleKeydown} />
 
 {#if isOpen}
-  <!-- svelte-ignore a11y-click-events-have-key-events -->
-  <!-- svelte-ignore a11y-no-static-element-interactions -->
+  <!-- svelte-ignore a11y_click_events_have_key_events -->
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
   <!-- svelte-ignore a11y_interactive_supports_focus -->
   <div
     class="overlay"
-    on:click={handleOverlayClick}
+    onclick={handleOverlayClick}
     role="dialog"
     aria-modal="true"
     aria-labelledby="export-dialog-title"
@@ -107,13 +125,13 @@
     <div class="dialog">
       <!-- Header -->
       <div class="dialog-header">
-        <h2 class="dialog-title" id="export-dialog-title">Export Annotations</h2>
+        <h2 class="dialog-title" id="export-dialog-title">{m.annotation_export_title()}</h2>
         <button
           type="button"
           class="close-btn"
-          on:click={handleClose}
+          onclick={handleClose}
           disabled={isExporting}
-          aria-label="Close export dialog"
+          aria-label={m.annotation_export_close_aria()}
         >
           <svg
             viewBox="0 0 16 16"
@@ -132,7 +150,7 @@
       <div class="dialog-body">
         <!-- Format selector -->
         <fieldset class="format-fieldset">
-          <legend class="format-legend">Export Format</legend>
+          <legend class="format-legend">{m.annotation_export_format_legend()}</legend>
           <div class="format-options">
             {#each FORMAT_OPTIONS as option (option.value)}
               <label
@@ -180,15 +198,15 @@
         <button
           type="button"
           class="btn btn--cancel"
-          on:click={handleClose}
+          onclick={handleClose}
           disabled={isExporting}
         >
-          Cancel
+          {m.annotation_export_cancel()}
         </button>
         <button
           type="button"
           class="btn btn--export"
-          on:click={handleExport}
+          onclick={handleExport}
           disabled={isExporting}
           aria-busy={isExporting}
         >
@@ -204,7 +222,7 @@
                 stroke-dashoffset="10"
               />
             </svg>
-            Exporting...
+            {m.annotation_export_exporting()}
           {:else}
             <svg
               viewBox="0 0 16 16"
@@ -216,7 +234,7 @@
             >
               <path stroke-linecap="round" stroke-linejoin="round" d="M8 2v8M5 7l3 3 3-3M2 12h12" />
             </svg>
-            Export
+            {m.annotation_export_button()}
           {/if}
         </button>
       </div>

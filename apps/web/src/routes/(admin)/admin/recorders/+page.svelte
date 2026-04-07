@@ -5,6 +5,7 @@
 
   import { recorderApi } from '$lib/api/recorders';
   import { ApiError } from '$lib/api/client';
+  import { getLocale } from '$lib/paraglide/runtime';
   import type { Recorder, RecorderCreateRequest, RecorderUpdateRequest } from '$lib/types';
 
   // State
@@ -207,7 +208,7 @@
    * Format date
    */
   function formatDate(dateString: string): string {
-    return new Date(dateString).toLocaleString();
+    return new Date(dateString).toLocaleString(getLocale());
   }
 </script>
 
@@ -219,12 +220,12 @@
   <!-- Header -->
   <div class="mb-6 flex items-center justify-between">
     <div>
-      <h1 class="text-3xl font-bold text-gray-900">Recorder Management</h1>
-      <p class="mt-2 text-sm text-gray-600">Manage audio recorders and their metadata</p>
+      <h1 class="text-3xl font-bold text-stone-900">Recorder Management</h1>
+      <p class="mt-2 text-sm text-stone-600">Manage audio recorders and their metadata</p>
     </div>
     <button
       onclick={openCreateModal}
-      class="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+      class="rounded-lg bg-primary-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2"
     >
       Add New Recorder
     </button>
@@ -284,7 +285,7 @@
   {#if isLoading}
     <div class="flex items-center justify-center py-12">
       <svg
-        class="h-8 w-8 animate-spin text-blue-600"
+        class="h-8 w-8 animate-spin text-primary-600"
         xmlns="http://www.w3.org/2000/svg"
         fill="none"
         viewBox="0 0 24 24"
@@ -299,9 +300,9 @@
       </svg>
     </div>
   {:else if recorders.length === 0}
-    <div class="rounded-lg border-2 border-dashed border-gray-300 p-12 text-center">
+    <div class="rounded-lg border-2 border-dashed border-stone-300 p-12 text-center">
       <svg
-        class="mx-auto h-12 w-12 text-gray-400"
+        class="mx-auto h-12 w-12 text-stone-400"
         xmlns="http://www.w3.org/2000/svg"
         fill="none"
         viewBox="0 0 24 24"
@@ -314,86 +315,86 @@
           d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"
         />
       </svg>
-      <h3 class="mt-2 text-sm font-medium text-gray-900">No recorders found</h3>
-      <p class="mt-1 text-sm text-gray-500">Get started by adding a new recorder.</p>
+      <h3 class="mt-2 text-sm font-medium text-stone-900">No recorders found</h3>
+      <p class="mt-1 text-sm text-stone-500">Get started by adding a new recorder.</p>
       <div class="mt-6">
         <button
           onclick={openCreateModal}
-          class="inline-flex items-center rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+          class="inline-flex items-center rounded-md bg-primary-600 px-4 py-2 text-sm font-medium text-white hover:bg-primary-700"
         >
           Add New Recorder
         </button>
       </div>
     </div>
   {:else}
-    <div class="overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm">
+    <div class="overflow-hidden rounded-lg border border-card bg-surface-card shadow-sm">
       <div class="overflow-x-auto">
-        <table class="min-w-full divide-y divide-gray-200">
-          <thead class="bg-gray-50">
+        <table class="min-w-full divide-y divide-stone-200">
+          <thead class="bg-stone-50">
             <tr>
               <th
                 scope="col"
-                class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500"
+                class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-stone-500"
               >
                 ID
               </th>
               <th
                 scope="col"
-                class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500"
+                class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-stone-500"
               >
                 Manufacturer
               </th>
               <th
                 scope="col"
-                class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500"
+                class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-stone-500"
               >
                 Recorder Name
               </th>
               <th
                 scope="col"
-                class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500"
+                class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-stone-500"
               >
                 Version
               </th>
               <th
                 scope="col"
-                class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500"
+                class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-stone-500"
               >
                 Created
               </th>
               <th
                 scope="col"
-                class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500"
+                class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-stone-500"
               >
                 Actions
               </th>
             </tr>
           </thead>
-          <tbody class="divide-y divide-gray-200 bg-white">
+          <tbody class="divide-y divide-stone-200 bg-surface-card">
             {#each recorders as recorder (recorder.id)}
-              <tr class="hover:bg-gray-50">
+              <tr class="hover:bg-stone-50">
                 <!-- ID -->
-                <td class="whitespace-nowrap px-6 py-4 text-sm font-medium text-gray-900">
+                <td class="whitespace-nowrap px-6 py-4 text-sm font-medium text-stone-900">
                   {recorder.id}
                 </td>
 
                 <!-- Manufacturer -->
-                <td class="whitespace-nowrap px-6 py-4 text-sm text-gray-900">
+                <td class="whitespace-nowrap px-6 py-4 text-sm text-stone-900">
                   {recorder.manufacturer}
                 </td>
 
                 <!-- Recorder Name -->
-                <td class="whitespace-nowrap px-6 py-4 text-sm text-gray-900">
+                <td class="whitespace-nowrap px-6 py-4 text-sm text-stone-900">
                   {recorder.recorder_name}
                 </td>
 
                 <!-- Version -->
-                <td class="whitespace-nowrap px-6 py-4 text-sm text-gray-500">
+                <td class="whitespace-nowrap px-6 py-4 text-sm text-stone-500">
                   {recorder.version || '-'}
                 </td>
 
                 <!-- Created -->
-                <td class="whitespace-nowrap px-6 py-4 text-sm text-gray-500">
+                <td class="whitespace-nowrap px-6 py-4 text-sm text-stone-500">
                   {formatDate(recorder.created_at)}
                 </td>
 
@@ -402,7 +403,7 @@
                   <div class="flex gap-2">
                     <button
                       onclick={() => openEditModal(recorder)}
-                      class="rounded bg-blue-100 px-3 py-1 text-xs font-medium text-blue-700 transition-colors hover:bg-blue-200"
+                      class="rounded bg-primary-100 px-3 py-1 text-xs font-medium text-primary-700 transition-colors hover:bg-primary-200"
                     >
                       Edit
                     </button>
@@ -424,7 +425,7 @@
     <!-- Pagination -->
     {#if totalPages > 1}
       <div class="mt-6 flex items-center justify-between">
-        <div class="text-sm text-gray-700">
+        <div class="text-sm text-stone-700">
           Showing <span class="font-medium">{(page - 1) * limit + 1}</span>
           to
           <span class="font-medium">{Math.min(page * limit, total)}</span>
@@ -437,7 +438,7 @@
           <button
             onclick={() => changePage(page - 1)}
             disabled={page === 1}
-            class="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+            class="rounded-md border border-stone-300 bg-surface-card px-4 py-2 text-sm font-medium text-stone-700 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-50"
           >
             Previous
           </button>
@@ -447,20 +448,20 @@
               <button
                 onclick={() => changePage(pageNum)}
                 class="rounded-md px-4 py-2 text-sm font-medium {pageNum === page
-                  ? 'bg-blue-600 text-white'
-                  : 'border border-gray-300 bg-white text-gray-700 hover:bg-gray-50'}"
+                  ? 'bg-primary-600 text-white'
+                  : 'border border-stone-300 bg-surface-card text-stone-700 hover:bg-stone-50'}"
               >
                 {pageNum}
               </button>
             {:else if pageNum === page - 2 || pageNum === page + 2}
-              <span class="px-2 text-gray-500">...</span>
+              <span class="px-2 text-stone-500">...</span>
             {/if}
           {/each}
 
           <button
             onclick={() => changePage(page + 1)}
             disabled={page === totalPages}
-            class="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+            class="rounded-md border border-stone-300 bg-surface-card px-4 py-2 text-sm font-medium text-stone-700 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-50"
           >
             Next
           </button>
@@ -476,7 +477,7 @@
     <div class="flex min-h-screen items-end justify-center px-4 pb-20 pt-4 text-center sm:block sm:p-0">
       <!-- Background overlay -->
       <div
-        class="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity"
+        class="fixed inset-0 bg-stone-500 bg-opacity-75 transition-opacity"
         aria-hidden="true"
         onclick={closeModal}
       ></div>
@@ -485,25 +486,25 @@
       <span class="hidden sm:inline-block sm:h-screen sm:align-middle" aria-hidden="true">&#8203;</span>
 
       <!-- Modal panel -->
-      <div class="inline-block transform overflow-hidden rounded-lg bg-white text-left align-bottom shadow-xl transition-all sm:my-8 sm:w-full sm:max-w-lg sm:align-middle">
+      <div class="inline-block transform overflow-hidden rounded-lg bg-surface-card text-left align-bottom shadow-xl transition-all sm:my-8 sm:w-full sm:max-w-lg sm:align-middle">
         <form onsubmit={handleSubmit}>
-          <div class="bg-white px-4 pb-4 pt-5 sm:p-6 sm:pb-4">
+          <div class="bg-surface-card px-4 pb-4 pt-5 sm:p-6 sm:pb-4">
             <div class="sm:flex sm:items-start">
               <div class="mt-3 w-full text-center sm:ml-0 sm:mt-0 sm:text-left">
-                <h3 class="text-lg font-medium leading-6 text-gray-900" id="modal-title">
+                <h3 class="text-lg font-medium leading-6 text-stone-900" id="modal-title">
                   {modalMode === 'create' ? 'Add New Recorder' : 'Edit Recorder'}
                 </h3>
                 <div class="mt-4 space-y-4">
                   <!-- ID (only for create) -->
                   {#if modalMode === 'create'}
                     <div>
-                      <label for="id" class="block text-sm font-medium text-gray-700">ID</label>
+                      <label for="id" class="block text-sm font-medium text-stone-700">ID</label>
                       <input
                         type="text"
                         id="id"
                         bind:value={formData.id}
                         required
-                        class="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-blue-500 sm:text-sm"
+                        class="mt-1 block w-full rounded-md border border-stone-300 px-3 py-2 shadow-sm focus:border-primary-500 focus:outline-none focus:ring-primary-500 sm:text-sm"
                         placeholder="e.g., AUDIOMOTH_1.0.0"
                       />
                     </div>
@@ -511,38 +512,38 @@
 
                   <!-- Manufacturer -->
                   <div>
-                    <label for="manufacturer" class="block text-sm font-medium text-gray-700">Manufacturer</label>
+                    <label for="manufacturer" class="block text-sm font-medium text-stone-700">Manufacturer</label>
                     <input
                       type="text"
                       id="manufacturer"
                       bind:value={formData.manufacturer}
                       required
-                      class="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-blue-500 sm:text-sm"
+                      class="mt-1 block w-full rounded-md border border-stone-300 px-3 py-2 shadow-sm focus:border-primary-500 focus:outline-none focus:ring-primary-500 sm:text-sm"
                       placeholder="e.g., Open Acoustic Devices"
                     />
                   </div>
 
                   <!-- Recorder Name -->
                   <div>
-                    <label for="recorder_name" class="block text-sm font-medium text-gray-700">Recorder Name</label>
+                    <label for="recorder_name" class="block text-sm font-medium text-stone-700">Recorder Name</label>
                     <input
                       type="text"
                       id="recorder_name"
                       bind:value={formData.recorder_name}
                       required
-                      class="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-blue-500 sm:text-sm"
+                      class="mt-1 block w-full rounded-md border border-stone-300 px-3 py-2 shadow-sm focus:border-primary-500 focus:outline-none focus:ring-primary-500 sm:text-sm"
                       placeholder="e.g., AudioMoth"
                     />
                   </div>
 
                   <!-- Version -->
                   <div>
-                    <label for="version" class="block text-sm font-medium text-gray-700">Version (optional)</label>
+                    <label for="version" class="block text-sm font-medium text-stone-700">Version (optional)</label>
                     <input
                       type="text"
                       id="version"
                       bind:value={formData.version}
-                      class="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-blue-500 sm:text-sm"
+                      class="mt-1 block w-full rounded-md border border-stone-300 px-3 py-2 shadow-sm focus:border-primary-500 focus:outline-none focus:ring-primary-500 sm:text-sm"
                       placeholder="e.g., 1.0.0"
                     />
                   </div>
@@ -550,17 +551,17 @@
               </div>
             </div>
           </div>
-          <div class="bg-gray-50 px-4 py-3 sm:flex sm:flex-row-reverse sm:px-6">
+          <div class="bg-stone-50 px-4 py-3 sm:flex sm:flex-row-reverse sm:px-6">
             <button
               type="submit"
-              class="inline-flex w-full justify-center rounded-md bg-blue-600 px-4 py-2 text-base font-medium text-white shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 sm:ml-3 sm:w-auto sm:text-sm"
+              class="inline-flex w-full justify-center rounded-md bg-primary-600 px-4 py-2 text-base font-medium text-white shadow-sm hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 sm:ml-3 sm:w-auto sm:text-sm"
             >
               {modalMode === 'create' ? 'Create' : 'Save'}
             </button>
             <button
               type="button"
               onclick={closeModal}
-              class="mt-3 inline-flex w-full justify-center rounded-md border border-gray-300 bg-white px-4 py-2 text-base font-medium text-gray-700 shadow-sm hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 sm:ml-3 sm:mt-0 sm:w-auto sm:text-sm"
+              class="mt-3 inline-flex w-full justify-center rounded-md border border-stone-300 bg-surface-card px-4 py-2 text-base font-medium text-stone-700 shadow-sm hover:bg-stone-50 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 sm:ml-3 sm:mt-0 sm:w-auto sm:text-sm"
             >
               Cancel
             </button>
@@ -577,7 +578,7 @@
     <div class="flex min-h-screen items-end justify-center px-4 pb-20 pt-4 text-center sm:block sm:p-0">
       <!-- Background overlay -->
       <div
-        class="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity"
+        class="fixed inset-0 bg-stone-500 bg-opacity-75 transition-opacity"
         aria-hidden="true"
         onclick={closeDeleteConfirm}
       ></div>
@@ -586,8 +587,8 @@
       <span class="hidden sm:inline-block sm:h-screen sm:align-middle" aria-hidden="true">&#8203;</span>
 
       <!-- Modal panel -->
-      <div class="inline-block transform overflow-hidden rounded-lg bg-white text-left align-bottom shadow-xl transition-all sm:my-8 sm:w-full sm:max-w-lg sm:align-middle">
-        <div class="bg-white px-4 pb-4 pt-5 sm:p-6 sm:pb-4">
+      <div class="inline-block transform overflow-hidden rounded-lg bg-surface-card text-left align-bottom shadow-xl transition-all sm:my-8 sm:w-full sm:max-w-lg sm:align-middle">
+        <div class="bg-surface-card px-4 pb-4 pt-5 sm:p-6 sm:pb-4">
           <div class="sm:flex sm:items-start">
             <div class="mx-auto flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-full bg-red-100 sm:mx-0 sm:h-10 sm:w-10">
               <svg
@@ -606,11 +607,11 @@
               </svg>
             </div>
             <div class="mt-3 text-center sm:ml-4 sm:mt-0 sm:text-left">
-              <h3 class="text-lg font-medium leading-6 text-gray-900" id="modal-title">
+              <h3 class="text-lg font-medium leading-6 text-stone-900" id="modal-title">
                 Delete Recorder
               </h3>
               <div class="mt-2">
-                <p class="text-sm text-gray-500">
+                <p class="text-sm text-stone-500">
                   Are you sure you want to delete the recorder "{deleteConfirmRecorder.recorder_name}"
                   ({deleteConfirmRecorder.id})? This action cannot be undone.
                 </p>
@@ -618,7 +619,7 @@
             </div>
           </div>
         </div>
-        <div class="bg-gray-50 px-4 py-3 sm:flex sm:flex-row-reverse sm:px-6">
+        <div class="bg-stone-50 px-4 py-3 sm:flex sm:flex-row-reverse sm:px-6">
           <button
             type="button"
             onclick={handleDelete}
@@ -629,7 +630,7 @@
           <button
             type="button"
             onclick={closeDeleteConfirm}
-            class="mt-3 inline-flex w-full justify-center rounded-md border border-gray-300 bg-white px-4 py-2 text-base font-medium text-gray-700 shadow-sm hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 sm:ml-3 sm:mt-0 sm:w-auto sm:text-sm"
+            class="mt-3 inline-flex w-full justify-center rounded-md border border-stone-300 bg-surface-card px-4 py-2 text-base font-medium text-stone-700 shadow-sm hover:bg-stone-50 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 sm:ml-3 sm:mt-0 sm:w-auto sm:text-sm"
           >
             Cancel
           </button>

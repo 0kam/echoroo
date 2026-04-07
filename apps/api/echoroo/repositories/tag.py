@@ -2,26 +2,20 @@
 
 from uuid import UUID
 
-from sqlalchemy import delete, func, or_, select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import selectinload
 
 from echoroo.models.clip_annotation import clip_annotation_tags
 from echoroo.models.enums import TagCategory
 from echoroo.models.sound_event_annotation import sound_event_annotation_tags
 from echoroo.models.tag import Tag
+from echoroo.repositories.base import BaseRepository
 
 
-class TagRepository:
+class TagRepository(BaseRepository[Tag]):
     """Repository for Tag entity operations."""
 
-    def __init__(self, db: AsyncSession) -> None:
-        """Initialize repository with database session.
-
-        Args:
-            db: SQLAlchemy async session
-        """
-        self.db = db
+    model = Tag
 
     async def get_by_id(self, tag_id: UUID) -> Tag | None:
         """Get tag by ID with project and children relationships loaded.
@@ -121,14 +115,57 @@ class TagRepository:
         await self.db.refresh(tag, ["project"])
         return tag
 
-    async def delete(self, tag_id: UUID) -> None:
-        """Delete a tag by ID.
+
+    async def get_or_create_species(
+        self,
+        project_id: UUID,
+        scientific_name: str,
+        common_name: str,
+        taxon_id: UUID | None = None,
+    ) -> Tag:
+        """Get an existing species tag by scientific name or create a new one.
+
+        Queries by project_id and scientific_name. Creates a new tag with
+        category=SPECIES when no match is found.
+
+        If taxon_id is provided and an existing tag has no taxon_id linked,
+        the existing tag is updated to link the taxon.
 
         Args:
-            tag_id: Tag's UUID
+            project_id: Project UUID to scope the lookup.
+            scientific_name: Scientific species name (e.g. "Turdus merula").
+            common_name: Common species name (e.g. "Eurasian Blackbird").
+            taxon_id: Optional UUID of the global Taxon record to link.
+
+        Returns:
+            Existing or newly created Tag instance.
         """
-        await self.db.execute(delete(Tag).where(Tag.id == tag_id))
+        result = await self.db.execute(
+            select(Tag)
+            .where(Tag.project_id == project_id)
+            .where(Tag.scientific_name == scientific_name)
+            .where(Tag.category == TagCategory.SPECIES)
+            .options(selectinload(Tag.project))
+        )
+        existing = result.scalar_one_or_none()
+        if existing is not None:
+            if taxon_id and existing.taxon_id is None:
+                existing.taxon_id = taxon_id
+                await self.db.flush()
+            return existing
+
+        tag = Tag(
+            project_id=project_id,
+            name=scientific_name,
+            category=TagCategory.SPECIES,
+            scientific_name=scientific_name,
+            common_name=common_name,
+            taxon_id=taxon_id,
+        )
+        self.db.add(tag)
         await self.db.flush()
+        await self.db.refresh(tag, ["project"])
+        return tag
 
     async def get_statistics(self, project_id: UUID) -> list[tuple[Tag, int]]:
         """Get tags with their usage counts across clip and sound event annotations.

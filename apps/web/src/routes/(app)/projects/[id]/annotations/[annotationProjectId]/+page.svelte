@@ -3,9 +3,12 @@
   import { goto } from '$app/navigation';
   import { createQuery, createMutation, useQueryClient } from '@tanstack/svelte-query';
   import { fetchAnnotationTasks, fetchNextAnnotationTask } from '$lib/api/annotation-tasks';
+  import { localizeHref } from '$lib/paraglide/runtime';
+  import * as m from '$lib/paraglide/messages';
   import { fetchAnnotationProject, generateTasks } from '$lib/api/annotation-projects';
-  import { fetchWithErrorHandling, handleApiResponse } from '$lib/api/errors';
+  import { apiClient } from '$lib/api/client';
   import type { AnnotationTaskStatus, AnnotationTask, AnnotationProjectDetail } from '$lib/types/annotation';
+  import { getAnnotationTaskStatusClass, getAnnotationTaskStatusLabel } from '$lib/utils/statusFormatters';
   import ExportDialog from '$lib/components/annotation/ExportDialog.svelte';
 
   const queryClient = useQueryClient();
@@ -66,9 +69,9 @@
     mutationFn: () => fetchNextAnnotationTask(projectId, annotationProjectId),
     onSuccess: (task) => {
       if (task) {
-        goto(`/projects/${projectId}/annotations/${annotationProjectId}/tasks/${task.id}`);
+        goto(localizeHref(`/projects/${projectId}/annotations/${annotationProjectId}/tasks/${task.id}`));
       } else {
-        noTasksMessage = 'No pending tasks available. All tasks may be completed or assigned.';
+        noTasksMessage = m.annotation_task_no_tasks();
       }
     },
   });
@@ -109,37 +112,20 @@
 
   function navigateToTask(task: AnnotationTask) {
     if (batchMode) return;
-    goto(`/projects/${projectId}/annotations/${annotationProjectId}/tasks/${task.id}`);
+    goto(localizeHref(`/projects/${projectId}/annotations/${annotationProjectId}/tasks/${task.id}`));
   }
 
   function getStatusBadgeClass(status: AnnotationTaskStatus): string {
-    switch (status) {
-      case 'pending':
-        return 'badge badge-pending';
-      case 'in_progress':
-        return 'badge badge-in-progress';
-      case 'completed':
-        return 'badge badge-completed';
-      case 'review_pending':
-        return 'badge badge-review-pending';
-      default:
-        return 'badge';
-    }
+    return getAnnotationTaskStatusClass(status);
   }
 
   function getStatusLabel(status: AnnotationTaskStatus): string {
-    switch (status) {
-      case 'pending':
-        return 'Pending';
-      case 'in_progress':
-        return 'In Progress';
-      case 'completed':
-        return 'Completed';
-      case 'review_pending':
-        return 'Review Pending';
-      default:
-        return status;
-    }
+    return getAnnotationTaskStatusLabel(status, {
+      pending: m.annotation_task_status_pending,
+      in_progress: m.annotation_task_status_in_progress,
+      completed: m.annotation_task_status_completed,
+      review_pending: m.annotation_task_status_review_pending,
+    });
   }
 
   function formatTime(seconds: number): string {
@@ -196,11 +182,11 @@
 
   async function executeBatchTag() {
     if (!batchTagId) {
-      batchTagError = 'Please select a tag.';
+      batchTagError = m.annotation_task_batch_error_no_tag();
       return;
     }
     if (selectedTaskIds.length === 0) {
-      batchTagError = 'No tasks selected.';
+      batchTagError = m.annotation_task_batch_error_no_tasks();
       return;
     }
 
@@ -208,16 +194,10 @@
     batchTagError = '';
 
     try {
-      const response = await fetchWithErrorHandling(
+      await apiClient.post(
         `/api/v1/projects/${projectId}/clip-annotations/batch-tag`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'include',
-          body: JSON.stringify({ task_ids: selectedTaskIds, tag_id: batchTagId }),
-        }
+        { task_ids: selectedTaskIds, tag_id: batchTagId }
       );
-      await handleApiResponse(response);
 
       // Invalidate queries to refresh task list
       queryClient.invalidateQueries({ queryKey: ['annotation-tasks', projectId, annotationProjectId] });
@@ -228,7 +208,7 @@
       batchTagId = '';
       batchMode = false;
     } catch (err) {
-      batchTagError = err instanceof Error ? err.message : 'Failed to apply batch tag.';
+      batchTagError = err instanceof Error ? err.message : m.annotation_task_batch_error_failed();
     } finally {
       isBatchTagPending = false;
     }
@@ -240,28 +220,28 @@
 
 <svelte:head>
   <title>
-    {$projectQuery.data?.name ?? 'Annotation Tasks'} | Annotation
+    {$projectQuery.data?.name ?? m.annotation_task_page_title()} | Annotation
   </title>
 </svelte:head>
 
 <div class="tasks-page">
   <!-- Back link -->
-  <a href="/projects/{projectId}/annotations" class="back-link">
-    &larr; Back to Annotation Projects
+  <a href={localizeHref(`/projects/${projectId}/annotations`)} class="back-link">
+    &larr; {m.annotation_task_back_link()}
   </a>
 
   <!-- Header -->
   <header class="page-header">
     <div class="header-info">
       {#if $projectQuery.isLoading}
-        <h1 class="placeholder-text">Loading...</h1>
+        <h1 class="placeholder-text">{m.common_loading()}</h1>
       {:else if $projectQuery.data}
         <h1>{$projectQuery.data.name}</h1>
         {#if $projectQuery.data.description}
           <p class="description">{$projectQuery.data.description}</p>
         {/if}
       {:else}
-        <h1>Annotation Tasks</h1>
+        <h1>{m.annotation_task_loading()}</h1>
       {/if}
     </div>
 
@@ -270,27 +250,27 @@
         class="btn-secondary"
         on:click={() => (showExportDialog = true)}
       >
-        Export
+        {m.annotation_task_export_button()}
       </button>
       <button
         class="btn-secondary"
         class:btn-active={batchMode}
         on:click={toggleBatchMode}
       >
-        {batchMode ? 'Exit Batch' : 'Batch Tag'}
+        {batchMode ? m.annotation_task_exit_batch() : m.annotation_task_batch_tag()}
       </button>
       <a
-        href="/projects/{projectId}/annotations/{annotationProjectId}/review"
+        href={localizeHref(`/projects/${projectId}/annotations/${annotationProjectId}/review`)}
         class="btn-secondary"
       >
-        Review
+        {m.annotation_task_review_button()}
       </a>
       <button
         class="btn-secondary"
         on:click={() => $generateTasksMutation.mutate()}
         disabled={$generateTasksMutation.isPending}
       >
-        {$generateTasksMutation.isPending ? 'Generating...' : 'Generate Tasks'}
+        {$generateTasksMutation.isPending ? m.annotation_task_generating() : m.annotation_task_generate_button()}
       </button>
       <button
         class="btn-primary"
@@ -300,7 +280,7 @@
         }}
         disabled={$startAnnotatingMutation.isPending}
       >
-        {$startAnnotatingMutation.isPending ? 'Finding task...' : 'Start Annotating'}
+        {$startAnnotatingMutation.isPending ? m.annotation_task_finding() : m.annotation_task_start_annotating()}
       </button>
     </div>
   </header>
@@ -308,19 +288,19 @@
   <!-- Mutation feedback -->
   {#if $generateTasksMutation.isError}
     <div class="alert alert-error">
-      Failed to generate tasks: {$generateTasksMutation.error?.message ?? 'Unknown error'}
+      {m.annotation_task_generate_error({ message: $generateTasksMutation.error?.message ?? '' })}
     </div>
   {/if}
 
   {#if $generateTasksMutation.isSuccess}
     <div class="alert alert-success">
-      Task generation started. Tasks will appear shortly.
+      {m.annotation_task_generate_success()}
     </div>
   {/if}
 
   {#if $startAnnotatingMutation.isError}
     <div class="alert alert-error">
-      Failed to fetch next task: {$startAnnotatingMutation.error?.message ?? 'Unknown error'}
+      {m.annotation_task_fetch_error({ message: $startAnnotatingMutation.error?.message ?? '' })}
     </div>
   {/if}
 
@@ -333,94 +313,94 @@
   <!-- Progress summary -->
   {#if progressData}
     <div class="progress-card">
-      <h2 class="progress-title">Progress</h2>
+      <h2 class="progress-title">{m.annotation_task_progress_title()}</h2>
       <div class="progress-stats">
         <div class="stat">
           <span class="stat-value">{progressData.total_tasks}</span>
-          <span class="stat-label">Total</span>
+          <span class="stat-label">{m.annotation_task_total()}</span>
         </div>
         <div class="stat">
           <span class="stat-value stat-completed">{progressData.completed_tasks}</span>
-          <span class="stat-label">Completed</span>
+          <span class="stat-label">{m.annotation_task_completed()}</span>
         </div>
         <div class="stat">
           <span class="stat-value stat-in-progress">{progressData.in_progress_tasks}</span>
-          <span class="stat-label">In Progress</span>
+          <span class="stat-label">{m.annotation_task_in_progress()}</span>
         </div>
         <div class="stat">
           <span class="stat-value stat-pending">{progressData.pending_tasks}</span>
-          <span class="stat-label">Pending</span>
+          <span class="stat-label">{m.annotation_task_pending()}</span>
         </div>
         <div class="stat">
           <span class="stat-value stat-review">{progressData.review_pending_tasks}</span>
-          <span class="stat-label">Review Pending</span>
+          <span class="stat-label">{m.annotation_task_review_pending()}</span>
         </div>
       </div>
       <div class="progress-bar-container">
         <div class="progress-bar" style="width: {completedPercent}%"></div>
       </div>
-      <p class="progress-label">{completedPercent}% complete</p>
+      <p class="progress-label">{m.annotation_task_complete_percent({ percent: completedPercent })}</p>
     </div>
   {/if}
 
   <!-- Filters -->
   <div class="filters">
     <div class="filter-group">
-      <label for="status-filter" class="filter-label">Status</label>
+      <label for="status-filter" class="filter-label">{m.annotation_task_filter_status()}</label>
       <select
         id="status-filter"
         class="filter-select"
         value={statusFilter}
         on:change={handleStatusFilterChange}
       >
-        <option value="">All</option>
-        <option value="pending">Pending</option>
-        <option value="in_progress">In Progress</option>
-        <option value="completed">Completed</option>
-        <option value="review_pending">Review Pending</option>
+        <option value="">{m.annotation_task_filter_all()}</option>
+        <option value="pending">{m.annotation_task_filter_pending()}</option>
+        <option value="in_progress">{m.annotation_task_filter_in_progress()}</option>
+        <option value="completed">{m.annotation_task_filter_completed()}</option>
+        <option value="review_pending">{m.annotation_task_filter_review_pending()}</option>
       </select>
     </div>
 
     <div class="filter-group">
-      <label for="sort-select" class="filter-label">Sort By</label>
+      <label for="sort-select" class="filter-label">{m.annotation_task_sort_by()}</label>
       <select
         id="sort-select"
         class="filter-select"
         value={sortSelectValue}
         on:change={handleSortChange}
       >
-        <option value="priority_desc">Priority (High to Low)</option>
-        <option value="created_at_desc">Created At (Newest)</option>
-        <option value="created_at_asc">Created At (Oldest)</option>
-        <option value="status_asc">Status</option>
+        <option value="priority_desc">{m.annotation_task_sort_priority()}</option>
+        <option value="created_at_desc">{m.annotation_task_sort_created_newest()}</option>
+        <option value="created_at_asc">{m.annotation_task_sort_created_oldest()}</option>
+        <option value="status_asc">{m.annotation_task_sort_status()}</option>
       </select>
     </div>
 
     {#if batchMode && ($tasksQuery.data?.items.length ?? 0) > 0}
       <div class="batch-select-actions">
-        <button class="btn-link" on:click={selectAllTasks}>Select All</button>
+        <button class="btn-link" on:click={selectAllTasks}>{m.annotation_task_select_all()}</button>
         <span class="separator">|</span>
-        <button class="btn-link" on:click={clearSelection}>Clear</button>
+        <button class="btn-link" on:click={clearSelection}>{m.annotation_task_clear_selection()}</button>
       </div>
     {/if}
   </div>
 
   <!-- Task list -->
   {#if $tasksQuery.isLoading}
-    <div class="loading">Loading annotation tasks...</div>
+    <div class="loading">{m.annotation_task_loading_tasks()}</div>
   {:else if $tasksQuery.isError}
     <div class="error">
-      Error loading tasks: {$tasksQuery.error?.message ?? 'Unknown error'}
+      {m.annotation_task_error_load({ message: $tasksQuery.error?.message ?? '' })}
     </div>
   {:else if $tasksQuery.data}
     {#if $tasksQuery.data.items.length === 0}
       <div class="empty-state">
         {#if statusFilter}
-          <p>No tasks match the selected filter.</p>
+          <p>{m.annotation_task_empty_filter()}</p>
         {:else}
-          <p>No annotation tasks generated yet.</p>
+          <p>{m.annotation_task_empty_no_tasks()}</p>
           <p class="empty-hint">
-            Click <strong>Generate Tasks</strong> to create tasks from dataset clips.
+            {m.annotation_task_empty_hint()}
           </p>
         {/if}
       </div>
@@ -433,7 +413,7 @@
                 <th class="checkbox-col">
                   <input
                     type="checkbox"
-                    aria-label="Select all tasks"
+                    aria-label={m.annotation_task_select_all_aria()}
                     checked={selectedTaskIds.length === $tasksQuery.data.items.length && $tasksQuery.data.items.length > 0}
                     on:change={(e) => {
                       if ((e.target as HTMLInputElement).checked) {
@@ -445,12 +425,12 @@
                   />
                 </th>
               {/if}
-              <th>Status</th>
-              <th>Clip</th>
-              <th>Time Range</th>
-              <th>Priority</th>
-              <th>Assigned To</th>
-              <th>Actions</th>
+              <th>{m.annotation_task_col_status()}</th>
+              <th>{m.annotation_task_col_clip()}</th>
+              <th>{m.annotation_task_col_time_range()}</th>
+              <th>{m.annotation_task_col_priority()}</th>
+              <th>{m.annotation_task_col_assigned()}</th>
+              <th>{m.annotation_task_col_actions()}</th>
             </tr>
           </thead>
           <tbody>
@@ -476,7 +456,7 @@
                 }}
                 tabindex="0"
                 role="button"
-                aria-label={batchMode ? `Select task ${task.id}` : `Open task ${task.id}`}
+                aria-label={batchMode ? m.annotation_task_batch_select_aria({ id: task.id }) : m.annotation_task_open_aria({ id: task.id })}
                 aria-pressed={batchMode ? selectedTaskIds.includes(task.id) : undefined}
               >
                 {#if batchMode}
@@ -484,7 +464,7 @@
                     <input
                       type="checkbox"
                       checked={selectedTaskIds.includes(task.id)}
-                      aria-label="Select task"
+                      aria-label={m.annotation_task_select_aria()}
                       on:change={() => toggleTaskSelection(task.id)}
                     />
                   </td>
@@ -511,7 +491,7 @@
                       {task.assigned_to_id.slice(0, 8)}&hellip;
                     </span>
                   {:else}
-                    <span class="unassigned">Unassigned</span>
+                    <span class="unassigned">{m.annotation_task_unassigned()}</span>
                   {/if}
                 </td>
                 <td class="actions-cell">
@@ -520,7 +500,7 @@
                       class="btn-action"
                       on:click|stopPropagation={() => navigateToTask(task)}
                     >
-                      Open
+                      {m.annotation_task_open_button()}
                     </button>
                   {/if}
                 </td>
@@ -538,11 +518,11 @@
             on:click={() => (currentPage = Math.max(1, currentPage - 1))}
             disabled={currentPage === 1}
           >
-            Previous
+            {m.annotation_task_previous()}
           </button>
 
           <span class="page-info">
-            Page {currentPage} of {$tasksQuery.data.pages}
+            {m.annotation_task_page_info({ page: currentPage, total: $tasksQuery.data.pages })}
           </span>
 
           <button
@@ -550,13 +530,13 @@
             on:click={() => (currentPage = Math.min($tasksQuery.data.pages, currentPage + 1))}
             disabled={currentPage === $tasksQuery.data.pages}
           >
-            Next
+            {m.annotation_task_next()}
           </button>
         </div>
       {/if}
 
       <div class="pagination-info">
-        Showing {$tasksQuery.data.items.length} of {$tasksQuery.data.total} tasks
+        {m.annotation_task_showing({ showing: $tasksQuery.data.items.length, total: $tasksQuery.data.total })}
       </div>
     {/if}
   {/if}
@@ -566,7 +546,9 @@
 {#if batchMode}
   <div class="batch-action-bar" role="toolbar" aria-label="Batch actions">
     <span class="batch-count">
-      {selectedTaskIds.length} task{selectedTaskIds.length !== 1 ? 's' : ''} selected
+      {selectedTaskIds.length !== 1
+        ? m.annotation_task_batch_count_plural({ count: selectedTaskIds.length })
+        : m.annotation_task_batch_count_singular({ count: selectedTaskIds.length })}
     </span>
     <div class="batch-buttons">
       <button
@@ -574,10 +556,10 @@
         on:click={openBatchTagDialog}
         disabled={selectedTaskIds.length === 0}
       >
-        Apply Tag
+        {m.annotation_task_apply_tag()}
       </button>
       <button class="btn-secondary" on:click={toggleBatchMode}>
-        Cancel
+        {m.annotation_task_batch_cancel()}
       </button>
     </div>
   </div>
@@ -593,12 +575,16 @@
     <!-- svelte-ignore a11y-interactive-supports-focus -->
     <div class="modal" on:click|stopPropagation role="dialog" aria-modal="true" aria-labelledby="batch-tag-title" tabindex="-1">
       <div class="modal-header">
-        <h3 id="batch-tag-title">Apply Tag to {selectedTaskIds.length} Task{selectedTaskIds.length !== 1 ? 's' : ''}</h3>
+        <h3 id="batch-tag-title">
+          {selectedTaskIds.length !== 1
+            ? m.annotation_task_batch_tag_title_plural({ count: selectedTaskIds.length })
+            : m.annotation_task_batch_tag_title({ count: selectedTaskIds.length })}
+        </h3>
         <button
           type="button"
           class="close-btn"
           on:click={closeBatchTagDialog}
-          aria-label="Close dialog"
+          aria-label={m.annotation_task_batch_close_aria()}
         >
           &times;
         </button>
@@ -611,16 +597,16 @@
           </div>
         {/if}
 
-        <label class="field-label" for="batch-tag-select">Select Tag</label>
+        <label class="field-label" for="batch-tag-select">{m.annotation_task_batch_select_tag()}</label>
         {#if availableTags.length === 0}
-          <p class="no-tags-hint">No tags available for this annotation project.</p>
+          <p class="no-tags-hint">{m.annotation_task_batch_no_tags()}</p>
         {:else}
           <select
             id="batch-tag-select"
             class="filter-select"
             bind:value={batchTagId}
           >
-            <option value="">-- Choose a tag --</option>
+            <option value="">{m.annotation_task_batch_choose_tag()}</option>
             {#each availableTags as tag}
               <option value={tag.id}>{tag.name} ({tag.category})</option>
             {/each}
@@ -635,7 +621,7 @@
           on:click={closeBatchTagDialog}
           disabled={isBatchTagPending}
         >
-          Cancel
+          {m.annotation_task_batch_cancel()}
         </button>
         <button
           type="button"
@@ -643,7 +629,7 @@
           on:click={executeBatchTag}
           disabled={isBatchTagPending || !batchTagId || availableTags.length === 0}
         >
-          {isBatchTagPending ? 'Applying...' : 'Apply Tag'}
+          {isBatchTagPending ? m.annotation_task_applying() : m.annotation_task_apply_tag_button()}
         </button>
       </div>
     </div>

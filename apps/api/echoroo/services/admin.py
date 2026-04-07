@@ -211,6 +211,22 @@ class AdminService:
                 admin_id,
             )
 
+        if request.birdnet_species_filter is not None:
+            await self._update_setting(
+                "birdnet_species_filter",
+                request.birdnet_species_filter,
+                "string",
+                admin_id,
+            )
+
+        if request.birdnet_min_conf is not None:
+            await self._update_setting(
+                "birdnet_min_conf",
+                str(request.birdnet_min_conf),
+                "number",
+                admin_id,
+            )
+
         await self.db.commit()
 
     async def _update_setting(
@@ -247,7 +263,7 @@ class AdminService:
 
     def _parse_setting_value(
         self, value: str, value_type: str
-    ) -> str | int | bool | dict[str, object]:
+    ) -> str | int | float | bool | dict[str, object]:
         """Parse setting value based on its type.
 
         Args:
@@ -260,13 +276,15 @@ class AdminService:
         if value_type == "boolean":
             return value.lower() == "true"
         elif value_type == "number":
-            # Try to parse as int, fallback to float if needed
-            # But return as int since we don't use floats in settings
+            # Try to parse as int first, fall back to float for decimal values
             try:
-                return int(value)
+                int_val = int(value)
+                # If the string has a decimal point, preserve as float
+                if "." in value:
+                    return float(value)
+                return int_val
             except ValueError:
-                # This shouldn't happen with our current settings
-                return int(float(value))
+                return float(value)
         elif value_type == "json":
             parsed: dict[str, object] = json.loads(value)
             return parsed

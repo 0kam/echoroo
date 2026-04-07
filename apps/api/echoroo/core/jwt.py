@@ -30,29 +30,36 @@ def create_access_token(data: dict[str, Any]) -> str:
     expire = datetime.now(UTC) + timedelta(
         minutes=settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES
     )
-    to_encode.update({"exp": expire, "type": "access"})
+    to_encode.update({"exp": expire, "type": "access", "jti": str(uuid.uuid4())})
     return jwt.encode(to_encode, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
 
 
-def create_refresh_token(data: dict[str, Any]) -> str:
+def create_refresh_token(data: dict[str, Any], family_id: str | None = None) -> str:
     """Create JWT refresh token with token family tracking.
 
     Args:
         data: Payload data to encode in the token
+        family_id: Existing family ID to reuse (for token rotation). If None, a new
+            family is created. Pass the previous token's family to keep the chain
+            together so that replay attacks can be detected across the entire family.
 
     Returns:
         Encoded JWT refresh token string with family ID
 
     Example:
         ```python
+        # Initial login - create a new family
         refresh_token = create_refresh_token({"sub": str(user.id)})
-        # Token expires in 14 days and includes a unique family ID
+
+        # Token rotation - preserve the existing family
+        refresh_token = create_refresh_token({"sub": str(user.id)}, family_id=old_family)
         ```
     """
     to_encode = data.copy()
     expire = datetime.now(UTC) + timedelta(days=settings.JWT_REFRESH_TOKEN_EXPIRE_DAYS)
-    family_id = str(uuid.uuid4())
-    to_encode.update({"exp": expire, "type": "refresh", "family": family_id})
+    family = family_id or str(uuid.uuid4())
+    jti = str(uuid.uuid4())
+    to_encode.update({"exp": expire, "type": "refresh", "family": family, "jti": jti})
     return jwt.encode(to_encode, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
 
 

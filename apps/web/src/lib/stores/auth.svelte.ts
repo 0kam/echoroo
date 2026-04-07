@@ -4,6 +4,8 @@
 
 import type { User } from '$lib/types';
 import { apiClient } from '$lib/api/client';
+import { goto } from '$app/navigation';
+import { localizeHref } from '$lib/paraglide/runtime';
 
 interface AuthState {
   user: User | null;
@@ -65,20 +67,52 @@ function createAuthStore() {
     },
 
     /**
-     * Initialize auth state by checking current session
+     * Initialize auth state by checking current session.
+     * On page reload the in-memory access token is lost, so we proactively
+     * attempt a token refresh before calling /users/me. This prevents child
+     * routes from receiving 401 errors while the token is being restored.
+     * If both refresh and /users/me fail, the user is redirected to login.
      */
     async initialize(): Promise<void> {
       state.isLoading = true;
       try {
-        // Try to get current user from backend
+        // If no access token in memory (e.g., after a page reload), attempt
+        // to restore it via the refresh token cookie before fetching the user.
+        if (!apiClient.getAccessToken()) {
+          try {
+            await apiClient.refreshToken();
+          } catch {
+            // Refresh failed - no valid session exists, redirect to login.
+            state.user = null;
+            state.isAuthenticated = false;
+            apiClient.setAccessToken(null);
+            state.isLoading = false;
+            await goto(localizeHref('/login'), { replaceState: true });
+            return;
+          }
+        }
+
+        // Access token is now available; fetch the current user.
         const user = await apiClient.get<User>('/api/v1/users/me');
         state.user = user;
         state.isAuthenticated = true;
-      } catch {
-        // Not authenticated or session expired
+      } catch (error) {
+        // Clear client-side session state
         state.user = null;
         state.isAuthenticated = false;
         apiClient.setAccessToken(null);
+
+        // If the error is a 401 (unauthorized), the refresh token is also invalid.
+        // Redirect to login so the user can re-authenticate.
+        const isUnauthorized =
+          error instanceof Error &&
+          'status' in error &&
+          (error as { status: number }).status === 401;
+
+        if (isUnauthorized) {
+          // Use replace to avoid adding login to the back-navigation stack
+          await goto(localizeHref('/login'), { replaceState: true });
+        }
       } finally {
         state.isLoading = false;
       }
@@ -157,3 +191,16 @@ function createAuthStore() {
 }
 
 export const authStore = createAuthStore();
+
+// Wire up the apiClient refresh failure callback so that when a background
+// request fails to refresh (e.g., mid-session expiry), the auth store is
+// cleared and the user is redirected to login.
+apiClient.onRefreshFailed = () => {
+  authStore.clearUser();
+  goto(localizeHref('/login'), { replaceState: true }).catch(() => {
+    // If SvelteKit navigation is not available (e.g., during SSR), fall back to hard redirect
+    if (typeof window !== 'undefined') {
+      window.location.href = localizeHref('/login');
+    }
+  });
+};

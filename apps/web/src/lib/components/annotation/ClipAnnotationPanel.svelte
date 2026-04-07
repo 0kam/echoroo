@@ -1,32 +1,44 @@
 <script lang="ts">
   import type { TagSummary, Note } from '$lib/types/annotation';
+  import { getLocale } from '$lib/paraglide/runtime';
+  import * as m from '$lib/paraglide/messages';
 
-  export let projectId: string;
-  export let clipAnnotationId: string | null = null;
-  /** Currently applied clip-level tags. Rendered as removable chips. */
-  export let clipTags: TagSummary[] = [];
-  /** Full list of tags available for this annotation project. */
-  export let availableTags: TagSummary[] = [];
-  /** Existing notes on the clip annotation (optional; for display only). */
-  export let notes: Note[] = [];
-  export let onAddTag: (tagId: string) => void;
-  export let onRemoveTag: (tagId: string) => void;
-  export let onAddNote: (content: string) => void;
+  let {
+    projectId,
+    clipAnnotationId = null,
+    /** Currently applied clip-level tags. Rendered as removable chips. */
+    clipTags = [] as TagSummary[],
+    /** Full list of tags available for this annotation project. */
+    availableTags = [] as TagSummary[],
+    /** Existing notes on the clip annotation (optional; for display only). */
+    notes = [] as Note[],
+    onAddTag,
+    onRemoveTag,
+    onAddNote,
+  }: {
+    projectId: string;
+    clipAnnotationId?: string | null;
+    clipTags?: TagSummary[];
+    availableTags?: TagSummary[];
+    notes?: Note[];
+    onAddTag: (tagId: string) => void;
+    onRemoveTag: (tagId: string) => void;
+    onAddNote: (content: string) => void;
+  } = $props();
 
-  // Suppress unused variable warning - projectId and clipAnnotationId are
-  // exposed as props for parent components that may need them for API calls.
-  $: void projectId;
-  $: void clipAnnotationId;
+  // projectId and clipAnnotationId are exposed as props for parent components that may need them for API calls.
+  void projectId;
+  void clipAnnotationId;
 
-  let noteInput = '';
+  let noteInput = $state('');
 
   // Group available tags by category for the Quick Tags section
-  $: speciesTags = availableTags.filter((t) => t.category === 'species');
-  $: soundTypeTags = availableTags.filter((t) => t.category === 'sound_type');
-  $: qualityTags = availableTags.filter((t) => t.category === 'quality');
+  const speciesTags = $derived(availableTags.filter((t) => t.category === 'species'));
+  const soundTypeTags = $derived(availableTags.filter((t) => t.category === 'sound_type'));
+  const qualityTags = $derived(availableTags.filter((t) => t.category === 'quality'));
 
   // Set of active tag IDs for O(1) membership checks
-  $: activeTagIds = new Set(clipTags.map((t) => t.id));
+  const activeTagIds = $derived(new Set(clipTags.map((t) => t.id)));
 
   function handleTagToggle(tagId: string) {
     if (activeTagIds.has(tagId)) {
@@ -52,7 +64,7 @@
 
   function formatNoteDate(isoString: string): string {
     const date = new Date(isoString);
-    return date.toLocaleString(undefined, {
+    return date.toLocaleString(getLocale(), {
       month: 'short',
       day: 'numeric',
       hour: '2-digit',
@@ -65,13 +77,13 @@
   <!-- Applied clip tags — shown as removable chips when tags are active -->
   {#if clipTags.length > 0}
     <section class="section" aria-labelledby="applied-tags-heading">
-      <h3 class="section-title" id="applied-tags-heading">Applied Tags</h3>
+      <h3 class="section-title" id="applied-tags-heading">{m.clip_panel_applied_tags()}</h3>
       <div class="chip-row" aria-label="Applied clip tags" aria-live="polite">
         {#each clipTags as tag (tag.id)}
           <button
             type="button"
             class="tag-chip tag-chip--{tag.category} tag-chip--removable"
-            on:click={() => onRemoveTag(tag.id)}
+            onclick={() => onRemoveTag(tag.id)}
             title="Remove {tag.name}"
             aria-label="Remove tag {tag.name}"
           >
@@ -87,7 +99,7 @@
 
   <!-- Quick Tags section — all available tags grouped by category -->
   <section class="section" aria-labelledby="quick-tags-heading">
-    <h3 class="section-title" id="quick-tags-heading">Quick Tags</h3>
+    <h3 class="section-title" id="quick-tags-heading">{m.clip_panel_quick_tags()}</h3>
 
     {#if availableTags.length === 0}
       <p class="empty-hint">No tags configured for this project.</p>
@@ -95,14 +107,14 @@
       <!-- Species -->
       {#if speciesTags.length > 0}
         <div class="tag-group">
-          <span class="tag-group-label">Species</span>
+          <span class="tag-group-label">{m.clip_panel_species()}</span>
           <div class="tag-buttons">
             {#each speciesTags as tag (tag.id)}
               <button
                 type="button"
                 class="tag-btn tag-btn--species"
                 class:tag-btn--active={activeTagIds.has(tag.id)}
-                on:click={() => handleTagToggle(tag.id)}
+                onclick={() => handleTagToggle(tag.id)}
                 aria-pressed={activeTagIds.has(tag.id)}
                 title={activeTagIds.has(tag.id) ? `Remove ${tag.name}` : `Add ${tag.name}`}
               >
@@ -116,14 +128,14 @@
       <!-- Sound Type -->
       {#if soundTypeTags.length > 0}
         <div class="tag-group">
-          <span class="tag-group-label">Sound Type</span>
+          <span class="tag-group-label">{m.clip_panel_sound_type()}</span>
           <div class="tag-buttons">
             {#each soundTypeTags as tag (tag.id)}
               <button
                 type="button"
                 class="tag-btn tag-btn--sound_type"
                 class:tag-btn--active={activeTagIds.has(tag.id)}
-                on:click={() => handleTagToggle(tag.id)}
+                onclick={() => handleTagToggle(tag.id)}
                 aria-pressed={activeTagIds.has(tag.id)}
                 title={activeTagIds.has(tag.id) ? `Remove ${tag.name}` : `Add ${tag.name}`}
               >
@@ -137,14 +149,14 @@
       <!-- Quality -->
       {#if qualityTags.length > 0}
         <div class="tag-group">
-          <span class="tag-group-label">Quality</span>
+          <span class="tag-group-label">{m.clip_panel_quality()}</span>
           <div class="tag-buttons">
             {#each qualityTags as tag (tag.id)}
               <button
                 type="button"
                 class="tag-btn tag-btn--quality"
                 class:tag-btn--active={activeTagIds.has(tag.id)}
-                on:click={() => handleTagToggle(tag.id)}
+                onclick={() => handleTagToggle(tag.id)}
                 aria-pressed={activeTagIds.has(tag.id)}
                 title={activeTagIds.has(tag.id) ? `Remove ${tag.name}` : `Add ${tag.name}`}
               >
@@ -161,7 +173,7 @@
 
   <!-- Notes section -->
   <section class="section" aria-labelledby="notes-heading">
-    <h3 class="section-title" id="notes-heading">Notes</h3>
+    <h3 class="section-title" id="notes-heading">{m.clip_panel_notes()}</h3>
 
     <!-- Add note input -->
     <div class="note-input-row">
@@ -169,14 +181,14 @@
         class="note-textarea"
         placeholder="Add a note... (Ctrl+Enter to submit)"
         bind:value={noteInput}
-        on:keydown={handleNoteKeydown}
+        onkeydown={handleNoteKeydown}
         rows={2}
         aria-label="Note content"
       ></textarea>
       <button
         type="button"
         class="add-note-btn"
-        on:click={handleAddNote}
+        onclick={handleAddNote}
         disabled={noteInput.trim() === ''}
         aria-label="Add note"
       >

@@ -3,14 +3,13 @@
  */
 
 import type {
-  Recording,
   RecordingDetail,
   RecordingListResponse,
   RecordingUpdate,
   SpectrogramParams,
   PlaybackParams,
 } from '$lib/types/data';
-import { fetchWithErrorHandling, handleApiResponse } from './errors';
+import { apiClient } from './client';
 
 const API_BASE = '/api/v1';
 
@@ -45,18 +44,16 @@ export async function listRecordings(params: ListRecordingsParams): Promise<Reco
   if (params.sortOrder) searchParams.append('sort_order', params.sortOrder);
 
   const url = `${API_BASE}/projects/${params.projectId}/recordings?${searchParams}`;
-  const response = await fetchWithErrorHandling(url, { credentials: 'include' });
-  return handleApiResponse<RecordingListResponse>(response);
+  return apiClient.get<RecordingListResponse>(url);
 }
 
 /**
  * Fetch a single recording by ID.
  */
 export async function getRecording(projectId: string, recordingId: string): Promise<RecordingDetail> {
-  const response = await fetchWithErrorHandling(`${API_BASE}/projects/${projectId}/recordings/${recordingId}`, {
-    credentials: 'include',
-  });
-  return handleApiResponse<RecordingDetail>(response);
+  return apiClient.get<RecordingDetail>(
+    `${API_BASE}/projects/${projectId}/recordings/${recordingId}`
+  );
 }
 
 /**
@@ -67,27 +64,19 @@ export async function updateRecording(
   recordingId: string,
   data: RecordingUpdate
 ): Promise<RecordingDetail> {
-  const response = await fetchWithErrorHandling(`${API_BASE}/projects/${projectId}/recordings/${recordingId}`, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    credentials: 'include',
-    body: JSON.stringify(data),
-  });
-  return handleApiResponse<RecordingDetail>(response);
+  return apiClient.patch<RecordingDetail>(
+    `${API_BASE}/projects/${projectId}/recordings/${recordingId}`,
+    data
+  );
 }
 
 /**
  * Delete a recording.
  */
 export async function deleteRecording(projectId: string, recordingId: string): Promise<void> {
-  const response = await fetchWithErrorHandling(`${API_BASE}/projects/${projectId}/recordings/${recordingId}`, {
-    method: 'DELETE',
-    credentials: 'include',
-  });
-
-  if (!response.ok) {
-    await handleApiResponse(response);
-  }
+  return apiClient.delete<void>(
+    `${API_BASE}/projects/${projectId}/recordings/${recordingId}`
+  );
 }
 
 /**

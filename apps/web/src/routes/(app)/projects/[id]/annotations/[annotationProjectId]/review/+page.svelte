@@ -3,6 +3,8 @@
   import { createQuery, createMutation, useQueryClient } from '@tanstack/svelte-query';
   import { fetchAnnotationTasks, fetchAnnotationTask } from '$lib/api/annotation-tasks';
   import { getOrCreateClipAnnotation, reviewClipAnnotation } from '$lib/api/annotations';
+  import { localizeHref } from '$lib/paraglide/runtime';
+  import * as m from '$lib/paraglide/messages';
   import { fetchAnnotationProject } from '$lib/api/annotation-projects';
   import type {
     AnnotationTask,
@@ -88,7 +90,7 @@
       reviewErrorByTaskId = {
         ...reviewErrorByTaskId,
         [taskId]:
-          error instanceof Error ? error.message : 'Failed to submit review.',
+          error instanceof Error ? error.message : m.annotation_review_error_load({ message: '' }),
       };
     },
   });
@@ -126,7 +128,7 @@
           [task.id]:
             err instanceof Error
               ? err.message
-              : 'Failed to load annotation data.',
+              : m.annotation_review_loading_annotation(),
         };
       } finally {
         clipAnnotationLoadingByTaskId = {
@@ -172,45 +174,47 @@
 
 <svelte:head>
   <title>
-    Review – {$projectQuery.data?.name ?? 'Annotation'} | Echoroo
+    {m.annotation_review_page_title({ name: $projectQuery.data?.name ?? 'Annotation' })}
   </title>
 </svelte:head>
 
 <div class="review-page">
   <!-- Back link -->
   <a
-    href="/projects/{projectId}/annotations/{annotationProjectId}"
+    href={localizeHref(`/projects/${projectId}/annotations/${annotationProjectId}`)}
     class="back-link"
   >
-    &larr; Back to tasks
+    &larr; {m.annotation_review_back_link()}
   </a>
 
   <!-- Page header -->
   <header class="page-header">
     <div class="header-info">
       {#if $projectQuery.isLoading}
-        <h1 class="placeholder-text">Loading...</h1>
+        <h1 class="placeholder-text">{m.common_loading()}</h1>
       {:else if $projectQuery.data}
         <h1>{$projectQuery.data.name}</h1>
-        <p class="header-subtitle">Annotation Review</p>
+        <p class="header-subtitle">{m.annotation_review_subtitle()}</p>
       {:else}
-        <h1>Annotation Review</h1>
+        <h1>{m.annotation_review_subtitle()}</h1>
       {/if}
     </div>
 
     {#if $tasksQuery.data}
       <span class="pending-count">
-        {$tasksQuery.data.total} task{$tasksQuery.data.total !== 1 ? 's' : ''} pending review
+        {$tasksQuery.data.total !== 1
+          ? m.annotation_review_pending_count_plural({ count: $tasksQuery.data.total })
+          : m.annotation_review_pending_count_singular({ count: $tasksQuery.data.total })}
       </span>
     {/if}
   </header>
 
   <!-- Task list -->
   {#if $tasksQuery.isLoading}
-    <div class="loading">Loading tasks pending review...</div>
+    <div class="loading">{m.annotation_review_loading()}</div>
   {:else if $tasksQuery.isError}
     <div class="alert alert-error">
-      Error loading tasks: {$tasksQuery.error?.message ?? 'Unknown error'}
+      {m.annotation_review_error_load({ message: $tasksQuery.error?.message ?? '' })}
     </div>
   {:else if $tasksQuery.data}
     {#if $tasksQuery.data.items.length === 0}
@@ -229,10 +233,9 @@
             d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
           />
         </svg>
-        <p class="empty-title">No tasks pending review</p>
+        <p class="empty-title">{m.annotation_review_empty_title()}</p>
         <p class="empty-hint">
-          All annotations have been reviewed, or no tasks have been submitted for
-          review yet.
+          {m.annotation_review_empty_hint()}
         </p>
       </div>
     {:else}
@@ -272,7 +275,7 @@
                 </svg>
 
                 <span class="task-clip-id" title="Clip ID: {task.clip_id}">
-                  Clip <code>{task.clip_id.slice(0, 8)}&hellip;</code>
+                  {m.annotation_review_clip_label()} <code>{task.clip_id.slice(0, 8)}&hellip;</code>
                 </span>
 
                 <!-- Review status pill -->
@@ -292,10 +295,14 @@
               <div class="task-header-right">
                 {#if clipAnnotation}
                   <span class="meta-chip">
-                    {clipAnnotation.tags.length} tag{clipAnnotation.tags.length !== 1 ? 's' : ''}
+                    {clipAnnotation.tags.length !== 1
+                      ? m.annotation_review_tag_count_plural({ count: clipAnnotation.tags.length })
+                      : m.annotation_review_tag_count_singular({ count: clipAnnotation.tags.length })}
                   </span>
                   <span class="meta-chip">
-                    {clipAnnotation.sound_events.length} event{clipAnnotation.sound_events.length !== 1 ? 's' : ''}
+                    {clipAnnotation.sound_events.length !== 1
+                      ? m.annotation_review_event_count_plural({ count: clipAnnotation.sound_events.length })
+                      : m.annotation_review_event_count_singular({ count: clipAnnotation.sound_events.length })}
                   </span>
                 {/if}
                 {#if task.priority > 0}
@@ -312,7 +319,7 @@
                 {#if isLoadingClip}
                   <div class="body-loading">
                     <div class="spinner"></div>
-                    <span>Loading annotation data...</span>
+                    <span>{m.annotation_review_loading_annotation()}</span>
                   </div>
                 {:else if clipError}
                   <div class="alert alert-error body-alert">
@@ -350,7 +357,7 @@
                     <!-- Clip-level tags -->
                     {#if clipAnnotation.tags.length > 0}
                       <div class="summary-row">
-                        <span class="summary-label">Clip Tags</span>
+                        <span class="summary-label">{m.annotation_review_clip_tags()}</span>
                         <div class="tag-chips">
                           {#each clipAnnotation.tags as tag (tag.id)}
                             <span
@@ -367,10 +374,10 @@
                     <!-- Sound events -->
                     <div class="summary-row">
                       <span class="summary-label">
-                        Events ({clipAnnotation.sound_events.length})
+                        {m.annotation_review_events_label({ count: clipAnnotation.sound_events.length })}
                       </span>
                       {#if clipAnnotation.sound_events.length === 0}
-                        <span class="no-events">No sound events annotated</span>
+                        <span class="no-events">{m.annotation_review_no_events()}</span>
                       {:else}
                         <ul class="sound-events-list">
                           {#each clipAnnotation.sound_events as event (event.id)}
@@ -385,7 +392,7 @@
                                   {event.tags.map((t) => t.name).join(', ')}
                                 </span>
                               {:else}
-                                <span class="event-no-tags">No tags</span>
+                                <span class="event-no-tags">{m.annotation_review_no_tags()}</span>
                               {/if}
                               {#if event.confidence !== null && event.confidence !== undefined}
                                 <span class="event-confidence">
@@ -402,7 +409,7 @@
                   <!-- Review feedback -->
                   {#if reviewedSuccessfully}
                     <div class="alert alert-success body-alert">
-                      Review submitted successfully.
+                      {m.annotation_review_success()}
                     </div>
                   {/if}
                   {#if reviewError}
@@ -427,7 +434,7 @@
                   <!-- Clip annotation loaded but task detail still loading -->
                   <div class="body-loading">
                     <div class="spinner"></div>
-                    <span>Loading task details...</span>
+                    <span>{m.annotation_review_loading_task()}</span>
                   </div>
                 {/if}
               </div>
@@ -444,10 +451,10 @@
             on:click={() => (currentPage = Math.max(1, currentPage - 1))}
             disabled={currentPage === 1}
           >
-            Previous
+            {m.annotation_review_previous()}
           </button>
           <span class="page-info">
-            Page {currentPage} of {$tasksQuery.data.pages}
+            {m.annotation_review_page_info({ page: currentPage, total: $tasksQuery.data.pages })}
           </span>
           <button
             class="page-btn"
@@ -455,13 +462,13 @@
               (currentPage = Math.min($tasksQuery.data.pages, currentPage + 1))}
             disabled={currentPage === $tasksQuery.data.pages}
           >
-            Next
+            {m.annotation_review_next()}
           </button>
         </div>
       {/if}
 
       <div class="pagination-info">
-        Showing {$tasksQuery.data.items.length} of {$tasksQuery.data.total} tasks
+        {m.annotation_review_showing({ showing: $tasksQuery.data.items.length, total: $tasksQuery.data.total })}
       </div>
     {/if}
   {/if}
