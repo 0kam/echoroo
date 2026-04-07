@@ -8,12 +8,16 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, status
 from fastapi.responses import StreamingResponse
+from sqlalchemy import select as sa_select
 
 from echoroo.core.database import DbSession
 from echoroo.middleware.auth import CurrentUser
 from echoroo.models.enums import DetectionStatus
+from echoroo.models.project import Project
 from echoroo.repositories.annotation import AnnotationRepository
+from echoroo.repositories.annotation_vote import AnnotationVoteRepository
 from echoroo.repositories.confirmed_region import ConfirmedRegionRepository
+from echoroo.schemas.annotation_vote import VoteCastRequest, VoteSummaryResponse
 from echoroo.schemas.detection import (
     ChangeSpeciesRequest,
     ConfirmRequest,
@@ -24,6 +28,7 @@ from echoroo.schemas.detection import (
     RejectRequest,
     SpeciesSummaryResponse,
 )
+from echoroo.services.annotation_vote import AnnotationVoteService
 from echoroo.services.detection import DetectionService
 from echoroo.services.detection_export import DetectionExportService
 
@@ -42,10 +47,27 @@ def get_detection_service(db: DbSession) -> DetectionService:
     return DetectionService(
         annotation_repo=AnnotationRepository(db),
         confirmed_region_repo=ConfirmedRegionRepository(db),
+        vote_repo=AnnotationVoteRepository(db),
+    )
+
+
+def get_vote_service(db: DbSession) -> AnnotationVoteService:
+    """Get AnnotationVoteService instance.
+
+    Args:
+        db: Database session
+
+    Returns:
+        AnnotationVoteService instance
+    """
+    return AnnotationVoteService(
+        vote_repo=AnnotationVoteRepository(db),
+        annotation_repo=AnnotationRepository(db),
     )
 
 
 DetectionServiceDep = Annotated[DetectionService, Depends(get_detection_service)]
+VoteServiceDep = Annotated[AnnotationVoteService, Depends(get_vote_service)]
 
 
 @router.get(
@@ -101,6 +123,7 @@ async def list_detections(
         detection_run_id=detection_run_id,
         page=page,
         page_size=page_size,
+        current_user_id=current_user.id,
     )
 
 
@@ -308,7 +331,7 @@ async def get_detection(
         401: Not authenticated
         404: Detection not found
     """
-    return await service.get(detection_id=detection_id)
+    return await service.get(detection_id=detection_id, current_user_id=current_user.id)
 
 
 @router.post(
@@ -466,6 +489,145 @@ async def change_species(
     )
     await db.commit()
     return detection
+
+
+@router.get(
+    "/{detection_id}/votes",
+    response_model=VoteSummaryResponse,
+    summary="Get vote summary",
+    description="Get vote counts and individual votes for a detection annotation",
+)
+async def get_votes(
+    project_id: UUID,
+    detection_id: UUID,
+    current_user: CurrentUser,
+    vote_service: VoteServiceDep,
+) -> VoteSummaryResponse:
+    """Get vote summary for a detection annotation.
+
+    Returns aggregate agree/disagree/unsure counts, the current user's vote,
+    the computed consensus status, and the full list of individual votes.
+
+    NOTE: This route must appear before /{detection_id} to avoid routing conflicts.
+
+    Args:
+        project_id: Project's UUID
+        detection_id: Detection's UUID
+        current_user: Current authenticated user
+        vote_service: Vote service instance
+
+    Returns:
+        Vote summary response
+
+    Raises:
+        401: Not authenticated
+        404: Detection not found
+    """
+    return await vote_service.get_vote_summary(
+        annotation_id=detection_id,
+        current_user_id=current_user.id,
+    )
+
+
+@router.post(
+    "/{detection_id}/votes",
+    response_model=VoteSummaryResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Cast vote",
+    description="Cast or update a vote on a detection annotation",
+)
+async def cast_vote(
+    project_id: UUID,
+    detection_id: UUID,
+    request: VoteCastRequest,
+    current_user: CurrentUser,
+    vote_service: VoteServiceDep,
+    db: DbSession,
+) -> VoteSummaryResponse:
+    """Cast or update a vote on a detection annotation.
+
+    If the current user has already voted on this annotation, their existing
+    vote is replaced. The annotation status is recomputed from all votes
+    after each cast.
+
+    Args:
+        project_id: Project's UUID
+        detection_id: Detection's UUID
+        request: Vote cast request (vote type, optional tag suggestion, note)
+        current_user: Current authenticated user
+        vote_service: Vote service instance
+        db: Database session
+
+    Returns:
+        Updated vote summary response
+
+    Raises:
+        401: Not authenticated
+        404: Detection not found
+        422: Validation error
+    """
+    # Retrieve project settings for consensus thresholds
+    project_result = await db.execute(sa_select(Project).where(Project.id == project_id))
+    project = project_result.scalar_one_or_none()
+    min_votes = project.review_min_votes if project else 2
+    threshold = project.review_consensus_threshold if project else 0.667
+
+    summary = await vote_service.cast_vote(
+        annotation_id=detection_id,
+        user_id=current_user.id,
+        request=request,
+        min_votes=min_votes,
+        threshold=threshold,
+    )
+    await db.commit()
+    return summary
+
+
+@router.delete(
+    "/{detection_id}/votes",
+    response_model=VoteSummaryResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Remove vote",
+    description="Remove the current user's vote from a detection annotation",
+)
+async def delete_vote(
+    project_id: UUID,
+    detection_id: UUID,
+    current_user: CurrentUser,
+    vote_service: VoteServiceDep,
+    db: DbSession,
+) -> VoteSummaryResponse:
+    """Remove the current user's vote from a detection annotation.
+
+    The annotation status is recomputed from remaining votes after deletion.
+
+    Args:
+        project_id: Project's UUID
+        detection_id: Detection's UUID
+        current_user: Current authenticated user
+        vote_service: Vote service instance
+        db: Database session
+
+    Returns:
+        Updated vote summary response
+
+    Raises:
+        401: Not authenticated
+        404: Detection not found or no vote to delete
+    """
+    project_result = await db.execute(sa_select(Project).where(Project.id == project_id))
+    project = project_result.scalar_one_or_none()
+    min_votes = project.review_min_votes if project else 2
+    threshold = project.review_consensus_threshold if project else 0.667
+
+    summary = await vote_service.delete_vote(
+        annotation_id=detection_id,
+        user_id=current_user.id,
+        min_votes=min_votes,
+        threshold=threshold,
+    )
+    await db.commit()
+    return summary
 
 
 @router.delete(
