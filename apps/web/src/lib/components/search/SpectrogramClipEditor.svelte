@@ -484,7 +484,7 @@
     <!-- Error state -->
     {#if decodeError}
       <div class="absolute inset-0 flex items-center justify-center">
-        <p class="text-xs text-red-400">{decodeError}</p>
+        <p class="text-xs text-danger">{decodeError}</p>
       </div>
     {/if}
 
@@ -602,7 +602,7 @@
     <!-- Play / Stop button -->
     <button
       type="button"
-      class="flex items-center gap-1.5 rounded-md bg-primary-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50"
+      class="flex items-center gap-1.5 rounded-md bg-primary-600 dark:bg-primary-300 px-3 py-1.5 text-sm font-medium text-white hover:bg-primary-700 dark:hover:bg-primary-200 disabled:cursor-not-allowed disabled:opacity-50"
       onclick={playSelection}
       disabled={!decodedAudioBuffer || isDecoding}
     >
@@ -643,7 +643,7 @@
       <input
         id="clip-start-input"
         type="number"
-        class="w-16 rounded border border-stone-300 bg-white px-2 py-1 text-xs dark:border-stone-600 dark:bg-stone-800"
+        class="w-16 rounded border border-stone-300 bg-surface-card px-2 py-1 text-xs text-stone-900 dark:border-stone-600"
         step="0.1"
         min="0"
         max={endTime - minClipDuration}
@@ -655,7 +655,7 @@
       <input
         id="clip-end-input"
         type="number"
-        class="w-16 rounded border border-stone-300 bg-white px-2 py-1 text-xs dark:border-stone-600 dark:bg-stone-800"
+        class="w-16 rounded border border-stone-300 bg-surface-card px-2 py-1 text-xs text-stone-900 dark:border-stone-600"
         step="0.1"
         min={startTime + minClipDuration}
         max={duration}

@@ -264,17 +264,17 @@
         type="text"
         bind:value={query}
         onkeydown={handleKeydown}
-        class="min-w-0 flex-1 rounded-md border border-stone-300 bg-white px-3 py-1.5 text-sm
-               placeholder-stone-400 focus:border-primary-500 focus:outline-none focus:ring-1
-               focus:ring-primary-500 dark:border-stone-600 dark:bg-stone-800 dark:text-stone-100"
+        class="min-w-0 flex-1 rounded-md border border-stone-300 bg-surface-card px-3 py-1.5 text-sm
+               text-stone-900 placeholder-stone-400 focus:border-primary-500 focus:outline-none focus:ring-1
+               focus:ring-primary-500 dark:border-stone-600"
         placeholder={scientificName}
       />
       <button
         type="button"
         onclick={handleSearch}
         disabled={isLoading || !query.trim()}
-        class="shrink-0 rounded-md bg-primary-600 px-3 py-1.5 text-sm font-medium text-white
-               hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50"
+        class="shrink-0 rounded-md bg-primary-600 dark:bg-primary-300 px-3 py-1.5 text-sm font-medium text-white
+               hover:bg-primary-700 dark:hover:bg-primary-200 disabled:cursor-not-allowed disabled:opacity-50"
       >
         {isLoading ? m.search_xc_loading() : m.search_xc_search()}
       </button>
@@ -285,9 +285,9 @@
       <!-- Country -->
       <select
         bind:value={country}
-        class="rounded-md border border-stone-300 bg-white px-2 py-1 text-xs text-stone-700
+        class="rounded-md border border-stone-300 bg-surface-card px-2 py-1 text-xs text-stone-700
                focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500
-               dark:border-stone-600 dark:bg-stone-800 dark:text-stone-300"
+               dark:border-stone-600"
       >
         {#each COUNTRY_OPTIONS as opt}
           <option value={opt.code}>{opt.label || m.search_xc_country()}</option>
@@ -297,9 +297,9 @@
       <!-- Area -->
       <select
         bind:value={area}
-        class="rounded-md border border-stone-300 bg-white px-2 py-1 text-xs text-stone-700
+        class="rounded-md border border-stone-300 bg-surface-card px-2 py-1 text-xs text-stone-700
                focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500
-               dark:border-stone-600 dark:bg-stone-800 dark:text-stone-300"
+               dark:border-stone-600"
       >
         {#each AREA_OPTIONS as opt}
           <option value={opt}>{opt || m.search_xc_area()}</option>
@@ -309,9 +309,9 @@
       <!-- Min quality -->
       <select
         bind:value={qualityMin}
-        class="rounded-md border border-stone-300 bg-white px-2 py-1 text-xs text-stone-700
+        class="rounded-md border border-stone-300 bg-surface-card px-2 py-1 text-xs text-stone-700
                focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500
-               dark:border-stone-600 dark:bg-stone-800 dark:text-stone-300"
+               dark:border-stone-600"
       >
         {#each QUALITY_OPTIONS as opt}
           <option value={opt}>{opt || m.search_xc_quality_min()}</option>
@@ -321,9 +321,9 @@
       <!-- Recording type -->
       <select
         bind:value={recordingType}
-        class="rounded-md border border-stone-300 bg-white px-2 py-1 text-xs text-stone-700
+        class="rounded-md border border-stone-300 bg-surface-card px-2 py-1 text-xs text-stone-700
                focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500
-               dark:border-stone-600 dark:bg-stone-800 dark:text-stone-300"
+               dark:border-stone-600"
       >
         {#each TYPE_OPTIONS as opt}
           <option value={opt}>{opt || m.search_xc_recording_type()}</option>
@@ -350,7 +350,7 @@
   <!-- Results -->
   {:else if results}
     <!-- Result count + pagination info -->
-    <div class="flex items-center justify-between text-xs text-stone-500 dark:text-stone-400">
+    <div class="flex items-center justify-between text-xs text-stone-500">
       <span>
         {m.search_xc_total_results({ count: results.total_recordings.toString() })}
       </span>
@@ -363,7 +363,7 @@
 
     {#if results.recordings.length === 0}
       <!-- Empty state -->
-      <div class="py-6 text-center text-sm text-stone-400 dark:text-stone-500">
+      <div class="py-6 text-center text-sm text-stone-400">
         {m.search_xc_no_results()}
       </div>
     {:else}
@@ -424,7 +424,7 @@
                 <!-- Recording type badge -->
                 {#if recording.recording_type}
                   <span class="rounded bg-stone-200 px-1.5 py-0.5 text-xs text-stone-600
-                               dark:bg-stone-700 dark:text-stone-300">
+                               dark:bg-stone-700">
                     {recording.recording_type}
                   </span>
                 {/if}
@@ -438,7 +438,7 @@
                                    ? 'bg-lime-100 text-lime-700 dark:bg-lime-900/30 dark:text-lime-400'
                                    : recording.quality === 'C'
                                      ? 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400'
-                                     : 'bg-stone-100 text-stone-600 dark:bg-stone-700 dark:text-stone-300'}">
+                                     : 'bg-stone-100 text-stone-600 dark:bg-stone-700'}">
                     {recording.quality}
                   </span>
                 {/if}
@@ -450,7 +450,7 @@
               </div>
 
               <!-- Recordist + location -->
-              <p class="truncate text-xs text-stone-500 dark:text-stone-400">
+              <p class="truncate text-xs text-stone-500">
                 {recording.recordist}
                 {#if recording.location || recording.country}
                   &middot;
@@ -468,7 +468,7 @@
                        ? 'border-red-300 text-red-500 dark:border-red-700 dark:text-red-400'
                        : isPlaying
                          ? 'border-primary-300 bg-primary-50 text-primary-700 dark:border-primary-700 dark:bg-primary-900/30 dark:text-primary-400'
-                         : 'border-stone-300 text-stone-500 hover:border-primary-400 hover:text-primary-600 dark:border-stone-600 dark:text-stone-400 dark:hover:border-primary-500 dark:hover:text-primary-400'}"
+                         : 'border-stone-300 text-stone-500 hover:border-primary-400 hover:text-primary-600 dark:border-stone-600 dark:hover:border-primary-500 dark:hover:text-primary-400'}"
               aria-label={isPlaying ? 'Pause' : 'Play'}
               title={hasError ? 'Playback failed' : isPlaying ? 'Pause' : 'Play preview'}
             >
@@ -504,7 +504,7 @@
             disabled={currentPage <= 1}
             class="rounded-md border border-stone-300 px-3 py-1 text-xs text-stone-700
                    hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-40
-                   dark:border-stone-600 dark:text-stone-300 dark:hover:bg-stone-700/50"
+                   dark:border-stone-600 dark:hover:bg-stone-700/50"
           >
             {m.search_xc_prev()}
           </button>
@@ -517,7 +517,7 @@
             disabled={currentPage >= results.total_pages}
             class="rounded-md border border-stone-300 px-3 py-1 text-xs text-stone-700
                    hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-40
-                   dark:border-stone-600 dark:text-stone-300 dark:hover:bg-stone-700/50"
+                   dark:border-stone-600 dark:hover:bg-stone-700/50"
           >
             {m.search_xc_next()}
           </button>
@@ -552,8 +552,8 @@
         <button
           type="button"
           onclick={handleAddSelected}
-          class="rounded-md bg-primary-600 px-3 py-1 text-xs font-medium text-white
-                 hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50"
+          class="rounded-md bg-primary-600 dark:bg-primary-300 px-3 py-1 text-xs font-medium text-white
+                 hover:bg-primary-700 dark:hover:bg-primary-200 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {m.search_xc_add_selected()}
         </button>

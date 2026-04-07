@@ -347,7 +347,7 @@
         {m.search_source_s3()}
       </span>
     {:else}
-      <span class="shrink-0 rounded bg-stone-100 px-1.5 py-0.5 text-xs text-stone-600 dark:bg-stone-700 dark:text-stone-300">
+      <span class="shrink-0 rounded bg-stone-100 px-1.5 py-0.5 text-xs text-stone-600 dark:bg-stone-700">
         {m.search_origin_upload()}
       </span>
     {/if}
@@ -414,12 +414,12 @@
   {#if showEditor && editorAudioData}
     <div class="border-t border-stone-200 px-3 pt-2 pb-3 dark:border-stone-700">
       <div class="mb-2 flex items-center justify-between">
-        <p class="text-xs font-medium text-stone-600 dark:text-stone-400">
+        <p class="text-xs font-medium text-stone-600">
           {m.search_clip_editor_title()}
         </p>
         <button
           type="button"
-          class="rounded bg-primary-600 px-2 py-1 text-xs font-medium text-white hover:bg-primary-700"
+          class="rounded bg-primary-600 dark:bg-primary-300 px-2 py-1 text-xs font-medium text-white hover:bg-primary-700 dark:hover:bg-primary-200"
           onclick={confirmClip}
         >
           {m.search_save_clip()}

@@ -549,3 +549,40 @@ export async function exportSearchSessionCSV(
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
 }
+
+/**
+ * Export a search session's matched recordings as a CSV file and trigger a browser download.
+ *
+ * Downloads from /api/v1/projects/{projectId}/search-sessions/{sessionId}/export-recordings
+ * which returns one row per unique recording (not per match).
+ *
+ * @param projectId - Project UUID
+ * @param sessionId - Search session UUID to export
+ */
+export async function exportSearchSessionRecordingsCSV(
+  projectId: string,
+  sessionId: string
+): Promise<void> {
+  const response = await apiClient.requestRaw(
+    `${API_BASE}/projects/${projectId}/search-sessions/${sessionId}/export-recordings`
+  );
+
+  if (!response.ok) {
+    throw new Error(`Failed to export recordings: ${response.status}`);
+  }
+
+  // Trigger browser download
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download =
+    response.headers
+      .get('Content-Disposition')
+      ?.split('filename=')[1]
+      ?.replace(/"/g, '') ?? `recordings_${sessionId}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}

@@ -332,7 +332,7 @@
   <!-- Error message -->
   {#if decodeError}
     <div class="absolute inset-0 flex items-center justify-center px-2">
-      <p class="text-center text-xs text-red-400">{decodeError}</p>
+      <p class="text-center text-xs text-danger">{decodeError}</p>
     </div>
   {/if}
 

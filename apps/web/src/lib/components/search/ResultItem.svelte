@@ -29,9 +29,9 @@
   }
 
   function getSimilarityClass(similarity: number): string {
-    if (similarity >= 0.9) return 'bg-green-100 text-green-800';
+    if (similarity >= 0.9) return 'bg-success-light text-success';
     if (similarity >= 0.7) return 'bg-primary-100 text-primary-800';
-    if (similarity >= 0.5) return 'bg-yellow-100 text-yellow-800';
+    if (similarity >= 0.5) return 'bg-warning-light text-warning';
     return 'bg-stone-100 text-stone-600';
   }
 

@@ -98,7 +98,7 @@
   <!-- New Search primary action button -->
   <button
     type="button"
-    class="flex w-full items-center justify-center gap-2 rounded-lg bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-primary-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-600"
+    class="flex w-full items-center justify-center gap-2 rounded-lg bg-primary-600 dark:bg-primary-300 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-primary-700 dark:hover:bg-primary-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-600"
     onclick={onNewSearch}
   >
     <!-- Plus icon -->
@@ -203,16 +203,6 @@
                     <span class="text-stone-300" aria-hidden="true">·</span>
                     <span>{m.search_results_count_session({ count: String(session.result_count) })}</span>
                   {/if}
-                  {#if session.confirmed_count > 0}
-                    <span class="font-medium text-emerald-600">
-                      {m.search_confirmed_count({ count: String(session.confirmed_count) })}
-                    </span>
-                  {/if}
-                  {#if session.rejected_count > 0}
-                    <span class="font-medium text-red-500">
-                      {m.search_rejected_count({ count: String(session.rejected_count) })}
-                    </span>
-                  {/if}
                 </div>
               </div>
             </div>
@@ -220,7 +210,7 @@
             <!-- Delete button (appears on hover) -->
             <button
               type="button"
-              class="absolute right-3 top-1/2 -translate-y-1/2 rounded p-1 text-stone-300 opacity-0 transition-opacity hover:text-red-500 group-hover:opacity-100 focus:opacity-100"
+              class="absolute right-3 top-1/2 -translate-y-1/2 rounded p-1 text-stone-300 opacity-0 transition-opacity hover:text-danger group-hover:opacity-100 focus:opacity-100"
               onclick={(e) => handleDelete(e, session.id)}
               disabled={deletingId === session.id}
               aria-label={m.search_session_delete()}

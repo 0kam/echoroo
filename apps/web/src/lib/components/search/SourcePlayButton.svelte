@@ -37,7 +37,7 @@
     type="button"
     class="shrink-0 transition-colors
            {urlAudioError
-             ? 'text-red-400 hover:text-red-500'
+             ? 'text-danger hover:text-danger/80'
              : isUrlPlaying
                ? 'text-primary-600 hover:text-primary-700 dark:text-primary-400'
                : 'text-stone-500 hover:text-primary-600'}"

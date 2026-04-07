@@ -52,6 +52,9 @@ class SimilarityResult(BaseModel):
     embedding_id: UUID = Field(..., description="Embedding ID")
     recording_id: UUID = Field(..., description="Recording ID containing this embedding")
     recording_filename: str = Field(..., description="Original filename of the recording")
+    recording_datetime: datetime | None = Field(
+        default=None, description="Recording date/time (parsed from filename or metadata)"
+    )
     dataset_id: UUID = Field(..., description="Dataset ID containing the recording")
     start_time: float = Field(..., description="Start time in seconds within the recording")
     end_time: float = Field(..., description="End time in seconds within the recording")

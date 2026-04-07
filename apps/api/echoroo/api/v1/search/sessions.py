@@ -680,6 +680,168 @@ async def stream_reference_audio(
 
 
 @router.get(
+    "/sessions/{session_id}/export-recordings",
+    summary="Export session results aggregated by recording as CSV",
+    description=(
+        "Aggregate session similarity results by recording and export as CSV. "
+        "Each row represents one recording with max/avg similarity, match count, "
+        "and the time range of the best-matching segment."
+    ),
+)
+async def export_search_session_recordings_csv(
+    project_id: UUID,
+    session_id: UUID,
+    current_user: CurrentUser,
+    db: DbSession,
+    session_service: SearchSessionServiceDep,
+) -> StreamingResponse:
+    """Export per-recording aggregated similarity results as CSV.
+
+    Reads the stored JSON results for the session and aggregates them by
+    recording_id, computing max/avg similarity, match count, and the time
+    range of the highest-similarity segment per recording.
+
+    Args:
+        project_id: Project UUID (path parameter)
+        session_id: Session UUID (path parameter)
+        current_user: Current authenticated user
+        db: Database session
+        session_service: Search session service
+
+    Returns:
+        CSV file as streaming response with columns:
+        recording_filename, recording_datetime, max_similarity,
+        avg_similarity, match_count, best_segment_start, best_segment_end
+
+    Raises:
+        403: Access denied to project
+        404: Session not found or has no results
+    """
+    import csv
+    import io
+
+    await check_project_access(project_id, current_user.id, db)
+    session = await session_service.get_session(session_id, project_id)
+    if not session:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Search session not found")
+
+    if not session.results:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Session has no results to export",
+        )
+
+    # Aggregate matches across all species by recording_id
+    # Structure: recording_id -> aggregated data dict
+    class _RecordingAgg:
+        """Accumulator for per-recording similarity statistics."""
+
+        def __init__(
+            self,
+            recording_filename: str,
+            recording_datetime: str | None,
+            similarity: float,
+            start_time: float,
+            end_time: float,
+        ) -> None:
+            self.recording_filename = recording_filename
+            self.recording_datetime = recording_datetime
+            self.max_similarity = similarity
+            self.total_similarity = similarity
+            self.match_count = 1
+            self.best_segment_start = start_time
+            self.best_segment_end = end_time
+
+        def update(self, similarity: float, start_time: float, end_time: float) -> None:
+            """Update accumulator with a new match."""
+            self.match_count += 1
+            self.total_similarity += similarity
+            if similarity > self.max_similarity:
+                self.max_similarity = similarity
+                self.best_segment_start = start_time
+                self.best_segment_end = end_time
+
+    agg: dict[str, _RecordingAgg] = {}
+
+    raw_results = session.results.get("results")
+    if isinstance(raw_results, dict):
+        for _species_key, species_data in raw_results.items():
+            if not isinstance(species_data, dict):
+                continue
+            matches = species_data.get("matches", [])
+            if not isinstance(matches, list):
+                continue
+            for match in matches:
+                if not isinstance(match, dict):
+                    continue
+                rec_id = str(match.get("recording_id", ""))
+                if not rec_id:
+                    continue
+                similarity = float(match.get("similarity", 0.0))
+                start_time = float(match.get("start_time", 0.0))
+                end_time = float(match.get("end_time", 0.0))
+                recording_filename = str(match.get("recording_filename", ""))
+                raw_dt = match.get("recording_datetime")
+                recording_datetime: str | None = str(raw_dt) if raw_dt is not None else None
+
+                if rec_id not in agg:
+                    agg[rec_id] = _RecordingAgg(
+                        recording_filename=recording_filename,
+                        recording_datetime=recording_datetime,
+                        similarity=similarity,
+                        start_time=start_time,
+                        end_time=end_time,
+                    )
+                else:
+                    agg[rec_id].update(similarity, start_time, end_time)
+
+    # Sort by descending max_similarity
+    sorted_agg = sorted(
+        agg.values(),
+        key=lambda r: r.max_similarity,
+        reverse=True,
+    )
+
+    # Build CSV
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(
+        [
+            "recording_filename",
+            "recording_datetime",
+            "max_similarity",
+            "avg_similarity",
+            "match_count",
+            "best_segment_start",
+            "best_segment_end",
+        ]
+    )
+    for row in sorted_agg:
+        avg_similarity = row.total_similarity / row.match_count if row.match_count > 0 else 0.0
+        writer.writerow(
+            [
+                row.recording_filename,
+                row.recording_datetime or "",
+                f"{row.max_similarity:.4f}",
+                f"{avg_similarity:.4f}",
+                row.match_count,
+                f"{row.best_segment_start:.2f}",
+                f"{row.best_segment_end:.2f}",
+            ]
+        )
+
+    csv_content = output.getvalue()
+    date_str = datetime.now(UTC).strftime("%Y%m%d")
+    safe_name = (session.name or str(session_id)).replace(" ", "_").replace("/", "-")
+    filename = f"recordings_{safe_name}_{date_str}.csv"
+    return StreamingResponse(
+        iter([csv_content]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get(
     "/sessions/{session_id}/export/csv",
     summary="Export session annotations as CSV",
     description="Export all annotations linked to a search session as a CSV file.",

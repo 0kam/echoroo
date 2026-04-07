@@ -70,11 +70,11 @@
   <!-- Header -->
   <div class="flex items-start justify-between p-3">
     <div class="min-w-0 flex-1">
-      <p class="text-base font-semibold italic text-stone-900 dark:text-stone-100">
+      <p class="text-base font-semibold italic text-stone-900">
         {species.scientific_name}
       </p>
       {#if species.common_name || species.sources.length > 0}
-        <p class="text-sm text-stone-500 dark:text-stone-400">
+        <p class="text-sm text-stone-500">
           {species.common_name ?? ''}
           {#if species.sources.length > 0}
             <span class="ml-1 text-stone-400">({sourceCountLabel()})</span>
@@ -90,7 +90,7 @@
           type="button"
           class="flex items-center rounded border border-stone-300 px-2 py-1 text-xs text-stone-700
                  transition-colors hover:border-primary-400 hover:text-primary-700
-                 dark:border-stone-600 dark:text-stone-300 dark:hover:border-primary-500"
+                 dark:border-stone-600 dark:hover:border-primary-500"
           onclick={() => (showAddSource = !showAddSource)}
         >
           <!-- Plus icon -->
@@ -103,7 +103,7 @@
         <!-- Remove species -->
         <button
           type="button"
-          class="text-stone-300 transition-colors hover:text-stone-500 dark:text-stone-600 dark:hover:text-stone-400"
+          class="text-stone-300 transition-colors hover:text-stone-500 dark:hover:text-stone-400"
           onclick={handleRemove}
           aria-label="Remove species"
           title={m.search_remove_species_confirm({ count: species.sources.length.toString() })}
@@ -146,11 +146,11 @@
     <!-- Empty state (not shown in readonly mode) -->
     <div class="px-3 pb-4 pt-1 text-center">
       <!-- Upload icon -->
-      <svg class="mx-auto mb-2 h-8 w-8 text-stone-300 dark:text-stone-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+      <svg class="mx-auto mb-2 h-8 w-8 text-stone-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
         <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12" stroke-linecap="round" stroke-linejoin="round" />
       </svg>
-      <p class="text-sm text-stone-400 dark:text-stone-500">{m.search_no_sources()}</p>
-      <p class="mt-0.5 text-xs text-stone-400 dark:text-stone-500">{m.search_no_sources_hint()}</p>
+      <p class="text-sm text-stone-400">{m.search_no_sources()}</p>
+      <p class="mt-0.5 text-xs text-stone-400">{m.search_no_sources_hint()}</p>
     </div>
   {/if}
 </div>

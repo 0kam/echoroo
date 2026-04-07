@@ -36,7 +36,7 @@
     <button
       type="button"
       class="truncate text-sm font-medium transition-colors
-             {showSpectrogram ? 'text-primary-600 dark:text-primary-400' : 'text-stone-900 hover:text-primary-600 dark:text-stone-100 dark:hover:text-primary-400'}
+             {showSpectrogram ? 'text-primary-600 dark:text-primary-400' : 'text-stone-900 hover:text-primary-600 dark:hover:text-primary-400'}
              {isLoadingSpectrogram ? 'animate-pulse' : ''}"
       onclick={onToggleSpectrogram}
       disabled={isLoadingSpectrogram}
@@ -45,7 +45,7 @@
       {displayName}
     </button>
   {:else}
-    <p class="truncate text-sm text-stone-900 dark:text-stone-100">{displayName}</p>
+    <p class="truncate text-sm text-stone-900">{displayName}</p>
   {/if}
 
   {#if source.origin === 'url'}

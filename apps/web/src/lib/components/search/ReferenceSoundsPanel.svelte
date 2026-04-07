@@ -60,10 +60,10 @@
   }
 </script>
 
-<div class="rounded-lg border border-stone-200 bg-white shadow-sm dark:border-stone-700 dark:bg-stone-900">
+<div class="rounded-lg border border-stone-200 bg-surface-card shadow-sm dark:border-stone-700">
   <!-- Panel header -->
   <div class="flex items-center justify-between border-b border-stone-200 p-4 dark:border-stone-700">
-    <h2 class="text-lg font-semibold text-stone-900 dark:text-stone-100">
+    <h2 class="text-lg font-semibold text-stone-900">
       {readonly ? m.search_loaded_sources() : m.search_reference_sounds()}
     </h2>
     {#if !readonly}
@@ -110,7 +110,7 @@
     {#if species.length === 0 && !showSelector && !readonly}
       <div class="py-8 text-center">
         <!-- Sound wave icon -->
-      <svg class="mx-auto mb-3 h-12 w-12 text-stone-300 dark:text-stone-600" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <svg class="mx-auto mb-3 h-12 w-12 text-stone-300" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <path d="M2 12h2" />
         <path d="M6 8v8" />
         <path d="M10 4v16" />
@@ -118,8 +118,8 @@
         <path d="M18 8v8" />
         <path d="M22 12h2" />
       </svg>
-        <p class="font-medium text-stone-400 dark:text-stone-500">{m.search_no_species()}</p>
-        <p class="mt-1 text-sm text-stone-400 dark:text-stone-500">{m.search_no_species_hint()}</p>
+        <p class="font-medium text-stone-400">{m.search_no_species()}</p>
+        <p class="mt-1 text-sm text-stone-400">{m.search_no_species_hint()}</p>
       </div>
     {/if}
   </div>

@@ -199,7 +199,7 @@
 </script>
 
 <div class="rounded-lg border border-stone-200 bg-stone-50 p-4 space-y-3 dark:border-stone-700 dark:bg-stone-800/50">
-  <p class="text-sm font-medium text-stone-900 dark:text-stone-100">
+  <p class="text-sm font-medium text-stone-900">
     {m.search_species_selector_title()}
   </p>
 
@@ -213,9 +213,9 @@
       bind:this={inputEl}
       bind:value={query}
       type="text"
-      class="w-full rounded-md border border-stone-300 bg-white py-1.5 pl-9 pr-3 text-sm
-             placeholder-stone-400 focus:border-primary-500 focus:outline-none focus:ring-1
-             focus:ring-primary-500 dark:border-stone-600 dark:bg-stone-800 dark:text-stone-100"
+      class="w-full rounded-md border border-stone-300 bg-surface-card py-1.5 pl-9 pr-3 text-sm
+             text-stone-900 placeholder-stone-400 focus:border-primary-500 focus:outline-none focus:ring-1
+             focus:ring-primary-500 dark:border-stone-600"
       placeholder={m.search_species_selector_placeholder()}
       oninput={handleInput}
       onkeydown={handleKeydown}
@@ -234,7 +234,7 @@
       <!-- Project species section -->
       {#if suggestions.length > 0}
         <div class="px-3 py-1.5 bg-stone-100 dark:bg-stone-700/30">
-          <span class="text-xs font-medium uppercase tracking-wide text-stone-500 dark:text-stone-400">
+          <span class="text-xs font-medium uppercase tracking-wide text-stone-500">
             {m.search_species_section_project()}
           </span>
         </div>
@@ -245,11 +245,11 @@
                    {alreadyAdded ? 'opacity-50' : 'hover:bg-stone-100 dark:hover:bg-stone-700/50'}"
           >
             <div class="min-w-0 flex-1">
-              <span class="text-sm italic text-stone-900 dark:text-stone-100">
+              <span class="text-sm italic text-stone-900">
                 {tag.scientific_name ?? tag.name}
               </span>
               {#if tag.common_name}
-                <span class="ml-2 text-sm text-stone-500 dark:text-stone-400">{tag.common_name}</span>
+                <span class="ml-2 text-sm text-stone-500">{tag.common_name}</span>
               {/if}
             </div>
             {#if alreadyAdded}
@@ -277,7 +277,7 @@
       <!-- Global taxon database section -->
       {#if filteredTaxonResults().length > 0}
         <div class="px-3 py-1.5 bg-stone-100 dark:bg-stone-700/30">
-          <span class="text-xs font-medium uppercase tracking-wide text-stone-500 dark:text-stone-400">
+          <span class="text-xs font-medium uppercase tracking-wide text-stone-500">
             {m.search_species_section_taxon_db()}
           </span>
         </div>
@@ -286,11 +286,11 @@
             class="flex items-center justify-between px-3 py-2 hover:bg-stone-100 dark:hover:bg-stone-700/50"
           >
             <div class="min-w-0 flex-1">
-              <span class="text-sm italic text-stone-900 dark:text-stone-100">
+              <span class="text-sm italic text-stone-900">
                 {taxon.scientific_name}
               </span>
               {#if taxon.common_name}
-                <span class="ml-2 text-sm text-stone-500 dark:text-stone-400">{taxon.common_name}</span>
+                <span class="ml-2 text-sm text-stone-500">{taxon.common_name}</span>
               {/if}
             </div>
             <button
@@ -311,7 +311,7 @@
       <!-- GBIF real-time search section -->
       {#if filteredGbifResults().length > 0}
         <div class="px-3 py-1.5 bg-stone-100 dark:bg-stone-700/30">
-          <span class="text-xs font-medium uppercase tracking-wide text-stone-500 dark:text-stone-400">
+          <span class="text-xs font-medium uppercase tracking-wide text-stone-500">
             {m.search_species_section_gbif()}
           </span>
         </div>
@@ -320,11 +320,11 @@
             class="flex items-center justify-between px-3 py-2 hover:bg-stone-100 dark:hover:bg-stone-700/50"
           >
             <div class="min-w-0 flex-1">
-              <span class="text-sm italic text-stone-900 dark:text-stone-100">
+              <span class="text-sm italic text-stone-900">
                 {result.canonical_name}
               </span>
               {#if result.vernacular_name}
-                <span class="ml-2 text-sm text-stone-500 dark:text-stone-400">{result.vernacular_name}</span>
+                <span class="ml-2 text-sm text-stone-500">{result.vernacular_name}</span>
               {/if}
             </div>
             <button
@@ -346,14 +346,14 @@
 
   <!-- Custom entry (if no exact match and query is long enough) -->
   {#if query.trim().length >= 2 && !exactMatch}
-    <div class="text-sm text-stone-500 dark:text-stone-400">
+    <div class="text-sm text-stone-500">
       <p>{m.search_species_selector_custom_hint()}</p>
       <div class="mt-1 flex items-center gap-2">
         <span class="italic">"{query.trim()}"</span>
         <button
           type="button"
           class="rounded border border-stone-300 px-2 py-0.5 text-xs text-stone-700 transition-colors
-                 hover:border-primary-400 hover:text-primary-700 dark:border-stone-600 dark:text-stone-300"
+                 hover:border-primary-400 hover:text-primary-700 dark:border-stone-600"
           onclick={addCustom}
         >
           {m.search_species_selector_add_custom()}
@@ -366,7 +366,7 @@
   <div class="text-right">
     <button
       type="button"
-      class="text-sm text-stone-500 transition-colors hover:text-stone-700 dark:text-stone-400 dark:hover:text-stone-200"
+      class="text-sm text-stone-500 transition-colors hover:text-stone-700 dark:hover:text-stone-200"
       onclick={onClose}
     >
       {m.search_species_selector_close()}

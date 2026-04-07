@@ -19,6 +19,8 @@ export interface SimilarityResult {
   recording_id: string;
   /** Original filename of the recording */
   recording_filename: string;
+  /** Recording date/time (parsed from filename or metadata), ISO 8601 string or null */
+  recording_datetime: string | null;
   /** Dataset that contains the recording */
   dataset_id: string;
   /** Start time of the audio segment within the recording, in seconds */

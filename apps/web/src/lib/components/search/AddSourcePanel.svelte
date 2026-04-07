@@ -178,7 +178,7 @@
       class="rounded px-3 py-1.5 text-sm font-medium transition-colors
              {activeTab === 'upload'
                ? 'bg-stone-700 text-white dark:bg-stone-600'
-               : 'border border-stone-300 bg-white text-stone-600 hover:bg-stone-50 dark:border-stone-600 dark:bg-stone-800 dark:text-stone-400 dark:hover:bg-stone-700'}"
+               : 'border border-stone-300 bg-white text-stone-600 hover:bg-stone-50 dark:border-stone-600 dark:bg-stone-800 dark:hover:bg-stone-700'}"
     >
       {m.search_upload_file()}
     </button>
@@ -188,7 +188,7 @@
       class="rounded px-3 py-1.5 text-sm font-medium transition-colors
              {activeTab === 'xeno-canto'
                ? 'bg-stone-700 text-white dark:bg-stone-600'
-               : 'border border-stone-300 bg-white text-stone-600 hover:bg-stone-50 dark:border-stone-600 dark:bg-stone-800 dark:text-stone-400 dark:hover:bg-stone-700'}"
+               : 'border border-stone-300 bg-white text-stone-600 hover:bg-stone-50 dark:border-stone-600 dark:bg-stone-800 dark:hover:bg-stone-700'}"
     >
       {m.search_from_url()}
     </button>
@@ -207,7 +207,7 @@
     <div class="mt-3 flex justify-end">
       <button
         type="button"
-        class="rounded-md px-3 py-1.5 text-sm text-stone-600 hover:bg-stone-100 dark:text-stone-400 dark:hover:bg-stone-700"
+        class="rounded-md px-3 py-1.5 text-sm text-stone-600 hover:bg-stone-100 dark:hover:bg-stone-700"
         onclick={onCancel}
       >
         {m.search_cancel()}
@@ -242,7 +242,7 @@
       <svg class="mx-auto mb-2 h-8 w-8 text-stone-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
         <path d="M7 16a4 4 0 0 1-.88-7.903A5 5 0 1 1 15.9 6L16 6a5 5 0 0 1 1 9.9M15 13l-3-3m0 0-3 3m3-3v12" stroke-linecap="round" stroke-linejoin="round" />
       </svg>
-      <p class="text-sm text-stone-600 dark:text-stone-400">{m.search_drop_zone_text()}</p>
+      <p class="text-sm text-stone-600">{m.search_drop_zone_text()}</p>
       <p class="mt-1 text-xs text-stone-400">
         {m.search_drop_zone_browse()} — {m.search_drop_zone_formats()}
       </p>
@@ -265,7 +265,7 @@
     {:else}
       <!-- File info row -->
       <div class="mb-3 flex items-center justify-between rounded-lg bg-stone-50 px-3 py-2 dark:bg-stone-800/50">
-        <span class="truncate text-sm text-stone-900 dark:text-stone-100">
+        <span class="truncate text-sm text-stone-900">
           {selectedFile.name}
           <span class="ml-1 text-xs text-stone-400">
             ({formatDuration(audioDuration)}s, {formatFileSize(selectedFile.size)})
@@ -299,7 +299,7 @@
       <div class="mt-3">
         <label
           for="source-label-input"
-          class="mb-1 block text-sm text-stone-600 dark:text-stone-400"
+          class="mb-1 block text-sm text-stone-600"
         >
           {m.search_source_label()}
         </label>
@@ -307,9 +307,9 @@
           id="source-label-input"
           bind:value={label}
           type="text"
-          class="w-full rounded-md border border-stone-300 bg-white px-3 py-1.5 text-sm
-                 placeholder-stone-400 focus:border-primary-500 focus:outline-none focus:ring-1
-                 focus:ring-primary-500 dark:border-stone-600 dark:bg-stone-800 dark:text-stone-100"
+          class="w-full rounded-md border border-stone-300 bg-surface-card px-3 py-1.5 text-sm
+                 text-stone-900 placeholder-stone-400 focus:border-primary-500 focus:outline-none focus:ring-1
+                 focus:ring-primary-500 dark:border-stone-600"
           placeholder={m.search_source_label_placeholder()}
         />
       </div>
@@ -318,15 +318,15 @@
       <div class="mt-3 flex justify-end gap-2">
         <button
           type="button"
-          class="rounded-md px-3 py-1.5 text-sm text-stone-600 hover:bg-stone-100 dark:text-stone-400 dark:hover:bg-stone-700"
+          class="rounded-md px-3 py-1.5 text-sm text-stone-600 hover:bg-stone-100 dark:hover:bg-stone-700"
           onclick={onCancel}
         >
           {m.search_cancel()}
         </button>
         <button
           type="button"
-          class="rounded-md bg-primary-600 px-3 py-1.5 text-sm font-medium text-white
-                 hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50"
+          class="rounded-md bg-primary-600 dark:bg-primary-300 px-3 py-1.5 text-sm font-medium text-white
+                 hover:bg-primary-700 dark:hover:bg-primary-200 disabled:cursor-not-allowed disabled:opacity-50"
           onclick={handleAdd}
           disabled={!selectedFile || isDecoding}
         >

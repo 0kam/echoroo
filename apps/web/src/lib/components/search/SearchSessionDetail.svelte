@@ -9,7 +9,7 @@
 
   import { onMount } from 'svelte';
   import * as m from '$lib/paraglide/messages';
-  import { getSearchSession, getReferenceAudioUrl, updateSearchSession } from '$lib/api/search';
+  import { getSearchSession, getReferenceAudioUrl, updateSearchSession, exportSearchSessionRecordingsCSV } from '$lib/api/search';
   import { generateId } from '$lib/utils/id';
   import type { SearchSession, TargetSpecies, SoundSource } from '$lib/types/search';
   import ReferenceSoundsPanel from './ReferenceSoundsPanel.svelte';
@@ -40,6 +40,21 @@
 
   // Reconstructed TargetSpecies for the ReferenceSoundsPanel
   let reconstructedSpecies = $state<TargetSpecies[]>([]);
+
+  // Recordings CSV export state
+  let isExportingRecordings = $state(false);
+
+  async function handleExportRecordings() {
+    if (!session) return;
+    isExportingRecordings = true;
+    try {
+      await exportSearchSessionRecordingsCSV(projectId, session.id);
+    } catch (e) {
+      console.error('Recordings export failed:', e);
+    } finally {
+      isExportingRecordings = false;
+    }
+  }
 
   // Inline rename state
   let isRenaming = $state(false);
@@ -275,7 +290,7 @@
   <div>
     <button
       type="button"
-      class="inline-flex items-center gap-1.5 text-sm text-stone-500 transition-colors hover:text-stone-900 dark:text-stone-400 dark:hover:text-stone-100"
+      class="inline-flex items-center gap-1.5 text-sm text-stone-500 transition-colors hover:text-stone-900 dark:hover:text-stone-100"
       onclick={onBack}
     >
       <!-- Left arrow icon -->
@@ -290,21 +305,21 @@
     <!-- Loading skeleton -->
     <div class="space-y-4">
       <!-- Header skeleton -->
-      <div class="rounded-lg border border-stone-200 bg-white p-6 shadow-sm dark:border-stone-700 dark:bg-stone-900">
+      <div class="rounded-lg border border-stone-200 bg-surface-card p-6 shadow-sm dark:border-stone-700">
         <div class="mb-2 h-6 w-2/5 animate-pulse rounded bg-stone-200 dark:bg-stone-700"></div>
         <div class="h-4 w-1/3 animate-pulse rounded bg-stone-100 dark:bg-stone-800"></div>
       </div>
       <!-- Reference audio skeleton -->
-      <div class="rounded-lg border border-stone-200 bg-white p-6 shadow-sm dark:border-stone-700 dark:bg-stone-900">
+      <div class="rounded-lg border border-stone-200 bg-surface-card p-6 shadow-sm dark:border-stone-700">
         <div class="mb-4 h-5 w-1/4 animate-pulse rounded bg-stone-200 dark:bg-stone-700"></div>
         <div class="h-20 animate-pulse rounded bg-stone-100 dark:bg-stone-800"></div>
       </div>
       <!-- Results skeleton -->
-      <div class="rounded-lg border border-stone-200 bg-white p-6 shadow-sm dark:border-stone-700 dark:bg-stone-900">
+      <div class="rounded-lg border border-stone-200 bg-surface-card p-6 shadow-sm dark:border-stone-700">
         <div class="mb-4 h-5 w-1/4 animate-pulse rounded bg-stone-200 dark:bg-stone-700"></div>
         <div class="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
           {#each { length: 8 } as _}
-            <div class="animate-pulse overflow-hidden rounded-lg border border-stone-200 bg-white shadow-sm dark:border-stone-700 dark:bg-stone-900">
+            <div class="animate-pulse overflow-hidden rounded-lg border border-stone-200 bg-surface-card shadow-sm dark:border-stone-700">
               <div class="h-[120px] bg-stone-200 dark:bg-stone-700"></div>
               <div class="flex flex-col gap-2 p-2.5">
                 <div class="h-3 w-4/5 rounded bg-stone-100 dark:bg-stone-800"></div>
@@ -324,7 +339,7 @@
 
   {:else if session}
     <!-- Session header card -->
-    <div class="rounded-lg border border-stone-200 bg-white p-5 shadow-sm dark:border-stone-700 dark:bg-stone-900">
+    <div class="rounded-lg border border-stone-200 bg-surface-card p-5 shadow-sm dark:border-stone-700">
       <div class="flex flex-wrap items-start justify-between gap-3">
         <div class="min-w-0 flex-1">
           <!-- Session name with inline rename -->
@@ -335,16 +350,16 @@
                 bind:value={renameValue}
                 type="text"
                 aria-label={m.search_session_name()}
-                class="min-w-0 flex-1 rounded-md border border-stone-300 bg-white px-3 py-1.5 text-lg font-semibold text-stone-900
+                class="min-w-0 flex-1 rounded-md border border-stone-300 bg-surface-card px-3 py-1.5 text-lg font-semibold text-stone-900
                        shadow-sm outline-none ring-primary-500 focus:border-primary-500 focus:ring-2
-                       dark:border-stone-600 dark:bg-stone-800 dark:text-stone-100"
+                       dark:border-stone-600"
                 disabled={isSavingRename}
                 onkeydown={handleRenameKeydown}
               />
               <button
                 type="button"
-                class="shrink-0 rounded-md bg-primary-600 px-3 py-1.5 text-sm font-medium text-white
-                       transition-colors hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2
+                class="shrink-0 rounded-md bg-primary-600 dark:bg-primary-300 px-3 py-1.5 text-sm font-medium text-white
+                       transition-colors hover:bg-primary-700 dark:hover:bg-primary-200 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2
                        disabled:opacity-50"
                 disabled={isSavingRename || !renameValue.trim()}
                 onclick={saveRename}
@@ -353,9 +368,9 @@
               </button>
               <button
                 type="button"
-                class="shrink-0 rounded-md border border-stone-300 bg-white px-3 py-1.5 text-sm font-medium
-                       text-stone-700 transition-colors hover:bg-stone-50 disabled:opacity-50
-                       dark:border-stone-600 dark:bg-stone-800 dark:text-stone-300 dark:hover:bg-stone-700"
+                class="shrink-0 rounded-md border border-stone-300 bg-surface-card px-3 py-1.5 text-sm font-medium
+                       text-stone-700 transition-colors hover:bg-stone-50 dark:hover:bg-stone-700 disabled:opacity-50
+                       dark:border-stone-600"
                 disabled={isSavingRename}
                 onclick={cancelRename}
               >
@@ -367,7 +382,7 @@
             {/if}
           {:else}
             <div class="flex items-center gap-2">
-              <h2 class="truncate text-xl font-semibold text-stone-900 dark:text-stone-100">
+              <h2 class="truncate text-xl font-semibold text-stone-900">
                 {sessionName()}
               </h2>
               {#if session.status === 'completed'}
@@ -376,7 +391,7 @@
                   title={m.search_rename_session()}
                   aria-label={m.search_rename_session()}
                   class="shrink-0 rounded p-1 text-stone-400 transition-colors hover:text-stone-700
-                         dark:text-stone-500 dark:hover:text-stone-300"
+                         dark:hover:text-stone-300"
                   onclick={startRename}
                 >
                   <!-- Pencil icon -->
@@ -388,7 +403,7 @@
               {/if}
             </div>
           {/if}
-          <p class="mt-0.5 text-sm text-stone-500 dark:text-stone-400">
+          <p class="mt-0.5 text-sm text-stone-500">
             {formattedDate()}
           </p>
 
@@ -402,33 +417,47 @@
 
             {#if session.result_count > 0}
               <span class="text-stone-400">·</span>
-              <span class="text-stone-600 dark:text-stone-300">
+              <span class="text-stone-600">
                 {m.search_session_results_summary({ results: String(session.result_count) })}
-              </span>
-            {/if}
-
-            {#if session.confirmed_count > 0 || session.rejected_count > 0}
-              <span class="text-stone-400">·</span>
-              <span class="text-emerald-600 dark:text-emerald-400">
-                ✓ {session.confirmed_count}
-              </span>
-              <span class="text-red-500 dark:text-red-400">
-                ✗ {session.rejected_count}
               </span>
             {/if}
 
             {#if searchDuration() > 0}
               <span class="text-stone-400">·</span>
-              <span class="text-stone-500 dark:text-stone-400">
+              <span class="text-stone-500">
                 {m.search_search_duration({ ms: String(searchDuration()) })}
               </span>
             {/if}
           </div>
         </div>
 
-        <!-- CSV export button -->
+        <!-- Export buttons -->
         {#if session.status === 'completed' && session.result_count > 0}
-          <SearchSessionExportButton {projectId} sessionId={session.id} />
+          <div class="flex flex-wrap items-center gap-2">
+            <!-- Export Recordings CSV -->
+            <button
+              type="button"
+              onclick={handleExportRecordings}
+              disabled={isExportingRecordings}
+              class="inline-flex items-center gap-1.5 rounded-lg border border-stone-300 bg-surface-card px-3 py-1.5 text-sm font-medium text-stone-700 shadow-sm transition hover:bg-stone-50 disabled:opacity-50"
+            >
+              {#if isExportingRecordings}
+                <svg class="h-4 w-4 animate-spin text-stone-400" fill="none" viewBox="0 0 24 24" aria-hidden="true">
+                  <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                  <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+                </svg>
+                Exporting...
+              {:else}
+                <svg class="h-4 w-4 text-stone-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
+                </svg>
+                Export Recordings CSV
+              {/if}
+            </button>
+
+            <!-- Export search results CSV -->
+            <SearchSessionExportButton {projectId} sessionId={session.id} />
+          </div>
         {/if}
       </div>
 
@@ -457,9 +486,9 @@
         <!-- Fork: create a brand-new session preserving old results -->
         <button
           type="button"
-          class="inline-flex items-center gap-2 rounded-md border border-stone-300 bg-white px-4 py-2 text-sm font-medium
+          class="inline-flex items-center gap-2 rounded-md border border-stone-300 bg-surface-card px-4 py-2 text-sm font-medium
                  text-stone-500 shadow-sm transition-colors hover:bg-stone-50 hover:text-stone-700
-                 dark:border-stone-600 dark:bg-stone-800 dark:text-stone-400 dark:hover:bg-stone-700 dark:hover:text-stone-300"
+                 dark:border-stone-600 dark:hover:bg-stone-700 dark:hover:text-stone-300"
           onclick={handleFork}
         >
           <!-- Fork icon (git-branch) -->
@@ -474,9 +503,9 @@
         <!-- Edit & Re-search: update existing session in-place -->
         <button
           type="button"
-          class="inline-flex items-center gap-2 rounded-md border border-stone-300 bg-white px-4 py-2 text-sm font-medium
+          class="inline-flex items-center gap-2 rounded-md border border-stone-300 bg-surface-card px-4 py-2 text-sm font-medium
                  text-stone-700 shadow-sm transition-colors hover:bg-stone-50
-                 dark:border-stone-600 dark:bg-stone-800 dark:text-stone-300 dark:hover:bg-stone-700"
+                 dark:border-stone-600 dark:hover:bg-stone-700"
           onclick={handleEditRerun}
         >
           <!-- Edit icon -->
@@ -513,11 +542,11 @@
         >
           <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
         </svg>
-        <p class="font-medium text-stone-500 dark:text-stone-400">{m.search_session_status_failed()}</p>
+        <p class="font-medium text-stone-500">{m.search_session_status_failed()}</p>
       </div>
     {:else if session.status === 'pending' || session.status === 'running'}
       <!-- Pending/running state -->
-      <div class="flex items-center justify-center gap-3 rounded-lg border border-stone-200 bg-white p-6 text-sm text-stone-600 dark:border-stone-700 dark:bg-stone-900 dark:text-stone-400">
+      <div class="flex items-center justify-center gap-3 rounded-lg border border-stone-200 bg-surface-card p-6 text-sm text-stone-600 dark:border-stone-700">
         <svg class="h-5 w-5 animate-spin text-primary-500" fill="none" viewBox="0 0 24 24" aria-hidden="true">
           <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
           <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
@@ -528,7 +557,7 @@
       <!-- Completed but no results -->
       <div class="flex flex-col items-center justify-center rounded-lg border-2 border-dashed border-stone-200 py-12 text-center dark:border-stone-700">
         <svg
-          class="mx-auto mb-3 h-10 w-10 text-stone-300 dark:text-stone-600"
+          class="mx-auto mb-3 h-10 w-10 text-stone-300"
           fill="none"
           viewBox="0 0 24 24"
           stroke="currentColor"
@@ -537,8 +566,8 @@
         >
           <path stroke-linecap="round" stroke-linejoin="round" d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3" />
         </svg>
-        <p class="font-medium text-stone-500 dark:text-stone-400">{m.search_results_no_matches()}</p>
-        <p class="mt-1 text-sm text-stone-400 dark:text-stone-500">{m.search_results_no_matches_hint()}</p>
+        <p class="font-medium text-stone-500">{m.search_results_no_matches()}</p>
+        <p class="mt-1 text-sm text-stone-400">{m.search_results_no_matches_hint()}</p>
       </div>
     {/if}
   {/if}
