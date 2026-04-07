@@ -1359,7 +1359,9 @@
   "detection_filter_needs_votes": "Needs Votes",
   "detection_filter_agreed": "Agreed",
   "detection_filter_disputed": "Disputed",
-  "detection_keyboard_agree": "Agree",
+  "detection_keyboard_solo": "Solo",
+  "detection_keyboard_dominant": "Dominant",
+  "detection_keyboard_mixed": "Mixed",
   "detection_keyboard_disagree": "Disagree",
   "detection_keyboard_unsure": "Unsure",
 

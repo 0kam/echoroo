@@ -7,7 +7,7 @@
    * - Client-side threshold and max-per-species filter bar
    * - Spectrogram card grid for the selected species
    * - Voting actions (Agree/Disagree/Unsure) on each card
-   * - Keyboard shortcuts: Space=Play, A=Agree, D=Disagree, U=Unsure, Arrow Up/Down=Navigate
+   * - Keyboard shortcuts: Space=Play, 1=Solo, 2=Dominant, 3=Mixed, D=Disagree, U=Unsure, Arrow Up/Down=Navigate
    */
 
   import { onDestroy } from 'svelte';
@@ -176,11 +176,22 @@
     onReject: () => {
       // No-op: voting mode does not use legacy reject
     },
-    onAgree: (i) => {
+    onAgreeSolo: (i) => {
       const match = filteredMatches[i];
       if (match && mutatingId === null) {
-        // Keyboard shortcut A defaults to Solo (fastest/most common quality)
         handleAgree(match, 'solo');
+      }
+    },
+    onAgreeDominant: (i) => {
+      const match = filteredMatches[i];
+      if (match && mutatingId === null) {
+        handleAgree(match, 'dominant');
+      }
+    },
+    onAgreeMixed: (i) => {
+      const match = filteredMatches[i];
+      if (match && mutatingId === null) {
+        handleAgree(match, 'mixed');
       }
     },
     onDisagree: (i) => {
@@ -334,7 +345,9 @@
 
       <!-- Keyboard shortcuts hint -->
       <div class="ml-auto flex items-center gap-2 text-xs text-stone-400">
-        <kbd class="rounded border border-stone-200 bg-surface-card px-1.5 py-0.5 font-mono text-xs">A</kbd> {m.vote_agree_button()}
+        <kbd class="rounded border border-stone-200 bg-surface-card px-1.5 py-0.5 font-mono text-xs">1</kbd> {m.detection_keyboard_solo()}
+        <kbd class="rounded border border-stone-200 bg-surface-card px-1.5 py-0.5 font-mono text-xs">2</kbd> {m.detection_keyboard_dominant()}
+        <kbd class="rounded border border-stone-200 bg-surface-card px-1.5 py-0.5 font-mono text-xs">3</kbd> {m.detection_keyboard_mixed()}
         <kbd class="rounded border border-stone-200 bg-surface-card px-1.5 py-0.5 font-mono text-xs">D</kbd> {m.vote_disagree_button()}
         <kbd class="rounded border border-stone-200 bg-surface-card px-1.5 py-0.5 font-mono text-xs">U</kbd> {m.vote_unsure_button()}
         <kbd class="rounded border border-stone-200 bg-surface-card px-1.5 py-0.5 font-mono text-xs">Space</kbd> {m.search_keyboard_play()}

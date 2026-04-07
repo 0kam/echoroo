@@ -25,8 +25,12 @@ export interface ReviewNavigationOptions {
   onConfirm: (index: number) => void;
   /** Called when reject is triggered (keyboard R) on the selected item (legacy) */
   onReject: (index: number) => void;
-  /** Called when agree vote is triggered (keyboard A) on the selected item */
-  onAgree?: (index: number) => void;
+  /** Called when agree-solo vote is triggered (keyboard 1) on the selected item */
+  onAgreeSolo?: (index: number) => void;
+  /** Called when agree-dominant vote is triggered (keyboard 2) on the selected item */
+  onAgreeDominant?: (index: number) => void;
+  /** Called when agree-mixed vote is triggered (keyboard 3) on the selected item */
+  onAgreeMixed?: (index: number) => void;
   /** Called when disagree vote is triggered (keyboard D) on the selected item */
   onDisagree?: (index: number) => void;
   /** Called when unsure vote is triggered (keyboard U) on the selected item */
@@ -66,6 +70,10 @@ export interface ReviewNavigation {
  * - Space to toggle audio playback on the selected item
  * - C to confirm the selected item
  * - R to reject the selected item
+ * - 1 to agree as Solo quality
+ * - 2 to agree as Dominant quality
+ * - 3 to agree as Mixed quality
+ * - D to disagree, U to unsure
  * - Auto-scrolls the selected item into view
  * - Skips keyboard handling when focus is inside input/textarea/select
  * - Exposes isPlaying and playingIndex so child cards can sync their play button UI
@@ -163,10 +171,19 @@ export function createReviewNavigation(options: ReviewNavigationOptions): Review
         options.onReject(selectedIndex);
         break;
 
-      case 'a':
-      case 'A':
+      case '1':
         e.preventDefault();
-        options.onAgree?.(selectedIndex);
+        options.onAgreeSolo?.(selectedIndex);
+        break;
+
+      case '2':
+        e.preventDefault();
+        options.onAgreeDominant?.(selectedIndex);
+        break;
+
+      case '3':
+        e.preventDefault();
+        options.onAgreeMixed?.(selectedIndex);
         break;
 
       case 'd':

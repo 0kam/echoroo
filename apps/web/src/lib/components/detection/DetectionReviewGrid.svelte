@@ -7,7 +7,7 @@
    * - Status filter bar (All / Needs Votes / Agreed / Disputed / Rejected)
    * - Confidence slider filter
    * - Pagination controls
-   * - Keyboard shortcuts: A=Agree, D=Disagree, U=Unsure, Space=Play, Arrow=Navigate
+   * - Keyboard shortcuts: 1=Solo, 2=Dominant, 3=Mixed, D=Disagree, U=Unsure, Space=Play, Arrow=Navigate
    * - Vote summaries per detection card
    * - Shared audio playback via reviewNavigation hook
    */
@@ -103,11 +103,22 @@
     onReject: () => {
       // Legacy reject — no-op in voting mode
     },
-    onAgree: (i) => {
+    onAgreeSolo: (i) => {
       const d = detections[i];
       if (d && mutatingId === null) {
-        // Keyboard shortcut A defaults to Solo (fastest/most common quality)
         handleAgree(d.id, 'solo');
+      }
+    },
+    onAgreeDominant: (i) => {
+      const d = detections[i];
+      if (d && mutatingId === null) {
+        handleAgree(d.id, 'dominant');
+      }
+    },
+    onAgreeMixed: (i) => {
+      const d = detections[i];
+      if (d && mutatingId === null) {
+        handleAgree(d.id, 'mixed');
       }
     },
     onDisagree: (i) => {
@@ -314,7 +325,9 @@
 
     <!-- Keyboard shortcuts hint -->
     <div class="ml-auto flex items-center gap-2 text-xs text-stone-400">
-      <kbd class="rounded border border-stone-200 bg-surface-card px-1.5 py-0.5 font-mono text-xs">A</kbd> {m.detection_keyboard_agree()}
+      <kbd class="rounded border border-stone-200 bg-surface-card px-1.5 py-0.5 font-mono text-xs">1</kbd> {m.detection_keyboard_solo()}
+      <kbd class="rounded border border-stone-200 bg-surface-card px-1.5 py-0.5 font-mono text-xs">2</kbd> {m.detection_keyboard_dominant()}
+      <kbd class="rounded border border-stone-200 bg-surface-card px-1.5 py-0.5 font-mono text-xs">3</kbd> {m.detection_keyboard_mixed()}
       <kbd class="rounded border border-stone-200 bg-surface-card px-1.5 py-0.5 font-mono text-xs">D</kbd> {m.detection_keyboard_disagree()}
       <kbd class="rounded border border-stone-200 bg-surface-card px-1.5 py-0.5 font-mono text-xs">U</kbd> {m.detection_keyboard_unsure()}
       <kbd class="rounded border border-stone-200 bg-surface-card px-1.5 py-0.5 font-mono text-xs">Space</kbd> {m.detection_keyboard_play()}

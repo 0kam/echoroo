@@ -1359,7 +1359,9 @@
   "detection_filter_needs_votes": "投票待ち",
   "detection_filter_agreed": "同意済み",
   "detection_filter_disputed": "未解決",
-  "detection_keyboard_agree": "同意",
+  "detection_keyboard_solo": "ソロ",
+  "detection_keyboard_dominant": "ドミナント",
+  "detection_keyboard_mixed": "ミックス",
   "detection_keyboard_disagree": "不同意",
   "detection_keyboard_unsure": "不明",
 

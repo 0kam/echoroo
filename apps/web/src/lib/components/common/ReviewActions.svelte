@@ -4,17 +4,16 @@
    *
    * The Agree button opens a compact signal-quality popover so the reviewer
    * can classify how clearly the species is audible:
-   *   - Solo     (S / 1): only this species is present
-   *   - Dominant (D / 2): this species is dominant, others may be present
-   *   - Mixed    (M / 3): this species is present but not dominant
+   *   - Solo     (1): only this species is present
+   *   - Dominant (2): this species is dominant, others may be present
+   *   - Mixed    (3): this species is present but not dominant
    *
    * Keyboard shortcuts (handled by the parent grid unless in popover):
-   *   A = open signal-quality popover (or toggle off if already agreed)
-   *   1 / S = agree as Solo (fastest path — also works without opening popover)
-   *   2 / O = agree as Dominant
-   *   3 / X = agree as Mixed
-   *   Escape = close popover without voting
-   *   D = Disagree, U = Unsure (unchanged)
+   *   1 = agree as Solo
+   *   2 = agree as Dominant
+   *   3 = agree as Mixed
+   *   D = Disagree
+   *   U = Unsure
    */
 
   import * as m from '$lib/paraglide/messages';
