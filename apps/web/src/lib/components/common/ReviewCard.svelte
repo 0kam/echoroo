@@ -49,6 +49,11 @@
     onVote?: (vote: VoteValue) => void;
     onRemoveVote?: () => void;
     /**
+     * When true, vote buttons show icon + count only (no text label).
+     * Pass this on narrow-column grids to prevent text overflow.
+     */
+    compact?: boolean;
+    /**
      * Whether this card's audio is currently playing, controlled by a parent
      * navigation hook. When provided, the play button reflects this state
      * instead of the internal player's state.
@@ -92,6 +97,7 @@
     onAgree,
     onVote,
     onRemoveVote,
+    compact = false,
     externalIsPlaying,
     externalIsLoadingAudio,
     onPlayToggle,
@@ -252,6 +258,7 @@
     <ReviewActions
       {voteSummary}
       {isLoading}
+      {compact}
       onAgree={handleAgree}
       onVote={handleVote}
       onRemoveVote={handleRemoveVote}

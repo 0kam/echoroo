@@ -80,4 +80,5 @@
   {onAgree}
   {onVote}
   {onRemoveVote}
+  compact={true}
 />

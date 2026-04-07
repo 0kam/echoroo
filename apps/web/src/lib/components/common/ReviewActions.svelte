@@ -29,6 +29,11 @@
     onVote?: (vote: VoteValue) => void;
     /** Called when user clicks their current active vote to toggle it off */
     onRemoveVote?: () => void;
+    /**
+     * When true, buttons show icon + count only (no text label).
+     * Use on narrow cards to prevent text overflow.
+     */
+    compact?: boolean;
   }
 
   let {
@@ -37,6 +42,7 @@
     onAgree,
     onVote,
     onRemoveVote,
+    compact = false,
   }: Props = $props();
 
   const myVote = $derived(voteSummary?.my_vote ?? null);
@@ -111,6 +117,10 @@
 
   /** Build the label shown inside the active Agree button */
   function agreeButtonLabel(): string {
+    if (compact) {
+      // In compact mode, show count only (or nothing when zero)
+      return agreeCount > 0 ? String(agreeCount) : '';
+    }
     if (agreeCount === 0) return m.vote_agree_button();
     if (agreeCount > 0) {
       const { solo, dominant, mixed } = signalQualityCounts;
@@ -151,7 +161,7 @@
 <svelte:window onclick={handleWindowClick} />
 
 <!-- Voting mode: Agree (with quality popover) / Disagree / Unsure -->
-<div class="relative flex items-center gap-1.5" bind:this={containerEl}>
+<div class="relative flex flex-nowrap items-center gap-1" bind:this={containerEl}>
   <!-- Agree button + popover wrapper -->
   <div class="relative">
     <!-- Agree button -->
@@ -181,7 +191,9 @@
           <path d="M2 10.5a1.5 1.5 0 113 0v6a1.5 1.5 0 01-3 0v-6zM6 10.333v5.43a2 2 0 001.106 1.79l.05.025A4 4 0 008.943 18h5.416a2 2 0 001.962-1.608l1.2-6A2 2 0 0015.56 8H12V4a2 2 0 00-2-2 1 1 0 00-1 1v.667a4 4 0 01-.8 2.4L6.8 7.933a4 4 0 00-.8 2.4z" />
         </svg>
       {/if}
-      <span>{agreeButtonLabel()}</span>
+      {#if agreeButtonLabel()}
+        <span>{agreeButtonLabel()}</span>
+      {/if}
       <!-- Chevron indicator when not yet agreed -->
       {#if myVote !== 'agree'}
         <svg class="h-2.5 w-2.5 opacity-60" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
@@ -271,7 +283,9 @@
         <path d="M18 9.5a1.5 1.5 0 11-3 0v-6a1.5 1.5 0 013 0v6zM14 9.667v-5.43a2 2 0 00-1.105-1.79l-.05-.025A4 4 0 0011.055 2H5.64a2 2 0 00-1.962 1.608l-1.2 6A2 2 0 004.44 12H8v4a2 2 0 002 2 1 1 0 001-1v-.667a4 4 0 01.8-2.4l1.4-1.866a4 4 0 00.8-2.4z" />
       </svg>
     {/if}
-    <span>{disagreeCount > 0 ? disagreeCount : m.vote_disagree_button()}</span>
+    {#if !compact || disagreeCount > 0}
+      <span>{disagreeCount > 0 ? disagreeCount : m.vote_disagree_button()}</span>
+    {/if}
   </button>
 
   <!-- Unsure button -->
@@ -299,6 +313,8 @@
         <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-8-3a1 1 0 00-.867.5 1 1 0 11-1.731-1A3 3 0 0113 8a3.001 3.001 0 01-2 2.83V11a1 1 0 11-2 0v-1a1 1 0 011-1 1 1 0 100-2zm0 8a1 1 0 100-2 1 1 0 000 2z" clip-rule="evenodd" />
       </svg>
     {/if}
-    <span>{unsureCount > 0 ? unsureCount : m.vote_unsure_button()}</span>
+    {#if !compact || unsureCount > 0}
+      <span>{unsureCount > 0 ? unsureCount : m.vote_unsure_button()}</span>
+    {/if}
   </button>
 </div>
