@@ -18,7 +18,8 @@
   import { castAnnotationVote, deleteAnnotationVote, getAnnotationVotes } from '$lib/api/votes';
   import { createAnnotationFromSearch } from '$lib/api/search';
   import { createReviewNavigation } from '$lib/utils/reviewNavigation.svelte';
-  import SearchResultCard from './SearchResultCard.svelte';
+  import ReviewCard from '$lib/components/common/ReviewCard.svelte';
+  import { getConsensusStatusBadgeClass, getConsensusStatusLabel } from '$lib/utils/statusFormatters';
 
   interface Props {
     projectId: string;
@@ -366,14 +367,28 @@
           {/each}
         </div>
       </div>
-      <div class="grid grid-cols-2 gap-3 p-4 sm:grid-cols-3 lg:grid-cols-4">
+      <div class="grid grid-cols-1 gap-3 p-4 sm:grid-cols-2 lg:grid-cols-3">
         {#each { length: 8 } as _}
           <div class="animate-pulse overflow-hidden rounded-lg border border-stone-200 bg-surface-card shadow-sm">
+            <!-- Spectrogram area placeholder -->
             <div class="h-[120px] bg-stone-200"></div>
+            <!-- Card body placeholder — matches DetectionCard layout -->
             <div class="flex flex-col gap-2 p-2.5">
+              <!-- Species name + similarity badge row -->
+              <div class="flex items-center justify-between gap-2">
+                <div class="h-4 w-2/3 rounded bg-stone-200"></div>
+                <div class="h-5 w-10 shrink-0 rounded bg-stone-100"></div>
+              </div>
+              <!-- Recording name line -->
               <div class="h-3 w-4/5 rounded bg-stone-100"></div>
+              <!-- Time range line -->
               <div class="h-3 w-1/2 rounded bg-stone-100"></div>
-              <div class="h-6 w-full rounded bg-stone-100"></div>
+              <!-- Vote buttons placeholder -->
+              <div class="flex gap-1.5">
+                <div class="h-6 w-14 rounded bg-green-100"></div>
+                <div class="h-6 w-14 rounded bg-red-100"></div>
+                <div class="h-6 w-14 rounded bg-yellow-100"></div>
+              </div>
             </div>
           </div>
         {/each}
@@ -443,24 +458,103 @@
                 <p class="text-sm text-stone-500">{m.search_no_results_above_threshold()}</p>
               </div>
             {:else}
-              <!-- Result card grid -->
-              <div class="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+              <!-- Result card grid: 3-column layout identical to DetectionReviewGrid -->
+              <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
                 {#each filteredMatches as result, i (result.embedding_id)}
-                  <div bind:this={cardElements[i]}>
-                    <SearchResultCard
+                  {@const similarityPercent = Math.round(result.similarity * 100)}
+                  {@const similarityBadgeClass = result.similarity >= 0.8
+                    ? 'bg-green-100 text-green-700'
+                    : result.similarity >= 0.7
+                      ? 'bg-primary-100 text-primary-800'
+                      : result.similarity >= 0.5
+                        ? 'bg-yellow-100 text-yellow-700'
+                        : 'bg-stone-100 text-stone-600'}
+                  {@const resultVoteSummary = voteSummaries[result.embedding_id] ?? null}
+                  {@const displayName = selectedGroup ? getDisplayName(selectedGroup) : ''}
+                  <div
+                    bind:this={cardElements[i]}
+                    class="transition-transform duration-300 ease-in-out"
+                    role="article"
+                    aria-label="Search result: {displayName}"
+                  >
+                    <ReviewCard
                       {projectId}
-                      {result}
-                      {searchSessionId}
+                      recordingId={result.recording_id}
+                      recordingName={result.recording_filename ?? result.recording_id.slice(0, 8) + '...'}
+                      startTime={result.start_time}
+                      endTime={result.end_time}
+                      status="unreviewed"
+                      scoreValue={null}
+                      isLoading={mutatingId === result.embedding_id}
                       isSelected={i === nav.selectedIndex}
+                      voteSummary={resultVoteSummary}
                       externalIsPlaying={nav.playingIndex === i && nav.isPlaying}
                       externalIsLoadingAudio={nav.playingIndex === i && nav.isLoadingAudio}
                       onPlayToggle={() => nav.togglePlay(i)}
-                      voteSummary={voteSummaries[result.embedding_id] ?? null}
-                      isVoting={mutatingId === result.embedding_id}
                       onAgree={(q) => handleAgree(result, q)}
                       onVote={(vote) => handleVote(result, vote)}
                       onRemoveVote={() => handleRemoveVote(result.embedding_id)}
-                    />
+                    >
+                      {#snippet extraHeader()}
+                        <!-- Species name and similarity badge — mirrors DetectionCard header layout -->
+                        <div class="flex items-center justify-between gap-2">
+                          <span class="truncate text-sm font-semibold text-stone-800" title={displayName}>
+                            {displayName}
+                          </span>
+                          <span
+                            class="shrink-0 rounded px-1.5 py-0.5 text-xs font-medium {similarityBadgeClass}"
+                            title={m.search_similarity()}
+                          >
+                            {similarityPercent}%
+                          </span>
+                        </div>
+                      {/snippet}
+
+                      {#snippet extraBody()}
+                        <!-- Vote summary indicator — mirrors DetectionCard extraBody -->
+                        {#if resultVoteSummary && resultVoteSummary.total_votes > 0}
+                          <div class="flex flex-wrap items-center gap-1.5">
+                            <span
+                              class="rounded border px-1.5 py-0.5 text-xs font-medium {getConsensusStatusBadgeClass(resultVoteSummary.consensus)}"
+                            >
+                              {getConsensusStatusLabel(resultVoteSummary.consensus)}
+                            </span>
+                            <span class="text-xs text-stone-400">
+                              {m.vote_summary_ratio({ agree: resultVoteSummary.agree_count, total: resultVoteSummary.total_votes })}
+                            </span>
+                            {#if resultVoteSummary.agree_count > 0 && resultVoteSummary.signal_quality_counts}
+                              {@const sq = resultVoteSummary.signal_quality_counts}
+                              {#if sq.solo > 0 || sq.dominant > 0 || sq.mixed > 0}
+                                <div class="flex items-center gap-0.5">
+                                  {#if sq.solo > 0}
+                                    <span class="rounded bg-green-100 px-1 py-0.5 text-[10px] font-medium text-green-700" title={m.signal_quality_solo()}>
+                                      {sq.solo}{m.signal_quality_solo_abbr()}
+                                    </span>
+                                  {/if}
+                                  {#if sq.dominant > 0}
+                                    <span class="rounded bg-yellow-100 px-1 py-0.5 text-[10px] font-medium text-yellow-700" title={m.signal_quality_dominant()}>
+                                      {sq.dominant}{m.signal_quality_dominant_abbr()}
+                                    </span>
+                                  {/if}
+                                  {#if sq.mixed > 0}
+                                    <span class="rounded bg-orange-100 px-1 py-0.5 text-[10px] font-medium text-orange-700" title={m.signal_quality_mixed()}>
+                                      {sq.mixed}{m.signal_quality_mixed_abbr()}
+                                    </span>
+                                  {/if}
+                                </div>
+                              {/if}
+                            {/if}
+                          </div>
+                        {/if}
+
+                        <!-- Source badge — similarity search results always come from perch_search -->
+                        <div class="flex items-center gap-1">
+                          <span class="rounded bg-stone-100 px-1.5 py-0.5 text-xs text-stone-500">
+                            Perch
+                          </span>
+                        </div>
+                      {/snippet}
+                    </ReviewCard>
                   </div>
                 {/each}
               </div>

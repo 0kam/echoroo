@@ -2,7 +2,7 @@
   /**
    * ReviewCard - Shared spectrogram card with confirm/reject actions.
    *
-   * Used by both DetectionCard (detection review) and SearchResultCard
+   * Used by DetectionCard (detection review) and directly in ResultsPanel
    * (similarity search review). Renders a MiniSpectrogram with an audio
    * play button overlay, a score badge, and ReviewActions at the bottom.
    *
