@@ -47,6 +47,7 @@
   let config = $state<SearchConfig>({
     model_name: 'perch',
     dataset_id: undefined,
+    limit_per_species: 20,
   });
   let results = $state<Record<string, SpeciesMatchResult> | null>(null);
   let totalMatches = $state(0);

@@ -571,7 +571,7 @@ export async function getSessionDistribution(
 /**
  * Fetch a random sample of results within a similarity range from a search session.
  *
- * Used by ThresholdPreview to show representative spectrograms for a given
+ * Used by ResultsPanel to show representative spectrograms for a given
  * similarity band without loading all results.
  *
  * @param projectId - Project UUID

@@ -3,10 +3,10 @@
    * ResultsPanel - Displays batch similarity search results in exploration-only mode.
    *
    * Features:
-   * - Species tabs at the top (one per species)
-   * - Similarity histogram (pre-computed distribution bins from API)
-   * - Spectrogram preview card grid for the selected species
-   * - ThresholdPreview with random sampling API integration
+   * - Filter bar: similarity range (min/max) and limit_per_species (user-controlled)
+   * - Similarity histogram (pre-computed distribution bins from API, always full range)
+   * - Spiral plot (time-of-day distribution)
+   * - Sample card grid: random results from the sample API, filtered by user range
    * - Audio playback (Space to play, Arrow keys to navigate)
    *
    * No voting or review actions — this panel is for exploration only.
@@ -16,12 +16,11 @@
   import { createQuery } from '@tanstack/svelte-query';
   import * as m from '$lib/paraglide/messages.js';
   import type { DistributionBin, SimilarityResult, SpeciesMatchResult, TargetSpecies } from '$lib/types/search';
-  import { getSessionDistribution } from '$lib/api/search';
+  import { getSessionDistribution, getSessionSample } from '$lib/api/search';
   import { createReviewNavigation } from '$lib/utils/reviewNavigation.svelte';
   import SearchPreviewCard from './SearchPreviewCard.svelte';
   import SimilarityHistogram from './SimilarityHistogram.svelte';
   import SimilaritySpiral from './SimilaritySpiral.svelte';
-  import ThresholdPreview from './ThresholdPreview.svelte';
 
   interface Props {
     projectId: string;
@@ -44,50 +43,49 @@
     sessionId = null,
   }: Props = $props();
 
-  // ThresholdPreview independent range (not tied to the main filter threshold)
-  let previewMin = $state(0.3);
-  let previewMax = $state(0.7);
+  // ============================================================================
+  // Filter bar state (user-controllable)
+  // ============================================================================
 
-  // Main threshold for histogram (controls card grid display)
-  let filterThreshold = $state(0.5);
+  /** Input values (bound to form fields, not yet applied) */
+  let inputMin = $state('0.5');
+  let inputMax = $state('1.0');
+  let inputLimit = $state('20');
 
-  // Flat array of all results across all species (for spiral view only)
+  /** Applied values (used for the sample API query) */
+  let appliedMin = $state(0.5);
+  let appliedMax = $state(1.0);
+  let appliedLimit = $state(20);
+
+  /** Resample counter — incrementing forces a re-fetch with the same range */
+  let resampleCounter = $state(0);
+
+  function handleApply() {
+    const minVal = parseFloat(inputMin);
+    const maxVal = parseFloat(inputMax);
+    const limitVal = parseInt(inputLimit, 10);
+
+    if (!isNaN(minVal) && !isNaN(maxVal) && minVal >= 0 && maxVal <= 1 && minVal < maxVal) {
+      appliedMin = minVal;
+      appliedMax = maxVal;
+    }
+    if (!isNaN(limitVal) && limitVal > 0 && limitVal <= 500) {
+      appliedLimit = limitVal;
+    }
+  }
+
+  // ============================================================================
+  // Flat array of all results for spiral view
+  // ============================================================================
+
   const allMatches = $derived<SimilarityResult[]>(
     results !== null
       ? Object.values(results).flatMap((group) => group.matches)
       : []
   );
 
-  // Currently selected species tab key
-  let selectedTabKey = $state<string | null>(null);
-
-  // DOM references for scroll-into-view
-  let cardElements: (HTMLElement | null)[] = $state([]);
-
-  // Shared keyboard navigation and audio playback (arrows + space only)
-  const nav = createReviewNavigation({
-    projectId,
-    itemCount: () => paginatedMatches.length,
-    onConfirm: () => { /* no-op: no review actions in search */ },
-    onReject: () => { /* no-op: no review actions in search */ },
-    getPlaybackInfo: (i) => {
-      const match = paginatedMatches[i];
-      if (!match) return null;
-      return {
-        recordingId: match.recording_id,
-        startTime: match.start_time,
-        endTime: match.end_time,
-      };
-    },
-    getElement: (i) => cardElements[i] ?? null,
-  });
-
-  onDestroy(() => {
-    nav.cleanup();
-  });
-
   // ============================================================================
-  // Distribution query (TanStack Query)
+  // Distribution query (TanStack Query) — always full range
   // ============================================================================
 
   const distributionQuery = $derived(
@@ -98,7 +96,6 @@
     })
   );
 
-  /** Pre-computed distribution bins from the API, or empty array if not loaded */
   const distributionBins = $derived<DistributionBin[]>(
     $distributionQuery.data?.bins ?? []
   );
@@ -120,81 +117,62 @@
     }));
   })());
 
-  /** Bins to display: prefer API distribution, fall back to client-side */
   const binsToDisplay = $derived<DistributionBin[]>(
     distributionBins.length > 0 ? distributionBins : fallbackBins
   );
 
-  // Species entry list derived from results
+  // ============================================================================
+  // Sample query (TanStack Query) — triggered only on applied values
+  // ============================================================================
+
+  const sampleQuery = $derived(
+    createQuery({
+      queryKey: ['session-sample', projectId, sessionId, appliedMin, appliedMax, appliedLimit, resampleCounter],
+      queryFn: () => getSessionSample(projectId, sessionId!, appliedMin, appliedMax, appliedLimit),
+      enabled: !!sessionId,
+    })
+  );
+
+  const sampleResults = $derived<SimilarityResult[]>(
+    $sampleQuery.data?.results ?? []
+  );
+
+  const totalInRange = $derived($sampleQuery.data?.total_in_range ?? 0);
+
+  // ============================================================================
+  // Card grid navigation
+  // ============================================================================
+
+  let cardElements: (HTMLElement | null)[] = $state([]);
+
+  const nav = createReviewNavigation({
+    projectId,
+    itemCount: () => sampleResults.length,
+    onConfirm: () => { /* no-op: no review actions in search */ },
+    onReject: () => { /* no-op: no review actions in search */ },
+    getPlaybackInfo: (i) => {
+      const match = sampleResults[i];
+      if (!match) return null;
+      return {
+        recordingId: match.recording_id,
+        startTime: match.start_time,
+        endTime: match.end_time,
+      };
+    },
+    getElement: (i) => cardElements[i] ?? null,
+  });
+
+  onDestroy(() => {
+    nav.cleanup();
+  });
+
+  // ============================================================================
+  // Species entries (for display info only — no tabs)
+  // ============================================================================
+
   const speciesEntries = $derived(
     results !== null ? Object.entries(results) : []
   );
-
-  // Reset tab selection when results change
-  $effect(() => {
-    if (results !== null) {
-      const keys = Object.keys(results);
-      selectedTabKey = keys.length > 0 ? (keys[0] ?? null) : null;
-      nav.select(0);
-    }
-  });
-
-  // Pagination
-  const PAGE_SIZE = 20;
-  let page = $state(1);
-
-  // Filtered matches for the currently selected species
-  const selectedGroup = $derived(
-    selectedTabKey !== null && results !== null ? results[selectedTabKey] : null
-  );
-
-  const filteredMatches = $derived(
-    selectedGroup !== null && selectedGroup !== undefined
-      ? selectedGroup.matches.filter((r) => r.similarity >= filterThreshold)
-      : []
-  );
-
-  // Paginated subset of filtered matches
-  const totalPages = $derived(Math.max(1, Math.ceil(filteredMatches.length / PAGE_SIZE)));
-  const paginatedMatches = $derived(
-    filteredMatches.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
-  );
-
-  // Reset page when species tab or threshold changes
-  $effect(() => {
-    // Track dependencies
-    selectedTabKey;
-    filterThreshold;
-    // Reset to page 1
-    page = 1;
-  });
-
-  // Filtered count per species tab (for badges)
-  function getFilteredCount(group: SpeciesMatchResult): number {
-    return group.matches.filter((r) => r.similarity >= filterThreshold).length;
-  }
-
-  function prevPage() {
-    if (page > 1) {
-      page -= 1;
-      nav.select(0);
-    }
-  }
-
-  function nextPage() {
-    if (page < totalPages) {
-      page += 1;
-      nav.select(0);
-    }
-  }
-
-  function getDisplayName(group: SpeciesMatchResult): string {
-    return group.common_name ?? group.scientific_name;
-  }
-
-  function getSecondaryName(group: SpeciesMatchResult): string | undefined {
-    return group.common_name ? group.scientific_name : undefined;
-  }
 </script>
 
 <svelte:window onkeydown={nav.handleKeydown} />
@@ -203,7 +181,6 @@
   <!-- Summary bar (only show after search completes) -->
   {#if results !== null && !isSearching}
     <div class="flex flex-wrap items-center gap-4 rounded-lg border border-stone-200 bg-stone-50 p-3">
-      <!-- Summary -->
       <span class="text-xs text-stone-400">
         {m.search_results_total({ count: totalMatches.toString() })}
         &bull;
@@ -231,9 +208,7 @@
       <div class="grid grid-cols-1 gap-3 p-4 sm:grid-cols-2 lg:grid-cols-3">
         {#each { length: 8 } as _}
           <div class="animate-pulse overflow-hidden rounded-lg border border-stone-200 bg-surface-card shadow-sm">
-            <!-- Spectrogram area placeholder -->
             <div class="h-[120px] bg-stone-200"></div>
-            <!-- Card body placeholder -->
             <div class="flex flex-col gap-2 p-2.5">
               <div class="h-3 w-4/5 rounded bg-stone-100"></div>
               <div class="h-3 w-1/2 rounded bg-stone-100"></div>
@@ -260,11 +235,65 @@
         <p class="mt-1 text-sm text-stone-400">{m.search_results_no_matches_hint()}</p>
       </div>
     {:else}
+
       <!-- ================================================================ -->
-      <!-- Top section: SimilarityHistogram + SimilaritySpiral side by side -->
+      <!-- Filter bar                                                        -->
+      <!-- ================================================================ -->
+      <div class="flex flex-wrap items-end gap-4 rounded-lg border border-stone-200 bg-stone-50 px-4 py-3">
+        <!-- Similarity range -->
+        <div class="flex items-end gap-2">
+          <label class="flex flex-col gap-1">
+            <span class="text-xs font-medium text-stone-500">{m.search_filter_similarity_range()}</span>
+            <div class="flex items-center gap-1.5">
+              <input
+                type="number"
+                min="0"
+                max="1"
+                step="0.05"
+                bind:value={inputMin}
+                class="w-16 rounded border border-stone-300 bg-white px-2 py-1 text-sm text-stone-800 focus:border-primary-400 focus:outline-none"
+              />
+              <span class="text-stone-400">–</span>
+              <input
+                type="number"
+                min="0"
+                max="1"
+                step="0.05"
+                bind:value={inputMax}
+                class="w-16 rounded border border-stone-300 bg-white px-2 py-1 text-sm text-stone-800 focus:border-primary-400 focus:outline-none"
+              />
+            </div>
+          </label>
+        </div>
+
+        <!-- Results per species -->
+        <label class="flex flex-col gap-1">
+          <span class="text-xs font-medium text-stone-500">{m.search_filter_results_per_species()}</span>
+          <input
+            type="number"
+            min="1"
+            max="500"
+            step="1"
+            bind:value={inputLimit}
+            class="w-20 rounded border border-stone-300 bg-white px-2 py-1 text-sm text-stone-800 focus:border-primary-400 focus:outline-none"
+          />
+        </label>
+
+        <!-- Apply button -->
+        <button
+          type="button"
+          class="rounded-md bg-primary-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-primary-700 active:bg-primary-800"
+          onclick={handleApply}
+        >
+          {m.search_filter_apply()}
+        </button>
+      </div>
+
+      <!-- ================================================================ -->
+      <!-- Visualizations: Histogram + Spiral side by side                  -->
       <!-- ================================================================ -->
       <div class="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <!-- Histogram (left) — uses pre-computed distribution bins from API -->
+        <!-- Histogram (left) — always shows full distribution -->
         <div class="rounded-lg border border-card bg-surface-card p-4 shadow-sm">
           <h4 class="mb-3 text-xs font-semibold uppercase tracking-wide text-stone-500">
             {m.search_score_distribution()}
@@ -279,139 +308,119 @@
           {:else}
             <SimilarityHistogram
               bins={binsToDisplay}
-              bind:threshold={filterThreshold}
-              onThresholdChange={(v) => { filterThreshold = v; }}
+              threshold={appliedMin}
+              onThresholdChange={(v) => {
+                inputMin = v.toFixed(2);
+                appliedMin = v;
+              }}
             />
           {/if}
         </div>
 
-        <!-- Spiral (right) — time-of-day view using stored top results -->
+        <!-- Spiral (right) -->
         <div class="rounded-lg border border-card bg-surface-card p-4 shadow-sm">
           <h4 class="mb-3 text-xs font-semibold uppercase tracking-wide text-stone-500">
             {m.search_time_distribution()}
           </h4>
           <SimilaritySpiral
             results={allMatches}
-            threshold={filterThreshold}
+            threshold={appliedMin}
           />
         </div>
       </div>
 
       <!-- ================================================================ -->
-      <!-- Middle section: ThresholdPreview (random sampling API)           -->
-      <!-- ================================================================ -->
-      <div class="rounded-lg border border-card bg-surface-card p-4 shadow-sm">
-        <h4 class="mb-3 text-xs font-semibold uppercase tracking-wide text-stone-500">
-          {m.search_range_preview()}
-        </h4>
-        <ThresholdPreview
-          {projectId}
-          {sessionId}
-          bind:minSimilarity={previewMin}
-          bind:maxSimilarity={previewMax}
-        />
-      </div>
-
-      <!-- ================================================================ -->
-      <!-- Bottom section: Per-species card grid filtered by threshold      -->
+      <!-- Sample card grid (results from sample API within applied range)  -->
       <!-- ================================================================ -->
       <div class="rounded-lg border border-card bg-surface-card shadow-sm">
-        <!-- Species tabs -->
-        <div class="flex flex-wrap gap-1 border-b border-card p-2">
-          {#each speciesEntries as [key, group] (key)}
-            {@const filteredCount = getFilteredCount(group)}
-            <button
-              type="button"
-              class="flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors
-                {selectedTabKey === key
-                  ? 'bg-primary-600 dark:bg-primary-300 text-white shadow-sm'
-                  : 'border border-stone-200 bg-stone-50 text-stone-700 hover:bg-stone-100 dark:border-stone-700 dark:bg-stone-800 dark:hover:bg-stone-700'}"
-              onclick={() => { selectedTabKey = key; nav.select(0); }}
-            >
-              <span class="max-w-[140px] truncate">{getDisplayName(group)}</span>
-              <span
-                class="rounded-full px-1.5 py-0.5 text-xs font-semibold
-                  {selectedTabKey === key
-                    ? 'bg-white/25 text-white'
-                    : 'bg-primary-100 text-primary-800'}"
-              >
-                {filteredCount}
+        <div class="flex items-center justify-between border-b border-card px-4 py-3">
+          <h4 class="text-xs font-semibold uppercase tracking-wide text-stone-500">
+            {m.search_range_preview()}
+            <span class="ml-1 font-normal normal-case text-stone-400">
+              ({Math.round(appliedMin * 100)}% – {Math.round(appliedMax * 100)}%)
+            </span>
+          </h4>
+
+          {#if $sampleQuery.data}
+            <div class="flex items-center gap-3">
+              <span class="text-xs text-stone-400">
+                {m.search_sample_count({ shown: sampleResults.length.toString(), total: totalInRange.toLocaleString() })}
               </span>
-            </button>
-          {/each}
+              <button
+                type="button"
+                class="flex items-center gap-1.5 rounded-md border border-stone-200 bg-surface-card px-3 py-1 text-xs font-medium text-stone-600 transition-colors hover:border-primary-300 hover:text-primary-700 disabled:opacity-50"
+                disabled={$sampleQuery.isFetching}
+                onclick={() => { resampleCounter++; }}
+              >
+                {#if $sampleQuery.isFetching}
+                  <svg class="h-3.5 w-3.5 animate-spin" fill="none" viewBox="0 0 24 24" aria-hidden="true">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+                  </svg>
+                {:else}
+                  <svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                  </svg>
+                {/if}
+                {m.search_resample()}
+              </button>
+            </div>
+          {/if}
         </div>
 
-        <!-- Selected species details + grid -->
-        {#if selectedGroup !== null && selectedGroup !== undefined}
-          <div class="p-4">
-            <!-- Species name header -->
-            <div class="mb-4">
-              <h3 class="text-base font-semibold text-stone-900">{getDisplayName(selectedGroup)}</h3>
-              {#if getSecondaryName(selectedGroup)}
-                <p class="text-sm italic text-stone-400">{getSecondaryName(selectedGroup)}</p>
-              {/if}
+        <div class="p-4">
+          {#if !sessionId}
+            <div class="flex flex-col items-center justify-center py-10 text-center">
+              <p class="text-sm text-stone-400">{m.search_no_results_in_range()}</p>
+              <p class="mt-1 text-xs text-stone-300">{m.search_no_results_in_range_hint()}</p>
             </div>
-
-            {#if filteredMatches.length === 0}
-              <!-- No results above threshold -->
-              <div class="flex flex-col items-center justify-center py-10 text-center">
-                <svg class="mb-2 h-10 w-10 text-stone-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2a1 1 0 01-.293.707L13 13.414V19a1 1 0 01-.553.894l-4 2A1 1 0 017 21v-7.586L3.293 6.707A1 1 0 013 6V4z" />
-                </svg>
-                <p class="text-sm text-stone-500">{m.search_no_results_above_threshold()}</p>
-              </div>
-            {:else}
-              <!-- Preview card grid (paginated) -->
-              <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                {#each paginatedMatches as result, i (result.embedding_id)}
-                  <div
-                    bind:this={cardElements[i]}
-                    class="transition-transform duration-300 ease-in-out"
-                  >
-                    <SearchPreviewCard
-                      {projectId}
-                      recordingId={result.recording_id}
-                      recordingName={result.recording_filename ?? result.recording_id.slice(0, 8) + '...'}
-                      startTime={result.start_time}
-                      endTime={result.end_time}
-                      similarity={result.similarity}
-                      isSelected={i === nav.selectedIndex}
-                      isPlaying={nav.playingIndex === i && nav.isPlaying}
-                      isLoadingAudio={nav.playingIndex === i && nav.isLoadingAudio}
-                      onPlayToggle={() => nav.togglePlay(i)}
-                    />
+          {:else if $sampleQuery.isLoading}
+            <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {#each { length: 6 } as _}
+                <div class="animate-pulse overflow-hidden rounded-lg border border-stone-200 bg-surface-card shadow-sm">
+                  <div class="h-[120px] bg-stone-200"></div>
+                  <div class="flex flex-col gap-2 p-2.5">
+                    <div class="h-3 w-4/5 rounded bg-stone-100"></div>
+                    <div class="h-3 w-1/2 rounded bg-stone-100"></div>
                   </div>
-                {/each}
-              </div>
-
-              <!-- Pagination controls -->
-              {#if totalPages > 1}
-                <div class="flex items-center justify-center gap-3 py-2">
-                  <button
-                    type="button"
-                    class="rounded border border-stone-300 bg-surface-card px-3 py-1.5 text-sm text-stone-600 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-40"
-                    onclick={prevPage}
-                    disabled={page === 1}
-                  >
-                    {m.search_previous()}
-                  </button>
-                  <span class="text-sm text-stone-500">
-                    {m.search_page_of({ page, total: totalPages })}
-                  </span>
-                  <button
-                    type="button"
-                    class="rounded border border-stone-300 bg-surface-card px-3 py-1.5 text-sm text-stone-600 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-40"
-                    onclick={nextPage}
-                    disabled={page === totalPages}
-                  >
-                    {m.search_next()}
-                  </button>
                 </div>
-              {/if}
-            {/if}
-          </div>
-        {/if}
+              {/each}
+            </div>
+          {:else if $sampleQuery.isError || sampleResults.length === 0}
+            <div class="flex flex-col items-center justify-center py-10 text-center">
+              <svg class="mb-2 h-10 w-10 text-stone-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2a1 1 0 01-.293.707L13 13.414V19a1 1 0 01-.553.894l-4 2A1 1 0 017 21v-7.586L3.293 6.707A1 1 0 013 6V4z" />
+              </svg>
+              <p class="text-sm text-stone-500">{m.search_no_results_in_range()}</p>
+              <p class="mt-1 text-xs text-stone-400">{m.search_no_results_in_range_hint()}</p>
+            </div>
+          {:else}
+            <!-- Sample card grid (3 columns) -->
+            <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {#each sampleResults as result, i (result.embedding_id)}
+                <div
+                  bind:this={cardElements[i]}
+                  class="transition-transform duration-300 ease-in-out"
+                >
+                  <SearchPreviewCard
+                    {projectId}
+                    recordingId={result.recording_id}
+                    recordingName={result.recording_filename ?? result.recording_id.slice(0, 8) + '...'}
+                    startTime={result.start_time}
+                    endTime={result.end_time}
+                    similarity={result.similarity}
+                    isSelected={i === nav.selectedIndex}
+                    isPlaying={nav.playingIndex === i && nav.isPlaying}
+                    isLoadingAudio={nav.playingIndex === i && nav.isLoadingAudio}
+                    onPlayToggle={() => nav.togglePlay(i)}
+                  />
+                </div>
+              {/each}
+            </div>
+          {/if}
+        </div>
       </div>
+
     {/if}
   {/if}
 </div>

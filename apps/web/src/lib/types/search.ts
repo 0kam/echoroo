@@ -167,6 +167,8 @@ export interface SearchConfig {
   model_name: string;
   /** Optional dataset to restrict the search to */
   dataset_id?: string;
+  /** Maximum number of results to return per species (default 20) */
+  limit_per_species?: number;
 }
 
 // ============================================
