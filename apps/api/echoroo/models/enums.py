@@ -125,6 +125,18 @@ class VoteType(StrEnum):
     UNSURE = "unsure"
 
 
+class SignalQuality(StrEnum):
+    """Signal quality assessment for agree votes.
+
+    Describes how prominently the target species appears in the audio clip.
+    Only applicable when the vote is 'agree'.
+    """
+
+    SOLO = "solo"          # Only this species, very clear
+    DOMINANT = "dominant"  # This species is dominant but others present
+    MIXED = "mixed"        # This species present but other species more prominent
+
+
 class ConsensusStatus(StrEnum):
     """Consensus status computed from annotation votes."""
 

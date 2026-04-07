@@ -2,19 +2,31 @@
   /**
    * ReviewActions - Agree/Disagree/Unsure voting buttons with vote counts.
    *
-   * Shows vote counts next to each button and highlights the current user's
-   * vote. Clicking the active vote again removes it (toggle behavior).
-   * Keyboard shortcuts are handled by the parent grid: A=Agree, D=Disagree, U=Unsure.
+   * The Agree button opens a compact signal-quality popover so the reviewer
+   * can classify how clearly the species is audible:
+   *   - Solo     (S / 1): only this species is present
+   *   - Dominant (D / 2): this species is dominant, others may be present
+   *   - Mixed    (M / 3): this species is present but not dominant
+   *
+   * Keyboard shortcuts (handled by the parent grid unless in popover):
+   *   A = open signal-quality popover (or toggle off if already agreed)
+   *   1 / S = agree as Solo (fastest path — also works without opening popover)
+   *   2 / O = agree as Dominant
+   *   3 / X = agree as Mixed
+   *   Escape = close popover without voting
+   *   D = Disagree, U = Unsure (unchanged)
    */
 
   import * as m from '$lib/paraglide/messages';
-  import type { VoteValue, VoteSummary } from '$lib/types/detection';
+  import type { VoteValue, VoteSummary, SignalQuality } from '$lib/types/detection';
 
   interface Props {
     /** Current vote summary (null when not yet loaded) */
     voteSummary?: VoteSummary | null;
     isLoading?: boolean;
-    /** Called when user casts a vote */
+    /** Called when user casts an agree vote with a signal quality selection */
+    onAgree?: (signalQuality: SignalQuality) => void;
+    /** Called when user casts a non-agree vote */
     onVote?: (vote: VoteValue) => void;
     /** Called when user clicks their current active vote to toggle it off */
     onRemoveVote?: () => void;
@@ -23,55 +35,217 @@
   let {
     voteSummary = null,
     isLoading = false,
+    onAgree,
     onVote,
     onRemoveVote,
   }: Props = $props();
 
   const myVote = $derived(voteSummary?.my_vote ?? null);
+  const mySignalQuality = $derived(voteSummary?.my_signal_quality ?? null);
   const agreeCount = $derived(voteSummary?.agree_count ?? 0);
   const disagreeCount = $derived(voteSummary?.disagree_count ?? 0);
   const unsureCount = $derived(voteSummary?.unsure_count ?? 0);
+  const signalQualityCounts = $derived(
+    voteSummary?.signal_quality_counts ?? { solo: 0, dominant: 0, mixed: 0 }
+  );
+
+  /** Whether the signal-quality popover is visible */
+  let popoverOpen = $state(false);
+
+  /** Container element used for outside-click detection */
+  let containerEl: HTMLDivElement | undefined = $state(undefined);
+
+  const QUALITY_OPTIONS: { value: SignalQuality; labelKey: string; descKey: string; color: string }[] = [
+    {
+      value: 'solo',
+      labelKey: 'signal_quality_solo',
+      descKey: 'signal_quality_solo_desc',
+      color: 'green',
+    },
+    {
+      value: 'dominant',
+      labelKey: 'signal_quality_dominant',
+      descKey: 'signal_quality_dominant_desc',
+      color: 'yellow',
+    },
+    {
+      value: 'mixed',
+      labelKey: 'signal_quality_mixed',
+      descKey: 'signal_quality_mixed_desc',
+      color: 'orange',
+    },
+  ];
+
+  function openPopover() {
+    popoverOpen = true;
+  }
+
+  function closePopover() {
+    popoverOpen = false;
+  }
+
+  function handleAgreeButtonClick() {
+    if (isLoading) return;
+    if (myVote === 'agree') {
+      // Toggle off existing agree vote
+      onRemoveVote?.();
+      return;
+    }
+    openPopover();
+  }
+
+  function handleQualitySelect(quality: SignalQuality) {
+    if (isLoading) return;
+    closePopover();
+    onAgree?.(quality);
+  }
 
   function handleVoteClick(vote: VoteValue) {
     if (isLoading) return;
-    // Toggle off if clicking the same vote
+    closePopover();
     if (myVote === vote) {
       onRemoveVote?.();
     } else {
       onVote?.(vote);
     }
   }
+
+  /** Build the label shown inside the active Agree button */
+  function agreeButtonLabel(): string {
+    if (agreeCount === 0) return m.vote_agree_button();
+    if (agreeCount > 0) {
+      const { solo, dominant, mixed } = signalQualityCounts;
+      // If all agree votes have no quality data, just show the count
+      if (solo === 0 && dominant === 0 && mixed === 0) return String(agreeCount);
+      // Build a compact breakdown string
+      const parts: string[] = [];
+      if (solo > 0) parts.push(`${solo}${m.signal_quality_solo_abbr()}`);
+      if (dominant > 0) parts.push(`${dominant}${m.signal_quality_dominant_abbr()}`);
+      if (mixed > 0) parts.push(`${mixed}${m.signal_quality_mixed_abbr()}`);
+      return parts.join(' ');
+    }
+    return m.vote_agree_button();
+  }
+
+  /** Color class for a quality option button */
+  function qualityButtonClass(color: string, selected: boolean): string {
+    const base = 'flex items-start gap-2 rounded px-2 py-1.5 text-xs text-left transition-colors w-full';
+    if (color === 'green') {
+      return `${base} ${selected ? 'bg-green-600 text-white' : 'bg-green-50 text-green-700 hover:bg-green-100 border border-green-200'}`;
+    }
+    if (color === 'yellow') {
+      return `${base} ${selected ? 'bg-yellow-500 text-white' : 'bg-yellow-50 text-yellow-700 hover:bg-yellow-100 border border-yellow-200'}`;
+    }
+    // orange
+    return `${base} ${selected ? 'bg-orange-500 text-white' : 'bg-orange-50 text-orange-700 hover:bg-orange-100 border border-orange-200'}`;
+  }
+
+  /** Outside-click handler to close the popover */
+  function handleWindowClick(event: MouseEvent) {
+    if (!popoverOpen) return;
+    if (containerEl && !containerEl.contains(event.target as Node)) {
+      closePopover();
+    }
+  }
 </script>
 
-<!-- Voting mode: Agree / Disagree / Unsure -->
-<div class="flex items-center gap-1.5">
-  <!-- Agree button -->
-  <button
-    type="button"
-    data-action="agree"
-    class="inline-flex items-center gap-1 rounded px-2 py-1 text-xs font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-50
-      {myVote === 'agree'
-        ? 'bg-green-600 text-white hover:bg-green-700'
-        : 'border border-green-300 bg-green-50 text-green-700 hover:bg-green-100'}"
-    onclick={() => handleVoteClick('agree')}
-    disabled={isLoading}
-    title={m.vote_agree_title()}
-    aria-label={m.vote_agree_aria()}
-    aria-pressed={myVote === 'agree'}
-  >
-    {#if isLoading && myVote === 'agree'}
-      <svg class="h-3 w-3 animate-spin" viewBox="0 0 24 24" fill="none">
-        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
-      </svg>
-    {:else}
-      <!-- Thumbs up icon -->
-      <svg class="h-3 w-3" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-        <path d="M2 10.5a1.5 1.5 0 113 0v6a1.5 1.5 0 01-3 0v-6zM6 10.333v5.43a2 2 0 001.106 1.79l.05.025A4 4 0 008.943 18h5.416a2 2 0 001.962-1.608l1.2-6A2 2 0 0015.56 8H12V4a2 2 0 00-2-2 1 1 0 00-1 1v.667a4 4 0 01-.8 2.4L6.8 7.933a4 4 0 00-.8 2.4z" />
-      </svg>
+<svelte:window onclick={handleWindowClick} />
+
+<!-- Voting mode: Agree (with quality popover) / Disagree / Unsure -->
+<div class="relative flex items-center gap-1.5" bind:this={containerEl}>
+  <!-- Agree button + popover wrapper -->
+  <div class="relative">
+    <!-- Agree button -->
+    <button
+      type="button"
+      data-action="agree"
+      class="inline-flex items-center gap-1 rounded px-2 py-1 text-xs font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-50
+        {myVote === 'agree'
+          ? 'bg-green-600 text-white hover:bg-green-700'
+          : 'border border-green-300 bg-green-50 text-green-700 hover:bg-green-100'}"
+      onclick={handleAgreeButtonClick}
+      disabled={isLoading}
+      title={myVote === 'agree' ? m.vote_agree_title_active() : m.vote_agree_title()}
+      aria-label={m.vote_agree_aria()}
+      aria-pressed={myVote === 'agree'}
+      aria-haspopup="listbox"
+      aria-expanded={popoverOpen}
+    >
+      {#if isLoading && myVote === 'agree'}
+        <svg class="h-3 w-3 animate-spin" viewBox="0 0 24 24" fill="none">
+          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+        </svg>
+      {:else}
+        <!-- Thumbs up icon -->
+        <svg class="h-3 w-3" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+          <path d="M2 10.5a1.5 1.5 0 113 0v6a1.5 1.5 0 01-3 0v-6zM6 10.333v5.43a2 2 0 001.106 1.79l.05.025A4 4 0 008.943 18h5.416a2 2 0 001.962-1.608l1.2-6A2 2 0 0015.56 8H12V4a2 2 0 00-2-2 1 1 0 00-1 1v.667a4 4 0 01-.8 2.4L6.8 7.933a4 4 0 00-.8 2.4z" />
+        </svg>
+      {/if}
+      <span>{agreeButtonLabel()}</span>
+      <!-- Chevron indicator when not yet agreed -->
+      {#if myVote !== 'agree'}
+        <svg class="h-2.5 w-2.5 opacity-60" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+          <path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd" />
+        </svg>
+      {/if}
+    </button>
+
+    <!-- Signal quality popover -->
+    {#if popoverOpen}
+      <div
+        class="absolute bottom-full left-0 z-50 mb-1 w-48 rounded-lg border border-stone-200 bg-surface-card shadow-lg"
+        role="listbox"
+        aria-label={m.signal_quality_popover_label()}
+      >
+        <!-- Popover header -->
+        <div class="border-b border-stone-100 px-2 py-1.5">
+          <p class="text-xs font-semibold text-stone-600">{m.signal_quality_popover_title()}</p>
+        </div>
+
+        <!-- Quality options -->
+        <div class="flex flex-col gap-1 p-1.5">
+          {#each QUALITY_OPTIONS as option, i (option.value)}
+            <button
+              type="button"
+              role="option"
+              aria-selected={mySignalQuality === option.value}
+              class={qualityButtonClass(option.color, mySignalQuality === option.value)}
+              onclick={() => handleQualitySelect(option.value)}
+            >
+              <!-- Keyboard shortcut badge -->
+              <span
+                class="mt-0.5 shrink-0 rounded border border-current/30 bg-current/10 px-1 font-mono text-[10px] leading-tight"
+              >
+                {i + 1}
+              </span>
+              <span class="flex flex-col">
+                <span class="font-semibold leading-tight">
+                  <!-- Use dynamic message lookup via if/else to stay compatible with Paraglide -->
+                  {#if option.value === 'solo'}
+                    {m.signal_quality_solo()}
+                  {:else if option.value === 'dominant'}
+                    {m.signal_quality_dominant()}
+                  {:else}
+                    {m.signal_quality_mixed()}
+                  {/if}
+                </span>
+                <span class="mt-0.5 text-[10px] leading-snug opacity-75">
+                  {#if option.value === 'solo'}
+                    {m.signal_quality_solo_desc()}
+                  {:else if option.value === 'dominant'}
+                    {m.signal_quality_dominant_desc()}
+                  {:else}
+                    {m.signal_quality_mixed_desc()}
+                  {/if}
+                </span>
+              </span>
+            </button>
+          {/each}
+        </div>
+      </div>
     {/if}
-    <span>{agreeCount > 0 ? agreeCount : m.vote_agree_button()}</span>
-  </button>
+  </div>
 
   <!-- Disagree button -->
   <button

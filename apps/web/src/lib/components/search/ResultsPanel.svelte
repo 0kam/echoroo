@@ -14,7 +14,7 @@
   import { createMutation } from '@tanstack/svelte-query';
   import * as m from '$lib/paraglide/messages.js';
   import type { SpeciesMatchResult, TargetSpecies, SimilarityResult } from '$lib/types/search';
-  import type { VoteSummary, VoteValue } from '$lib/types/detection';
+  import type { VoteSummary, VoteValue, SignalQuality } from '$lib/types/detection';
   import { castVote, deleteVote, getVotes } from '$lib/api/votes';
   import { createReviewNavigation } from '$lib/utils/reviewNavigation.svelte';
   import SearchResultCard from './SearchResultCard.svelte';
@@ -57,8 +57,15 @@
 
   // Vote mutation
   const voteMutation = createMutation({
-    mutationFn: ({ embeddingId, vote }: { embeddingId: string; vote: VoteValue }) =>
-      castVote(projectId, embeddingId, vote),
+    mutationFn: ({
+      embeddingId,
+      vote,
+      signalQuality,
+    }: {
+      embeddingId: string;
+      vote: VoteValue;
+      signalQuality?: SignalQuality;
+    }) => castVote(projectId, embeddingId, vote, signalQuality),
     onMutate: ({ embeddingId }) => {
       mutatingId = embeddingId;
     },
@@ -93,6 +100,10 @@
     },
   });
 
+  function handleAgree(embeddingId: string, signalQuality: SignalQuality) {
+    $voteMutation.mutate({ embeddingId, vote: 'agree', signalQuality });
+  }
+
   function handleVote(embeddingId: string, vote: VoteValue) {
     $voteMutation.mutate({ embeddingId, vote });
   }
@@ -114,7 +125,8 @@
     onAgree: (i) => {
       const match = filteredMatches[i];
       if (match && mutatingId === null) {
-        handleVote(match.embedding_id, 'agree');
+        // Keyboard shortcut A defaults to Solo (fastest/most common quality)
+        handleAgree(match.embedding_id, 'solo');
       }
     },
     onDisagree: (i) => {
@@ -371,6 +383,7 @@
                       onPlayToggle={() => nav.togglePlay(i)}
                       voteSummary={voteSummaries[result.embedding_id] ?? null}
                       isVoting={mutatingId === result.embedding_id}
+                      onAgree={(q) => handleAgree(result.embedding_id, q)}
                       onVote={(vote) => handleVote(result.embedding_id, vote)}
                       onRemoveVote={() => handleRemoveVote(result.embedding_id)}
                     />

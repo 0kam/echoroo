@@ -16,7 +16,7 @@ from uuid import UUID
 from fastapi import HTTPException, status
 
 from echoroo.models.annotation import Annotation
-from echoroo.models.enums import ConsensusStatus, DetectionStatus, VoteType
+from echoroo.models.enums import ConsensusStatus, DetectionStatus, SignalQuality, VoteType
 from echoroo.repositories.annotation import AnnotationRepository
 from echoroo.repositories.annotation_vote import AnnotationVoteRepository
 from echoroo.schemas.annotation_vote import (
@@ -81,6 +81,7 @@ class AnnotationVoteService:
             annotation_id=annotation_id,
             user_id=user_id,
             vote=request.vote,
+            signal_quality=request.signal_quality,
             suggested_tag_id=request.suggested_tag_id,
             note=request.note,
         )
@@ -162,11 +163,19 @@ class AnnotationVoteService:
         disagree_count = sum(1 for v in votes if v.vote == VoteType.DISAGREE)
         unsure_count = sum(1 for v in votes if v.vote == VoteType.UNSURE)
 
+        # Count signal quality values among agree votes
+        signal_quality_counts: dict[str, int] = {q.value: 0 for q in SignalQuality}
+        for v in votes:
+            if v.vote == VoteType.AGREE and v.signal_quality is not None:
+                signal_quality_counts[v.signal_quality] += 1
+
         user_vote: VoteType | None = None
+        user_signal_quality: SignalQuality | None = None
         if current_user_id is not None:
             for v in votes:
                 if v.user_id == current_user_id:
                     user_vote = v.vote
+                    user_signal_quality = v.signal_quality if v.vote == VoteType.AGREE else None
                     break
 
         vote_items = [
@@ -175,6 +184,7 @@ class AnnotationVoteService:
                 annotation_id=v.annotation_id,
                 user_id=v.user_id,
                 vote=v.vote,
+                signal_quality=v.signal_quality,
                 suggested_tag_id=v.suggested_tag_id,
                 note=v.note,
                 created_at=v.created_at,
@@ -193,6 +203,8 @@ class AnnotationVoteService:
             disagree_count=disagree_count,
             unsure_count=unsure_count,
             user_vote=user_vote,
+            user_signal_quality=user_signal_quality,
+            signal_quality_counts=signal_quality_counts,
             consensus_status=annotation.status,
             votes=vote_items,
         )

@@ -16,7 +16,7 @@ from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from echoroo.models.base import Base, UUIDMixin
-from echoroo.models.enums import VoteType
+from echoroo.models.enums import SignalQuality, VoteType
 
 if TYPE_CHECKING:
     from echoroo.models.annotation import Annotation
@@ -70,6 +70,16 @@ class AnnotationVote(UUIDMixin, Base):
         ForeignKey("tags.id", ondelete="SET NULL"),
         nullable=True,
         doc="Suggested correct species tag when disagreeing",
+    )
+    signal_quality: Mapped[SignalQuality | None] = mapped_column(
+        Enum(
+            SignalQuality,
+            name="signalquality",
+            create_type=True,
+            values_callable=lambda x: [e.value for e in x],
+        ),
+        nullable=True,
+        doc="Signal quality assessment (only applicable when vote is 'agree')",
     )
     note: Mapped[str | None] = mapped_column(
         Text,

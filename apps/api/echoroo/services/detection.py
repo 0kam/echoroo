@@ -12,7 +12,7 @@ from echoroo.core.pagination import paginate
 from echoroo.models.annotation import Annotation
 from echoroo.models.annotation_vote import AnnotationVote
 from echoroo.models.confirmed_region import ConfirmedRegion
-from echoroo.models.enums import DetectionStatus, VoteType
+from echoroo.models.enums import DetectionStatus, SignalQuality, VoteType
 from echoroo.models.taxon_vernacular_name import TaxonVernacularName
 from echoroo.repositories.annotation import AnnotationRepository, TemporalSummaryRow
 from echoroo.repositories.annotation_vote import AnnotationVoteRepository
@@ -568,11 +568,19 @@ class DetectionService:
             disagree_count = sum(1 for v in votes if v.vote == VoteType.DISAGREE)
             unsure_count = sum(1 for v in votes if v.vote == VoteType.UNSURE)
 
+            # Count signal quality values among agree votes
+            signal_quality_counts: dict[str, int] = {q.value: 0 for q in SignalQuality}
+            for v in votes:
+                if v.vote == VoteType.AGREE and v.signal_quality is not None:
+                    signal_quality_counts[v.signal_quality] += 1
+
             user_vote: VoteType | None = None
+            user_signal_quality: SignalQuality | None = None
             if current_user_id is not None:
                 for v in votes:
                     if v.user_id == current_user_id:
                         user_vote = v.vote
+                        user_signal_quality = v.signal_quality if v.vote == VoteType.AGREE else None
                         break
 
             consensus_status = AnnotationVoteService.compute_consensus_status(
@@ -587,6 +595,8 @@ class DetectionService:
                 disagree_count=disagree_count,
                 unsure_count=unsure_count,
                 user_vote=user_vote,
+                user_signal_quality=user_signal_quality,
+                signal_quality_counts=signal_quality_counts,
                 consensus_status=consensus_status,
             )
 

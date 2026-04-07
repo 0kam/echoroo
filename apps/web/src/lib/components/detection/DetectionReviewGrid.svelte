@@ -16,7 +16,7 @@
   import { createQuery, createMutation, useQueryClient } from '@tanstack/svelte-query';
   import { fetchDetections, changeDetectionSpecies } from '$lib/api/detections';
   import { castVote, deleteVote, getVotes } from '$lib/api/votes';
-  import type { DetectionStatus, DetectionListResponse, VoteSummary, VoteValue } from '$lib/types/detection';
+  import type { DetectionStatus, DetectionListResponse, VoteSummary, VoteValue, SignalQuality } from '$lib/types/detection';
   import * as m from '$lib/paraglide/messages';
   import { createReviewNavigation } from '$lib/utils/reviewNavigation.svelte';
   import DetectionCard from './DetectionCard.svelte';
@@ -106,7 +106,8 @@
     onAgree: (i) => {
       const d = detections[i];
       if (d && mutatingId === null) {
-        handleVote(d.id, 'agree');
+        // Keyboard shortcut A defaults to Solo (fastest/most common quality)
+        handleAgree(d.id, 'solo');
       }
     },
     onDisagree: (i) => {
@@ -139,8 +140,15 @@
 
   // Vote mutation
   const voteMutation = createMutation({
-    mutationFn: ({ detectionId, vote }: { detectionId: string; vote: VoteValue }) =>
-      castVote(projectId, detectionId, vote),
+    mutationFn: ({
+      detectionId,
+      vote,
+      signalQuality,
+    }: {
+      detectionId: string;
+      vote: VoteValue;
+      signalQuality?: SignalQuality;
+    }) => castVote(projectId, detectionId, vote, signalQuality),
     onMutate: ({ detectionId }) => {
       mutatingId = detectionId;
     },
@@ -191,6 +199,10 @@
       queryClient.invalidateQueries({ queryKey: ['detections', projectId, tagId] });
     },
   });
+
+  function handleAgree(detectionId: string, signalQuality: SignalQuality) {
+    $voteMutation.mutate({ detectionId, vote: 'agree', signalQuality });
+  }
 
   function handleVote(detectionId: string, vote: VoteValue) {
     $voteMutation.mutate({ detectionId, vote });
@@ -391,6 +403,7 @@
             externalIsPlaying={nav.playingIndex === i && nav.isPlaying}
             externalIsLoadingAudio={nav.playingIndex === i && nav.isLoadingAudio}
             onPlayToggle={() => nav.togglePlay(i)}
+            onAgree={handleAgree}
             onVote={handleVote}
             onRemoveVote={handleRemoveVote}
             onChangeSpecies={handleChangeSpecies}

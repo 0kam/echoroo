@@ -33,6 +33,14 @@ export type DetectionStatus = 'unreviewed' | 'confirmed' | 'rejected';
 export type VoteValue = 'agree' | 'disagree' | 'unsure';
 
 /**
+ * Signal quality of the species vocalisation in an agreed detection.
+ * - solo: only this species is audible
+ * - dominant: this species is dominant, others may be present
+ * - mixed: this species is present but not dominant
+ */
+export type SignalQuality = 'solo' | 'dominant' | 'mixed';
+
+/**
  * Consensus status derived from all votes on a detection
  */
 export type ConsensusStatus = 'needs_votes' | 'agreed' | 'disputed' | 'rejected';
@@ -51,6 +59,8 @@ export interface DetectionVote {
   user_display_name: string | null;
   /** The vote value */
   vote: VoteValue;
+  /** Signal quality assessment — only present on agree votes */
+  signal_quality: SignalQuality | null;
   /** Optional suggested tag (species) if vote is 'disagree' with species suggestion */
   suggested_tag_id: string | null;
   /** Optional reason note */
@@ -79,6 +89,10 @@ export interface VoteSummary {
   consensus: ConsensusStatus;
   /** The current user's vote, if they have voted */
   my_vote: VoteValue | null;
+  /** The current user's signal quality selection (only present on agree votes) */
+  my_signal_quality: SignalQuality | null;
+  /** Breakdown of agree votes by signal quality */
+  signal_quality_counts: { solo: number; dominant: number; mixed: number };
   /** All votes with voter info */
   votes: DetectionVote[];
 }
@@ -89,6 +103,8 @@ export interface VoteSummary {
 export interface CastVoteRequest {
   /** The vote value */
   vote: VoteValue;
+  /** Signal quality of the vocalisation — only meaningful for agree votes */
+  signal_quality?: SignalQuality;
   /** Optional suggested species tag ID (for disagree with wrong species) */
   suggested_tag_id?: string;
   /** Optional note */

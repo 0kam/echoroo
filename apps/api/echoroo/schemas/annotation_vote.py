@@ -7,13 +7,17 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
-from echoroo.models.enums import ConsensusStatus, DetectionStatus, VoteType
+from echoroo.models.enums import ConsensusStatus, DetectionStatus, SignalQuality, VoteType
 
 
 class VoteCastRequest(BaseModel):
     """Request body for casting a vote on a detection annotation."""
 
     vote: VoteType = Field(..., description="Vote value: agree, disagree, or unsure")
+    signal_quality: SignalQuality | None = Field(
+        None,
+        description="Signal quality assessment (solo/dominant/mixed), only applicable when vote is 'agree'",
+    )
     suggested_tag_id: UUID | None = Field(
         None,
         description="Suggested correct species tag when disagreeing with the current identification",
@@ -42,6 +46,7 @@ class VoteResponse(BaseModel):
     annotation_id: UUID
     user_id: UUID
     vote: VoteType
+    signal_quality: SignalQuality | None
     suggested_tag_id: UUID | None
     note: str | None
     created_at: datetime
@@ -65,6 +70,14 @@ class VoteSummaryResponse(BaseModel):
         None,
         description="Current user's vote, or null if they haven't voted",
     )
+    user_signal_quality: SignalQuality | None = Field(
+        None,
+        description="Current user's signal quality assessment, or null if they haven't voted agree",
+    )
+    signal_quality_counts: dict[str, int] = Field(
+        default_factory=dict,
+        description="Counts of signal quality values among agree votes (solo/dominant/mixed)",
+    )
     consensus_status: DetectionStatus = Field(
         ...,
         description="Annotation review status (computed from votes)",
@@ -84,4 +97,6 @@ class DetectionVoteCounts(BaseModel):
     disagree_count: int = Field(0, ge=0)
     unsure_count: int = Field(0, ge=0)
     user_vote: VoteType | None = Field(None)
+    user_signal_quality: SignalQuality | None = Field(None)
+    signal_quality_counts: dict[str, int] = Field(default_factory=dict)
     consensus_status: ConsensusStatus = Field(ConsensusStatus.NEEDS_VOTES)

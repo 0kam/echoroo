@@ -12,7 +12,7 @@
    */
 
   import { onDestroy, type Snippet } from 'svelte';
-  import type { DetectionStatus, VoteSummary, VoteValue } from '$lib/types/detection';
+  import type { DetectionStatus, VoteSummary, VoteValue, SignalQuality } from '$lib/types/detection';
   import * as m from '$lib/paraglide/messages';
   import { createAudioPlayer } from '$lib/utils/audioPlayback.svelte';
   import { getConsensusCardBorderClass } from '$lib/utils/statusFormatters';
@@ -44,6 +44,8 @@
     isSelected?: boolean;
     /** Vote summary for the voting-based review UI */
     voteSummary?: VoteSummary | null;
+    /** Called when user casts an agree vote with a signal quality selection */
+    onAgree?: (signalQuality: SignalQuality) => void;
     onVote?: (vote: VoteValue) => void;
     onRemoveVote?: () => void;
     /**
@@ -87,6 +89,7 @@
     isLoading = false,
     isSelected = false,
     voteSummary = null,
+    onAgree,
     onVote,
     onRemoveVote,
     externalIsPlaying,
@@ -139,6 +142,11 @@
     } else {
       internalPlayer?.toggle(recordingId, startTime, endTime);
     }
+  }
+
+  function handleAgree(signalQuality: SignalQuality) {
+    internalPlayer?.stop();
+    onAgree?.(signalQuality);
   }
 
   function handleVote(vote: VoteValue) {
@@ -244,6 +252,7 @@
     <ReviewActions
       {voteSummary}
       {isLoading}
+      onAgree={handleAgree}
       onVote={handleVote}
       onRemoveVote={handleRemoveVote}
     />

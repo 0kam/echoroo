@@ -7,7 +7,7 @@
    * and SpeciesCorrector for reassigning the species tag.
    */
 
-  import type { Detection, VoteSummary, VoteValue } from '$lib/types/detection';
+  import type { Detection, VoteSummary, VoteValue, SignalQuality } from '$lib/types/detection';
   import * as m from '$lib/paraglide/messages';
   import { getLocale } from '$lib/paraglide/runtime';
   import { getConsensusStatusBadgeClass, getConsensusStatusLabel } from '$lib/utils/statusFormatters';
@@ -27,6 +27,7 @@
     externalIsLoadingAudio?: boolean;
     /** Callback when the play button is clicked (delegates to parent's player) */
     onPlayToggle?: () => void;
+    onAgree: (detectionId: string, signalQuality: SignalQuality) => void;
     onVote: (detectionId: string, vote: VoteValue) => void;
     onRemoveVote: (detectionId: string) => void;
     onChangeSpecies: (detectionId: string, newTagId: string) => void;
@@ -41,6 +42,7 @@
     externalIsPlaying,
     externalIsLoadingAudio,
     onPlayToggle,
+    onAgree,
     onVote,
     onRemoveVote,
     onChangeSpecies,
@@ -93,6 +95,10 @@
     }
   }
 
+  function handleAgree(signalQuality: SignalQuality) {
+    onAgree(detection.id, signalQuality);
+  }
+
   function handleVote(vote: VoteValue) {
     onVote(detection.id, vote);
   }
@@ -128,6 +134,7 @@
     {externalIsPlaying}
     {externalIsLoadingAudio}
     {onPlayToggle}
+    onAgree={handleAgree}
     onVote={handleVote}
     onRemoveVote={handleRemoveVote}
   >
@@ -151,7 +158,7 @@
     {#snippet extraBody()}
       <!-- Vote summary indicator -->
       {#if voteSummary && voteSummary.total_votes > 0}
-        <div class="flex items-center gap-1.5">
+        <div class="flex flex-wrap items-center gap-1.5">
           <!-- Consensus badge -->
           <span
             class="rounded border px-1.5 py-0.5 text-xs font-medium {getConsensusStatusBadgeClass(voteSummary.consensus)}"
@@ -162,6 +169,38 @@
           <span class="text-xs text-stone-400">
             {m.vote_summary_ratio({ agree: voteSummary.agree_count, total: voteSummary.total_votes })}
           </span>
+          <!-- Signal quality breakdown (only when there are agree votes with quality data) -->
+          {#if voteSummary.agree_count > 0 && voteSummary.signal_quality_counts}
+            {@const sq = voteSummary.signal_quality_counts}
+            {#if sq.solo > 0 || sq.dominant > 0 || sq.mixed > 0}
+              <div class="flex items-center gap-0.5">
+                {#if sq.solo > 0}
+                  <span
+                    class="rounded bg-green-100 px-1 py-0.5 text-[10px] font-medium text-green-700"
+                    title={m.signal_quality_solo()}
+                  >
+                    {sq.solo}{m.signal_quality_solo_abbr()}
+                  </span>
+                {/if}
+                {#if sq.dominant > 0}
+                  <span
+                    class="rounded bg-yellow-100 px-1 py-0.5 text-[10px] font-medium text-yellow-700"
+                    title={m.signal_quality_dominant()}
+                  >
+                    {sq.dominant}{m.signal_quality_dominant_abbr()}
+                  </span>
+                {/if}
+                {#if sq.mixed > 0}
+                  <span
+                    class="rounded bg-orange-100 px-1 py-0.5 text-[10px] font-medium text-orange-700"
+                    title={m.signal_quality_mixed()}
+                  >
+                    {sq.mixed}{m.signal_quality_mixed_abbr()}
+                  </span>
+                {/if}
+              </div>
+            {/if}
+          {/if}
         </div>
       {/if}
 

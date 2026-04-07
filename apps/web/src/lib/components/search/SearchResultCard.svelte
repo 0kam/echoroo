@@ -9,7 +9,7 @@
 
   import * as m from '$lib/paraglide/messages.js';
   import type { SimilarityResult } from '$lib/types/search';
-  import type { VoteSummary, VoteValue } from '$lib/types/detection';
+  import type { VoteSummary, VoteValue, SignalQuality } from '$lib/types/detection';
   import ReviewCard from '$lib/components/common/ReviewCard.svelte';
 
   interface Props {
@@ -28,7 +28,9 @@
     voteSummary: VoteSummary | null;
     /** Whether a vote mutation is in flight for this card */
     isVoting?: boolean;
-    /** Called when the user casts a vote */
+    /** Called when the user casts an agree vote with signal quality */
+    onAgree: (signalQuality: SignalQuality) => void;
+    /** Called when the user casts a non-agree vote */
     onVote: (vote: VoteValue) => void;
     /** Called when the user removes their current vote */
     onRemoveVote: () => void;
@@ -44,6 +46,7 @@
     onPlayToggle,
     voteSummary,
     isVoting = false,
+    onAgree,
     onVote,
     onRemoveVote,
   }: Props = $props();
@@ -74,6 +77,7 @@
   {externalIsLoadingAudio}
   {onPlayToggle}
   {voteSummary}
+  {onAgree}
   {onVote}
   {onRemoveVote}
 />

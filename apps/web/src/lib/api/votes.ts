@@ -5,7 +5,7 @@
  * on detections as part of the voting review system.
  */
 
-import type { VoteSummary, CastVoteRequest, VoteValue } from '$lib/types/detection';
+import type { VoteSummary, CastVoteRequest, VoteValue, SignalQuality } from '$lib/types/detection';
 import { apiClient } from './client';
 
 const API_BASE = '/api/v1';
@@ -13,15 +13,20 @@ const API_BASE = '/api/v1';
 /**
  * Cast or update a vote on a detection.
  * If the user already has a vote, it is updated.
+ *
+ * @param signalQuality - Only meaningful for 'agree' votes; describes how clearly
+ *   this species is audible relative to others in the clip.
  */
 export async function castVote(
   projectId: string,
   detectionId: string,
   vote: VoteValue,
+  signalQuality?: SignalQuality,
   suggestedTagId?: string,
   note?: string
 ): Promise<VoteSummary> {
   const body: CastVoteRequest = { vote };
+  if (signalQuality !== undefined) body.signal_quality = signalQuality;
   if (suggestedTagId !== undefined) body.suggested_tag_id = suggestedTagId;
   if (note !== undefined) body.note = note;
 

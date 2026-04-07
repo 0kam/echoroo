@@ -8,7 +8,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import selectinload
 
 from echoroo.models.annotation_vote import AnnotationVote
-from echoroo.models.enums import VoteType
+from echoroo.models.enums import SignalQuality, VoteType
 from echoroo.repositories.base import BaseRepository
 
 
@@ -69,6 +69,7 @@ class AnnotationVoteRepository(BaseRepository[AnnotationVote]):
         annotation_id: UUID,
         user_id: UUID,
         vote: VoteType,
+        signal_quality: SignalQuality | None = None,
         suggested_tag_id: UUID | None = None,
         note: str | None = None,
     ) -> AnnotationVote:
@@ -81,16 +82,21 @@ class AnnotationVoteRepository(BaseRepository[AnnotationVote]):
             annotation_id: Annotation's UUID
             user_id: User's UUID
             vote: Vote value (agree / disagree / unsure)
+            signal_quality: Optional signal quality (only applicable when vote is 'agree')
             suggested_tag_id: Optional alternative species tag suggestion
             note: Optional reason or comment
 
         Returns:
             Created or updated AnnotationVote instance
         """
+        # Enforce signal_quality is only set for agree votes
+        effective_signal_quality = signal_quality if vote == VoteType.AGREE else None
+
         existing = await self.get_by_annotation_and_user(annotation_id, user_id)
 
         if existing is not None:
             existing.vote = vote
+            existing.signal_quality = effective_signal_quality
             existing.suggested_tag_id = suggested_tag_id
             existing.note = note
             await self.db.flush()
@@ -101,6 +107,7 @@ class AnnotationVoteRepository(BaseRepository[AnnotationVote]):
             annotation_id=annotation_id,
             user_id=user_id,
             vote=vote,
+            signal_quality=effective_signal_quality,
             suggested_tag_id=suggested_tag_id,
             note=note,
         )
