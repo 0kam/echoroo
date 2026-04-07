@@ -1,10 +1,19 @@
 <script lang="ts">
   import type { SoundEventAnnotation } from '$lib/types/annotation';
+  import { getLocale } from '$lib/paraglide/runtime';
+  import * as m from '$lib/paraglide/messages';
 
-  export let annotations: SoundEventAnnotation[] = [];
-  export let selectedAnnotationId: string | null = null;
-  export let onSelect: (id: string) => void;
-  export let onDelete: (id: string) => void;
+  let {
+    annotations = [] as SoundEventAnnotation[],
+    selectedAnnotationId = null,
+    onSelect,
+    onDelete,
+  }: {
+    annotations?: SoundEventAnnotation[];
+    selectedAnnotationId?: string | null;
+    onSelect: (id: string) => void;
+    onDelete: (id: string) => void;
+  } = $props();
 
   // ============================================================
   // Helpers
@@ -42,24 +51,24 @@
     // coordinates = [time_start, freq_low, time_end, freq_high]
     const freqLow  = Math.round(annotation.geometry.coordinates[1] ?? 0);
     const freqHigh = Math.round(annotation.geometry.coordinates[3] ?? 0);
-    return `${freqLow.toLocaleString()}\u2013${freqHigh.toLocaleString()} Hz`;
+    return `${freqLow.toLocaleString(getLocale())}\u2013${freqHigh.toLocaleString(getLocale())} Hz`;
   }
 
   function getTagColor(category: string): { bg: string; text: string } {
     switch (category) {
       case 'species':    return { bg: '#dcfce7', text: '#15803d' };
-      case 'sound_type': return { bg: '#dbeafe', text: '#1d4ed8' };
+      case 'sound_type': return { bg: '#FFF3EB', text: '#E65100' };
       case 'quality':    return { bg: '#fef9c3', text: '#a16207' };
       default:           return { bg: '#f3f4f6', text: '#374151' };
     }
   }
 
   // Sort annotations by start time
-  $: sortedAnnotations = [...annotations].sort((a, b) => {
+  const sortedAnnotations = $derived([...annotations].sort((a, b) => {
     const aTime = getTimeRange(a).start;
     const bTime = getTimeRange(b).start;
     return aTime - bTime;
-  });
+  }));
 </script>
 
 <div class="annotation-list">
@@ -69,8 +78,8 @@
         <path stroke-linecap="round" stroke-linejoin="round"
           d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" />
       </svg>
-      <p class="empty-title">No annotations yet</p>
-      <p class="empty-subtitle">Draw on the spectrogram to add one.</p>
+      <p class="empty-title">{m.annotation_list_no_annotations()}</p>
+      <p class="empty-subtitle">{m.annotation_list_draw_hint()}</p>
     </div>
   {:else}
     <ul class="annotation-items" role="listbox" aria-label="Sound event annotations">
@@ -85,7 +94,7 @@
           class:selected={isSelected}
           role="option"
           aria-selected={isSelected}
-          on:click={() => onSelect(annotation.id)}
+          onclick={() => onSelect(annotation.id)}
         >
           <!-- Left: geometry icon -->
           <div class="icon-col" aria-hidden="true">
@@ -110,9 +119,9 @@
             <div class="time-row">
               <span class="time-label">{formatTime(timeRange.start)} &ndash; {formatTime(timeRange.end)}</span>
               {#if annotation.source === 'model'}
-                <span class="source-badge model">AI</span>
+                <span class="source-badge model">{m.annotation_list_source_ai()}</span>
               {:else}
-                <span class="source-badge human">Human</span>
+                <span class="source-badge human">{m.annotation_list_source_human()}</span>
               {/if}
             </div>
 
@@ -140,9 +149,9 @@
           <!-- Right: delete button -->
           <button
             class="delete-btn"
-            title="Delete annotation"
-            aria-label="Delete annotation"
-            on:click|stopPropagation={() => onDelete(annotation.id)}
+            title={m.annotation_list_delete_title()}
+            aria-label={m.annotation_list_delete_aria()}
+            onclick={(e) => { e.stopPropagation(); onDelete(annotation.id); }}
           >
             <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" class="delete-icon">
               <path stroke-linecap="round" d="M4 4l8 8M12 4l-8 8"/>

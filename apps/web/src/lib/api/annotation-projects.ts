@@ -10,7 +10,7 @@ import type {
   AnnotationProjectUpdate,
   TaskGenerationResponse,
 } from '$lib/types/annotation';
-import { fetchWithErrorHandling, handleApiResponse } from './errors';
+import { apiClient } from './client';
 
 const API_BASE = '/api/v1';
 
@@ -26,8 +26,7 @@ export async function fetchAnnotationProjects(
   if (params.page_size) searchParams.set('page_size', params.page_size.toString());
 
   const url = `${API_BASE}/projects/${projectId}/annotation-projects?${searchParams}`;
-  const response = await fetchWithErrorHandling(url, { credentials: 'include' });
-  return handleApiResponse<AnnotationProjectListResponse>(response);
+  return apiClient.get<AnnotationProjectListResponse>(url);
 }
 
 /**
@@ -37,11 +36,9 @@ export async function fetchAnnotationProject(
   projectId: string,
   annotationProjectId: string
 ): Promise<AnnotationProjectDetail> {
-  const response = await fetchWithErrorHandling(
-    `${API_BASE}/projects/${projectId}/annotation-projects/${annotationProjectId}`,
-    { credentials: 'include' }
+  return apiClient.get<AnnotationProjectDetail>(
+    `${API_BASE}/projects/${projectId}/annotation-projects/${annotationProjectId}`
   );
-  return handleApiResponse<AnnotationProjectDetail>(response);
 }
 
 /**
@@ -51,16 +48,10 @@ export async function createAnnotationProject(
   projectId: string,
   data: AnnotationProjectCreate
 ): Promise<AnnotationProjectDetail> {
-  const response = await fetchWithErrorHandling(
+  return apiClient.post<AnnotationProjectDetail>(
     `${API_BASE}/projects/${projectId}/annotation-projects`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify(data),
-    }
+    data
   );
-  return handleApiResponse<AnnotationProjectDetail>(response);
 }
 
 /**
@@ -71,16 +62,10 @@ export async function updateAnnotationProject(
   annotationProjectId: string,
   data: AnnotationProjectUpdate
 ): Promise<AnnotationProjectDetail> {
-  const response = await fetchWithErrorHandling(
+  return apiClient.patch<AnnotationProjectDetail>(
     `${API_BASE}/projects/${projectId}/annotation-projects/${annotationProjectId}`,
-    {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify(data),
-    }
+    data
   );
-  return handleApiResponse<AnnotationProjectDetail>(response);
 }
 
 /**
@@ -90,17 +75,9 @@ export async function deleteAnnotationProject(
   projectId: string,
   annotationProjectId: string
 ): Promise<void> {
-  const response = await fetchWithErrorHandling(
-    `${API_BASE}/projects/${projectId}/annotation-projects/${annotationProjectId}`,
-    {
-      method: 'DELETE',
-      credentials: 'include',
-    }
+  return apiClient.delete<void>(
+    `${API_BASE}/projects/${projectId}/annotation-projects/${annotationProjectId}`
   );
-
-  if (!response.ok) {
-    await handleApiResponse(response);
-  }
 }
 
 /**
@@ -110,12 +87,7 @@ export async function generateTasks(
   projectId: string,
   annotationProjectId: string
 ): Promise<TaskGenerationResponse> {
-  const response = await fetchWithErrorHandling(
-    `${API_BASE}/projects/${projectId}/annotation-projects/${annotationProjectId}/generate-tasks`,
-    {
-      method: 'POST',
-      credentials: 'include',
-    }
+  return apiClient.post<TaskGenerationResponse>(
+    `${API_BASE}/projects/${projectId}/annotation-projects/${annotationProjectId}/generate-tasks`
   );
-  return handleApiResponse<TaskGenerationResponse>(response);
 }

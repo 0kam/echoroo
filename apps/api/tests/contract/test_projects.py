@@ -4,8 +4,16 @@ Tests verify that endpoints conform to the OpenAPI specification in
 specs/001-administration/contracts/openapi.yaml.
 """
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 import pytest
 from httpx import AsyncClient
+
+if TYPE_CHECKING:
+    from echoroo.models.project import ProjectMember
+    from echoroo.models.user import User
 
 
 @pytest.mark.asyncio
@@ -289,7 +297,7 @@ class TestProjectMemberEndpoints:
         client: AsyncClient,
         auth_headers: dict[str, str],
         test_project_id: str,
-        member_user: "User",  # noqa: F821
+        member_user: User,  # noqa: F821
     ) -> None:
         """Test POST /api/v1/projects/{projectId}/members - Add member."""
         member_data = {
@@ -318,8 +326,8 @@ class TestProjectMemberEndpoints:
         client: AsyncClient,
         auth_headers: dict[str, str],
         test_project_id: str,
-        test_member: "ProjectMember",  # noqa: F821
-        member_user: "User",  # noqa: F821
+        test_member: ProjectMember,  # noqa: F821
+        member_user: User,  # noqa: F821
     ) -> None:
         """Test POST /api/v1/projects/{projectId}/members with existing member."""
         member_data = {
@@ -341,8 +349,8 @@ class TestProjectMemberEndpoints:
         client: AsyncClient,
         auth_headers_member: dict[str, str],
         test_project_id: str,
-        test_member: "ProjectMember",  # noqa: F821
-        admin_user: "User",  # noqa: F821
+        test_member: ProjectMember,  # noqa: F821
+        admin_user: User,  # noqa: F821
     ) -> None:
         """Test POST /api/v1/projects/{projectId}/members requires admin."""
         member_data = {
@@ -363,7 +371,7 @@ class TestProjectMemberEndpoints:
         client: AsyncClient,
         auth_headers: dict[str, str],
         test_project_id: str,
-        test_member: "ProjectMember",  # noqa: F821
+        test_member: ProjectMember,  # noqa: F821
         test_member_id: str,
     ) -> None:
         """Test PATCH /api/v1/projects/{projectId}/members/{userId} - Update role."""
@@ -403,7 +411,7 @@ class TestProjectMemberEndpoints:
         client: AsyncClient,
         auth_headers: dict[str, str],
         test_project_id: str,
-        test_member: "ProjectMember",  # noqa: F821
+        test_member: ProjectMember,  # noqa: F821
         test_member_id: str,
     ) -> None:
         """Test DELETE /api/v1/projects/{projectId}/members/{userId} - Remove member."""

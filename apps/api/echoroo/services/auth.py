@@ -1,13 +1,17 @@
 """Authentication service with business logic."""
 
+import logging
 import secrets
+import time
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 from fastapi import HTTPException, status
+from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from echoroo.core.jwt import create_access_token, create_refresh_token, decode_token
+from echoroo.core.redis import get_redis_connection
 from echoroo.core.security import hash_password, verify_password
 from echoroo.core.settings import get_settings
 from echoroo.models.user import User
@@ -21,11 +25,15 @@ from echoroo.schemas.auth import (
 from echoroo.services.captcha import verify_turnstile
 from echoroo.services.email import send_password_reset_email, send_verification_email
 
+logger = logging.getLogger(__name__)
 settings = get_settings()
 
 
 class AuthService:
     """Authentication service for user registration, login, and token management."""
+
+    # Redis key prefix for revoked user tokens
+    _REVOCATION_KEY_PREFIX = "revoked_user:"
 
     def __init__(self, db: AsyncSession) -> None:
         """Initialize auth service.
@@ -35,6 +43,64 @@ class AuthService:
         """
         self.db = db
         self.user_repo = UserRepository(db)
+
+    async def _get_redis(self) -> Redis | None:
+        """Get Redis connection, returning None on failure.
+
+        Returns:
+            Redis client or None if connection fails
+        """
+        try:
+            return await get_redis_connection()
+        except Exception:
+            logger.warning("Redis connection unavailable; token revocation checks skipped")
+            return None
+
+    async def revoke_user_tokens(self, user_id: UUID) -> None:
+        """Revoke all tokens for a user by storing a revocation marker in Redis.
+
+        The revocation key TTL matches the refresh token expiry so that the key
+        is automatically cleaned up once all tokens have naturally expired.
+
+        Args:
+            user_id: User's UUID whose tokens should be revoked
+        """
+        redis = await self._get_redis()
+        if redis is None:
+            logger.warning("Could not revoke tokens for user %s: Redis unavailable", user_id)
+            return
+
+        key = f"{self._REVOCATION_KEY_PREFIX}{user_id}"
+        ttl_seconds = settings.JWT_REFRESH_TOKEN_EXPIRE_DAYS * 86400
+        try:
+            await redis.set(key, "1", ex=ttl_seconds)
+            logger.info("Revoked all tokens for user %s (TTL=%ds)", user_id, ttl_seconds)
+        except Exception:
+            logger.warning("Failed to write revocation key for user %s", user_id, exc_info=True)
+
+    async def is_token_revoked(self, user_id: UUID) -> bool:
+        """Check whether a user's tokens have been revoked.
+
+        Args:
+            user_id: User's UUID to check
+
+        Returns:
+            True if the user's tokens are revoked, False otherwise (including on Redis failure)
+        """
+        redis = await self._get_redis()
+        if redis is None:
+            # Fail open: do not block auth when Redis is unavailable
+            return False
+
+        key = f"{self._REVOCATION_KEY_PREFIX}{user_id}"
+        try:
+            value = await redis.get(key)
+            return value is not None
+        except Exception:
+            logger.warning(
+                "Failed to check revocation for user %s; allowing request", user_id, exc_info=True
+            )
+            return False
 
     async def register(self, request: UserRegisterRequest, client_ip: str) -> User:
         """Register a new user.
@@ -174,8 +240,21 @@ class AuthService:
         await self.user_repo.update(user)
         await self.db.commit()
 
-        # Generate tokens
-        token_data = {"sub": str(user.id), "email": user.email}
+        # Clear any existing revocation marker so a fresh login always succeeds.
+        # This handles the case where a previous "replay attack detected" incorrectly
+        # set the revoked_user key due to a race condition with concurrent refresh requests.
+        redis = await self._get_redis()
+        if redis:
+            try:
+                await redis.delete(f"{self._REVOCATION_KEY_PREFIX}{user.id}")
+                logger.debug("Cleared revocation marker for user %s on login", user.id)
+            except Exception:
+                logger.warning(
+                    "Failed to clear revocation marker for user %s", user.id, exc_info=True
+                )
+
+        # Generate tokens (only include user ID, not email, to minimize JWT payload exposure)
+        token_data = {"sub": str(user.id)}
         access_token = create_access_token(token_data)
         refresh_token = create_refresh_token(token_data)
 
@@ -188,19 +267,25 @@ class AuthService:
         return token_response, refresh_token
 
     async def logout(self, user_id: UUID) -> None:
-        """Logout user (placeholder for token revocation).
+        """Logout user by revoking all active tokens via Redis.
+
+        Stores a revocation marker in Redis keyed on the user ID.  All subsequent
+        requests that present a JWT issued before this marker was written will be
+        rejected by ``get_current_user``.  The key expires automatically after the
+        refresh token TTL so no manual cleanup is required.
 
         Args:
             user_id: User's UUID
-
-        Note:
-            In production, this would revoke refresh token families in Redis
         """
-        # TODO: Implement token family revocation in Redis
-        pass
+        await self.revoke_user_tokens(user_id)
 
     async def refresh_token(self, refresh_token: str) -> tuple[TokenResponse, str]:
         """Refresh access token using refresh token.
+
+        Implements refresh token family tracking to detect replay attacks.  When a
+        refresh token is used it is marked as consumed in Redis.  If the same jti is
+        presented a second time all tokens for the user are immediately revoked and
+        an error is returned.
 
         Args:
             refresh_token: Valid refresh token
@@ -209,7 +294,7 @@ class AuthService:
             Tuple of (new TokenResponse, new refresh_token)
 
         Raises:
-            HTTPException: If token is invalid or expired
+            HTTPException: If token is invalid, expired, already consumed, or revoked
         """
         try:
             payload = decode_token(refresh_token)
@@ -235,10 +320,75 @@ class AuthService:
                 detail="User not found or inactive",
             )
 
-        # Generate new tokens (token rotation)
-        token_data = {"sub": str(user.id), "email": user.email}
+        # Reject refresh attempts for revoked sessions
+        if await self.is_token_revoked(user_id):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Token has been revoked",
+            )
+
+        old_jti: str | None = payload.get("jti")
+        old_family: str | None = payload.get("family")
+
+        # Replay attack detection via consumed-token tracking with grace period.
+        # We store the consumption timestamp so we can distinguish between:
+        #   - Race conditions (two concurrent requests using the same token within ~10s)
+        #   - Genuine replay attacks (token reused after the grace period)
+        _RACE_CONDITION_GRACE_SECONDS = 10
+        redis = await self._get_redis()
+        if redis and old_jti:
+            consumed_key = f"consumed_rt:{old_jti}"
+            consumed_at_raw = await redis.get(consumed_key)
+            if consumed_at_raw:
+                try:
+                    consumed_ts = float(consumed_at_raw)
+                    elapsed = time.time() - consumed_ts
+                except (ValueError, TypeError):
+                    # Fallback: treat legacy "1" markers as a genuine replay attack
+                    elapsed = _RACE_CONDITION_GRACE_SECONDS + 1
+
+                if elapsed < _RACE_CONDITION_GRACE_SECONDS:
+                    # Concurrent refresh request using the same token (race condition).
+                    # The first request already issued new tokens; simply reject this one
+                    # without revoking the user's entire session.
+                    logger.info(
+                        "Concurrent refresh detected for jti=%s (%.1fs ago), rejecting duplicate",
+                        old_jti,
+                        elapsed,
+                    )
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail="Token already refreshed",
+                    )
+                else:
+                    # Token reused well after it was consumed - this is a genuine replay attack.
+                    logger.warning(
+                        "Replay attack detected: refresh token jti=%s reused for user %s "
+                        "(%.1fs after consumption); revoking all tokens",
+                        old_jti,
+                        user_id,
+                        elapsed,
+                    )
+                    await self.revoke_user_tokens(user_id)
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail="Token reuse detected; all sessions have been revoked",
+                    )
+
+            # Mark this refresh token as consumed with the current timestamp.
+            # Using the timestamp (instead of "1") allows the grace period check above.
+            ttl_seconds = settings.JWT_REFRESH_TOKEN_EXPIRE_DAYS * 86400
+            try:
+                await redis.set(consumed_key, str(time.time()), ex=ttl_seconds)
+            except Exception:
+                logger.warning(
+                    "Failed to mark refresh token jti=%s as consumed", old_jti, exc_info=True
+                )
+
+        # Generate new tokens (token rotation), preserving the token family
+        token_data = {"sub": str(user.id)}
         new_access_token = create_access_token(token_data)
-        new_refresh_token = create_refresh_token(token_data)
+        new_refresh_token = create_refresh_token(token_data, family_id=old_family)
 
         token_response = TokenResponse(
             access_token=new_access_token,
@@ -348,6 +498,10 @@ class AuthService:
         await self.user_repo.update(user)
         await self.db.commit()
 
+        # Revoke all existing tokens so any previously-issued sessions are invalidated
+        logger.info("Password reset confirmed for user %s; revoking all tokens", user.id)
+        await self.revoke_user_tokens(user.id)
+
     async def get_current_user(self, token: str) -> User:
         """Get current user from access token.
 
@@ -392,6 +546,14 @@ class AuthService:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="User account is disabled",
+            )
+
+        # Check whether the user has been logged out (all tokens revoked)
+        if await self.is_token_revoked(user_id):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Token has been revoked",
+                headers={"WWW-Authenticate": "Bearer"},
             )
 
         return user

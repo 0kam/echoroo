@@ -1,13 +1,14 @@
 """Tag service for business logic."""
 
-import math
+from __future__ import annotations
+
 from uuid import UUID
 
-import httpx
 from fastapi import HTTPException, status
 
-from echoroo.models.tag import Tag
+from echoroo.core.pagination import paginate
 from echoroo.models.enums import TagCategory
+from echoroo.models.tag import Tag
 from echoroo.repositories.tag import TagRepository
 from echoroo.schemas.tag import (
     GBIFSuggestion,
@@ -23,13 +24,19 @@ from echoroo.schemas.tag import (
 class TagService:
     """Service for tag management business logic."""
 
-    def __init__(self, tag_repo: TagRepository) -> None:
-        """Initialize service with repository.
+    def __init__(
+        self,
+        tag_repo: TagRepository,
+        gbif_service: object | None = None,
+    ) -> None:
+        """Initialize service with repository and optional GBIF service.
 
         Args:
             tag_repo: Tag repository instance
+            gbif_service: Optional GBIFService instance; created lazily if None
         """
         self.tag_repo = tag_repo
+        self._gbif_service = gbif_service
 
     async def list_tags(
         self,
@@ -51,27 +58,22 @@ class TagService:
         Returns:
             Paginated tag list response
         """
-        if page < 1:
-            page = 1
-        if page_size < 1 or page_size > 200:
-            page_size = 50
+        pagination = paginate(page, page_size)
 
         tags, total = await self.tag_repo.list_by_project(
             project_id=project_id,
             category=category,
             search=search,
-            page=page,
-            page_size=page_size,
+            page=pagination.page,
+            page_size=pagination.page_size,
         )
-
-        pages = math.ceil(total / page_size) if total > 0 else 1
 
         return TagListResponse(
             items=[TagResponse.model_validate(t) for t in tags],
             total=total,
-            page=page,
-            page_size=page_size,
-            pages=pages,
+            page=pagination.page,
+            page_size=pagination.page_size,
+            pages=pagination.total_pages(total),
         )
 
     async def create(self, project_id: UUID, request: TagCreate) -> TagResponse:
@@ -175,7 +177,7 @@ class TagService:
     async def gbif_suggest(self, query: str, limit: int = 10) -> list[GBIFSuggestion]:
         """Suggest GBIF species matching query string.
 
-        Calls the GBIF species suggest API and maps the response to
+        Delegates to GBIFService.search_species() and maps the response to
         GBIFSuggestion schema objects. Returns empty list on any failure.
 
         Args:
@@ -185,30 +187,28 @@ class TagService:
         Returns:
             List of GBIF species suggestions
         """
-        try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                response = await client.get(
-                    "https://api.gbif.org/v1/species/suggest",
-                    params={"q": query, "limit": limit},
-                )
-                response.raise_for_status()
-                data = response.json()
-        except Exception:
-            return []
+        if self._gbif_service is None:
+            from echoroo.services.gbif import GBIFService
+            self._gbif_service = GBIFService()
+
+        from echoroo.services.gbif import GBIFService as _GBIFService
+        gbif: _GBIFService = self._gbif_service  # type: ignore[assignment]
+
+        data = await gbif.search_species(query, limit=limit)
 
         suggestions: list[GBIFSuggestion] = []
         for item in data:
             try:
                 suggestion = GBIFSuggestion(
                     key=item["key"],
-                    canonical_name=item.get("canonicalName", item.get("scientificName", "")),
-                    scientific_name=item.get("scientificName", ""),
-                    rank=item.get("rank", "UNKNOWN"),
-                    kingdom=item.get("kingdom"),
-                    phylum=item.get("phylum"),
-                    class_name=item.get("class"),
-                    order=item.get("order"),
-                    family=item.get("family"),
+                    canonical_name=str(item.get("canonicalName", item.get("scientificName", ""))),
+                    scientific_name=str(item.get("scientificName", "")),
+                    rank=str(item.get("rank", "UNKNOWN")),
+                    kingdom=str(item["kingdom"]) if "kingdom" in item else None,
+                    phylum=str(item["phylum"]) if "phylum" in item else None,
+                    class_name=str(item["class"]) if "class" in item else None,
+                    order=str(item["order"]) if "order" in item else None,
+                    family=str(item["family"]) if "family" in item else None,
                 )
                 suggestions.append(suggestion)
             except (KeyError, ValueError):

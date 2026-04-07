@@ -3,22 +3,16 @@
 from uuid import UUID
 
 from sqlalchemy import delete, insert, select
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from echoroo.models.sound_event_annotation import SoundEventAnnotation, sound_event_annotation_tags
+from echoroo.repositories.base import BaseRepository
 
 
-class SoundEventAnnotationRepository:
+class SoundEventAnnotationRepository(BaseRepository[SoundEventAnnotation]):
     """Repository for SoundEventAnnotation entity operations."""
 
-    def __init__(self, db: AsyncSession) -> None:
-        """Initialize repository with database session.
-
-        Args:
-            db: SQLAlchemy async session
-        """
-        self.db = db
+    model = SoundEventAnnotation
 
     async def get_by_id(self, sound_event_id: UUID) -> SoundEventAnnotation | None:
         """Get sound event annotation by ID with tags relationship loaded.
@@ -82,16 +76,6 @@ class SoundEventAnnotationRepository:
         await self.db.refresh(sound_event, ["tags"])
         return sound_event
 
-    async def delete(self, sound_event_id: UUID) -> None:
-        """Delete a sound event annotation by ID.
-
-        Args:
-            sound_event_id: SoundEventAnnotation's UUID
-        """
-        await self.db.execute(
-            delete(SoundEventAnnotation).where(SoundEventAnnotation.id == sound_event_id)
-        )
-        await self.db.flush()
 
     async def add_tag(self, sound_event_id: UUID, tag_id: UUID) -> None:
         """Add a tag to a sound event annotation via the association table.

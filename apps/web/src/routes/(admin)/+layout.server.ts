@@ -9,11 +9,14 @@
 
 import { redirect } from '@sveltejs/kit';
 import type { LayoutServerLoad } from './$types';
+import { localizeHref, deLocalizeHref } from '$lib/paraglide/runtime';
 
 export const load: LayoutServerLoad = async ({ locals, url }) => {
   // Check if user is authenticated (set by hooks.server.ts)
   if (!locals.isAuthenticated) {
-    throw redirect(302, `/login?redirect=${encodeURIComponent(url.pathname)}`);
+    // Use de-localized path for the redirect parameter
+    const returnPath = deLocalizeHref(url.pathname);
+    throw redirect(302, localizeHref(`/login?redirect=${encodeURIComponent(returnPath)}`));
   }
 
   return {};

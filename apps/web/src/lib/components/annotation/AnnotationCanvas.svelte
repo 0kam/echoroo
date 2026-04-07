@@ -1,33 +1,46 @@
 <script lang="ts">
-  import { createEventDispatcher, onMount } from 'svelte';
+  import { onMount } from 'svelte';
   import type { SoundEventAnnotation, Geometry, TagSummary } from '$lib/types/annotation';
 
-  export let width: number;
-  export let height: number;
-  export let duration: number;
-  export let minFreq: number = 0;
-  export let maxFreq: number = 22050;
-  export let annotations: SoundEventAnnotation[] = [];
-  export let selectedAnnotationId: string | null = null;
-  export let mode: 'select' | 'bbox' | 'timeinterval' = 'select';
-  // projectTags is reserved for future tag-based color filtering
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  export let projectTags: TagSummary[] = [];
-  $: void projectTags; // suppress unused export warning
+  let {
+    width,
+    height,
+    duration,
+    minFreq = 0,
+    maxFreq = 22050,
+    annotations = [] as SoundEventAnnotation[],
+    selectedAnnotationId = null,
+    mode = 'select' as 'select' | 'bbox' | 'timeinterval',
+    // projectTags is reserved for future tag-based color filtering
+    projectTags = [] as TagSummary[],
+    oncreate,
+    onselect,
+    ondelete,
+  }: {
+    width: number;
+    height: number;
+    duration: number;
+    minFreq?: number;
+    maxFreq?: number;
+    annotations?: SoundEventAnnotation[];
+    selectedAnnotationId?: string | null;
+    mode?: 'select' | 'bbox' | 'timeinterval';
+    projectTags?: TagSummary[];
+    oncreate?: (detail: { geometry: Geometry }) => void;
+    onselect?: (detail: { id: string }) => void;
+    ondelete?: (detail: { id: string }) => void;
+  } = $props();
 
-  const dispatch = createEventDispatcher<{
-    create: { geometry: Geometry };
-    select: { id: string };
-    delete: { id: string };
-  }>();
+  // projectTags is reserved for future tag-based color filtering.
+  void projectTags;
 
   // Drawing state
-  let isDrawing = false;
-  let drawStartX = 0;
-  let drawStartY = 0;
-  let drawCurrentX = 0;
-  let drawCurrentY = 0;
-  let svgElement: SVGSVGElement;
+  let isDrawing = $state(false);
+  let drawStartX = $state(0);
+  let drawStartY = $state(0);
+  let drawCurrentX = $state(0);
+  let drawCurrentY = $state(0);
+  let svgElement: SVGSVGElement | undefined = $state(undefined);
 
   // ============================================================
   // Coordinate conversion helpers
@@ -51,6 +64,7 @@
   }
 
   function getSvgCoords(event: MouseEvent): { x: number; y: number } {
+    if (!svgElement) return { x: 0, y: 0 };
     const rect = svgElement.getBoundingClientRect();
     const scaleX = width / rect.width;
     const scaleY = height / rect.height;
@@ -122,9 +136,9 @@
   // Preview rect during drawing
   // ============================================================
 
-  $: previewRect = (isDrawing && mode !== 'select')
+  const previewRect = $derived((isDrawing && mode !== 'select')
     ? computePreviewRect()
-    : null;
+    : null);
 
   function computePreviewRect(): SvgRect {
     if (mode === 'timeinterval') {
@@ -201,7 +215,7 @@
       };
     }
 
-    dispatch('create', { geometry });
+    oncreate?.({ geometry });
   }
 
   function handleMouseLeave(event: MouseEvent) {
@@ -213,19 +227,19 @@
   function handleAnnotationClick(event: MouseEvent, annotation: SoundEventAnnotation) {
     if (mode !== 'select') return;
     event.stopPropagation();
-    dispatch('select', { id: annotation.id });
+    onselect?.({ id: annotation.id });
   }
 
   function handleAnnotationRightClick(event: MouseEvent, annotation: SoundEventAnnotation) {
     event.preventDefault();
     event.stopPropagation();
-    dispatch('delete', { id: annotation.id });
+    ondelete?.({ id: annotation.id });
   }
 
   function handleKeyDown(event: KeyboardEvent) {
     if (event.key === 'Delete' || event.key === 'Backspace') {
       if (selectedAnnotationId) {
-        dispatch('delete', { id: selectedAnnotationId });
+        ondelete?.({ id: selectedAnnotationId });
       }
     }
   }
@@ -246,7 +260,7 @@
     return annotation.tags.map(t => t.name).join(', ');
   }
 
-  $: cursor = mode === 'select' ? 'default' : 'crosshair';
+  const cursor = $derived(mode === 'select' ? 'default' : 'crosshair');
 </script>
 
 <!-- svelte-ignore a11y-no-noninteractive-tabindex -->
@@ -258,10 +272,10 @@
   viewBox="0 0 {width} {height}"
   style="cursor: {cursor}; user-select: none; display: block;"
   tabindex="0"
-  on:mousedown={handleMouseDown}
-  on:mousemove={handleMouseMove}
-  on:mouseup={handleMouseUp}
-  on:mouseleave={handleMouseLeave}
+  onmousedown={handleMouseDown}
+  onmousemove={handleMouseMove}
+  onmouseup={handleMouseUp}
+  onmouseleave={handleMouseLeave}
   role="application"
   aria-label="Annotation canvas"
 >
@@ -273,14 +287,14 @@
 
     <g
       class="annotation-group"
-      on:click={(e) => handleAnnotationClick(e, annotation)}
-      on:contextmenu={(e) => handleAnnotationRightClick(e, annotation)}
+      onclick={(e) => handleAnnotationClick(e, annotation)}
+      oncontextmenu={(e) => handleAnnotationRightClick(e, annotation)}
       role="button"
       tabindex="0"
       aria-label="Annotation {annotation.id}"
-      on:keydown={(e) => {
+      onkeydown={(e) => {
         if (e.key === 'Enter' || e.key === ' ') {
-          dispatch('select', { id: annotation.id });
+          onselect?.({ id: annotation.id });
         }
       }}
     >

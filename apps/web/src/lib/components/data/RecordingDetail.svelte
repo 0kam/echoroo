@@ -7,6 +7,7 @@
   import NoteEditor from '$lib/components/data/NoteEditor.svelte';
   import { getDownloadUrl, updateRecording } from '$lib/api/recordings';
   import { createMutation, useQueryClient } from '@tanstack/svelte-query';
+  import { getLocale } from '$lib/paraglide/runtime';
 
   interface Props {
     projectId: string;
@@ -44,7 +45,7 @@
   <!-- Header -->
   <div class="flex items-start justify-between gap-4 mb-6">
     <div class="min-w-0 flex-1">
-      <h2 class="text-xl font-semibold font-mono text-stone-800 dark:text-stone-100 break-all">
+      <h2 class="text-xl font-semibold font-mono text-stone-800 break-all">
         {recording.filename}
       </h2>
       <p class="mt-1 text-sm text-stone-500 font-mono truncate">{recording.path}</p>
@@ -92,7 +93,7 @@
     {#if recording.datetime}
       <div class="metadata-item">
         <span class="metadata-label">Recorded</span>
-        <p class="metadata-value">{new Date(recording.datetime).toLocaleString()}</p>
+        <p class="metadata-value">{new Date(recording.datetime).toLocaleString(getLocale())}</p>
       </div>
       <div class="metadata-item">
         <span class="metadata-label">DateTime Status</span>
@@ -125,17 +126,17 @@
     </div>
     <div class="metadata-item">
       <span class="metadata-label">Created</span>
-      <p class="metadata-value">{new Date(recording.created_at).toLocaleString()}</p>
+      <p class="metadata-value">{new Date(recording.created_at).toLocaleString(getLocale())}</p>
     </div>
     <div class="metadata-item">
       <span class="metadata-label">Updated</span>
-      <p class="metadata-value">{new Date(recording.updated_at).toLocaleString()}</p>
+      <p class="metadata-value">{new Date(recording.updated_at).toLocaleString(getLocale())}</p>
     </div>
   </div>
 
   <!-- Notes -->
   <div>
-    <h3 class="text-sm font-semibold text-stone-700 dark:text-stone-300 mb-2">Notes</h3>
+    <h3 class="text-sm font-semibold text-stone-700 mb-2">Notes</h3>
     <NoteEditor
       value={recording.note ?? ''}
       placeholder="Add notes about this recording..."

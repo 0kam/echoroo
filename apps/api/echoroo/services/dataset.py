@@ -1,22 +1,22 @@
 """Dataset service for business logic."""
 
-from datetime import datetime
 import re
-from typing import Any, TypedDict
+from datetime import datetime
+from typing import TypedDict
 from uuid import UUID
 
 from fastapi import HTTPException, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from echoroo.core.pagination import paginate
 from echoroo.models.dataset import Dataset
-from echoroo.models.enums import DatasetStatus, DatasetVisibility, DatetimeParseStatus
+from echoroo.models.enums import DatasetStatus, DatasetVisibility
 from echoroo.models.recording import Recording
 from echoroo.repositories.dataset import DatasetRepository
 from echoroo.repositories.project import ProjectRepository
 from echoroo.repositories.recording import RecordingRepository
 from echoroo.repositories.site import SiteRepository
-from echoroo.services.audio import AudioService
 
 
 class DateRangeDict(TypedDict, total=False):
@@ -58,7 +58,6 @@ class DatasetService:
         site_repo: SiteRepository,
         project_repo: ProjectRepository,
         recording_repo: RecordingRepository,
-        audio_service: AudioService | None = None,
     ) -> None:
         """Initialize service with repositories.
 
@@ -67,13 +66,11 @@ class DatasetService:
             site_repo: Site repository instance
             project_repo: Project repository instance
             recording_repo: Recording repository instance
-            audio_service: Audio service instance (optional)
         """
         self.dataset_repo = dataset_repo
         self.site_repo = site_repo
         self.project_repo = project_repo
         self.recording_repo = recording_repo
-        self.audio_service = audio_service
 
     async def get_by_id(
         self, user_id: UUID, project_id: UUID, dataset_id: UUID
@@ -146,14 +143,11 @@ class DatasetService:
             )
 
         # Validate pagination
-        if page < 1:
-            page = 1
-        if page_size < 1 or page_size > 100:
-            page_size = 20
+        pagination = paginate(page, page_size, default_page_size=20, max_page_size=100)
 
         # Delegate to repository
         datasets, total = await self.dataset_repo.list_by_project(
-            project_id, page, page_size, site_id, status_filter, visibility, search
+            project_id, pagination.page, pagination.page_size, site_id, status_filter, visibility, search
         )
 
         return datasets, total
@@ -164,7 +158,6 @@ class DatasetService:
         project_id: UUID,
         site_id: UUID,
         name: str,
-        audio_dir: str,
         description: str | None = None,
         visibility: DatasetVisibility = DatasetVisibility.PRIVATE,
         recorder_id: str | None = None,
@@ -174,6 +167,7 @@ class DatasetService:
         note: str | None = None,
         datetime_pattern: str | None = None,
         datetime_format: str | None = None,
+        datetime_timezone: str | None = None,
     ) -> Dataset:
         """Create a new dataset.
 
@@ -182,7 +176,6 @@ class DatasetService:
             project_id: Project's UUID
             site_id: Site's UUID
             name: Dataset name
-            audio_dir: Relative path to audio directory
             description: Dataset description
             visibility: Dataset visibility
             recorder_id: Recorder ID
@@ -192,6 +185,7 @@ class DatasetService:
             note: Internal notes
             datetime_pattern: Regex pattern for datetime extraction
             datetime_format: strftime format string
+            datetime_timezone: IANA timezone for datetime parsing
 
         Returns:
             Created dataset
@@ -230,7 +224,6 @@ class DatasetService:
             created_by_id=user_id,
             name=name,
             description=description,
-            audio_dir=audio_dir,
             visibility=visibility,
             status=DatasetStatus.PENDING,
             recorder_id=recorder_id,
@@ -240,6 +233,7 @@ class DatasetService:
             note=note,
             datetime_pattern=datetime_pattern,
             datetime_format=datetime_format,
+            datetime_timezone=datetime_timezone,
         )
 
         created_dataset = await self.dataset_repo.create(dataset)
@@ -260,6 +254,7 @@ class DatasetService:
         note: str | None = None,
         datetime_pattern: str | None = None,
         datetime_format: str | None = None,
+        datetime_timezone: str | None = None,
     ) -> Dataset:
         """Update dataset.
 
@@ -277,6 +272,7 @@ class DatasetService:
             note: Internal notes
             datetime_pattern: Regex pattern for datetime extraction
             datetime_format: strftime format string
+            datetime_timezone: IANA timezone for datetime parsing
 
         Returns:
             Updated dataset
@@ -328,6 +324,8 @@ class DatasetService:
             dataset.datetime_pattern = datetime_pattern
         if datetime_format is not None:
             dataset.datetime_format = datetime_format
+        if datetime_timezone is not None:
+            dataset.datetime_timezone = datetime_timezone
 
         updated_dataset = await self.dataset_repo.update(dataset)
         return updated_dataset
@@ -362,263 +360,6 @@ class DatasetService:
 
         await self.dataset_repo.delete(dataset_id)
 
-    async def start_import(
-        self,
-        db: AsyncSession,
-        dataset_id: UUID,
-        datetime_pattern: str | None = None,
-        datetime_format: str | None = None,
-    ) -> bool:
-        """Start importing recordings from audio_dir.
-
-        Args:
-            db: Database session
-            dataset_id: Dataset's UUID
-            datetime_pattern: Override regex pattern for datetime extraction
-            datetime_format: Override strftime format string
-
-        Returns:
-            True if import started successfully, False otherwise
-        """
-        if not self.audio_service:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Audio service not configured",
-            )
-
-        # Get dataset
-        dataset = await self.dataset_repo.get_by_id(dataset_id)
-        if not dataset:
-            return False
-
-        try:
-            # Update status to SCANNING
-            await self.dataset_repo.update_import_status(
-                dataset_id, DatasetStatus.SCANNING
-            )
-            await db.commit()
-
-            # Use provided patterns or dataset defaults
-            pattern = datetime_pattern or dataset.datetime_pattern
-            format_str = datetime_format or dataset.datetime_format
-
-            # Scan directory using audio_service
-            audio_files = self.audio_service.scan_directory(dataset.audio_dir)
-            total_files = len(audio_files)
-
-            # Update total files and set status to PROCESSING
-            await self.dataset_repo.update_import_status(
-                dataset_id, DatasetStatus.PROCESSING, total_files=total_files
-            )
-            await db.commit()
-
-            # Process each audio file
-            recordings_to_create: list[Recording] = []
-            processed_count = 0
-
-            for file_path in audio_files:
-                try:
-                    # Check if already imported (by path)
-                    existing = await self.recording_repo.get_by_dataset_and_path(
-                        dataset_id, file_path
-                    )
-                    if existing:
-                        processed_count += 1
-                        continue
-
-                    # Extract metadata
-                    metadata = self.audio_service.extract_metadata(file_path)
-
-                    # Parse datetime from filename
-                    parsed_datetime, parse_error = self.parse_datetime_from_filename(
-                        metadata.filename, pattern, format_str
-                    )
-
-                    # Determine parse status
-                    if parsed_datetime:
-                        parse_status = DatetimeParseStatus.SUCCESS
-                    elif pattern and format_str:
-                        parse_status = DatetimeParseStatus.FAILED
-                    else:
-                        parse_status = DatetimeParseStatus.PENDING
-
-                    # Create recording
-                    recording = Recording(
-                        dataset_id=dataset_id,
-                        filename=metadata.filename,
-                        path=metadata.path,
-                        hash=metadata.hash,
-                        duration=metadata.duration,
-                        samplerate=metadata.samplerate,
-                        channels=metadata.channels,
-                        bit_depth=metadata.bit_depth,
-                        datetime=parsed_datetime,
-                        datetime_parse_status=parse_status,
-                        datetime_parse_error=parse_error,
-                    )
-
-                    recordings_to_create.append(recording)
-                    processed_count += 1
-
-                    # Batch insert every 100 recordings
-                    if len(recordings_to_create) >= 100:
-                        await self.recording_repo.create_many(recordings_to_create)
-                        await self.dataset_repo.update_import_status(
-                            dataset_id,
-                            DatasetStatus.PROCESSING,
-                            processed_files=processed_count,
-                        )
-                        await db.commit()
-                        recordings_to_create.clear()
-
-                except Exception as e:
-                    # Log error but continue processing
-                    print(f"Error processing {file_path}: {e}")
-                    processed_count += 1
-                    continue
-
-            # Insert remaining recordings
-            if recordings_to_create:
-                await self.recording_repo.create_many(recordings_to_create)
-
-            # Update status to COMPLETED
-            await self.dataset_repo.update_import_status(
-                dataset_id,
-                DatasetStatus.COMPLETED,
-                processed_files=processed_count,
-            )
-            await db.commit()
-
-            return True
-
-        except Exception as e:
-            # Update status to FAILED
-            await self.dataset_repo.update_import_status(
-                dataset_id, DatasetStatus.FAILED, error=str(e)
-            )
-            await db.commit()
-            return False
-
-    async def rescan(self, db: AsyncSession, dataset_id: UUID) -> bool:
-        """Rescan directory for new files.
-
-        Args:
-            db: Database session
-            dataset_id: Dataset's UUID
-
-        Returns:
-            True if rescan completed successfully, False otherwise
-        """
-        if not self.audio_service:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Audio service not configured",
-            )
-
-        # Get dataset
-        dataset = await self.dataset_repo.get_by_id(dataset_id)
-        if not dataset:
-            return False
-
-        try:
-            # Update status to SCANNING
-            await self.dataset_repo.update_import_status(
-                dataset_id, DatasetStatus.SCANNING
-            )
-            await db.commit()
-
-            # Scan directory
-            audio_files = self.audio_service.scan_directory(dataset.audio_dir)
-            total_files = len(audio_files)
-
-            # Update total files
-            await self.dataset_repo.update_import_status(
-                dataset_id, DatasetStatus.PROCESSING, total_files=total_files
-            )
-            await db.commit()
-
-            # Process only new files (not already in database)
-            recordings_to_create: list[Recording] = []
-            new_count = 0
-
-            for file_path in audio_files:
-                try:
-                    # Check if already imported
-                    existing = await self.recording_repo.get_by_dataset_and_path(
-                        dataset_id, file_path
-                    )
-                    if existing:
-                        continue
-
-                    # Extract metadata
-                    metadata = self.audio_service.extract_metadata(file_path)
-
-                    # Parse datetime from filename
-                    parsed_datetime, parse_error = self.parse_datetime_from_filename(
-                        metadata.filename,
-                        dataset.datetime_pattern,
-                        dataset.datetime_format,
-                    )
-
-                    # Determine parse status
-                    if parsed_datetime:
-                        parse_status = DatetimeParseStatus.SUCCESS
-                    elif dataset.datetime_pattern and dataset.datetime_format:
-                        parse_status = DatetimeParseStatus.FAILED
-                    else:
-                        parse_status = DatetimeParseStatus.PENDING
-
-                    # Create recording
-                    recording = Recording(
-                        dataset_id=dataset_id,
-                        filename=metadata.filename,
-                        path=metadata.path,
-                        hash=metadata.hash,
-                        duration=metadata.duration,
-                        samplerate=metadata.samplerate,
-                        channels=metadata.channels,
-                        bit_depth=metadata.bit_depth,
-                        datetime=parsed_datetime,
-                        datetime_parse_status=parse_status,
-                        datetime_parse_error=parse_error,
-                    )
-
-                    recordings_to_create.append(recording)
-                    new_count += 1
-
-                    # Batch insert every 100 recordings
-                    if len(recordings_to_create) >= 100:
-                        await self.recording_repo.create_many(recordings_to_create)
-                        await db.commit()
-                        recordings_to_create.clear()
-
-                except Exception as e:
-                    print(f"Error processing {file_path}: {e}")
-                    continue
-
-            # Insert remaining recordings
-            if recordings_to_create:
-                await self.recording_repo.create_many(recordings_to_create)
-
-            # Update status to COMPLETED
-            current_count = await self.recording_repo.count_by_dataset(dataset_id)
-            await self.dataset_repo.update_import_status(
-                dataset_id,
-                DatasetStatus.COMPLETED,
-                processed_files=current_count,
-            )
-            await db.commit()
-
-            return True
-
-        except Exception as e:
-            # Update status to FAILED
-            await self.dataset_repo.update_import_status(
-                dataset_id, DatasetStatus.FAILED, error=str(e)
-            )
-            await db.commit()
-            return False
-
     def get_import_status(self, dataset: Dataset) -> dict[str, DatasetStatus | int | float | str | None]:
         """Get import progress status.
 
@@ -641,7 +382,7 @@ class DatasetService:
         }
 
     def parse_datetime_from_filename(
-        self, filename: str, pattern: str | None, format_str: str | None
+        self, filename: str, pattern: str | None, format_str: str | None, timezone: str | None = None
     ) -> tuple[datetime | None, str | None]:
         """Extract datetime from filename using pattern/format.
 
@@ -649,12 +390,17 @@ class DatasetService:
             filename: Filename to parse
             pattern: Regex pattern to extract datetime string
             format_str: strftime format string
+            timezone: Optional IANA timezone string (e.g., 'Asia/Tokyo')
 
         Returns:
             Tuple of (parsed datetime or None, error message or None)
         """
         if not pattern or not format_str:
             return None, None
+
+        # Guard against excessively long patterns (ReDoS mitigation)
+        if len(pattern) > 200:
+            return None, "Regex pattern too long (max 200 characters)"
 
         try:
             match = re.search(pattern, filename)
@@ -663,12 +409,16 @@ class DatasetService:
 
             datetime_str = match.group(0)
             parsed = datetime.strptime(datetime_str, format_str)
+            if timezone:
+                from zoneinfo import ZoneInfo
+                tz = ZoneInfo(timezone)
+                parsed = parsed.replace(tzinfo=tz)
             return parsed, None
         except Exception as e:
             return None, str(e)
 
     def test_datetime_pattern(
-        self, filename: str, pattern: str, format_str: str
+        self, filename: str, pattern: str, format_str: str, timezone: str | None = None
     ) -> dict[str, bool | str | None]:
         """Test datetime extraction pattern.
 
@@ -676,16 +426,154 @@ class DatasetService:
             filename: Filename to test
             pattern: Regex pattern
             format_str: strftime format string
+            timezone: Optional IANA timezone string (e.g., 'Asia/Tokyo')
 
         Returns:
             Dictionary with test results
         """
-        dt, error = self.parse_datetime_from_filename(filename, pattern, format_str)
+        dt, error = self.parse_datetime_from_filename(filename, pattern, format_str, timezone)
         return {
             "success": dt is not None,
             "parsed_datetime": dt.isoformat() if dt else None,
             "error": error,
         }
+
+    async def get_datetime_config(self, dataset_id: UUID) -> dict[str, object]:
+        """Get current datetime config with sample filenames and parse summary.
+
+        Args:
+            dataset_id: Dataset's UUID
+
+        Returns:
+            Dictionary with datetime_pattern, datetime_format, datetime_timezone,
+            sample_filenames, and parse_summary
+        """
+        dataset = await self.dataset_repo.get_by_id(dataset_id)
+        sample_filenames = await self.recording_repo.get_sample_filenames(dataset_id)
+        parse_summary = await self.recording_repo.get_datetime_parse_summary(dataset_id)
+
+        return {
+            "datetime_pattern": dataset.datetime_pattern if dataset else None,
+            "datetime_format": dataset.datetime_format if dataset else None,
+            "datetime_timezone": dataset.datetime_timezone if dataset else None,
+            "sample_filenames": sample_filenames,
+            "parse_summary": parse_summary,
+        }
+
+    # Known datetime patterns ordered by commonality
+    _KNOWN_PATTERNS: list[dict[str, str]] = [
+        {"name": "AudioMoth / Wildlife Acoustics", "pattern": r"(\d{8}_\d{6})", "format": "%Y%m%d_%H%M%S"},
+        {"name": "AudioMoth (T separator)", "pattern": r"(\d{8}T\d{6})", "format": "%Y%m%dT%H%M%S"},
+        {"name": "ISO 8601", "pattern": r"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})", "format": "%Y-%m-%dT%H:%M:%S"},
+        {"name": "ISO 8601 (no T)", "pattern": r"(\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})", "format": "%Y-%m-%d_%H-%M-%S"},
+        {"name": "Compact", "pattern": r"(\d{14})", "format": "%Y%m%d%H%M%S"},
+        {"name": "Underscore separated", "pattern": r"(\d{4}_\d{2}_\d{2}_\d{2}_\d{2}_\d{2})", "format": "%Y_%m_%d_%H_%M_%S"},
+        {"name": "Hyphen separated", "pattern": r"(\d{4}-\d{2}-\d{2}-\d{2}-\d{2}-\d{2})", "format": "%Y-%m-%d-%H-%M-%S"},
+    ]
+
+    async def auto_detect_datetime_pattern(self, dataset_id: UUID) -> dict[str, object]:
+        """Try known patterns against sample filenames and return the best match.
+
+        Tests each known pattern against the dataset's sample filenames and
+        returns the first pattern where >= 80% of filenames parse successfully.
+
+        Args:
+            dataset_id: Dataset's UUID
+
+        Returns:
+            Dictionary with detected, pattern, format_str, preset_name, and results
+        """
+        sample_filenames = await self.recording_repo.get_sample_filenames(dataset_id)
+
+        if not sample_filenames:
+            return {
+                "detected": False,
+                "pattern": None,
+                "format_str": None,
+                "preset_name": None,
+                "results": [],
+            }
+
+        for preset in self._KNOWN_PATTERNS:
+            results = await self.test_datetime_pattern_bulk(
+                sample_filenames, preset["pattern"], preset["format"]
+            )
+            success_count = sum(1 for r in results if r["success"])
+            if len(sample_filenames) > 0 and success_count / len(sample_filenames) >= 0.8:
+                return {
+                    "detected": True,
+                    "pattern": preset["pattern"],
+                    "format_str": preset["format"],
+                    "preset_name": preset["name"],
+                    "results": results,
+                }
+
+        return {
+            "detected": False,
+            "pattern": None,
+            "format_str": None,
+            "preset_name": None,
+            "results": [],
+        }
+
+    async def test_datetime_pattern_bulk(
+        self, filenames: list[str], pattern: str, format_str: str, timezone: str | None = None
+    ) -> list[dict[str, object]]:
+        """Test a pattern against multiple filenames.
+
+        Args:
+            filenames: List of filenames to test
+            pattern: Regex pattern for datetime extraction
+            format_str: strptime format string
+            timezone: Optional IANA timezone string (e.g., 'Asia/Tokyo')
+
+        Returns:
+            List of result dicts with filename, success, parsed_datetime, error
+        """
+        results: list[dict[str, object]] = []
+        for filename in filenames:
+            result = self.test_datetime_pattern(filename, pattern, format_str, timezone)
+            results.append(
+                {
+                    "filename": filename,
+                    "success": result["success"],
+                    "parsed_datetime": result["parsed_datetime"],
+                    "error": result["error"],
+                }
+            )
+        return results
+
+    async def apply_datetime_pattern(
+        self, dataset_id: UUID, pattern: str, format_str: str, timezone: str | None = None
+    ) -> tuple[str, int]:
+        """Save datetime pattern to dataset and dispatch a Celery task to re-parse all recordings.
+
+        Args:
+            dataset_id: Dataset's UUID
+            pattern: Regex pattern for datetime extraction
+            format_str: strptime format string
+            timezone: Optional IANA timezone string (e.g., 'Asia/Tokyo')
+
+        Returns:
+            Tuple of (task_id, total_recordings)
+        """
+        from echoroo.workers.upload_tasks import reparse_recording_datetimes
+
+        # Update dataset datetime pattern, format, and timezone
+        dataset = await self.dataset_repo.get_by_id(dataset_id)
+        if dataset is not None:
+            dataset.datetime_pattern = pattern
+            dataset.datetime_format = format_str
+            dataset.datetime_timezone = timezone
+            await self.dataset_repo.update(dataset)
+
+        # Get total recording count
+        total_recordings = await self.recording_repo.count_by_dataset(dataset_id)
+
+        # Dispatch Celery task
+        task = reparse_recording_datetimes.delay(str(dataset_id), pattern, format_str, timezone)
+
+        return str(task.id), total_recordings
 
     async def get_statistics(
         self, db: AsyncSession, dataset_id: UUID

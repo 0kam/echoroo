@@ -1,4 +1,6 @@
 <script lang="ts">
+  import * as m from '$lib/paraglide/messages';
+
   interface Props {
     isOpen?: boolean;
     title: string;
@@ -9,6 +11,7 @@
     onConfirm: () => void | Promise<void>;
     onCancel?: () => void;
     warningItems?: string[];
+    errorMessage?: string | null;
   }
 
   let {
@@ -21,6 +24,7 @@
     onConfirm,
     onCancel = () => {},
     warningItems = [],
+    errorMessage = null,
   }: Props = $props();
 
   let isProcessing = $state(false);
@@ -66,15 +70,15 @@
     aria-labelledby="confirm-dialog-title"
     tabindex="-1"
   >
-    <div class="w-full max-w-md overflow-y-auto rounded-lg bg-white shadow-xl">
+    <div class="w-full max-w-md overflow-y-auto rounded-lg bg-surface-card shadow-xl">
       <!-- Header -->
-      <div class="border-b border-gray-200 px-6 py-4">
-        <h2 id="confirm-dialog-title" class="m-0 text-lg font-semibold text-gray-900">{title}</h2>
+      <div class="border-b border-stone-200 px-6 py-4">
+        <h2 id="confirm-dialog-title" class="m-0 text-lg font-semibold text-stone-900">{title}</h2>
       </div>
 
       <!-- Body -->
       <div class="p-6">
-        <p class="m-0 mb-4 leading-relaxed text-gray-700">{message}</p>
+        <p class="m-0 mb-4 leading-relaxed text-stone-700">{message}</p>
 
         {#if warningItems.length > 0}
           <div class="rounded-md border border-red-200 bg-red-50 p-4">
@@ -87,7 +91,7 @@
                 <line x1="12" y1="9" x2="12" y2="13" stroke-width="2" />
                 <line x1="12" y1="17" x2="12.01" y2="17" stroke-width="2" />
               </svg>
-              <span class="text-sm font-medium text-red-800">The following will be deleted:</span>
+              <span class="text-sm font-medium text-red-800">{m.common_delete_warning_items()}</span>
             </div>
             <ul class="m-0 pl-6 text-sm text-red-900">
               {#each warningItems as item}
@@ -96,15 +100,21 @@
             </ul>
           </div>
         {/if}
+
+        {#if errorMessage}
+          <div class="mt-3 rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">
+            {errorMessage}
+          </div>
+        {/if}
       </div>
 
       <!-- Footer -->
-      <div class="flex justify-end gap-3 border-t border-gray-200 px-6 py-4">
+      <div class="flex justify-end gap-3 border-t border-stone-200 px-6 py-4">
         <button
           type="button"
           onclick={handleCancel}
           disabled={isProcessing}
-          class="rounded-md border border-gray-300 bg-white px-5 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+          class="rounded-md border border-stone-300 bg-surface-card px-5 py-2 text-sm font-medium text-stone-700 transition-colors hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {cancelText}
         </button>
@@ -113,9 +123,9 @@
           onclick={handleConfirm}
           disabled={isProcessing}
           class="rounded-md px-5 py-2 text-sm font-medium text-white transition-colors disabled:cursor-not-allowed disabled:opacity-50
-            {isDanger ? 'bg-red-600 hover:bg-red-700' : 'bg-blue-600 hover:bg-blue-700'}"
+            {isDanger ? 'bg-red-600 hover:bg-red-700' : 'bg-primary-600 hover:bg-primary-700'}"
         >
-          {isProcessing ? 'Processing...' : confirmText}
+          {isProcessing ? m.common_processing() : confirmText}
         </button>
       </div>
     </div>

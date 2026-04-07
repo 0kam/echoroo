@@ -29,7 +29,7 @@ class SystemSettingResponse(BaseModel):
     """System setting response schema."""
 
     key: str = Field(..., description="Setting key")
-    value: str | int | bool | dict[str, object] = Field(..., description="Setting value")
+    value: str | int | float | bool | dict[str, object] = Field(..., description="Setting value")
     value_type: str = Field(..., description="Value type (string, number, boolean, json)")
     description: str | None = Field(None, description="Setting description")
     updated_at: datetime = Field(..., description="Last update timestamp")
@@ -46,4 +46,10 @@ class SystemSettingsUpdateRequest(BaseModel):
     )
     session_timeout_minutes: int | None = Field(
         None, ge=5, le=1440, description="Session timeout in minutes (5-1440)"
+    )
+    birdnet_species_filter: Literal["none", "birdnet_geo"] | None = Field(
+        None, description="BirdNET species filter mode (none or birdnet_geo)"
+    )
+    birdnet_min_conf: float | None = Field(
+        None, ge=0.0, le=1.0, description="BirdNET minimum confidence threshold (0.0-1.0)"
     )

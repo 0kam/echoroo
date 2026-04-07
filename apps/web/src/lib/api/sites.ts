@@ -10,7 +10,7 @@ import type {
   SiteListResponse,
   SiteUpdate,
 } from '$lib/types/data';
-import { fetchWithErrorHandling, handleApiResponse } from './errors';
+import { apiClient } from './client';
 
 const API_BASE = '/api/v1';
 
@@ -26,31 +26,21 @@ export async function fetchSites(
   if (params.page_size) searchParams.set('page_size', params.page_size.toString());
 
   const url = `${API_BASE}/projects/${projectId}/sites?${searchParams}`;
-  const response = await fetchWithErrorHandling(url, { credentials: 'include' });
-  return handleApiResponse<SiteListResponse>(response);
+  return apiClient.get<SiteListResponse>(url);
 }
 
 /**
  * Fetch a single site by ID.
  */
 export async function fetchSite(projectId: string, siteId: string): Promise<SiteDetail> {
-  const response = await fetchWithErrorHandling(`${API_BASE}/projects/${projectId}/sites/${siteId}`, {
-    credentials: 'include',
-  });
-  return handleApiResponse<SiteDetail>(response);
+  return apiClient.get<SiteDetail>(`${API_BASE}/projects/${projectId}/sites/${siteId}`);
 }
 
 /**
  * Create a new site.
  */
 export async function createSite(projectId: string, data: SiteCreate): Promise<Site> {
-  const response = await fetchWithErrorHandling(`${API_BASE}/projects/${projectId}/sites`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    credentials: 'include',
-    body: JSON.stringify(data),
-  });
-  return handleApiResponse<Site>(response);
+  return apiClient.post<Site>(`${API_BASE}/projects/${projectId}/sites`, data);
 }
 
 /**
@@ -61,25 +51,12 @@ export async function updateSite(
   siteId: string,
   data: SiteUpdate
 ): Promise<Site> {
-  const response = await fetchWithErrorHandling(`${API_BASE}/projects/${projectId}/sites/${siteId}`, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    credentials: 'include',
-    body: JSON.stringify(data),
-  });
-  return handleApiResponse<Site>(response);
+  return apiClient.patch<Site>(`${API_BASE}/projects/${projectId}/sites/${siteId}`, data);
 }
 
 /**
  * Delete a site.
  */
 export async function deleteSite(projectId: string, siteId: string): Promise<void> {
-  const response = await fetchWithErrorHandling(`${API_BASE}/projects/${projectId}/sites/${siteId}`, {
-    method: 'DELETE',
-    credentials: 'include',
-  });
-
-  if (!response.ok) {
-    await handleApiResponse(response);
-  }
+  return apiClient.delete<void>(`${API_BASE}/projects/${projectId}/sites/${siteId}`);
 }

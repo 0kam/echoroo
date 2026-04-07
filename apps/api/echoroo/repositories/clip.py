@@ -3,22 +3,16 @@
 from uuid import UUID
 
 from sqlalchemy import delete, func, select
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from echoroo.models.clip import Clip
+from echoroo.repositories.base import BaseRepository
 
 
-class ClipRepository:
+class ClipRepository(BaseRepository[Clip]):
     """Repository for Clip entity operations."""
 
-    def __init__(self, db: AsyncSession) -> None:
-        """Initialize repository with database session.
-
-        Args:
-            db: SQLAlchemy async session
-        """
-        self.db = db
+    model = Clip
 
     async def get_by_id(self, clip_id: UUID) -> Clip | None:
         """Get clip by ID with recording relationship loaded.

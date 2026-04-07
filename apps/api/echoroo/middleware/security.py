@@ -19,7 +19,7 @@ References:
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Literal, TypedDict
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
@@ -81,7 +81,7 @@ class SecurityHeadersConfig:
         if self.environment == "development":
             base_csp["script-src"] = ["'self'"]
             base_csp["style-src"] = ["'self'", "'unsafe-inline'"]
-            base_csp["img-src"] = ["'self'", "data:"]
+            base_csp["img-src"] = ["'self'", "data:", "https://xeno-canto.org"]
             base_csp["connect-src"] = ["'self'"]
 
         return base_csp
@@ -237,13 +237,24 @@ def get_security_config_for_environment(
         )
 
 
-def get_production_cors_config(allowed_origins: list[str]) -> dict[str, object]:
+class CorsConfig(TypedDict, total=False):
+    """Typed dictionary for CORS middleware configuration."""
+
+    allow_origins: list[str]
+    allow_credentials: bool
+    allow_methods: list[str]
+    allow_headers: list[str]
+    expose_headers: list[str]
+    max_age: int
+
+
+def get_production_cors_config(allowed_origins: list[str]) -> CorsConfig:
     """Get restrictive CORS configuration for production."""
-    return {
-        "allow_origins": allowed_origins,
-        "allow_credentials": True,
-        "allow_methods": ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-        "allow_headers": [
+    return CorsConfig(
+        allow_origins=allowed_origins,
+        allow_credentials=True,
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+        allow_headers=[
             "Accept",
             "Accept-Language",
             "Authorization",
@@ -252,22 +263,22 @@ def get_production_cors_config(allowed_origins: list[str]) -> dict[str, object]:
             "X-Requested-With",
             "X-CSRF-Token",
         ],
-        "expose_headers": [
+        expose_headers=[
             "X-Request-ID",
             "X-RateLimit-Limit",
             "X-RateLimit-Remaining",
             "X-RateLimit-Reset",
         ],
-        "max_age": 600,  # 10 minutes preflight cache
-    }
+        max_age=600,  # 10 minutes preflight cache
+    )
 
 
-def get_development_cors_config(allowed_origins: list[str]) -> dict[str, object]:
+def get_development_cors_config(allowed_origins: list[str]) -> CorsConfig:
     """Get permissive CORS configuration for development."""
-    return {
-        "allow_origins": allowed_origins,
-        "allow_credentials": True,
-        "allow_methods": ["*"],
-        "allow_headers": ["*"],
-        "max_age": 600,
-    }
+    return CorsConfig(
+        allow_origins=allowed_origins,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+        max_age=600,
+    )

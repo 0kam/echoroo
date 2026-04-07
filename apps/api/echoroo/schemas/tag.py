@@ -40,6 +40,7 @@ class TagResponse(BaseModel):
     gbif_taxon_key: int | None
     scientific_name: str | None
     common_name: str | None
+    taxon_id: UUID | None = None
     created_at: datetime
     updated_at: datetime
 

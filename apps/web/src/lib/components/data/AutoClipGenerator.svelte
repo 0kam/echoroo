@@ -2,20 +2,26 @@
   import { createMutation, useQueryClient } from '@tanstack/svelte-query';
   import { generateClips } from '$lib/api/clips';
 
-  export let projectId: string;
-  export let recordingId: string;
-  export let duration: number;
+  let {
+    projectId,
+    recordingId,
+    duration,
+  }: {
+    projectId: string;
+    recordingId: string;
+    duration: number;
+  } = $props();
 
-  let clipLength = 3.0;
-  let overlap = 0.0;
-  let startTime = 0;
-  let endTime: number | null = null;
-  let showAdvanced = false;
+  let clipLength = $state(3.0);
+  let overlap = $state(0.0);
+  let startTime = $state(0);
+  let endTime: number | null = $state(null);
+  let showAdvanced = $state(false);
 
-  $: effectiveEndTime = endTime ?? duration;
-  $: effectiveRange = Math.max(0, effectiveEndTime - startTime);
-  $: stepSize = Math.max(0.01, clipLength - overlap);
-  $: estimatedClips = stepSize > 0 ? Math.floor(effectiveRange / stepSize) : 0;
+  const effectiveEndTime = $derived(endTime ?? duration);
+  const effectiveRange = $derived(Math.max(0, effectiveEndTime - startTime));
+  const stepSize = $derived(Math.max(0.01, clipLength - overlap));
+  const estimatedClips = $derived(stepSize > 0 ? Math.floor(effectiveRange / stepSize) : 0);
 
   const queryClient = useQueryClient();
   const generateMut = createMutation({
@@ -36,7 +42,7 @@
     },
   });
 
-  $: isValid = clipLength > 0 && overlap >= 0 && overlap < clipLength && startTime >= 0 && effectiveEndTime <= duration;
+  const isValid = $derived(clipLength > 0 && overlap >= 0 && overlap < clipLength && startTime >= 0 && effectiveEndTime <= duration);
 
   function handleSubmit(event: Event) {
     event.preventDefault();
@@ -54,7 +60,7 @@
     </svg>
   </div>
 
-  <form on:submit={handleSubmit} class="form">
+  <form onsubmit={handleSubmit} class="form">
     <div class="main-inputs">
       <div class="field">
         <label for="clip-length" class="label">Clip Length (seconds)</label>
@@ -82,7 +88,7 @@
       </div>
     </div>
 
-    <button type="button" on:click={() => (showAdvanced = !showAdvanced)} class="toggle-advanced">
+    <button type="button" onclick={() => (showAdvanced = !showAdvanced)} class="toggle-advanced">
       <svg
         class="icon-chevron"
         class:rotated={showAdvanced}

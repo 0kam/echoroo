@@ -1,4 +1,5 @@
 import { writable } from 'svelte/store';
+import { generateId } from '$lib/utils/id';
 
 export interface Toast {
   id: string;
@@ -13,7 +14,7 @@ function createToastStore() {
   return {
     subscribe,
     add: (toast: Omit<Toast, 'id'>) => {
-      const id = crypto.randomUUID();
+      const id = generateId();
       update(toasts => [...toasts, { ...toast, id }]);
       return id;
     },
@@ -21,11 +22,11 @@ function createToastStore() {
       update(toasts => toasts.filter(t => t.id !== id));
     },
     success: (message: string) => {
-      const id = crypto.randomUUID();
+      const id = generateId();
       update(toasts => [...toasts, { id, message, type: 'success' }]);
     },
     error: (message: string) => {
-      const id = crypto.randomUUID();
+      const id = generateId();
       update(toasts => [...toasts, { id, message, type: 'error', duration: 8000 }]);
     },
   };

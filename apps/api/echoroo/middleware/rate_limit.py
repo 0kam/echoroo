@@ -109,3 +109,47 @@ def password_reset_rate_limiter() -> Any:
         times=settings.RATE_LIMIT_PASSWORD_RESET_ATTEMPTS,
         seconds=settings.RATE_LIMIT_PASSWORD_RESET_WINDOW_SECONDS,
     )
+
+
+def upload_session_create_rate_limiter() -> Any:
+    """Rate limiter for upload session creation endpoint.
+
+    Returns:
+        Rate limiter dependency (10 attempts per hour)
+
+    Example:
+        ```python
+        @router.post("/upload-sessions")
+        async def create_upload_session(
+            request: Request,
+            _: None = Depends(upload_session_create_rate_limiter())
+        ):
+            pass
+        ```
+    """
+    return RateLimiterDependency(
+        times=settings.RATE_LIMIT_UPLOAD_SESSION_CREATE_ATTEMPTS,
+        seconds=settings.RATE_LIMIT_UPLOAD_SESSION_CREATE_WINDOW_SECONDS,
+    )
+
+
+def upload_session_complete_rate_limiter() -> Any:
+    """Rate limiter for upload session completion endpoint.
+
+    Returns:
+        Rate limiter dependency (20 attempts per hour)
+
+    Example:
+        ```python
+        @router.post("/upload-sessions/{id}/complete")
+        async def complete_upload_session(
+            request: Request,
+            _: None = Depends(upload_session_complete_rate_limiter())
+        ):
+            pass
+        ```
+    """
+    return RateLimiterDependency(
+        times=settings.RATE_LIMIT_UPLOAD_SESSION_COMPLETE_ATTEMPTS,
+        seconds=settings.RATE_LIMIT_UPLOAD_SESSION_COMPLETE_WINDOW_SECONDS,
+    )

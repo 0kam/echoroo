@@ -11,7 +11,7 @@ class UserRegisterRequest(BaseModel):
 
     email: EmailStr = Field(..., description="User's email address")
     password: str = Field(
-        ..., min_length=8, description="Password (min 8 chars, must contain letters and numbers)"
+        ..., min_length=8, max_length=128, description="Password (min 8 chars, max 128 chars, must contain letters and numbers)"
     )
     display_name: str | None = Field(None, max_length=100, description="Display name")
     captcha_token: str | None = Field(
@@ -36,7 +36,7 @@ class LoginRequest(BaseModel):
     """User login request schema."""
 
     email: EmailStr = Field(..., description="User's email address")
-    password: str = Field(..., description="User's password")
+    password: str = Field(..., max_length=128, description="User's password (max 128 chars)")
     captcha_token: str | None = Field(
         None, description="Turnstile CAPTCHA token (required after 3 failed attempts)"
     )
@@ -61,7 +61,7 @@ class PasswordResetConfirm(BaseModel):
 
     token: str = Field(..., description="Reset token from email")
     password: str = Field(
-        ..., min_length=8, description="New password (min 8 chars, must contain letters and numbers)"
+        ..., min_length=8, max_length=128, description="New password (min 8 chars, max 128 chars, must contain letters and numbers)"
     )
 
     @field_validator("password")

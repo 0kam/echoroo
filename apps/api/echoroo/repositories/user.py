@@ -4,21 +4,15 @@ from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 from sqlalchemy import func, select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from echoroo.models.user import LoginAttempt, User
+from echoroo.repositories.base import BaseRepository
 
 
-class UserRepository:
+class UserRepository(BaseRepository[User]):
     """Repository for User entity operations."""
 
-    def __init__(self, db: AsyncSession) -> None:
-        """Initialize repository with database session.
-
-        Args:
-            db: SQLAlchemy async session
-        """
-        self.db = db
+    model = User
 
     async def get_by_id(self, user_id: UUID) -> User | None:
         """Get user by ID.

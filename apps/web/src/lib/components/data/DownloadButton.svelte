@@ -38,7 +38,7 @@
   onclick={download}
   disabled={disabled || isDownloading}
   class="inline-flex items-center gap-2 whitespace-nowrap rounded-md px-4 py-2 text-sm font-medium transition-all disabled:cursor-not-allowed disabled:opacity-50
-    {variant === 'primary' ? 'border-0 bg-blue-600 text-white hover:bg-blue-700' : 'border border-gray-300 bg-gray-100 text-gray-700 hover:bg-gray-200'}"
+    {variant === 'primary' ? 'border-0 bg-primary-600 text-white hover:bg-primary-700' : 'border border-stone-300 bg-stone-100 text-stone-700 hover:bg-stone-200'}"
 >
   {#if isDownloading}
     <svg class="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24">

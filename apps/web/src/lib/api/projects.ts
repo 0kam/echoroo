@@ -10,6 +10,7 @@ import type {
   ProjectUpdateRequest,
   ProjectMemberAddRequest,
   ProjectMemberUpdateRequest,
+  ProjectOverviewResponse,
 } from '$lib/types';
 import { apiClient } from './client';
 
@@ -89,5 +90,12 @@ export const projectsApi = {
    */
   removeMember: async (projectId: string, userId: string): Promise<void> => {
     return apiClient.delete<void>(`/api/v1/projects/${projectId}/members/${userId}`);
+  },
+
+  /**
+   * Get project overview (sites, recording calendar, stats)
+   */
+  getOverview: async (projectId: string): Promise<ProjectOverviewResponse> => {
+    return apiClient.get<ProjectOverviewResponse>(`/api/v1/projects/${projectId}/overview`);
   },
 };

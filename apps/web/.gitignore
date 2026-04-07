@@ -6,6 +6,9 @@ node_modules
 build
 dist
 
+# Paraglide-JS generated code (auto-generated, do not commit)
+src/lib/paraglide/
+
 # Environment variables
 .env
 .env.*

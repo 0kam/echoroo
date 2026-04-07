@@ -6,6 +6,7 @@
   import { onMount } from 'svelte';
   import { verifyEmail, resendVerificationEmail } from '$lib/api/auth';
   import { ApiError } from '$lib/api/client';
+  import { localizeHref } from '$lib/paraglide/runtime';
   import type { PageData } from './$types';
 
   interface Props {
@@ -90,22 +91,23 @@
   <title>Verify Email - Echoroo</title>
 </svelte:head>
 
-<div class="flex min-h-screen items-center justify-center bg-gray-50 px-4 py-12 sm:px-6 lg:px-8">
+<div class="flex min-h-screen items-center justify-center bg-stone-50 px-4 py-12 sm:px-6 lg:px-8">
   <div class="w-full max-w-md space-y-8">
     <!-- Header -->
-    <div>
-      <h2 class="mt-6 text-center text-3xl font-extrabold text-gray-900">
+    <div class="flex flex-col items-center">
+      <img src="/echoroo.png" alt="Echoroo" class="h-16 w-auto mb-4" />
+      <h2 class="text-center text-3xl font-extrabold text-stone-900">
         Email Verification
       </h2>
     </div>
 
-    <div class="mt-8 rounded-lg bg-white p-8 shadow-md">
+    <div class="mt-8 rounded-lg bg-surface-card p-8 shadow-md">
       {#if isVerifying}
         <!-- Verifying State -->
         <div class="text-center">
           <div class="mb-4 flex justify-center">
             <svg
-              class="h-12 w-12 animate-spin text-blue-600"
+              class="h-12 w-12 animate-spin text-primary-600"
               xmlns="http://www.w3.org/2000/svg"
               fill="none"
               viewBox="0 0 24 24"
@@ -125,8 +127,8 @@
               ></path>
             </svg>
           </div>
-          <p class="text-lg font-medium text-gray-900">Verifying your email...</p>
-          <p class="mt-2 text-sm text-gray-600">Please wait while we verify your email address.</p>
+          <p class="text-lg font-medium text-stone-900">Verifying your email...</p>
+          <p class="mt-2 text-sm text-stone-600">Please wait while we verify your email address.</p>
         </div>
       {:else if isVerified}
         <!-- Success State -->
@@ -147,14 +149,14 @@
               />
             </svg>
           </div>
-          <h3 class="text-lg font-medium text-gray-900">Email verified successfully!</h3>
-          <p class="mt-2 text-sm text-gray-600">
+          <h3 class="text-lg font-medium text-stone-900">Email verified successfully!</h3>
+          <p class="mt-2 text-sm text-stone-600">
             Your email address has been verified. You can now log in to your account.
           </p>
           <div class="mt-6">
             <a
-              href="/login"
-              class="inline-flex w-full justify-center rounded-md border border-transparent bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+              href={localizeHref('/login')}
+              class="inline-flex w-full justify-center rounded-md border border-transparent bg-primary-600 px-4 py-2 text-sm font-medium text-white hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2"
             >
               Go to Login
             </a>
@@ -165,7 +167,7 @@
         <div class="text-center">
           <div class="mb-4 flex justify-center">
             <svg
-              class="h-12 w-12 text-blue-600"
+              class="h-12 w-12 text-primary-600"
               xmlns="http://www.w3.org/2000/svg"
               fill="none"
               viewBox="0 0 24 24"
@@ -179,8 +181,8 @@
               />
             </svg>
           </div>
-          <h3 class="text-lg font-medium text-gray-900">Check your email!</h3>
-          <p class="mt-2 text-sm text-gray-600">
+          <h3 class="text-lg font-medium text-stone-900">Check your email!</h3>
+          <p class="mt-2 text-sm text-stone-600">
             We've sent a verification link to your email address. Please click the link to verify
             your account.
           </p>
@@ -194,12 +196,12 @@
           {/if}
 
           <div class="mt-6">
-            <p class="text-sm text-gray-600">Didn't receive the email?</p>
+            <p class="text-sm text-stone-600">Didn't receive the email?</p>
             <button
               type="button"
               onclick={handleResend}
               disabled={isResending || resendCooldown > 0}
-              class="mt-2 inline-flex items-center rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+              class="mt-2 inline-flex items-center rounded-md border border-stone-300 bg-surface-card px-4 py-2 text-sm font-medium text-stone-700 hover:bg-stone-50 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {#if isResending}
                 Sending...
@@ -230,7 +232,7 @@
               />
             </svg>
           </div>
-          <h3 class="text-lg font-medium text-gray-900">Verification failed</h3>
+          <h3 class="text-lg font-medium text-stone-900">Verification failed</h3>
           <p class="mt-2 text-sm text-red-600">{error}</p>
 
           <div class="mt-6 space-y-3">
@@ -238,7 +240,7 @@
               type="button"
               onclick={handleResend}
               disabled={isResending || resendCooldown > 0}
-              class="inline-flex w-full justify-center rounded-md border border-transparent bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+              class="inline-flex w-full justify-center rounded-md border border-transparent bg-primary-600 px-4 py-2 text-sm font-medium text-white hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {#if isResending}
                 Sending...
@@ -250,8 +252,8 @@
             </button>
 
             <a
-              href="/login"
-              class="inline-flex w-full justify-center rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+              href={localizeHref('/login')}
+              class="inline-flex w-full justify-center rounded-md border border-stone-300 bg-surface-card px-4 py-2 text-sm font-medium text-stone-700 hover:bg-stone-50 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2"
             >
               Back to Login
             </a>
@@ -260,11 +262,11 @@
       {:else}
         <!-- No Token Provided -->
         <div class="text-center">
-          <p class="text-sm text-gray-600">No verification token provided.</p>
+          <p class="text-sm text-stone-600">No verification token provided.</p>
           <div class="mt-4">
             <a
-              href="/login"
-              class="inline-flex justify-center rounded-md border border-transparent bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+              href={localizeHref('/login')}
+              class="inline-flex justify-center rounded-md border border-transparent bg-primary-600 px-4 py-2 text-sm font-medium text-white hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2"
             >
               Go to Login
             </a>

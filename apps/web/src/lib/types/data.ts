@@ -121,12 +121,12 @@ export interface Dataset {
   created_by_id: string;
   name: string;
   description: string | null;
-  audio_dir: string;
   visibility: DatasetVisibility;
   status: DatasetStatus;
   doi: string | null;
   gain: number | null;
   note: string | null;
+  datetime_timezone: string | null;
   total_files: number;
   processed_files: number;
   processing_error: string | null;
@@ -149,7 +149,6 @@ export interface DatasetCreate {
   site_id: string;
   name: string;
   description?: string | null;
-  audio_dir: string;
   visibility?: DatasetVisibility;
   recorder_id?: string | null;
   license_id?: string | null;
@@ -158,6 +157,7 @@ export interface DatasetCreate {
   note?: string | null;
   datetime_pattern?: string | null;
   datetime_format?: string | null;
+  datetime_timezone?: string | null;
 }
 
 export interface DatasetUpdate {
@@ -171,6 +171,7 @@ export interface DatasetUpdate {
   note?: string | null;
   datetime_pattern?: string | null;
   datetime_format?: string | null;
+  datetime_timezone?: string | null;
 }
 
 export interface DatasetListResponse {
@@ -182,8 +183,10 @@ export interface DatasetListResponse {
 }
 
 export interface ImportRequest {
+  source?: string | null;
   datetime_pattern?: string | null;
   datetime_format?: string | null;
+  datetime_timezone?: string | null;
 }
 
 export interface ImportStatusResponse {
@@ -220,20 +223,82 @@ export interface DatasetStatistics {
   recordings_by_hour: RecordingsByHour[];
 }
 
-export interface DirectoryInfo {
-  name: string;
-  path: string;
-  audio_file_count: number;
-  formats: string[];
-}
-
-export interface DirectoryListResponse {
-  path: string;
-  directories: DirectoryInfo[];
-}
-
 export interface ExportRequest {
   include_audio?: boolean;
+}
+
+// ============================================
+// Upload Session Types
+// ============================================
+
+export type UploadSessionStatus =
+  | 'issued'
+  | 'uploaded'
+  | 'validating'
+  | 'validated'
+  | 'importing'
+  | 'imported'
+  | 'failed';
+
+export type UploadFileStatus = 'pending' | 'uploaded' | 'valid' | 'invalid' | 'imported';
+
+export interface UploadFileRequest {
+  filename: string;
+  size: number;
+  checksum_sha256?: string | null;
+}
+
+export interface CreateUploadSessionRequest {
+  files: UploadFileRequest[];
+}
+
+export interface UploadFilePresignedResponse {
+  file_id: string;
+  original_filename: string;
+  upload_url: string;
+}
+
+export interface CreateUploadSessionResponse {
+  session_id: string;
+  status: string;
+  expires_at: string;
+  total_files: number;
+  total_bytes: number;
+  files: UploadFilePresignedResponse[];
+}
+
+export interface CompleteUploadResponse {
+  session_id: string;
+  status: string;
+  verified_files: number;
+  missing_files: number;
+  mismatched_files: number;
+}
+
+export interface UploadFileStatusResponse {
+  file_id: string;
+  original_filename: string;
+  status: UploadFileStatus;
+  file_size: number;
+  duration: number | null;
+  samplerate: number | null;
+  channels: number | null;
+  validation_error: string | null;
+  recording_id: string | null;
+}
+
+export interface UploadSessionStatusResponse {
+  session_id: string;
+  status: UploadSessionStatus;
+  total_files: number;
+  total_bytes: number;
+  validated_files: number;
+  imported_files: number;
+  progress_percent: number;
+  error: string | null;
+  files: UploadFileStatusResponse[];
+  created_at: string;
+  updated_at: string;
 }
 
 // ============================================
@@ -404,4 +469,43 @@ export interface ClipListParams {
   page_size?: number;
   sort_by?: 'start_time' | 'created_at';
   sort_order?: 'asc' | 'desc';
+}
+
+// ============================================
+// Datetime Config Types
+// ============================================
+
+export interface DatetimeParseSummary {
+  total: number;
+  success: number;
+  failed: number;
+  pending: number;
+}
+
+export interface DatetimeConfig {
+  datetime_pattern: string | null;
+  datetime_format: string | null;
+  datetime_timezone: string | null;
+  sample_filenames: string[];
+  parse_summary: DatetimeParseSummary;
+}
+
+export interface DatetimeTestResult {
+  filename: string;
+  success: boolean;
+  parsed_datetime: string | null;
+  error: string | null;
+}
+
+export interface DatetimeAutoDetectResult {
+  detected: boolean;
+  pattern: string | null;
+  format_str: string | null;
+  preset_name: string | null;
+  results: DatetimeTestResult[];
+}
+
+export interface DatetimeApplyResult {
+  task_id: string;
+  total_recordings: number;
 }

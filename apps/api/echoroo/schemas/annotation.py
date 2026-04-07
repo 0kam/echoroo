@@ -8,7 +8,10 @@ from uuid import UUID
 from pydantic import BaseModel, Field, model_validator
 
 from echoroo.models.enums import AnnotationSource, ReviewStatus
-from echoroo.schemas.note import NoteCreate, NoteResponse  # noqa: F401 - re-exported for convenience
+from echoroo.schemas.note import (  # noqa: F401 - re-exported for convenience
+    NoteCreate,
+    NoteResponse,
+)
 from echoroo.schemas.tag import TagResponse  # noqa: F401 - re-exported for convenience
 
 

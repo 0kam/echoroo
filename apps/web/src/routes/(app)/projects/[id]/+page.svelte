@@ -4,10 +4,15 @@
    */
 
   import { goto } from '$app/navigation';
+  import { createQuery } from '@tanstack/svelte-query';
   import { projectsApi } from '$lib/api/projects';
   import { authStore } from '$lib/stores/auth.svelte';
   import { ApiError } from '$lib/api/client';
+  import { localizeHref, getLocale } from '$lib/paraglide/runtime';
+  import * as m from '$lib/paraglide/messages';
   import type { Project, ProjectMember } from '$lib/types';
+  import ProjectSitesMap from '$lib/components/project/ProjectSitesMap.svelte';
+  import RecordingCalendar from '$lib/components/project/RecordingCalendar.svelte';
 
   // Props
   let { data } = $props();
@@ -59,12 +64,12 @@
       if (err instanceof ApiError) {
         error = err.detail || err.message;
         if (err.status === 404) {
-          error = 'Project not found';
+          error = m.project_detail_error_not_found();
         } else if (err.status === 403) {
-          error = 'You do not have permission to view this project';
+          error = m.project_detail_error_forbidden();
         }
       } else {
-        error = 'Failed to load project';
+        error = m.project_detail_error_load();
       }
     } finally {
       isLoading = false;
@@ -76,18 +81,34 @@
     loadProject();
   });
 
+  // Overview query (TanStack Query)
+  const overviewQuery = $derived(
+    createQuery({
+      queryKey: ['project-overview', projectId],
+      queryFn: () => projectsApi.getOverview(projectId),
+      enabled: !!projectId,
+      retry: false,
+    })
+  );
+
+  const overview = $derived($overviewQuery.data ?? null);
+
+  // Format total duration as hours + minutes
+  const totalHours = $derived(overview ? Math.floor(overview.total_duration / 3600) : 0);
+  const totalMinutes = $derived(overview ? Math.floor((overview.total_duration % 3600) / 60) : 0);
+
   /**
    * Navigate to settings
    */
   function goToSettings() {
-    goto(`/projects/${projectId}/settings`);
+    goto(localizeHref(`/projects/${projectId}/settings`));
   }
 
   /**
    * Navigate to members
    */
   function goToMembers() {
-    goto(`/projects/${projectId}/members`);
+    goto(localizeHref(`/projects/${projectId}/members`));
   }
 
   /**
@@ -113,12 +134,12 @@
     try {
       await projectsApi.delete(projectId);
       // Redirect to projects list
-      await goto('/projects');
+      await goto(localizeHref('/projects'));
     } catch (err) {
       if (err instanceof ApiError) {
         error = err.detail || err.message;
       } else {
-        error = 'Failed to delete project';
+        error = m.project_detail_error_delete();
       }
       showDeleteDialog = false;
     } finally {
@@ -136,7 +157,7 @@
   {#if isLoading}
     <div class="flex items-center justify-center py-12">
       <svg
-        class="h-8 w-8 animate-spin text-blue-600"
+        class="h-8 w-8 animate-spin text-primary-600"
         xmlns="http://www.w3.org/2000/svg"
         fill="none"
         viewBox="0 0 24 24"
@@ -173,8 +194,8 @@
         </div>
       </div>
       <div class="mt-4">
-        <a href="/projects" class="text-sm font-medium text-blue-600 hover:text-blue-500">
-          Back to Projects
+        <a href={localizeHref('/projects')} class="text-sm font-medium text-primary-600 hover:text-primary-500">
+          {m.project_detail_back_to_projects()}
         </a>
       </div>
     </div>
@@ -184,12 +205,12 @@
       <div class="flex items-start justify-between">
         <div>
           <div class="flex items-center space-x-3">
-            <h1 class="text-3xl font-bold text-gray-900">{project.name}</h1>
+            <h1 class="text-3xl font-bold text-stone-900">{project.name}</h1>
             <span
               class="inline-flex items-center rounded-full px-3 py-1 text-sm font-medium {project.visibility ===
               'public'
                 ? 'bg-green-100 text-green-800'
-                : 'bg-gray-100 text-gray-800'}"
+                : 'bg-stone-100 text-stone-800'}"
             >
               {#if project.visibility === 'public'}
                 <svg class="mr-1.5 h-4 w-4" fill="currentColor" viewBox="0 0 20 20">
@@ -199,7 +220,7 @@
                     clip-rule="evenodd"
                   />
                 </svg>
-                Public
+                {m.project_detail_visibility_public()}
               {:else}
                 <svg class="mr-1.5 h-4 w-4" fill="currentColor" viewBox="0 0 20 20">
                   <path
@@ -208,13 +229,12 @@
                     clip-rule="evenodd"
                   />
                 </svg>
-                Private
+                {m.project_detail_visibility_private()}
               {/if}
             </span>
           </div>
-          <p class="mt-2 text-sm text-gray-600">
-            Created {new Date(project.created_at).toLocaleDateString()} by {project.owner
-              .display_name || project.owner.email}
+          <p class="mt-2 text-sm text-stone-600">
+            {m.project_detail_created_by({ date: new Date(project.created_at).toLocaleDateString(getLocale()), owner: project.owner.display_name || project.owner.email })}
           </p>
         </div>
 
@@ -223,7 +243,7 @@
           {#if isAdmin}
             <button
               onclick={goToSettings}
-              class="inline-flex items-center rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+              class="inline-flex items-center rounded-md border border-stone-300 bg-surface-card px-4 py-2 text-sm font-medium text-stone-700 hover:bg-stone-50"
             >
               <svg class="mr-2 h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path
@@ -239,14 +259,14 @@
                   d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
                 />
               </svg>
-              Settings
+              {m.project_detail_settings_button()}
             </button>
           {/if}
 
           {#if isOwner}
             <button
               onclick={showDeleteConfirmation}
-              class="inline-flex items-center rounded-md border border-red-300 bg-white px-4 py-2 text-sm font-medium text-red-700 hover:bg-red-50"
+              class="inline-flex items-center rounded-md border border-red-300 bg-surface-card px-4 py-2 text-sm font-medium text-red-700 hover:bg-red-50"
             >
               <svg class="mr-2 h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path
@@ -256,7 +276,7 @@
                   d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
                 />
               </svg>
-              Delete
+              {m.project_detail_delete_button()}
             </button>
           {/if}
         </div>
@@ -268,87 +288,147 @@
       <!-- Main Content -->
       <div class="lg:col-span-2">
         <!-- Description -->
-        <div class="mb-6 rounded-lg bg-white p-6 shadow">
-          <h2 class="mb-4 text-lg font-semibold text-gray-900">Description</h2>
+        <div class="mb-6 rounded-lg bg-surface-card p-6 shadow">
+          <h2 class="mb-4 text-lg font-semibold text-stone-900">{m.project_detail_description_heading()}</h2>
           {#if project.description}
-            <p class="whitespace-pre-wrap text-sm text-gray-700">{project.description}</p>
+            <p class="whitespace-pre-wrap text-sm text-stone-700">{project.description}</p>
           {:else}
-            <p class="text-sm italic text-gray-400">No description provided</p>
+            <p class="text-sm italic text-stone-400">{m.project_detail_no_description()}</p>
           {/if}
         </div>
 
         <!-- Target Taxa -->
         {#if project.target_taxa}
-          <div class="mb-6 rounded-lg bg-white p-6 shadow">
-            <h2 class="mb-4 text-lg font-semibold text-gray-900">Target Taxa</h2>
-            <p class="text-sm text-gray-700">{project.target_taxa}</p>
+          <div class="mb-6 rounded-lg bg-surface-card p-6 shadow">
+            <h2 class="mb-4 text-lg font-semibold text-stone-900">{m.project_detail_target_taxa_heading()}</h2>
+            <p class="text-sm text-stone-700">{project.target_taxa}</p>
           </div>
         {/if}
 
         <!-- Quick Navigation -->
         <div class="mb-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <a
-            href="/projects/{projectId}/datasets"
-            class="rounded-lg bg-white p-4 shadow transition hover:shadow-md"
+            href={localizeHref(`/projects/${projectId}/data`)}
+            class="flex items-start rounded-lg bg-surface-card p-4 shadow transition hover:shadow-md"
           >
-            <h3 class="text-sm font-semibold text-gray-900">Datasets</h3>
-            <p class="mt-1 text-xs text-gray-500">Manage audio datasets</p>
+            <svg class="mr-3 mt-0.5 h-5 w-5 flex-shrink-0 text-primary-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4" />
+            </svg>
+            <div>
+              <h3 class="text-sm font-semibold text-stone-900">{m.project_detail_nav_sites_data_title()}</h3>
+              <p class="mt-1 text-xs text-stone-500">{m.project_detail_nav_sites_data_desc()}</p>
+            </div>
           </a>
           <a
-            href="/projects/{projectId}/recordings"
-            class="rounded-lg bg-white p-4 shadow transition hover:shadow-md"
+            href={localizeHref(`/projects/${projectId}/detections`)}
+            class="flex items-start rounded-lg bg-surface-card p-4 shadow transition hover:shadow-md"
           >
-            <h3 class="text-sm font-semibold text-gray-900">Recordings</h3>
-            <p class="mt-1 text-xs text-gray-500">Browse audio recordings</p>
+            <svg class="mr-3 mt-0.5 h-5 w-5 flex-shrink-0 text-primary-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3" />
+            </svg>
+            <div>
+              <h3 class="text-sm font-semibold text-stone-900">{m.project_detail_nav_detections_title()}</h3>
+              <p class="mt-1 text-xs text-stone-500">{m.project_detail_nav_detections_desc()}</p>
+            </div>
           </a>
           <a
-            href="/projects/{projectId}/sites"
-            class="rounded-lg bg-white p-4 shadow transition hover:shadow-md"
+            href={localizeHref(`/projects/${projectId}/reports`)}
+            class="flex items-start rounded-lg bg-surface-card p-4 shadow transition hover:shadow-md"
           >
-            <h3 class="text-sm font-semibold text-gray-900">Sites</h3>
-            <p class="mt-1 text-xs text-gray-500">Manage monitoring sites</p>
+            <svg class="mr-3 mt-0.5 h-5 w-5 flex-shrink-0 text-primary-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+            </svg>
+            <div>
+              <h3 class="text-sm font-semibold text-stone-900">{m.project_detail_nav_reports_title()}</h3>
+              <p class="mt-1 text-xs text-stone-500">{m.project_detail_nav_reports_desc()}</p>
+            </div>
           </a>
           <a
-            href="/projects/{projectId}/annotations"
-            class="rounded-lg bg-white p-4 shadow transition hover:shadow-md"
+            href={localizeHref(`/projects/${projectId}/settings`)}
+            class="flex items-start rounded-lg bg-surface-card p-4 shadow transition hover:shadow-md"
           >
-            <h3 class="text-sm font-semibold text-gray-900">Annotations</h3>
-            <p class="mt-1 text-xs text-gray-500">Annotate audio events</p>
+            <svg class="mr-3 mt-0.5 h-5 w-5 flex-shrink-0 text-primary-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+            </svg>
+            <div>
+              <h3 class="text-sm font-semibold text-stone-900">{m.project_detail_nav_settings_title()}</h3>
+              <p class="mt-1 text-xs text-stone-500">{m.project_detail_nav_settings_desc()}</p>
+            </div>
           </a>
         </div>
 
-        <!-- Placeholder for future content -->
-        <div class="rounded-lg border-2 border-dashed border-gray-300 p-12 text-center">
-          <svg
-            class="mx-auto h-12 w-12 text-gray-400"
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
-          >
-            <path
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              stroke-width="2"
-              d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3"
-            />
-          </svg>
-          <h3 class="mt-2 text-sm font-medium text-gray-900">No recordings yet</h3>
-          <p class="mt-1 text-sm text-gray-500">Upload recordings to start analyzing.</p>
-        </div>
+        <!-- Overview section: shows data if recordings exist, otherwise placeholder -->
+        {#if $overviewQuery.isLoading}
+          <!-- Loading skeleton -->
+          <div class="rounded-lg bg-surface-card p-6 shadow">
+            <div class="mb-4 h-5 w-32 animate-pulse rounded bg-stone-200"></div>
+            <div class="h-[300px] animate-pulse rounded-lg bg-stone-100"></div>
+          </div>
+        {:else if overview && overview.total_recordings > 0}
+          <!-- Summary stats -->
+          <div class="mb-4 flex flex-wrap gap-4">
+            <div class="rounded-lg bg-surface-card px-4 py-3 shadow">
+              <p class="text-xs text-stone-500">{m.project_overview_total_recordings({ count: overview.total_recordings })}</p>
+            </div>
+            <div class="rounded-lg bg-surface-card px-4 py-3 shadow">
+              <p class="text-xs text-stone-500">{m.project_overview_total_sites({ count: overview.total_sites })}</p>
+            </div>
+            {#if overview.total_duration > 0}
+              <div class="rounded-lg bg-surface-card px-4 py-3 shadow">
+                <p class="text-xs text-stone-500">{m.project_overview_total_duration({ hours: totalHours, minutes: totalMinutes })}</p>
+              </div>
+            {/if}
+          </div>
+
+          <!-- Sites Map -->
+          {#if overview.sites.length > 0}
+            <div class="mb-6 rounded-lg bg-surface-card p-6 shadow">
+              <h2 class="mb-4 text-lg font-semibold text-stone-900">{m.project_overview_sites_map_title()}</h2>
+              <ProjectSitesMap sites={overview.sites} {projectId} />
+            </div>
+          {/if}
+
+          <!-- Recording Calendar -->
+          {#if overview.recording_calendar.length > 0}
+            <div class="rounded-lg bg-surface-card p-6 shadow">
+              <h2 class="mb-4 text-lg font-semibold text-stone-900">{m.project_overview_recording_calendar_title()}</h2>
+              <RecordingCalendar calendar={overview.recording_calendar} />
+            </div>
+          {/if}
+        {:else}
+          <!-- No recordings placeholder -->
+          <div class="rounded-lg border-2 border-dashed border-stone-300 p-12 text-center">
+            <svg
+              class="mx-auto h-12 w-12 text-stone-400"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="2"
+                d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3"
+              />
+            </svg>
+            <h3 class="mt-2 text-sm font-medium text-stone-900">{m.project_overview_no_data()}</h3>
+            <p class="mt-1 text-sm text-stone-500">{m.project_overview_no_data_desc()}</p>
+          </div>
+        {/if}
       </div>
 
       <!-- Sidebar -->
       <div class="space-y-6">
         <!-- Project Members -->
-        <div class="rounded-lg bg-white p-6 shadow">
+        <div class="rounded-lg bg-surface-card p-6 shadow">
           <div class="mb-4 flex items-center justify-between">
-            <h2 class="text-lg font-semibold text-gray-900">Members</h2>
+            <h2 class="text-lg font-semibold text-stone-900">{m.project_detail_members_heading()}</h2>
             {#if isAdmin}
               <button
                 onclick={goToMembers}
-                class="text-sm font-medium text-blue-600 hover:text-blue-500"
+                class="text-sm font-medium text-primary-600 hover:text-primary-500"
               >
-                Manage
+                {m.project_detail_members_manage()}
               </button>
             {/if}
           </div>
@@ -357,16 +437,16 @@
             {#each members.slice(0, 5) as member (member.id)}
               <div class="flex items-center justify-between">
                 <div class="flex items-center space-x-3">
-                  <div class="flex h-8 w-8 items-center justify-center rounded-full bg-gray-200">
-                    <span class="text-xs font-medium text-gray-600">
+                  <div class="flex h-8 w-8 items-center justify-center rounded-full bg-stone-200">
+                    <span class="text-xs font-medium text-stone-600">
                       {(member.user?.display_name || member.user?.email || 'U').charAt(0).toUpperCase()}
                     </span>
                   </div>
                   <div class="min-w-0 flex-1">
-                    <p class="truncate text-sm font-medium text-gray-900">
+                    <p class="truncate text-sm font-medium text-stone-900">
                       {member.user.display_name || member.user.email}
                     </p>
-                    <p class="truncate text-xs text-gray-500">{member.role}</p>
+                    <p class="truncate text-xs text-stone-500">{member.role}</p>
                   </div>
                 </div>
               </div>
@@ -375,9 +455,9 @@
             {#if members.length > 5}
               <button
                 onclick={goToMembers}
-                class="w-full pt-2 text-center text-sm text-gray-600 hover:text-gray-900"
+                class="w-full pt-2 text-center text-sm text-stone-600 hover:text-stone-900"
               >
-                View all {members.length} members
+                {m.project_detail_members_view_all({ count: members.length })}
               </button>
             {/if}
           </div>
@@ -396,16 +476,16 @@
         role="button"
         tabindex="0"
         aria-label="Close dialog"
-        class="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity"
+        class="fixed inset-0 bg-stone-500 bg-opacity-75 transition-opacity"
         onclick={cancelDelete}
         onkeydown={(e) => e.key === 'Escape' && cancelDelete()}
       ></div>
 
       <!-- Modal panel -->
       <div
-        class="inline-block transform overflow-hidden rounded-lg bg-white text-left align-bottom shadow-xl transition-all sm:my-8 sm:w-full sm:max-w-lg sm:align-middle"
+        class="inline-block transform overflow-hidden rounded-lg bg-surface-card text-left align-bottom shadow-xl transition-all sm:my-8 sm:w-full sm:max-w-lg sm:align-middle"
       >
-        <div class="bg-white px-4 pb-4 pt-5 sm:p-6 sm:pb-4">
+        <div class="bg-surface-card px-4 pb-4 pt-5 sm:p-6 sm:pb-4">
           <div class="sm:flex sm:items-start">
             <div
               class="mx-auto flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-full bg-red-100 sm:mx-0 sm:h-10 sm:w-10"
@@ -420,20 +500,18 @@
               </svg>
             </div>
             <div class="mt-3 text-center sm:ml-4 sm:mt-0 sm:text-left">
-              <h3 class="text-lg font-medium leading-6 text-gray-900" id="modal-title">
-                Delete Project
+              <h3 class="text-lg font-medium leading-6 text-stone-900" id="modal-title">
+                {m.project_detail_delete_title()}
               </h3>
               <div class="mt-2">
-                <p class="text-sm text-gray-500">
-                  Are you sure you want to delete "{project?.name}"? This action cannot be undone and
-                  will permanently delete all recordings, annotations, and data associated with this
-                  project.
+                <p class="text-sm text-stone-500">
+                  {m.project_detail_delete_body({ name: project?.name ?? '' })}
                 </p>
               </div>
             </div>
           </div>
         </div>
-        <div class="bg-gray-50 px-4 py-3 sm:flex sm:flex-row-reverse sm:px-6">
+        <div class="bg-stone-50 px-4 py-3 sm:flex sm:flex-row-reverse sm:px-6">
           <button
             type="button"
             onclick={deleteProject}
@@ -461,18 +539,18 @@
                   d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
                 ></path>
               </svg>
-              Deleting...
+              {m.project_detail_deleting()}
             {:else}
-              Delete
+              {m.project_detail_delete_button()}
             {/if}
           </button>
           <button
             type="button"
             onclick={cancelDelete}
             disabled={isDeleting}
-            class="mt-3 inline-flex w-full justify-center rounded-md border border-gray-300 bg-white px-4 py-2 text-base font-medium text-gray-700 shadow-sm hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 sm:ml-3 sm:mt-0 sm:w-auto sm:text-sm"
+            class="mt-3 inline-flex w-full justify-center rounded-md border border-stone-300 bg-surface-card px-4 py-2 text-base font-medium text-stone-700 shadow-sm hover:bg-stone-50 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 sm:ml-3 sm:mt-0 sm:w-auto sm:text-sm"
           >
-            Cancel
+            {m.common_cancel()}
           </button>
         </div>
       </div>

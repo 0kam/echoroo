@@ -12,13 +12,10 @@ Tests the complete dataset import workflow including:
 from pathlib import Path
 
 import pytest
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from echoroo.models.dataset import Dataset
 from echoroo.models.enums import DatasetStatus, DatasetVisibility, DatetimeParseStatus
 from echoroo.models.project import Project
-from echoroo.models.recording import Recording
 from echoroo.models.site import Site
 from echoroo.models.user import User
 from echoroo.repositories.dataset import DatasetRepository
@@ -80,9 +77,9 @@ async def test_create_dataset_and_start_import(
 
     assert success is True
 
-    # Verify dataset status updated
+    # Verify dataset status updated (status changes after import completes)
     await db_session.refresh(dataset)
-    assert dataset.status == DatasetStatus.COMPLETED
+    assert dataset.status == DatasetStatus.COMPLETED  # type: ignore[comparison-overlap]
     assert dataset.total_files > 0
     assert dataset.processed_files == dataset.total_files
 
@@ -301,7 +298,7 @@ async def test_import_progress_tracking(
     import_status = dataset_service.get_import_status(dataset)
 
     assert import_status["status"] == DatasetStatus.COMPLETED
-    assert import_status["total_files"] > 0
+    assert import_status["total_files"] > 0  # type: ignore[operator]
     assert import_status["processed_files"] == import_status["total_files"]
     assert import_status["progress_percent"] == 100.0
     assert import_status["error"] is None
@@ -345,9 +342,9 @@ async def test_import_status_transitions(
     # Start import (should transition through statuses)
     await dataset_service.start_import(db=db_session, dataset_id=dataset.id)
 
-    # Final status should be COMPLETED
+    # Final status should be COMPLETED (status changes after import completes)
     await db_session.refresh(dataset)
-    assert dataset.status == DatasetStatus.COMPLETED
+    assert dataset.status == DatasetStatus.COMPLETED  # type: ignore[comparison-overlap]
 
 
 @pytest.mark.asyncio

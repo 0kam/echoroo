@@ -8,7 +8,11 @@
   import { login } from '$lib/api/auth';
   import { authStore } from '$lib/stores/auth.svelte';
   import { ApiError } from '$lib/api/client';
+  import { localizeHref } from '$lib/paraglide/runtime';
+  import * as m from '$lib/paraglide/messages';
   import Captcha from '$lib/components/Captcha.svelte';
+  import LanguageSwitcher from '$lib/components/ui/LanguageSwitcher.svelte';
+  import DarkModeToggle from '$lib/components/ui/DarkModeToggle.svelte';
   import { onMount } from 'svelte';
 
   // Form state
@@ -36,7 +40,7 @@
     // Check if user came from protected route
     const redirect = $page.url.searchParams.get('redirect');
     if (redirect) {
-      error = 'Please login to continue';
+      error = m.auth_login_redirect_message();
     }
   });
 
@@ -49,26 +53,26 @@
 
     // Validate form
     if (!email || !password) {
-      error = 'Please enter your email and password';
+      error = m.error_required_email_password();
       return;
     }
 
     // Validate email format
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(email)) {
-      error = 'Please enter a valid email address';
+      error = m.error_invalid_email();
       return;
     }
 
     // Validate password length
     if (password.length < 8) {
-      error = 'Password must be at least 8 characters';
+      error = m.error_password_too_short();
       return;
     }
 
     // Require CAPTCHA after 3 failed attempts
     if (showCaptcha && !captchaToken) {
-      error = 'Please complete the CAPTCHA verification';
+      error = m.error_captcha_required();
       return;
     }
 
@@ -101,7 +105,7 @@
 
       // Redirect to dashboard or return URL
       const redirect = $page.url.searchParams.get('redirect');
-      await goto(redirect || '/dashboard');
+      await goto(redirect ? localizeHref(redirect) : localizeHref('/dashboard'));
     } catch (err) {
       if (err instanceof ApiError) {
         error = err.detail || err.message;
@@ -120,7 +124,7 @@
           captchaToken = null;
         }
       } else {
-        error = 'An unexpected error occurred. Please try again.';
+        error = m.error_unexpected();
       }
     } finally {
       isSubmitting = false;
@@ -139,7 +143,7 @@
    */
   function handleCaptchaError() {
     captchaToken = null;
-    error = 'CAPTCHA verification failed. Please try again.';
+    error = m.error_captcha_failed();
   }
 
   /**
@@ -151,18 +155,25 @@
 </script>
 
 <svelte:head>
-  <title>Login - Echoroo</title>
+  <title>{m.auth_page_title()}</title>
 </svelte:head>
 
-<div class="flex min-h-screen items-center justify-center bg-gray-50 px-4 py-12 sm:px-6 lg:px-8">
+<div class="flex min-h-screen items-center justify-center bg-stone-50 px-4 py-12 sm:px-6 lg:px-8">
   <div class="w-full max-w-md space-y-8">
+    <!-- Language switcher and dark mode toggle -->
+    <div class="flex justify-end gap-1">
+      <DarkModeToggle />
+      <LanguageSwitcher />
+    </div>
+
     <!-- Header -->
-    <div>
-      <h2 class="mt-6 text-center text-3xl font-extrabold text-gray-900">
-        Login to Echoroo
+    <div class="flex flex-col items-center">
+      <img src="/echoroo.png" alt="Echoroo" class="h-16 w-auto mb-4" />
+      <h2 class="text-center text-3xl font-extrabold text-stone-900">
+        {m.auth_login_title()}
       </h2>
-      <p class="mt-2 text-center text-sm text-gray-600">
-        Welcome back! Please sign in to continue.
+      <p class="mt-2 text-center text-sm text-stone-600">
+        {m.auth_login_subtitle()}
       </p>
     </div>
 
@@ -171,7 +182,7 @@
       <div class="space-y-4 rounded-md shadow-sm">
         <!-- Email Input -->
         <div>
-          <label for="email" class="sr-only">Email address</label>
+          <label for="email" class="sr-only">{m.auth_login_email_placeholder()}</label>
           <input
             id="email"
             name="email"
@@ -180,14 +191,14 @@
             required
             bind:value={email}
             disabled={isSubmitting}
-            class="relative block w-full appearance-none rounded-md border border-gray-300 px-3 py-2 text-gray-900 placeholder-gray-500 focus:z-10 focus:border-blue-500 focus:outline-none focus:ring-blue-500 disabled:bg-gray-100 disabled:cursor-not-allowed sm:text-sm"
-            placeholder="Email address"
+            class="relative block w-full appearance-none rounded-md border border-stone-300 px-3 py-2 text-stone-900 placeholder-stone-500 focus:z-10 focus:border-primary-500 focus:outline-none focus:ring-primary-500 disabled:bg-stone-100 disabled:cursor-not-allowed sm:text-sm"
+            placeholder={m.auth_login_email_placeholder()}
           />
         </div>
 
         <!-- Password Input -->
         <div>
-          <label for="password" class="sr-only">Password</label>
+          <label for="password" class="sr-only">{m.auth_login_password_placeholder()}</label>
           <input
             id="password"
             name="password"
@@ -196,8 +207,8 @@
             required
             bind:value={password}
             disabled={isSubmitting}
-            class="relative block w-full appearance-none rounded-md border border-gray-300 px-3 py-2 text-gray-900 placeholder-gray-500 focus:z-10 focus:border-blue-500 focus:outline-none focus:ring-blue-500 disabled:bg-gray-100 disabled:cursor-not-allowed sm:text-sm"
-            placeholder="Password"
+            class="relative block w-full appearance-none rounded-md border border-stone-300 px-3 py-2 text-stone-900 placeholder-stone-500 focus:z-10 focus:border-primary-500 focus:outline-none focus:ring-primary-500 disabled:bg-stone-100 disabled:cursor-not-allowed sm:text-sm"
+            placeholder={m.auth_login_password_placeholder()}
           />
         </div>
       </div>
@@ -244,8 +255,8 @@
       <!-- Forgot Password Link -->
       <div class="flex items-center justify-end">
         <div class="text-sm">
-          <a href="/forgot-password" class="font-medium text-blue-600 hover:text-blue-500">
-            Forgot password?
+          <a href={localizeHref('/forgot-password')} class="font-medium text-primary-600 hover:text-primary-500">
+            {m.auth_login_forgot_password()}
           </a>
         </div>
       </div>
@@ -255,7 +266,7 @@
         <button
           type="submit"
           disabled={isSubmitting}
-          class="group relative flex w-full justify-center rounded-md border border-transparent bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:bg-gray-400 disabled:cursor-not-allowed"
+          class="group relative flex w-full justify-center rounded-md border border-transparent bg-primary-600 px-4 py-2 text-sm font-medium text-white hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 disabled:bg-stone-400 disabled:cursor-not-allowed"
         >
           {#if isSubmitting}
             <span class="flex items-center">
@@ -279,19 +290,19 @@
                   d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
                 ></path>
               </svg>
-              Signing in...
+              {m.auth_login_submitting()}
             </span>
           {:else}
-            Log In
+            {m.auth_login_submit()}
           {/if}
         </button>
       </div>
 
       <!-- Register Link -->
       <div class="text-center text-sm">
-        <span class="text-gray-600">Don't have an account?</span>
-        <a href="/register" class="ml-1 font-medium text-blue-600 hover:text-blue-500">
-          Register
+        <span class="text-stone-600">{m.auth_login_no_account()}</span>
+        <a href={localizeHref('/register')} class="ml-1 font-medium text-primary-600 hover:text-primary-500">
+          {m.auth_login_register_link()}
         </a>
       </div>
     </form>

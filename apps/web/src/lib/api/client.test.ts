@@ -13,6 +13,7 @@ describe('ApiClient', () => {
     const mockResponse = { id: '1', name: 'Test' };
     (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
       ok: true,
+      headers: { get: (_key: string) => 'application/json' },
       json: async () => mockResponse,
     });
 
@@ -35,6 +36,7 @@ describe('ApiClient', () => {
     const mockResponse = { id: '1', ...mockData };
     (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
       ok: true,
+      headers: { get: (_key: string) => 'application/json' },
       json: async () => mockResponse,
     });
 

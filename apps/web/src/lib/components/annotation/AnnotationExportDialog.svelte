@@ -3,17 +3,25 @@
    * Export dialog for annotation project data (annotations, tasks, clip data).
    */
 
-  export let projectId: string;
-  export let annotationProjectId: string;
-  export let annotationProjectName: string;
-  export let isOpen: boolean = false;
-  export let onClose: () => void;
+  let {
+    projectId,
+    annotationProjectId,
+    annotationProjectName,
+    isOpen = false,
+    onClose,
+  }: {
+    projectId: string;
+    annotationProjectId: string;
+    annotationProjectName: string;
+    isOpen?: boolean;
+    onClose: () => void;
+  } = $props();
 
   type ExportFormat = 'json' | 'csv';
 
-  let selectedFormat: ExportFormat = 'json';
-  let includeRejected = false;
-  let isExporting = false;
+  let selectedFormat: ExportFormat = $state('json');
+  let includeRejected = $state(false);
+  let isExporting = $state(false);
 
   function getExportUrl(): string {
     const params = new URLSearchParams();
@@ -46,19 +54,19 @@
   }
 </script>
 
-<svelte:window on:keydown={handleKeydown} />
+<svelte:window onkeydown={handleKeydown} />
 
 {#if isOpen}
   <!-- svelte-ignore a11y-click-events-have-key-events -->
   <!-- svelte-ignore a11y-no-static-element-interactions -->
-  <div class="modal-overlay" on:click={onClose}>
+  <div class="modal-overlay" onclick={onClose}>
     <!-- svelte-ignore a11y-click-events-have-key-events -->
     <!-- svelte-ignore a11y-no-static-element-interactions -->
     <!-- svelte-ignore a11y-interactive-supports-focus -->
-    <div class="modal" on:click|stopPropagation role="dialog" aria-modal="true" aria-labelledby="export-dialog-title" tabindex="-1">
+    <div class="modal" onclick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-labelledby="export-dialog-title" tabindex="-1">
       <div class="modal-header">
         <h3 id="export-dialog-title">Export Annotations</h3>
-        <button type="button" class="close-btn" on:click={onClose} aria-label="Close">
+        <button type="button" class="close-btn" onclick={onClose} aria-label="Close">
           <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor">
             <line x1="18" y1="6" x2="6" y2="18" stroke-width="2" />
             <line x1="6" y1="6" x2="18" y2="18" stroke-width="2" />
@@ -105,13 +113,13 @@
       </div>
 
       <div class="modal-footer">
-        <button type="button" class="btn-secondary" on:click={onClose} disabled={isExporting}>
+        <button type="button" class="btn-secondary" onclick={onClose} disabled={isExporting}>
           Cancel
         </button>
         <button
           type="button"
           class="btn-primary"
-          on:click={startExport}
+          onclick={startExport}
           disabled={isExporting}
         >
           {#if isExporting}

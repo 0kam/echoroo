@@ -1,8 +1,6 @@
 """Fixtures for integration tests."""
 
-import tempfile
 from pathlib import Path
-from uuid import UUID
 
 import numpy as np
 import pytest
@@ -53,6 +51,52 @@ async def test_user(db_session: AsyncSession) -> User:
 
 
 @pytest.fixture
+async def member_user(db_session: AsyncSession) -> User:
+    """Create a test member user for integration tests.
+
+    Args:
+        db_session: Database session
+
+    Returns:
+        Test member user instance
+    """
+    user = User(
+        email="integrationmember@example.com",
+        hashed_password="$argon2id$v=19$m=65536,t=3,p=4$test",
+        display_name="Integration Member User",
+        is_active=True,
+        is_verified=True,
+    )
+    db_session.add(user)
+    await db_session.commit()
+    await db_session.refresh(user)
+    return user
+
+
+@pytest.fixture
+async def other_user(db_session: AsyncSession) -> User:
+    """Create a test user with no project access for integration tests.
+
+    Args:
+        db_session: Database session
+
+    Returns:
+        Test user instance (no project access)
+    """
+    user = User(
+        email="integrationother@example.com",
+        hashed_password="$argon2id$v=19$m=65536,t=3,p=4$test",
+        display_name="Integration Other User",
+        is_active=True,
+        is_verified=True,
+    )
+    db_session.add(user)
+    await db_session.commit()
+    await db_session.refresh(user)
+    return user
+
+
+@pytest.fixture
 async def auth_headers(db_session: AsyncSession, test_user: User) -> dict[str, str]:
     """Create authentication headers for test user.
 
@@ -68,12 +112,43 @@ async def auth_headers(db_session: AsyncSession, test_user: User) -> dict[str, s
 
 
 @pytest.fixture
-async def test_project(db_session: AsyncSession, test_user: User) -> Project:
-    """Create a test project with test user as admin.
+async def auth_headers_member(db_session: AsyncSession, member_user: User) -> dict[str, str]:
+    """Create authentication headers for member user.
 
     Args:
         db_session: Database session
-        test_user: Test user
+        member_user: Member test user
+
+    Returns:
+        Headers with Bearer token
+    """
+    access_token = create_access_token({"sub": str(member_user.id)})
+    return {"Authorization": f"Bearer {access_token}"}
+
+
+@pytest.fixture
+async def auth_headers_other(db_session: AsyncSession, other_user: User) -> dict[str, str]:
+    """Create authentication headers for other user (no project access).
+
+    Args:
+        db_session: Database session
+        other_user: Other test user
+
+    Returns:
+        Headers with Bearer token
+    """
+    access_token = create_access_token({"sub": str(other_user.id)})
+    return {"Authorization": f"Bearer {access_token}"}
+
+
+@pytest.fixture
+async def test_project(db_session: AsyncSession, test_user: User, member_user: User) -> Project:
+    """Create a test project with test user as admin and member_user as member.
+
+    Args:
+        db_session: Database session
+        test_user: Test user (admin)
+        member_user: Member test user
 
     Returns:
         Test project instance
@@ -87,15 +162,62 @@ async def test_project(db_session: AsyncSession, test_user: User) -> Project:
     await db_session.flush()
 
     # Add test user as admin
-    member = ProjectMember(
+    admin_member = ProjectMember(
         project_id=project.id,
         user_id=test_user.id,
         role=ProjectRole.ADMIN,
+        invited_by_id=test_user.id,
+    )
+    db_session.add(admin_member)
+
+    # Add member_user as member
+    member = ProjectMember(
+        project_id=project.id,
+        user_id=member_user.id,
+        role=ProjectRole.MEMBER,
+        invited_by_id=test_user.id,
     )
     db_session.add(member)
     await db_session.commit()
     await db_session.refresh(project)
     return project
+
+
+@pytest.fixture
+async def test_member(db_session: AsyncSession, test_project: Project, member_user: User) -> ProjectMember:
+    """Get the project member relationship for member_user.
+
+    Args:
+        db_session: Database session
+        test_project: Test project
+        member_user: Member test user
+
+    Returns:
+        Project member instance
+    """
+    # Query explicitly to avoid lazy-loading issues in async context
+    from sqlalchemy import select
+
+    result = await db_session.execute(
+        select(ProjectMember).where(
+            ProjectMember.project_id == test_project.id,
+            ProjectMember.user_id == member_user.id,
+        )
+    )
+    member = result.scalar_one_or_none()
+    if member:
+        return member
+    # Fallback: create if not found (shouldn't happen)
+    member = ProjectMember(
+        project_id=test_project.id,
+        user_id=member_user.id,
+        role=ProjectRole.MEMBER,
+        invited_by_id=test_project.owner_id,
+    )
+    db_session.add(member)
+    await db_session.commit()
+    await db_session.refresh(member)
+    return member
 
 
 @pytest.fixture

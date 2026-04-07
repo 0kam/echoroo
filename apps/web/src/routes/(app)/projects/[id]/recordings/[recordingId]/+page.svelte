@@ -1,8 +1,10 @@
 <script lang="ts">
   import { page } from '$app/stores';
+  import { browser } from '$app/environment';
   import { createQuery, createMutation, useQueryClient } from '@tanstack/svelte-query';
   import { getRecording, updateRecording, deleteRecording, getDownloadUrl } from '$lib/api/recordings';
   import { goto } from '$app/navigation';
+  import { localizeHref, getLocale } from '$lib/paraglide/runtime';
   import AudioPlayer from '$lib/components/audio/AudioPlayer.svelte';
   import SpectrogramViewer from '$lib/components/audio/SpectrogramViewer.svelte';
   import SpectrogramSettings from '$lib/components/audio/SpectrogramSettings.svelte';
@@ -26,17 +28,19 @@
     adjustWindowToBounds,
     centerWindowOn,
   } from '$lib/utils/viewport';
+  import { untrack } from 'svelte';
+  import * as m from '$lib/paraglide/messages';
 
   // Route params
   let projectId = $derived($page.params.id as string);
   let recordingId = $derived($page.params.recordingId as string);
 
-  // Recording query
+  // Recording query - only fetch on client side to avoid SSR fetch issues
   let recordingQuery = $derived(
     createQuery({
       queryKey: ['recording', projectId, recordingId],
       queryFn: () => getRecording(projectId, recordingId),
-      enabled: !!projectId && !!recordingId,
+      enabled: browser && !!projectId && !!recordingId,
     })
   );
 
@@ -77,8 +81,52 @@
       samplerate: rec.samplerate,
     });
 
-    // Also adjust audio settings
-    audioSettings = { ...audioSettings, samplerate: rec.samplerate };
+    // Update samplerate directly to avoid read-write loop
+    // (spreading audioSettings inside $effect would track it as a dependency,
+    // causing an infinite reactive loop since each spread creates a new object)
+    audioSettings.samplerate = rec.samplerate;
+  });
+
+  // Track previous scale values to compute relative zoom on change.
+  let prevTimeScale = $state(spectrogramSettings.time_scale);
+  let prevFreqScale = $state(spectrogramSettings.freq_scale);
+
+  // When time_scale or freq_scale changes, zoom the viewport relative to
+  // its current size (not relative to the full recording bounds).
+  $effect(() => {
+    const timeScale = spectrogramSettings.time_scale;
+    const freqScale = spectrogramSettings.freq_scale;
+
+    const currentViewport = untrack(() => viewport);
+    const currentBounds = untrack(() => bounds);
+    const oldTimeScale = untrack(() => prevTimeScale);
+    const oldFreqScale = untrack(() => prevFreqScale);
+
+    // Skip if nothing changed (e.g. initial run)
+    if (timeScale === oldTimeScale && freqScale === oldFreqScale) return;
+
+    const currentDuration = currentViewport.time.max - currentViewport.time.min;
+    const currentBandwidth = currentViewport.freq.max - currentViewport.freq.min;
+
+    // Ratio: if scale went from 1x to 2x, shrink viewport to 1/2
+    const newDuration = currentDuration * (oldTimeScale / timeScale);
+    const newBandwidth = currentBandwidth * (oldFreqScale / freqScale);
+
+    const timeCenter = (currentViewport.time.min + currentViewport.time.max) / 2;
+    const freqCenter = (currentViewport.freq.min + currentViewport.freq.max) / 2;
+
+    const proposed: SpectrogramWindow = {
+      time: { min: timeCenter - newDuration / 2, max: timeCenter + newDuration / 2 },
+      freq: { min: freqCenter - newBandwidth / 2, max: freqCenter + newBandwidth / 2 },
+    };
+
+    viewport = adjustWindowToBounds(proposed, currentBounds);
+
+    // Update previous values (inside untrack to avoid re-triggering)
+    untrack(() => {
+      prevTimeScale = timeScale;
+      prevFreqScale = freqScale;
+    });
   });
 
   // Current audio time
@@ -100,25 +148,21 @@
 
   const queryClient = useQueryClient();
 
-  let updateMut = $derived(
-    createMutation({
-      mutationFn: (data: { note?: string; time_expansion?: number }) =>
-        updateRecording(projectId, recordingId, data),
-      onSuccess: () => {
-        showEditModal = false;
-        queryClient.invalidateQueries({ queryKey: ['recording', projectId, recordingId] });
-      },
-    })
-  );
+  const updateMut = createMutation({
+    mutationFn: (data: { note?: string; time_expansion?: number }) =>
+      updateRecording(projectId, recordingId, data),
+    onSuccess: () => {
+      showEditModal = false;
+      queryClient.invalidateQueries({ queryKey: ['recording', projectId, recordingId] });
+    },
+  });
 
-  let deleteMut = $derived(
-    createMutation({
-      mutationFn: () => deleteRecording(projectId, recordingId),
-      onSuccess: () => {
-        goto(`/projects/${projectId}/recordings`);
-      },
-    })
-  );
+  const deleteMut = createMutation({
+    mutationFn: () => deleteRecording(projectId, recordingId),
+    onSuccess: () => {
+      goto(localizeHref(`/projects/${projectId}/recordings`));
+    },
+  });
 
   // Viewport management
   function handleViewportChange(newViewport: SpectrogramWindow) {
@@ -189,7 +233,7 @@
   }
 
   function handleDelete() {
-    if (confirm('Are you sure you want to delete this recording? This action cannot be undone.')) {
+    if (confirm(m.recording_detail_delete_confirm())) {
       $deleteMut.mutate();
     }
   }
@@ -219,7 +263,7 @@
   {#if $recordingQuery.isLoading}
     <div class="flex flex-col items-center justify-center py-20 gap-4">
       <div class="w-10 h-10 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin"></div>
-      <p class="text-stone-500 text-sm">Loading recording...</p>
+      <p class="text-stone-500 text-sm">{m.recording_detail_loading()}</p>
     </div>
 
   {:else if $recordingQuery.error}
@@ -237,11 +281,11 @@
 
     <!-- Breadcrumb -->
     <nav class="flex items-center gap-2 text-sm mb-4 text-stone-500">
-      <a href="/projects/{projectId}/recordings" class="text-emerald-600 hover:underline">
-        Recordings
+      <a href={localizeHref(`/projects/${projectId}/recordings`)} class="text-emerald-600 hover:underline">
+        {m.recording_detail_breadcrumb_recordings()}
       </a>
       <span>/</span>
-      <span class="truncate text-stone-600 dark:text-stone-300 font-medium">
+      <span class="truncate text-stone-600 font-medium">
         {recording.filename}
       </span>
     </nav>
@@ -271,7 +315,7 @@
           <span class="chip">{recording.bit_depth}-bit</span>
         {/if}
         {#if recording.is_ultrasonic}
-          <span class="chip chip-warning">Ultrasonic</span>
+          <span class="chip chip-warning">{m.recording_detail_ultrasonic()}</span>
         {/if}
         {#if recording.datetime}
           <span class="chip">
@@ -281,7 +325,7 @@
               <line x1="8" y1="2" x2="8" y2="6" />
               <line x1="3" y1="10" x2="21" y2="10" />
             </svg>
-            {new Date(recording.datetime).toLocaleString()}
+            {new Date(recording.datetime).toLocaleString(getLocale())}
           </span>
         {/if}
       </div>
@@ -299,21 +343,21 @@
             <polyline points="7 10 12 15 17 10" />
             <line x1="12" y1="15" x2="12" y2="3" />
           </svg>
-          Download
+          {m.recording_detail_download()}
         </a>
         <button type="button" class="action-btn" onclick={openEditModal}>
           <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
             <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
           </svg>
-          Edit
+          {m.recording_detail_edit()}
         </button>
         <button type="button" class="action-btn action-btn-danger" onclick={handleDelete}>
           <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <polyline points="3 6 5 6 21 6" />
             <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
           </svg>
-          Delete
+          {m.recording_detail_delete()}
         </button>
       </div>
     </div>
@@ -348,7 +392,7 @@
               <circle cx="12" cy="12" r="3" />
               <path d="M19.07 4.93l-1.41 1.41M6.34 17.66l-1.41 1.41M2 12h2M20 12h2M6.34 6.34L4.93 4.93M17.66 17.66l1.41 1.41M12 2v2M12 20v2" />
             </svg>
-            Settings
+            {m.recording_detail_settings()}
           </button>
 
           <!-- Filter toggle -->
@@ -361,7 +405,7 @@
             <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
             </svg>
-            Filters
+            {m.recording_detail_filters()}
           </button>
         </div>
       </div>
@@ -376,6 +420,7 @@
           {speedOptions}
           {viewport}
           {bounds}
+          seekTo={currentTime}
           onViewportChange={handleViewportChange}
           onTimeUpdate={handleTimeUpdate}
           onSeek={handleSeek}
@@ -433,13 +478,13 @@
 
       <!-- Keyboard shortcut hints -->
       <div class="shortcut-hints">
-        <span><kbd>X</kbd> Pan</span>
-        <span><kbd>Z</kbd> Zoom</span>
-        <span><kbd>B</kbd> Back</span>
-        <span><kbd>Space</kbd> Play/Pause</span>
-        <span><kbd>Scroll</kbd> Navigate</span>
-        <span><kbd>Ctrl+Scroll</kbd> Expand</span>
-        <span><kbd>Alt+Scroll</kbd> Zoom</span>
+        <span><kbd>X</kbd> {m.recording_detail_shortcut_pan()}</span>
+        <span><kbd>Z</kbd> {m.recording_detail_shortcut_zoom()}</span>
+        <span><kbd>B</kbd> {m.recording_detail_shortcut_back()}</span>
+        <span><kbd>Space</kbd> {m.recording_detail_shortcut_play_pause()}</span>
+        <span><kbd>Scroll</kbd> {m.recording_detail_shortcut_navigate()}</span>
+        <span><kbd>Ctrl+Scroll</kbd> {m.recording_detail_shortcut_expand()}</span>
+        <span><kbd>Alt+Scroll</kbd> {m.recording_detail_shortcut_zoom()}</span>
         <span><kbd>DblClick</kbd> Seek</span>
       </div>
     </div>
@@ -447,7 +492,7 @@
     <!-- Notes section -->
     {#if recording.note}
       <div class="notes-section">
-        <h4 class="notes-title">Notes</h4>
+        <h4 class="notes-title">{m.recording_detail_notes_title()}</h4>
         <p class="notes-content">{recording.note}</p>
       </div>
     {/if}
@@ -464,15 +509,15 @@
       <!-- svelte-ignore a11y_click_events_have_key_events -->
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div
-        class="bg-white dark:bg-stone-800 rounded-lg shadow-xl p-6 w-full max-w-md"
+        class="bg-surface-card rounded-lg shadow-xl p-6 w-full max-w-md"
         onclick={(e) => e.stopPropagation()}
       >
-        <h3 class="text-lg font-semibold text-stone-800 dark:text-stone-100 mb-4">Edit Recording</h3>
+        <h3 class="text-lg font-semibold text-stone-800 mb-4">{m.recording_detail_edit_modal_title()}</h3>
         <form onsubmit={handleEditSubmit}>
           <div class="space-y-4 mb-6">
             <div>
-              <label for="time-expansion" class="block text-sm font-medium text-stone-700 dark:text-stone-300 mb-1">
-                Time Expansion
+              <label for="time-expansion" class="block text-sm font-medium text-stone-700 mb-1">
+                {m.recording_detail_time_expansion_label()}
               </label>
               <input
                 id="time-expansion"
@@ -481,19 +526,19 @@
                 min="0.1"
                 max="100"
                 bind:value={editTimeExpansion}
-                class="w-full px-3 py-2 border border-stone-300 dark:border-stone-600 rounded-md text-sm bg-white dark:bg-stone-700 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                class="w-full px-3 py-2 border border-stone-300 rounded-md text-sm bg-surface-card focus:outline-none focus:ring-2 focus:ring-emerald-500"
               />
-              <p class="mt-1 text-xs text-stone-500">Playback speed adjustment for ultrasonic recordings</p>
+              <p class="mt-1 text-xs text-stone-500">{m.recording_detail_time_expansion_hint()}</p>
             </div>
             <div>
-              <label for="note" class="block text-sm font-medium text-stone-700 dark:text-stone-300 mb-1">
-                Notes
+              <label for="note" class="block text-sm font-medium text-stone-700 mb-1">
+                {m.recording_detail_notes_label()}
               </label>
               <textarea
                 id="note"
                 bind:value={editNote}
                 rows="3"
-                class="w-full px-3 py-2 border border-stone-300 dark:border-stone-600 rounded-md text-sm bg-white dark:bg-stone-700 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                class="w-full px-3 py-2 border border-stone-300 rounded-md text-sm bg-surface-card focus:outline-none focus:ring-2 focus:ring-emerald-500"
               ></textarea>
             </div>
           </div>
@@ -501,16 +546,16 @@
             <button
               type="button"
               onclick={() => (showEditModal = false)}
-              class="px-4 py-2 text-sm font-medium border border-stone-300 rounded-md hover:bg-stone-50 dark:border-stone-600 dark:hover:bg-stone-700"
+              class="px-4 py-2 text-sm font-medium border border-stone-300 rounded-md hover:bg-stone-50"
             >
-              Cancel
+              {m.recording_detail_cancel()}
             </button>
             <button
               type="submit"
               disabled={$updateMut.isPending}
               class="px-4 py-2 text-sm font-medium bg-emerald-600 text-white rounded-md hover:bg-emerald-700 disabled:opacity-60 disabled:cursor-not-allowed"
             >
-              {$updateMut.isPending ? 'Saving...' : 'Save'}
+              {$updateMut.isPending ? m.recording_detail_saving() : m.recording_detail_save()}
             </button>
           </div>
         </form>

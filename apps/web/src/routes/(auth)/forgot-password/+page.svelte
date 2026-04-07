@@ -3,7 +3,11 @@
    * Forgot password page
    */
 
+  import { localizeHref } from '$lib/paraglide/runtime';
+  import * as m from '$lib/paraglide/messages';
   import { requestPasswordReset } from '$lib/api/auth';
+  import LanguageSwitcher from '$lib/components/ui/LanguageSwitcher.svelte';
+  import DarkModeToggle from '$lib/components/ui/DarkModeToggle.svelte';
 
   // Form state
   let email = $state('');
@@ -22,13 +26,13 @@
 
     // Validate email
     if (!email) {
-      error = 'Please enter your email address';
+      error = m.error_email_required_field();
       return;
     }
 
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(email)) {
-      error = 'Please enter a valid email address';
+      error = m.error_invalid_email();
       return;
     }
 
@@ -48,24 +52,30 @@
 </script>
 
 <svelte:head>
-  <title>Forgot Password - Echoroo</title>
+  <title>{m.auth_forgot_password_page_title()}</title>
 </svelte:head>
 
-<div class="flex min-h-screen items-center justify-center bg-gray-50 px-4 py-12 sm:px-6 lg:px-8">
+<div class="flex min-h-screen items-center justify-center bg-stone-50 px-4 py-12 sm:px-6 lg:px-8">
   <div class="w-full max-w-md space-y-8">
+    <!-- Language switcher and dark mode toggle -->
+    <div class="flex justify-end gap-1">
+      <DarkModeToggle />
+      <LanguageSwitcher />
+    </div>
+
     <!-- Header -->
     <div>
-      <h2 class="mt-6 text-center text-3xl font-extrabold text-gray-900">
-        Forgot your password?
+      <h2 class="mt-6 text-center text-3xl font-extrabold text-stone-900">
+        {m.auth_forgot_password_title()}
       </h2>
-      <p class="mt-2 text-center text-sm text-gray-600">
-        Enter your email address and we'll send you a link to reset your password.
+      <p class="mt-2 text-center text-sm text-stone-600">
+        {m.auth_forgot_password_subtitle()}
       </p>
     </div>
 
     {#if isSubmitted}
       <!-- Success Message -->
-      <div class="rounded-lg bg-white p-8 shadow-md">
+      <div class="rounded-lg bg-surface-card p-8 shadow-md">
         <div class="text-center">
           <div class="mb-4 flex justify-center">
             <svg
@@ -83,22 +93,20 @@
               />
             </svg>
           </div>
-          <h3 class="text-lg font-medium text-gray-900">Check your email</h3>
-          <p class="mt-2 text-sm text-gray-600">
-            If an account exists for <strong>{email}</strong>, you will receive a password reset
-            link shortly.
+          <h3 class="text-lg font-medium text-stone-900">{m.auth_forgot_password_success_title()}</h3>
+          <p class="mt-2 text-sm text-stone-600">
+            {m.auth_forgot_password_success_body({ email })}
           </p>
-          <p class="mt-4 text-xs text-gray-500">
-            Didn't receive an email? Check your spam folder or try again with a different email
-            address.
+          <p class="mt-4 text-xs text-stone-500">
+            {m.auth_forgot_password_no_email_hint()}
           </p>
 
           <div class="mt-6">
             <a
-              href="/login"
-              class="inline-flex w-full justify-center rounded-md border border-transparent bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+              href={localizeHref('/login')}
+              class="inline-flex w-full justify-center rounded-md border border-transparent bg-primary-600 px-4 py-2 text-sm font-medium text-white hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2"
             >
-              Back to Login
+              {m.auth_forgot_password_back_to_login()}
             </a>
           </div>
         </div>
@@ -108,7 +116,7 @@
       <form class="mt-8 space-y-6" onsubmit={handleSubmit}>
         <div class="rounded-md shadow-sm">
           <div>
-            <label for="email" class="sr-only">Email address</label>
+            <label for="email" class="sr-only">{m.auth_forgot_password_email_placeholder()}</label>
             <input
               id="email"
               name="email"
@@ -117,8 +125,8 @@
               required
               bind:value={email}
               disabled={isSubmitting}
-              class="relative block w-full appearance-none rounded-md border border-gray-300 px-3 py-2 text-gray-900 placeholder-gray-500 focus:z-10 focus:border-blue-500 focus:outline-none focus:ring-blue-500 disabled:bg-gray-100 disabled:cursor-not-allowed sm:text-sm"
-              placeholder="Email address"
+              class="relative block w-full appearance-none rounded-md border border-stone-300 px-3 py-2 text-stone-900 placeholder-stone-500 focus:z-10 focus:border-primary-500 focus:outline-none focus:ring-primary-500 disabled:bg-stone-100 disabled:cursor-not-allowed sm:text-sm"
+              placeholder={m.auth_forgot_password_email_placeholder()}
             />
           </div>
         </div>
@@ -154,7 +162,7 @@
           <button
             type="submit"
             disabled={isSubmitting}
-            class="group relative flex w-full justify-center rounded-md border border-transparent bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:bg-gray-400 disabled:cursor-not-allowed"
+            class="group relative flex w-full justify-center rounded-md border border-transparent bg-primary-600 px-4 py-2 text-sm font-medium text-white hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 disabled:bg-stone-400 disabled:cursor-not-allowed"
           >
             {#if isSubmitting}
               <span class="flex items-center">
@@ -178,18 +186,18 @@
                     d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
                   ></path>
                 </svg>
-                Sending...
+                {m.auth_forgot_password_submitting()}
               </span>
             {:else}
-              Send Reset Link
+              {m.auth_forgot_password_submit()}
             {/if}
           </button>
         </div>
 
         <!-- Back to Login Link -->
         <div class="text-center text-sm">
-          <a href="/login" class="font-medium text-blue-600 hover:text-blue-500">
-            Back to Login
+          <a href={localizeHref('/login')} class="font-medium text-primary-600 hover:text-primary-500">
+            {m.auth_forgot_password_back_to_login()}
           </a>
         </div>
       </form>

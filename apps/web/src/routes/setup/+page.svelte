@@ -7,6 +7,8 @@
   import { goto } from '$app/navigation';
   import { initializeSetup, type SetupInitializeRequest } from '$lib/api/setup';
   import { ApiError } from '$lib/api/client';
+  import { localizeHref } from '$lib/paraglide/runtime';
+  import * as m from '$lib/paraglide/messages';
 
   // Form state using Svelte 5 runes
   let email = $state('');
@@ -26,11 +28,11 @@
    */
   function validateEmail(value: string): string | null {
     if (!value) {
-      return 'Email is required';
+      return m.error_email_required();
     }
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(value)) {
-      return 'Invalid email format';
+      return m.error_invalid_email();
     }
     return null;
   }
@@ -40,10 +42,10 @@
    */
   function validatePassword(value: string): string | null {
     if (!value) {
-      return 'Password is required';
+      return m.error_password_required();
     }
     if (value.length < 8) {
-      return 'Password must be at least 8 characters';
+      return m.error_password_too_short();
     }
     return null;
   }
@@ -53,10 +55,10 @@
    */
   function validateConfirmPassword(value: string, passwordValue: string): string | null {
     if (!value) {
-      return 'Please confirm your password';
+      return m.error_confirm_password_required();
     }
     if (value !== passwordValue) {
-      return 'Passwords do not match';
+      return m.error_passwords_do_not_match();
     }
     return null;
   }
@@ -100,7 +102,7 @@
       await initializeSetup(requestData);
 
       // Success - redirect to login page
-      goto('/login');
+      goto(localizeHref('/login'));
     } catch (error) {
       // Handle API errors
       if (error instanceof ApiError) {
@@ -108,7 +110,7 @@
       } else if (error instanceof Error) {
         errorMessage = error.message;
       } else {
-        errorMessage = 'An unexpected error occurred';
+        errorMessage = m.common_error_unexpected();
       }
     } finally {
       isLoading = false;
@@ -137,14 +139,14 @@
   }
 </script>
 
-<div class="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center px-4 sm:px-6 lg:px-8">
+<div class="min-h-screen bg-gradient-to-br from-primary-50 to-primary-100 flex items-center justify-center px-4 sm:px-6 lg:px-8">
   <div class="max-w-md w-full">
     <!-- Card Container -->
-    <div class="bg-white shadow-xl rounded-lg p-8">
+    <div class="bg-surface-card shadow-xl rounded-lg p-8">
       <!-- Header -->
       <div class="text-center mb-8">
-        <h1 class="text-3xl font-bold text-gray-900 mb-2">Welcome to Echoroo</h1>
-        <p class="text-gray-600">Create your administrator account</p>
+        <h1 class="text-3xl font-bold text-stone-900 mb-2">{m.setup_page_title()}</h1>
+        <p class="text-stone-600">{m.setup_create_admin()}</p>
       </div>
 
       <!-- Error Message -->
@@ -158,8 +160,8 @@
       <form onsubmit={handleSubmit} class="space-y-6">
         <!-- Email Field -->
         <div>
-          <label for="email" class="block text-sm font-medium text-gray-700 mb-1">
-            Email
+          <label for="email" class="block text-sm font-medium text-stone-700 mb-1">
+            {m.setup_email_label()}
           </label>
           <input
             id="email"
@@ -167,8 +169,8 @@
             bind:value={email}
             onblur={handleEmailBlur}
             disabled={isLoading}
-            class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 disabled:bg-gray-100 disabled:cursor-not-allowed"
-            placeholder="admin@example.com"
+            class="w-full px-3 py-2 border border-stone-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 disabled:bg-stone-100 disabled:cursor-not-allowed"
+            placeholder={m.setup_email_placeholder()}
             autocomplete="email"
           />
           {#if emailError}
@@ -178,8 +180,8 @@
 
         <!-- Password Field -->
         <div>
-          <label for="password" class="block text-sm font-medium text-gray-700 mb-1">
-            Password
+          <label for="password" class="block text-sm font-medium text-stone-700 mb-1">
+            {m.setup_password_label()}
           </label>
           <input
             id="password"
@@ -187,21 +189,21 @@
             bind:value={password}
             onblur={handlePasswordBlur}
             disabled={isLoading}
-            class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 disabled:bg-gray-100 disabled:cursor-not-allowed"
-            placeholder="Enter a secure password"
+            class="w-full px-3 py-2 border border-stone-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 disabled:bg-stone-100 disabled:cursor-not-allowed"
+            placeholder={m.setup_password_placeholder()}
             autocomplete="new-password"
           />
           {#if passwordError}
             <p class="mt-1 text-sm text-red-600">{passwordError}</p>
           {:else}
-            <p class="mt-1 text-xs text-gray-500">At least 8 characters required</p>
+            <p class="mt-1 text-xs text-stone-500">{m.setup_password_hint()}</p>
           {/if}
         </div>
 
         <!-- Confirm Password Field -->
         <div>
-          <label for="confirmPassword" class="block text-sm font-medium text-gray-700 mb-1">
-            Confirm Password
+          <label for="confirmPassword" class="block text-sm font-medium text-stone-700 mb-1">
+            {m.setup_confirm_password_label()}
           </label>
           <input
             id="confirmPassword"
@@ -209,8 +211,8 @@
             bind:value={confirmPassword}
             onblur={handleConfirmPasswordBlur}
             disabled={isLoading}
-            class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 disabled:bg-gray-100 disabled:cursor-not-allowed"
-            placeholder="Re-enter your password"
+            class="w-full px-3 py-2 border border-stone-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 disabled:bg-stone-100 disabled:cursor-not-allowed"
+            placeholder={m.setup_confirm_password_placeholder()}
             autocomplete="new-password"
           />
           {#if confirmPasswordError}
@@ -220,16 +222,16 @@
 
         <!-- Display Name Field (Optional) -->
         <div>
-          <label for="displayName" class="block text-sm font-medium text-gray-700 mb-1">
-            Display Name <span class="text-gray-400 text-xs">(optional)</span>
+          <label for="displayName" class="block text-sm font-medium text-stone-700 mb-1">
+            {m.setup_display_name_label()} <span class="text-stone-400 text-xs">{m.setup_display_name_optional()}</span>
           </label>
           <input
             id="displayName"
             type="text"
             bind:value={displayName}
             disabled={isLoading}
-            class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 disabled:bg-gray-100 disabled:cursor-not-allowed"
-            placeholder="Your name"
+            class="w-full px-3 py-2 border border-stone-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 disabled:bg-stone-100 disabled:cursor-not-allowed"
+            placeholder={m.setup_display_name_placeholder()}
             autocomplete="name"
           />
         </div>
@@ -238,7 +240,7 @@
         <button
           type="submit"
           disabled={isLoading}
-          class="w-full py-3 px-4 bg-indigo-600 hover:bg-indigo-700 text-white font-medium rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
+          class="w-full py-3 px-4 bg-primary-600 hover:bg-primary-700 text-white font-medium rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:bg-stone-400 disabled:cursor-not-allowed transition-colors"
         >
           {#if isLoading}
             <span class="flex items-center justify-center">
@@ -246,10 +248,10 @@
                 <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
                 <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
               </svg>
-              Setting up...
+              {m.setup_submitting()}
             </span>
           {:else}
-            Complete Setup
+            {m.setup_submit()}
           {/if}
         </button>
       </form>
@@ -257,8 +259,8 @@
 
     <!-- Footer Info -->
     <div class="mt-6 text-center">
-      <p class="text-sm text-gray-600">
-        This will create your administrator account and complete the initial setup.
+      <p class="text-sm text-stone-600">
+        {m.setup_footer()}
       </p>
     </div>
   </div>

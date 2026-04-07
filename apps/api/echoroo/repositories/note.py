@@ -3,21 +3,15 @@
 from uuid import UUID
 
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from echoroo.models.note import Note
+from echoroo.repositories.base import BaseRepository
 
 
-class NoteRepository:
+class NoteRepository(BaseRepository[Note]):
     """Repository for Note entity operations."""
 
-    def __init__(self, db: AsyncSession) -> None:
-        """Initialize repository with database session.
-
-        Args:
-            db: SQLAlchemy async session
-        """
-        self.db = db
+    model = Note
 
     async def create(self, note: Note) -> Note:
         """Create a new note.

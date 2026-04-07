@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from datetime import datetime
 from uuid import UUID
+from zoneinfo import ZoneInfoNotFoundError
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from echoroo.models.enums import DatasetStatus, DatasetVisibility
 
@@ -50,21 +51,41 @@ class SiteSummary(BaseModel):
     model_config = {"from_attributes": True}
 
 
+def _validate_iana_timezone(v: str | None) -> str | None:
+    """Validate that the given string is a valid IANA timezone identifier."""
+    if v is None:
+        return v
+    try:
+        from zoneinfo import ZoneInfo
+        ZoneInfo(v)
+    except (ZoneInfoNotFoundError, KeyError):
+        raise ValueError(f"Invalid IANA timezone: '{v}'") from None
+    return v
+
+
 class DatasetCreate(BaseModel):
     """Dataset creation request schema."""
 
     site_id: UUID = Field(..., description="Parent site ID (required)")
     name: str = Field(..., min_length=1, max_length=200, description="Dataset name")
     description: str | None = Field(None, description="Dataset description")
-    audio_dir: str = Field(..., description="Relative path to audio directory")
     visibility: DatasetVisibility = Field(default=DatasetVisibility.PRIVATE, description="Dataset visibility")
     recorder_id: str | None = Field(None, description="Recording device ID")
     license_id: str | None = Field(None, description="Content license ID")
     doi: str | None = Field(None, description="Digital Object Identifier")
     gain: float | None = Field(None, ge=-100, le=100, description="Recording gain in dB")
     note: str | None = Field(None, description="Internal notes")
-    datetime_pattern: str | None = Field(None, description="Regex pattern for datetime extraction")
+    datetime_pattern: str | None = Field(None, max_length=200, description="Regex pattern for datetime extraction")
     datetime_format: str | None = Field(None, description="strftime format string")
+    datetime_timezone: str | None = Field(
+        None, max_length=50, description="IANA timezone for interpreting filenames (e.g., 'Asia/Tokyo')"
+    )
+
+    @field_validator("datetime_timezone")
+    @classmethod
+    def validate_timezone(cls, v: str | None) -> str | None:
+        """Validate IANA timezone string."""
+        return _validate_iana_timezone(v)
 
 
 class DatasetUpdate(BaseModel):
@@ -78,8 +99,17 @@ class DatasetUpdate(BaseModel):
     doi: str | None = Field(None, description="Digital Object Identifier")
     gain: float | None = Field(None, ge=-100, le=100, description="Recording gain in dB")
     note: str | None = Field(None, description="Internal notes")
-    datetime_pattern: str | None = Field(None, description="Regex pattern for datetime extraction")
+    datetime_pattern: str | None = Field(None, max_length=200, description="Regex pattern for datetime extraction")
     datetime_format: str | None = Field(None, description="strftime format string")
+    datetime_timezone: str | None = Field(
+        None, max_length=50, description="IANA timezone for interpreting filenames (e.g., 'Asia/Tokyo')"
+    )
+
+    @field_validator("datetime_timezone")
+    @classmethod
+    def validate_timezone(cls, v: str | None) -> str | None:
+        """Validate IANA timezone string."""
+        return _validate_iana_timezone(v)
 
 
 class DatasetResponse(BaseModel):
@@ -93,12 +123,12 @@ class DatasetResponse(BaseModel):
     created_by_id: UUID
     name: str
     description: str | None
-    audio_dir: str
     visibility: DatasetVisibility
     status: DatasetStatus
     doi: str | None
     gain: float | None
     note: str | None
+    datetime_timezone: str | None = None
     total_files: int
     processed_files: int
     processing_error: str | None
@@ -132,10 +162,28 @@ class DatasetListResponse(BaseModel):
 
 
 class ImportRequest(BaseModel):
-    """Dataset import request."""
+    """Import request for upload-session based import."""
 
-    datetime_pattern: str | None = Field(None, description="Regex pattern for datetime extraction")
+    source: str | None = Field(
+        None,
+        description=(
+            "Import source URI. Must be an 'upload-session://<session_id>' URI "
+            "referencing a validated upload session. "
+            "If omitted, the most recent validated upload session for the dataset is used."
+        ),
+        examples=["upload-session://550e8400-e29b-41d4-a716-446655440000"],
+    )
+    datetime_pattern: str | None = Field(None, max_length=200, description="Regex pattern for datetime extraction")
     datetime_format: str | None = Field(None, description="strftime format string")
+    datetime_timezone: str | None = Field(
+        None, max_length=50, description="IANA timezone for interpreting filenames (e.g., 'Asia/Tokyo')"
+    )
+
+    @field_validator("datetime_timezone")
+    @classmethod
+    def validate_timezone(cls, v: str | None) -> str | None:
+        """Validate IANA timezone string."""
+        return _validate_iana_timezone(v)
 
 
 class ImportStatusResponse(BaseModel):
@@ -182,23 +230,87 @@ class DatasetStatisticsResponse(BaseModel):
     recordings_by_hour: list[RecordingsByHour] = []
 
 
-class DirectoryInfo(BaseModel):
-    """Directory information for import."""
-
-    name: str
-    path: str
-    audio_file_count: int
-    formats: list[str]
-
-
-class DirectoryListResponse(BaseModel):
-    """Directory listing response."""
-
-    path: str
-    directories: list[DirectoryInfo]
-
-
 class ExportRequest(BaseModel):
     """Dataset export request."""
 
     include_audio: bool = Field(default=False, description="Include audio files in export")
+
+
+# Datetime configuration schemas
+
+
+class DatetimeParseSummary(BaseModel):
+    """Counts of datetime parse statuses for a dataset."""
+
+    total: int
+    success: int
+    failed: int
+    pending: int
+
+
+class DatetimeConfigResponse(BaseModel):
+    """Current datetime parsing configuration and status for a dataset."""
+
+    datetime_pattern: str | None
+    datetime_format: str | None
+    datetime_timezone: str | None = None
+    sample_filenames: list[str]
+    parse_summary: DatetimeParseSummary
+
+
+class DatetimeTestResult(BaseModel):
+    """Result of testing a datetime pattern against a single filename."""
+
+    filename: str
+    success: bool
+    parsed_datetime: str | None = None  # ISO format string
+    error: str | None = None
+
+
+class DatetimeAutoDetectResponse(BaseModel):
+    """Result of auto-detecting a datetime pattern from sample filenames."""
+
+    detected: bool
+    pattern: str | None = None
+    format_str: str | None = None
+    preset_name: str | None = None
+    results: list[DatetimeTestResult]
+
+
+class DatetimeTestRequest(BaseModel):
+    """Request to test a datetime pattern against sample filenames."""
+
+    pattern: str = Field(..., max_length=200)
+    format_str: str
+    timezone: str | None = Field(
+        None, max_length=50, description="IANA timezone for interpreting filenames (e.g., 'Asia/Tokyo')"
+    )
+
+    @field_validator("timezone")
+    @classmethod
+    def validate_timezone(cls, v: str | None) -> str | None:
+        """Validate IANA timezone string."""
+        return _validate_iana_timezone(v)
+
+
+class DatetimeApplyRequest(BaseModel):
+    """Request to apply a datetime pattern to all recordings in a dataset."""
+
+    pattern: str = Field(..., max_length=200)
+    format_str: str
+    timezone: str | None = Field(
+        None, max_length=50, description="IANA timezone for interpreting filenames (e.g., 'Asia/Tokyo')"
+    )
+
+    @field_validator("timezone")
+    @classmethod
+    def validate_timezone(cls, v: str | None) -> str | None:
+        """Validate IANA timezone string."""
+        return _validate_iana_timezone(v)
+
+
+class DatetimeApplyResponse(BaseModel):
+    """Response after dispatching a datetime re-parse task."""
+
+    task_id: str
+    total_recordings: int

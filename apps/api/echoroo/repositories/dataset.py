@@ -2,24 +2,18 @@
 
 from uuid import UUID
 
-from sqlalchemy import delete, func, or_, select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import selectinload
 
 from echoroo.models.dataset import Dataset
 from echoroo.models.enums import DatasetStatus, DatasetVisibility
+from echoroo.repositories.base import BaseRepository
 
 
-class DatasetRepository:
+class DatasetRepository(BaseRepository[Dataset]):
     """Repository for Dataset entity operations."""
 
-    def __init__(self, db: AsyncSession) -> None:
-        """Initialize repository with database session.
-
-        Args:
-            db: SQLAlchemy async session
-        """
-        self.db = db
+    model = Dataset
 
     async def get_by_id(self, dataset_id: UUID) -> Dataset | None:
         """Get dataset by ID with relationships loaded.
@@ -153,14 +147,6 @@ class DatasetRepository:
         await self.db.refresh(dataset, ["site", "recorder", "license", "created_by"])
         return dataset
 
-    async def delete(self, dataset_id: UUID) -> None:
-        """Delete a dataset by ID.
-
-        Args:
-            dataset_id: Dataset's UUID
-        """
-        await self.db.execute(delete(Dataset).where(Dataset.id == dataset_id))
-        await self.db.flush()
 
     async def update_import_status(
         self,

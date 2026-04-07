@@ -7,9 +7,11 @@
   import { projectsApi } from '$lib/api/projects';
   import { authStore } from '$lib/stores/auth.svelte';
   import { ApiError } from '$lib/api/client';
+  import { localizeHref, getLocale } from '$lib/paraglide/runtime';
   import type { Project, ProjectMember } from '$lib/types';
   import type { ProjectRole } from '$lib/stores/permissions';
   import { getRoleDescription, getRoleDisplayName } from '$lib/stores/permissions';
+  import * as m from '$lib/paraglide/messages';
 
   // Get project ID from URL
   const projectId = $derived($page.params.id!);
@@ -74,12 +76,12 @@
       if (err instanceof ApiError) {
         error = err.detail || err.message;
         if (err.status === 404) {
-          error = 'Project not found';
+          error = m.members_error_not_found();
         } else if (err.status === 403) {
-          error = 'You do not have permission to access this project';
+          error = m.members_error_forbidden();
         }
       } else {
-        error = 'Failed to load project';
+        error = m.members_error_load();
       }
     } finally {
       isLoading = false;
@@ -131,7 +133,7 @@
       if (err instanceof ApiError) {
         addError = err.detail || err.message;
       } else {
-        addError = 'Failed to add member';
+        addError = m.members_error_add();
       }
     } finally {
       isAdding = false;
@@ -175,7 +177,7 @@
       if (err instanceof ApiError) {
         error = err.detail || err.message;
       } else {
-        error = 'Failed to update member role';
+        error = m.members_error_update_role();
       }
     } finally {
       isChangingRole = false;
@@ -214,7 +216,7 @@
       if (err instanceof ApiError) {
         error = err.detail || err.message;
       } else {
-        error = 'Failed to remove member';
+        error = m.members_error_remove();
       }
     } finally {
       isRemoving = false;
@@ -230,7 +232,7 @@
 </script>
 
 <svelte:head>
-  <title>Project Members - Echoroo</title>
+  <title>{m.members_page_title()}</title>
 </svelte:head>
 
 <div class="mx-auto max-w-4xl px-4 py-8 sm:px-6 lg:px-8">
@@ -238,18 +240,18 @@
   <div class="mb-8">
     <div class="flex items-center justify-between">
       <div>
-        <h1 class="text-3xl font-bold text-gray-900">Project Members</h1>
+        <h1 class="text-3xl font-bold text-stone-900">{m.members_heading()}</h1>
         {#if project}
-          <p class="mt-2 text-sm text-gray-600">
-            Manage members and permissions for "{project.name}"
+          <p class="mt-2 text-sm text-stone-600">
+            {m.members_manage_description({ projectName: project.name })}
           </p>
         {/if}
       </div>
       <a
-        href="/projects/{projectId}"
-        class="text-sm font-medium text-blue-600 hover:text-blue-500"
+        href={localizeHref(`/projects/${projectId}`)}
+        class="text-sm font-medium text-primary-600 hover:text-primary-500"
       >
-        Back to Project
+        {m.members_back_to_project()}
       </a>
     </div>
   </div>
@@ -258,7 +260,7 @@
   {#if isLoading}
     <div class="flex items-center justify-center py-12">
       <svg
-        class="h-8 w-8 animate-spin text-blue-600"
+        class="h-8 w-8 animate-spin text-primary-600"
         xmlns="http://www.w3.org/2000/svg"
         fill="none"
         viewBox="0 0 24 24"
@@ -292,7 +294,7 @@
         </div>
         <div class="ml-3">
           <p class="text-sm font-medium text-red-800">
-            You do not have permission to manage project members
+            {m.members_access_denied()}
           </p>
         </div>
       </div>
@@ -324,12 +326,12 @@
     {/if}
 
     <!-- Add Member Section -->
-    <div class="mb-6 rounded-lg bg-white shadow">
+    <div class="mb-6 rounded-lg bg-surface-card shadow">
       <div class="p-6">
         {#if !showAddMemberForm}
           <button
             onclick={toggleAddMemberForm}
-            class="inline-flex items-center rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+            class="inline-flex items-center rounded-md bg-primary-600 px-4 py-2 text-sm font-medium text-white hover:bg-primary-700"
           >
             <svg class="mr-2 h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path
@@ -339,14 +341,14 @@
                 d="M12 4v16m8-8H4"
               />
             </svg>
-            Add Member
+            {m.members_add_button()}
           </button>
         {:else}
           <form onsubmit={handleAddMember} class="space-y-4">
             <div class="flex items-end space-x-4">
               <div class="flex-1">
-                <label for="email" class="block text-sm font-medium text-gray-700">
-                  Email Address
+                <label for="email" class="block text-sm font-medium text-stone-700">
+                  {m.members_email_label()}
                 </label>
                 <input
                   id="email"
@@ -354,18 +356,18 @@
                   required
                   bind:value={newMemberEmail}
                   disabled={isAdding}
-                  class="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-blue-500 disabled:bg-gray-100"
-                  placeholder="member@example.com"
+                  class="mt-1 block w-full rounded-md border border-stone-300 px-3 py-2 text-sm focus:border-primary-500 focus:outline-none focus:ring-primary-500 disabled:bg-stone-100"
+                  placeholder={m.members_email_placeholder()}
                 />
               </div>
 
               <div class="w-48">
-                <label for="role" class="block text-sm font-medium text-gray-700">
-                  Role
+                <label for="role" class="block text-sm font-medium text-stone-700">
+                  {m.members_role_label()}
                   <button
                     type="button"
                     aria-label="Show role descriptions"
-                    class="ml-1 inline-flex items-center text-gray-400 hover:text-gray-500"
+                    class="ml-1 inline-flex items-center text-stone-400 hover:text-stone-500"
                     onmouseenter={() => (showRoleTooltip = 'add-role')}
                     onmouseleave={() => (showRoleTooltip = null)}
                   >
@@ -383,15 +385,15 @@
                     id="role"
                     bind:value={newMemberRole}
                     disabled={isAdding}
-                    class="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-blue-500 disabled:bg-gray-100"
+                    class="mt-1 block w-full rounded-md border border-stone-300 px-3 py-2 text-sm focus:border-primary-500 focus:outline-none focus:ring-primary-500 disabled:bg-stone-100"
                   >
-                    <option value="viewer">Viewer</option>
-                    <option value="member">Member</option>
-                    <option value="admin">Admin</option>
+                    <option value="viewer">{m.role_viewer()}</option>
+                    <option value="member">{m.role_member()}</option>
+                    <option value="admin">{m.role_admin()}</option>
                   </select>
                   {#if showRoleTooltip === 'add-role'}
                     <div
-                      class="absolute z-10 mt-2 w-64 rounded-md bg-gray-900 p-3 text-xs text-white shadow-lg"
+                      class="absolute z-10 mt-2 w-64 rounded-md bg-stone-900 p-3 text-xs text-white shadow-lg"
                     >
                       <div class="space-y-2">
                         <div>
@@ -412,18 +414,18 @@
               <button
                 type="submit"
                 disabled={isAdding}
-                class="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+                class="rounded-md bg-primary-600 px-4 py-2 text-sm font-medium text-white hover:bg-primary-700 disabled:opacity-50"
               >
-                {isAdding ? 'Adding...' : 'Add'}
+                {isAdding ? m.members_adding() : m.members_add_submit()}
               </button>
 
               <button
                 type="button"
                 onclick={toggleAddMemberForm}
                 disabled={isAdding}
-                class="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                class="rounded-md border border-stone-300 bg-surface-card px-4 py-2 text-sm font-medium text-stone-700 hover:bg-stone-50"
               >
-                Cancel
+                {m.members_cancel()}
               </button>
             </div>
 
@@ -436,34 +438,34 @@
     </div>
 
     <!-- Members List -->
-    <div class="rounded-lg bg-white shadow">
+    <div class="rounded-lg bg-surface-card shadow">
       <div class="p-6">
-        <h2 class="mb-4 text-lg font-semibold text-gray-900">
-          Members ({members.length})
+        <h2 class="mb-4 text-lg font-semibold text-stone-900">
+          {m.members_count({ count: members.length })}
         </h2>
 
-        <div class="divide-y divide-gray-200">
+        <div class="divide-y divide-stone-200">
           {#each members as member (member.id)}
             <div class="flex items-center justify-between py-4">
               <div class="flex items-center space-x-4">
                 <!-- Avatar -->
-                <div class="flex h-10 w-10 items-center justify-center rounded-full bg-gray-200">
-                  <span class="text-sm font-medium text-gray-600">
+                <div class="flex h-10 w-10 items-center justify-center rounded-full bg-stone-200">
+                  <span class="text-sm font-medium text-stone-600">
                     {(member.user?.display_name || member.user?.email || 'U').charAt(0).toUpperCase()}
                   </span>
                 </div>
 
                 <!-- User Info -->
                 <div>
-                  <p class="text-sm font-medium text-gray-900">
+                  <p class="text-sm font-medium text-stone-900">
                     {member.user.display_name || member.user.email}
                     {#if isMemberOwner(member)}
-                      <span class="ml-2 text-xs text-gray-500">(Owner)</span>
+                      <span class="ml-2 text-xs text-stone-500">({m.role_owner()})</span>
                     {/if}
                   </p>
-                  <p class="text-xs text-gray-500">{member.user.email}</p>
-                  <p class="text-xs text-gray-500">
-                    Joined {new Date(member.joined_at).toLocaleDateString()}
+                  <p class="text-xs text-stone-500">{member.user.email}</p>
+                  <p class="text-xs text-stone-500">
+                    {m.members_joined({ date: new Date(member.joined_at).toLocaleDateString() })}
                   </p>
                 </div>
               </div>
@@ -477,16 +479,16 @@
                       <select
                         value={member.role}
                         onchange={(e) => showRoleChangeConfirmation(member, e.currentTarget.value)}
-                        class="rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-blue-500"
+                        class="rounded-md border border-stone-300 px-3 py-1.5 text-sm focus:border-primary-500 focus:outline-none focus:ring-primary-500"
                       >
-                        <option value="viewer">Viewer</option>
-                        <option value="member">Member</option>
-                        <option value="admin">Admin</option>
+                        <option value="viewer">{m.role_viewer()}</option>
+                        <option value="member">{m.role_member()}</option>
+                        <option value="admin">{m.role_admin()}</option>
                       </select>
                       <button
                         type="button"
                         aria-label="Show role descriptions"
-                        class="text-gray-400 hover:text-gray-500"
+                        class="text-stone-400 hover:text-stone-500"
                         onmouseenter={() => (showRoleTooltip = member.id)}
                         onmouseleave={() => (showRoleTooltip = null)}
                       >
@@ -501,7 +503,7 @@
                     </div>
                     {#if showRoleTooltip === member.id}
                       <div
-                        class="absolute right-0 z-10 mt-2 w-64 rounded-md bg-gray-900 p-3 text-xs text-white shadow-lg"
+                        class="absolute right-0 z-10 mt-2 w-64 rounded-md bg-stone-900 p-3 text-xs text-white shadow-lg"
                       >
                         <div class="space-y-2">
                           <div>
@@ -521,13 +523,13 @@
                   <!-- Remove Button -->
                   <button
                     onclick={() => showRemoveConfirmation(member)}
-                    class="rounded-md border border-red-300 bg-white px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-50"
+                    class="rounded-md border border-red-300 bg-surface-card px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-50"
                   >
-                    Remove
+                    {m.members_remove_button()}
                   </button>
                 {:else}
-                  <span class="rounded-md border border-gray-300 px-3 py-1.5 text-sm text-gray-500">
-                    Owner
+                  <span class="rounded-md border border-stone-300 px-3 py-1.5 text-sm text-stone-500">
+                    {m.role_owner()}
                   </span>
                 {/if}
               </div>
@@ -548,21 +550,21 @@
         role="button"
         tabindex="0"
         aria-label="Close dialog"
-        class="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity"
+        class="fixed inset-0 bg-stone-500 bg-opacity-75 transition-opacity"
         onclick={cancelRoleChange}
         onkeydown={(e) => e.key === 'Escape' && cancelRoleChange()}
       ></div>
 
       <!-- Modal panel -->
       <div
-        class="inline-block transform overflow-hidden rounded-lg bg-white text-left align-bottom shadow-xl transition-all sm:my-8 sm:w-full sm:max-w-lg sm:align-middle"
+        class="inline-block transform overflow-hidden rounded-lg bg-surface-card text-left align-bottom shadow-xl transition-all sm:my-8 sm:w-full sm:max-w-lg sm:align-middle"
       >
-        <div class="bg-white px-4 pb-4 pt-5 sm:p-6 sm:pb-4">
+        <div class="bg-surface-card px-4 pb-4 pt-5 sm:p-6 sm:pb-4">
           <div class="sm:flex sm:items-start">
             <div
-              class="mx-auto flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-full bg-blue-100 sm:mx-0 sm:h-10 sm:w-10"
+              class="mx-auto flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-full bg-primary-100 sm:mx-0 sm:h-10 sm:w-10"
             >
-              <svg class="h-6 w-6 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <svg class="h-6 w-6 text-primary-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path
                   stroke-linecap="round"
                   stroke-linejoin="round"
@@ -572,37 +574,37 @@
               </svg>
             </div>
             <div class="mt-3 text-center sm:ml-4 sm:mt-0 sm:text-left">
-              <h3 class="text-lg font-medium leading-6 text-gray-900">Change Member Role</h3>
+              <h3 class="text-lg font-medium leading-6 text-stone-900">{m.members_role_change_title()}</h3>
               <div class="mt-2">
-                <p class="text-sm text-gray-500">
+                <p class="text-sm text-stone-500">
                   Are you sure you want to change {roleChangeConfirmation.member.user.display_name ||
                     roleChangeConfirmation.member.user.email}'s role from <strong
                     >{getRoleDisplayName(roleChangeConfirmation.member.role)}</strong
                   > to <strong>{getRoleDisplayName(roleChangeConfirmation.newRole)}</strong>?
                 </p>
-                <p class="mt-2 text-sm text-gray-500">
+                <p class="mt-2 text-sm text-stone-500">
                   {getRoleDescription(roleChangeConfirmation.newRole)}
                 </p>
               </div>
             </div>
           </div>
         </div>
-        <div class="bg-gray-50 px-4 py-3 sm:flex sm:flex-row-reverse sm:px-6">
+        <div class="bg-stone-50 px-4 py-3 sm:flex sm:flex-row-reverse sm:px-6">
           <button
             type="button"
             onclick={confirmRoleChange}
             disabled={isChangingRole}
-            class="inline-flex w-full justify-center rounded-md bg-blue-600 px-4 py-2 text-base font-medium text-white shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 sm:ml-3 sm:w-auto sm:text-sm"
+            class="inline-flex w-full justify-center rounded-md bg-primary-600 px-4 py-2 text-base font-medium text-white shadow-sm hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 disabled:opacity-50 sm:ml-3 sm:w-auto sm:text-sm"
           >
-            {isChangingRole ? 'Changing...' : 'Change Role'}
+            {isChangingRole ? m.members_changing_role() : m.members_change_role_submit()}
           </button>
           <button
             type="button"
             onclick={cancelRoleChange}
             disabled={isChangingRole}
-            class="mt-3 inline-flex w-full justify-center rounded-md border border-gray-300 bg-white px-4 py-2 text-base font-medium text-gray-700 shadow-sm hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 sm:ml-3 sm:mt-0 sm:w-auto sm:text-sm"
+            class="mt-3 inline-flex w-full justify-center rounded-md border border-stone-300 bg-surface-card px-4 py-2 text-base font-medium text-stone-700 shadow-sm hover:bg-stone-50 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 sm:ml-3 sm:mt-0 sm:w-auto sm:text-sm"
           >
-            Cancel
+            {m.members_cancel()}
           </button>
         </div>
       </div>
@@ -619,16 +621,16 @@
         role="button"
         tabindex="0"
         aria-label="Close dialog"
-        class="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity"
+        class="fixed inset-0 bg-stone-500 bg-opacity-75 transition-opacity"
         onclick={cancelRemove}
         onkeydown={(e) => e.key === 'Escape' && cancelRemove()}
       ></div>
 
       <!-- Modal panel -->
       <div
-        class="inline-block transform overflow-hidden rounded-lg bg-white text-left align-bottom shadow-xl transition-all sm:my-8 sm:w-full sm:max-w-lg sm:align-middle"
+        class="inline-block transform overflow-hidden rounded-lg bg-surface-card text-left align-bottom shadow-xl transition-all sm:my-8 sm:w-full sm:max-w-lg sm:align-middle"
       >
-        <div class="bg-white px-4 pb-4 pt-5 sm:p-6 sm:pb-4">
+        <div class="bg-surface-card px-4 pb-4 pt-5 sm:p-6 sm:pb-4">
           <div class="sm:flex sm:items-start">
             <div
               class="mx-auto flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-full bg-red-100 sm:mx-0 sm:h-10 sm:w-10"
@@ -643,9 +645,9 @@
               </svg>
             </div>
             <div class="mt-3 text-center sm:ml-4 sm:mt-0 sm:text-left">
-              <h3 class="text-lg font-medium leading-6 text-gray-900">Remove Member</h3>
+              <h3 class="text-lg font-medium leading-6 text-stone-900">{m.members_remove_title()}</h3>
               <div class="mt-2">
-                <p class="text-sm text-gray-500">
+                <p class="text-sm text-stone-500">
                   Are you sure you want to remove {memberToRemove.user.display_name ||
                     memberToRemove.user.email} from this project? They will lose access to all project
                   data.
@@ -654,22 +656,22 @@
             </div>
           </div>
         </div>
-        <div class="bg-gray-50 px-4 py-3 sm:flex sm:flex-row-reverse sm:px-6">
+        <div class="bg-stone-50 px-4 py-3 sm:flex sm:flex-row-reverse sm:px-6">
           <button
             type="button"
             onclick={confirmRemove}
             disabled={isRemoving}
             class="inline-flex w-full justify-center rounded-md bg-red-600 px-4 py-2 text-base font-medium text-white shadow-sm hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 disabled:opacity-50 sm:ml-3 sm:w-auto sm:text-sm"
           >
-            {isRemoving ? 'Removing...' : 'Remove'}
+            {isRemoving ? m.members_removing() : m.members_remove_submit()}
           </button>
           <button
             type="button"
             onclick={cancelRemove}
             disabled={isRemoving}
-            class="mt-3 inline-flex w-full justify-center rounded-md border border-gray-300 bg-white px-4 py-2 text-base font-medium text-gray-700 shadow-sm hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 sm:ml-3 sm:mt-0 sm:w-auto sm:text-sm"
+            class="mt-3 inline-flex w-full justify-center rounded-md border border-stone-300 bg-surface-card px-4 py-2 text-base font-medium text-stone-700 shadow-sm hover:bg-stone-50 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 sm:ml-3 sm:mt-0 sm:w-auto sm:text-sm"
           >
-            Cancel
+            {m.members_cancel()}
           </button>
         </div>
       </div>

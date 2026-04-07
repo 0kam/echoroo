@@ -4,6 +4,7 @@
    */
 
   import { onMount } from 'svelte';
+  import * as m from '$lib/paraglide/messages';
 
   interface Props {
     siteKey: string;
@@ -109,8 +110,8 @@
 <div class="captcha-container">
   {#if isLoading}
     <div class="flex items-center justify-center py-4">
-      <div class="h-8 w-8 animate-spin rounded-full border-4 border-gray-300 border-t-blue-600"></div>
-      <span class="ml-2 text-sm text-gray-600">Loading CAPTCHA...</span>
+      <div class="h-8 w-8 animate-spin rounded-full border-4 border-stone-300 border-t-primary-600"></div>
+      <span class="ml-2 text-sm text-stone-600">{m.captcha_loading()}</span>
     </div>
   {/if}
 

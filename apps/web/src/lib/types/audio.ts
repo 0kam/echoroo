@@ -220,6 +220,8 @@ export interface SpectrogramChunk {
   isLoading: boolean;
   isReady: boolean;
   isError: boolean;
+  /** Number of load attempts that have failed so far */
+  retryCount: number;
 }
 
 // ============================================

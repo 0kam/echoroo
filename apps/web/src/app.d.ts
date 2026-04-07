@@ -8,6 +8,7 @@ declare global {
     interface Locals {
       isAuthenticated: boolean;
       user?: User;
+      locale?: string;
     }
     // interface PageData {}
     // interface PageState {}

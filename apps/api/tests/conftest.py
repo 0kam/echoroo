@@ -1,6 +1,7 @@
 """Pytest configuration and fixtures."""
 
 from collections.abc import AsyncGenerator
+from unittest.mock import patch
 
 import pytest
 import sqlalchemy as sa
@@ -85,6 +86,31 @@ async def setup_test_database(engine: AsyncEngine) -> None:
         await conn.execute(
             sa.text("CREATE TYPE geometrytype AS ENUM ('BoundingBox', 'TimeInterval')")
         )
+        # Detection review enums (003-detection-review)
+        await conn.execute(
+            sa.text("CREATE TYPE detectionsource AS ENUM ('birdnet', 'perch_search', 'human')")
+        )
+        await conn.execute(
+            sa.text("CREATE TYPE detectionstatus AS ENUM ('unreviewed', 'confirmed', 'rejected')")
+        )
+        await conn.execute(
+            sa.text(
+                "CREATE TYPE detectionrunstatus AS ENUM ('pending', 'running', 'completed', 'failed')"
+            )
+        )
+        # Upload feature enums (004-upload-tables)
+        await conn.execute(
+            sa.text(
+                "CREATE TYPE uploadsessionstatus AS ENUM "
+                "('issued', 'uploaded', 'validating', 'validated', 'importing', 'imported', 'failed')"
+            )
+        )
+        await conn.execute(
+            sa.text(
+                "CREATE TYPE uploadfilestatus AS ENUM "
+                "('pending', 'uploaded', 'valid', 'invalid', 'imported')"
+            )
+        )
         # Create all tables
         await conn.run_sync(Base.metadata.create_all)
 
@@ -117,6 +143,13 @@ async def cleanup_test_data(session: AsyncSession) -> None:
     await session.execute(sa.text("DELETE FROM clip_annotations"))
     await session.execute(sa.text("DELETE FROM annotation_tasks"))
     await session.execute(sa.text("DELETE FROM annotation_projects"))
+    # Upload feature tables (004-upload-tables)
+    await session.execute(sa.text("DELETE FROM upload_files"))
+    await session.execute(sa.text("DELETE FROM upload_sessions"))
+    # Detection review tables (003-detection-review)
+    await session.execute(sa.text("DELETE FROM confirmed_regions"))
+    await session.execute(sa.text("DELETE FROM annotations"))
+    await session.execute(sa.text("DELETE FROM detection_runs"))
     await session.execute(sa.text("DELETE FROM tags"))
     await session.execute(sa.text("DELETE FROM clips"))
     await session.execute(sa.text("DELETE FROM recordings"))
@@ -210,10 +243,22 @@ async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
 
     app.dependency_overrides[get_db] = override_get_db
 
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as test_client:
-        yield test_client
+    # Patch RateLimiter.__call__ with a no-op that uses correct FastAPI types
+    # so they are injected rather than treated as query params
+    from starlette.requests import Request
+    from starlette.responses import Response
+
+    async def _noop_rate_limiter(self, request: Request, response: Response) -> None:  # noqa: ARG001
+        pass
+
+    with patch(
+        "fastapi_limiter.depends.RateLimiter.__call__",
+        _noop_rate_limiter,
+    ):
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as test_client:
+            yield test_client
 
     app.dependency_overrides.clear()
     await engine.dispose()

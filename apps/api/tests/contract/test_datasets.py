@@ -9,12 +9,10 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from echoroo.models.dataset import Dataset
 from echoroo.models.site import Site
 
 if TYPE_CHECKING:
     from echoroo.models.project import Project, ProjectMember
-    from echoroo.models.user import User
 
 
 @pytest.fixture
@@ -544,7 +542,7 @@ class TestDatasetImportEndpoints:
     ) -> None:
         """Test POST /api/v1/projects/{project_id}/datasets/{dataset_id}/import with non-existent ID."""
         fake_id = "00000000-0000-0000-0000-000000000000"
-        import_data = {}
+        import_data: dict[str, object] = {}
 
         response = await client.post(
             f"/api/v1/projects/{test_project_id}/datasets/{fake_id}/import",
@@ -561,7 +559,7 @@ class TestDatasetImportEndpoints:
     ) -> None:
         """Test POST /api/v1/projects/{project_id}/datasets/{dataset_id}/import requires authentication."""
         fake_id = "00000000-0000-0000-0000-000000000000"
-        import_data = {}
+        import_data: dict[str, object] = {}
 
         response = await client.post(
             f"/api/v1/projects/{test_project_id}/datasets/{fake_id}/import",

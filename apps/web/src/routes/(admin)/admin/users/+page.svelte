@@ -5,6 +5,7 @@
 
   import { adminApi } from '$lib/api/admin';
   import { ApiError } from '$lib/api/client';
+  import { getLocale } from '$lib/paraglide/runtime';
   import type { User } from '$lib/types';
 
   // State
@@ -158,7 +159,7 @@
    * Format date
    */
   function formatDate(dateString: string): string {
-    return new Date(dateString).toLocaleString();
+    return new Date(dateString).toLocaleString(getLocale());
   }
 </script>
 
@@ -169,8 +170,8 @@
 <div class="px-8 py-6">
   <!-- Header -->
   <div class="mb-6">
-    <h1 class="text-3xl font-bold text-gray-900">User Management</h1>
-    <p class="mt-2 text-sm text-gray-600">Manage user accounts and permissions</p>
+    <h1 class="text-3xl font-bold text-stone-900">User Management</h1>
+    <p class="mt-2 text-sm text-stone-600">Manage user accounts and permissions</p>
   </div>
 
   <!-- Success Message -->
@@ -230,7 +231,7 @@
       <label for="search" class="sr-only">Search users</label>
       <div class="relative">
         <div class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
-          <svg class="h-5 w-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <svg class="h-5 w-5 text-stone-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path
               stroke-linecap="round"
               stroke-linejoin="round"
@@ -245,7 +246,7 @@
           value={search}
           oninput={handleSearch}
           placeholder="Search by email or name..."
-          class="block w-full rounded-lg border border-gray-300 bg-white py-2 pl-10 pr-3 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+          class="block w-full rounded-lg border border-stone-300 bg-surface-card py-2 pl-10 pr-3 text-sm focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
         />
       </div>
     </div>
@@ -256,7 +257,7 @@
       <select
         id="status-filter"
         onchange={handleFilterChange}
-        class="block w-full rounded-lg border border-gray-300 bg-white py-2 pl-3 pr-10 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+        class="block w-full rounded-lg border border-stone-300 bg-surface-card py-2 pl-3 pr-10 text-sm focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
       >
         <option value="all">All Users</option>
         <option value="active">Active Only</option>
@@ -269,7 +270,7 @@
   {#if isLoading}
     <div class="flex items-center justify-center py-12">
       <svg
-        class="h-8 w-8 animate-spin text-blue-600"
+        class="h-8 w-8 animate-spin text-primary-600"
         xmlns="http://www.w3.org/2000/svg"
         fill="none"
         viewBox="0 0 24 24"
@@ -284,9 +285,9 @@
       </svg>
     </div>
   {:else if users.length === 0}
-    <div class="rounded-lg border-2 border-dashed border-gray-300 p-12 text-center">
+    <div class="rounded-lg border-2 border-dashed border-stone-300 p-12 text-center">
       <svg
-        class="mx-auto h-12 w-12 text-gray-400"
+        class="mx-auto h-12 w-12 text-stone-400"
         xmlns="http://www.w3.org/2000/svg"
         fill="none"
         viewBox="0 0 24 24"
@@ -299,70 +300,70 @@
           d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"
         />
       </svg>
-      <h3 class="mt-2 text-sm font-medium text-gray-900">No users found</h3>
-      <p class="mt-1 text-sm text-gray-500">Try adjusting your search or filters.</p>
+      <h3 class="mt-2 text-sm font-medium text-stone-900">No users found</h3>
+      <p class="mt-1 text-sm text-stone-500">Try adjusting your search or filters.</p>
     </div>
   {:else}
-    <div class="overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm">
+    <div class="overflow-hidden rounded-lg border border-card bg-surface-card shadow-sm">
       <div class="overflow-x-auto">
-        <table class="min-w-full divide-y divide-gray-200">
-          <thead class="bg-gray-50">
+        <table class="min-w-full divide-y divide-stone-200">
+          <thead class="bg-stone-50">
             <tr>
               <th
                 scope="col"
-                class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500"
+                class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-stone-500"
               >
                 Email
               </th>
               <th
                 scope="col"
-                class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500"
+                class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-stone-500"
               >
                 Display Name
               </th>
               <th
                 scope="col"
-                class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500"
+                class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-stone-500"
               >
                 Status
               </th>
               <th
                 scope="col"
-                class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500"
+                class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-stone-500"
               >
                 Role
               </th>
               <th
                 scope="col"
-                class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500"
+                class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-stone-500"
               >
                 Created
               </th>
               <th
                 scope="col"
-                class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500"
+                class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-stone-500"
               >
                 Actions
               </th>
             </tr>
           </thead>
-          <tbody class="divide-y divide-gray-200 bg-white">
+          <tbody class="divide-y divide-stone-200 bg-surface-card">
             {#each users as user (user.id)}
-              <tr class="hover:bg-gray-50">
+              <tr class="hover:bg-stone-50">
                 <!-- Email -->
                 <td class="whitespace-nowrap px-6 py-4">
                   <div class="flex items-center">
                     <div>
-                      <div class="text-sm font-medium text-gray-900">{user.email}</div>
+                      <div class="text-sm font-medium text-stone-900">{user.email}</div>
                       {#if user.organization}
-                        <div class="text-xs text-gray-500">{user.organization}</div>
+                        <div class="text-xs text-stone-500">{user.organization}</div>
                       {/if}
                     </div>
                   </div>
                 </td>
 
                 <!-- Display Name -->
-                <td class="whitespace-nowrap px-6 py-4 text-sm text-gray-900">
+                <td class="whitespace-nowrap px-6 py-4 text-sm text-stone-900">
                   {user.display_name || '-'}
                 </td>
 
@@ -378,7 +379,7 @@
                     </span>
                     {#if user.is_verified}
                       <span
-                        class="inline-flex items-center rounded-full bg-blue-100 px-2.5 py-0.5 text-xs font-medium text-blue-800"
+                        class="inline-flex items-center rounded-full bg-primary-100 px-2.5 py-0.5 text-xs font-medium text-primary-800"
                       >
                         Verified
                       </span>
@@ -390,15 +391,15 @@
                 <td class="whitespace-nowrap px-6 py-4">
                   <span
                     class="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium {user.is_superuser
-                      ? 'bg-purple-100 text-purple-800'
-                      : 'bg-gray-100 text-gray-800'}"
+                      ? 'bg-primary-100 text-primary-800'
+                      : 'bg-stone-100 text-stone-800'}"
                   >
                     {user.is_superuser ? 'Superuser' : 'User'}
                   </span>
                 </td>
 
                 <!-- Created -->
-                <td class="whitespace-nowrap px-6 py-4 text-sm text-gray-500">
+                <td class="whitespace-nowrap px-6 py-4 text-sm text-stone-500">
                   {formatDate(user.created_at)}
                 </td>
 
@@ -415,7 +416,7 @@
                     </button>
                     <button
                       onclick={() => toggleUserSuperuser(user)}
-                      class="rounded bg-purple-100 px-3 py-1 text-xs font-medium text-purple-700 transition-colors hover:bg-purple-200"
+                      class="rounded bg-primary-100 px-3 py-1 text-xs font-medium text-primary-700 transition-colors hover:bg-primary-200"
                     >
                       {user.is_superuser ? 'Demote' : 'Promote'}
                     </button>
@@ -431,7 +432,7 @@
     <!-- Pagination -->
     {#if totalPages > 1}
       <div class="mt-6 flex items-center justify-between">
-        <div class="text-sm text-gray-700">
+        <div class="text-sm text-stone-700">
           Showing <span class="font-medium">{(page - 1) * limit + 1}</span>
           to
           <span class="font-medium">{Math.min(page * limit, total)}</span>
@@ -444,7 +445,7 @@
           <button
             onclick={() => changePage(page - 1)}
             disabled={page === 1}
-            class="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+            class="rounded-md border border-stone-300 bg-surface-card px-4 py-2 text-sm font-medium text-stone-700 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-50"
           >
             Previous
           </button>
@@ -454,20 +455,20 @@
               <button
                 onclick={() => changePage(pageNum)}
                 class="rounded-md px-4 py-2 text-sm font-medium {pageNum === page
-                  ? 'bg-blue-600 text-white'
-                  : 'border border-gray-300 bg-white text-gray-700 hover:bg-gray-50'}"
+                  ? 'bg-primary-600 text-white'
+                  : 'border border-stone-300 bg-surface-card text-stone-700 hover:bg-stone-50'}"
               >
                 {pageNum}
               </button>
             {:else if pageNum === page - 2 || pageNum === page + 2}
-              <span class="px-2 text-gray-500">...</span>
+              <span class="px-2 text-stone-500">...</span>
             {/if}
           {/each}
 
           <button
             onclick={() => changePage(page + 1)}
             disabled={page === totalPages}
-            class="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+            class="rounded-md border border-stone-300 bg-surface-card px-4 py-2 text-sm font-medium text-stone-700 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-50"
           >
             Next
           </button>
