@@ -45,12 +45,12 @@
 
   const similarityBadgeClass = $derived(
     similarity >= 0.8
-      ? 'bg-success-light text-success'
+      ? 'bg-green-100/90 text-green-800'
       : similarity >= 0.7
-        ? 'bg-primary-100 text-primary-800'
+        ? 'bg-orange-100/90 text-orange-800'
         : similarity >= 0.5
-          ? 'bg-warning-light text-warning'
-          : 'bg-stone-100 text-stone-600'
+          ? 'bg-yellow-100/90 text-yellow-800'
+          : 'bg-white/90 text-stone-700'
   );
 
   function formatTime(seconds: number): string {
