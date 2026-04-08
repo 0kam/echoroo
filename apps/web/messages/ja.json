@@ -1250,6 +1250,7 @@
   "search_session_species_count": "{count} 種",
   "search_session_results_summary": "{results} 件の結果",
   "search_export_csv": "CSVエクスポート",
+  "search_export_summary": "検索サマリーをエクスポート",
   "search_exporting": "エクスポート中...",
   "search_results_count_session": "{count}件の結果",
   "search_confirmed_count": "{count}件確認済み",

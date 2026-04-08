@@ -1250,6 +1250,7 @@
   "search_session_species_count": "{count} species",
   "search_session_results_summary": "{results} results",
   "search_export_csv": "Export CSV",
+  "search_export_summary": "Export search summary",
   "search_exporting": "Exporting...",
   "search_results_count_session": "{count} results",
   "search_confirmed_count": "{count} confirmed",

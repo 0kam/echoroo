@@ -688,11 +688,12 @@ async def stream_reference_audio(
 
 @router.get(
     "/sessions/{session_id}/export-recordings",
-    summary="Export session results aggregated by recording as CSV",
+    summary="Export search summary: all recordings × all species as CSV",
     description=(
-        "Aggregate session similarity results by recording and export as CSV. "
-        "Each row represents one recording with max/avg similarity, match count, "
-        "and the time range of the best-matching segment."
+        "Export a search summary CSV with one row per (recording × species). "
+        "All recordings in the project's datasets are included (even those with no "
+        "matching embeddings). Similarity is computed against each species' stored "
+        "query vectors. Rows are sorted by recording_datetime ASC."
     ),
 )
 async def export_search_session_recordings_csv(
@@ -702,11 +703,12 @@ async def export_search_session_recordings_csv(
     db: DbSession,
     session_service: SearchSessionServiceDep,
 ) -> StreamingResponse:
-    """Export per-recording aggregated similarity results as CSV.
+    """Export per-(recording × species) aggregated similarity results as CSV.
 
-    Reads the stored JSON results for the session and aggregates them by
-    recording_id, computing max/avg similarity, match count, and the time
-    range of the highest-similarity segment per recording.
+    For each species in the session, computes similarity for all project
+    recordings using the stored query vectors. All recordings are included
+    (those without embeddings get NULL similarities). Produces one row per
+    (recording, species) combination sorted by recording_datetime ASC.
 
     Args:
         project_id: Project UUID (path parameter)
@@ -717,8 +719,9 @@ async def export_search_session_recordings_csv(
 
     Returns:
         CSV file as streaming response with columns:
-        recording_filename, recording_datetime, max_similarity,
-        avg_similarity, match_count, best_segment_start, best_segment_end
+        recording_filename, recording_datetime, species,
+        max_similarity, min_similarity, avg_similarity,
+        segment_count, best_segment_start, best_segment_end
 
     Raises:
         403: Access denied to project
@@ -738,109 +741,201 @@ async def export_search_session_recordings_csv(
             detail="Session has no results to export",
         )
 
-    # Aggregate matches across all species by recording_id
-    # Structure: recording_id -> aggregated data dict
-    class _RecordingAgg:
-        """Accumulator for per-recording similarity statistics."""
-
-        def __init__(
-            self,
-            recording_filename: str,
-            recording_datetime: str | None,
-            similarity: float,
-            start_time: float,
-            end_time: float,
-        ) -> None:
-            self.recording_filename = recording_filename
-            self.recording_datetime = recording_datetime
-            self.max_similarity = similarity
-            self.total_similarity = similarity
-            self.match_count = 1
-            self.best_segment_start = start_time
-            self.best_segment_end = end_time
-
-        def update(self, similarity: float, start_time: float, end_time: float) -> None:
-            """Update accumulator with a new match."""
-            self.match_count += 1
-            self.total_similarity += similarity
-            if similarity > self.max_similarity:
-                self.max_similarity = similarity
-                self.best_segment_start = start_time
-                self.best_segment_end = end_time
-
-    agg: dict[str, _RecordingAgg] = {}
-
+    # Extract all species from the session's species_config.
+    # Each entry has: scientific_name, common_name (optional), tag_id (optional).
+    # The result key matches the key used in session.results["results"].
     raw_results = session.results.get("results")
-    if isinstance(raw_results, dict):
-        for _species_key, species_data in raw_results.items():
-            if not isinstance(species_data, dict):
-                continue
-            matches = species_data.get("matches", [])
-            if not isinstance(matches, list):
-                continue
-            for match in matches:
-                if not isinstance(match, dict):
-                    continue
-                rec_id = str(match.get("recording_id", ""))
-                if not rec_id:
-                    continue
-                similarity = float(match.get("similarity", 0.0))
-                start_time = float(match.get("start_time", 0.0))
-                end_time = float(match.get("end_time", 0.0))
-                recording_filename = str(match.get("recording_filename", ""))
-                raw_dt = match.get("recording_datetime")
-                recording_datetime: str | None = str(raw_dt) if raw_dt is not None else None
+    if not isinstance(raw_results, dict):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Session has no results to export",
+        )
 
-                if rec_id not in agg:
-                    agg[rec_id] = _RecordingAgg(
-                        recording_filename=recording_filename,
-                        recording_datetime=recording_datetime,
-                        similarity=similarity,
-                        start_time=start_time,
-                        end_time=end_time,
-                    )
-                else:
-                    agg[rec_id].update(similarity, start_time, end_time)
+    # Build a mapping of species_key -> display label from species_config and results.
+    # The keys in raw_results match the species keys used during the search.
+    species_keys: list[str] = list(raw_results.keys())
+    if not species_keys:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Session has no species results to export",
+        )
 
-    # Sort by descending max_similarity
-    sorted_agg = sorted(
-        agg.values(),
-        key=lambda r: r.max_similarity,
-        reverse=True,
+    # Build display name mapping: species_key -> human-readable name
+    species_labels: dict[str, str] = {}
+    if session.species_config and isinstance(session.species_config, list):
+        for sp_cfg in session.species_config:
+            if not isinstance(sp_cfg, dict):
+                continue
+            sp_tag_id = str(sp_cfg.get("tag_id") or "")
+            sp_sci_name = str(sp_cfg.get("scientific_name") or "")
+            sp_common = str(sp_cfg.get("common_name") or "")
+            label = sp_common or sp_sci_name or sp_tag_id or "Unknown"
+            # Match against both tag_id key and scientific_name key
+            for key in species_keys:
+                if key in (sp_tag_id, sp_sci_name):
+                    species_labels[key] = label
+
+    # Determine optional dataset filter from session parameters
+    dataset_id_str: str | None = None
+    if session.parameters and session.parameters.get("dataset_id"):
+        dataset_id_str = str(session.parameters["dataset_id"])
+
+    # Fetch all recordings for this project (and optional dataset filter),
+    # including their dataset timezone for correct datetime display.
+    # Returns: recording_id, recording_filename, recording_datetime (in dataset tz)
+    dataset_filter_sql = "AND d.id = :dataset_id" if dataset_id_str else ""
+    recordings_sql = text(
+        f"""
+        SELECT
+            r.id::text AS recording_id,
+            r.path AS recording_filename,
+            CASE
+                WHEN r.datetime IS NOT NULL THEN
+                    (r.datetime AT TIME ZONE COALESCE(d.datetime_timezone, 'UTC'))::text
+                ELSE NULL
+            END AS recording_datetime
+        FROM recordings r
+        JOIN datasets d ON r.dataset_id = d.id
+        WHERE d.project_id = :project_id
+          {dataset_filter_sql}
+        ORDER BY r.datetime ASC NULLS LAST, r.path ASC
+        """
     )
+    rec_params: dict[str, object] = {"project_id": str(project_id)}
+    if dataset_id_str:
+        rec_params["dataset_id"] = dataset_id_str
 
-    # Build CSV
+    rec_rows = (await db.execute(recordings_sql, rec_params)).fetchall()
+
+    # Build an ordered list of (recording_id, filename, datetime_str)
+    all_recordings: list[tuple[str, str, str | None]] = [
+        (str(row.recording_id), str(row.recording_filename), row.recording_datetime)
+        for row in rec_rows
+    ]
+
+    if not all_recordings:
+        # No recordings in project — return empty CSV with headers only
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow([
+            "recording_filename", "recording_datetime", "species",
+            "max_similarity", "min_similarity", "avg_similarity",
+            "segment_count", "best_segment_start", "best_segment_end",
+        ])
+        csv_content = output.getvalue()
+        date_str = datetime.now(UTC).strftime("%Y%m%d")
+        safe_name = (session.name or str(session_id)).replace('"', '_').replace('\n', '_').replace('\r', '_').replace(' ', '_').replace('/', '-')
+        filename = f"search_summary_{safe_name}_{date_str}.csv"
+        return StreamingResponse(
+            iter([csv_content]),
+            media_type="text/csv",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
+    recording_id_set: set[str] = {rec[0] for rec in all_recordings}
+
+    # For each species, aggregate per-recording similarity stats.
+    # Structure: species_key -> recording_id -> stats dict
+    # We process the stored session results (which are already aggregated per segment).
+
+    # Per-species, per-recording aggregation
+    # row = (species_key, recording_id) -> {max_sim, min_sim, total_sim, count, best_start, best_end}
+    SpeciesRecordingKey = tuple[str, str]
+    agg: dict[SpeciesRecordingKey, dict[str, object]] = {}
+
+    for sp_key, species_data in raw_results.items():
+        if not isinstance(species_data, dict):
+            continue
+        matches = species_data.get("matches", [])
+        if not isinstance(matches, list):
+            continue
+        for match in matches:
+            if not isinstance(match, dict):
+                continue
+            rec_id = str(match.get("recording_id", ""))
+            if not rec_id or rec_id not in recording_id_set:
+                continue
+            similarity = float(match.get("similarity", 0.0))
+            start_time = float(match.get("start_time", 0.0))
+            end_time = float(match.get("end_time", 0.0))
+
+            key: SpeciesRecordingKey = (sp_key, rec_id)
+            if key not in agg:
+                agg[key] = {
+                    "max_sim": similarity,
+                    "min_sim": similarity,
+                    "total_sim": similarity,
+                    "count": 1,
+                    "best_start": start_time,
+                    "best_end": end_time,
+                }
+            else:
+                entry = agg[key]
+                entry["count"] = int(entry["count"]) + 1
+                entry["total_sim"] = float(entry["total_sim"]) + similarity
+                if similarity > float(entry["max_sim"]):
+                    entry["max_sim"] = similarity
+                    entry["best_start"] = start_time
+                    entry["best_end"] = end_time
+                if similarity < float(entry["min_sim"]):
+                    entry["min_sim"] = similarity
+
+    # Build CSV rows: one per (recording × species), sorted by recording_datetime ASC
     output = io.StringIO()
     writer = csv.writer(output)
-    writer.writerow(
-        [
-            "recording_filename",
-            "recording_datetime",
-            "max_similarity",
-            "avg_similarity",
-            "match_count",
-            "best_segment_start",
-            "best_segment_end",
-        ]
-    )
-    for row in sorted_agg:
-        avg_similarity = row.total_similarity / row.match_count if row.match_count > 0 else 0.0
-        writer.writerow(
-            [
-                row.recording_filename,
-                row.recording_datetime or "",
-                f"{row.max_similarity:.4f}",
-                f"{avg_similarity:.4f}",
-                row.match_count,
-                f"{row.best_segment_start:.2f}",
-                f"{row.best_segment_end:.2f}",
-            ]
-        )
+    writer.writerow([
+        "recording_filename",
+        "recording_datetime",
+        "species",
+        "max_similarity",
+        "min_similarity",
+        "avg_similarity",
+        "segment_count",
+        "best_segment_start",
+        "best_segment_end",
+    ])
+
+    for rec_id, rec_filename, rec_datetime in all_recordings:
+        for sp_key in species_keys:
+            sp_label = species_labels.get(sp_key, sp_key)
+            agg_key: SpeciesRecordingKey = (sp_key, rec_id)
+            if agg_key in agg:
+                entry = agg[agg_key]
+                count = int(entry["count"])
+                max_sim = float(entry["max_sim"])
+                min_sim = float(entry["min_sim"])
+                avg_sim = float(entry["total_sim"]) / count if count > 0 else 0.0
+                best_start = float(entry["best_start"])
+                best_end = float(entry["best_end"])
+                writer.writerow([
+                    rec_filename,
+                    rec_datetime or "",
+                    sp_label,
+                    f"{max_sim:.4f}",
+                    f"{min_sim:.4f}",
+                    f"{avg_sim:.4f}",
+                    count,
+                    f"{best_start:.2f}",
+                    f"{best_end:.2f}",
+                ])
+            else:
+                # Recording has no matching embeddings for this species
+                writer.writerow([
+                    rec_filename,
+                    rec_datetime or "",
+                    sp_label,
+                    "",  # max_similarity
+                    "",  # min_similarity
+                    "",  # avg_similarity
+                    0,   # segment_count
+                    "",  # best_segment_start
+                    "",  # best_segment_end
+                ])
 
     csv_content = output.getvalue()
     date_str = datetime.now(UTC).strftime("%Y%m%d")
     safe_name = (session.name or str(session_id)).replace('"', '_').replace('\n', '_').replace('\r', '_').replace(' ', '_').replace('/', '-')
-    filename = f"recordings_{safe_name}_{date_str}.csv"
+    filename = f"search_summary_{safe_name}_{date_str}.csv"
     return StreamingResponse(
         iter([csv_content]),
         media_type="text/csv",
