@@ -26,26 +26,45 @@
   } = $props();
 
   // ============================================================================
-  // Color Scale (orange gradient matching the Sunrise Field theme)
+  // Color Scale (viridis-inspired multi-hue palette for maximum contrast)
   // ============================================================================
 
-  function getColor(intensity: number): string {
-    if (intensity === 0) {
-      return 'rgb(250, 250, 249)';
-    }
-    const clamped = Math.min(1, Math.max(0, intensity));
-    const t = Math.pow(clamped, 0.5);
-    // stone-100: rgb(245, 245, 244) -> primary-500: rgb(255, 90, 0)
-    const r = Math.round(245 + t * 10);
-    const g = Math.round(245 - t * 155);
-    const b = Math.round(244 - t * 244);
+  // Viridis-inspired stops with brand orange (#FF5A00) at the high end
+  const COLOR_STOPS: Array<{ r: number; g: number; b: number }> = [
+    { r: 68, g: 1, b: 84 },   // t=0.00: dark purple
+    { r: 49, g: 104, b: 142 }, // t=0.25: blue
+    { r: 53, g: 183, b: 121 }, // t=0.50: green
+    { r: 253, g: 231, b: 37 }, // t=0.75: yellow
+    { r: 255, g: 90, b: 0 },   // t=1.00: brand orange (high similarity)
+  ];
+
+  /** Interpolate along the multi-stop color palette. t in [0, 1]. */
+  function interpolateColor(t: number): string {
+    const n = COLOR_STOPS.length - 1;
+    const scaledT = Math.min(1, Math.max(0, t)) * n;
+    const i = Math.min(n - 1, Math.floor(scaledT));
+    const frac = scaledT - i;
+    const c0 = COLOR_STOPS[i]!;
+    const c1 = COLOR_STOPS[i + 1]!;
+    const r = Math.round(c0.r + frac * (c1.r - c0.r));
+    const g = Math.round(c0.g + frac * (c1.g - c0.g));
+    const b = Math.round(c0.b + frac * (c1.b - c0.b));
     return `rgb(${r}, ${g}, ${b})`;
+  }
+
+  /** Color for a cell using the actual data range for normalization. */
+  function getColor(t: number, hasData: boolean): string {
+    if (!hasData) {
+      // No-data cells: clearly distinct light gray
+      return 'rgb(226, 224, 222)';
+    }
+    return interpolateColor(t);
   }
 
   function getLegendGradient(): string {
     const stops: string[] = [];
-    for (let i = 0; i <= 10; i++) {
-      stops.push(`${getColor(i / 10)} ${i * 10}%`);
+    for (let i = 0; i <= 20; i++) {
+      stops.push(`${interpolateColor(i / 20)} ${i * 5}%`);
     }
     return `linear-gradient(to right, ${stops.join(', ')})`;
   }
@@ -132,13 +151,18 @@
     return { grid, dates };
   })());
 
-  /** Max average similarity across all cells (used for color normalization) */
-  const maxAvg = $derived((() => {
-    let max = 0;
+  /** Min/max average similarity across all cells (used for data-range color normalization) */
+  const dataRange = $derived((() => {
+    let min = Infinity;
+    let max = -Infinity;
     for (const v of binned.grid.values()) {
+      if (v < min) min = v;
       if (v > max) max = v;
     }
-    return max > 0 ? max : 1;
+    if (!isFinite(min) || !isFinite(max)) return { min: 0, max: 1, range: 1 };
+    // Avoid division by zero when all values are identical
+    const range = max - min;
+    return { min, max, range: range > 0 ? range : 1 };
   })());
 
   // ============================================================================
@@ -173,14 +197,17 @@
       const rOuter = rInner + ringWidth - ringGap;
 
       for (let hour = 0; hour < 24; hour++) {
-        const avg = binned.grid.get(`${date}-${hour}`) ?? 0;
-        const intensity = avg / maxAvg;
+        const rawAvg = binned.grid.get(`${date}-${hour}`);
+        const hasData = rawAvg !== undefined;
+        const avg = rawAvg ?? 0;
+        // Normalize to [0, 1] using the actual data range for maximum contrast
+        const t = hasData ? (avg - dataRange.min) / dataRange.range : 0;
         const startAngle = hourToAngle(hour);
         const endAngle = hourToAngle(hour + 1);
 
         result.push({
           path: createWedgePath(cxVal, cyVal, rInner, rOuter, startAngle, endAngle),
-          fill: getColor(intensity),
+          fill: getColor(t, hasData),
           date,
           hour,
           avg,
@@ -375,13 +402,18 @@
     <!-- Legend -->
     <div class="flex flex-col items-center gap-1">
       <div class="flex items-center gap-2">
-        <span class="text-[10px] text-stone-500">0%</span>
+        <span class="text-[10px] text-stone-500">{Math.round(dataRange.min * 100)}%</span>
         <div
           class="h-3 w-24 rounded-sm"
           style="background: {getLegendGradient()};"
           aria-hidden="true"
         ></div>
-        <span class="text-[10px] text-stone-500">{Math.round(maxAvg * 100)}%</span>
+        <span class="text-[10px] text-stone-500">{Math.round(dataRange.max * 100)}%</span>
+      </div>
+      <!-- No-data swatch -->
+      <div class="flex items-center gap-1">
+        <div class="h-3 w-3 rounded-sm" style="background: rgb(226, 224, 222);" aria-hidden="true"></div>
+        <span class="text-[10px] text-stone-400">{m.search_time_no_data()}</span>
       </div>
       <span class="text-[10px] text-stone-400">{m.search_time_avg_similarity_per_hour()}</span>
       {#if timezone}
