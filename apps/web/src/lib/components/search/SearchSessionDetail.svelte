@@ -50,7 +50,7 @@
     if (!session) return;
     isExportingRecordings = true;
     try {
-      await exportSearchSessionRecordingsCSV(projectId, session.id);
+      await exportSearchSessionRecordingsCSV(projectId, session.id, getLocale());
     } catch (e) {
       console.error('Recordings export failed:', e);
     } finally {

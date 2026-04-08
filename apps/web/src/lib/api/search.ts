@@ -655,10 +655,12 @@ export async function getSessionSample(
  */
 export async function exportSearchSessionRecordingsCSV(
   projectId: string,
-  sessionId: string
+  sessionId: string,
+  locale?: string
 ): Promise<void> {
+  const params = locale ? `?locale=${locale}` : '';
   const response = await apiClient.requestRaw(
-    `${API_BASE}/projects/${projectId}/search/sessions/${sessionId}/export-recordings`
+    `${API_BASE}/projects/${projectId}/search/sessions/${sessionId}/export-recordings${params}`
   );
 
   if (!response.ok) {

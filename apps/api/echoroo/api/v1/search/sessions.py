@@ -766,6 +766,7 @@ async def export_search_session_recordings_csv(
     current_user: CurrentUser,
     db: DbSession,
     session_service: SearchSessionServiceDep,
+    locale: str = Query(default="en", description="Locale for common names (en, ja)"),
 ) -> StreamingResponse:
     """Export per-(recording × species) aggregated similarity results as CSV.
 
@@ -869,6 +870,26 @@ async def export_search_session_recordings_csv(
                 if key in tag_id_to_sci:
                     species_labels[key] = tag_id_to_sci[key]
 
+    # Build common name mapping using the same enrichment as session detail API
+    species_common_names: dict[str, str] = {}
+    if session.species_config and isinstance(session.species_config, list):
+        from echoroo.api.v1.search.utils import _enrich_species_config_with_locale
+        enriched_config = await _enrich_species_config_with_locale(
+            list(session.species_config), locale, db
+        )
+        for sp_cfg in enriched_config:
+            if not isinstance(sp_cfg, dict):
+                continue
+            sp_tag_id = str(sp_cfg.get("tag_id") or "")
+            sp_sci = str(sp_cfg.get("scientific_name") or "")
+            sp_common = str(sp_cfg.get("common_name") or "")
+            # Map species_key -> common_name
+            for key in species_keys:
+                if sp_tag_id and key == sp_tag_id:
+                    species_common_names[key] = sp_common
+                elif key in species_labels and species_labels[key] == sp_sci:
+                    species_common_names[key] = sp_common
+
     # Determine optional dataset filter from session parameters
     dataset_id_str: str | None = None
     if session.parameters and session.parameters.get("dataset_id"):
@@ -912,8 +933,8 @@ async def export_search_session_recordings_csv(
         output = io.StringIO()
         writer = csv.writer(output)
         writer.writerow([
-            "recording_filename", "recording_datetime", "species",
-            "max_similarity", "min_similarity", "avg_similarity",
+            "recording_filename", "recording_datetime", "scientific_name",
+            "common_name", "max_similarity", "min_similarity", "avg_similarity",
         ])
         csv_content = output.getvalue()
         date_str = datetime.now(UTC).strftime("%Y%m%d")
@@ -1001,7 +1022,8 @@ async def export_search_session_recordings_csv(
     writer.writerow([
         "recording_filename",
         "recording_datetime",
-        "species",
+        "scientific_name",
+        "common_name",
         "max_similarity",
         "min_similarity",
         "avg_similarity",
@@ -1009,14 +1031,16 @@ async def export_search_session_recordings_csv(
 
     for rec_id, rec_filename, rec_datetime in all_recordings:
         for sp_key in species_keys:
-            sp_label = species_labels.get(sp_key, sp_key)
+            sci_name = species_labels.get(sp_key, sp_key)
+            common_name = species_common_names.get(sp_key, "")
             agg_key: SpeciesRecordingKey = (sp_key, rec_id)
             if agg_key in agg:
                 entry = agg[agg_key]
                 writer.writerow([
                     rec_filename,
                     rec_datetime or "",
-                    sp_label,
+                    sci_name,
+                    common_name,
                     f"{entry['max_sim']:.4f}",
                     f"{entry['min_sim']:.4f}",
                     f"{entry['avg_sim']:.4f}",
@@ -1025,7 +1049,8 @@ async def export_search_session_recordings_csv(
                 writer.writerow([
                     rec_filename,
                     rec_datetime or "",
-                    sp_label,
+                    sci_name,
+                    common_name,
                     "",
                     "",
                     "",
