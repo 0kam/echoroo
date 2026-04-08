@@ -58,6 +58,9 @@
     }
   }
 
+  // Dataset name (resolved from session.parameters.dataset_id)
+  let datasetName = $state<string | null>(null);
+
   // Inline rename state
   let isRenaming = $state(false);
   let renameValue = $state('');
@@ -78,6 +81,18 @@
     try {
       const data = await getSearchSession(pid, sid, getLocale());
       session = data;
+
+      // Resolve dataset name from parameters.dataset_id
+      datasetName = null;
+      if (data.parameters?.dataset_id) {
+        try {
+          const { fetchDataset } = await import('$lib/api/datasets');
+          const ds = await fetchDataset(pid, data.parameters.dataset_id);
+          datasetName = ds.name ?? null;
+        } catch {
+          // Non-critical — just skip dataset name display
+        }
+      }
 
       // Reconstruct reference audio sources from persisted session data
       if (data.species_config) {
@@ -412,6 +427,16 @@
               <span class="inline-block h-2 w-2 rounded-full {statusDotColor()}"></span>
               {statusLabel()}
             </span>
+
+            {#if datasetName}
+              <span class="text-stone-400">·</span>
+              <span class="text-stone-500">{datasetName}</span>
+            {/if}
+
+            {#if session.model_name}
+              <span class="text-stone-400">·</span>
+              <span class="rounded bg-stone-100 px-1.5 py-0.5 text-xs font-medium text-stone-600 dark:bg-stone-700 dark:text-stone-300">{session.model_name}</span>
+            {/if}
 
             {#if searchDuration() > 0}
               <span class="text-stone-400">·</span>
