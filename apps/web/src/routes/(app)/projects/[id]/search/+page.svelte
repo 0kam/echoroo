@@ -248,6 +248,7 @@
    *                        If null, a brand-new session is created (fork).
    */
   function handleRerunFromDetail(rerunSpecies: TargetSpecies[], editSessionId: string | null) {
+    stopPolling();
     const sessionIdForRerun = selectedSessionId;
     species = rerunSpecies;
     isRerunMode = true;
@@ -255,6 +256,9 @@
     editingSessionId = editSessionId;
     results = null;
     searchDurationMs = 0;
+    isSearching = false;
+    searchError = undefined;
+    searchProgress = null;
     searchJobId = null;
     searchSessionId = null;
     selectedSessionId = null;
@@ -375,7 +379,7 @@
       </button>
 
       <!-- Page heading -->
-      <h1 class="text-2xl font-bold text-stone-900">{m.search_new_search()}</h1>
+      <h1 class="text-2xl font-bold text-stone-900">{isRerunMode ? m.search_edit_rerun() : m.search_new_search()}</h1>
 
       <!-- Reference Sounds Panel (editable) -->
       <ReferenceSoundsPanel
