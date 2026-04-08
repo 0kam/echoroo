@@ -562,10 +562,16 @@ export async function exportSearchSessionCSV(
  */
 export async function getSessionDistribution(
   projectId: string,
-  sessionId: string
+  sessionId: string,
+  speciesKey?: string
 ): Promise<SessionDistributionResponse> {
+  const params = new URLSearchParams();
+  if (speciesKey) {
+    params.set('species_key', speciesKey);
+  }
+  const qs = params.toString() ? `?${params.toString()}` : '';
   return apiClient.get<SessionDistributionResponse>(
-    `${API_BASE}/projects/${projectId}/search/sessions/${sessionId}/distribution`
+    `${API_BASE}/projects/${projectId}/search/sessions/${sessionId}/distribution${qs}`
   );
 }
 
@@ -582,10 +588,16 @@ export async function getSessionDistribution(
  */
 export async function getSessionTimeDistribution(
   projectId: string,
-  sessionId: string
+  sessionId: string,
+  speciesKey?: string
 ): Promise<SessionTimeDistributionResponse> {
+  const params = new URLSearchParams();
+  if (speciesKey) {
+    params.set('species_key', speciesKey);
+  }
+  const qs = params.toString() ? `?${params.toString()}` : '';
   return apiClient.get<SessionTimeDistributionResponse>(
-    `${API_BASE}/projects/${projectId}/search/sessions/${sessionId}/time-distribution`
+    `${API_BASE}/projects/${projectId}/search/sessions/${sessionId}/time-distribution${qs}`
   );
 }
 
@@ -607,13 +619,17 @@ export async function getSessionSample(
   sessionId: string,
   minSimilarity: number,
   maxSimilarity: number,
-  limit = 20
+  limit = 20,
+  speciesKey?: string
 ): Promise<SessionSampleResponse> {
   const params = new URLSearchParams({
     min_similarity: String(minSimilarity),
     max_similarity: String(maxSimilarity),
     limit: String(limit),
   });
+  if (speciesKey) {
+    params.set('species_key', speciesKey);
+  }
   return apiClient.get<SessionSampleResponse>(
     `${API_BASE}/projects/${projectId}/search/sessions/${sessionId}/sample?${params}`
   );

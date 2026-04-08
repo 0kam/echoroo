@@ -919,12 +919,16 @@ async def get_session_similarity_distribution(
     db: DbSession,
     session_service: SearchSessionServiceDep,
     bin_width: float = Query(default=0.05, ge=0.01, le=0.5, description="Histogram bin width"),
+    species_key: str | None = Query(default=None, description="Filter to a single species by its result key"),
 ) -> SessionDistributionResponse:
     """Get a similarity histogram for all project embeddings vs. the session's reference vectors.
 
     Retrieves the stored top-match embedding vectors from the session results and
     uses them as query vectors to compute a full-space similarity distribution.
     This approach avoids re-running model inference.
+
+    When ``species_key`` is provided, only the query vector for that species is
+    used, so the distribution reflects similarity to that single species only.
 
     Args:
         project_id: Project UUID (path parameter)
@@ -933,6 +937,7 @@ async def get_session_similarity_distribution(
         db: Database session
         session_service: Search session service
         bin_width: Histogram bin width (default 0.05 = 20 bins from 0.0 to 1.0)
+        species_key: Optional species key to filter distribution to a single species
 
     Returns:
         SessionDistributionResponse with histogram bins, total count, and session_id
@@ -946,7 +951,7 @@ async def get_session_similarity_distribution(
     if not session:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Search session not found")
 
-    query_vectors = await _get_query_vectors_from_session(session, db)
+    query_vectors = await _get_query_vectors_from_session(session, db, species_key=species_key)
     if not query_vectors:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -993,8 +998,12 @@ async def get_session_time_distribution(
     current_user: CurrentUser,
     db: DbSession,
     session_service: SearchSessionServiceDep,
+    species_key: str | None = Query(default=None, description="Filter to a single species by its result key"),
 ) -> SessionTimeDistributionResponse:
     """Get average similarity per (date, hour) for all project embeddings.
+
+    When ``species_key`` is provided, only the query vector for that species is
+    used, so the distribution reflects similarity to that single species only.
 
     Args:
         project_id: Project UUID (path parameter)
@@ -1002,6 +1011,7 @@ async def get_session_time_distribution(
         current_user: Current authenticated user
         db: Database session
         session_service: Search session service
+        species_key: Optional species key to filter distribution to a single species
 
     Returns:
         SessionTimeDistributionResponse with cells for each (date, hour) combination
@@ -1015,7 +1025,7 @@ async def get_session_time_distribution(
     if not session:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Search session not found")
 
-    query_vectors = await _get_query_vectors_from_session(session, db)
+    query_vectors = await _get_query_vectors_from_session(session, db, species_key=species_key)
     if not query_vectors:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -1076,8 +1086,12 @@ async def sample_session_similarity_range(
     min_similarity: float = Query(default=0.0, ge=0.0, le=1.0, description="Lower bound (inclusive)"),
     max_similarity: float = Query(default=1.0, ge=0.0, le=1.0, description="Upper bound (inclusive)"),
     limit: int = Query(default=20, ge=1, le=200, description="Maximum number of results to return"),
+    species_key: str | None = Query(default=None, description="Filter to a single species by its result key"),
 ) -> SessionSampleResponse:
     """Return a random sample of embeddings within a given similarity range.
+
+    When ``species_key`` is provided, only the query vector for that species is
+    used, so the sampled results reflect similarity to that single species only.
 
     Args:
         project_id: Project UUID (path parameter)
@@ -1088,6 +1102,7 @@ async def sample_session_similarity_range(
         min_similarity: Lower bound of similarity range
         max_similarity: Upper bound of similarity range
         limit: Maximum number of randomly sampled results
+        species_key: Optional species key to filter sample to a single species
 
     Returns:
         SessionSampleResponse with randomly sampled SimilarityResult items and total_in_range
@@ -1108,7 +1123,7 @@ async def sample_session_similarity_range(
     if not session:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Search session not found")
 
-    query_vectors = await _get_query_vectors_from_session(session, db)
+    query_vectors = await _get_query_vectors_from_session(session, db, species_key=species_key)
     if not query_vectors:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -1143,6 +1158,7 @@ async def sample_session_similarity_range(
 async def _get_query_vectors_from_session(
     session: Any,
     db: Any,
+    species_key: str | None = None,
 ) -> list[list[float]]:
     """Extract query vectors from a completed session's stored match embeddings.
 
@@ -1153,9 +1169,13 @@ async def _get_query_vectors_from_session(
     For multi-species sessions, one representative vector per species is returned
     so the distribution reflects similarity to any of the searched species.
 
+    When ``species_key`` is provided, only the query vector for that specific
+    species is returned, allowing callers to compute per-species distributions.
+
     Args:
         session: SearchSession ORM instance with populated results field
         db: SQLAlchemy async session
+        species_key: Optional species key to filter results to a single species
 
     Returns:
         List of float vectors (each of length _STORAGE_EMBEDDING_DIM), one per species.
@@ -1173,6 +1193,9 @@ async def _get_query_vectors_from_session(
     # Collect the best embedding_id per species (highest similarity match)
     best_embedding_ids: list[str] = []
     for _species_key, species_data in raw_results.items():
+        # If a species_key filter is provided, skip non-matching species
+        if species_key is not None and _species_key != species_key:
+            continue
         if not isinstance(species_data, dict):
             continue
         matches = species_data.get("matches", [])

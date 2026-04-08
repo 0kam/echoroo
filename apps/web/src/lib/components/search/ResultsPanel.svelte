@@ -47,8 +47,9 @@
   // ============================================================================
 
   /**
-   * Currently selected species key, or null for "All species" tab.
+   * Currently selected species key.
    * Species keys are the top-level keys of the `results` object.
+   * Defaults to the first species when results change.
    */
   let selectedSpeciesKey = $state<string | null>(null);
 
@@ -56,12 +57,14 @@
     results !== null ? Object.entries(results) : []
   );
 
-  /** Reset tab selection whenever results change (new search completed). */
+  /** Reset tab selection to first species whenever results change (new search completed). */
   let prevResultsRef = $state<Record<string, SpeciesMatchResult> | null>(null);
   $effect(() => {
     if (results !== prevResultsRef) {
       prevResultsRef = results;
-      selectedSpeciesKey = null;
+      // Default to first species key (never "all")
+      const keys = results ? Object.keys(results) : [];
+      selectedSpeciesKey = keys.length > 0 ? (keys[0] ?? null) : null;
     }
   });
 
@@ -101,11 +104,9 @@
   // ============================================================================
 
   const selectedMatches = $derived<SimilarityResult[]>(
-    results === null
+    results === null || selectedSpeciesKey === null
       ? []
-      : selectedSpeciesKey !== null
-        ? (results[selectedSpeciesKey]?.matches ?? [])
-        : Object.values(results).flatMap((group) => group.matches)
+      : (results[selectedSpeciesKey]?.matches ?? [])
   );
 
   /** All matches across all species — used for the heatmap and flat list. */
@@ -121,9 +122,9 @@
 
   const distributionQuery = $derived(
     createQuery({
-      queryKey: ['session-distribution', projectId, sessionId],
-      queryFn: () => getSessionDistribution(projectId, sessionId!),
-      enabled: !!sessionId,
+      queryKey: ['session-distribution', projectId, sessionId, selectedSpeciesKey],
+      queryFn: () => getSessionDistribution(projectId, sessionId!, selectedSpeciesKey ?? undefined),
+      enabled: !!sessionId && !!selectedSpeciesKey,
     })
   );
 
@@ -137,9 +138,9 @@
 
   const timeDistributionQuery = $derived(
     createQuery({
-      queryKey: ['session-time-distribution', projectId, sessionId],
-      queryFn: () => getSessionTimeDistribution(projectId, sessionId!),
-      enabled: !!sessionId,
+      queryKey: ['session-time-distribution', projectId, sessionId, selectedSpeciesKey],
+      queryFn: () => getSessionTimeDistribution(projectId, sessionId!, selectedSpeciesKey ?? undefined),
+      enabled: !!sessionId && !!selectedSpeciesKey,
     })
   );
 
@@ -154,10 +155,9 @@
   /**
    * Fallback: generate bins client-side from the current species' matches
    * when the server-side distribution API data is unavailable.
-   * When a species tab is selected, only that species' matches are used.
    */
   const fallbackBins = $derived<DistributionBin[]>((() => {
-    const source = selectedSpeciesKey !== null ? selectedMatches : allMatches;
+    const source = selectedMatches;
     if (source.length === 0) return [];
     const NUM_BINS = 20;
     const counts = new Array<number>(NUM_BINS).fill(0);
@@ -183,48 +183,20 @@
 
   const sampleQuery = $derived(
     createQuery({
-      queryKey: ['session-sample', projectId, sessionId, appliedMin, appliedMax, appliedLimit, resampleCounter],
-      queryFn: () => getSessionSample(projectId, sessionId!, appliedMin, appliedMax, appliedLimit),
-      enabled: !!sessionId,
+      queryKey: ['session-sample', projectId, sessionId, appliedMin, appliedMax, appliedLimit, resampleCounter, selectedSpeciesKey],
+      queryFn: () => getSessionSample(projectId, sessionId!, appliedMin, appliedMax, appliedLimit, selectedSpeciesKey ?? undefined),
+      enabled: !!sessionId && !!selectedSpeciesKey,
     })
   );
 
   /**
-   * Raw sample results from the API (covers all species).
-   * When a specific species tab is selected, filter client-side.
+   * Sample results from the API, already filtered by species_key server-side.
    */
-  const rawSampleResults = $derived<SimilarityResult[]>(
+  const sampleResults = $derived<SimilarityResult[]>(
     $sampleQuery.data?.results ?? []
   );
 
-  /**
-   * If a species tab is active, filter sample results to that species by
-   * matching recording IDs against the species' stored matches.
-   */
-  const sampleResults = $derived<SimilarityResult[]>((() => {
-    if (selectedSpeciesKey === null || results === null) return rawSampleResults;
-    const speciesMatchIds = new Set(
-      (results[selectedSpeciesKey]?.matches ?? []).map((r) => r.embedding_id)
-    );
-    return rawSampleResults.filter((r) => speciesMatchIds.has(r.embedding_id));
-  })());
-
   const totalInRange = $derived($sampleQuery.data?.total_in_range ?? 0);
-
-  /**
-   * For the selected species, count how many of that species' total matches
-   * fall in the applied range (client-side approximation from stored results).
-   */
-  const speciesTotalInRange = $derived<number>((() => {
-    if (selectedSpeciesKey === null || results === null) return totalInRange;
-    return (results[selectedSpeciesKey]?.matches ?? []).filter(
-      (r) => r.similarity >= appliedMin && r.similarity <= appliedMax
-    ).length;
-  })());
-
-  const displayedTotalInRange = $derived(
-    selectedSpeciesKey !== null ? speciesTotalInRange : totalInRange
-  );
 
   // ============================================================================
   // Card grid navigation
@@ -309,23 +281,11 @@
     {:else}
 
       <!-- ================================================================ -->
-      <!-- Species tabs (only shown when 2+ species)                        -->
+      <!-- Species tabs (always shown)                                      -->
       <!-- ================================================================ -->
-      {#if speciesEntries.length > 1}
+      {#if speciesEntries.length > 0}
         <div class="rounded-lg border border-card bg-surface-card shadow-sm">
           <div class="flex overflow-x-auto border-b border-card">
-            <!-- "All species" tab -->
-            <button
-              type="button"
-              class="flex shrink-0 items-center gap-1.5 border-b-2 px-4 py-2.5 text-sm font-medium transition-colors {selectedSpeciesKey === null
-                ? 'border-primary-500 text-primary-700'
-                : 'border-transparent text-stone-500 hover:text-stone-700'}"
-              onclick={() => { selectedSpeciesKey = null; }}
-            >
-              {m.search_tab_all_species()}
-            </button>
-
-            <!-- Per-species tabs -->
             {#each speciesEntries as [key, sp] (key)}
               <button
                 type="button"
@@ -468,7 +428,7 @@
           {#if $sampleQuery.data}
             <div class="flex items-center gap-3">
               <span class="text-xs text-stone-400">
-                {m.search_sample_count({ shown: sampleResults.length.toString(), total: displayedTotalInRange.toLocaleString() })}
+                {m.search_sample_count({ shown: sampleResults.length.toString(), total: totalInRange.toLocaleString() })}
               </span>
               <button
                 type="button"
