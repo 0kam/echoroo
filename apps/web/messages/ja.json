@@ -1272,6 +1272,8 @@
   "search_spiral_above": "閾値以上",
   "search_spiral_below": "以下",
   "search_spiral_radius_legend": "半径 = 類似度スコア（中心 = 0%、端 = 100%）",
+  "search_time_no_datetime": "これらの結果には日時情報がありません",
+  "search_time_matches_per_hour": "時間あたりのマッチ数",
   "search_threshold_range": "類似度範囲:",
   "search_threshold_results_count": "{count} 件",
   "search_no_results_in_range": "この範囲に結果がありません",

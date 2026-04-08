@@ -552,6 +552,11 @@ async def _run_batch_search_with_progress(
                         "embedding_id": str(sim_result.embedding_id),
                         "recording_id": str(sim_result.recording_id),
                         "recording_filename": sim_result.recording_filename,
+                        "recording_datetime": (
+                            sim_result.recording_datetime.isoformat()
+                            if sim_result.recording_datetime is not None
+                            else None
+                        ),
                         "dataset_id": str(sim_result.dataset_id),
                         "start_time": sim_result.start_time,
                         "end_time": sim_result.end_time,

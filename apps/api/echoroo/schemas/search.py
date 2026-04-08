@@ -290,3 +290,25 @@ class SimilarityDistributionResponse(BaseModel):
     )
     total: int = Field(..., description="Total number of embeddings considered")
     bin_width: float = Field(..., description="Width of each histogram bin")
+
+
+class SessionDistributionResponse(BaseModel):
+    """Distribution response scoped to a search session (matches frontend contract)."""
+
+    session_id: _uuid.UUID = Field(..., description="Search session UUID")
+    bins: list[SimilarityBin] = Field(
+        ..., description="Histogram bins ordered by lower bound ascending"
+    )
+    total_count: int = Field(..., description="Total number of embeddings considered")
+
+
+class SessionSampleResponse(BaseModel):
+    """Random sample response scoped to a search session (matches frontend contract)."""
+
+    session_id: _uuid.UUID = Field(..., description="Search session UUID")
+    results: list[SimilarityResult] = Field(
+        ..., description="Randomly sampled results within the requested similarity range"
+    )
+    total_in_range: int = Field(
+        ..., description="Total number of results in the requested range (before sampling)"
+    )

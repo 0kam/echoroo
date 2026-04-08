@@ -42,8 +42,8 @@ from echoroo.schemas.search import (
     SearchSessionListItem,
     SearchSessionListResponse,
     SearchSessionResponse,
-    SimilarityDistributionResponse,
-    SimilaritySearchResponse,
+    SessionDistributionResponse,
+    SessionSampleResponse,
     SourceConfig,
     SpeciesSearchConfig,
 )
@@ -901,7 +901,7 @@ async def export_search_session_csv(
 
 @router.get(
     "/sessions/{session_id}/distribution",
-    response_model=SimilarityDistributionResponse,
+    response_model=SessionDistributionResponse,
     summary="Get similarity distribution for a search session",
     description=(
         "Compute a histogram of cosine similarities for all project embeddings "
@@ -917,7 +917,7 @@ async def get_session_similarity_distribution(
     db: DbSession,
     session_service: SearchSessionServiceDep,
     bin_width: float = Query(default=0.05, ge=0.01, le=0.5, description="Histogram bin width"),
-) -> SimilarityDistributionResponse:
+) -> SessionDistributionResponse:
     """Get a similarity histogram for all project embeddings vs. the session's reference vectors.
 
     Retrieves the stored top-match embedding vectors from the session results and
@@ -933,7 +933,7 @@ async def get_session_similarity_distribution(
         bin_width: Histogram bin width (default 0.05 = 20 bins from 0.0 to 1.0)
 
     Returns:
-        SimilarityDistributionResponse with histogram bins and total count
+        SessionDistributionResponse with histogram bins, total count, and session_id
 
     Raises:
         403: Access denied to project
@@ -959,7 +959,7 @@ async def get_session_similarity_distribution(
     from echoroo.services.search import SimilaritySearchService
 
     search_service = SimilaritySearchService(db)
-    return await search_service.get_similarity_distribution(
+    dist = await search_service.get_similarity_distribution(
         project_id=project_id,
         query_vectors=query_vectors,
         model_name=session.model_name,
@@ -967,10 +967,16 @@ async def get_session_similarity_distribution(
         dataset_id=dataset_id,
     )
 
+    return SessionDistributionResponse(
+        session_id=session_id,
+        bins=dist.bins,
+        total_count=dist.total,
+    )
+
 
 @router.get(
     "/sessions/{session_id}/sample",
-    response_model=SimilaritySearchResponse,
+    response_model=SessionSampleResponse,
     summary="Randomly sample embeddings within a similarity range",
     description=(
         "Return a random sample of embeddings whose cosine similarity to the "
@@ -987,7 +993,7 @@ async def sample_session_similarity_range(
     min_similarity: float = Query(default=0.0, ge=0.0, le=1.0, description="Lower bound (inclusive)"),
     max_similarity: float = Query(default=1.0, ge=0.0, le=1.0, description="Upper bound (inclusive)"),
     limit: int = Query(default=20, ge=1, le=200, description="Maximum number of results to return"),
-) -> SimilaritySearchResponse:
+) -> SessionSampleResponse:
     """Return a random sample of embeddings within a given similarity range.
 
     Args:
@@ -1001,7 +1007,7 @@ async def sample_session_similarity_range(
         limit: Maximum number of randomly sampled results
 
     Returns:
-        SimilaritySearchResponse with randomly sampled SimilarityResult items
+        SessionSampleResponse with randomly sampled SimilarityResult items and total_in_range
 
     Raises:
         400: min_similarity > max_similarity
@@ -1034,7 +1040,7 @@ async def sample_session_similarity_range(
     from echoroo.services.search import SimilaritySearchService
 
     search_service = SimilaritySearchService(db)
-    results = await search_service.sample_by_similarity_range(
+    results, total_in_range = await search_service.sample_by_similarity_range(
         project_id=project_id,
         query_vectors=query_vectors,
         model_name=session.model_name,
@@ -1044,10 +1050,10 @@ async def sample_session_similarity_range(
         dataset_id=dataset_id,
     )
 
-    return SimilaritySearchResponse(
+    return SessionSampleResponse(
+        session_id=session_id,
         results=results,
-        query_model=session.model_name,
-        total_results=len(results),
+        total_in_range=total_in_range,
     )
 
 

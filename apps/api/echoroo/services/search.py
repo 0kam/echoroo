@@ -523,7 +523,7 @@ class SimilaritySearchService:
         max_similarity: float,
         limit: int = 20,
         dataset_id: UUID | None = None,
-    ) -> list[SimilarityResult]:
+    ) -> tuple[list[SimilarityResult], int]:
         """Randomly sample embeddings within a similarity range against query vectors.
 
         For each embedding, the max similarity across all query vectors is computed.
@@ -540,10 +540,10 @@ class SimilaritySearchService:
             dataset_id: Optional dataset filter
 
         Returns:
-            List of SimilarityResult (randomly sampled, unordered)
+            Tuple of (list of SimilarityResult randomly sampled, total count in range)
         """
         if not query_vectors:
-            return []
+            return [], 0
 
         dataset_filter = ""
         base_params: dict[str, object] = {
@@ -588,6 +588,8 @@ class SimilaritySearchService:
         params["max_similarity"] = max_similarity
         params["limit"] = limit
 
+        # Use a CTE to compute max similarities, then count total in range and
+        # randomly sample up to `limit` results in one round trip.
         sample_sql = text(
             f"""
             WITH all_similarities AS (
@@ -612,11 +614,19 @@ class SimilaritySearchService:
                     dataset_id,
                     start_time,
                     end_time
+            ),
+            in_range AS (
+                SELECT *
+                FROM max_similarities
+                WHERE similarity >= :min_similarity
+                  AND similarity <= :max_similarity
+            ),
+            total AS (
+                SELECT COUNT(*) AS total_in_range FROM in_range
             )
-            SELECT *
-            FROM max_similarities
-            WHERE similarity >= :min_similarity
-              AND similarity <= :max_similarity
+            SELECT ir.*, t.total_in_range
+            FROM in_range ir
+            CROSS JOIN total t
             ORDER BY RANDOM()
             LIMIT :limit
             """
@@ -624,7 +634,9 @@ class SimilaritySearchService:
 
         rows = (await self.db.execute(sample_sql, params)).fetchall()
 
-        return [
+        total_in_range = int(rows[0].total_in_range) if rows else 0
+
+        results = [
             SimilarityResult(
                 embedding_id=row.embedding_id,
                 recording_id=row.recording_id,
@@ -637,6 +649,8 @@ class SimilaritySearchService:
             )
             for row in rows
         ]
+
+        return results, total_in_range
 
     async def batch_search(
         self,

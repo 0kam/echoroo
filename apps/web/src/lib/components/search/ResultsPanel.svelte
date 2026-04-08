@@ -19,8 +19,8 @@
   import { getSessionDistribution, getSessionSample } from '$lib/api/search';
   import { createReviewNavigation } from '$lib/utils/reviewNavigation.svelte';
   import SearchPreviewCard from './SearchPreviewCard.svelte';
+  import SearchTimeHeatmap from './SearchTimeHeatmap.svelte';
   import SimilarityHistogram from './SimilarityHistogram.svelte';
-  import SimilaritySpiral from './SimilaritySpiral.svelte';
 
   interface Props {
     projectId: string;
@@ -317,12 +317,12 @@
           {/if}
         </div>
 
-        <!-- Spiral (right) -->
+        <!-- Activity Heatmap (right) -->
         <div class="rounded-lg border border-card bg-surface-card p-4 shadow-sm">
           <h4 class="mb-3 text-xs font-semibold uppercase tracking-wide text-stone-500">
             {m.search_time_distribution()}
           </h4>
-          <SimilaritySpiral
+          <SearchTimeHeatmap
             results={allMatches}
             threshold={appliedMin}
           />

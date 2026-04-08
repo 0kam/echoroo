@@ -564,7 +564,7 @@ export async function getSessionDistribution(
   sessionId: string
 ): Promise<SessionDistributionResponse> {
   return apiClient.get<SessionDistributionResponse>(
-    `${API_BASE}/projects/${projectId}/search-sessions/${sessionId}/distribution`
+    `${API_BASE}/projects/${projectId}/search/sessions/${sessionId}/distribution`
   );
 }
 
@@ -594,7 +594,7 @@ export async function getSessionSample(
     limit: String(limit),
   });
   return apiClient.get<SessionSampleResponse>(
-    `${API_BASE}/projects/${projectId}/search-sessions/${sessionId}/sample?${params}`
+    `${API_BASE}/projects/${projectId}/search/sessions/${sessionId}/sample?${params}`
   );
 }
 
@@ -612,7 +612,7 @@ export async function exportSearchSessionRecordingsCSV(
   sessionId: string
 ): Promise<void> {
   const response = await apiClient.requestRaw(
-    `${API_BASE}/projects/${projectId}/search-sessions/${sessionId}/export-recordings`
+    `${API_BASE}/projects/${projectId}/search/sessions/${sessionId}/export-recordings`
   );
 
   if (!response.ok) {
