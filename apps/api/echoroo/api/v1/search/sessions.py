@@ -759,8 +759,14 @@ async def export_search_session_recordings_csv(
             detail="Session has no species results to export",
         )
 
-    # Build display name mapping: species_key -> scientific name
+    # Build display name mapping: species_key -> scientific name.
+    #
+    # The keys in raw_results are tag UUIDs. species_config entries may have
+    # tag_id=null (when the search was created from a URL source without an
+    # existing tag), so we fall back to looking up the tag by scientific_name.
     species_labels: dict[str, str] = {}
+
+    # First pass: map by tag_id when available
     if session.species_config and isinstance(session.species_config, list):
         for sp_cfg in session.species_config:
             if not isinstance(sp_cfg, dict):
@@ -768,10 +774,36 @@ async def export_search_session_recordings_csv(
             sp_tag_id = str(sp_cfg.get("tag_id") or "")
             sp_sci_name = str(sp_cfg.get("scientific_name") or "")
             label = sp_sci_name or sp_tag_id or "Unknown"
-            # Match against both tag_id key and scientific_name key
             for key in species_keys:
-                if key in (sp_tag_id, sp_sci_name):
+                if sp_tag_id and key == sp_tag_id:
                     species_labels[key] = label
+
+    # Second pass: for keys still unmapped, look up tag by scientific_name
+    unmapped_keys = [k for k in species_keys if k not in species_labels]
+    if unmapped_keys and session.species_config and isinstance(session.species_config, list):
+        sci_names_in_config = [
+            str(sp_cfg.get("scientific_name") or "")
+            for sp_cfg in session.species_config
+            if isinstance(sp_cfg, dict) and sp_cfg.get("scientific_name")
+        ]
+        if sci_names_in_config:
+            tag_lookup_sql = text(
+                "SELECT id::text, scientific_name FROM tags "
+                "WHERE id = ANY(:ids) OR scientific_name = ANY(:names)"
+            )
+            tag_rows = (
+                await db.execute(
+                    tag_lookup_sql,
+                    {"ids": unmapped_keys, "names": sci_names_in_config},
+                )
+            ).fetchall()
+            # Build: tag_id -> scientific_name from DB
+            tag_id_to_sci: dict[str, str] = {
+                str(row[0]): str(row[1]) for row in tag_rows if row[1]
+            }
+            for key in unmapped_keys:
+                if key in tag_id_to_sci:
+                    species_labels[key] = tag_id_to_sci[key]
 
     # Determine optional dataset filter from session parameters
     dataset_id_str: str | None = None
