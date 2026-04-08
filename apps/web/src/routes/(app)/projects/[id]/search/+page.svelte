@@ -50,7 +50,6 @@
     limit_per_species: 20,
   });
   let results = $state<Record<string, SpeciesMatchResult> | null>(null);
-  let totalMatches = $state(0);
   let searchDurationMs = $state(0);
   let isSearching = $state(false);
   let searchError = $state<string | undefined>(undefined);
@@ -172,7 +171,6 @@
             stopPolling();
             if (status.results) {
               results = status.results.results;
-              totalMatches = status.results.total_matches;
               searchDurationMs = status.results.search_duration_ms;
             }
             isSearching = false;
@@ -212,7 +210,6 @@
     stopPolling();
     species = [];
     results = null;
-    totalMatches = 0;
     searchDurationMs = 0;
     isSearching = false;
     searchError = undefined;
@@ -257,7 +254,6 @@
     rerunSourceSessionId = sessionIdForRerun;
     editingSessionId = editSessionId;
     results = null;
-    totalMatches = 0;
     searchDurationMs = 0;
     searchJobId = null;
     searchSessionId = null;
@@ -430,7 +426,6 @@
         <ResultsPanel
           {projectId}
           {results}
-          {totalMatches}
           {searchDurationMs}
           {isSearching}
           searchingSpecies={species}

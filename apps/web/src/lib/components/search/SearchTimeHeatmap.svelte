@@ -1,11 +1,11 @@
 <script lang="ts">
   /**
-   * SearchTimeHeatmap - Polar heatmap of search result activity by hour and date.
+   * SearchTimeHeatmap - Polar heatmap of average similarity by hour and date.
    *
    * Reuses the same visual style as the detection PolarHeatmap:
    * - Angle: Hours 0-23, with 0h at 12 o'clock, clockwise
    * - Radius: Dates, innermost = oldest, outermost = newest
-   * - Color: Orange gradient based on match count per (date, hour) cell
+   * - Color: Orange gradient based on average similarity per (date, hour) cell
    *
    * Accepts an array of SimilarityResult items and bins them by date and hour
    * using recording_datetime. Results without a datetime are excluded from the plot.
@@ -118,9 +118,10 @@
   // Data Processing
   // ============================================================================
 
-  /** Bin results by date (YYYY-MM-DD) and hour (0-23) */
+  /** Bin results by date (YYYY-MM-DD) and hour (0-23), tracking sum and count for averaging */
   const binned = $derived((() => {
-    const grid = new Map<string, number>();
+    const sumGrid = new Map<string, number>();
+    const countGrid = new Map<string, number>();
     const dateSet = new Set<string>();
     let validCount = 0;
 
@@ -132,12 +133,20 @@
         const dateKey = d.toISOString().slice(0, 10);
         const hour = d.getHours();
         const key = `${dateKey}-${hour}`;
-        grid.set(key, (grid.get(key) ?? 0) + 1);
+        sumGrid.set(key, (sumGrid.get(key) ?? 0) + r.similarity);
+        countGrid.set(key, (countGrid.get(key) ?? 0) + 1);
         dateSet.add(dateKey);
         validCount++;
       } catch {
         // skip invalid dates
       }
+    }
+
+    // Compute average similarity per cell
+    const grid = new Map<string, number>();
+    for (const [key, sum] of sumGrid) {
+      const count = countGrid.get(key) ?? 1;
+      grid.set(key, sum / count);
     }
 
     const dates = Array.from(dateSet).sort(
@@ -147,12 +156,13 @@
     return { grid, dates, validCount };
   })());
 
-  const maxCount = $derived((() => {
-    let max = 1;
+  /** Max average similarity across all cells (used for color normalization) */
+  const maxAvg = $derived((() => {
+    let max = 0;
     for (const v of binned.grid.values()) {
       if (v > max) max = v;
     }
-    return max;
+    return max > 0 ? max : 1;
   })());
 
   const noDatetimeCount = $derived(
@@ -180,7 +190,7 @@
       fill: string;
       date: string;
       hour: number;
-      count: number;
+      avg: number;
       key: string;
     }> = [];
 
@@ -191,8 +201,8 @@
       const rOuter = rInner + ringWidth - ringGap;
 
       for (let hour = 0; hour < 24; hour++) {
-        const count = binned.grid.get(`${date}-${hour}`) ?? 0;
-        const intensity = count / maxCount;
+        const avg = binned.grid.get(`${date}-${hour}`) ?? 0;
+        const intensity = avg / maxAvg;
         const startAngle = hourToAngle(hour);
         const endAngle = hourToAngle(hour + 1);
 
@@ -201,7 +211,7 @@
           fill: getColor(intensity),
           date,
           hour,
-          count,
+          avg,
           key: `${date}-${hour}`,
         });
       }
@@ -219,7 +229,7 @@
     y: number;
     date: string;
     hour: number;
-    count: number;
+    avg: number;
   }
 
   let tooltip: TooltipState = $state({
@@ -228,12 +238,12 @@
     y: 0,
     date: '',
     hour: 0,
-    count: 0,
+    avg: 0,
   });
 
   let svgEl: SVGSVGElement | null = $state(null);
 
-  function handleMouseEnter(event: MouseEvent, date: string, hour: number, count: number) {
+  function handleMouseEnter(event: MouseEvent, date: string, hour: number, avg: number) {
     const rect = svgEl?.getBoundingClientRect();
     if (!rect) return;
     tooltip = {
@@ -242,7 +252,7 @@
       y: event.clientY - rect.top,
       date,
       hour,
-      count,
+      avg,
     };
   }
 
@@ -333,10 +343,10 @@
             stroke="white"
             stroke-width="0.3"
             class="cursor-pointer"
-            onmouseenter={(e) => handleMouseEnter(e, wedge.date, wedge.hour, wedge.count)}
+            onmouseenter={(e) => handleMouseEnter(e, wedge.date, wedge.hour, wedge.avg)}
             onmouseleave={handleMouseLeave}
             role="img"
-            aria-label="{formatDate(wedge.date)} {formatHour(wedge.hour)}: {wedge.count} matches"
+            aria-label="{formatDate(wedge.date)} {formatHour(wedge.hour)}: {wedge.avg > 0 ? Math.round(wedge.avg * 100) + '%' : 'no data'}"
           />
         {/each}
 
@@ -388,7 +398,7 @@
             {formatHour(tooltip.hour)} - {formatHour((tooltip.hour + 1) % 24)}
           </div>
           <div class="mt-1 font-semibold text-primary-400">
-            {tooltip.count} {tooltip.count === 1 ? 'match' : 'matches'}
+            {tooltip.avg > 0 ? Math.round(tooltip.avg * 100) + '%' : '—'}
           </div>
         </div>
       {/if}
@@ -397,15 +407,15 @@
     <!-- Legend -->
     <div class="flex flex-col items-center gap-1">
       <div class="flex items-center gap-2">
-        <span class="text-[10px] text-stone-500">0</span>
+        <span class="text-[10px] text-stone-500">0%</span>
         <div
           class="h-3 w-24 rounded-sm"
           style="background: {getLegendGradient()};"
           aria-hidden="true"
         ></div>
-        <span class="text-[10px] text-stone-500">{maxCount}</span>
+        <span class="text-[10px] text-stone-500">{Math.round(maxAvg * 100)}%</span>
       </div>
-      <span class="text-[10px] text-stone-400">{m.search_time_matches_per_hour()}</span>
+      <span class="text-[10px] text-stone-400">{m.search_time_avg_similarity_per_hour()}</span>
     </div>
 
     <!-- Date range indicator -->

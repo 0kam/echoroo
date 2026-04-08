@@ -1278,6 +1278,7 @@
   "search_spiral_radius_legend": "Radius = similarity score (center = 0%, edge = 100%)",
   "search_time_no_datetime": "No datetime information available for these results",
   "search_time_matches_per_hour": "Matches per hour",
+  "search_time_avg_similarity_per_hour": "Avg. similarity per hour",
   "search_threshold_range": "Similarity range:",
   "search_threshold_results_count": "{count} results",
   "search_no_results_in_range": "No results in this range",

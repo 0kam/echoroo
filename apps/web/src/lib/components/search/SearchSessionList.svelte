@@ -199,10 +199,6 @@
                     {session.model_name}
                   </span>
 
-                  {#if session.result_count > 0}
-                    <span class="text-stone-300" aria-hidden="true">·</span>
-                    <span>{m.search_results_count_session({ count: String(session.result_count) })}</span>
-                  {/if}
                 </div>
               </div>
             </div>

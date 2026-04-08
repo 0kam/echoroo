@@ -197,11 +197,6 @@
     return session.results.search_duration_ms;
   });
 
-  const totalMatches = $derived(() => {
-    if (!session?.results) return 0;
-    return session.results.total_matches;
-  });
-
   // ============================================
   // Rename handlers
   // ============================================
@@ -410,13 +405,6 @@
               {statusLabel()}
             </span>
 
-            {#if session.result_count > 0}
-              <span class="text-stone-400">·</span>
-              <span class="text-stone-600">
-                {m.search_session_results_summary({ results: String(session.result_count) })}
-              </span>
-            {/if}
-
             {#if searchDuration() > 0}
               <span class="text-stone-400">·</span>
               <span class="text-stone-500">
@@ -519,7 +507,6 @@
         {projectId}
         sessionId={session.id}
         results={session.results.results}
-        totalMatches={totalMatches()}
         searchDurationMs={searchDuration()}
         isSearching={false}
         searchingSpecies={reconstructedSpecies}

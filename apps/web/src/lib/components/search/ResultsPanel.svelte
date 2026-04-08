@@ -26,7 +26,6 @@
   interface Props {
     projectId: string;
     results: Record<string, SpeciesMatchResult> | null;
-    totalMatches: number;
     searchDurationMs: number;
     isSearching: boolean;
     searchingSpecies: TargetSpecies[];
@@ -37,7 +36,6 @@
   let {
     projectId,
     results,
-    totalMatches,
     searchDurationMs,
     isSearching,
     searchingSpecies,
@@ -239,17 +237,10 @@
 <svelte:window onkeydown={nav.handleKeydown} />
 
 <div class="flex flex-col gap-4">
-  <!-- Summary bar (only show after search completes) -->
+  <!-- Keyboard shortcuts hint (only show after search completes) -->
   {#if results !== null && !isSearching}
-    <div class="flex flex-wrap items-center gap-4 rounded-lg border border-stone-200 bg-stone-50 p-3">
-      <span class="text-xs text-stone-400">
-        {m.search_results_total({ count: totalMatches.toString() })}
-        &bull;
-        {m.search_search_duration({ ms: searchDurationMs.toString() })}
-      </span>
-
-      <!-- Keyboard shortcuts hint -->
-      <div class="ml-auto flex items-center gap-2 text-xs text-stone-400">
+    <div class="flex flex-wrap items-center justify-end gap-4 rounded-lg border border-stone-200 bg-stone-50 p-3">
+      <div class="flex items-center gap-2 text-xs text-stone-400">
         <kbd class="rounded border border-stone-200 bg-surface-card px-1.5 py-0.5 font-mono text-xs">Space</kbd> {m.search_keyboard_play()}
         <kbd class="rounded border border-stone-200 bg-surface-card px-1.5 py-0.5 font-mono text-xs">&#8593;&#8595;</kbd> {m.search_keyboard_navigate()}
       </div>
@@ -279,7 +270,7 @@
       </div>
     </div>
   {:else if results !== null}
-    {#if speciesEntries.length === 0 || totalMatches === 0}
+    {#if speciesEntries.length === 0 || allMatches.length === 0}
       <!-- No results at all -->
       <div class="flex flex-col items-center justify-center rounded-lg border-2 border-dashed border-stone-200 py-16 text-center">
         <svg
@@ -312,9 +303,6 @@
               onclick={() => { selectedSpeciesKey = null; }}
             >
               {m.search_tab_all_species()}
-              <span class="rounded-full bg-stone-100 px-1.5 py-0.5 text-xs text-stone-500">
-                {totalMatches.toLocaleString()}
-              </span>
             </button>
 
             <!-- Per-species tabs -->
@@ -331,9 +319,6 @@
                   {#if sp.common_name}
                     <span class="not-italic text-stone-400">({sp.common_name})</span>
                   {/if}
-                </span>
-                <span class="rounded-full bg-stone-100 px-1.5 py-0.5 text-xs text-stone-500">
-                  {m.search_tab_species_count({ count: sp.matches.length.toLocaleString() })}
                 </span>
               </button>
             {/each}
