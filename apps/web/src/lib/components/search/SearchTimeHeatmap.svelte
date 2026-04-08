@@ -26,24 +26,37 @@
   } = $props();
 
   // ============================================================================
-  // Color Scale (viridis-inspired multi-hue palette for maximum contrast)
+  // Color Scale (single-hue orange gradient matching brand color #FF5A00)
   // ============================================================================
 
-  // Viridis-inspired stops with brand orange (#FF5A00) at the high end
+  // Single-hue orange gradient: pale cream -> deep dark orange
   const COLOR_STOPS: Array<{ r: number; g: number; b: number }> = [
-    { r: 68, g: 1, b: 84 },   // t=0.00: dark purple
-    { r: 49, g: 104, b: 142 }, // t=0.25: blue
-    { r: 53, g: 183, b: 121 }, // t=0.50: green
-    { r: 253, g: 231, b: 37 }, // t=0.75: yellow
-    { r: 255, g: 90, b: 0 },   // t=1.00: brand orange (high similarity)
+    { r: 255, g: 245, b: 235 }, // t=0.00: very pale cream (#FFF5EB)
+    { r: 255, g: 212, b: 173 }, // t=0.30: light peach (#FFD4AD)
+    { r: 255, g: 167, b: 92 },  // t=0.50: medium orange (#FFA75C)
+    { r: 255, g: 122, b: 26 },  // t=0.70: strong orange (#FF7A1A)
+    { r: 204, g: 72, b: 0 },    // t=1.00: deep dark orange (#CC4800)
   ];
 
-  /** Interpolate along the multi-stop color palette. t in [0, 1]. */
+  // Non-uniform stop positions matching the design spec
+  const STOP_POSITIONS = [0.0, 0.3, 0.5, 0.7, 1.0];
+
+  /** Interpolate along the single-hue orange palette. t in [0, 1]. */
   function interpolateColor(t: number): string {
-    const n = COLOR_STOPS.length - 1;
-    const scaledT = Math.min(1, Math.max(0, t)) * n;
-    const i = Math.min(n - 1, Math.floor(scaledT));
-    const frac = scaledT - i;
+    const clamped = Math.min(1, Math.max(0, t));
+
+    // Find the two stops that bracket this t value
+    let i = 0;
+    for (let s = 0; s < STOP_POSITIONS.length - 1; s++) {
+      if (clamped >= STOP_POSITIONS[s]!) {
+        i = s;
+      }
+    }
+
+    const tLow = STOP_POSITIONS[i]!;
+    const tHigh = STOP_POSITIONS[i + 1]!;
+    const frac = (clamped - tLow) / (tHigh - tLow);
+
     const c0 = COLOR_STOPS[i]!;
     const c1 = COLOR_STOPS[i + 1]!;
     const r = Math.round(c0.r + frac * (c1.r - c0.r));
@@ -52,19 +65,31 @@
     return `rgb(${r}, ${g}, ${b})`;
   }
 
+  /**
+   * Apply a power curve to spread out the mid-range for better visual
+   * differentiation. Exponent < 1.0 emphasizes differences in the lower
+   * similarity range where most data lives.
+   */
+  function applyCurve(t: number): number {
+    return Math.pow(Math.min(1, Math.max(0, t)), 0.6);
+  }
+
+  /** No-data cell color: neutral stone gray that contrasts with warm palette */
+  const NO_DATA_COLOR = 'rgb(231, 229, 228)'; // stone-200 (#E7E5E4)
+
   /** Color for a cell using the actual data range for normalization. */
   function getColor(t: number, hasData: boolean): string {
     if (!hasData) {
-      // No-data cells: clearly distinct light gray
-      return 'rgb(226, 224, 222)';
+      return NO_DATA_COLOR;
     }
-    return interpolateColor(t);
+    return interpolateColor(applyCurve(t));
   }
 
   function getLegendGradient(): string {
     const stops: string[] = [];
     for (let i = 0; i <= 20; i++) {
-      stops.push(`${interpolateColor(i / 20)} ${i * 5}%`);
+      const t = i / 20;
+      stops.push(`${interpolateColor(applyCurve(t))} ${i * 5}%`);
     }
     return `linear-gradient(to right, ${stops.join(', ')})`;
   }
@@ -412,7 +437,7 @@
       </div>
       <!-- No-data swatch -->
       <div class="flex items-center gap-1">
-        <div class="h-3 w-3 rounded-sm" style="background: rgb(226, 224, 222);" aria-hidden="true"></div>
+        <div class="h-3 w-3 rounded-sm" style="background: {NO_DATA_COLOR};" aria-hidden="true"></div>
         <span class="text-[10px] text-stone-400">{m.search_time_no_data()}</span>
       </div>
       <span class="text-[10px] text-stone-400">{m.search_time_avg_similarity_per_hour()}</span>
