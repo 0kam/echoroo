@@ -14,6 +14,7 @@ import type {
   SearchSessionListResponse,
   SessionDistributionResponse,
   SessionSampleResponse,
+  SessionTimeDistributionResponse,
   SimilarByAudioParams,
   SimilarByEmbeddingRequest,
   SimilaritySearchResponse,
@@ -565,6 +566,26 @@ export async function getSessionDistribution(
 ): Promise<SessionDistributionResponse> {
   return apiClient.get<SessionDistributionResponse>(
     `${API_BASE}/projects/${projectId}/search/sessions/${sessionId}/distribution`
+  );
+}
+
+/**
+ * Fetch time-of-day similarity distribution for a search session.
+ *
+ * Returns average similarity per (date, hour) cell computed over ALL
+ * project embeddings, not just the session's top results. Used to render
+ * the SearchTimeHeatmap.
+ *
+ * @param projectId - Project UUID
+ * @param sessionId - Search session UUID
+ * @returns Time distribution cells with date, hour, avg_similarity, count
+ */
+export async function getSessionTimeDistribution(
+  projectId: string,
+  sessionId: string
+): Promise<SessionTimeDistributionResponse> {
+  return apiClient.get<SessionTimeDistributionResponse>(
+    `${API_BASE}/projects/${projectId}/search/sessions/${sessionId}/time-distribution`
   );
 }
 

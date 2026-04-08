@@ -312,3 +312,21 @@ class SessionSampleResponse(BaseModel):
     total_in_range: int = Field(
         ..., description="Total number of results in the requested range (before sampling)"
     )
+
+
+class TimeDistributionCell(BaseModel):
+    """A single (date, hour) cell for the time-of-day similarity distribution."""
+
+    date: str = Field(..., description="Date in YYYY-MM-DD format")
+    hour: int = Field(..., ge=0, le=23, description="Hour of day (0-23)")
+    avg_similarity: float = Field(..., description="Average similarity in this cell")
+    count: int = Field(..., description="Number of embeddings in this cell")
+
+
+class SessionTimeDistributionResponse(BaseModel):
+    """Time-of-day similarity distribution for a search session."""
+
+    session_id: _uuid.UUID = Field(..., description="Search session UUID")
+    cells: list[TimeDistributionCell] = Field(
+        ..., description="Average similarity per (date, hour) cell"
+    )

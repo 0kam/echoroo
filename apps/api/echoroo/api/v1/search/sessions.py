@@ -44,8 +44,10 @@ from echoroo.schemas.search import (
     SearchSessionResponse,
     SessionDistributionResponse,
     SessionSampleResponse,
+    SessionTimeDistributionResponse,
     SourceConfig,
     SpeciesSearchConfig,
+    TimeDistributionCell,
 )
 
 logger = logging.getLogger(__name__)
@@ -971,6 +973,83 @@ async def get_session_similarity_distribution(
         session_id=session_id,
         bins=dist.bins,
         total_count=dist.total,
+    )
+
+
+@router.get(
+    "/sessions/{session_id}/time-distribution",
+    response_model=SessionTimeDistributionResponse,
+    summary="Get time-of-day similarity distribution for a search session",
+    description=(
+        "Compute average cosine similarity grouped by (date, hour) for all "
+        "project embeddings against the session's reference vectors. "
+        "Returns one cell per (date, hour) combination with average similarity "
+        "and embedding count. Useful for rendering time-of-day heatmaps."
+    ),
+)
+async def get_session_time_distribution(
+    project_id: UUID,
+    session_id: UUID,
+    current_user: CurrentUser,
+    db: DbSession,
+    session_service: SearchSessionServiceDep,
+) -> SessionTimeDistributionResponse:
+    """Get average similarity per (date, hour) for all project embeddings.
+
+    Args:
+        project_id: Project UUID (path parameter)
+        session_id: Session UUID (path parameter)
+        current_user: Current authenticated user
+        db: Database session
+        session_service: Search session service
+
+    Returns:
+        SessionTimeDistributionResponse with cells for each (date, hour) combination
+
+    Raises:
+        403: Access denied to project
+        404: Session not found or has no results
+    """
+    await check_project_access(project_id, current_user.id, db)
+    session = await session_service.get_session(session_id, project_id)
+    if not session:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Search session not found")
+
+    query_vectors = await _get_query_vectors_from_session(session, db)
+    if not query_vectors:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Session has no results to compute time distribution from",
+        )
+
+    dataset_id: UUID | None = None
+    if session.parameters and session.parameters.get("dataset_id"):
+        with contextlib.suppress(ValueError):
+            dataset_id = UUID(str(session.parameters["dataset_id"]))
+
+    from echoroo.services.search import SimilaritySearchService
+
+    search_service = SimilaritySearchService(db)
+    raw_cells = await search_service.get_time_distribution(
+        project_id=project_id,
+        query_vectors=query_vectors,
+        model_name=session.model_name,
+        dataset_id=dataset_id,
+    )
+
+    cells = [
+        TimeDistributionCell(
+            date=str(c["date"]),
+            hour=int(c["hour"]),
+            avg_similarity=float(c["avg_similarity"]),
+            count=int(c["count"]),
+        )
+        for c in raw_cells
+    ]
+
+    return SessionTimeDistributionResponse(
+        session_id=session_id,
+        cells=cells,
     )
 
 

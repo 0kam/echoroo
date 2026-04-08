@@ -16,8 +16,8 @@
   import { onDestroy } from 'svelte';
   import { createQuery } from '@tanstack/svelte-query';
   import * as m from '$lib/paraglide/messages.js';
-  import type { DistributionBin, SimilarityResult, SpeciesMatchResult, TargetSpecies } from '$lib/types/search';
-  import { getSessionDistribution, getSessionSample } from '$lib/api/search';
+  import type { DistributionBin, SimilarityResult, SpeciesMatchResult, TargetSpecies, TimeDistributionCell } from '$lib/types/search';
+  import { getSessionDistribution, getSessionSample, getSessionTimeDistribution } from '$lib/api/search';
   import { createReviewNavigation } from '$lib/utils/reviewNavigation.svelte';
   import SearchPreviewCard from './SearchPreviewCard.svelte';
   import SearchTimeHeatmap from './SearchTimeHeatmap.svelte';
@@ -129,6 +129,22 @@
 
   const distributionBins = $derived<DistributionBin[]>(
     $distributionQuery.data?.bins ?? []
+  );
+
+  // ============================================================================
+  // Time distribution query (TanStack Query) — for heatmap
+  // ============================================================================
+
+  const timeDistributionQuery = $derived(
+    createQuery({
+      queryKey: ['session-time-distribution', projectId, sessionId],
+      queryFn: () => getSessionTimeDistribution(projectId, sessionId!),
+      enabled: !!sessionId,
+    })
+  );
+
+  const timeDistributionCells = $derived<TimeDistributionCell[]>(
+    $timeDistributionQuery.data?.cells ?? []
   );
 
   /**
@@ -412,15 +428,23 @@
           {/if}
         </div>
 
-        <!-- Activity Heatmap (right) — always shows all species -->
+        <!-- Activity Heatmap (right) — uses time-distribution API for all embeddings -->
         <div class="rounded-lg border border-card bg-surface-card p-4 shadow-sm">
           <h4 class="mb-3 text-xs font-semibold uppercase tracking-wide text-stone-500">
             {m.search_time_distribution()}
           </h4>
-          <SearchTimeHeatmap
-            results={selectedSpeciesKey !== null ? selectedMatches : allMatches}
-            threshold={appliedMin}
-          />
+          {#if $timeDistributionQuery.isLoading && sessionId}
+            <div class="flex h-[260px] items-center justify-center">
+              <svg class="h-5 w-5 animate-spin text-stone-300" fill="none" viewBox="0 0 24 24" aria-hidden="true">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+              </svg>
+            </div>
+          {:else}
+            <SearchTimeHeatmap
+              cells={timeDistributionCells}
+            />
+          {/if}
         </div>
       </div>
 

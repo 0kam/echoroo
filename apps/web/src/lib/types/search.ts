@@ -212,6 +212,30 @@ export interface SessionSampleResponse {
 }
 
 /**
+ * A single (date, hour) cell in the time-of-day similarity distribution.
+ */
+export interface TimeDistributionCell {
+  /** Date in YYYY-MM-DD format */
+  date: string;
+  /** Hour of day (0-23) */
+  hour: number;
+  /** Average similarity for this cell */
+  avg_similarity: number;
+  /** Number of embeddings in this cell */
+  count: number;
+}
+
+/**
+ * Response from the session time-distribution endpoint.
+ */
+export interface SessionTimeDistributionResponse {
+  /** Session UUID */
+  session_id: string;
+  /** Average similarity per (date, hour) cell */
+  cells: TimeDistributionCell[];
+}
+
+/**
  * Aggregated similarity matches for a single species.
  */
 export interface SpeciesMatchResult {

@@ -652,6 +652,102 @@ class SimilaritySearchService:
 
         return results, total_in_range
 
+    async def get_time_distribution(
+        self,
+        project_id: UUID,
+        query_vectors: list[list[float]],
+        model_name: str,
+        dataset_id: UUID | None = None,
+    ) -> list[dict[str, object]]:
+        """Compute average similarity grouped by (date, hour) for all project embeddings.
+
+        For each embedding with a recording datetime, computes the maximum cosine
+        similarity across all provided query vectors, then groups by date and hour
+        returning average similarity and count per cell.
+
+        Args:
+            project_id: Project UUID for access scoping
+            query_vectors: List of query vectors to compute similarities against
+            model_name: Model name filter
+            dataset_id: Optional dataset filter
+
+        Returns:
+            List of dicts with keys: date (str), hour (int), avg_similarity (float), count (int)
+        """
+        if not query_vectors:
+            return []
+
+        dataset_filter = ""
+        base_params: dict[str, object] = {
+            "project_id": str(project_id),
+            "model_name": model_name,
+        }
+        if dataset_id is not None:
+            dataset_filter = "AND d.id = :dataset_id"
+            base_params["dataset_id"] = str(dataset_id)
+
+        # Build UNION ALL across all query vectors
+        union_parts: list[str] = []
+        params: dict[str, object] = dict(base_params)
+
+        for idx, qv in enumerate(query_vectors):
+            vec_literal = "[" + ",".join(str(v) for v in qv) + "]"
+            param_key = f"qv_{idx}"
+            params[param_key] = vec_literal
+            union_parts.append(
+                f"""
+                SELECT
+                    e.id AS embedding_id,
+                    r.datetime AS recording_datetime,
+                    1 - (e.vector <=> CAST(:{param_key} AS vector)) AS similarity
+                FROM embeddings e
+                JOIN recordings r ON e.recording_id = r.id
+                JOIN datasets d   ON r.dataset_id   = d.id
+                WHERE d.project_id = :project_id
+                  AND e.model_name  = :model_name
+                  AND r.datetime IS NOT NULL
+                  {dataset_filter}
+                """
+            )
+
+        union_sql = " UNION ALL ".join(union_parts)
+
+        time_dist_sql = text(
+            f"""
+            WITH all_similarities AS (
+                {union_sql}
+            ),
+            max_similarities AS (
+                SELECT
+                    embedding_id,
+                    recording_datetime,
+                    MAX(similarity) AS similarity
+                FROM all_similarities
+                GROUP BY embedding_id, recording_datetime
+            )
+            SELECT
+                DATE(recording_datetime)::text AS date,
+                EXTRACT(HOUR FROM recording_datetime)::int AS hour,
+                AVG(similarity) AS avg_similarity,
+                COUNT(*) AS count
+            FROM max_similarities
+            GROUP BY DATE(recording_datetime), EXTRACT(HOUR FROM recording_datetime)
+            ORDER BY date, hour
+            """
+        )
+
+        rows = (await self.db.execute(time_dist_sql, params)).fetchall()
+
+        return [
+            {
+                "date": row.date,
+                "hour": int(row.hour),
+                "avg_similarity": float(row.avg_similarity),
+                "count": int(row.count),
+            }
+            for row in rows
+        ]
+
     async def batch_search(
         self,
         project_id: UUID,

@@ -7,25 +7,19 @@
    * - Radius: Dates, innermost = oldest, outermost = newest
    * - Color: Orange gradient based on average similarity per (date, hour) cell
    *
-   * Accepts an array of SimilarityResult items and bins them by date and hour
-   * using recording_datetime. Results without a datetime are excluded from the plot.
+   * Accepts pre-computed cells from the time-distribution API endpoint.
+   * Each cell contains a date, hour, avg_similarity, and count.
    */
 
   import { getLocale } from '$lib/paraglide/runtime';
   import * as m from '$lib/paraglide/messages';
-
-  interface Result {
-    similarity: number;
-    recording_datetime: string | null;
-  }
+  import type { TimeDistributionCell } from '$lib/types/search';
 
   let {
-    results,
-    threshold = 0.5,
+    cells = [],
     size = 260,
   }: {
-    results: Result[];
-    threshold: number;
+    cells: TimeDistributionCell[];
     size?: number;
   } = $props();
 
@@ -118,42 +112,22 @@
   // Data Processing
   // ============================================================================
 
-  /** Bin results by date (YYYY-MM-DD) and hour (0-23), tracking sum and count for averaging */
+  /** Build a grid from pre-computed API cells keyed by "date-hour" */
   const binned = $derived((() => {
-    const sumGrid = new Map<string, number>();
-    const countGrid = new Map<string, number>();
-    const dateSet = new Set<string>();
-    let validCount = 0;
-
-    for (const r of results) {
-      if (!r.recording_datetime) continue;
-      try {
-        const d = new Date(r.recording_datetime);
-        if (isNaN(d.getTime())) continue;
-        const dateKey = d.toISOString().slice(0, 10);
-        const hour = d.getHours();
-        const key = `${dateKey}-${hour}`;
-        sumGrid.set(key, (sumGrid.get(key) ?? 0) + r.similarity);
-        countGrid.set(key, (countGrid.get(key) ?? 0) + 1);
-        dateSet.add(dateKey);
-        validCount++;
-      } catch {
-        // skip invalid dates
-      }
-    }
-
-    // Compute average similarity per cell
     const grid = new Map<string, number>();
-    for (const [key, sum] of sumGrid) {
-      const count = countGrid.get(key) ?? 1;
-      grid.set(key, sum / count);
+    const dateSet = new Set<string>();
+
+    for (const cell of cells) {
+      const key = `${cell.date}-${cell.hour}`;
+      grid.set(key, cell.avg_similarity);
+      dateSet.add(cell.date);
     }
 
     const dates = Array.from(dateSet).sort(
       (a, b) => new Date(a).getTime() - new Date(b).getTime(),
     );
 
-    return { grid, dates, validCount };
+    return { grid, dates };
   })());
 
   /** Max average similarity across all cells (used for color normalization) */
@@ -164,10 +138,6 @@
     }
     return max > 0 ? max : 1;
   })());
-
-  const noDatetimeCount = $derived(
-    results.filter((r) => !r.recording_datetime).length
-  );
 
   // ============================================================================
   // Layout
@@ -291,11 +261,7 @@
         />
       </svg>
       <p class="mt-2 text-xs text-stone-400">
-        {#if noDatetimeCount > 0}
-          {m.search_time_no_datetime()}
-        {:else}
-          {m.search_results_no_matches()}
-        {/if}
+        {m.search_time_no_datetime()}
       </p>
     </div>
   {:else}
