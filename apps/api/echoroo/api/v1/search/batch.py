@@ -488,6 +488,7 @@ async def get_search_job(
         if search_session is not None and raw is not None:
             from echoroo.models.enums import SearchSessionStatus
 
+            await db.refresh(search_session)
             if search_session.status != SearchSessionStatus.COMPLETED:
                 search_session.status = SearchSessionStatus.COMPLETED
                 search_session.results = raw if isinstance(raw, dict) else None
