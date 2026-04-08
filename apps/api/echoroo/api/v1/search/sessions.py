@@ -861,47 +861,75 @@ async def export_search_session_recordings_csv(
             headers={"Content-Disposition": f'attachment; filename="{filename}"'},
         )
 
-    recording_id_set: set[str] = {rec[0] for rec in all_recordings}
+    # For each species, compute similarity against ALL embeddings via SQL
+    # (same pattern as distribution/time-distribution APIs).
+    # Aggregate per recording: MAX, MIN, AVG similarity.
+    model_name = session.model_name or "perch"
+    dataset_filter = "AND d.id = :dataset_id" if dataset_id_str else ""
 
-    # For each species, aggregate per-recording similarity stats.
-    # Structure: species_key -> recording_id -> stats dict
-    # We process the stored session results (which are already aggregated per segment).
-
-    # Per-species, per-recording aggregation
-    # row = (species_key, recording_id) -> {max_sim, min_sim, total_sim, count, best_start, best_end}
     SpeciesRecordingKey = tuple[str, str]
-    agg: dict[SpeciesRecordingKey, dict[str, object]] = {}
+    agg: dict[SpeciesRecordingKey, dict[str, float]] = {}
 
-    for sp_key, species_data in raw_results.items():
-        if not isinstance(species_data, dict):
+    for sp_key in species_keys:
+        query_vectors = await _get_query_vectors_from_session(session, db, species_key=sp_key)
+        if not query_vectors:
             continue
-        matches = species_data.get("matches", [])
-        if not isinstance(matches, list):
-            continue
-        for match in matches:
-            if not isinstance(match, dict):
-                continue
-            rec_id = str(match.get("recording_id", ""))
-            if not rec_id or rec_id not in recording_id_set:
-                continue
-            similarity = float(match.get("similarity", 0.0))
 
-            key: SpeciesRecordingKey = (sp_key, rec_id)
-            if key not in agg:
-                agg[key] = {
-                    "max_sim": similarity,
-                    "min_sim": similarity,
-                    "total_sim": similarity,
-                    "count": 1,
-                }
-            else:
-                entry = agg[key]
-                entry["count"] = int(entry["count"]) + 1
-                entry["total_sim"] = float(entry["total_sim"]) + similarity
-                if similarity > float(entry["max_sim"]):
-                    entry["max_sim"] = similarity
-                if similarity < float(entry["min_sim"]):
-                    entry["min_sim"] = similarity
+        # Build UNION ALL for multi-vector MAX similarity per embedding
+        union_parts: list[str] = []
+        sim_params: dict[str, object] = {
+            "project_id": str(project_id),
+            "model_name": model_name,
+        }
+        if dataset_id_str:
+            sim_params["dataset_id"] = dataset_id_str
+
+        for idx, qv in enumerate(query_vectors):
+            vec_literal = "[" + ",".join(str(v) for v in qv) + "]"
+            param_key = f"qv_{idx}"
+            sim_params[param_key] = vec_literal
+            union_parts.append(
+                f"""
+                SELECT
+                    e.id AS embedding_id,
+                    e.recording_id,
+                    1 - (e.vector <=> CAST(:{param_key} AS vector)) AS similarity
+                FROM embeddings e
+                JOIN recordings r ON e.recording_id = r.id
+                JOIN datasets d   ON r.dataset_id   = d.id
+                WHERE d.project_id = :project_id
+                  AND e.model_name  = :model_name
+                  {dataset_filter}
+                """
+            )
+
+        union_sql = " UNION ALL ".join(union_parts)
+        agg_sql = text(
+            f"""
+            WITH all_sims AS (
+                {union_sql}
+            ),
+            best_per_embedding AS (
+                SELECT recording_id, MAX(similarity) AS similarity
+                FROM all_sims
+                GROUP BY recording_id, embedding_id
+            )
+            SELECT
+                recording_id::text,
+                MAX(similarity) AS max_sim,
+                MIN(similarity) AS min_sim,
+                AVG(similarity) AS avg_sim
+            FROM best_per_embedding
+            GROUP BY recording_id
+            """
+        )
+        rows = (await db.execute(agg_sql, sim_params)).fetchall()
+        for row in rows:
+            agg[(sp_key, str(row[0]))] = {
+                "max_sim": float(row[1]),
+                "min_sim": float(row[2]),
+                "avg_sim": float(row[3]),
+            }
 
     # Build CSV rows: one per (recording × species), sorted by recording_datetime ASC
     output = io.StringIO()
@@ -921,27 +949,22 @@ async def export_search_session_recordings_csv(
             agg_key: SpeciesRecordingKey = (sp_key, rec_id)
             if agg_key in agg:
                 entry = agg[agg_key]
-                count = int(entry["count"])
-                max_sim = float(entry["max_sim"])
-                min_sim = float(entry["min_sim"])
-                avg_sim = float(entry["total_sim"]) / count if count > 0 else 0.0
                 writer.writerow([
                     rec_filename,
                     rec_datetime or "",
                     sp_label,
-                    f"{max_sim:.4f}",
-                    f"{min_sim:.4f}",
-                    f"{avg_sim:.4f}",
+                    f"{entry['max_sim']:.4f}",
+                    f"{entry['min_sim']:.4f}",
+                    f"{entry['avg_sim']:.4f}",
                 ])
             else:
-                # Recording has no matching embeddings for this species
                 writer.writerow([
                     rec_filename,
                     rec_datetime or "",
                     sp_label,
-                    "",  # max_similarity
-                    "",  # min_similarity
-                    "",  # avg_similarity
+                    "",
+                    "",
+                    "",
                 ])
 
     csv_content = output.getvalue()
