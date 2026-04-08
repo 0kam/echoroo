@@ -658,12 +658,16 @@ class SimilaritySearchService:
         query_vectors: list[list[float]],
         model_name: str,
         dataset_id: UUID | None = None,
-    ) -> list[dict[str, object]]:
+    ) -> dict[str, object]:
         """Compute average similarity grouped by (date, hour) for all project embeddings.
 
         For each embedding with a recording datetime, computes the maximum cosine
         similarity across all provided query vectors, then groups by date and hour
         returning average similarity and count per cell.
+
+        Recording datetimes are converted to the dataset's configured timezone
+        (``datetime_timezone``) before extracting the hour. If datasets have
+        different timezones, each recording uses its own dataset's timezone.
 
         Args:
             project_id: Project UUID for access scoping
@@ -672,10 +676,12 @@ class SimilaritySearchService:
             dataset_id: Optional dataset filter
 
         Returns:
-            List of dicts with keys: date (str), hour (int), avg_similarity (float), count (int)
+            Dict with keys:
+                cells: list of dicts with date, hour, avg_similarity, count
+                timezone: IANA timezone string used (or "Mixed" if multiple)
         """
         if not query_vectors:
-            return []
+            return {"cells": [], "timezone": "UTC"}
 
         dataset_filter = ""
         base_params: dict[str, object] = {
@@ -699,6 +705,7 @@ class SimilaritySearchService:
                 SELECT
                     e.id AS embedding_id,
                     r.datetime AS recording_datetime,
+                    COALESCE(d.datetime_timezone, 'UTC') AS tz,
                     1 - (e.vector <=> CAST(:{param_key} AS vector)) AS similarity
                 FROM embeddings e
                 JOIN recordings r ON e.recording_id = r.id
@@ -712,6 +719,10 @@ class SimilaritySearchService:
 
         union_sql = " UNION ALL ".join(union_parts)
 
+        # Convert each recording's datetime to its dataset's timezone before
+        # extracting date and hour.  PostgreSQL's ``AT TIME ZONE`` converts a
+        # ``timestamptz`` to a ``timestamp`` in the given zone, so EXTRACT
+        # will return the local hour.
         time_dist_sql = text(
             f"""
             WITH all_similarities AS (
@@ -721,24 +732,26 @@ class SimilaritySearchService:
                 SELECT
                     embedding_id,
                     recording_datetime,
+                    tz,
                     MAX(similarity) AS similarity
                 FROM all_similarities
-                GROUP BY embedding_id, recording_datetime
+                GROUP BY embedding_id, recording_datetime, tz
             )
             SELECT
-                DATE(recording_datetime)::text AS date,
-                EXTRACT(HOUR FROM recording_datetime)::int AS hour,
+                DATE(recording_datetime AT TIME ZONE tz)::text AS date,
+                EXTRACT(HOUR FROM recording_datetime AT TIME ZONE tz)::int AS hour,
                 AVG(similarity) AS avg_similarity,
                 COUNT(*) AS count
             FROM max_similarities
-            GROUP BY DATE(recording_datetime), EXTRACT(HOUR FROM recording_datetime)
+            GROUP BY DATE(recording_datetime AT TIME ZONE tz),
+                     EXTRACT(HOUR FROM recording_datetime AT TIME ZONE tz)
             ORDER BY date, hour
             """
         )
 
         rows = (await self.db.execute(time_dist_sql, params)).fetchall()
 
-        return [
+        cells = [
             {
                 "date": row.date,
                 "hour": int(row.hour),
@@ -747,6 +760,30 @@ class SimilaritySearchService:
             }
             for row in rows
         ]
+
+        # Determine the timezone label for the response
+        tz_sql = text(
+            f"""
+            SELECT DISTINCT COALESCE(d.datetime_timezone, 'UTC') AS tz
+            FROM embeddings e
+            JOIN recordings r ON e.recording_id = r.id
+            JOIN datasets d   ON r.dataset_id   = d.id
+            WHERE d.project_id = :project_id
+              AND e.model_name  = :model_name
+              AND r.datetime IS NOT NULL
+              {dataset_filter}
+            """
+        )
+        tz_rows = (await self.db.execute(tz_sql, base_params)).fetchall()
+        distinct_tzs = [r.tz for r in tz_rows]
+        if len(distinct_tzs) == 1:
+            timezone = distinct_tzs[0]
+        elif len(distinct_tzs) > 1:
+            timezone = "Mixed"
+        else:
+            timezone = "UTC"
+
+        return {"cells": cells, "timezone": timezone}
 
     async def batch_search(
         self,

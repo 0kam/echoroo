@@ -1030,12 +1030,15 @@ async def get_session_time_distribution(
     from echoroo.services.search import SimilaritySearchService
 
     search_service = SimilaritySearchService(db)
-    raw_cells = await search_service.get_time_distribution(
+    result = await search_service.get_time_distribution(
         project_id=project_id,
         query_vectors=query_vectors,
         model_name=session.model_name,
         dataset_id=dataset_id,
     )
+
+    raw_cells = result["cells"]
+    timezone = str(result["timezone"])
 
     cells = [
         TimeDistributionCell(
@@ -1044,12 +1047,13 @@ async def get_session_time_distribution(
             avg_similarity=float(c["avg_similarity"]),
             count=int(c["count"]),
         )
-        for c in raw_cells
+        for c in raw_cells  # type: ignore[union-attr]
     ]
 
     return SessionTimeDistributionResponse(
         session_id=session_id,
         cells=cells,
+        timezone=timezone,
     )
 
 

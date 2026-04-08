@@ -18,9 +18,11 @@
   let {
     cells = [],
     size = 260,
+    timezone = 'UTC',
   }: {
     cells: TimeDistributionCell[];
     size?: number;
+    timezone?: string;
   } = $props();
 
   // ============================================================================
@@ -382,6 +384,9 @@
         <span class="text-[10px] text-stone-500">{Math.round(maxAvg * 100)}%</span>
       </div>
       <span class="text-[10px] text-stone-400">{m.search_time_avg_similarity_per_hour()}</span>
+      {#if timezone}
+        <span class="text-[10px] text-stone-400">({timezone})</span>
+      {/if}
     </div>
 
     <!-- Date range indicator -->

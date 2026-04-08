@@ -147,6 +147,10 @@
     $timeDistributionQuery.data?.cells ?? []
   );
 
+  const timeDistributionTimezone = $derived<string>(
+    $timeDistributionQuery.data?.timezone ?? 'UTC'
+  );
+
   /**
    * Fallback: generate bins client-side from the current species' matches
    * when the server-side distribution API data is unavailable.
@@ -443,6 +447,7 @@
           {:else}
             <SearchTimeHeatmap
               cells={timeDistributionCells}
+              timezone={timeDistributionTimezone}
             />
           {/if}
         </div>

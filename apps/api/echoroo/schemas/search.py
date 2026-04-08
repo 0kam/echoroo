@@ -330,3 +330,7 @@ class SessionTimeDistributionResponse(BaseModel):
     cells: list[TimeDistributionCell] = Field(
         ..., description="Average similarity per (date, hour) cell"
     )
+    timezone: str = Field(
+        "UTC",
+        description="IANA timezone used for hour grouping (e.g. 'Asia/Tokyo', 'UTC')",
+    )

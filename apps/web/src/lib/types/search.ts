@@ -233,6 +233,8 @@ export interface SessionTimeDistributionResponse {
   session_id: string;
   /** Average similarity per (date, hour) cell */
   cells: TimeDistributionCell[];
+  /** IANA timezone used for hour grouping (e.g. "Asia/Tokyo", "UTC", or "Mixed") */
+  timezone: string;
 }
 
 /**
