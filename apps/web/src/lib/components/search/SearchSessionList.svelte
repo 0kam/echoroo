@@ -10,6 +10,7 @@
    */
 
   import * as m from '$lib/paraglide/messages';
+  import { getLocale } from '$lib/paraglide/runtime';
   import type { SearchSessionListItem } from '$lib/types/search';
   import { listSearchSessions, deleteSearchSession } from '$lib/api/search';
   import {
@@ -42,7 +43,7 @@
   async function loadSessions() {
     isLoading = true;
     try {
-      const response = await listSearchSessions(projectId);
+      const response = await listSearchSessions(projectId, 50, 0, getLocale());
       sessions = response.sessions;
     } catch (e) {
       console.error('Failed to load sessions:', e);
@@ -88,7 +89,12 @@
     if (session.name) return session.name;
     const config = session.species_config;
     if (!config || config.length === 0) return session.id.slice(0, 8);
-    const names = config.map((s) => s.common_name ?? s.scientific_name);
+    const names = config.map((s) => {
+      if (s.common_name && s.common_name !== s.scientific_name) {
+        return `${s.common_name} (${s.scientific_name})`;
+      }
+      return s.scientific_name;
+    });
     if (names.length <= 2) return names.join(', ');
     return `${names.slice(0, 2).join(', ')} +${names.length - 2}`;
   }

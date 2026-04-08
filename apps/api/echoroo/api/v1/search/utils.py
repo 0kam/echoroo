@@ -116,6 +116,133 @@ async def _resolve_vernacular_via_gbif(
     return None
 
 
+async def _enrich_species_config_with_locale(
+    species_config: list[object],
+    locale: str,
+    db: DbSession,
+) -> list[object]:
+    """Enrich species_config common names with locale-specific vernacular names.
+
+    Collects all scientific names from the species_config, batch-queries the
+    taxa and taxon_vernacular_names tables for locale-specific names, and
+    returns an updated species_config list with enriched common_name fields.
+
+    For English locale, also looks up common names from the tags table when
+    species_config doesn't already have a common_name set.
+
+    Falls back to a GBIF API call for species not yet cached locally.
+
+    Args:
+        species_config: List of species config dicts (from session.species_config)
+        locale: Locale code (e.g. "en", "ja")
+        db: Database session
+
+    Returns:
+        Updated species_config list with locale-enriched common_name fields
+    """
+    if not species_config:
+        return species_config
+
+    # Collect scientific names and tag_ids for batch lookup
+    sci_names: list[str] = []
+    tag_ids: list[str] = []
+    for sp in species_config:
+        if isinstance(sp, dict):
+            name = sp.get("scientific_name")
+            if name and isinstance(name, str):
+                sci_names.append(name)
+            tid = sp.get("tag_id")
+            if tid and isinstance(tid, str):
+                tag_ids.append(tid)
+
+    if not sci_names:
+        return species_config
+
+    vernacular_by_sci: dict[str, str] = {}
+
+    if locale == "en":
+        # For English, look up common_name from tags table by tag_id
+        if tag_ids:
+            try:
+                tag_ids_uuid = [uuid_module.UUID(tid) for tid in tag_ids]
+                tag_sql = text(
+                    """
+                    SELECT t.id AS tag_id, t.common_name, t.scientific_name
+                    FROM tags t
+                    WHERE t.id = ANY(:tag_ids)
+                    """
+                ).bindparams(bindparam("tag_ids", value=tag_ids_uuid, type_=ARRAY(PGUUID())))
+                rows = (await db.execute(tag_sql)).fetchall()
+                for row in rows:
+                    if row.common_name and row.scientific_name:
+                        vernacular_by_sci[row.scientific_name] = row.common_name
+            except Exception:
+                logger.warning("English species_config common_name lookup failed", exc_info=True)
+
+        # Also try taxon_vernacular_names for English (for species without tags)
+        missing = [n for n in sci_names if n not in vernacular_by_sci]
+        if missing:
+            try:
+                vn_sql = text(
+                    """
+                    SELECT tx.scientific_name, tvn.name
+                    FROM taxa tx
+                    JOIN taxon_vernacular_names tvn ON tvn.taxon_id = tx.id
+                    WHERE tx.scientific_name = ANY(:sci_names)
+                      AND tvn.locale = 'en'
+                    ORDER BY tx.scientific_name, tvn.is_primary DESC
+                    """
+                ).bindparams(bindparam("sci_names", value=missing, type_=ARRAY(String())))
+                rows = (await db.execute(vn_sql)).fetchall()
+                for row in rows:
+                    if row.scientific_name not in vernacular_by_sci:
+                        vernacular_by_sci[row.scientific_name] = row.name
+            except Exception:
+                logger.warning("English vernacular name lookup failed", exc_info=True)
+    else:
+        # For non-English, query taxon_vernacular_names with the target locale
+        taxa_vn_sql = text(
+            """
+            SELECT tx.scientific_name, tvn.name
+            FROM taxa tx
+            JOIN taxon_vernacular_names tvn ON tvn.taxon_id = tx.id
+            WHERE tx.scientific_name = ANY(:sci_names)
+              AND tvn.locale = :locale
+            ORDER BY tx.scientific_name, tvn.is_primary DESC
+            """
+        ).bindparams(bindparam("sci_names", value=sci_names, type_=ARRAY(String())))
+        try:
+            rows = (await db.execute(taxa_vn_sql, {"locale": locale})).fetchall()
+            for row in rows:
+                if row.scientific_name not in vernacular_by_sci:
+                    vernacular_by_sci[row.scientific_name] = row.name
+        except Exception:
+            logger.warning("species_config vernacular lookup failed", exc_info=True)
+
+        # For species not found locally, try GBIF (one at a time, with caching)
+        for sci_name in sci_names:
+            if sci_name not in vernacular_by_sci:
+                resolved = await _resolve_vernacular_via_gbif(sci_name, locale, db)
+                if resolved:
+                    vernacular_by_sci[sci_name] = resolved
+
+    # Build enriched species_config
+    enriched: list[object] = []
+    for sp in species_config:
+        if isinstance(sp, dict):
+            sci_name = sp.get("scientific_name", "")
+            if isinstance(sci_name, str) and sci_name in vernacular_by_sci:
+                updated = dict(sp)
+                updated["common_name"] = vernacular_by_sci[sci_name]
+                enriched.append(updated)
+            else:
+                enriched.append(sp)
+        else:
+            enriched.append(sp)
+
+    return enriched
+
+
 async def _enrich_search_results_with_locale(
     response: BatchSearchResponse,
     locale: str,

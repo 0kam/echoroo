@@ -365,14 +365,19 @@ export async function rejectSearchResult(
  * @param projectId - Project UUID
  * @param limit - Maximum number of sessions to return (default 50)
  * @param offset - Number of sessions to skip for pagination (default 0)
+ * @param locale - Optional locale for species common name localization (e.g. "ja")
  * @returns Paginated list of search session summaries
  */
 export async function listSearchSessions(
   projectId: string,
   limit = 50,
-  offset = 0
+  offset = 0,
+  locale?: string
 ): Promise<SearchSessionListResponse> {
   const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+  if (locale) {
+    params.set('locale', locale);
+  }
   return apiClient.get<SearchSessionListResponse>(
     `${API_BASE}/projects/${projectId}/search/sessions?${params}`
   );
@@ -383,14 +388,17 @@ export async function listSearchSessions(
  *
  * @param projectId - Project UUID
  * @param sessionId - Search session UUID
+ * @param locale - Optional locale for species common name localization (e.g. "ja")
  * @returns Full search session including results and review counts
  */
 export async function getSearchSession(
   projectId: string,
-  sessionId: string
+  sessionId: string,
+  locale?: string
 ): Promise<SearchSession> {
+  const params = locale ? `?locale=${locale}` : '';
   return apiClient.get<SearchSession>(
-    `${API_BASE}/projects/${projectId}/search/sessions/${sessionId}`
+    `${API_BASE}/projects/${projectId}/search/sessions/${sessionId}${params}`
   );
 }
 

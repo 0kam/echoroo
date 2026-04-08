@@ -38,6 +38,7 @@ from echoroo.core.permissions import check_project_access
 from echoroo.middleware.auth import CurrentUser
 from echoroo.schemas.search import (
     BatchSearchRequest,
+    BatchSearchResponse,
     SearchJobAcceptedResponse,
     SearchSessionListItem,
     SearchSessionListResponse,
@@ -64,7 +65,10 @@ router = APIRouter()
     "/sessions",
     response_model=SearchSessionListResponse,
     summary="List search sessions",
-    description="List paginated batch search sessions for a project, ordered by creation date descending.",
+    description=(
+        "List paginated batch search sessions for a project, ordered by creation date descending. "
+        "Pass ?locale=ja to receive locale-specific common names in species_config."
+    ),
 )
 async def list_search_sessions(
     project_id: UUID,
@@ -73,8 +77,12 @@ async def list_search_sessions(
     session_service: SearchSessionServiceDep,
     limit: int = Query(default=50, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
+    locale: str = "en",
 ) -> SearchSessionListResponse:
     """List search sessions for a project.
+
+    When locale is provided (e.g. "ja"), common names in species_config
+    are enriched with locale-specific vernacular names.
 
     Args:
         project_id: Project UUID (path parameter)
@@ -83,6 +91,7 @@ async def list_search_sessions(
         session_service: Search session service
         limit: Maximum number of results
         offset: Number of results to skip
+        locale: Locale code for common name resolution (default: "en")
 
     Returns:
         Paginated list of search sessions
@@ -90,19 +99,37 @@ async def list_search_sessions(
     Raises:
         403: Access denied to project
     """
+    from echoroo.api.v1.search.utils import _enrich_species_config_with_locale
+
     await check_project_access(project_id, current_user.id, db)
     sessions, total = await session_service.list_sessions(project_id, limit, offset)
-    return SearchSessionListResponse(
-        sessions=[SearchSessionListItem.model_validate(s) for s in sessions],
-        total=total,
-    )
+    items = [SearchSessionListItem.model_validate(s) for s in sessions]
+
+    # Enrich species_config with common names (works for all locales)
+    for item in items:
+        if item.species_config:
+            try:
+                item.species_config = await _enrich_species_config_with_locale(
+                    item.species_config, locale, db
+                )
+            except Exception:
+                logger.warning(
+                    "Failed to enrich species_config for session list item with locale=%r",
+                    locale,
+                    exc_info=True,
+                )
+
+    return SearchSessionListResponse(sessions=items, total=total)
 
 
 @router.get(
     "/sessions/{session_id}",
     response_model=SearchSessionResponse,
     summary="Get search session detail",
-    description="Get full search session detail with review status merged into results.",
+    description=(
+        "Get full search session detail with review status merged into results. "
+        "Pass ?locale=ja to receive locale-specific common names in results and species_config."
+    ),
 )
 async def get_search_session(
     project_id: UUID,
@@ -110,8 +137,13 @@ async def get_search_session(
     current_user: CurrentUser,
     db: DbSession,
     session_service: SearchSessionServiceDep,
+    locale: str = "en",
 ) -> SearchSessionResponse:
     """Get a search session with review status merged into results.
+
+    When locale is provided (e.g. "ja"), common names in the results and
+    species_config are enriched with locale-specific vernacular names from
+    the taxon_vernacular_names table.
 
     Args:
         project_id: Project UUID (path parameter)
@@ -119,6 +151,7 @@ async def get_search_session(
         current_user: Current authenticated user
         db: Database session
         session_service: Search session service
+        locale: Locale code for common name resolution (default: "en")
 
     Returns:
         SearchSessionResponse with live review status merged into results
@@ -127,6 +160,11 @@ async def get_search_session(
         403: Access denied to project
         404: Session not found
     """
+    from echoroo.api.v1.search.utils import (
+        _enrich_search_results_with_locale,
+        _enrich_species_config_with_locale,
+    )
+
     await check_project_access(project_id, current_user.id, db)
     session = await session_service.get_session(session_id, project_id)
     if not session:
@@ -139,6 +177,32 @@ async def get_search_session(
     response = SearchSessionResponse.model_validate(session)
     if merged_results is not None:
         response.results = merged_results
+
+    # Enrich results with locale-specific vernacular names
+    if locale != "en" and response.results is not None:
+        try:
+            raw_results = response.results
+            if isinstance(raw_results, dict):
+                inner = raw_results.get("results")
+                if isinstance(inner, dict):
+                    batch_resp = BatchSearchResponse.model_validate(raw_results)
+                    enriched = await _enrich_search_results_with_locale(batch_resp, locale, db)
+                    # Merge enriched common_name back into the raw results dict
+                    for key, species_data in inner.items():
+                        if isinstance(species_data, dict) and key in enriched.results:
+                            species_data["common_name"] = enriched.results[key].common_name
+        except Exception:
+            logger.warning("Failed to enrich session results with locale=%r", locale, exc_info=True)
+
+    # Enrich species_config with common names (works for all locales)
+    if response.species_config:
+        try:
+            response.species_config = await _enrich_species_config_with_locale(
+                response.species_config, locale, db
+            )
+        except Exception:
+            logger.warning("Failed to enrich species_config with locale=%r", locale, exc_info=True)
+
     return response
 
 

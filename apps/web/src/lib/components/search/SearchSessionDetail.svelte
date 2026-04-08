@@ -8,6 +8,7 @@
    */
 
   import * as m from '$lib/paraglide/messages';
+  import { getLocale } from '$lib/paraglide/runtime';
   import { getSearchSession, getReferenceAudioUrl, updateSearchSession, exportSearchSessionRecordingsCSV } from '$lib/api/search';
   import { generateId } from '$lib/utils/id';
   import type { SearchSession, TargetSpecies, SoundSource } from '$lib/types/search';
@@ -75,7 +76,7 @@
     reconstructedSpecies = [];
 
     try {
-      const data = await getSearchSession(pid, sid);
+      const data = await getSearchSession(pid, sid, getLocale());
       session = data;
 
       // Reconstruct reference audio sources from persisted session data
@@ -178,7 +179,12 @@
     if (session.name) return session.name;
     if (session.species_config && session.species_config.length > 0) {
       return session.species_config
-        .map((sp) => sp.common_name ?? sp.scientific_name)
+        .map((sp) => {
+          if (sp.common_name && sp.common_name !== sp.scientific_name) {
+            return `${sp.common_name} (${sp.scientific_name})`;
+          }
+          return sp.scientific_name;
+        })
         .join(', ');
     }
     return m.search_session_detail();

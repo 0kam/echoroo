@@ -302,10 +302,12 @@
                   : 'border-transparent text-stone-500 hover:text-stone-700'}"
                 onclick={() => { selectedSpeciesKey = key; }}
               >
-                <span class="max-w-[180px] truncate italic">
-                  {sp.scientific_name}
-                  {#if sp.common_name}
-                    <span class="not-italic text-stone-400">({sp.common_name})</span>
+                <span class="max-w-[240px] truncate">
+                  {#if sp.common_name && sp.common_name !== sp.scientific_name}
+                    {sp.common_name}
+                    <span class="ml-1 italic text-stone-400">({sp.scientific_name})</span>
+                  {:else}
+                    <span class="italic">{sp.scientific_name}</span>
                   {/if}
                 </span>
               </button>
