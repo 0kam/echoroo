@@ -24,7 +24,7 @@
     projectId: string;
     sessionId: string;
     onBack: () => void;
-    onRerun: (species: TargetSpecies[], editingSessionId: string | null) => void;
+    onRerun: (species: TargetSpecies[], editingSessionId: string | null, datasetId?: string) => void;
   }
 
   let { projectId, sessionId, onBack, onRerun }: Props = $props();
@@ -276,8 +276,8 @@
       sources: sp.sources.map((src) => ({ ...src, id: generateId() })),
     }));
 
-    // Pass the session ID so the parent knows to call the rerun endpoint
-    onRerun(cloned, session.id);
+    // Pass the session ID and dataset_id so the parent restores the correct config
+    onRerun(cloned, session.id, session.parameters?.dataset_id ?? undefined);
   }
 
   // ============================================
@@ -294,7 +294,7 @@
       sources: sp.sources.map((src) => ({ ...src, id: generateId() })),
     }));
 
-    onRerun(cloned, null);
+    onRerun(cloned, null, session?.parameters?.dataset_id ?? undefined);
   }
 </script>
 

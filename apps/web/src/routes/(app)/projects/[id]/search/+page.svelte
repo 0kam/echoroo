@@ -247,13 +247,16 @@
    * @param editSessionId - If non-null, the existing session will be updated in-place (rerun).
    *                        If null, a brand-new session is created (fork).
    */
-  function handleRerunFromDetail(rerunSpecies: TargetSpecies[], editSessionId: string | null) {
+  function handleRerunFromDetail(rerunSpecies: TargetSpecies[], editSessionId: string | null, datasetId?: string) {
     stopPolling();
     const sessionIdForRerun = selectedSessionId;
     species = rerunSpecies;
     isRerunMode = true;
     rerunSourceSessionId = sessionIdForRerun;
     editingSessionId = editSessionId;
+    if (datasetId) {
+      config.dataset_id = datasetId;
+    }
     results = null;
     searchDurationMs = 0;
     isSearching = false;
