@@ -877,18 +877,20 @@ async def export_search_session_recordings_csv(
         enriched_config = await _enrich_species_config_with_locale(
             list(session.species_config), locale, db
         )
+        # Build sci_name -> common_name from enriched config
+        sci_to_common: dict[str, str] = {}
         for sp_cfg in enriched_config:
             if not isinstance(sp_cfg, dict):
                 continue
-            sp_tag_id = str(sp_cfg.get("tag_id") or "")
             sp_sci = str(sp_cfg.get("scientific_name") or "")
             sp_common = str(sp_cfg.get("common_name") or "")
-            # Map species_key -> common_name
-            for key in species_keys:
-                if sp_tag_id and key == sp_tag_id:
-                    species_common_names[key] = sp_common
-                elif key in species_labels and species_labels[key] == sp_sci:
-                    species_common_names[key] = sp_common
+            if sp_sci and sp_common:
+                sci_to_common[sp_sci] = sp_common
+        # Map species_key -> common_name using species_labels (key -> sci_name)
+        for key in species_keys:
+            sci_name = species_labels.get(key, "")
+            if sci_name in sci_to_common:
+                species_common_names[key] = sci_to_common[sci_name]
 
     # Determine optional dataset filter from session parameters
     dataset_id_str: str | None = None
