@@ -720,8 +720,7 @@ async def export_search_session_recordings_csv(
     Returns:
         CSV file as streaming response with columns:
         recording_filename, recording_datetime, species,
-        max_similarity, min_similarity, avg_similarity,
-        segment_count, best_segment_start, best_segment_end
+        max_similarity, min_similarity, avg_similarity
 
     Raises:
         403: Access denied to project
@@ -760,7 +759,7 @@ async def export_search_session_recordings_csv(
             detail="Session has no species results to export",
         )
 
-    # Build display name mapping: species_key -> human-readable name
+    # Build display name mapping: species_key -> scientific name
     species_labels: dict[str, str] = {}
     if session.species_config and isinstance(session.species_config, list):
         for sp_cfg in session.species_config:
@@ -768,8 +767,7 @@ async def export_search_session_recordings_csv(
                 continue
             sp_tag_id = str(sp_cfg.get("tag_id") or "")
             sp_sci_name = str(sp_cfg.get("scientific_name") or "")
-            sp_common = str(sp_cfg.get("common_name") or "")
-            label = sp_common or sp_sci_name or sp_tag_id or "Unknown"
+            label = sp_sci_name or sp_tag_id or "Unknown"
             # Match against both tag_id key and scientific_name key
             for key in species_keys:
                 if key in (sp_tag_id, sp_sci_name):
@@ -788,7 +786,7 @@ async def export_search_session_recordings_csv(
         f"""
         SELECT
             r.id::text AS recording_id,
-            r.path AS recording_filename,
+            r.filename AS recording_filename,
             CASE
                 WHEN r.datetime IS NOT NULL THEN
                     (r.datetime AT TIME ZONE COALESCE(d.datetime_timezone, 'UTC'))::text
@@ -798,7 +796,7 @@ async def export_search_session_recordings_csv(
         JOIN datasets d ON r.dataset_id = d.id
         WHERE d.project_id = :project_id
           {dataset_filter_sql}
-        ORDER BY r.datetime ASC NULLS LAST, r.path ASC
+        ORDER BY r.datetime ASC NULLS LAST, r.filename ASC
         """
     )
     rec_params: dict[str, object] = {"project_id": str(project_id)}
@@ -820,7 +818,6 @@ async def export_search_session_recordings_csv(
         writer.writerow([
             "recording_filename", "recording_datetime", "species",
             "max_similarity", "min_similarity", "avg_similarity",
-            "segment_count", "best_segment_start", "best_segment_end",
         ])
         csv_content = output.getvalue()
         date_str = datetime.now(UTC).strftime("%Y%m%d")
@@ -856,8 +853,6 @@ async def export_search_session_recordings_csv(
             if not rec_id or rec_id not in recording_id_set:
                 continue
             similarity = float(match.get("similarity", 0.0))
-            start_time = float(match.get("start_time", 0.0))
-            end_time = float(match.get("end_time", 0.0))
 
             key: SpeciesRecordingKey = (sp_key, rec_id)
             if key not in agg:
@@ -866,8 +861,6 @@ async def export_search_session_recordings_csv(
                     "min_sim": similarity,
                     "total_sim": similarity,
                     "count": 1,
-                    "best_start": start_time,
-                    "best_end": end_time,
                 }
             else:
                 entry = agg[key]
@@ -875,8 +868,6 @@ async def export_search_session_recordings_csv(
                 entry["total_sim"] = float(entry["total_sim"]) + similarity
                 if similarity > float(entry["max_sim"]):
                     entry["max_sim"] = similarity
-                    entry["best_start"] = start_time
-                    entry["best_end"] = end_time
                 if similarity < float(entry["min_sim"]):
                     entry["min_sim"] = similarity
 
@@ -890,9 +881,6 @@ async def export_search_session_recordings_csv(
         "max_similarity",
         "min_similarity",
         "avg_similarity",
-        "segment_count",
-        "best_segment_start",
-        "best_segment_end",
     ])
 
     for rec_id, rec_filename, rec_datetime in all_recordings:
@@ -905,8 +893,6 @@ async def export_search_session_recordings_csv(
                 max_sim = float(entry["max_sim"])
                 min_sim = float(entry["min_sim"])
                 avg_sim = float(entry["total_sim"]) / count if count > 0 else 0.0
-                best_start = float(entry["best_start"])
-                best_end = float(entry["best_end"])
                 writer.writerow([
                     rec_filename,
                     rec_datetime or "",
@@ -914,9 +900,6 @@ async def export_search_session_recordings_csv(
                     f"{max_sim:.4f}",
                     f"{min_sim:.4f}",
                     f"{avg_sim:.4f}",
-                    count,
-                    f"{best_start:.2f}",
-                    f"{best_end:.2f}",
                 ])
             else:
                 # Recording has no matching embeddings for this species
@@ -927,9 +910,6 @@ async def export_search_session_recordings_csv(
                     "",  # max_similarity
                     "",  # min_similarity
                     "",  # avg_similarity
-                    0,   # segment_count
-                    "",  # best_segment_start
-                    "",  # best_segment_end
                 ])
 
     csv_content = output.getvalue()
