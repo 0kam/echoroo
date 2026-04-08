@@ -3,12 +3,13 @@
    * SimilarityHistogram - SVG-based histogram of similarity score distribution.
    *
    * Displays how many search results fall into each similarity bin,
-   * with a draggable threshold line to filter results interactively.
+   * with two draggable threshold lines to define a min/max range.
    *
    * - X-axis: similarity percentage (0–100%)
    * - Y-axis: count of results in each bin
-   * - Draggable red threshold line
-   * - Count summary above/below threshold
+   * - Two draggable red lines: min (left edge) and max (right edge) of the active range
+   * - Bars within the range are fully opaque; bars outside are dimmed
+   * - Count summary shows results within the range
    *
    * Accepts pre-computed bins from the server-side distribution API
    * instead of binning individual results client-side.
@@ -19,12 +20,16 @@
 
   let {
     bins,
-    threshold = $bindable(),
-    onThresholdChange,
+    thresholdMin = $bindable(),
+    thresholdMax = $bindable(),
+    onThresholdMinChange,
+    onThresholdMaxChange,
   }: {
     bins: DistributionBin[];
-    threshold: number;
-    onThresholdChange: (value: number) => void;
+    thresholdMin: number;
+    thresholdMax: number;
+    onThresholdMinChange: (value: number) => void;
+    onThresholdMaxChange: (value: number) => void;
   } = $props();
 
   // ============================================================================
@@ -55,23 +60,25 @@
       // Color: lighter orange for low similarity, richer orange for high
       const midpoint = (bin.lower + bin.upper) / 2;
       const alpha = 0.3 + midpoint * 0.7;
-      return { x, y, w, h: barH, count: bin.count, alpha, binStart: bin.lower };
+      const inRange = bin.lower >= thresholdMin && bin.upper <= thresholdMax + 0.001;
+      return { x, y, w, h: barH, count: bin.count, alpha, binStart: bin.lower, inRange };
     }),
   );
 
   // ============================================================================
-  // Threshold derived values
+  // Range derived values
   // ============================================================================
 
-  const thresholdX = $derived(threshold * CHART_W);
+  const minX = $derived(thresholdMin * CHART_W);
+  const maxX = $derived(thresholdMax * CHART_W);
 
-  const countAbove = $derived(
+  const countInRange = $derived(
     bins
-      .filter((b) => b.lower >= threshold)
+      .filter((b) => b.lower >= thresholdMin && b.upper <= thresholdMax + 0.001)
       .reduce((sum, b) => sum + b.count, 0)
   );
 
-  const countBelow = $derived(totalCount - countAbove);
+  const countOutOfRange = $derived(totalCount - countInRange);
 
   // ============================================================================
   // X-axis labels (every 20%)
@@ -80,41 +87,70 @@
   const xLabels = [0, 0.2, 0.4, 0.6, 0.8, 1.0];
 
   // ============================================================================
-  // Dragging logic
+  // Dragging logic — tracks which handle is being dragged
   // ============================================================================
 
   let svgEl = $state<SVGSVGElement | null>(null);
-  let isDragging = $state(false);
+  /** Which handle is currently being dragged: 'min', 'max', or null */
+  let dragging = $state<'min' | 'max' | null>(null);
 
-  function getThresholdFromMouseX(clientX: number): number {
+  function getValueFromMouseX(clientX: number): number {
     const rect = svgEl?.getBoundingClientRect();
-    if (!rect) return threshold;
+    if (!rect) return 0;
     const relX = clientX - rect.left - MARGIN.left;
     const clamped = Math.max(0, Math.min(CHART_W, relX));
     return Math.round((clamped / CHART_W) * 20) / 20; // Snap to 5% grid
   }
 
-  function handleMouseDown(e: MouseEvent) {
-    isDragging = true;
+  function handleMinMouseDown(e: MouseEvent) {
+    dragging = 'min';
     e.preventDefault();
+    e.stopPropagation();
+  }
+
+  function handleMaxMouseDown(e: MouseEvent) {
+    dragging = 'max';
+    e.preventDefault();
+    e.stopPropagation();
   }
 
   function handleMouseMove(e: MouseEvent) {
-    if (!isDragging) return;
-    const newThreshold = getThresholdFromMouseX(e.clientX);
-    threshold = newThreshold;
-    onThresholdChange(newThreshold);
+    if (!dragging) return;
+    const val = getValueFromMouseX(e.clientX);
+    if (dragging === 'min') {
+      // Min cannot exceed max; clamp to [0, thresholdMax - 0.05]
+      const newMin = Math.min(val, thresholdMax - 0.05);
+      thresholdMin = newMin;
+      onThresholdMinChange(newMin);
+    } else {
+      // Max cannot go below min; clamp to [thresholdMin + 0.05, 1]
+      const newMax = Math.max(val, thresholdMin + 0.05);
+      thresholdMax = newMax;
+      onThresholdMaxChange(newMax);
+    }
   }
 
   function handleMouseUp() {
-    isDragging = false;
+    dragging = null;
   }
 
+  /**
+   * Click on the chart background: move the nearest handle to the clicked position.
+   */
   function handleSvgClick(e: MouseEvent) {
-    if (isDragging) return;
-    const newThreshold = getThresholdFromMouseX(e.clientX);
-    threshold = newThreshold;
-    onThresholdChange(newThreshold);
+    if (dragging) return;
+    const val = getValueFromMouseX(e.clientX);
+    const distToMin = Math.abs(val - thresholdMin);
+    const distToMax = Math.abs(val - thresholdMax);
+    if (distToMin <= distToMax) {
+      const newMin = Math.min(val, thresholdMax - 0.05);
+      thresholdMin = newMin;
+      onThresholdMinChange(newMin);
+    } else {
+      const newMax = Math.max(val, thresholdMin + 0.05);
+      thresholdMax = newMax;
+      onThresholdMaxChange(newMax);
+    }
   }
 
   // ============================================================================
@@ -129,13 +165,13 @@
 <svelte:window onmousemove={handleMouseMove} onmouseup={handleMouseUp} />
 
 <div class="flex flex-col gap-1.5">
-  <!-- Count summary above/below threshold -->
+  <!-- Count summary: in range vs out of range -->
   <div class="flex items-center justify-between px-1 text-xs text-stone-500">
     <span>
-      <span class="font-semibold text-stone-700">{countAbove.toLocaleString()}</span>
-      {m.search_histogram_above({ threshold: formatPct(threshold) })}
+      <span class="font-semibold text-stone-700">{countInRange.toLocaleString()}</span>
+      {m.search_histogram_in_range({ min: formatPct(thresholdMin), max: formatPct(thresholdMax) })}
     </span>
-    <span class="text-stone-400">{countBelow.toLocaleString()} {m.search_histogram_below()}</span>
+    <span class="text-stone-400">{countOutOfRange.toLocaleString()} {m.search_histogram_outside()}</span>
   </div>
 
   <!-- SVG Histogram -->
@@ -163,6 +199,17 @@
         stroke-width="1"
       />
 
+      <!-- Shaded range background -->
+      <rect
+        x={minX}
+        y={0}
+        width={Math.max(0, maxX - minX)}
+        height={CHART_H}
+        fill="rgb(255,90,0)"
+        fill-opacity="0.07"
+        pointer-events="none"
+      />
+
       <!-- Bars -->
       {#each bars as bar, i (i)}
         <rect
@@ -171,7 +218,7 @@
           width={bar.w}
           height={bar.h}
           fill="rgb(255,90,0)"
-          fill-opacity={bar.binStart >= threshold ? bar.alpha : bar.alpha * 0.3}
+          fill-opacity={bar.inRange ? bar.alpha : bar.alpha * 0.25}
           rx="1"
         />
       {/each}
@@ -215,33 +262,33 @@
         0
       </text>
 
-      <!-- Threshold line (draggable) -->
+      <!-- ── Min threshold line ── -->
       <!-- Invisible wide hit area for easier dragging -->
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <line
-        x1={thresholdX}
+        x1={minX}
         y1={-4}
-        x2={thresholdX}
+        x2={minX}
         y2={CHART_H + 4}
         stroke="transparent"
         stroke-width="12"
         class="cursor-ew-resize"
-        onmousedown={handleMouseDown}
+        onmousedown={handleMinMouseDown}
       />
-      <!-- Visible red threshold line -->
+      <!-- Visible min line -->
       <line
-        x1={thresholdX}
+        x1={minX}
         y1={-4}
-        x2={thresholdX}
+        x2={minX}
         y2={CHART_H + 4}
         stroke="rgb(220,38,38)"
         stroke-width="2"
         stroke-dasharray="3 2"
         pointer-events="none"
       />
-      <!-- Threshold handle circle -->
+      <!-- Min handle circle -->
       <circle
-        cx={thresholdX}
+        cx={minX}
         cy={CHART_H / 2}
         r={6}
         fill="rgb(220,38,38)"
@@ -249,26 +296,82 @@
         stroke-width="2"
         class="cursor-ew-resize"
         pointer-events="all"
-        onmousedown={handleMouseDown}
+        onmousedown={handleMinMouseDown}
         role="slider"
         tabindex="0"
-        aria-label={m.search_aria_threshold({ value: formatPct(threshold) })}
-        aria-valuenow={Math.round(threshold * 100)}
+        aria-label={m.search_aria_threshold_min({ value: formatPct(thresholdMin) })}
+        aria-valuenow={Math.round(thresholdMin * 100)}
         aria-valuemin={0}
         aria-valuemax={100}
       />
-      <!-- Threshold label above line -->
+      <!-- Min label above line -->
       <text
-        x={thresholdX}
+        x={minX}
         y={-6}
-        text-anchor={thresholdX > CHART_W * 0.8 ? 'end' : 'middle'}
+        text-anchor={minX < CHART_W * 0.15 ? 'start' : 'middle'}
         font-size="9"
         font-weight="600"
         fill="rgb(220,38,38)"
         font-family="sans-serif"
         pointer-events="none"
       >
-        {formatPct(threshold)}
+        {formatPct(thresholdMin)}
+      </text>
+
+      <!-- ── Max threshold line ── -->
+      <!-- Invisible wide hit area for easier dragging -->
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <line
+        x1={maxX}
+        y1={-4}
+        x2={maxX}
+        y2={CHART_H + 4}
+        stroke="transparent"
+        stroke-width="12"
+        class="cursor-ew-resize"
+        onmousedown={handleMaxMouseDown}
+      />
+      <!-- Visible max line -->
+      <line
+        x1={maxX}
+        y1={-4}
+        x2={maxX}
+        y2={CHART_H + 4}
+        stroke="rgb(220,38,38)"
+        stroke-width="2"
+        stroke-dasharray="3 2"
+        pointer-events="none"
+      />
+      <!-- Max handle circle -->
+      <circle
+        cx={maxX}
+        cy={CHART_H / 2}
+        r={6}
+        fill="rgb(220,38,38)"
+        stroke="white"
+        stroke-width="2"
+        class="cursor-ew-resize"
+        pointer-events="all"
+        onmousedown={handleMaxMouseDown}
+        role="slider"
+        tabindex="0"
+        aria-label={m.search_aria_threshold_max({ value: formatPct(thresholdMax) })}
+        aria-valuenow={Math.round(thresholdMax * 100)}
+        aria-valuemin={0}
+        aria-valuemax={100}
+      />
+      <!-- Max label above line -->
+      <text
+        x={maxX}
+        y={-6}
+        text-anchor={maxX > CHART_W * 0.85 ? 'end' : 'middle'}
+        font-size="9"
+        font-weight="600"
+        fill="rgb(220,38,38)"
+        font-family="sans-serif"
+        pointer-events="none"
+      >
+        {formatPct(thresholdMax)}
       </text>
     </g>
   </svg>

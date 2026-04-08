@@ -3,6 +3,7 @@
    * ResultsPanel - Displays batch similarity search results in exploration-only mode.
    *
    * Features:
+   * - Species tabs (one tab per searched species + "All" tab)
    * - Filter bar: similarity range (min/max) and limit_per_species (user-controlled)
    * - Similarity histogram (pre-computed distribution bins from API, always full range)
    * - Spiral plot (time-of-day distribution)
@@ -44,6 +45,29 @@
   }: Props = $props();
 
   // ============================================================================
+  // Species tabs state
+  // ============================================================================
+
+  /**
+   * Currently selected species key, or null for "All species" tab.
+   * Species keys are the top-level keys of the `results` object.
+   */
+  let selectedSpeciesKey = $state<string | null>(null);
+
+  const speciesEntries = $derived(
+    results !== null ? Object.entries(results) : []
+  );
+
+  /** Reset tab selection whenever results change (new search completed). */
+  let prevResultsRef = $state<Record<string, SpeciesMatchResult> | null>(null);
+  $effect(() => {
+    if (results !== prevResultsRef) {
+      prevResultsRef = results;
+      selectedSpeciesKey = null;
+    }
+  });
+
+  // ============================================================================
   // Filter bar state (user-controllable)
   // ============================================================================
 
@@ -75,9 +99,18 @@
   }
 
   // ============================================================================
-  // Flat array of all results for spiral view
+  // Matches for the currently selected species (or all species)
   // ============================================================================
 
+  const selectedMatches = $derived<SimilarityResult[]>(
+    results === null
+      ? []
+      : selectedSpeciesKey !== null
+        ? (results[selectedSpeciesKey]?.matches ?? [])
+        : Object.values(results).flatMap((group) => group.matches)
+  );
+
+  /** All matches across all species — used for the heatmap and flat list. */
   const allMatches = $derived<SimilarityResult[]>(
     results !== null
       ? Object.values(results).flatMap((group) => group.matches)
@@ -100,12 +133,17 @@
     $distributionQuery.data?.bins ?? []
   );
 
-  /** Fallback: generate bins client-side from stored results when API data is unavailable */
+  /**
+   * Fallback: generate bins client-side from the current species' matches
+   * when the server-side distribution API data is unavailable.
+   * When a species tab is selected, only that species' matches are used.
+   */
   const fallbackBins = $derived<DistributionBin[]>((() => {
-    if (allMatches.length === 0) return [];
+    const source = selectedSpeciesKey !== null ? selectedMatches : allMatches;
+    if (source.length === 0) return [];
     const NUM_BINS = 20;
     const counts = new Array<number>(NUM_BINS).fill(0);
-    for (const r of allMatches) {
+    for (const r of source) {
       const idx = Math.min(Math.floor(r.similarity * NUM_BINS), NUM_BINS - 1);
       const safeIdx = idx >= 0 && idx < NUM_BINS ? idx : 0;
       counts[safeIdx] = (counts[safeIdx] ?? 0) + 1;
@@ -133,11 +171,42 @@
     })
   );
 
-  const sampleResults = $derived<SimilarityResult[]>(
+  /**
+   * Raw sample results from the API (covers all species).
+   * When a specific species tab is selected, filter client-side.
+   */
+  const rawSampleResults = $derived<SimilarityResult[]>(
     $sampleQuery.data?.results ?? []
   );
 
+  /**
+   * If a species tab is active, filter sample results to that species by
+   * matching recording IDs against the species' stored matches.
+   */
+  const sampleResults = $derived<SimilarityResult[]>((() => {
+    if (selectedSpeciesKey === null || results === null) return rawSampleResults;
+    const speciesMatchIds = new Set(
+      (results[selectedSpeciesKey]?.matches ?? []).map((r) => r.embedding_id)
+    );
+    return rawSampleResults.filter((r) => speciesMatchIds.has(r.embedding_id));
+  })());
+
   const totalInRange = $derived($sampleQuery.data?.total_in_range ?? 0);
+
+  /**
+   * For the selected species, count how many of that species' total matches
+   * fall in the applied range (client-side approximation from stored results).
+   */
+  const speciesTotalInRange = $derived<number>((() => {
+    if (selectedSpeciesKey === null || results === null) return totalInRange;
+    return (results[selectedSpeciesKey]?.matches ?? []).filter(
+      (r) => r.similarity >= appliedMin && r.similarity <= appliedMax
+    ).length;
+  })());
+
+  const displayedTotalInRange = $derived(
+    selectedSpeciesKey !== null ? speciesTotalInRange : totalInRange
+  );
 
   // ============================================================================
   // Card grid navigation
@@ -165,14 +234,6 @@
   onDestroy(() => {
     nav.cleanup();
   });
-
-  // ============================================================================
-  // Species entries (for display info only — no tabs)
-  // ============================================================================
-
-  const speciesEntries = $derived(
-    results !== null ? Object.entries(results) : []
-  );
 </script>
 
 <svelte:window onkeydown={nav.handleKeydown} />
@@ -235,6 +296,50 @@
         <p class="mt-1 text-sm text-stone-400">{m.search_results_no_matches_hint()}</p>
       </div>
     {:else}
+
+      <!-- ================================================================ -->
+      <!-- Species tabs (only shown when 2+ species)                        -->
+      <!-- ================================================================ -->
+      {#if speciesEntries.length > 1}
+        <div class="rounded-lg border border-card bg-surface-card shadow-sm">
+          <div class="flex overflow-x-auto border-b border-card">
+            <!-- "All species" tab -->
+            <button
+              type="button"
+              class="flex shrink-0 items-center gap-1.5 border-b-2 px-4 py-2.5 text-sm font-medium transition-colors {selectedSpeciesKey === null
+                ? 'border-primary-500 text-primary-700'
+                : 'border-transparent text-stone-500 hover:text-stone-700'}"
+              onclick={() => { selectedSpeciesKey = null; }}
+            >
+              {m.search_tab_all_species()}
+              <span class="rounded-full bg-stone-100 px-1.5 py-0.5 text-xs text-stone-500">
+                {totalMatches.toLocaleString()}
+              </span>
+            </button>
+
+            <!-- Per-species tabs -->
+            {#each speciesEntries as [key, sp] (key)}
+              <button
+                type="button"
+                class="flex shrink-0 items-center gap-1.5 border-b-2 px-4 py-2.5 text-sm font-medium transition-colors {selectedSpeciesKey === key
+                  ? 'border-primary-500 text-primary-700'
+                  : 'border-transparent text-stone-500 hover:text-stone-700'}"
+                onclick={() => { selectedSpeciesKey = key; }}
+              >
+                <span class="max-w-[180px] truncate italic">
+                  {sp.scientific_name}
+                  {#if sp.common_name}
+                    <span class="not-italic text-stone-400">({sp.common_name})</span>
+                  {/if}
+                </span>
+                <span class="rounded-full bg-stone-100 px-1.5 py-0.5 text-xs text-stone-500">
+                  {m.search_tab_species_count({ count: sp.matches.length.toLocaleString() })}
+                </span>
+              </button>
+            {/each}
+          </div>
+        </div>
+      {/if}
 
       <!-- ================================================================ -->
       <!-- Filter bar                                                        -->
@@ -308,22 +413,27 @@
           {:else}
             <SimilarityHistogram
               bins={binsToDisplay}
-              threshold={appliedMin}
-              onThresholdChange={(v) => {
+              thresholdMin={appliedMin}
+              thresholdMax={appliedMax}
+              onThresholdMinChange={(v) => {
                 inputMin = v.toFixed(2);
                 appliedMin = v;
+              }}
+              onThresholdMaxChange={(v) => {
+                inputMax = v.toFixed(2);
+                appliedMax = v;
               }}
             />
           {/if}
         </div>
 
-        <!-- Activity Heatmap (right) -->
+        <!-- Activity Heatmap (right) — always shows all species -->
         <div class="rounded-lg border border-card bg-surface-card p-4 shadow-sm">
           <h4 class="mb-3 text-xs font-semibold uppercase tracking-wide text-stone-500">
             {m.search_time_distribution()}
           </h4>
           <SearchTimeHeatmap
-            results={allMatches}
+            results={selectedSpeciesKey !== null ? selectedMatches : allMatches}
             threshold={appliedMin}
           />
         </div>
@@ -344,7 +454,7 @@
           {#if $sampleQuery.data}
             <div class="flex items-center gap-3">
               <span class="text-xs text-stone-400">
-                {m.search_sample_count({ shown: sampleResults.length.toString(), total: totalInRange.toLocaleString() })}
+                {m.search_sample_count({ shown: sampleResults.length.toString(), total: displayedTotalInRange.toLocaleString() })}
               </span>
               <button
                 type="button"
