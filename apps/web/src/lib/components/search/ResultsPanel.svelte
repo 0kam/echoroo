@@ -31,6 +31,8 @@
     searchingSpecies: TargetSpecies[];
     /** Session ID for distribution and sampling APIs */
     sessionId?: string | null;
+    /** Called when the selected species tab changes */
+    onSpeciesKeyChange?: (speciesKey: string | null) => void;
   }
 
   let {
@@ -40,6 +42,7 @@
     isSearching,
     searchingSpecies,
     sessionId = null,
+    onSpeciesKeyChange,
   }: Props = $props();
 
   // ============================================================================
@@ -66,6 +69,11 @@
       const keys = results ? Object.keys(results) : [];
       selectedSpeciesKey = keys.length > 0 ? (keys[0] ?? null) : null;
     }
+  });
+
+  /** Notify parent when selected species changes */
+  $effect(() => {
+    onSpeciesKeyChange?.(selectedSpeciesKey);
   });
 
   // ============================================================================

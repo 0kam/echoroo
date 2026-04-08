@@ -13,7 +13,6 @@
   import type { SearchSession, TargetSpecies, SoundSource } from '$lib/types/search';
   import ReferenceSoundsPanel from './ReferenceSoundsPanel.svelte';
   import ResultsPanel from './ResultsPanel.svelte';
-  import SearchSessionExportButton from './SearchSessionExportButton.svelte';
   import {
     getSearchSessionStatusLabel,
     getSearchSessionStatusTextClass,
@@ -40,6 +39,9 @@
   // Reconstructed TargetSpecies for the ReferenceSoundsPanel
   let reconstructedSpecies = $state<TargetSpecies[]>([]);
 
+  // Currently selected species key (tracked from ResultsPanel)
+  let currentSpeciesKey = $state<string | null>(null);
+
   // Recordings CSV export state
   let isExportingRecordings = $state(false);
 
@@ -47,7 +49,7 @@
     if (!session) return;
     isExportingRecordings = true;
     try {
-      await exportSearchSessionRecordingsCSV(projectId, session.id);
+      await exportSearchSessionRecordingsCSV(projectId, session.id, currentSpeciesKey ?? undefined);
     } catch (e) {
       console.error('Recordings export failed:', e);
     } finally {
@@ -414,10 +416,9 @@
           </div>
         </div>
 
-        <!-- Export buttons -->
+        <!-- Export button -->
         {#if session.status === 'completed' && session.result_count > 0}
           <div class="flex flex-wrap items-center gap-2">
-            <!-- Export Recordings CSV -->
             <button
               type="button"
               onclick={handleExportRecordings}
@@ -437,9 +438,6 @@
                 Export Recordings CSV
               {/if}
             </button>
-
-            <!-- Export search results CSV -->
-            <SearchSessionExportButton {projectId} sessionId={session.id} />
           </div>
         {/if}
       </div>
@@ -510,6 +508,7 @@
         searchDurationMs={searchDuration()}
         isSearching={false}
         searchingSpecies={reconstructedSpecies}
+        onSpeciesKeyChange={(key) => { currentSpeciesKey = key; }}
       />
     {:else if session.status === 'failed'}
       <!-- Failed state - no results -->

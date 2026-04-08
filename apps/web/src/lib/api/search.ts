@@ -638,18 +638,25 @@ export async function getSessionSample(
 /**
  * Export a search session's matched recordings as a CSV file and trigger a browser download.
  *
- * Downloads from /api/v1/projects/{projectId}/search-sessions/{sessionId}/export-recordings
- * which returns one row per unique recording (not per match).
+ * Computes similarity against ALL embeddings in the project, aggregates by
+ * recording, and downloads one row per unique recording.
  *
  * @param projectId - Project UUID
  * @param sessionId - Search session UUID to export
+ * @param speciesKey - Optional species key to filter export to a single species
  */
 export async function exportSearchSessionRecordingsCSV(
   projectId: string,
-  sessionId: string
+  sessionId: string,
+  speciesKey?: string
 ): Promise<void> {
+  const params = new URLSearchParams();
+  if (speciesKey) {
+    params.set('species_key', speciesKey);
+  }
+  const qs = params.toString() ? `?${params.toString()}` : '';
   const response = await apiClient.requestRaw(
-    `${API_BASE}/projects/${projectId}/search/sessions/${sessionId}/export-recordings`
+    `${API_BASE}/projects/${projectId}/search/sessions/${sessionId}/export-recordings${qs}`
   );
 
   if (!response.ok) {
