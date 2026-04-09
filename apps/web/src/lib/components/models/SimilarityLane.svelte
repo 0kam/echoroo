@@ -94,12 +94,12 @@
   }
 
   function scoreBadgeClass(similarity: number): string {
-    if (similarity >= 0.9) return 'bg-emerald-100 text-emerald-700';
-    if (similarity >= 0.8) return 'bg-green-100 text-green-700';
-    if (similarity >= 0.7) return 'bg-yellow-100 text-yellow-700';
-    if (similarity >= 0.6) return 'bg-orange-100 text-orange-700';
-    if (similarity >= 0.5) return 'bg-red-100 text-red-700';
-    return 'bg-stone-100 text-stone-600';
+    if (similarity >= 0.9) return 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400';
+    if (similarity >= 0.8) return 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400';
+    if (similarity >= 0.7) return 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400';
+    if (similarity >= 0.6) return 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400';
+    if (similarity >= 0.5) return 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400';
+    return 'bg-stone-100 text-stone-600 dark:bg-stone-700 dark:text-stone-400';
   }
 </script>
 

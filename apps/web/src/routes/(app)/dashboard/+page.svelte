@@ -35,16 +35,14 @@
               <dt class="text-sm font-medium text-stone-500">{m.dashboard_status_label()}</dt>
               <dd class="mt-1 text-sm text-stone-900">
                 <span
-                  class="inline-flex rounded-full px-2 py-1 text-xs font-semibold leading-5"
-                  class:bg-green-100={authStore.user.is_verified}
-                  class:text-green-800={authStore.user.is_verified}
-                  class:bg-yellow-100={!authStore.user.is_verified}
-                  class:text-yellow-800={!authStore.user.is_verified}
+                  class="inline-flex rounded-full px-2 py-1 text-xs font-semibold leading-5 {authStore.user.is_verified
+                    ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400'
+                    : 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400'}"
                 >
                   {authStore.user.is_verified ? m.dashboard_status_verified() : m.dashboard_status_unverified()}
                 </span>
                 {#if authStore.user.is_superuser}
-                  <span class="ml-2 inline-flex rounded-full bg-primary-100 px-2 py-1 text-xs font-semibold leading-5 text-primary-800">
+                  <span class="ml-2 inline-flex rounded-full bg-primary-100 px-2 py-1 text-xs font-semibold leading-5 text-primary-800 dark:bg-primary-900/30 dark:text-primary-400">
                     {m.dashboard_status_admin()}
                   </span>
                 {/if}

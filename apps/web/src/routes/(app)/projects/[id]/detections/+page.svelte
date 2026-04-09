@@ -88,7 +88,7 @@
 
   {#if projectId}
     <!-- Run selector -->
-    <div class="mb-6 flex items-center gap-3 rounded-lg border border-stone-200 bg-stone-50 px-4 py-3">
+    <div class="mb-6 flex items-center gap-3 rounded-lg border border-stone-200 bg-stone-50 px-4 py-3 dark:border-stone-700 dark:bg-stone-800/50">
       <label for="run-selector" class="shrink-0 text-sm font-medium text-stone-600">
         {m.detection_run_selector_label()}:
       </label>

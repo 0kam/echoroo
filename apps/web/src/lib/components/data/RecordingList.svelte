@@ -264,9 +264,9 @@
                 <td class="px-4 py-3">
                   <span
                     class="inline-flex items-center rounded px-2 py-0.5 text-xs font-medium capitalize
-                      {recording.datetime_parse_status === 'success' ? 'bg-green-100 text-green-800' : ''}
-                      {recording.datetime_parse_status === 'pending' ? 'bg-yellow-100 text-yellow-800' : ''}
-                      {recording.datetime_parse_status === 'failed' ? 'bg-red-100 text-red-800' : ''}"
+                      {recording.datetime_parse_status === 'success' ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400' : ''}
+                      {recording.datetime_parse_status === 'pending' ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400' : ''}
+                      {recording.datetime_parse_status === 'failed' ? 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400' : ''}"
                   >
                     {recording.datetime_parse_status}
                   </span>

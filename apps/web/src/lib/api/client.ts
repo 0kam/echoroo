@@ -192,6 +192,10 @@ export class ApiClient {
     }
 
     // Handle empty responses (e.g., 204 No Content)
+    if (response.status === 204) {
+      return undefined as T;
+    }
+
     const contentType = response.headers.get('content-type');
     if (contentType?.includes('application/json')) {
       return response.json();

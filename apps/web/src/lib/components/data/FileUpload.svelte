@@ -277,17 +277,17 @@
     switch (status) {
       case 'issued':
       case 'uploaded':
-        return 'bg-yellow-100 text-yellow-800';
+        return 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400';
       case 'validating':
       case 'importing':
-        return 'bg-primary-100 text-primary-800';
+        return 'bg-primary-100 text-primary-800 dark:bg-primary-900/30 dark:text-primary-400';
       case 'validated':
       case 'imported':
-        return 'bg-green-100 text-green-800';
+        return 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400';
       case 'failed':
-        return 'bg-red-100 text-red-800';
+        return 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400';
       default:
-        return 'bg-stone-100 text-stone-800';
+        return 'bg-stone-100 text-stone-800 dark:bg-stone-700 dark:text-stone-300';
     }
   }
 
@@ -461,9 +461,9 @@
           </svg>
         </div>
         <div>
-          <p class="font-medium text-green-800">Upload and import complete</p>
+          <p class="font-medium text-green-800 dark:text-green-400">Upload and import complete</p>
           {#if status}
-            <p class="text-sm text-green-700">
+            <p class="text-sm text-green-700 dark:text-green-500">
               Successfully imported {status.imported_files} recording{status.imported_files !== 1 ? 's' : ''}.
             </p>
           {/if}
@@ -471,8 +471,8 @@
       </div>
 
       {#if status?.files.some((f) => f.status === 'invalid')}
-        <div class="rounded-md border border-amber-200 bg-amber-50 p-3">
-          <p class="mb-1.5 text-xs font-medium text-amber-800">
+        <div class="rounded-md border border-amber-200 bg-amber-50 p-3 dark:border-amber-800 dark:bg-amber-900/20">
+          <p class="mb-1.5 text-xs font-medium text-amber-800 dark:text-amber-400">
             {status.files.filter((f) => f.status === 'invalid').length} file{status.files.filter((f) => f.status === 'invalid').length !== 1 ? 's' : ''} could not be imported:
           </p>
           <ul class="space-y-1">

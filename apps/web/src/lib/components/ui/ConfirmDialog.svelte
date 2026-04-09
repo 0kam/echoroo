@@ -81,9 +81,9 @@
         <p class="m-0 mb-4 leading-relaxed text-stone-700">{message}</p>
 
         {#if warningItems.length > 0}
-          <div class="rounded-md border border-red-200 bg-red-50 p-4">
+          <div class="rounded-md border border-red-200 bg-red-50 p-4 dark:border-red-800 dark:bg-red-900/20">
             <div class="mb-3 flex items-center gap-2">
-              <svg class="h-5 w-5 flex-shrink-0 text-red-600" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+              <svg class="h-5 w-5 flex-shrink-0 text-red-600 dark:text-red-400" viewBox="0 0 24 24" fill="none" stroke="currentColor">
                 <path
                   d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"
                   stroke-width="2"
@@ -91,9 +91,9 @@
                 <line x1="12" y1="9" x2="12" y2="13" stroke-width="2" />
                 <line x1="12" y1="17" x2="12.01" y2="17" stroke-width="2" />
               </svg>
-              <span class="text-sm font-medium text-red-800">{m.common_delete_warning_items()}</span>
+              <span class="text-sm font-medium text-red-800 dark:text-red-400">{m.common_delete_warning_items()}</span>
             </div>
-            <ul class="m-0 pl-6 text-sm text-red-900">
+            <ul class="m-0 pl-6 text-sm text-red-900 dark:text-red-300">
               {#each warningItems as item}
                 <li class="mb-1">{item}</li>
               {/each}
@@ -102,7 +102,7 @@
         {/if}
 
         {#if errorMessage}
-          <div class="mt-3 rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">
+          <div class="mt-3 rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-800 dark:bg-red-900/20 dark:text-red-400">
             {errorMessage}
           </div>
         {/if}

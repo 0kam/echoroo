@@ -167,7 +167,7 @@
 
   <!-- Success Message -->
   {#if successMessage}
-    <div class="mb-6 rounded-md bg-green-50 p-4" role="alert">
+    <div class="mb-6 rounded-md bg-green-50 p-4 dark:bg-green-900/20" role="alert">
       <div class="flex">
         <div class="flex-shrink-0">
           <svg
@@ -184,7 +184,7 @@
           </svg>
         </div>
         <div class="ml-3">
-          <p class="text-sm font-medium text-green-800">{successMessage}</p>
+          <p class="text-sm font-medium text-green-800 dark:text-green-400">{successMessage}</p>
         </div>
       </div>
     </div>
@@ -192,7 +192,7 @@
 
   <!-- Error Message -->
   {#if error}
-    <div class="mb-6 rounded-md bg-red-50 p-4" role="alert">
+    <div class="mb-6 rounded-md bg-red-50 p-4 dark:bg-red-900/20" role="alert">
       <div class="flex">
         <div class="flex-shrink-0">
           <svg
@@ -209,7 +209,7 @@
           </svg>
         </div>
         <div class="ml-3">
-          <p class="text-sm font-medium text-red-800">{error}</p>
+          <p class="text-sm font-medium text-red-800 dark:text-red-400">{error}</p>
         </div>
       </div>
     </div>

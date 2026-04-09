@@ -77,10 +77,10 @@
     --primary-100: 58 32 30;      /* Dark rose - subtle bg */
     --primary-200: 90 48 46;      /* Deeper rose */
     --primary-300: 140 80 76;     /* Medium-dark rose */
-    --primary-400: 180 120 116;   /* Medium rose */
-    --primary-500: 235 188 186;   /* Rosé Pine Main Rose - accent */
-    --primary-600: 192 110 106;   /* Button bg - darker rose, white text readable */
-    --primary-700: 160 82 78;     /* Hover state */
+    --primary-400: 210 155 152;   /* Warm rose - smoothed gradient */
+    --primary-500: 235 188 186;   /* Rosé Pine Main Rose - accent (text use) */
+    --primary-600: 195 130 126;   /* Button bg - visible on dark bg, white text readable */
+    --primary-700: 170 95 90;     /* Hover state */
     --primary-800: 128 58 54;     /* Active/pressed */
     --primary-900: 96 40 36;      /* Very dark */
     --primary-950: 64 24 20;      /* Darkest */

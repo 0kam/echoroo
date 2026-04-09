@@ -102,7 +102,7 @@
 
   <!-- Error Message -->
   {#if error}
-    <div class="mb-6 rounded-md bg-red-50 p-4" role="alert">
+    <div class="mb-6 rounded-md bg-red-50 p-4 dark:bg-red-900/20" role="alert">
       <div class="flex">
         <div class="flex-shrink-0">
           <svg
@@ -119,7 +119,7 @@
           </svg>
         </div>
         <div class="ml-3">
-          <p class="text-sm font-medium text-red-800">{error}</p>
+          <p class="text-sm font-medium text-red-800 dark:text-red-400">{error}</p>
         </div>
       </div>
     </div>
@@ -200,8 +200,8 @@
             <span
               class="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium {project.visibility ===
               'public'
-                ? 'bg-green-100 text-green-800'
-                : 'bg-stone-100 text-stone-800'}"
+                ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400'
+                : 'bg-stone-100 text-stone-800 dark:bg-stone-700 dark:text-stone-300'}"
             >
               {#if project.visibility === 'public'}
                 <svg class="mr-1 h-3 w-3" fill="currentColor" viewBox="0 0 20 20">

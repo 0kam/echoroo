@@ -176,7 +176,7 @@
 
   <!-- Success Message -->
   {#if successMessage}
-    <div class="mb-6 rounded-md bg-green-50 p-4" role="alert">
+    <div class="mb-6 rounded-md bg-green-50 p-4 dark:bg-green-900/20" role="alert">
       <div class="flex">
         <div class="flex-shrink-0">
           <svg
@@ -193,7 +193,7 @@
           </svg>
         </div>
         <div class="ml-3">
-          <p class="text-sm font-medium text-green-800">{successMessage}</p>
+          <p class="text-sm font-medium text-green-800 dark:text-green-400">{successMessage}</p>
         </div>
       </div>
     </div>
@@ -201,7 +201,7 @@
 
   <!-- Error Message -->
   {#if error}
-    <div class="mb-6 rounded-md bg-red-50 p-4" role="alert">
+    <div class="mb-6 rounded-md bg-red-50 p-4 dark:bg-red-900/20" role="alert">
       <div class="flex">
         <div class="flex-shrink-0">
           <svg
@@ -218,7 +218,7 @@
           </svg>
         </div>
         <div class="ml-3">
-          <p class="text-sm font-medium text-red-800">{error}</p>
+          <p class="text-sm font-medium text-red-800 dark:text-red-400">{error}</p>
         </div>
       </div>
     </div>
@@ -372,14 +372,14 @@
                   <div class="flex flex-col gap-1">
                     <span
                       class="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium {user.is_active
-                        ? 'bg-green-100 text-green-800'
-                        : 'bg-red-100 text-red-800'}"
+                        ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400'
+                        : 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400'}"
                     >
                       {user.is_active ? 'Active' : 'Inactive'}
                     </span>
                     {#if user.is_verified}
                       <span
-                        class="inline-flex items-center rounded-full bg-primary-100 px-2.5 py-0.5 text-xs font-medium text-primary-800"
+                        class="inline-flex items-center rounded-full bg-primary-100 px-2.5 py-0.5 text-xs font-medium text-primary-800 dark:bg-primary-900/30 dark:text-primary-400"
                       >
                         Verified
                       </span>
@@ -391,8 +391,8 @@
                 <td class="whitespace-nowrap px-6 py-4">
                   <span
                     class="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium {user.is_superuser
-                      ? 'bg-primary-100 text-primary-800'
-                      : 'bg-stone-100 text-stone-800'}"
+                      ? 'bg-primary-100 text-primary-800 dark:bg-primary-900/30 dark:text-primary-400'
+                      : 'bg-stone-100 text-stone-800 dark:bg-stone-700 dark:text-stone-300'}"
                   >
                     {user.is_superuser ? 'Superuser' : 'User'}
                   </span>
@@ -409,14 +409,14 @@
                     <button
                       onclick={() => toggleUserActive(user)}
                       class="rounded px-3 py-1 text-xs font-medium transition-colors {user.is_active
-                        ? 'bg-red-100 text-red-700 hover:bg-red-200'
-                        : 'bg-green-100 text-green-700 hover:bg-green-200'}"
+                        ? 'bg-red-100 text-red-700 hover:bg-red-200 dark:bg-red-900/30 dark:text-red-400 dark:hover:bg-red-900/50'
+                        : 'bg-green-100 text-green-700 hover:bg-green-200 dark:bg-green-900/30 dark:text-green-400 dark:hover:bg-green-900/50'}"
                     >
                       {user.is_active ? 'Deactivate' : 'Activate'}
                     </button>
                     <button
                       onclick={() => toggleUserSuperuser(user)}
-                      class="rounded bg-primary-100 px-3 py-1 text-xs font-medium text-primary-700 transition-colors hover:bg-primary-200"
+                      class="rounded bg-primary-100 px-3 py-1 text-xs font-medium text-primary-700 transition-colors hover:bg-primary-200 dark:bg-primary-900/30 dark:text-primary-400 dark:hover:bg-primary-900/50"
                     >
                       {user.is_superuser ? 'Demote' : 'Promote'}
                     </button>

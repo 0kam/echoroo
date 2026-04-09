@@ -152,15 +152,15 @@
       {/each}
     </div>
   {:else if $speciesSummaryQuery.isError}
-    <div class="rounded-lg border border-red-200 bg-red-50 px-4 py-6 text-center">
-      <p class="text-sm font-medium text-red-700">{m.detection_load_error()}</p>
-      <p class="mt-1 text-xs text-red-500">
+    <div class="rounded-lg border border-red-200 bg-red-50 px-4 py-6 text-center dark:border-red-800 dark:bg-red-900/20">
+      <p class="text-sm font-medium text-red-700 dark:text-red-400">{m.detection_load_error()}</p>
+      <p class="mt-1 text-xs text-red-500 dark:text-red-500">
         {$speciesSummaryQuery.error?.message ?? m.common_error_unexpected()}
       </p>
       <button
         type="button"
         onclick={() => $speciesSummaryQuery.refetch()}
-        class="mt-3 rounded-md bg-red-100 px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-200"
+        class="mt-3 rounded-md bg-red-100 px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-200 dark:bg-red-900/30 dark:text-red-400 dark:hover:bg-red-900/50"
       >
         {m.detection_retry()}
       </button>

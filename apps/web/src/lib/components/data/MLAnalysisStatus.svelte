@@ -230,7 +230,7 @@
           </svg>
         </div>
         <div>
-          <p class="text-sm font-medium text-green-800">
+          <p class="text-sm font-medium text-green-800 dark:text-green-400">
             {m.ml_analysis_completed({ model: runModelLabel(latestRun) })} — {m.common_detections_count({ count: latestRun.annotation_count })} found
           </p>
           {#if latestRun.completed_at}

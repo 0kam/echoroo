@@ -116,9 +116,9 @@
     onmousedown={handleMouseDown('start')}
     ontouchstart={() => (dragging = 'start')}
   >
-    <div class="h-full w-0.5 bg-primary-500 opacity-90"></div>
+    <div class="h-full w-0.5 bg-primary-600 opacity-90"></div>
     <!-- Handle grip indicator -->
-    <div class="absolute top-1/2 -translate-y-1/2 rounded bg-primary-500 px-0.5 py-1 text-white shadow-sm">
+    <div class="absolute top-1/2 -translate-y-1/2 rounded bg-primary-600 px-0.5 py-1 text-white shadow-sm">
       <div class="flex flex-col gap-0.5">
         <div class="h-0.5 w-1 bg-surface-card/70"></div>
         <div class="h-0.5 w-1 bg-surface-card/70"></div>
@@ -140,9 +140,9 @@
     onmousedown={handleMouseDown('end')}
     ontouchstart={() => (dragging = 'end')}
   >
-    <div class="h-full w-0.5 bg-primary-500 opacity-90"></div>
+    <div class="h-full w-0.5 bg-primary-600 opacity-90"></div>
     <!-- Handle grip indicator -->
-    <div class="absolute top-1/2 -translate-y-1/2 rounded bg-primary-500 px-0.5 py-1 text-white shadow-sm">
+    <div class="absolute top-1/2 -translate-y-1/2 rounded bg-primary-600 px-0.5 py-1 text-white shadow-sm">
       <div class="flex flex-col gap-0.5">
         <div class="h-0.5 w-1 bg-surface-card/70"></div>
         <div class="h-0.5 w-1 bg-surface-card/70"></div>

@@ -230,7 +230,7 @@
 
         <!-- Success Message -->
         {#if successMessage}
-          <div class="mt-4 rounded-md bg-green-50 p-4">
+          <div class="mt-4 rounded-md bg-green-50 p-4 dark:bg-green-900/20">
             <div class="flex">
               <div class="flex-shrink-0">
                 <svg class="h-5 w-5 text-green-400" viewBox="0 0 20 20" fill="currentColor">
@@ -238,7 +238,7 @@
                 </svg>
               </div>
               <div class="ml-3">
-                <p class="text-sm font-medium text-green-800">{successMessage}</p>
+                <p class="text-sm font-medium text-green-800 dark:text-green-400">{successMessage}</p>
               </div>
             </div>
           </div>
@@ -246,7 +246,7 @@
 
         <!-- Error Message -->
         {#if errorMessage}
-          <div class="mt-4 rounded-md bg-red-50 p-4">
+          <div class="mt-4 rounded-md bg-red-50 p-4 dark:bg-red-900/20">
             <div class="flex">
               <div class="flex-shrink-0">
                 <svg class="h-5 w-5 text-red-400" viewBox="0 0 20 20" fill="currentColor">
@@ -254,7 +254,7 @@
                 </svg>
               </div>
               <div class="ml-3">
-                <p class="text-sm font-medium text-red-800">{errorMessage}</p>
+                <p class="text-sm font-medium text-red-800 dark:text-red-400">{errorMessage}</p>
               </div>
             </div>
           </div>
@@ -424,7 +424,7 @@
         </div>
 
         {#if tokensError}
-          <div class="mb-4 rounded-md bg-red-50 p-3 text-sm text-red-700" role="alert">
+          <div class="mb-4 rounded-md bg-red-50 p-3 text-sm text-red-700 dark:bg-red-900/20 dark:text-red-400" role="alert">
             {tokensError}
           </div>
         {/if}

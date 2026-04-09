@@ -110,7 +110,7 @@
 
         <!-- Success Message -->
         {#if successMessage}
-          <div class="mt-4 rounded-md bg-green-50 p-4">
+          <div class="mt-4 rounded-md bg-green-50 p-4 dark:bg-green-900/20">
             <div class="flex">
               <div class="flex-shrink-0">
                 <svg class="h-5 w-5 text-green-400" viewBox="0 0 20 20" fill="currentColor">
@@ -118,7 +118,7 @@
                 </svg>
               </div>
               <div class="ml-3">
-                <p class="text-sm font-medium text-green-800">{successMessage}</p>
+                <p class="text-sm font-medium text-green-800 dark:text-green-400">{successMessage}</p>
               </div>
             </div>
           </div>
@@ -126,7 +126,7 @@
 
         <!-- Error Message -->
         {#if errorMessage}
-          <div class="mt-4 rounded-md bg-red-50 p-4">
+          <div class="mt-4 rounded-md bg-red-50 p-4 dark:bg-red-900/20">
             <div class="flex">
               <div class="flex-shrink-0">
                 <svg class="h-5 w-5 text-red-400" viewBox="0 0 20 20" fill="currentColor">
@@ -134,7 +134,7 @@
                 </svg>
               </div>
               <div class="ml-3">
-                <p class="text-sm font-medium text-red-800">{errorMessage}</p>
+                <p class="text-sm font-medium text-red-800 dark:text-red-400">{errorMessage}</p>
               </div>
             </div>
           </div>
@@ -211,16 +211,14 @@
                 <dt class="text-sm font-medium text-stone-500">{m.profile_status_label()}</dt>
                 <dd class="mt-1 text-sm text-stone-900">
                   <span
-                    class="inline-flex rounded-full px-2 py-1 text-xs font-semibold leading-5"
-                    class:bg-green-100={authStore.user?.is_verified}
-                    class:text-green-800={authStore.user?.is_verified}
-                    class:bg-yellow-100={!authStore.user?.is_verified}
-                    class:text-yellow-800={!authStore.user?.is_verified}
+                    class="inline-flex rounded-full px-2 py-1 text-xs font-semibold leading-5 {authStore.user?.is_verified
+                      ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400'
+                      : 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400'}"
                   >
                     {authStore.user?.is_verified ? m.profile_status_verified() : m.profile_status_unverified()}
                   </span>
                   {#if authStore.user?.is_superuser}
-                    <span class="ml-2 inline-flex rounded-full bg-primary-100 px-2 py-1 text-xs font-semibold leading-5 text-primary-800">
+                    <span class="ml-2 inline-flex rounded-full bg-primary-100 px-2 py-1 text-xs font-semibold leading-5 text-primary-800 dark:bg-primary-900/30 dark:text-primary-400">
                       {m.profile_status_admin()}
                     </span>
                   {/if}

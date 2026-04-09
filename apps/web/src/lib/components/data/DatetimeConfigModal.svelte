@@ -348,7 +348,7 @@
                 <polyline points="20 6 9 17 4 12"></polyline>
               </svg>
             </div>
-            <p class="text-sm font-medium text-green-800">
+            <p class="text-sm font-medium text-green-800 dark:text-green-400">
               {m.datetime_config_auto_detected({ name: autoDetectResult.preset_name ?? 'Custom' })}
             </p>
           </div>
@@ -397,7 +397,7 @@
                   <polyline points="20 6 9 17 4 12"></polyline>
                 </svg>
               </div>
-              <p class="text-sm font-medium text-green-800">
+              <p class="text-sm font-medium text-green-800 dark:text-green-400">
                 {m.datetime_config_auto_detected({ name: autoDetectResult?.preset_name ?? 'Custom' })}
               </p>
             </div>
@@ -419,7 +419,7 @@
 
           <!-- Apply feedback -->
           {#if applySuccess}
-            <div class="flex items-center gap-2 rounded-md border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800">
+            <div class="flex items-center gap-2 rounded-md border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800 dark:border-green-800 dark:bg-green-900/20 dark:text-green-400">
               <svg class="h-4 w-4 flex-shrink-0 text-green-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 <polyline points="20 6 9 17 4 12"></polyline>
               </svg>
@@ -427,7 +427,7 @@
             </div>
           {/if}
           {#if applyError}
-            <div class="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
+            <div class="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600 dark:border-red-800 dark:bg-red-900/20 dark:text-red-400">
               {applyError}
             </div>
           {/if}
@@ -527,7 +527,7 @@
 
         <!-- Apply feedback -->
         {#if applySuccess}
-          <div class="flex items-center gap-2 rounded-md border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800">
+          <div class="flex items-center gap-2 rounded-md border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800 dark:border-green-800 dark:bg-green-900/20 dark:text-green-400">
             <svg class="h-4 w-4 flex-shrink-0 text-green-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <polyline points="20 6 9 17 4 12"></polyline>
             </svg>
@@ -535,7 +535,7 @@
           </div>
         {/if}
         {#if applyError}
-          <div class="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
+          <div class="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600 dark:border-red-800 dark:bg-red-900/20 dark:text-red-400">
             {applyError}
           </div>
         {/if}
