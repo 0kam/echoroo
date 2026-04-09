@@ -44,7 +44,26 @@ export default {
           900: 'rgb(var(--secondary-900) / <alpha-value>)',
           950: 'rgb(var(--secondary-950) / <alpha-value>)',
         },
-        // Semantic colors for page/card backgrounds
+        // Brand orange — logo only, never changes
+        'brand-orange': '#FF5A00',
+        // Semantic status colors
+        success: {
+          DEFAULT: 'rgb(var(--color-success) / <alpha-value>)',
+          light: 'rgb(var(--color-success-light) / <alpha-value>)',
+        },
+        warning: {
+          DEFAULT: 'rgb(var(--color-warning) / <alpha-value>)',
+          light: 'rgb(var(--color-warning-light) / <alpha-value>)',
+        },
+        danger: {
+          DEFAULT: 'rgb(var(--color-danger) / <alpha-value>)',
+          light: 'rgb(var(--color-danger-light) / <alpha-value>)',
+        },
+        info: {
+          DEFAULT: 'rgb(var(--color-info) / <alpha-value>)',
+          light: 'rgb(var(--color-info-light) / <alpha-value>)',
+        },
+        // Semantic surface colors
         surface: {
           page: 'rgb(var(--color-page-bg) / <alpha-value>)',
           card: 'rgb(var(--color-card-bg) / <alpha-value>)',
