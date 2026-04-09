@@ -21,7 +21,8 @@
   }: Props = $props();
 
   const variantClasses = {
-    primary: 'bg-primary-600 text-white hover:bg-primary-700 focus:ring-primary-500',
+    primary:
+      'bg-primary-600 text-white hover:bg-primary-700 focus:ring-primary-500 dark:bg-primary-500 dark:text-stone-50 dark:hover:bg-primary-400',
     secondary: 'bg-secondary-600 text-white hover:bg-secondary-700 focus:ring-secondary-500',
     outline:
       'border-2 border-primary-600 text-primary-600 hover:bg-primary-50 focus:ring-primary-500',

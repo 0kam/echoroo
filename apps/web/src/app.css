@@ -4,135 +4,120 @@
 
 @layer base {
   :root {
-    /* Primary (Rose accent — Rosé Pine Dawn Rose #d7827e centered at 500) */
-    --primary-50: 252 241 240;
+    /* Primary (Rose accent — Rosé Pine Dawn rose #d7827e centered at 500) */
+    --primary-50: 253 243 242;
     --primary-100: 248 224 222;
-    --primary-200: 242 196 194;
-    --primary-300: 234 166 163;
-    --primary-400: 225 146 142;
-    --primary-500: 215 130 126;
-    --primary-600: 192 108 104;
-    --primary-700: 162 84 80;
-    --primary-800: 128 62 59;
-    --primary-900: 96 44 42;
-    --primary-950: 64 26 24;
+    --primary-200: 240 195 192;
+    --primary-300: 230 165 162;
+    --primary-400: 222 148 144;
+    --primary-500: 215 130 126;   /* Dawn rose #d7827e */
+    --primary-600: 190 105 100;
+    --primary-700: 160 80 76;
+    --primary-800: 130 58 54;
+    --primary-900: 100 40 36;
+    --primary-950: 70 24 20;
 
-    /* Stone (Rosé Pine Dawn neutrals — 50=Dawn Base #faf4ed → 950=near-black) */
-    --stone-50: 250 244 237;
-    --stone-100: 242 233 225;
-    --stone-200: 232 220 210;
-    --stone-300: 223 218 217;
-    --stone-400: 159 154 150;
-    --stone-500: 121 117 113;
-    --stone-600: 97 95 99;
-    --stone-700: 87 82 121;
-    --stone-800: 57 53 82;
-    --stone-900: 40 36 58;
-    --stone-950: 25 23 36;
+    /* Stone (Rosé Pine Dawn neutrals — 50=lightest bg, 950=darkest text) */
+    --stone-50: 255 250 243;   /* Dawn surface */
+    --stone-100: 250 244 237;  /* Dawn base */
+    --stone-200: 244 237 232;  /* Dawn highlight-low */
+    --stone-300: 223 218 217;  /* Dawn highlight-med */
+    --stone-400: 206 202 205;  /* Dawn highlight-high */
+    --stone-500: 152 147 165;  /* Dawn muted */
+    --stone-600: 121 117 147;  /* Dawn subtle */
+    --stone-700: 87 82 121;    /* Dawn text */
+    --stone-800: 70 66 97;     /* strong text — darker than Dawn text */
+    --stone-900: 55 52 80;     /* very strong */
+    --stone-950: 40 38 65;     /* strongest */
 
     /* Secondary (mirrors stone palette for semantic use) */
-    --secondary-50: 250 244 237;
-    --secondary-100: 242 233 225;
-    --secondary-200: 232 220 210;
+    --secondary-50: 255 250 243;
+    --secondary-100: 250 244 237;
+    --secondary-200: 244 237 232;
     --secondary-300: 223 218 217;
-    --secondary-400: 159 154 150;
-    --secondary-500: 121 117 113;
-    --secondary-600: 97 95 99;
+    --secondary-400: 206 202 205;
+    --secondary-500: 152 147 165;
+    --secondary-600: 121 117 147;
     --secondary-700: 87 82 121;
-    --secondary-800: 57 53 82;
-    --secondary-900: 40 36 58;
-    --secondary-950: 25 23 36;
+    --secondary-800: 70 66 97;
+    --secondary-900: 55 52 80;
+    --secondary-950: 40 38 65;
 
-    /* Surfaces */
-    --color-page-bg: 250 244 237;
-    --color-card-bg: 255 250 243;
-    /* Darkened from stone-300 (223 218 217) for visible contrast against card-bg */
-    --color-card-border: 200 190 180;
-    --color-nav-bg: 242 233 225;
-    /* Darkened from stone-300 (223 218 217) for visible contrast against nav-bg */
-    --color-nav-border: 195 185 175;
+    /* Surfaces — exact official Rosé Pine Dawn roles */
+    --color-page-bg: 250 244 237;    /* Dawn base */
+    --color-card-bg: 255 250 243;    /* Dawn surface */
+    --color-card-border: 223 218 217; /* Dawn highlight-med */
+    --color-nav-bg: 242 233 225;     /* Dawn overlay */
+    --color-nav-border: 206 202 205; /* Dawn highlight-high */
 
-    /* Semantic Status Colors */
-    /* success: Pine #286983 — 5.21:1 on card-bg, OK as-is */
-    --color-success: 40 105 131;
-    --color-success-light: 218 237 243;
-    /* warning: darkened from Gold #ea9d34 → ~4.5:1 on warning-light and card-bg */
-    --color-warning: 180 120 20;
+    /* Semantic Status Colors — exact official Rosé Pine Dawn values */
+    --color-success: 40 105 131;     /* Dawn pine #286983 */
+    --color-success-light: 232 243 246;
+    --color-warning: 234 157 52;     /* Dawn gold #ea9d34 */
     --color-warning-light: 253 240 218;
-    /* danger: darkened from Love #b4637a → ~5.5:1 on danger-light */
-    --color-danger: 150 70 95;
+    --color-danger: 180 99 122;      /* Dawn love #b4637a */
     --color-danger-light: 245 224 231;
-    /* info: darkened from Foam #56949f → ~5.5:1 on card-bg */
-    --color-info: 35 110 120;
+    --color-info: 86 148 159;        /* Dawn foam #56949f */
     --color-info-light: 222 240 243;
   }
 
   .dark {
-    /* Primary (Rose — Dark Mode: NON-INVERTED, centered on Rosé Pine Main Rose #ebbcba at 500)
-     * Low numbers = dark rose tints (subtle bg on dark surfaces)
-     * primary-500 = #ebbcba accent, visible on dark backgrounds
-     * High numbers (600-900) = darker/more saturated rose for button bg (white text readable)
-     * bg-primary-600 text-white works in both light and dark modes */
-    --primary-50: 30 18 17;       /* Very dark rose tint - subtle bg */
-    --primary-100: 58 32 30;      /* Dark rose - subtle bg */
-    --primary-200: 90 48 46;      /* Deeper rose */
-    --primary-300: 140 80 76;     /* Medium-dark rose */
-    --primary-400: 210 155 152;   /* Warm rose - smoothed gradient */
-    --primary-500: 235 188 186;   /* Rosé Pine Main Rose - accent (text use) */
-    --primary-600: 175 95 90;     /* Button bg - ~4.5:1 with white text */
-    --primary-700: 145 70 65;     /* Hover state */
-    --primary-800: 115 50 45;     /* Active/pressed */
-    --primary-900: 96 40 36;      /* Very dark */
-    --primary-950: 64 24 20;      /* Darkest */
+    /* Primary (Rose — Dark Mode: NON-INVERTED, centered on Rosé Pine Main rose #ebbcba at 500)
+     * In dark mode, accent buttons use light rose bg with dark base text — authentic Rosé Pine style */
+    --primary-50: 250 240 240;
+    --primary-100: 245 225 224;
+    --primary-200: 240 210 208;
+    --primary-300: 238 200 198;
+    --primary-400: 237 194 192;
+    --primary-500: 235 188 186;   /* Main rose #ebbcba */
+    --primary-600: 200 150 146;
+    --primary-700: 170 115 110;
+    --primary-800: 140 80 76;
+    --primary-900: 110 55 50;
+    --primary-950: 80 30 26;
 
-    /* Stone (Rosé Pine Main neutrals — FLIPPED: 50=Main Base #191724 → 950=Main Text #e0def4) */
-    --stone-50: 25 23 36;
-    --stone-100: 31 29 46;
-    --stone-200: 38 35 58;
-    --stone-300: 57 53 82;
-    --stone-400: 110 106 134;
-    --stone-500: 144 140 170;
-    --stone-600: 172 169 196;
-    --stone-700: 196 193 216;
-    --stone-800: 218 216 236;
-    --stone-900: 234 232 248;
-    --stone-950: 224 222 244;
+    /* Stone (Rosé Pine Main neutrals — INVERTED: 50=darkest bg, 950=lightest text) */
+    --stone-50: 25 23 36;      /* Main base */
+    --stone-100: 31 29 46;     /* Main surface */
+    --stone-200: 38 35 58;     /* Main overlay */
+    --stone-300: 64 61 81;     /* Main highlight-med */
+    --stone-400: 110 106 134;  /* Main muted */
+    --stone-500: 144 140 170;  /* Main subtle */
+    --stone-600: 170 167 200;  /* between subtle and text */
+    --stone-700: 196 193 216;  /* approaching text */
+    --stone-800: 210 208 230;  /* near text */
+    --stone-900: 224 222 244;  /* Main text #e0def4 */
+    --stone-950: 240 238 254;  /* brightest */
 
-    /* Secondary (mirrors stone — Dark Mode: FLIPPED) */
+    /* Secondary (mirrors stone — Dark Mode: INVERTED) */
     --secondary-50: 25 23 36;
     --secondary-100: 31 29 46;
     --secondary-200: 38 35 58;
-    --secondary-300: 57 53 82;
+    --secondary-300: 64 61 81;
     --secondary-400: 110 106 134;
     --secondary-500: 144 140 170;
-    --secondary-600: 172 169 196;
+    --secondary-600: 170 167 200;
     --secondary-700: 196 193 216;
-    --secondary-800: 218 216 236;
-    --secondary-900: 234 232 248;
-    --secondary-950: 224 222 244;
+    --secondary-800: 210 208 230;
+    --secondary-900: 224 222 244;
+    --secondary-950: 240 238 254;
 
-    /* Surfaces */
-    --color-page-bg: 25 23 36;
-    --color-card-bg: 31 29 46;
-    /* Lightened from stone-200 (38 35 58) for visible contrast against dark card-bg */
-    --color-card-border: 55 52 75;
-    --color-nav-bg: 31 29 46;
-    /* Lightened from stone-200 (38 35 58) for visible contrast against dark nav-bg */
-    --color-nav-border: 55 52 75;
+    /* Surfaces — exact official Rosé Pine Main roles */
+    --color-page-bg: 25 23 36;       /* Main base */
+    --color-card-bg: 31 29 46;       /* Main surface */
+    --color-card-border: 64 61 81;   /* Main highlight-med */
+    --color-nav-bg: 31 29 46;        /* Main surface */
+    --color-nav-border: 64 61 81;    /* Main highlight-med */
 
-    /* Semantic Status Colors */
-    /* success: brightened from #31748f → ~5:1 on dark success-light */
-    --color-success: 70 170 180;
-    --color-success-light: 30 48 58;
-    /* warning: #f6c177 — OK, leave as-is */
-    --color-warning: 246 193 119;
-    --color-warning-light: 62 48 30;
-    /* danger: #eb6f92 — borderline on danger-light dark, OK */
-    --color-danger: 235 111 146;
-    --color-danger-light: 62 28 38;
-    /* info: #9ccfd8 — OK, leave as-is */
-    --color-info: 156 207 216;
-    --color-info-light: 30 52 58;
+    /* Semantic Status Colors — exact official Rosé Pine Main values */
+    --color-success: 49 116 143;     /* Main pine #31748f */
+    --color-success-light: 30 40 50;
+    --color-warning: 246 193 119;    /* Main gold #f6c177 */
+    --color-warning-light: 50 42 30;
+    --color-danger: 235 111 146;     /* Main love #eb6f92 */
+    --color-danger-light: 50 28 38;
+    --color-info: 156 207 216;       /* Main foam #9ccfd8 */
+    --color-info-light: 30 42 50;
   }
 
   body {
