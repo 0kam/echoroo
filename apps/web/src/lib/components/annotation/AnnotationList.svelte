@@ -179,7 +179,7 @@
     justify-content: center;
     padding: 2rem 1rem;
     text-align: center;
-    color: #9ca3af;
+    color: rgb(var(--stone-400));
     gap: 0.25rem;
   }
 
@@ -193,13 +193,13 @@
   .empty-title {
     font-size: 0.875rem;
     font-weight: 500;
-    color: #6b7280;
+    color: rgb(var(--stone-500));
     margin: 0;
   }
 
   .empty-subtitle {
     font-size: 0.75rem;
-    color: #9ca3af;
+    color: rgb(var(--stone-400));
     margin: 0;
   }
 
@@ -230,7 +230,7 @@
 
   .annotation-item:hover {
     background-color: #f9fafb;
-    border-color: #d1d5db;
+    border-color: rgb(var(--stone-300));
   }
 
   .annotation-item.selected {
@@ -249,7 +249,7 @@
   .geo-icon {
     width: 1rem;
     height: 1rem;
-    color: #6b7280;
+    color: rgb(var(--stone-500));
   }
 
   /* ---- Details ---- */
@@ -270,13 +270,13 @@
   .time-label {
     font-size: 0.8125rem;
     font-weight: 500;
-    color: #111827;
+    color: rgb(var(--stone-900));
     font-variant-numeric: tabular-nums;
   }
 
   .freq-row {
     font-size: 0.6875rem;
-    color: #6b7280;
+    color: rgb(var(--stone-500));
   }
 
   /* ---- Source badges ---- */
@@ -328,7 +328,7 @@
     background: transparent;
     border-radius: 9999px;
     cursor: pointer;
-    color: #9ca3af;
+    color: rgb(var(--stone-400));
     padding: 0;
     transition: background-color 0.1s ease, color 0.1s ease;
   }

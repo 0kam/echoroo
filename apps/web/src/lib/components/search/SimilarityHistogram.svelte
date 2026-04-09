@@ -195,7 +195,7 @@
         y1={CHART_H}
         x2={CHART_W}
         y2={CHART_H}
-        stroke="rgb(214,211,209)"
+        stroke="rgb(var(--stone-300))"
         stroke-width="1"
       />
 
@@ -205,7 +205,7 @@
         y={0}
         width={Math.max(0, maxX - minX)}
         height={CHART_H}
-        fill="rgb(255,90,0)"
+        fill="rgb(var(--primary-500))"
         fill-opacity="0.07"
         pointer-events="none"
       />
@@ -217,7 +217,7 @@
           y={bar.y}
           width={bar.w}
           height={bar.h}
-          fill="rgb(255,90,0)"
+          fill="rgb(var(--primary-500))"
           fill-opacity={bar.inRange ? bar.alpha : bar.alpha * 0.25}
           rx="1"
         />
@@ -231,7 +231,7 @@
           y={CHART_H + 14}
           text-anchor="middle"
           font-size="9"
-          fill="rgb(120,113,108)"
+          fill="rgb(var(--stone-500))"
           font-family="sans-serif"
         >
           {formatPct(label)}
@@ -245,7 +245,7 @@
         text-anchor="end"
         dominant-baseline="hanging"
         font-size="9"
-        fill="rgb(120,113,108)"
+        fill="rgb(var(--stone-500))"
         font-family="sans-serif"
       >
         {maxCount}
@@ -256,7 +256,7 @@
         text-anchor="end"
         dominant-baseline="auto"
         font-size="9"
-        fill="rgb(120,113,108)"
+        fill="rgb(var(--stone-500))"
         font-family="sans-serif"
       >
         0
@@ -281,7 +281,7 @@
         y1={-4}
         x2={minX}
         y2={CHART_H + 4}
-        stroke="rgb(220,38,38)"
+        stroke="rgb(var(--color-danger))"
         stroke-width="2"
         stroke-dasharray="3 2"
         pointer-events="none"
@@ -291,7 +291,7 @@
         cx={minX}
         cy={CHART_H / 2}
         r={6}
-        fill="rgb(220,38,38)"
+        fill="rgb(var(--color-danger))"
         stroke="white"
         stroke-width="2"
         class="cursor-ew-resize"
@@ -311,7 +311,7 @@
         text-anchor={minX < CHART_W * 0.15 ? 'start' : 'middle'}
         font-size="9"
         font-weight="600"
-        fill="rgb(220,38,38)"
+        fill="rgb(var(--color-danger))"
         font-family="sans-serif"
         pointer-events="none"
       >
@@ -337,7 +337,7 @@
         y1={-4}
         x2={maxX}
         y2={CHART_H + 4}
-        stroke="rgb(220,38,38)"
+        stroke="rgb(var(--color-danger))"
         stroke-width="2"
         stroke-dasharray="3 2"
         pointer-events="none"
@@ -347,7 +347,7 @@
         cx={maxX}
         cy={CHART_H / 2}
         r={6}
-        fill="rgb(220,38,38)"
+        fill="rgb(var(--color-danger))"
         stroke="white"
         stroke-width="2"
         class="cursor-ew-resize"
@@ -367,7 +367,7 @@
         text-anchor={maxX > CHART_W * 0.85 ? 'end' : 'middle'}
         font-size="9"
         font-weight="600"
-        fill="rgb(220,38,38)"
+        fill="rgb(var(--color-danger))"
         font-family="sans-serif"
         pointer-events="none"
       >

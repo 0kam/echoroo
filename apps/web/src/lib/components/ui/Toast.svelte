@@ -62,39 +62,39 @@
   }
 
   .bg-green-100 {
-    background-color: #d1fae5;
+    background-color: rgb(var(--color-success-light));
   }
 
   .border-green-500 {
-    border-color: #10b981;
+    border-color: rgb(var(--color-success));
   }
 
   .text-green-800 {
-    color: #065f46;
+    color: rgb(var(--color-success));
   }
 
   .bg-red-100 {
-    background-color: #fee2e2;
+    background-color: rgb(var(--color-danger-light));
   }
 
   .border-red-500 {
-    border-color: #ef4444;
+    border-color: rgb(var(--color-danger));
   }
 
   .text-red-800 {
-    color: #991b1b;
+    color: rgb(var(--color-danger));
   }
 
   .bg-amber-100 {
-    background-color: #fef3c7;
+    background-color: rgb(var(--color-warning-light));
   }
 
   .border-amber-500 {
-    border-color: #f59e0b;
+    border-color: rgb(var(--color-warning));
   }
 
   .text-amber-800 {
-    color: #92400e;
+    color: rgb(var(--color-warning));
   }
 
   .bg-primary-100 {

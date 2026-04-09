@@ -26,39 +26,66 @@
   } = $props();
 
   // ============================================================================
-  // Color Scale (single-hue orange gradient matching brand color #FF5A00)
+  // Color Scale (single-hue Rose/primary gradient matching Rosé Pine theme)
   // ============================================================================
 
-  // Single-hue orange gradient: pale cream -> deep dark orange
-  const COLOR_STOPS: Array<{ r: number; g: number; b: number }> = [
-    { r: 255, g: 245, b: 235 }, // t=0.00: very pale cream (#FFF5EB)
-    { r: 255, g: 212, b: 173 }, // t=0.30: light peach (#FFD4AD)
-    { r: 255, g: 167, b: 92 },  // t=0.50: medium orange (#FFA75C)
-    { r: 255, g: 122, b: 26 },  // t=0.70: strong orange (#FF7A1A)
-    { r: 204, g: 72, b: 0 },    // t=1.00: deep dark orange (#CC4800)
+  // Rose gradient: card-bg -> pale rose -> primary-400 -> primary-500 -> primary-700
+  const COLOR_STOPS: Array<[number, string]> = [
+    [0,   'rgb(var(--color-card-bg))'],
+    [0.2, 'rgb(252, 228, 226)'],
+    [0.4, 'rgb(240, 180, 178)'],
+    [0.6, 'rgb(var(--primary-400))'],
+    [0.8, 'rgb(var(--primary-500))'],
+    [1.0, 'rgb(var(--primary-700))'],
   ];
 
-  // Non-uniform stop positions matching the design spec
-  const STOP_POSITIONS = [0.0, 0.3, 0.5, 0.7, 1.0];
+  /**
+   * Interpolate along the Rose/primary palette using CSS variable strings.
+   * For stops that use CSS variables we must resolve them at runtime via
+   * getComputedStyle; for literal rgb() stops we parse directly.
+   * t in [0, 1].
+   */
+  function resolveCssRgb(value: string): { r: number; g: number; b: number } | null {
+    // Match literal rgb(R, G, B) — no var()
+    const literal = value.match(/^rgb\((\d+),\s*(\d+),\s*(\d+)\)$/);
+    if (literal) {
+      return { r: parseInt(literal[1]!), g: parseInt(literal[2]!), b: parseInt(literal[3]!) };
+    }
+    // Match rgb(var(--name)) — resolve via computed style
+    const varMatch = value.match(/^rgb\(var\((--[\w-]+)\)\)$/);
+    if (varMatch && typeof document !== 'undefined') {
+      const raw = getComputedStyle(document.documentElement)
+        .getPropertyValue(varMatch[1]!)
+        .trim();
+      // CSS variable value is space-separated: "R G B"
+      const parts = raw.split(/\s+/).map(Number);
+      if (parts.length >= 3) {
+        return { r: parts[0]!, g: parts[1]!, b: parts[2]! };
+      }
+    }
+    return null;
+  }
 
-  /** Interpolate along the single-hue orange palette. t in [0, 1]. */
+  /** Interpolate along the Rose/primary palette. t in [0, 1]. */
   function interpolateColor(t: number): string {
     const clamped = Math.min(1, Math.max(0, t));
 
     // Find the two stops that bracket this t value
     let i = 0;
-    for (let s = 0; s < STOP_POSITIONS.length - 1; s++) {
-      if (clamped >= STOP_POSITIONS[s]!) {
+    for (let s = 0; s < COLOR_STOPS.length - 1; s++) {
+      if (clamped >= COLOR_STOPS[s]![0]) {
         i = s;
       }
     }
 
-    const tLow = STOP_POSITIONS[i]!;
-    const tHigh = STOP_POSITIONS[i + 1]!;
-    const frac = (clamped - tLow) / (tHigh - tLow);
+    const [tLow, colorLow] = COLOR_STOPS[i]!;
+    const [tHigh, colorHigh] = COLOR_STOPS[Math.min(i + 1, COLOR_STOPS.length - 1)]!;
+    const frac = tHigh > tLow ? (clamped - tLow) / (tHigh - tLow) : 0;
 
-    const c0 = COLOR_STOPS[i]!;
-    const c1 = COLOR_STOPS[i + 1]!;
+    const c0 = resolveCssRgb(colorLow);
+    const c1 = resolveCssRgb(colorHigh);
+    if (!c0 || !c1) return colorLow;
+
     const r = Math.round(c0.r + frac * (c1.r - c0.r));
     const g = Math.round(c0.g + frac * (c1.g - c0.g));
     const b = Math.round(c0.b + frac * (c1.b - c0.b));
@@ -75,7 +102,7 @@
   }
 
   /** No-data cell color: neutral stone gray that contrasts with warm palette */
-  const NO_DATA_COLOR = 'rgb(231, 229, 228)'; // stone-200 (#E7E5E4)
+  const NO_DATA_COLOR = 'rgb(var(--stone-200))';
 
   /** Color for a cell using the actual data range for normalization. */
   function getColor(t: number, hasData: boolean): string {
@@ -336,7 +363,7 @@
           cy={cyVal}
           r={outerRadius}
           fill="none"
-          stroke="rgb(229, 231, 235)"
+          stroke="rgb(var(--stone-200))"
           stroke-width="1"
         />
 
@@ -350,7 +377,7 @@
             y1={p1.y}
             x2={p2.x}
             y2={p2.y}
-            stroke="rgb(209, 213, 219)"
+            stroke="rgb(var(--stone-300))"
             stroke-width="0.5"
           />
         {/each}
@@ -383,7 +410,7 @@
             text-anchor="middle"
             dominant-baseline="middle"
             font-size="9"
-            fill="rgb(120, 113, 108)"
+            fill="rgb(var(--stone-500))"
             font-family="sans-serif"
           >
             {hour === 0 ? '0h' : `${hour}h`}
@@ -400,7 +427,7 @@
             y1={tickInner.y}
             x2={tickOuter.x}
             y2={tickOuter.y}
-            stroke="rgb(156, 163, 175)"
+            stroke="rgb(var(--stone-400))"
             stroke-width="1"
           />
         {/each}

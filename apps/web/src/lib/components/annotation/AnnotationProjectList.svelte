@@ -133,7 +133,7 @@
   .empty-state {
     padding: 2rem;
     text-align: center;
-    color: #6b7280;
+    color: rgb(var(--stone-500));
     background: #f9fafb;
     border-radius: 0.5rem;
   }
@@ -161,7 +161,7 @@
 
   .project-item:hover {
     background: #f9fafb;
-    border-color: #d1d5db;
+    border-color: rgb(var(--stone-300));
   }
 
   .project-info {
@@ -179,7 +179,7 @@
     margin: 0;
     font-size: 1rem;
     font-weight: 600;
-    color: #111827;
+    color: rgb(var(--stone-900));
   }
 
   .visibility-badge {
@@ -192,7 +192,7 @@
 
   .badge-private {
     background: #f3f4f6;
-    color: #374151;
+    color: rgb(var(--stone-700));
   }
 
   .badge-public {
@@ -203,7 +203,7 @@
   .description {
     margin: 0 0 0.75rem 0;
     font-size: 0.875rem;
-    color: #6b7280;
+    color: rgb(var(--stone-500));
     line-height: 1.5;
   }
 
@@ -220,13 +220,13 @@
 
   .progress-text {
     font-size: 0.75rem;
-    color: #6b7280;
+    color: rgb(var(--stone-500));
   }
 
   .progress-percent {
     font-size: 0.75rem;
     font-weight: 600;
-    color: #374151;
+    color: rgb(var(--stone-700));
   }
 
   .progress-bar {
@@ -268,7 +268,7 @@
 
   .detail-pending {
     background: #f3f4f6;
-    color: #6b7280;
+    color: rgb(var(--stone-500));
   }
 
   .project-meta {
@@ -279,7 +279,7 @@
 
   .meta-item {
     font-size: 0.75rem;
-    color: #6b7280;
+    color: rgb(var(--stone-500));
   }
 
   .meta-label {

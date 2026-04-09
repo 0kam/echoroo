@@ -619,8 +619,8 @@
   }
 
   .task-card--expanded {
-    border-color: #93c5fd;
-    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.08);
+    border-color: rgb(var(--primary-300));
+    box-shadow: 0 0 0 3px rgb(var(--primary-500) / 0.08);
   }
 
   /* ---- Task header button ---- */
@@ -644,7 +644,7 @@
   }
 
   .task-header:focus-visible {
-    outline: 2px solid #3b82f6;
+    outline: 2px solid rgb(var(--primary-500));
     outline-offset: -2px;
   }
 
@@ -768,7 +768,7 @@
     width: 20px;
     height: 20px;
     border: 2px solid #e5e7eb;
-    border-top-color: #3b82f6;
+    border-top-color: rgb(var(--primary-500));
     border-radius: 50%;
     animation: spin 0.8s linear infinite;
     flex-shrink: 0;

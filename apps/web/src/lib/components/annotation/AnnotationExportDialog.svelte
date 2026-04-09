@@ -155,7 +155,7 @@
   }
 
   .modal {
-    background: white;
+    background: rgb(var(--color-card-bg));
     border-radius: 0.5rem;
     max-width: 500px;
     width: 100%;
@@ -235,7 +235,7 @@
     border-radius: 0.375rem;
     font-size: 0.875rem;
     color: #374151;
-    background: white;
+    background: rgb(var(--color-card-bg));
     cursor: pointer;
   }
 
@@ -341,7 +341,7 @@
   }
 
   .btn-secondary {
-    background: white;
+    background: rgb(var(--color-card-bg));
     color: #374151;
     border: 1px solid #d1d5db;
   }

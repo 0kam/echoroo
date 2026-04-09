@@ -196,11 +196,11 @@
     align-items: center;
     gap: 0.25rem;
     font-size: 0.75rem;
-    color: #92400e;
-    background-color: #fef3c7;
+    color: rgb(var(--color-warning));
+    background-color: rgb(var(--color-warning-light));
     padding: 0.125rem 0.5rem;
     border-radius: 9999px;
-    border: 1px solid #fde68a;
+    border: 1px solid rgb(var(--color-warning) / 0.3);
     white-space: nowrap;
   }
 
@@ -209,7 +209,7 @@
     width: 0.5rem;
     height: 0.5rem;
     border-radius: 9999px;
-    background-color: #f59e0b;
+    background-color: rgb(var(--color-warning));
     flex-shrink: 0;
   }
 
@@ -224,7 +224,7 @@
 
   .progress-bar-fill {
     height: 100%;
-    background-color: #22c55e;
+    background-color: rgb(var(--color-success));
     border-radius: 9999px;
     transition: width 0.3s ease;
   }
@@ -275,7 +275,7 @@
     align-items: center;
     gap: 0.375rem;
     padding: 0.4375rem 0.875rem;
-    background-color: #22c55e;
+    background-color: rgb(var(--color-success));
     color: #fff;
     border: none;
     border-radius: 0.375rem;
@@ -287,11 +287,11 @@
   }
 
   .complete-btn:hover {
-    background-color: #16a34a;
+    background-color: rgb(var(--color-success) / 0.85);
   }
 
   .complete-btn:active {
-    background-color: #15803d;
+    background-color: rgb(var(--color-success) / 0.7);
   }
 
   .complete-icon {

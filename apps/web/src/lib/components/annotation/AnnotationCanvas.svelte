@@ -334,7 +334,7 @@
           cx={rect.x + rect.width - 5}
           cy={rect.y + 5}
           r="4"
-          fill="#8b5cf6"
+          fill="rgb(var(--color-info))"
           stroke="white"
           stroke-width="0.5"
         />
@@ -374,8 +374,8 @@
       y={previewRect.y}
       width={previewRect.width}
       height={previewRect.height}
-      fill="rgba(59, 130, 246, 0.15)"
-      stroke="#3b82f6"
+      fill="rgb(var(--primary-500) / 0.15)"
+      stroke="rgb(var(--primary-500))"
       stroke-width="1.5"
       stroke-dasharray="5,3"
       rx="2"

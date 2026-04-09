@@ -161,7 +161,7 @@
             {@const percentage = (hourData.count / maxCount) * 100}
             <div class="flex h-full flex-col items-center">
               <div
-                class="w-full cursor-pointer rounded-t bg-emerald-500 transition-all duration-300 hover:bg-emerald-600"
+                class="w-full cursor-pointer rounded-t bg-primary-500 transition-all duration-300 hover:bg-primary-600"
                 style="height: {percentage}%; min-height: 2px;"
                 title="{hourData.hour}:00 - {hourData.count} recording(s)"
               ></div>

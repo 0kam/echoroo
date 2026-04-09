@@ -724,7 +724,7 @@
 
   .btn-secondary {
     padding: 0.625rem 1rem;
-    background: white;
+    background: rgb(var(--color-card-bg));
     color: #374151;
     border: 1px solid #d1d5db;
     border-radius: 0.375rem;
@@ -754,7 +754,7 @@
 
   .btn-action {
     padding: 0.375rem 0.75rem;
-    background: white;
+    background: rgb(var(--color-card-bg));
     color: #3b82f6;
     border: 1px solid #bfdbfe;
     border-radius: 0.375rem;
@@ -809,7 +809,7 @@
 
   /* Progress card */
   .progress-card {
-    background: white;
+    background: rgb(var(--color-card-bg));
     border: 1px solid #e5e7eb;
     border-radius: 0.5rem;
     padding: 1.25rem 1.5rem;
@@ -918,15 +918,15 @@
     border-radius: 0.375rem;
     font-size: 0.875rem;
     color: #374151;
-    background: white;
+    background: rgb(var(--color-card-bg));
     cursor: pointer;
     min-width: 160px;
   }
 
   .filter-select:focus {
     outline: none;
-    border-color: #3b82f6;
-    box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+    border-color: rgb(var(--primary-500));
+    box-shadow: 0 0 0 2px rgb(var(--primary-500) / 0.2);
   }
 
   .batch-select-actions {
@@ -1130,7 +1130,7 @@
 
   .page-btn {
     padding: 0.5rem 1rem;
-    background: white;
+    background: rgb(var(--color-card-bg));
     border: 1px solid #d1d5db;
     border-radius: 0.375rem;
     font-size: 0.875rem;
@@ -1221,7 +1221,7 @@
   }
 
   .modal {
-    background: white;
+    background: rgb(var(--color-card-bg));
     border-radius: 0.5rem;
     max-width: 440px;
     width: 100%;

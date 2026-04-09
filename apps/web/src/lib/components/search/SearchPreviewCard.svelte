@@ -50,7 +50,7 @@
         ? 'bg-orange-100/90 text-orange-800'
         : similarity >= 0.5
           ? 'bg-yellow-100/90 text-yellow-800'
-          : 'bg-white/90 text-stone-700'
+          : 'bg-stone-50/90 text-stone-700'
   );
 
   function formatTime(seconds: number): string {
