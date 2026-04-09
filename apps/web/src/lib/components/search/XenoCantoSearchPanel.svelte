@@ -273,8 +273,8 @@
         type="button"
         onclick={handleSearch}
         disabled={isLoading || !query.trim()}
-        class="shrink-0 rounded-md bg-primary-600 dark:bg-primary-300 px-3 py-1.5 text-sm font-medium text-white
-               hover:bg-primary-700 dark:hover:bg-primary-200 disabled:cursor-not-allowed disabled:opacity-50"
+        class="shrink-0 rounded-md bg-primary-600 px-3 py-1.5 text-sm font-medium text-white
+               hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50"
       >
         {isLoading ? m.search_xc_loading() : m.search_xc_search()}
       </button>
@@ -531,11 +531,11 @@
     <div class="sticky bottom-0 flex items-center justify-between gap-3 rounded-lg border
                 border-primary-200 bg-primary-50 px-3 py-2 shadow-md
                 dark:border-primary-800 dark:bg-primary-950/60">
-      <div class="flex items-center gap-2 text-sm font-medium text-primary-800 dark:text-primary-200">
+      <div class="flex items-center gap-2 text-sm font-medium text-primary-800 dark:text-primary-400">
         <span>{m.search_xc_selected({ count: selectedCount.toString() })}</span>
         {#if offPageSelectedCount > 0}
           <span class="rounded-full bg-primary-200 px-1.5 py-0.5 text-xs text-primary-700
-                       dark:bg-primary-800 dark:text-primary-300">
+                       dark:bg-primary-800 dark:text-primary-400">
             +{offPageSelectedCount} other pages
           </span>
         {/if}
@@ -545,15 +545,15 @@
           type="button"
           onclick={clearSelection}
           class="rounded-md px-2.5 py-1 text-xs text-primary-700 hover:bg-primary-100
-                 dark:text-primary-300 dark:hover:bg-primary-900/40"
+                 dark:text-primary-400 dark:hover:bg-primary-900/40"
         >
           {m.search_xc_clear_selection()}
         </button>
         <button
           type="button"
           onclick={handleAddSelected}
-          class="rounded-md bg-primary-600 dark:bg-primary-300 px-3 py-1 text-xs font-medium text-white
-                 hover:bg-primary-700 dark:hover:bg-primary-200 disabled:cursor-not-allowed disabled:opacity-50"
+          class="rounded-md bg-primary-600 px-3 py-1 text-xs font-medium text-white
+                 hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {m.search_xc_add_selected()}
         </button>

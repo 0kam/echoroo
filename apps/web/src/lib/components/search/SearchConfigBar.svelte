@@ -96,7 +96,7 @@
     {/if}
 
     <button
-      class="flex items-center gap-2 rounded-md bg-primary-600 dark:bg-primary-300 px-5 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-700 dark:hover:bg-primary-200 disabled:cursor-not-allowed disabled:opacity-50"
+      class="flex items-center gap-2 rounded-md bg-primary-600 px-5 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50"
       onclick={onSearch}
       disabled={!canSearch}
       type="button"

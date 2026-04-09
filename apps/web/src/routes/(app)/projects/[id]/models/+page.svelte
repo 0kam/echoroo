@@ -501,7 +501,7 @@
         </div>
         <button
           type="button"
-          class="inline-flex items-center gap-2 rounded-lg bg-primary-600 dark:bg-primary-300 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-primary-700 dark:hover:bg-primary-200 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2"
+          class="inline-flex items-center gap-2 rounded-lg bg-primary-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2"
           onclick={() => openCreateDialog()}
         >
           <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
@@ -536,7 +536,7 @@
           <p class="mt-1 text-sm text-stone-500">{m.models_description()}</p>
           <button
             type="button"
-            class="mt-6 inline-flex items-center gap-2 rounded-lg bg-primary-600 dark:bg-primary-300 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-primary-700 dark:hover:bg-primary-200"
+            class="mt-6 inline-flex items-center gap-2 rounded-lg bg-primary-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-primary-700"
             onclick={() => openCreateDialog()}
           >
             <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
@@ -763,7 +763,7 @@
               type="button"
               class="flex-1 rounded-lg px-4 py-2 text-sm font-medium transition-colors focus:outline-none
                 {metricsTab === 'internal'
-                  ? 'bg-primary-50 text-primary-700 dark:bg-primary-900/30 dark:text-primary-300'
+                  ? 'bg-primary-50 text-primary-700 dark:bg-primary-900/30 dark:text-primary-400'
                   : 'text-stone-500 hover:text-stone-800 dark:hover:text-stone-200'}"
               onclick={() => { metricsTab = 'internal'; }}
             >

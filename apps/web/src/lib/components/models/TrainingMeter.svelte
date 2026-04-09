@@ -167,7 +167,7 @@
         type="button"
         class="inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium shadow-sm transition-colors focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50
           {canTrain
-            ? 'bg-primary-600 dark:bg-primary-300 text-white hover:bg-primary-700 dark:hover:bg-primary-200'
+            ? 'bg-primary-600 text-white hover:bg-primary-700'
             : 'border border-stone-200 bg-stone-50 text-stone-400 cursor-not-allowed dark:border-stone-700 dark:bg-stone-800'}"
         onclick={onTrainRequest}
         disabled={!canTrain || isTraining}

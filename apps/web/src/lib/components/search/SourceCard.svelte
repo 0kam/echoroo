@@ -419,7 +419,7 @@
         </p>
         <button
           type="button"
-          class="rounded bg-primary-600 dark:bg-primary-300 px-2 py-1 text-xs font-medium text-white hover:bg-primary-700 dark:hover:bg-primary-200"
+          class="rounded bg-primary-600 px-2 py-1 text-xs font-medium text-white hover:bg-primary-700"
           onclick={confirmClip}
         >
           {m.search_save_clip()}
