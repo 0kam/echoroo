@@ -134,8 +134,8 @@
             </div>
             <!-- Right-side stats placeholders -->
             <div class="flex shrink-0 items-center gap-2">
-              <div class="h-5 w-10 rounded bg-green-100"></div>
-              <div class="h-5 w-10 rounded bg-red-100"></div>
+              <div class="h-5 w-10 rounded bg-success-light"></div>
+              <div class="h-5 w-10 rounded bg-danger-light"></div>
               <div class="h-5 w-10 rounded bg-stone-100"></div>
             </div>
           </div>

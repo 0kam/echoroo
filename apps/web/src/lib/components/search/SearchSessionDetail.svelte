@@ -373,7 +373,7 @@
                 type="button"
                 class="shrink-0 rounded-md bg-primary-600 px-3 py-1.5 text-sm font-medium text-white
                        transition-colors hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2
-                       disabled:opacity-50"
+                       disabled:opacity-50 dark:bg-primary-500 dark:text-stone-50 dark:hover:bg-primary-400"
                 disabled={isSavingRename || !renameValue.trim()}
                 onclick={saveRename}
               >
@@ -545,7 +545,7 @@
       <!-- Failed state - no results -->
       <div class="flex flex-col items-center justify-center rounded-lg border-2 border-dashed border-stone-200 py-12 text-center dark:border-stone-700">
         <svg
-          class="mx-auto mb-3 h-10 w-10 text-red-300 dark:text-red-700"
+          class="mx-auto mb-3 h-10 w-10 text-danger/50 dark:text-danger"
           fill="none"
           viewBox="0 0 24 24"
           stroke="currentColor"

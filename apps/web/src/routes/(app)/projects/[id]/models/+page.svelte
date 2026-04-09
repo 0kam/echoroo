@@ -501,7 +501,7 @@
         </div>
         <button
           type="button"
-          class="inline-flex items-center gap-2 rounded-lg bg-primary-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2"
+          class="inline-flex items-center gap-2 rounded-lg bg-primary-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 dark:bg-primary-500 dark:text-stone-50 dark:hover:bg-primary-400"
           onclick={() => openCreateDialog()}
         >
           <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
@@ -536,7 +536,7 @@
           <p class="mt-1 text-sm text-stone-500">{m.models_description()}</p>
           <button
             type="button"
-            class="mt-6 inline-flex items-center gap-2 rounded-lg bg-primary-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-primary-700"
+            class="mt-6 inline-flex items-center gap-2 rounded-lg bg-primary-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-primary-700 dark:bg-primary-500 dark:text-stone-50 dark:hover:bg-primary-400"
             onclick={() => openCreateDialog()}
           >
             <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
@@ -610,7 +610,7 @@
                   {/if}
                   <button
                     type="button"
-                    class="rounded-lg p-1.5 text-stone-400 transition-colors hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-950/30"
+                    class="rounded-lg p-1.5 text-stone-400 transition-colors hover:bg-danger-light hover:text-danger"
                     onclick={() => handleDeleteRequest(model.id)}
                     aria-label={m.models_delete()}
                   >
@@ -711,7 +711,7 @@
               {#if model.status === 'draft' || model.status === 'failed'}
                 <button
                   type="button"
-                  class="inline-flex items-center gap-2 rounded-lg bg-primary-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 disabled:opacity-50"
+                  class="inline-flex items-center gap-2 rounded-lg bg-primary-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 disabled:opacity-50 dark:bg-primary-500 dark:text-stone-50 dark:hover:bg-primary-400"
                   onclick={() => handleTrain(model.id)}
                   disabled={$trainMutationState.isPending}
                 >
@@ -739,7 +739,7 @@
 
         <!-- Training in progress notice -->
         {#if model.status === 'training'}
-          <div class="flex items-center gap-3 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-700 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-400">
+          <div class="flex items-center gap-3 rounded-lg border border-warning/20 bg-warning-light p-4 text-sm text-warning">
             <svg class="h-4 w-4 shrink-0 animate-spin" fill="none" viewBox="0 0 24 24" aria-hidden="true">
               <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
               <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
@@ -773,13 +773,13 @@
               type="button"
               class="flex-1 rounded-lg px-4 py-2 text-sm font-medium transition-colors focus:outline-none
                 {metricsTab === 'audit'
-                  ? 'bg-amber-50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300'
+                  ? 'bg-warning-light text-warning'
                   : 'text-stone-500 hover:text-stone-800 dark:hover:text-stone-200'}"
               onclick={() => { metricsTab = 'audit'; }}
             >
               Blind Audit
               {#if model.audit_metrics}
-                <span class="ml-1.5 rounded-full bg-amber-100 px-1.5 py-0.5 text-xs text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">
+                <span class="ml-1.5 rounded-full bg-warning-light px-1.5 py-0.5 text-xs text-warning">
                   evaluated
                 </span>
               {/if}
@@ -803,7 +803,7 @@
                 </div>
 
                 {#if metrics.cv_warning}
-                  <div class="mb-4 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-700 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-400">
+                  <div class="mb-4 flex items-start gap-2 rounded-lg border border-warning/20 bg-warning-light p-3 text-xs text-warning">
                     <svg class="mt-0.5 h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
                       <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
                     </svg>
@@ -897,10 +897,10 @@
 
           <!-- Blind Audit panel -->
           {#if metricsTab === 'audit'}
-            <div class="rounded-xl border border-amber-200 bg-surface-card p-6 shadow-sm dark:border-amber-800/40">
+            <div class="rounded-xl border border-warning/20 bg-surface-card p-6 shadow-sm">
               <div class="mb-5 flex flex-wrap items-center justify-between gap-3">
                 <div>
-                  <h2 class="text-sm font-semibold uppercase tracking-wider text-amber-700 dark:text-amber-400">
+                  <h2 class="text-sm font-semibold uppercase tracking-wider text-warning">
                     Blind Audit — Independent Evaluation
                   </h2>
                   <p class="mt-1 text-xs text-stone-500">
@@ -919,7 +919,7 @@
                     {#if auditItems.length === 0 && model.status === 'trained'}
                       <button
                         type="button"
-                        class="inline-flex items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-1.5 text-xs font-medium text-amber-700 transition-colors hover:bg-amber-100 dark:border-amber-700 dark:bg-amber-900/20 dark:text-amber-400 dark:hover:bg-amber-900/40 disabled:opacity-50"
+                        class="inline-flex items-center gap-2 rounded-lg border border-warning/30 bg-warning-light px-3 py-1.5 text-xs font-medium text-warning transition-colors hover:opacity-90 disabled:opacity-50"
                         onclick={() => selectedModelId && $generateAuditSetMutation.mutate(selectedModelId)}
                         disabled={$generateAuditSetMutation.isPending}
                       >
@@ -936,7 +936,7 @@
                     {:else if reviewedCount >= 2}
                       <button
                         type="button"
-                        class="inline-flex items-center gap-2 rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-amber-700 disabled:opacity-50"
+                        class="inline-flex items-center gap-2 rounded-lg bg-warning px-3 py-1.5 text-xs font-medium text-white transition-colors hover:opacity-90 disabled:opacity-50"
                         onclick={() => selectedModelId && $evaluateAuditSetMutation.mutate(selectedModelId)}
                         disabled={$evaluateAuditSetMutation.isPending}
                       >
@@ -976,7 +976,7 @@
               {#if model.audit_metrics}
                 {@const am = model.audit_metrics as { accuracy: number; precision: number; recall: number; f1: number; roc_auc: number | null; pr_auc: number | null; confusion_matrix: [[number, number], [number, number]]; n_audited: number; n_total: number }}
                 <!-- Audit progress summary -->
-                <div class="mb-5 flex items-center gap-4 rounded-lg bg-amber-50 p-3 text-xs dark:bg-amber-950/20">
+                <div class="mb-5 flex items-center gap-4 rounded-lg bg-warning-light p-3 text-xs">
                   <div>
                     <span class="text-stone-500">Audited</span>
                     <span class="ml-1 font-semibold text-stone-800 dark:text-stone-200">{am.n_audited}</span>
@@ -1006,7 +1006,7 @@
                         </div>
                         <div class="h-2 w-full overflow-hidden rounded-full bg-stone-100 dark:bg-stone-800">
                           <div
-                            class="h-full rounded-full bg-amber-500 transition-all"
+                            class="h-full rounded-full bg-warning transition-all"
                             style="width: {(metric.value * 100).toFixed(1)}%"
                           ></div>
                         </div>
@@ -1044,7 +1044,7 @@
                 {/if}
               {:else}
                 <!-- No audit metrics yet -->
-                <div class="rounded-lg border border-dashed border-amber-200 p-6 text-center text-sm text-stone-400 dark:border-amber-800/40">
+                <div class="rounded-lg border border-dashed border-warning/20 p-6 text-center text-sm text-stone-400">
                   {#if $auditSetQuery.data && $auditSetQuery.data.items.length > 0}
                     {@const reviewedCount = $auditSetQuery.data.items.filter(i => i.review_status === 'confirmed' || i.review_status === 'rejected').length}
                     {#if reviewedCount < 2}
@@ -1177,9 +1177,10 @@
                 <span class="ml-2 text-sm text-stone-500">{createSelectedSpecies.common_name}</span>
               {/if}
               {#if !createTargetTagId}
-                <span class="ml-2 rounded-full bg-amber-100 px-1.5 py-0.5 text-xs text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
+                <span class="ml-2 rounded-full bg-warning-light px-1.5 py-0.5 text-xs text-warning">
                   new tag will be created
                 </span>
+
               {/if}
             </div>
             <button
@@ -1245,7 +1246,7 @@
         </button>
         <button
           type="submit"
-          class="inline-flex items-center gap-2 rounded-lg bg-primary-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 disabled:opacity-50"
+          class="inline-flex items-center gap-2 rounded-lg bg-primary-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 disabled:opacity-50 dark:bg-primary-500 dark:text-stone-50 dark:hover:bg-primary-400"
           disabled={$createMutationState.isPending || isCreatingTag}
         >
           {#if isCreatingTag}
@@ -1364,7 +1365,7 @@
         </button>
         <button
           type="submit"
-          class="inline-flex items-center gap-2 rounded-lg bg-primary-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 disabled:opacity-50"
+          class="inline-flex items-center gap-2 rounded-lg bg-primary-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 disabled:opacity-50 dark:bg-primary-500 dark:text-stone-50 dark:hover:bg-primary-400"
           disabled={$applyMutationState.isPending}
         >
           {#if $applyMutationState.isPending}

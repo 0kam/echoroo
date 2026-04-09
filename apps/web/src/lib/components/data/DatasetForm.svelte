@@ -156,7 +156,7 @@
           <option>{m.common_loading_sites()}</option>
         </select>
       {:else if $sitesQuery.isError}
-        <div class="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-600">{m.common_error_load_sites()}</div>
+        <div class="rounded-md border border-danger/20 bg-danger-light px-3 py-2 text-sm text-danger">{m.common_error_load_sites()}</div>
       {:else if $sitesQuery.data}
         <select
           id="site"
@@ -199,7 +199,7 @@
               <option>{m.common_loading_recorders()}</option>
             </select>
           {:else if $recordersQuery.isError}
-            <div class="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-600">{m.common_error_load_recorders()}</div>
+            <div class="rounded-md border border-danger/20 bg-danger-light px-3 py-2 text-sm text-danger">{m.common_error_load_recorders()}</div>
           {:else if $recordersQuery.data}
             <select
               id="recorder"
@@ -354,7 +354,7 @@
   </details>
 
   {#if error}
-    <div class="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-600">
+    <div class="rounded-md border border-danger/20 bg-danger-light px-3 py-2 text-sm text-danger">
       {error}
     </div>
   {/if}
@@ -371,7 +371,7 @@
     <button
       type="submit"
       disabled={isSubmitting || !name || (!isEdit && !siteId)}
-      class="rounded-md bg-primary-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50"
+      class="rounded-md bg-primary-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-primary-500 dark:text-stone-50 dark:hover:bg-primary-400"
     >
       {isSubmitting ? m.form_dataset_saving() : isEdit ? m.form_dataset_update() : m.form_dataset_create()}
     </button>

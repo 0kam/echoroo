@@ -96,12 +96,12 @@
         </div>
         <div class="h-8 w-px bg-stone-200"></div>
         <div class="text-center">
-          <div class="text-lg font-semibold text-green-600">{currentSpecies.confirmed_count}</div>
+          <div class="text-lg font-semibold text-success">{currentSpecies.confirmed_count}</div>
           <div class="text-xs text-stone-500">{m.detection_confirmed_label()}</div>
         </div>
         <div class="h-8 w-px bg-stone-200"></div>
         <div class="text-center">
-          <div class="text-lg font-semibold text-red-600">{currentSpecies.rejected_count}</div>
+          <div class="text-lg font-semibold text-danger">{currentSpecies.rejected_count}</div>
           <div class="text-xs text-stone-500">{m.detection_rejected_label()}</div>
         </div>
         {#if currentSpecies.avg_confidence !== null}
@@ -122,12 +122,12 @@
     <button
       type="button"
       on:click={() => (activityExpanded = !activityExpanded)}
-      class="flex w-full items-center justify-between px-4 py-3 text-left hover:bg-stone-50 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-emerald-400 transition-colors"
+      class="flex w-full items-center justify-between px-4 py-3 text-left hover:bg-stone-50 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-success/40 transition-colors"
       aria-expanded={activityExpanded}
     >
       <div class="flex items-center gap-2">
         <svg
-          class="h-4 w-4 text-emerald-600"
+          class="h-4 w-4 text-success"
           fill="none"
           stroke="currentColor"
           viewBox="0 0 24 24"
@@ -165,15 +165,15 @@
             </div>
           </div>
         {:else if $temporalQuery.isError}
-          <div class="rounded-lg border border-red-200 bg-red-50 px-4 py-4 text-center">
-            <p class="text-sm font-medium text-red-700">{m.detection_activity_pattern_load_error()}</p>
-            <p class="mt-1 text-xs text-red-500">
+          <div class="rounded-lg border border-danger/20 bg-danger-light px-4 py-4 text-center">
+            <p class="text-sm font-medium text-danger">{m.detection_activity_pattern_load_error()}</p>
+            <p class="mt-1 text-xs text-danger">
               {$temporalQuery.error?.message ?? m.common_error_unexpected()}
             </p>
             <button
               type="button"
               on:click={() => $temporalQuery.refetch()}
-              class="mt-3 rounded-md bg-red-100 px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-200"
+              class="mt-3 rounded-md bg-danger-light px-3 py-1.5 text-xs font-medium text-danger hover:opacity-80"
             >
               {m.detection_retry()}
             </button>

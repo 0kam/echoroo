@@ -317,13 +317,13 @@
 
     <!-- Validation error banner -->
     {#if errorMessage}
-      <div class="mb-4 rounded-md border border-red-200 bg-red-50 p-3">
+      <div class="mb-4 rounded-md border border-danger/20 bg-danger-light p-3">
         <div class="flex items-start gap-2">
-          <svg class="mt-0.5 h-4 w-4 flex-shrink-0 text-red-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
+          <svg class="mt-0.5 h-4 w-4 flex-shrink-0 text-danger" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
               d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
           </svg>
-          <p class="whitespace-pre-wrap text-sm text-red-700">{errorMessage}</p>
+          <p class="whitespace-pre-wrap text-sm text-danger">{errorMessage}</p>
         </div>
       </div>
     {/if}
@@ -432,11 +432,11 @@
 
         <!-- Invalid files warning -->
         {#if status.files.some((f) => f.status === 'invalid')}
-          <div class="rounded-md border border-amber-200 bg-amber-50 p-3">
-            <p class="mb-1.5 text-xs font-medium text-amber-800">Some files failed validation:</p>
+          <div class="rounded-md border border-warning/20 bg-warning-light p-3">
+            <p class="mb-1.5 text-xs font-medium text-warning">Some files failed validation:</p>
             <ul class="space-y-1">
               {#each status.files.filter((f) => f.status === 'invalid') as invalidFile}
-                <li class="text-xs text-amber-700">
+                <li class="text-xs text-warning">
                   <span class="font-medium">{invalidFile.original_filename}</span>
                   {#if invalidFile.validation_error}
                     &mdash; {invalidFile.validation_error}
@@ -471,13 +471,13 @@
       </div>
 
       {#if status?.files.some((f) => f.status === 'invalid')}
-        <div class="rounded-md border border-amber-200 bg-amber-50 p-3 dark:border-amber-800 dark:bg-amber-900/20">
-          <p class="mb-1.5 text-xs font-medium text-amber-800 dark:text-amber-400">
+        <div class="rounded-md border border-warning/20 bg-warning-light p-3">
+          <p class="mb-1.5 text-xs font-medium text-warning">
             {status.files.filter((f) => f.status === 'invalid').length} file{status.files.filter((f) => f.status === 'invalid').length !== 1 ? 's' : ''} could not be imported:
           </p>
           <ul class="space-y-1">
             {#each status.files.filter((f) => f.status === 'invalid') as invalidFile}
-              <li class="text-xs text-amber-700">
+              <li class="text-xs text-warning">
                 <span class="font-medium">{invalidFile.original_filename}</span>
                 {#if invalidFile.validation_error}
                   &mdash; {invalidFile.validation_error}
@@ -502,15 +502,15 @@
   <!-- ── Step: Error ──────────────────────────────────────────────────────── -->
   {#if step === 'error'}
     <div class="space-y-4">
-      <div class="rounded-md border border-red-200 bg-red-50 p-4">
+      <div class="rounded-md border border-danger/20 bg-danger-light p-4">
         <div class="mb-2 flex items-center gap-2">
-          <svg class="h-4 w-4 flex-shrink-0 text-red-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
+          <svg class="h-4 w-4 flex-shrink-0 text-danger" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
               d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
           </svg>
-          <span class="text-sm font-semibold text-red-700">Upload Error</span>
+          <span class="text-sm font-semibold text-danger">Upload Error</span>
         </div>
-        <p class="whitespace-pre-wrap break-words font-mono text-sm text-red-600">
+        <p class="whitespace-pre-wrap break-words font-mono text-sm text-danger">
           {errorMessage ?? 'An unknown error occurred.'}
         </p>
       </div>

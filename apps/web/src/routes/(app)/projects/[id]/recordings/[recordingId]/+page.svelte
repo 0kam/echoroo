@@ -262,18 +262,18 @@
 <div class="page">
   {#if $recordingQuery.isLoading}
     <div class="flex flex-col items-center justify-center py-20 gap-4">
-      <div class="w-10 h-10 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin"></div>
+      <div class="w-10 h-10 border-4 border-success border-t-transparent rounded-full animate-spin"></div>
       <p class="text-stone-500 text-sm">{m.recording_detail_loading()}</p>
     </div>
 
   {:else if $recordingQuery.error}
-    <div class="flex flex-col items-center justify-center py-20 gap-4 bg-red-50 rounded-lg">
-      <svg class="w-12 h-12 text-red-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+    <div class="flex flex-col items-center justify-center py-20 gap-4 bg-danger-light rounded-lg">
+      <svg class="w-12 h-12 text-danger/60" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <circle cx="12" cy="12" r="10" />
         <line x1="12" y1="8" x2="12" y2="12" />
         <line x1="12" y1="16" x2="12.01" y2="16" />
       </svg>
-      <p class="text-red-600">Error: {$recordingQuery.error.message}</p>
+      <p class="text-danger">Error: {$recordingQuery.error.message}</p>
     </div>
 
   {:else if $recordingQuery.data}
@@ -281,7 +281,7 @@
 
     <!-- Breadcrumb -->
     <nav class="flex items-center gap-2 text-sm mb-4 text-stone-500">
-      <a href={localizeHref(`/projects/${projectId}/recordings`)} class="text-emerald-600 hover:underline">
+      <a href={localizeHref(`/projects/${projectId}/recordings`)} class="text-success hover:underline">
         {m.recording_detail_breadcrumb_recordings()}
       </a>
       <span>/</span>
@@ -526,7 +526,7 @@
                 min="0.1"
                 max="100"
                 bind:value={editTimeExpansion}
-                class="w-full px-3 py-2 border border-stone-300 rounded-md text-sm bg-surface-card focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                class="w-full px-3 py-2 border border-stone-300 rounded-md text-sm bg-surface-card focus:outline-none focus:ring-2 focus:ring-primary-500"
               />
               <p class="mt-1 text-xs text-stone-500">{m.recording_detail_time_expansion_hint()}</p>
             </div>
@@ -538,7 +538,7 @@
                 id="note"
                 bind:value={editNote}
                 rows="3"
-                class="w-full px-3 py-2 border border-stone-300 rounded-md text-sm bg-surface-card focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                class="w-full px-3 py-2 border border-stone-300 rounded-md text-sm bg-surface-card focus:outline-none focus:ring-2 focus:ring-primary-500"
               ></textarea>
             </div>
           </div>
@@ -553,7 +553,7 @@
             <button
               type="submit"
               disabled={$updateMut.isPending}
-              class="px-4 py-2 text-sm font-medium bg-emerald-600 text-white rounded-md hover:bg-emerald-700 disabled:opacity-60 disabled:cursor-not-allowed"
+              class="px-4 py-2 text-sm font-medium bg-success text-white rounded-md hover:opacity-90 disabled:opacity-60 disabled:cursor-not-allowed"
             >
               {$updateMut.isPending ? m.recording_detail_saving() : m.recording_detail_save()}
             </button>

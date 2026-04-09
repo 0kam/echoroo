@@ -274,7 +274,7 @@
         onclick={handleSearch}
         disabled={isLoading || !query.trim()}
         class="shrink-0 rounded-md bg-primary-600 px-3 py-1.5 text-sm font-medium text-white
-               hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50"
+               hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-primary-500 dark:text-stone-50 dark:hover:bg-primary-400"
       >
         {isLoading ? m.search_xc_loading() : m.search_xc_search()}
       </button>
@@ -553,7 +553,7 @@
           type="button"
           onclick={handleAddSelected}
           class="rounded-md bg-primary-600 px-3 py-1 text-xs font-medium text-white
-                 hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50"
+                 hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-primary-500 dark:text-stone-50 dark:hover:bg-primary-400"
         >
           {m.search_xc_add_selected()}
         </button>

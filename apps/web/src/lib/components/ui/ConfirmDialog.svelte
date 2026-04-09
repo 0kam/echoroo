@@ -123,7 +123,7 @@
           onclick={handleConfirm}
           disabled={isProcessing}
           class="rounded-md px-5 py-2 text-sm font-medium text-white transition-colors disabled:cursor-not-allowed disabled:opacity-50
-            {isDanger ? 'bg-red-600 hover:bg-red-700' : 'bg-primary-600 hover:bg-primary-700'}"
+            {isDanger ? 'bg-danger hover:opacity-90' : 'bg-primary-600 hover:bg-primary-700'}"
         >
           {isProcessing ? m.common_processing() : confirmText}
         </button>

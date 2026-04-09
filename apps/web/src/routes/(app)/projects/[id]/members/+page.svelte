@@ -331,7 +331,7 @@
         {#if !showAddMemberForm}
           <button
             onclick={toggleAddMemberForm}
-            class="inline-flex items-center rounded-md bg-primary-600 px-4 py-2 text-sm font-medium text-white hover:bg-primary-700"
+            class="inline-flex items-center rounded-md bg-primary-600 px-4 py-2 text-sm font-medium text-white hover:bg-primary-700 dark:bg-primary-500 dark:text-stone-50 dark:hover:bg-primary-400"
           >
             <svg class="mr-2 h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path
@@ -414,7 +414,7 @@
               <button
                 type="submit"
                 disabled={isAdding}
-                class="rounded-md bg-primary-600 px-4 py-2 text-sm font-medium text-white hover:bg-primary-700 disabled:opacity-50"
+                class="rounded-md bg-primary-600 px-4 py-2 text-sm font-medium text-white hover:bg-primary-700 disabled:opacity-50 dark:bg-primary-500 dark:text-stone-50 dark:hover:bg-primary-400"
               >
                 {isAdding ? m.members_adding() : m.members_add_submit()}
               </button>
@@ -430,7 +430,7 @@
             </div>
 
             {#if addError}
-              <p class="text-sm text-red-600">{addError}</p>
+              <p class="text-sm text-danger">{addError}</p>
             {/if}
           </form>
         {/if}
@@ -523,7 +523,7 @@
                   <!-- Remove Button -->
                   <button
                     onclick={() => showRemoveConfirmation(member)}
-                    class="rounded-md border border-red-300 bg-surface-card px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-50"
+                    class="rounded-md border border-danger/30 bg-surface-card px-3 py-1.5 text-sm font-medium text-danger hover:bg-danger-light"
                   >
                     {m.members_remove_button()}
                   </button>
@@ -594,7 +594,7 @@
             type="button"
             onclick={confirmRoleChange}
             disabled={isChangingRole}
-            class="inline-flex w-full justify-center rounded-md bg-primary-600 px-4 py-2 text-base font-medium text-white shadow-sm hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 disabled:opacity-50 sm:ml-3 sm:w-auto sm:text-sm"
+            class="inline-flex w-full justify-center rounded-md bg-primary-600 px-4 py-2 text-base font-medium text-white shadow-sm hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 disabled:opacity-50 sm:ml-3 sm:w-auto sm:text-sm dark:bg-primary-500 dark:text-stone-50 dark:hover:bg-primary-400"
           >
             {isChangingRole ? m.members_changing_role() : m.members_change_role_submit()}
           </button>
@@ -633,9 +633,9 @@
         <div class="bg-surface-card px-4 pb-4 pt-5 sm:p-6 sm:pb-4">
           <div class="sm:flex sm:items-start">
             <div
-              class="mx-auto flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-full bg-red-100 sm:mx-0 sm:h-10 sm:w-10"
+              class="mx-auto flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-full bg-danger-light sm:mx-0 sm:h-10 sm:w-10"
             >
-              <svg class="h-6 w-6 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <svg class="h-6 w-6 text-danger" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path
                   stroke-linecap="round"
                   stroke-linejoin="round"
@@ -661,7 +661,7 @@
             type="button"
             onclick={confirmRemove}
             disabled={isRemoving}
-            class="inline-flex w-full justify-center rounded-md bg-red-600 px-4 py-2 text-base font-medium text-white shadow-sm hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 disabled:opacity-50 sm:ml-3 sm:w-auto sm:text-sm"
+            class="inline-flex w-full justify-center rounded-md bg-danger px-4 py-2 text-base font-medium text-white shadow-sm hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-danger/50 focus:ring-offset-2 disabled:opacity-50 sm:ml-3 sm:w-auto sm:text-sm"
           >
             {isRemoving ? m.members_removing() : m.members_remove_submit()}
           </button>

@@ -97,7 +97,7 @@
             <input type="checkbox" bind:checked={includeAudio} class="mt-0.5 h-4 w-4 cursor-pointer" />
             <div class="flex flex-col gap-0.5">
               <span class="text-sm font-medium text-stone-900">{m.data_export_include_audio_label()}</span>
-              <span class="text-xs text-amber-600">{m.data_export_audio_warning()}</span>
+              <span class="text-xs text-warning">{m.data_export_audio_warning()}</span>
             </div>
           </label>
         </div>
@@ -130,7 +130,7 @@
           type="button"
           onclick={startExport}
           disabled={isExporting}
-          class="flex items-center gap-2 rounded-md bg-primary-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50"
+          class="flex items-center gap-2 rounded-md bg-primary-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-primary-500 dark:text-stone-50 dark:hover:bg-primary-400"
         >
           {#if isExporting}
             <svg class="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24">

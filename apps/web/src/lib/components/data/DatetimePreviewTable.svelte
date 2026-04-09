@@ -63,19 +63,19 @@
     </thead>
     <tbody>
       {#each displayResults as result}
-        <tr class="border-b border-stone-100 last:border-0 {result.success ? '' : 'bg-red-50'}">
+        <tr class="border-b border-stone-100 last:border-0 {result.success ? '' : 'bg-danger-light'}">
           <td class="px-3 py-1.5 font-mono text-stone-700">{result.filename}</td>
           <td class="px-3 py-1.5 text-stone-600">
             {#if result.success}
               {formatParsedDatetime(result.parsed_datetime)}
             {:else}
-              <span class="text-red-500">{result.error ?? 'Parse failed'}</span>
+              <span class="text-danger">{result.error ?? 'Parse failed'}</span>
             {/if}
           </td>
           <td class="px-3 py-1.5 text-center">
             {#if result.success}
               <svg
-                class="mx-auto h-4 w-4 text-green-600"
+                class="mx-auto h-4 w-4 text-success"
                 viewBox="0 0 24 24"
                 fill="none"
                 stroke="currentColor"
@@ -88,7 +88,7 @@
               </svg>
             {:else}
               <svg
-                class="mx-auto h-4 w-4 text-red-500"
+                class="mx-auto h-4 w-4 text-danger"
                 viewBox="0 0 24 24"
                 fill="none"
                 stroke="currentColor"

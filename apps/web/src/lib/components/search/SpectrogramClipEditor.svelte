@@ -512,7 +512,7 @@
     <!-- Playback progress line -->
     {#if isPlaying}
       <div
-        class="pointer-events-none absolute top-0 bottom-0 w-0.5 bg-white/80"
+        class="pointer-events-none absolute top-0 bottom-0 w-0.5 bg-stone-50/80 dark:bg-stone-950/80"
         style="left: {progressPercent}%;"
       ></div>
     {/if}
@@ -543,15 +543,15 @@
         <!-- Grip dots -->
         <div class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2">
           <div class="flex flex-col gap-0.5">
-            <div class="h-0.5 w-1 rounded-full bg-white/50"></div>
-            <div class="h-0.5 w-1 rounded-full bg-white/50"></div>
-            <div class="h-0.5 w-1 rounded-full bg-white/50"></div>
+            <div class="h-0.5 w-1 rounded-full bg-stone-50/50"></div>
+            <div class="h-0.5 w-1 rounded-full bg-stone-50/50"></div>
+            <div class="h-0.5 w-1 rounded-full bg-stone-50/50"></div>
           </div>
         </div>
       </div>
       <!-- Time label -->
       <div
-        class="pointer-events-none absolute top-1 left-2 whitespace-nowrap rounded bg-primary-600/90 px-1 py-0.5 font-mono text-xs text-white shadow-sm"
+        class="pointer-events-none absolute top-1 left-2 whitespace-nowrap rounded bg-primary-600/90 px-1 py-0.5 font-mono text-xs text-white shadow-sm dark:bg-primary-500/90 dark:text-stone-50"
       >
         {startTime.toFixed(1)}s
       </div>
@@ -582,15 +582,15 @@
         <!-- Grip dots -->
         <div class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2">
           <div class="flex flex-col gap-0.5">
-            <div class="h-0.5 w-1 rounded-full bg-white/50"></div>
-            <div class="h-0.5 w-1 rounded-full bg-white/50"></div>
-            <div class="h-0.5 w-1 rounded-full bg-white/50"></div>
+            <div class="h-0.5 w-1 rounded-full bg-stone-50/50"></div>
+            <div class="h-0.5 w-1 rounded-full bg-stone-50/50"></div>
+            <div class="h-0.5 w-1 rounded-full bg-stone-50/50"></div>
           </div>
         </div>
       </div>
       <!-- Time label -->
       <div
-        class="pointer-events-none absolute top-1 right-2 whitespace-nowrap rounded bg-primary-600/90 px-1 py-0.5 font-mono text-xs text-white shadow-sm"
+        class="pointer-events-none absolute top-1 right-2 whitespace-nowrap rounded bg-primary-600/90 px-1 py-0.5 font-mono text-xs text-white shadow-sm dark:bg-primary-500/90 dark:text-stone-50"
       >
         {endTime.toFixed(1)}s
       </div>
@@ -602,7 +602,7 @@
     <!-- Play / Stop button -->
     <button
       type="button"
-      class="flex items-center gap-1.5 rounded-md bg-primary-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50"
+      class="flex items-center gap-1.5 rounded-md bg-primary-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-primary-500 dark:text-stone-50 dark:hover:bg-primary-400"
       onclick={playSelection}
       disabled={!decodedAudioBuffer || isDecoding}
     >

@@ -151,7 +151,7 @@
 
       <!-- Error Message -->
       {#if errorMessage}
-        <div class="mb-6 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-md" role="alert">
+        <div class="mb-6 bg-danger-light border border-danger/20 text-danger px-4 py-3 rounded-md" role="alert">
           <p class="text-sm">{errorMessage}</p>
         </div>
       {/if}
@@ -174,7 +174,7 @@
             autocomplete="email"
           />
           {#if emailError}
-            <p class="mt-1 text-sm text-red-600">{emailError}</p>
+            <p class="mt-1 text-sm text-danger">{emailError}</p>
           {/if}
         </div>
 
@@ -194,7 +194,7 @@
             autocomplete="new-password"
           />
           {#if passwordError}
-            <p class="mt-1 text-sm text-red-600">{passwordError}</p>
+            <p class="mt-1 text-sm text-danger">{passwordError}</p>
           {:else}
             <p class="mt-1 text-xs text-stone-500">{m.setup_password_hint()}</p>
           {/if}
@@ -216,7 +216,7 @@
             autocomplete="new-password"
           />
           {#if confirmPasswordError}
-            <p class="mt-1 text-sm text-red-600">{confirmPasswordError}</p>
+            <p class="mt-1 text-sm text-danger">{confirmPasswordError}</p>
           {/if}
         </div>
 
@@ -240,7 +240,7 @@
         <button
           type="submit"
           disabled={isLoading}
-          class="w-full py-3 px-4 bg-primary-600 hover:bg-primary-700 text-white font-medium rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:bg-stone-400 disabled:cursor-not-allowed transition-colors"
+          class="w-full py-3 px-4 bg-primary-600 hover:bg-primary-700 text-white font-medium rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:bg-stone-400 disabled:cursor-not-allowed transition-colors dark:bg-primary-500 dark:text-stone-50 dark:hover:bg-primary-400"
         >
           {#if isLoading}
             <span class="flex items-center justify-center">

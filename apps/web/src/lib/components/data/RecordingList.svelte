@@ -176,7 +176,7 @@
       <span class="text-sm text-stone-600">{m.common_loading_recordings()}</span>
     </div>
   {:else if $recordingsQuery.error}
-    <div class="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700">
+    <div class="rounded-lg bg-danger-light px-4 py-3 text-sm text-danger">
       Error: {$recordingsQuery.error.message}
     </div>
   {:else if $recordingsQuery.data}
@@ -273,7 +273,7 @@
                 </td>
                 <td class="px-4 py-3">
                   <button
-                    class="rounded border border-red-200 bg-surface-card px-2 py-1 text-xs font-medium text-red-600 transition-colors hover:bg-red-50 hover:border-red-300"
+                    class="rounded border border-danger/20 bg-surface-card px-2 py-1 text-xs font-medium text-danger transition-colors hover:bg-danger-light hover:border-danger/30"
                     onclick={(e) => { e.stopPropagation(); handleDeleteClick(recording); }}
                     disabled={$deleteMutation.isPending}
                     aria-label="Delete recording"

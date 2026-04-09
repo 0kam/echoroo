@@ -72,14 +72,14 @@
     <div class="mt-2 flex h-1.5 w-full overflow-hidden rounded-full bg-stone-100">
       {#if confirmedPct > 0}
         <div
-          class="h-full bg-green-500"
+          class="h-full bg-success"
           style="width: {confirmedPct}%"
           title="{m.detection_confirmed_label()}: {species.confirmed_count}"
         ></div>
       {/if}
       {#if rejectedPct > 0}
         <div
-          class="h-full bg-red-400"
+          class="h-full bg-danger/70"
           style="width: {rejectedPct}%"
           title="{m.detection_rejected_label()}: {species.rejected_count}"
         ></div>
@@ -96,10 +96,10 @@
     <!-- Progress counts -->
     <div class="mt-1 flex gap-3 text-xs text-stone-500">
       {#if species.confirmed_count > 0}
-        <span class="text-green-600">{species.confirmed_count} {m.detection_status_confirmed()}</span>
+        <span class="text-success">{species.confirmed_count} {m.detection_status_confirmed()}</span>
       {/if}
       {#if species.rejected_count > 0}
-        <span class="text-red-500">{species.rejected_count} {m.detection_status_rejected()}</span>
+        <span class="text-danger">{species.rejected_count} {m.detection_status_rejected()}</span>
       {/if}
       {#if species.unreviewed_count > 0}
         <span>{species.unreviewed_count} {m.detection_status_unreviewed()}</span>

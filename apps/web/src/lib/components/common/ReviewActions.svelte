@@ -146,7 +146,7 @@
       return `${base} ${selected ? 'bg-warning text-white' : 'bg-warning-light text-warning hover:bg-warning/20 border border-warning/30'}`;
     }
     // orange
-    return `${base} ${selected ? 'bg-primary-600 text-white' : 'bg-primary-50 text-primary-700 hover:bg-primary-100 border border-primary-200 dark:bg-primary-900/20 dark:text-primary-400 dark:border-primary-700 dark:hover:bg-primary-900/40'}`;
+    return `${base} ${selected ? 'bg-primary-600 text-white dark:bg-primary-500 dark:text-stone-50' : 'bg-primary-50 text-primary-700 hover:bg-primary-100 border border-primary-200 dark:bg-primary-900/20 dark:text-primary-400 dark:border-primary-700 dark:hover:bg-primary-900/40'}`;
   }
 
   /** Outside-click handler to close the popover */

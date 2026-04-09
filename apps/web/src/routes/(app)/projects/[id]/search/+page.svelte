@@ -321,7 +321,7 @@
         {:else if $statsQuery.data}
           {@const stats = $statsQuery.data as EmbeddingStats}
           {#if stats.total_count === 0}
-            <div class="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-400">
+            <div class="rounded-md border border-warning/20 bg-warning-light px-4 py-3 text-sm text-warning">
               {m.search_no_embeddings()}
             </div>
           {:else}

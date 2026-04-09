@@ -78,7 +78,7 @@
       {m.common_loading()}
     </div>
   {:else if $configQuery.isError}
-    <div class="mt-4 text-sm text-red-600">
+    <div class="mt-4 text-sm text-danger">
       {$configQuery.error?.message}
     </div>
   {:else if $configQuery.data}

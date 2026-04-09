@@ -102,7 +102,7 @@
       {m.site_detail_loading()}
     </div>
   {:else if $siteQuery.isError}
-    <div class="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
+    <div class="rounded-md border border-danger/20 bg-danger-light px-4 py-3 text-sm text-danger">
       Error: {$siteQuery.error?.message}
     </div>
   {:else if $siteQuery.data}
@@ -150,7 +150,7 @@
           </button>
           <button
             onclick={() => (showDeleteConfirm = true)}
-            class="rounded-md border border-red-200 bg-surface-card px-3 py-2 text-sm font-medium text-red-600 transition-colors hover:bg-red-50"
+            class="rounded-md border border-danger/20 bg-surface-card px-3 py-2 text-sm font-medium text-danger transition-colors hover:bg-danger-light"
           >
             {m.site_detail_delete_button()}
           </button>
@@ -227,7 +227,7 @@
         </div>
         <a
           href={localizeHref(`/projects/${projectId}/recordings?site=${siteId}`)}
-          class="flex items-center gap-2 rounded-md bg-primary-600 px-4 py-2 text-sm font-medium text-white no-underline transition-colors hover:bg-primary-700"
+          class="flex items-center gap-2 rounded-md bg-primary-600 px-4 py-2 text-sm font-medium text-white no-underline transition-colors hover:bg-primary-700 dark:bg-primary-500 dark:text-stone-50 dark:hover:bg-primary-400"
         >
           {m.site_detail_view_recordings()}
           <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">

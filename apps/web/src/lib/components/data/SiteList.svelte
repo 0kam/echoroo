@@ -51,7 +51,7 @@
           </div>
           <div class="ml-4 flex-shrink-0">
             <button
-              class="rounded border border-red-200 bg-surface-card px-2 py-1 text-xs font-medium text-red-600 transition-colors hover:border-red-300 hover:bg-red-50"
+              class="rounded border border-danger/20 bg-surface-card px-2 py-1 text-xs font-medium text-danger transition-colors hover:border-danger/30 hover:bg-danger-light"
               onclick={(e) => { e.stopPropagation(); onDelete(site); }}
               aria-label="Delete site"
             >

@@ -43,7 +43,7 @@
         <div class="mb-1 flex items-center gap-2">
           {#if pct >= 100}
             <svg
-              class="h-3.5 w-3.5 flex-shrink-0 text-green-500"
+              class="h-3.5 w-3.5 flex-shrink-0 text-success"
               viewBox="0 0 24 24"
               fill="none"
               stroke="currentColor"
@@ -69,7 +69,7 @@
         </div>
         <div class="h-1 overflow-hidden rounded-full bg-stone-100">
           <div
-            class="h-full transition-all duration-200 {pct >= 100 ? 'bg-green-500' : 'bg-primary-500'}"
+            class="h-full transition-all duration-200 {pct >= 100 ? 'bg-success' : 'bg-primary-500'}"
             style="width: {pct}%"
           ></div>
         </div>

@@ -347,13 +347,13 @@
                 required
                 class="block w-full rounded-md shadow-sm focus:ring-primary-500 sm:text-sm"
                 class:border-stone-300={confirmNewPassword.length === 0 || passwordsMatch}
-                class:border-red-500={confirmNewPassword.length > 0 && !passwordsMatch}
+                class:border-danger={confirmNewPassword.length > 0 && !passwordsMatch}
                 class:focus:border-primary-500={confirmNewPassword.length === 0 || passwordsMatch}
-                class:focus:border-red-500={confirmNewPassword.length > 0 && !passwordsMatch}
+                class:focus:border-danger={confirmNewPassword.length > 0 && !passwordsMatch}
               />
             </div>
             {#if confirmNewPassword.length > 0 && !passwordsMatch}
-              <p class="mt-1 text-sm text-red-600">{m.settings_passwords_do_not_match()}</p>
+              <p class="mt-1 text-sm text-danger">{m.settings_passwords_do_not_match()}</p>
             {/if}
           </div>
 
@@ -370,7 +370,7 @@
             <button
               type="submit"
               disabled={!formValid || isSubmitting}
-              class="inline-flex items-center rounded-md border border-transparent bg-primary-600 px-4 py-2 text-sm font-medium text-white hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+              class="inline-flex items-center rounded-md border border-transparent bg-primary-600 px-4 py-2 text-sm font-medium text-white hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-primary-500 dark:text-stone-50 dark:hover:bg-primary-400"
             >
               {#if isSubmitting}
                 <svg class="-ml-1 mr-2 h-4 w-4 animate-spin" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
@@ -416,7 +416,7 @@
           <button
             type="button"
             onclick={() => (isTokenDialogOpen = true)}
-            class="rounded-md bg-primary-600 px-4 py-2 text-sm font-medium text-white hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2"
+            class="rounded-md bg-primary-600 px-4 py-2 text-sm font-medium text-white hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 dark:bg-primary-500 dark:text-stone-50 dark:hover:bg-primary-400"
             data-testid="create-token-button"
           >
             {m.settings_create_token_button()}
@@ -500,7 +500,7 @@
                         type="button"
                         onclick={() => handleRevokeToken(token.id)}
                         disabled={deletingTokenId === token.id}
-                        class="text-red-600 hover:text-red-800 disabled:cursor-not-allowed disabled:opacity-50"
+                        class="text-danger hover:text-danger disabled:cursor-not-allowed disabled:opacity-50"
                         data-testid={`revoke-token-${token.id}`}
                       >
                         {deletingTokenId === token.id ? m.settings_token_revoking() : m.settings_token_revoke()}

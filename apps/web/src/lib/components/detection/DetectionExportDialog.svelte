@@ -252,8 +252,8 @@
 
         <!-- Error message -->
         {#if errorMessage}
-          <div class="rounded-md border border-red-200 bg-red-50 px-4 py-3">
-            <p class="text-sm text-red-700">{errorMessage}</p>
+          <div class="rounded-md border border-danger/20 bg-danger-light px-4 py-3">
+            <p class="text-sm text-danger">{errorMessage}</p>
           </div>
         {/if}
       </div>
@@ -272,7 +272,7 @@
           type="button"
           onclick={handleExport}
           disabled={isExporting}
-          class="flex items-center gap-2 rounded-md bg-primary-600 px-4 py-2 text-sm font-medium text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50"
+          class="flex items-center gap-2 rounded-md bg-primary-600 px-4 py-2 text-sm font-medium text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-primary-500 dark:text-stone-50 dark:hover:bg-primary-400"
         >
           {#if isExporting}
             <svg class="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24">

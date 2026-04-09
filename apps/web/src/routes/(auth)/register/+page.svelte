@@ -174,7 +174,7 @@
         <!-- Email Input -->
         <div>
           <label for="email" class="block text-sm font-medium text-stone-700">
-            {m.auth_register_email_label()} <span class="text-red-600">*</span>
+            {m.auth_register_email_label()} <span class="text-danger">*</span>
           </label>
           <input
             id="email"
@@ -185,11 +185,11 @@
             bind:value={email}
             disabled={isSubmitting}
             class="mt-1 block w-full appearance-none rounded-md border border-stone-300 px-3 py-2 text-stone-900 placeholder-stone-500 focus:border-primary-500 focus:outline-none focus:ring-primary-500 disabled:bg-stone-100 disabled:cursor-not-allowed sm:text-sm"
-            class:border-red-500={fieldErrors.email}
+            class:border-danger={fieldErrors.email}
             placeholder="you@example.com"
           />
           {#if fieldErrors.email}
-            <p class="mt-1 text-sm text-red-600">{fieldErrors.email}</p>
+            <p class="mt-1 text-sm text-danger">{fieldErrors.email}</p>
           {/if}
         </div>
 
@@ -206,18 +206,18 @@
             bind:value={displayName}
             disabled={isSubmitting}
             class="mt-1 block w-full appearance-none rounded-md border border-stone-300 px-3 py-2 text-stone-900 placeholder-stone-500 focus:border-primary-500 focus:outline-none focus:ring-primary-500 disabled:bg-stone-100 disabled:cursor-not-allowed sm:text-sm"
-            class:border-red-500={fieldErrors.displayName}
+            class:border-danger={fieldErrors.displayName}
             placeholder={m.auth_register_display_name_placeholder()}
           />
           {#if fieldErrors.displayName}
-            <p class="mt-1 text-sm text-red-600">{fieldErrors.displayName}</p>
+            <p class="mt-1 text-sm text-danger">{fieldErrors.displayName}</p>
           {/if}
         </div>
 
         <!-- Password Input -->
         <div>
           <label for="password" class="block text-sm font-medium text-stone-700">
-            {m.auth_register_password_label()} <span class="text-red-600">*</span>
+            {m.auth_register_password_label()} <span class="text-danger">*</span>
           </label>
           <input
             id="password"
@@ -228,11 +228,11 @@
             bind:value={password}
             disabled={isSubmitting}
             class="mt-1 block w-full appearance-none rounded-md border border-stone-300 px-3 py-2 text-stone-900 placeholder-stone-500 focus:border-primary-500 focus:outline-none focus:ring-primary-500 disabled:bg-stone-100 disabled:cursor-not-allowed sm:text-sm"
-            class:border-red-500={fieldErrors.password}
+            class:border-danger={fieldErrors.password}
             placeholder={m.auth_register_password_placeholder()}
           />
           {#if fieldErrors.password}
-            <p class="mt-1 text-sm text-red-600">{fieldErrors.password}</p>
+            <p class="mt-1 text-sm text-danger">{fieldErrors.password}</p>
           {:else}
             <p class="mt-1 text-xs text-stone-500">
               {m.auth_register_password_hint()}
@@ -243,7 +243,7 @@
         <!-- Confirm Password Input -->
         <div>
           <label for="confirmPassword" class="block text-sm font-medium text-stone-700">
-            {m.auth_register_confirm_password_label()} <span class="text-red-600">*</span>
+            {m.auth_register_confirm_password_label()} <span class="text-danger">*</span>
           </label>
           <input
             id="confirmPassword"
@@ -254,11 +254,11 @@
             bind:value={confirmPassword}
             disabled={isSubmitting}
             class="mt-1 block w-full appearance-none rounded-md border border-stone-300 px-3 py-2 text-stone-900 placeholder-stone-500 focus:border-primary-500 focus:outline-none focus:ring-primary-500 disabled:bg-stone-100 disabled:cursor-not-allowed sm:text-sm"
-            class:border-red-500={fieldErrors.confirmPassword}
+            class:border-danger={fieldErrors.confirmPassword}
             placeholder={m.auth_register_confirm_password_placeholder()}
           />
           {#if fieldErrors.confirmPassword}
-            <p class="mt-1 text-sm text-red-600">{fieldErrors.confirmPassword}</p>
+            <p class="mt-1 text-sm text-danger">{fieldErrors.confirmPassword}</p>
           {/if}
         </div>
       </div>
@@ -305,7 +305,7 @@
         <button
           type="submit"
           disabled={isSubmitting}
-          class="group relative flex w-full justify-center rounded-md border border-transparent bg-primary-600 px-4 py-2 text-sm font-medium text-white hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 disabled:bg-stone-400 disabled:cursor-not-allowed"
+          class="group relative flex w-full justify-center rounded-md border border-transparent bg-primary-600 px-4 py-2 text-sm font-medium text-white hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 disabled:bg-stone-400 disabled:cursor-not-allowed dark:bg-primary-500 dark:text-stone-50 dark:hover:bg-primary-400"
         >
           {#if isSubmitting}
             <span class="flex items-center">

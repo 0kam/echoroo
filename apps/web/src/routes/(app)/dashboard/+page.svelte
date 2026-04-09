@@ -124,7 +124,7 @@
       <h3 class="text-lg font-medium text-primary-900">{m.dashboard_how_it_works()}</h3>
       <ol class="mt-4 space-y-4">
         <li class="flex items-start">
-          <span class="mr-3 flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full bg-primary-600 text-xs font-bold text-white">
+          <span class="mr-3 flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full bg-primary-600 text-xs font-bold text-white dark:bg-primary-500 dark:text-stone-50">
             1
           </span>
           <div>
@@ -135,7 +135,7 @@
           </div>
         </li>
         <li class="flex items-start">
-          <span class="mr-3 flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full bg-primary-600 text-xs font-bold text-white">
+          <span class="mr-3 flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full bg-primary-600 text-xs font-bold text-white dark:bg-primary-500 dark:text-stone-50">
             2
           </span>
           <div>
@@ -146,7 +146,7 @@
           </div>
         </li>
         <li class="flex items-start">
-          <span class="mr-3 flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full bg-primary-600 text-xs font-bold text-white">
+          <span class="mr-3 flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full bg-primary-600 text-xs font-bold text-white dark:bg-primary-500 dark:text-stone-50">
             3
           </span>
           <div>
@@ -157,7 +157,7 @@
           </div>
         </li>
         <li class="flex items-start">
-          <span class="mr-3 flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full bg-primary-600 text-xs font-bold text-white">
+          <span class="mr-3 flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full bg-primary-600 text-xs font-bold text-white dark:bg-primary-500 dark:text-stone-50">
             4
           </span>
           <div>

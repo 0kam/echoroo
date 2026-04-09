@@ -151,7 +151,7 @@
       Loading...
     </div>
   {:else if $runsQuery.isError}
-    <div class="text-sm text-red-600">
+    <div class="text-sm text-danger">
       Failed to load embedding status: {$runsQuery.error?.message}
     </div>
   {:else if !latestRun}
@@ -186,7 +186,7 @@
         <button
           onclick={() => { mutationError = null; $createMut.mutate(); }}
           disabled={isActing}
-          class="flex-shrink-0 rounded-md bg-primary-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50"
+          class="flex-shrink-0 rounded-md bg-primary-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-primary-500 dark:text-stone-50 dark:hover:bg-primary-400"
         >
           {$createMut.isPending ? 'Starting...' : m.embedding_run()}
         </button>
@@ -253,24 +253,24 @@
     <!-- Failed state -->
     <div class="flex items-start justify-between gap-4">
       <div class="flex items-start gap-3">
-        <div class="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-red-100">
-          <svg class="h-4 w-4 text-red-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <div class="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-danger-light">
+          <svg class="h-4 w-4 text-danger" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
           </svg>
         </div>
         <div>
-          <p class="text-sm font-medium text-red-700">
+          <p class="text-sm font-medium text-danger">
             {m.embedding_failed({ model: runModelLabel(latestRun) })}
           </p>
           {#if latestRun.error_message}
-            <p class="mt-0.5 text-xs text-red-500">{latestRun.error_message}</p>
+            <p class="mt-0.5 text-xs text-danger/80">{latestRun.error_message}</p>
           {/if}
         </div>
       </div>
       <button
         onclick={() => { if (latestRun) $retryMut.mutate(latestRun.id); }}
         disabled={isActing}
-        class="flex-shrink-0 rounded-md bg-red-600 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50"
+        class="flex-shrink-0 rounded-md bg-danger px-3 py-1.5 text-sm font-medium text-white transition-colors hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
       >
         {$retryMut.isPending ? 'Retrying...' : 'Retry'}
       </button>
@@ -278,7 +278,7 @@
   {/if}
 
   {#if mutationError}
-    <div class="mt-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-600">
+    <div class="mt-3 rounded-md border border-danger/20 bg-danger-light px-3 py-2 text-sm text-danger">
       {mutationError}
     </div>
   {/if}
@@ -293,7 +293,7 @@
             <span class="font-medium text-stone-700">{modelDisplayName(run.model_name)} v{run.model_version.replace(/^v/, '')}</span>
             <span class={
               run.status === 'completed' ? 'text-primary-600' :
-              run.status === 'failed' ? 'text-red-500' :
+              run.status === 'failed' ? 'text-danger' :
               run.status === 'running' ? 'text-primary-500' :
               'text-stone-400'
             }>

@@ -67,7 +67,7 @@
     <div class="flex gap-3">
       <button
         onclick={togglePlay}
-        class="flex items-center gap-2 rounded-md border border-primary-600 bg-primary-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-700"
+        class="flex items-center gap-2 rounded-md border border-primary-600 bg-primary-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-700 dark:bg-primary-500 dark:text-stone-50 dark:hover:bg-primary-400 dark:border-primary-500"
       >
         {#if isPlaying}
           <svg class="h-4 w-4" viewBox="0 0 24 24" fill="currentColor">
@@ -107,7 +107,7 @@
       onSave={handleNoteSave}
     />
     {#if $noteMutation.isError}
-      <p class="mt-2 text-xs text-red-600">Failed to save note: {$noteMutation.error?.message}</p>
+      <p class="mt-2 text-xs text-danger">Failed to save note: {$noteMutation.error?.message}</p>
     {/if}
   </div>
 

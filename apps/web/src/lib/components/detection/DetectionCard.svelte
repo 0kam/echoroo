@@ -192,7 +192,7 @@
                 {/if}
                 {#if sq.mixed > 0}
                   <span
-                    class="rounded bg-orange-100 px-1 py-0.5 text-[10px] font-medium text-orange-700"
+                    class="rounded bg-warning-light px-1 py-0.5 text-[10px] font-medium text-warning"
                     title={m.signal_quality_mixed()}
                   >
                     {sq.mixed}{m.signal_quality_mixed_abbr()}

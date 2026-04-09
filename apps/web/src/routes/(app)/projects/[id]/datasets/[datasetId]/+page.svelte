@@ -89,7 +89,7 @@
       {m.dataset_detail_loading()}
     </div>
   {:else if $datasetQuery.isError}
-    <div class="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
+    <div class="rounded-md border border-danger/20 bg-danger-light px-4 py-3 text-sm text-danger">
       Error: {$datasetQuery.error?.message}
     </div>
   {:else if $datasetQuery.data}
@@ -116,7 +116,7 @@
           {#if dataset.status === 'completed'}
             <button
               onclick={() => (showExportDialog = true)}
-              class="flex items-center gap-2 rounded-md bg-emerald-600 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-emerald-700"
+              class="flex items-center gap-2 rounded-md bg-success px-3 py-2 text-sm font-medium text-white transition-colors hover:opacity-90"
             >
               <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
                 <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" stroke-width="2" />
@@ -134,7 +134,7 @@
           </button>
           <button
             onclick={() => (showDeleteConfirm = true)}
-            class="rounded-md border border-red-200 bg-surface-card px-3 py-2 text-sm font-medium text-red-600 transition-colors hover:bg-red-50"
+            class="rounded-md border border-danger/20 bg-surface-card px-3 py-2 text-sm font-medium text-danger transition-colors hover:bg-danger-light"
           >
             {m.dataset_detail_delete_button()}
           </button>
@@ -316,7 +316,7 @@
         />
       </div>
       {#if $updateMutation.isError}
-        <div class="mx-6 mb-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-600">
+        <div class="mx-6 mb-4 rounded-md border border-danger/20 bg-danger-light px-3 py-2 text-sm text-danger">
           {$updateMutation.error?.message || 'Failed to update dataset'}
         </div>
       {/if}

@@ -223,7 +223,7 @@
     </div>
     <button
       onclick={openCreateModal}
-      class="rounded-lg bg-primary-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2"
+      class="rounded-lg bg-primary-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 dark:bg-primary-500 dark:text-stone-50 dark:hover:bg-primary-400"
     >
       Add New License
     </button>
@@ -318,7 +318,7 @@
       <div class="mt-6">
         <button
           onclick={openCreateModal}
-          class="inline-flex items-center rounded-md bg-primary-600 px-4 py-2 text-sm font-medium text-white hover:bg-primary-700"
+          class="inline-flex items-center rounded-md bg-primary-600 px-4 py-2 text-sm font-medium text-white hover:bg-primary-700 dark:bg-primary-500 dark:text-stone-50 dark:hover:bg-primary-400"
         >
           Add New License
         </button>
@@ -431,7 +431,7 @@
                     </button>
                     <button
                       onclick={() => openDeleteModal(license)}
-                      class="rounded bg-red-100 px-3 py-1 text-xs font-medium text-red-700 transition-colors hover:bg-red-200"
+                      class="rounded bg-danger-light px-3 py-1 text-xs font-medium text-danger transition-colors hover:opacity-80"
                     >
                       Delete
                     </button>
@@ -467,7 +467,7 @@
             <!-- ID -->
             <div>
               <label for="create-id" class="block text-sm font-medium text-stone-700">
-                ID <span class="text-red-500">*</span>
+                ID <span class="text-danger">*</span>
               </label>
               <input
                 type="text"
@@ -482,7 +482,7 @@
             <!-- Name -->
             <div>
               <label for="create-name" class="block text-sm font-medium text-stone-700">
-                Name <span class="text-red-500">*</span>
+                Name <span class="text-danger">*</span>
               </label>
               <input
                 type="text"
@@ -497,7 +497,7 @@
             <!-- Short Name -->
             <div>
               <label for="create-short-name" class="block text-sm font-medium text-stone-700">
-                Short Name <span class="text-red-500">*</span>
+                Short Name <span class="text-danger">*</span>
               </label>
               <input
                 type="text"
@@ -542,7 +542,7 @@
           <button
             type="button"
             onclick={handleCreate}
-            class="inline-flex w-full justify-center rounded-md bg-primary-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 sm:ml-3 sm:w-auto"
+            class="inline-flex w-full justify-center rounded-md bg-primary-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 sm:ml-3 sm:w-auto dark:bg-primary-500 dark:text-stone-50 dark:hover:bg-primary-400"
           >
             Create
           </button>
@@ -580,7 +580,7 @@
             <!-- Name -->
             <div>
               <label for="edit-name" class="block text-sm font-medium text-stone-700">
-                Name <span class="text-red-500">*</span>
+                Name <span class="text-danger">*</span>
               </label>
               <input
                 type="text"
@@ -594,7 +594,7 @@
             <!-- Short Name -->
             <div>
               <label for="edit-short-name" class="block text-sm font-medium text-stone-700">
-                Short Name <span class="text-red-500">*</span>
+                Short Name <span class="text-danger">*</span>
               </label>
               <input
                 type="text"
@@ -636,7 +636,7 @@
           <button
             type="button"
             onclick={handleUpdate}
-            class="inline-flex w-full justify-center rounded-md bg-primary-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 sm:ml-3 sm:w-auto"
+            class="inline-flex w-full justify-center rounded-md bg-primary-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 sm:ml-3 sm:w-auto dark:bg-primary-500 dark:text-stone-50 dark:hover:bg-primary-400"
           >
             Update
           </button>
@@ -668,8 +668,8 @@
       <div class="inline-block transform overflow-hidden rounded-lg bg-surface-card text-left align-bottom shadow-xl transition-all sm:my-8 sm:w-full sm:max-w-lg sm:align-middle">
         <div class="bg-surface-card px-4 pb-4 pt-5 sm:p-6 sm:pb-4">
           <div class="sm:flex sm:items-start">
-            <div class="mx-auto flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-full bg-red-100 sm:mx-0 sm:h-10 sm:w-10">
-              <svg class="h-6 w-6 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <div class="mx-auto flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-full bg-danger-light sm:mx-0 sm:h-10 sm:w-10">
+              <svg class="h-6 w-6 text-danger" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path
                   stroke-linecap="round"
                   stroke-linejoin="round"
@@ -695,7 +695,7 @@
           <button
             type="button"
             onclick={handleDelete}
-            class="inline-flex w-full justify-center rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 sm:ml-3 sm:w-auto"
+            class="inline-flex w-full justify-center rounded-md bg-danger px-4 py-2 text-sm font-medium text-white shadow-sm hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-danger/50 focus:ring-offset-2 sm:ml-3 sm:w-auto"
           >
             Delete
           </button>

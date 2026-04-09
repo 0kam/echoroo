@@ -135,7 +135,7 @@
         <div class="text-center">
           <div class="mb-4 flex justify-center">
             <svg
-              class="h-12 w-12 text-green-600"
+              class="h-12 w-12 text-success"
               xmlns="http://www.w3.org/2000/svg"
               fill="none"
               viewBox="0 0 24 24"
@@ -156,7 +156,7 @@
           <div class="mt-6">
             <a
               href={localizeHref('/login')}
-              class="inline-flex w-full justify-center rounded-md border border-transparent bg-primary-600 px-4 py-2 text-sm font-medium text-white hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2"
+              class="inline-flex w-full justify-center rounded-md border border-transparent bg-primary-600 px-4 py-2 text-sm font-medium text-white hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 dark:bg-primary-500 dark:text-stone-50 dark:hover:bg-primary-400"
             >
               Go to Login
             </a>
@@ -218,7 +218,7 @@
         <div class="text-center">
           <div class="mb-4 flex justify-center">
             <svg
-              class="h-12 w-12 text-red-600"
+              class="h-12 w-12 text-danger"
               xmlns="http://www.w3.org/2000/svg"
               fill="none"
               viewBox="0 0 24 24"
@@ -233,14 +233,14 @@
             </svg>
           </div>
           <h3 class="text-lg font-medium text-stone-900">Verification failed</h3>
-          <p class="mt-2 text-sm text-red-600">{error}</p>
+          <p class="mt-2 text-sm text-danger">{error}</p>
 
           <div class="mt-6 space-y-3">
             <button
               type="button"
               onclick={handleResend}
               disabled={isResending || resendCooldown > 0}
-              class="inline-flex w-full justify-center rounded-md border border-transparent bg-primary-600 px-4 py-2 text-sm font-medium text-white hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+              class="inline-flex w-full justify-center rounded-md border border-transparent bg-primary-600 px-4 py-2 text-sm font-medium text-white hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-primary-500 dark:text-stone-50 dark:hover:bg-primary-400"
             >
               {#if isResending}
                 Sending...
@@ -266,7 +266,7 @@
           <div class="mt-4">
             <a
               href={localizeHref('/login')}
-              class="inline-flex justify-center rounded-md border border-transparent bg-primary-600 px-4 py-2 text-sm font-medium text-white hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2"
+              class="inline-flex justify-center rounded-md border border-transparent bg-primary-600 px-4 py-2 text-sm font-medium text-white hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 dark:bg-primary-500 dark:text-stone-50 dark:hover:bg-primary-400"
             >
               Go to Login
             </a>

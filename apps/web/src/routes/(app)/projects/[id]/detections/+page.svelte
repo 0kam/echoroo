@@ -116,7 +116,7 @@
           type="button"
           on:click={() => (activeTab = 'species-list')}
           class="whitespace-nowrap border-b-2 pb-3 text-sm font-medium transition-colors focus:outline-none {activeTab === 'species-list'
-            ? 'border-emerald-500 text-emerald-600'
+            ? 'border-success text-success'
             : 'border-transparent text-stone-500 hover:border-stone-300 hover:text-stone-700'}"
           aria-current={activeTab === 'species-list' ? 'page' : undefined}
         >
@@ -126,7 +126,7 @@
           type="button"
           on:click={() => (activeTab = 'activity-patterns')}
           class="whitespace-nowrap border-b-2 pb-3 text-sm font-medium transition-colors focus:outline-none {activeTab === 'activity-patterns'
-            ? 'border-emerald-500 text-emerald-600'
+            ? 'border-success text-success'
             : 'border-transparent text-stone-500 hover:border-stone-300 hover:text-stone-700'}"
           aria-current={activeTab === 'activity-patterns' ? 'page' : undefined}
         >
@@ -153,15 +153,15 @@
           </div>
         </div>
       {:else if $temporalQuery.isError}
-        <div class="rounded-lg border border-red-200 bg-red-50 px-4 py-6 text-center">
-          <p class="text-sm font-medium text-red-700">{m.detection_activity_load_error()}</p>
-          <p class="mt-1 text-xs text-red-500">
+        <div class="rounded-lg border border-danger/20 bg-danger-light px-4 py-6 text-center">
+          <p class="text-sm font-medium text-danger">{m.detection_activity_load_error()}</p>
+          <p class="mt-1 text-xs text-danger">
             {$temporalQuery.error?.message ?? m.common_error_unexpected()}
           </p>
           <button
             type="button"
             on:click={() => $temporalQuery.refetch()}
-            class="mt-3 rounded-md bg-red-100 px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-200"
+            class="mt-3 rounded-md bg-danger-light px-3 py-1.5 text-xs font-medium text-danger hover:opacity-80"
           >
             {m.detection_retry()}
           </button>

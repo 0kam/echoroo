@@ -101,13 +101,13 @@
       <p class="text-sm text-stone-500">{m.clip_list_loading()}</p>
     </div>
   {:else if $clipsQuery.error}
-    <div class="flex flex-col items-center gap-2 rounded-lg bg-red-50 py-8">
-      <svg class="h-10 w-10 text-red-400" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+    <div class="flex flex-col items-center gap-2 rounded-lg bg-danger-light py-8">
+      <svg class="h-10 w-10 text-danger/60" viewBox="0 0 24 24" fill="none" stroke="currentColor">
         <circle cx="12" cy="12" r="10" stroke-width="2" />
         <line x1="12" y1="8" x2="12" y2="12" stroke-width="2" />
         <line x1="12" y1="16" x2="12.01" y2="16" stroke-width="2" />
       </svg>
-      <p class="text-sm text-red-600">Error: {$clipsQuery.error.message}</p>
+      <p class="text-sm text-danger">Error: {$clipsQuery.error.message}</p>
     </div>
   {:else if $clipsQuery.data && $clipsQuery.data.items.length === 0}
     <div class="flex flex-col items-center gap-2 rounded-lg bg-stone-50 py-12">
@@ -199,11 +199,11 @@
                   {/if}
                   <button
                     onclick={(e) => { e.stopPropagation(); handleDeleteClick(clip); }}
-                    class="rounded border border-stone-200 p-1.5 transition-colors hover:border-red-200 hover:bg-red-50"
+                    class="rounded border border-stone-200 p-1.5 transition-colors hover:border-danger/20 hover:bg-danger-light"
                     title="Delete clip"
                     disabled={$deleteMut.isPending}
                   >
-                    <svg class="h-4 w-4 text-stone-500 hover:text-red-500" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                    <svg class="h-4 w-4 text-stone-500 hover:text-danger" viewBox="0 0 24 24" fill="none" stroke="currentColor">
                       <polyline points="3 6 5 6 21 6" stroke-width="2" />
                       <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" stroke-width="2" />
                     </svg>

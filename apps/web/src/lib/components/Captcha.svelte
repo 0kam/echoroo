@@ -118,7 +118,7 @@
   <div bind:this={container} class:hidden={isLoading}></div>
 
   {#if error}
-    <div class="mt-2 text-sm text-red-600" role="alert">
+    <div class="mt-2 text-sm text-danger" role="alert">
       {error}
     </div>
   {/if}

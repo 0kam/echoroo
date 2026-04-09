@@ -21,7 +21,7 @@
     Y: { bg: 'bg-primary-200', text: 'text-primary-900', label: () => m.datetime_config_year() },
     M: { bg: 'bg-green-200', text: 'text-green-900', label: () => m.datetime_config_month() },
     D: { bg: 'bg-orange-200', text: 'text-orange-900', label: () => m.datetime_config_day() },
-    h: { bg: 'bg-red-200', text: 'text-red-900', label: () => m.datetime_config_hour() },
+    h: { bg: 'bg-danger-light', text: 'text-danger', label: () => m.datetime_config_hour() },
     m: { bg: 'bg-purple-200', text: 'text-purple-900', label: () => m.datetime_config_minute() },
     s: { bg: 'bg-teal-200', text: 'text-teal-900', label: () => m.datetime_config_second() },
   };
@@ -163,7 +163,7 @@
         <button
           type="button"
           onclick={clearAllAssignments}
-          class="inline-flex items-center rounded border border-stone-300 bg-surface-card px-2 py-1 text-xs font-medium text-stone-600 transition-colors hover:bg-stone-50 hover:text-red-600 hover:border-red-300"
+          class="inline-flex items-center rounded border border-stone-300 bg-surface-card px-2 py-1 text-xs font-medium text-stone-600 transition-colors hover:bg-stone-50 hover:text-danger hover:border-danger/30"
         >
           {m.datetime_config_clear_all()}
         </button>

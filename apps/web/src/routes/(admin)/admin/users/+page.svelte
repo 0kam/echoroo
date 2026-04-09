@@ -455,7 +455,7 @@
               <button
                 onclick={() => changePage(pageNum)}
                 class="rounded-md px-4 py-2 text-sm font-medium {pageNum === page
-                  ? 'bg-primary-600 text-white'
+                  ? 'bg-primary-600 text-white dark:bg-primary-500 dark:text-stone-50'
                   : 'border border-stone-300 bg-surface-card text-stone-700 hover:bg-stone-50'}"
               >
                 {pageNum}

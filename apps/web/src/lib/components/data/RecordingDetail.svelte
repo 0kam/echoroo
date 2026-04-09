@@ -53,7 +53,7 @@
     <a
       href={getDownloadUrl(projectId, recording.id)}
       download={recording.filename}
-      class="flex items-center gap-2 px-3 py-2 bg-emerald-600 text-white rounded-md text-sm font-medium hover:bg-emerald-700 flex-shrink-0"
+      class="flex items-center gap-2 px-3 py-2 bg-success text-white rounded-md text-sm font-medium hover:opacity-90 flex-shrink-0"
     >
       <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
@@ -144,7 +144,7 @@
       onSave={handleNoteSave}
     />
     {#if $noteMutation.isError}
-      <p class="mt-1 text-xs text-red-600">
+      <p class="mt-1 text-xs text-danger">
         Failed to save note: {$noteMutation.error?.message}
       </p>
     {/if}

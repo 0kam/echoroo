@@ -142,7 +142,7 @@
     {#if !showCreateForm}
       <button
         onclick={() => (showCreateForm = true)}
-        class="flex items-center gap-2 rounded-md bg-primary-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-700"
+        class="flex items-center gap-2 rounded-md bg-primary-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-700 dark:bg-primary-500 dark:text-stone-50 dark:hover:bg-primary-400"
       >
         <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
           <line x1="12" y1="5" x2="12" y2="19" stroke-width="2" />
@@ -175,7 +175,7 @@
         onCancel={() => (showCreateForm = false)}
       />
       {#if $datasetCreateMutation.isError}
-        <div class="mt-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-600">
+        <div class="mt-4 rounded-md border border-danger/20 bg-danger-light px-3 py-2 text-sm text-danger">
           {$datasetCreateMutation.error?.message || 'Failed to create dataset'}
         </div>
       {/if}
@@ -191,7 +191,7 @@
       {m.dataset_list_loading()}
     </div>
   {:else if $datasetsQuery.isError}
-    <div class="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
+    <div class="rounded-md border border-danger/20 bg-danger-light px-4 py-3 text-sm text-danger">
       {m.dataset_list_error_load({ message: $datasetsQuery.error?.message ?? '' })}
     </div>
   {:else if $datasetsQuery.data}

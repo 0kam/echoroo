@@ -225,7 +225,7 @@
     </div>
     <button
       onclick={openCreateModal}
-      class="rounded-lg bg-primary-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2"
+      class="rounded-lg bg-primary-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 dark:bg-primary-500 dark:text-stone-50 dark:hover:bg-primary-400"
     >
       Add New Recorder
     </button>
@@ -320,7 +320,7 @@
       <div class="mt-6">
         <button
           onclick={openCreateModal}
-          class="inline-flex items-center rounded-md bg-primary-600 px-4 py-2 text-sm font-medium text-white hover:bg-primary-700"
+          class="inline-flex items-center rounded-md bg-primary-600 px-4 py-2 text-sm font-medium text-white hover:bg-primary-700 dark:bg-primary-500 dark:text-stone-50 dark:hover:bg-primary-400"
         >
           Add New Recorder
         </button>
@@ -409,7 +409,7 @@
                     </button>
                     <button
                       onclick={() => openDeleteConfirm(recorder)}
-                      class="rounded bg-red-100 px-3 py-1 text-xs font-medium text-red-700 transition-colors hover:bg-red-200"
+                      class="rounded bg-danger-light px-3 py-1 text-xs font-medium text-danger transition-colors hover:opacity-80"
                     >
                       Delete
                     </button>
@@ -448,7 +448,7 @@
               <button
                 onclick={() => changePage(pageNum)}
                 class="rounded-md px-4 py-2 text-sm font-medium {pageNum === page
-                  ? 'bg-primary-600 text-white'
+                  ? 'bg-primary-600 text-white dark:bg-primary-500 dark:text-stone-50'
                   : 'border border-stone-300 bg-surface-card text-stone-700 hover:bg-stone-50'}"
               >
                 {pageNum}
@@ -554,7 +554,7 @@
           <div class="bg-stone-50 px-4 py-3 sm:flex sm:flex-row-reverse sm:px-6">
             <button
               type="submit"
-              class="inline-flex w-full justify-center rounded-md bg-primary-600 px-4 py-2 text-base font-medium text-white shadow-sm hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 sm:ml-3 sm:w-auto sm:text-sm"
+              class="inline-flex w-full justify-center rounded-md bg-primary-600 px-4 py-2 text-base font-medium text-white shadow-sm hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 sm:ml-3 sm:w-auto sm:text-sm dark:bg-primary-500 dark:text-stone-50 dark:hover:bg-primary-400"
             >
               {modalMode === 'create' ? 'Create' : 'Save'}
             </button>
@@ -590,9 +590,9 @@
       <div class="inline-block transform overflow-hidden rounded-lg bg-surface-card text-left align-bottom shadow-xl transition-all sm:my-8 sm:w-full sm:max-w-lg sm:align-middle">
         <div class="bg-surface-card px-4 pb-4 pt-5 sm:p-6 sm:pb-4">
           <div class="sm:flex sm:items-start">
-            <div class="mx-auto flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-full bg-red-100 sm:mx-0 sm:h-10 sm:w-10">
+            <div class="mx-auto flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-full bg-danger-light sm:mx-0 sm:h-10 sm:w-10">
               <svg
-                class="h-6 w-6 text-red-600"
+                class="h-6 w-6 text-danger"
                 xmlns="http://www.w3.org/2000/svg"
                 fill="none"
                 viewBox="0 0 24 24"
@@ -623,7 +623,7 @@
           <button
             type="button"
             onclick={handleDelete}
-            class="inline-flex w-full justify-center rounded-md bg-red-600 px-4 py-2 text-base font-medium text-white shadow-sm hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 sm:ml-3 sm:w-auto sm:text-sm"
+            class="inline-flex w-full justify-center rounded-md bg-danger px-4 py-2 text-base font-medium text-white shadow-sm hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-danger/50 focus:ring-offset-2 sm:ml-3 sm:w-auto sm:text-sm"
           >
             Delete
           </button>

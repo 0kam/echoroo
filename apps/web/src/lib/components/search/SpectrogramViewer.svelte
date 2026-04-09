@@ -370,7 +370,7 @@
     ></div>
     <!-- Start time label -->
     <div
-      class="pointer-events-none absolute top-1 whitespace-nowrap rounded bg-primary-600/80 px-1 py-0.5 font-mono text-xs text-white"
+      class="pointer-events-none absolute top-1 whitespace-nowrap rounded bg-primary-600/80 px-1 py-0.5 font-mono text-xs text-white dark:bg-primary-500/80 dark:text-stone-50"
       style="left: calc({startPercent}% + 3px);"
     >
       {startTime.toFixed(1)}s
@@ -385,7 +385,7 @@
     ></div>
     <!-- End time label -->
     <div
-      class="pointer-events-none absolute top-1 whitespace-nowrap rounded bg-primary-600/80 px-1 py-0.5 font-mono text-xs text-white"
+      class="pointer-events-none absolute top-1 whitespace-nowrap rounded bg-primary-600/80 px-1 py-0.5 font-mono text-xs text-white dark:bg-primary-500/80 dark:text-stone-50"
       style="right: calc({100 - endPercent}% + 3px);"
     >
       {endTime.toFixed(1)}s

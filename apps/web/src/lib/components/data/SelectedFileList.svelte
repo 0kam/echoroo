@@ -75,7 +75,7 @@
 <div class="flex justify-end">
   <button
     onclick={onUpload}
-    class="rounded-md bg-primary-600 px-5 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-700"
+    class="rounded-md bg-primary-600 px-5 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-700 dark:bg-primary-500 dark:text-stone-50 dark:hover:bg-primary-400"
   >
     Upload {files.length} File{files.length !== 1 ? 's' : ''}
   </button>

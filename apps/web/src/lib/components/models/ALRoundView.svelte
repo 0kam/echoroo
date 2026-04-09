@@ -63,7 +63,7 @@
       return 'bg-stone-100 text-stone-600 border-stone-200 dark:bg-stone-800 dark:text-stone-400 dark:border-stone-700';
     const abs = Math.abs(distance);
     if (abs < 0.1)
-      return 'bg-red-100 text-red-700 border-red-200 dark:bg-red-950/30 dark:text-red-300 dark:border-red-800';
+      return 'bg-danger-light text-danger border-danger/20 dark:bg-danger-light dark:text-danger/50 dark:border-danger/60';
     if (abs < 0.3)
       return 'bg-orange-100 text-orange-700 border-orange-200 dark:bg-orange-950/30 dark:text-orange-300 dark:border-orange-800';
     if (abs < 0.6)

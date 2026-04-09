@@ -362,7 +362,7 @@
         <!-- Apply button -->
         <button
           type="button"
-          class="rounded-md bg-primary-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-primary-700 active:bg-primary-800"
+          class="rounded-md bg-primary-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-primary-700 active:bg-primary-800 dark:bg-primary-500 dark:text-stone-50 dark:hover:bg-primary-400 dark:active:bg-primary-400"
           onclick={handleApply}
         >
           {m.search_filter_apply()}

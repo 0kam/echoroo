@@ -85,7 +85,7 @@
     </div>
     <button
       onclick={createNewProject}
-      class="inline-flex items-center rounded-md bg-primary-600 px-4 py-2 text-sm font-medium text-white hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2"
+      class="inline-flex items-center rounded-md bg-primary-600 px-4 py-2 text-sm font-medium text-white hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 dark:bg-primary-500 dark:text-stone-50 dark:hover:bg-primary-400"
     >
       <svg
         class="mr-2 h-5 w-5"
@@ -165,7 +165,7 @@
       <div class="mt-6">
         <button
           onclick={createNewProject}
-          class="inline-flex items-center rounded-md bg-primary-600 px-4 py-2 text-sm font-medium text-white hover:bg-primary-700"
+          class="inline-flex items-center rounded-md bg-primary-600 px-4 py-2 text-sm font-medium text-white hover:bg-primary-700 dark:bg-primary-500 dark:text-stone-50 dark:hover:bg-primary-400"
         >
           <svg class="mr-2 h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path
@@ -290,7 +290,7 @@
             <button
               onclick={() => changePage(pageNum)}
               class="rounded-md px-4 py-2 text-sm font-medium {pageNum === page
-                ? 'bg-primary-600 text-white'
+                ? 'bg-primary-600 text-white dark:bg-primary-500 dark:text-stone-50'
                 : 'border border-stone-300 bg-surface-card text-stone-700 hover:bg-stone-50'}"
             >
               {pageNum}

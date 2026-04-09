@@ -48,7 +48,7 @@
   <ToastContainer />
 
   {#if errorMessage}
-    <div class="fixed right-4 top-4 z-50 rounded-lg bg-red-500 p-4 text-white shadow-lg">
+    <div class="fixed right-4 top-4 z-50 rounded-lg bg-danger p-4 text-white shadow-lg">
       <div class="flex items-start gap-2">
         <svg
           class="h-5 w-5 flex-shrink-0"

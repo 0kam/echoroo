@@ -84,7 +84,7 @@
   {/if}
 
   {#if error}
-    <div class="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-600">
+    <div class="rounded-md border border-danger/20 bg-danger-light px-3 py-2 text-sm text-danger">
       {error}
     </div>
   {/if}
@@ -101,7 +101,7 @@
     <button
       type="submit"
       disabled={isSubmitting || !name || !h3Index}
-      class="rounded-md bg-primary-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50"
+      class="rounded-md bg-primary-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-primary-500 dark:text-stone-50 dark:hover:bg-primary-400"
     >
       {isSubmitting ? m.form_site_saving() : site ? m.form_site_update() : m.form_site_create()}
     </button>
