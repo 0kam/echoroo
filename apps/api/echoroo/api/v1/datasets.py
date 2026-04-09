@@ -431,6 +431,11 @@ async def start_import(
             detail=f"Upload session is in '{upload_session.status.value}' state, must be 'validated'",
         )
 
+    # Update dataset status to PROCESSING before dispatching
+    dataset_repo = DatasetRepository(db)
+    await dataset_repo.update_import_status(dataset_id, DatasetStatus.PROCESSING)
+    await db.commit()
+
     # Dispatch async import task
     from echoroo.workers.upload_tasks import import_from_upload_session
 

@@ -28,7 +28,7 @@ from echoroo.core.s3 import (
     move_object,
     verify_object_exists,
 )
-from echoroo.models.enums import DatetimeParseStatus, UploadFileStatus, UploadSessionStatus
+from echoroo.models.enums import DatasetStatus, DatetimeParseStatus, UploadFileStatus, UploadSessionStatus
 from echoroo.models.recording import Recording
 from echoroo.models.upload import UploadFile, UploadSession
 from echoroo.repositories.dataset import DatasetRepository
@@ -419,6 +419,7 @@ async def _run_import(
             session_repo = UploadSessionRepository(db)
             file_repo = UploadFileRepository(db)
             recording_repo = RecordingRepository(db)
+            dataset_repo = DatasetRepository(db)
 
             # Load upload session
             upload_session: UploadSession | None = await session_repo.get_by_id(UUID(session_id))
@@ -553,6 +554,15 @@ async def _run_import(
             await session_repo.update_status(upload_session.id, UploadSessionStatus.IMPORTED)
             await db.commit()
 
+            # Update dataset status to COMPLETED
+            await dataset_repo.update_import_status(
+                dataset_id,
+                DatasetStatus.COMPLETED,
+                total_files=len(valid_files),
+                processed_files=imported_count,
+            )
+            await db.commit()
+
             logger.info(
                 "Import complete for session %s: %d imported, %d failed",
                 session_id,
@@ -661,6 +671,30 @@ async def _mark_session_failed(session_id: str, error: str) -> None:
         await engine.dispose()
 
 
+async def _mark_import_failed(session_id: str, error: str) -> None:
+    """Mark an upload session and its dataset as FAILED after an import error."""
+    engine, session_factory = get_worker_engine_and_session_factory()
+    try:
+        async with session_factory() as db:
+            session_repo = UploadSessionRepository(db)
+            session = await session_repo.get_by_id(UUID(session_id))
+            await session_repo.update_status(
+                UUID(session_id),
+                UploadSessionStatus.FAILED,
+                error=error,
+            )
+            if session is not None:
+                dataset_repo = DatasetRepository(db)
+                await dataset_repo.update_import_status(
+                    session.dataset_id,
+                    DatasetStatus.FAILED,
+                    error=error,
+                )
+            await db.commit()
+    finally:
+        await engine.dispose()
+
+
 # ---------------------------------------------------------------------------
 # Celery task definitions
 # ---------------------------------------------------------------------------
@@ -727,7 +761,7 @@ def import_from_upload_session(
     except Exception as exc:  # noqa: BLE001
         logger.exception("Import failed for session %s: %s", session_id, exc)
         with contextlib.suppress(Exception):
-            asyncio.run(_mark_session_failed(session_id, str(exc)))
+            asyncio.run(_mark_import_failed(session_id, str(exc)))
         raise self.retry(exc=exc, countdown=30) from exc
 
 

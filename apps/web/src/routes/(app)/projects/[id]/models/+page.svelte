@@ -26,11 +26,12 @@
     getAuditSet,
     evaluateAuditSet,
   } from '$lib/api/custom-models';
-  import { fetchTags } from '$lib/api/tags';
+  import { createTag } from '$lib/api/tags';
   import { fetchDatasets } from '$lib/api/datasets';
+  import SpeciesSelector from '$lib/components/search/SpeciesSelector.svelte';
   import { toasts } from '$lib/stores/toast';
   import type { CustomModel, CustomModelListItem, CustomModelCreate, AuditMetrics } from '$lib/types/custom-model';
-  import type { Tag } from '$lib/types/annotation';
+  import type { TagCreate } from '$lib/types/annotation';
   import { getCustomModelStatusClass, getCustomModelStatusLabel } from '$lib/utils/statusFormatters';
   import ReviewTab from '$lib/components/models/ReviewTab.svelte';
 
@@ -55,7 +56,14 @@
   let createName = $state('');
   let createDescription = $state('');
   let createTargetTagId = $state('');
-  let createEmbeddingModel = $state('perch');
+  /** Holds the selected species info from SpeciesSelector for deferred tag creation */
+  let createSelectedSpecies = $state<{
+    tag_id: string | null;
+    scientific_name: string;
+    common_name?: string;
+  } | null>(null);
+  let showSpeciesSelector = $state(false);
+  let isCreatingTag = $state(false);
   let createError = $state<string | null>(null);
 
   // ============================================
@@ -108,14 +116,6 @@
       queryFn: () => fetchCustomModels(projectId),
       enabled: !!projectId,
       refetchInterval: false,
-    })
-  );
-
-  const tagsQuery = $derived(
-    createQuery({
-      queryKey: ['tags', projectId],
-      queryFn: () => fetchTags(projectId, { page_size: 200 }),
-      enabled: showCreateDialog,
     })
   );
 
@@ -260,7 +260,9 @@
     createName = '';
     createDescription = '';
     createTargetTagId = '';
-    createEmbeddingModel = 'perch';
+    createSelectedSpecies = null;
+    showSpeciesSelector = false;
+    isCreatingTag = false;
     createError = null;
     showCreateDialog = true;
   }
@@ -274,22 +276,43 @@
     showCreateDialog = false;
   }
 
-  function handleCreate() {
+  async function handleCreate() {
     createError = null;
     if (!createName.trim()) {
       createError = 'Model name is required';
       return;
     }
-    if (!createTargetTagId) {
-      createError = 'Target species tag is required';
+    if (!createSelectedSpecies) {
+      createError = 'Target species is required';
       return;
+    }
+
+    let tagId = createTargetTagId;
+
+    // If the selected species has no existing project tag, create one first
+    if (!tagId && createSelectedSpecies) {
+      isCreatingTag = true;
+      try {
+        const tagData: TagCreate = {
+          name: createSelectedSpecies.scientific_name,
+          category: 'species',
+          scientific_name: createSelectedSpecies.scientific_name,
+          common_name: createSelectedSpecies.common_name,
+        };
+        const newTag = await createTag(projectId, tagData);
+        tagId = newTag.id;
+      } catch (err) {
+        createError = err instanceof Error ? err.message : 'Failed to create species tag';
+        isCreatingTag = false;
+        return;
+      }
+      isCreatingTag = false;
     }
 
     const payload: CustomModelCreate = {
       name: createName.trim(),
       description: createDescription.trim() || undefined,
-      target_tag_id: createTargetTagId,
-      embedding_model_name: createEmbeddingModel,
+      target_tag_id: tagId,
     };
 
     $createMutationState.mutate(payload);
@@ -384,12 +407,6 @@
     });
   }
 
-  function getTagName(tagId: string | null, tags: Tag[]): string {
-    if (!tagId) return m.models_no_target_species();
-    const tag = tags.find((t) => t.id === tagId);
-    if (!tag) return tagId;
-    return tag.scientific_name ?? tag.name;
-  }
 </script>
 
 <svelte:head>
@@ -1085,22 +1102,23 @@
      Create Model Dialog
 ==================================================== -->
 {#if showCreateDialog}
-  <!-- Backdrop -->
+  <!-- Backdrop + centering wrapper -->
   <div
-    class="fixed inset-0 z-40 bg-black/50 backdrop-blur-sm"
-    onclick={closeCreateDialog}
+    class="fixed inset-0 z-40 flex items-end justify-center bg-black/50 backdrop-blur-sm sm:items-center"
+    onclick={(e) => { if (e.target === e.currentTarget) closeCreateDialog(); }}
     onkeydown={(e) => e.key === 'Escape' && closeCreateDialog()}
     role="button"
     tabindex="-1"
     aria-label="Close dialog"
-  ></div>
+  >
 
   <!-- Dialog panel -->
   <div
-    class="fixed inset-x-0 bottom-0 z-50 mx-auto max-w-2xl rounded-t-2xl border border-card bg-surface-card p-6 shadow-2xl sm:inset-x-auto sm:left-1/2 sm:top-1/2 sm:w-full sm:-translate-x-1/2 sm:-translate-y-1/2 sm:rounded-2xl sm:p-8"
+    class="max-h-[85vh] w-full max-w-2xl overflow-y-auto rounded-t-2xl border border-card bg-surface-card p-6 shadow-2xl sm:rounded-2xl sm:p-8"
     role="dialog"
     aria-modal="true"
     aria-labelledby="create-dialog-title"
+    onclick={(e) => e.stopPropagation()}
   >
     <div class="mb-6">
       <h2 id="create-dialog-title" class="text-lg font-semibold text-stone-900">
@@ -1113,7 +1131,7 @@
 
     <form
       class="space-y-5"
-      onsubmit={(e) => { e.preventDefault(); handleCreate(); }}
+      onsubmit={(e) => { e.preventDefault(); void handleCreate(); }}
     >
       <!-- Model name -->
       <div>
@@ -1144,41 +1162,70 @@
         ></textarea>
       </div>
 
-      <!-- Target species tag -->
+      <!-- Target species -->
       <div>
-        <label for="model-tag" class="block text-sm font-medium text-stone-700">
+        <span class="block text-sm font-medium text-stone-700">
           {m.models_target_species()} <span class="text-danger">*</span>
-        </label>
-        <select
-          id="model-tag"
-          bind:value={createTargetTagId}
-          class="mt-1.5 block w-full rounded-lg border border-stone-300 bg-surface-card px-3 py-2 text-sm text-stone-900 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500 dark:border-stone-600"
-        >
-          <option value="">{m.models_no_target_species()}</option>
-          {#if $tagsQuery.data}
-            {#each $tagsQuery.data.items as tag (tag.id)}
-              <option value={tag.id}>
-                {tag.scientific_name ?? tag.name}
-                {#if tag.common_name} — {tag.common_name}{/if}
-              </option>
-            {/each}
-          {/if}
-        </select>
-      </div>
+        </span>
 
-      <!-- Embedding model -->
-      <div>
-        <label for="model-embedding" class="block text-sm font-medium text-stone-700">
-          {m.models_embedding_model()}
-        </label>
-        <select
-          id="model-embedding"
-          bind:value={createEmbeddingModel}
-          class="mt-1.5 block w-full rounded-lg border border-stone-300 bg-surface-card px-3 py-2 text-sm text-stone-900 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500 dark:border-stone-600"
-        >
-          <option value="perch">perch</option>
-          <option value="birdnet">birdnet</option>
-        </select>
+        {#if createSelectedSpecies}
+          <!-- Selected species display -->
+          <div class="mt-1.5 flex items-center justify-between rounded-lg border border-stone-200 bg-stone-50 px-3 py-2 dark:border-stone-700 dark:bg-stone-800/50">
+            <div class="min-w-0 flex-1">
+              <span class="text-sm italic text-stone-900">{createSelectedSpecies.scientific_name}</span>
+              {#if createSelectedSpecies.common_name}
+                <span class="ml-2 text-sm text-stone-500">{createSelectedSpecies.common_name}</span>
+              {/if}
+              {#if !createTargetTagId}
+                <span class="ml-2 rounded-full bg-amber-100 px-1.5 py-0.5 text-xs text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
+                  new tag will be created
+                </span>
+              {/if}
+            </div>
+            <button
+              type="button"
+              class="ml-2 shrink-0 text-stone-400 transition-colors hover:text-stone-600 dark:hover:text-stone-200"
+              onclick={() => {
+                createSelectedSpecies = null;
+                createTargetTagId = '';
+                showSpeciesSelector = true;
+              }}
+              aria-label="Change species"
+            >
+              <!-- Pencil icon -->
+              <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7" stroke-linecap="round" stroke-linejoin="round" />
+                <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+            </button>
+          </div>
+        {:else if !showSpeciesSelector}
+          <!-- Trigger button to open selector -->
+          <button
+            type="button"
+            class="mt-1.5 flex w-full items-center gap-2 rounded-lg border border-dashed border-stone-300 bg-surface-card px-3 py-2 text-sm text-stone-500 transition-colors hover:border-primary-400 hover:text-primary-600 dark:border-stone-600 dark:hover:border-primary-500 dark:hover:text-primary-400"
+            onclick={() => { showSpeciesSelector = true; }}
+          >
+            <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <circle cx="11" cy="11" r="8" /><path d="m21 21-4.35-4.35" />
+            </svg>
+            Search for a species...
+          </button>
+        {:else}
+          <!-- SpeciesSelector inline panel -->
+          <div class="mt-1.5">
+            <SpeciesSelector
+              {projectId}
+              addedSpeciesIds={new Set()}
+              onAdd={(species) => {
+                createSelectedSpecies = species;
+                createTargetTagId = species.tag_id ?? '';
+                showSpeciesSelector = false;
+              }}
+              onClose={() => { showSpeciesSelector = false; }}
+            />
+          </div>
+        {/if}
       </div>
 
       <!-- Error message -->
@@ -1192,16 +1239,22 @@
           type="button"
           class="rounded-lg border border-stone-300 px-4 py-2 text-sm font-medium text-stone-700 transition-colors hover:bg-stone-50 dark:border-stone-600 dark:hover:bg-stone-800"
           onclick={closeCreateDialog}
-          disabled={$createMutationState.isPending}
+          disabled={$createMutationState.isPending || isCreatingTag}
         >
           {m.models_cancel()}
         </button>
         <button
           type="submit"
           class="inline-flex items-center gap-2 rounded-lg bg-primary-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 disabled:opacity-50"
-          disabled={$createMutationState.isPending}
+          disabled={$createMutationState.isPending || isCreatingTag}
         >
-          {#if $createMutationState.isPending}
+          {#if isCreatingTag}
+            <svg class="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24" aria-hidden="true">
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+            </svg>
+            Creating tag...
+          {:else if $createMutationState.isPending}
             <svg class="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24" aria-hidden="true">
               <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
               <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
@@ -1213,6 +1266,7 @@
         </button>
       </div>
     </form>
+  </div>
   </div>
 {/if}
 
