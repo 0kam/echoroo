@@ -295,7 +295,7 @@
   }
 
   .tag-btn:focus-visible {
-    outline: 2px solid #3b82f6;
+    outline: 2px solid rgb(var(--primary-500));
     outline-offset: 2px;
   }
 
@@ -369,7 +369,7 @@
   }
 
   .tag-chip--removable:focus-visible {
-    outline: 2px solid #3b82f6;
+    outline: 2px solid rgb(var(--primary-500));
     outline-offset: 2px;
   }
 
@@ -426,8 +426,8 @@
   }
 
   .note-textarea:focus {
-    border-color: #3b82f6;
-    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+    border-color: rgb(var(--primary-500));
+    box-shadow: 0 0 0 3px rgb(var(--primary-500) / 0.15);
   }
 
   .note-textarea::placeholder {
@@ -452,7 +452,7 @@
   }
 
   .add-note-btn:focus-visible {
-    outline: 2px solid #3b82f6;
+    outline: 2px solid rgb(var(--primary-500));
     outline-offset: 2px;
   }
 

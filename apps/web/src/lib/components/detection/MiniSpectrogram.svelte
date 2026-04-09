@@ -5,6 +5,9 @@
    * Renders a small spectrogram from the backend API for the given recording
    * and time range, with a semi-transparent overlay for the detection region.
    * Uses authenticated fetch + blob URL to avoid 401 errors from direct <img> requests.
+   *
+   * NOTE: This is a detection-specific copy. The canonical version is in
+   * $lib/components/common/MiniSpectrogram.svelte.
    */
 
   import { onDestroy, onMount } from 'svelte';
@@ -93,8 +96,6 @@
   });
 
   // Fetch on mount and re-fetch when props change.
-  // Uses a local copy of props to avoid double-fetching from $effect
-  // re-running when mounted transitions to true.
   let prevKey = '';
   $effect(() => {
     if (!mounted) return;

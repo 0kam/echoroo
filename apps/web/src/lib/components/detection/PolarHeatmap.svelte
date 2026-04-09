@@ -8,7 +8,7 @@
    * Displays detection activity by hour (angle) and date (radius).
    * - X-axis (angle): Hours 0-23, with 0h at 12 o'clock, clockwise
    * - Y-axis (radius): Dates, innermost = oldest, outermost = newest
-   * - Color: Emerald gradient (light -> deep green) based on detection count
+   * - Color: Primary (Rose) gradient (card-bg -> deep primary) based on detection count
    */
 
   interface DataPoint {
@@ -45,21 +45,69 @@
   // ============================================================================
 
   /**
-   * Generate emerald color scale from light emerald to deep emerald.
-   * Returns RGB string for given intensity (0-1).
-   * 0 intensity = near-white, 1 intensity = emerald-600.
+   * Resolve a CSS variable color string like "rgb(var(--name))" to { r, g, b }.
+   * Falls back to null if the variable cannot be resolved.
    */
-  function getEmeraldColor(intensity: number): string {
+  function resolveCssRgb(value: string): { r: number; g: number; b: number } | null {
+    const literal = value.match(/^rgb\((\d+),\s*(\d+),\s*(\d+)\)$/);
+    if (literal) {
+      return { r: parseInt(literal[1]!), g: parseInt(literal[2]!), b: parseInt(literal[3]!) };
+    }
+    const varMatch = value.match(/^rgb\(var\((--[\w-]+)\)\)$/);
+    if (varMatch && typeof document !== 'undefined') {
+      const raw = getComputedStyle(document.documentElement)
+        .getPropertyValue(varMatch[1]!)
+        .trim();
+      const parts = raw.split(/\s+/).map(Number);
+      if (parts.length >= 3) {
+        return { r: parts[0]!, g: parts[1]!, b: parts[2]! };
+      }
+    }
+    return null;
+  }
+
+  // Rose/primary gradient stops: card-bg -> pale rose -> primary-400 -> primary-500 -> primary-700
+  const PRIMARY_COLOR_STOPS: Array<[number, string]> = [
+    [0,   'rgb(var(--color-card-bg))'],
+    [0.2, 'rgb(252, 228, 226)'],
+    [0.4, 'rgb(240, 180, 178)'],
+    [0.6, 'rgb(var(--primary-400))'],
+    [0.8, 'rgb(var(--primary-500))'],
+    [1.0, 'rgb(var(--primary-700))'],
+  ];
+
+  /**
+   * Generate primary (Rose) color scale from card-bg to primary-700.
+   * Returns RGB string for given intensity (0-1).
+   * 0 intensity = card-bg (near-white in light mode), 1 intensity = primary-700 (deep rose).
+   */
+  function getPrimaryColor(intensity: number): string {
     if (intensity === 0) {
-      return 'rgb(250, 250, 250)';
+      return PRIMARY_COLOR_STOPS[0]![1];
     }
     const clamped = Math.min(1, Math.max(0, intensity));
     // Power curve for better visual distinction at low values
-    const t = Math.pow(clamped, 0.5);
-    // emerald-100: rgb(209, 250, 229) -> emerald-600: rgb(5, 150, 105)
-    const r = Math.round(209 - t * 204);
-    const g = Math.round(250 - t * 100);
-    const b = Math.round(229 - t * 124);
+    const curved = Math.pow(clamped, 0.5);
+
+    // Find the two stops that bracket this t value
+    let i = 0;
+    for (let s = 0; s < PRIMARY_COLOR_STOPS.length - 1; s++) {
+      if (curved >= PRIMARY_COLOR_STOPS[s]![0]) {
+        i = s;
+      }
+    }
+
+    const [tLow, colorLow] = PRIMARY_COLOR_STOPS[i]!;
+    const [tHigh, colorHigh] = PRIMARY_COLOR_STOPS[Math.min(i + 1, PRIMARY_COLOR_STOPS.length - 1)]!;
+    const frac = tHigh > tLow ? (curved - tLow) / (tHigh - tLow) : 0;
+
+    const c0 = resolveCssRgb(colorLow);
+    const c1 = resolveCssRgb(colorHigh);
+    if (!c0 || !c1) return colorLow;
+
+    const r = Math.round(c0.r + frac * (c1.r - c0.r));
+    const g = Math.round(c0.g + frac * (c1.g - c0.g));
+    const b = Math.round(c0.b + frac * (c1.b - c0.b));
     return `rgb(${r}, ${g}, ${b})`;
   }
 
@@ -69,7 +117,7 @@
   function getLegendGradient(): string {
     const stops: string[] = [];
     for (let i = 0; i <= 10; i++) {
-      stops.push(`${getEmeraldColor(i / 10)} ${i * 10}%`);
+      stops.push(`${getPrimaryColor(i / 10)} ${i * 10}%`);
     }
     return `linear-gradient(to right, ${stops.join(', ')})`;
   }
@@ -208,7 +256,7 @@
 
         result.push({
           path: createWedgePath(cx, cy, ringInner, ringOuter, startAngle, endAngle),
-          fill: getEmeraldColor(intensity),
+          fill: getPrimaryColor(intensity),
           date,
           hour,
           count,
@@ -314,7 +362,7 @@
           cy={cy}
           r={outerRadius}
           fill="none"
-          stroke="rgb(229, 231, 235)"
+          stroke="rgb(var(--stone-200))"
           stroke-width="1"
         />
 
@@ -328,7 +376,7 @@
             y1={p1.y}
             x2={p2.x}
             y2={p2.y}
-            stroke="rgb(209, 213, 219)"
+            stroke="rgb(var(--stone-300))"
             stroke-width="0.5"
           />
         {/each}
@@ -361,7 +409,7 @@
             text-anchor="middle"
             dominant-baseline="middle"
             font-size="9"
-            fill="rgb(120, 113, 108)"
+            fill="rgb(var(--stone-500))"
             font-family="sans-serif"
           >
             {hour === 0 ? '0h' : `${hour}h`}
@@ -378,7 +426,7 @@
             y1={tickInner.y}
             x2={tickOuter.x}
             y2={tickOuter.y}
-            stroke="rgb(156, 163, 175)"
+            stroke="rgb(var(--stone-400))"
             stroke-width="1"
           />
         {/each}
@@ -395,7 +443,7 @@
           <div class="text-stone-300">
             {formatHour(tooltip.hour)} - {formatHour((tooltip.hour + 1) % 24)}
           </div>
-          <div class="mt-1 font-semibold text-emerald-400">
+          <div class="mt-1 font-semibold text-primary-400">
             {m.common_detections_count({ count: tooltip.count })}
           </div>
         </div>

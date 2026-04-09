@@ -539,7 +539,7 @@
     align-items: center;
     gap: 0.375rem;
     padding: 0.5rem 0.75rem;
-    background: #ffffff;
+    background: rgb(var(--color-card-bg));
     border-bottom: 1px solid #e5e7eb;
     flex-shrink: 0;
   }
@@ -550,7 +550,7 @@
     gap: 0.375rem;
     padding: 0.375rem 0.625rem;
     border: 1px solid #e5e7eb;
-    background: #ffffff;
+    background: rgb(var(--color-card-bg));
     border-radius: 0.375rem;
     font-size: 0.8125rem;
     font-weight: 500;
@@ -651,7 +651,7 @@
 
   .player-wrapper {
     padding: 0.75rem;
-    background: #ffffff;
+    background: rgb(var(--color-card-bg));
     border-top: 1px solid #e5e7eb;
     flex-shrink: 0;
   }
@@ -667,7 +667,7 @@
     overflow-y: auto;
     display: flex;
     flex-direction: column;
-    background: #ffffff;
+    background: rgb(var(--color-card-bg));
   }
 
   .sidebar-section {
@@ -763,7 +763,7 @@
 
   .instructions-panel {
     flex-shrink: 0;
-    background: #ffffff;
+    background: rgb(var(--color-card-bg));
     border-top: 1px solid #e5e7eb;
   }
 

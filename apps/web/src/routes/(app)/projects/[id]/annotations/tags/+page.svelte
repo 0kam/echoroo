@@ -610,7 +610,7 @@
 
   /* Form */
   .form-container {
-    background: white;
+    background: rgb(var(--color-card-bg));
     padding: 1.5rem;
     border-radius: 0.5rem;
     border: 1px solid #e5e7eb;
@@ -656,8 +656,8 @@
 
   .input:focus,
   .select:focus {
-    border-color: #3b82f6;
-    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+    border-color: rgb(var(--primary-500));
+    box-shadow: 0 0 0 3px rgb(var(--primary-500) / 0.15);
   }
 
   .gbif-search-wrapper {
@@ -669,7 +669,7 @@
     top: calc(100% + 4px);
     left: 0;
     right: 0;
-    background: white;
+    background: rgb(var(--color-card-bg));
     border: 1px solid #d1d5db;
     border-radius: 0.375rem;
     box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
@@ -763,7 +763,7 @@
 
   .tab-btn {
     padding: 0.375rem 0.875rem;
-    background: white;
+    background: rgb(var(--color-card-bg));
     border: 1px solid #d1d5db;
     border-radius: 0.375rem;
     font-size: 0.875rem;
@@ -777,8 +777,8 @@
   }
 
   .tab-btn--active {
-    background: #3b82f6;
-    border-color: #3b82f6;
+    background: rgb(var(--primary-500));
+    border-color: rgb(var(--primary-500));
     color: white;
   }
 
@@ -793,8 +793,8 @@
   }
 
   .search-input:focus {
-    border-color: #3b82f6;
-    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+    border-color: rgb(var(--primary-500));
+    box-shadow: 0 0 0 3px rgb(var(--primary-500) / 0.15);
   }
 
   /* State messages */
@@ -942,7 +942,7 @@
 
   .page-btn {
     padding: 0.5rem 1rem;
-    background: white;
+    background: rgb(var(--color-card-bg));
     border: 1px solid #d1d5db;
     border-radius: 0.375rem;
     font-size: 0.875rem;
@@ -990,7 +990,7 @@
   }
 
   .stat-card {
-    background: white;
+    background: rgb(var(--color-card-bg));
     border: 1px solid #e5e7eb;
     border-radius: 0.5rem;
     padding: 1rem;
@@ -1013,14 +1013,14 @@
   .stat-card__count {
     font-size: 1.25rem;
     font-weight: 600;
-    color: #3b82f6;
+    color: rgb(var(--primary-500));
     margin-top: 0.25rem;
   }
 
   /* Global buttons */
   .btn-primary {
     padding: 0.625rem 1rem;
-    background: #3b82f6;
+    background: rgb(var(--primary-500));
     color: white;
     border: none;
     border-radius: 0.375rem;
@@ -1030,7 +1030,7 @@
   }
 
   .btn-primary:hover:not(:disabled) {
-    background: #2563eb;
+    background: rgb(var(--primary-600));
   }
 
   .btn-primary:disabled {
@@ -1040,7 +1040,7 @@
 
   .btn-secondary {
     padding: 0.625rem 1rem;
-    background: white;
+    background: rgb(var(--color-card-bg));
     color: #374151;
     border: 1px solid #d1d5db;
     border-radius: 0.375rem;

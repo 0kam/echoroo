@@ -595,7 +595,7 @@
     gap: 0.25rem;
     padding: 0.25rem 0.625rem;
     background: #f3f4f6;
-    color: #374151;
+    color: rgb(var(--stone-700));
     border-radius: 9999px;
     font-size: 0.8125rem;
     font-weight: 500;
@@ -603,8 +603,8 @@
   }
 
   :global(.dark) .chip {
-    background: #3f3f46;
-    color: #d4d4d8;
+    background: rgb(var(--stone-700));
+    color: rgb(var(--stone-300));
   }
 
   .chip-warning {
@@ -626,8 +626,8 @@
     font-weight: 500;
     border: 1px solid #d1d5db;
     border-radius: 0.375rem;
-    background: white;
-    color: #374151;
+    background: rgb(var(--color-card-bg));
+    color: rgb(var(--stone-700));
     cursor: pointer;
     text-decoration: none;
     transition: all 0.15s ease;
@@ -635,47 +635,47 @@
   }
 
   :global(.dark) .action-btn {
-    background: #3f3f46;
-    border-color: #52525b;
-    color: #d4d4d8;
+    background: rgb(var(--stone-700));
+    border-color: rgb(var(--stone-600));
+    color: rgb(var(--stone-300));
   }
 
   .action-btn:hover {
     background: #f3f4f6;
-    border-color: #9ca3af;
+    border-color: rgb(var(--stone-400));
   }
 
   :global(.dark) .action-btn:hover {
-    background: #52525b;
+    background: rgb(var(--stone-600));
   }
 
   .action-btn-active {
-    background: #ecfdf5;
-    border-color: #10b981;
-    color: #059669;
+    background: rgb(var(--color-success-light));
+    border-color: rgb(var(--color-success));
+    color: rgb(var(--color-success));
   }
 
   :global(.dark) .action-btn-active {
-    background: #064e3b;
-    border-color: #10b981;
-    color: #34d399;
+    background: rgb(var(--color-success-light));
+    border-color: rgb(var(--color-success));
+    color: rgb(var(--color-success));
   }
 
   .action-btn-danger {
-    background: #fef2f2;
-    border-color: #fecaca;
-    color: #991b1b;
+    background: rgb(var(--color-danger-light));
+    border-color: rgb(var(--color-danger));
+    color: rgb(var(--color-danger));
   }
 
   :global(.dark) .action-btn-danger {
-    background: #450a0a;
-    border-color: #7f1d1d;
-    color: #fca5a5;
+    background: rgb(var(--color-danger-light));
+    border-color: rgb(var(--color-danger));
+    color: rgb(var(--color-danger));
   }
 
   .action-btn-danger:hover {
-    background: #fee2e2;
-    border-color: #f87171;
+    background: rgb(var(--color-danger-light));
+    border-color: rgb(var(--color-danger));
   }
 
   .viewer-area {
@@ -719,7 +719,7 @@
     gap: 0.75rem;
     padding: 0.5rem 0;
     font-size: 0.75rem;
-    color: #9ca3af;
+    color: rgb(var(--stone-400));
   }
 
   .shortcut-hints span {
@@ -736,7 +736,7 @@
     font-family: monospace;
     font-size: 0.7rem;
     background: #f9fafb;
-    color: #374151;
+    color: rgb(var(--stone-700));
   }
 
   .notes-section {
@@ -747,19 +747,19 @@
   }
 
   :global(.dark) .notes-section {
-    background: #27272a;
-    border-color: #3f3f46;
+    background: rgb(var(--stone-100));
+    border-color: rgb(var(--stone-700));
   }
 
   .notes-title {
     margin: 0 0 0.5rem 0;
     font-size: 0.875rem;
     font-weight: 600;
-    color: #374151;
+    color: rgb(var(--stone-700));
   }
 
   :global(.dark) .notes-title {
-    color: #d4d4d8;
+    color: rgb(var(--stone-300));
   }
 
   .notes-content {

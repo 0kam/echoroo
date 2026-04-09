@@ -357,7 +357,7 @@
   <button
     type="button"
     class="player-btn {loop
-      ? 'text-emerald-500 hover:text-emerald-700 dark:hover:text-emerald-300'
+      ? 'text-primary-500 hover:text-primary-700 dark:hover:text-primary-300'
       : 'text-stone-600 hover:text-stone-800 dark:text-stone-400 dark:hover:text-stone-200'}"
     onclick={toggleLoop}
     aria-label={loop ? 'Disable loop' : 'Enable loop'}
@@ -381,7 +381,7 @@
     <div class="relative w-full h-3 flex items-center cursor-pointer">
       <div class="absolute w-full h-1 rounded-full bg-stone-300 dark:bg-stone-600">
         <div
-          class="h-1 bg-emerald-500 rounded-full dark:bg-emerald-400"
+          class="h-1 bg-primary-500 rounded-full dark:bg-primary-400"
           style="width: {Math.min((currentTime / duration) * 100, 100)}%"
         ></div>
       </div>
@@ -398,7 +398,7 @@
       />
       <!-- Thumb indicator -->
       <div
-        class="absolute w-3 h-3 bg-emerald-500 rounded-full shadow pointer-events-none"
+        class="absolute w-3 h-3 bg-primary-500 rounded-full shadow pointer-events-none"
         style="left: calc({Math.min((currentTime / duration) * 100, 100)}% - 6px)"
       ></div>
     </div>
@@ -430,8 +430,8 @@
         {#each speedOptions as option}
           <button
             type="button"
-            class="block w-full px-3 py-1.5 text-left text-sm font-mono hover:bg-emerald-100 dark:hover:bg-emerald-900 {speed === option.value
-              ? 'text-emerald-600 dark:text-emerald-400 font-semibold'
+            class="block w-full px-3 py-1.5 text-left text-sm font-mono hover:bg-primary-100 dark:hover:bg-primary-900 {speed === option.value
+              ? 'text-primary-600 dark:text-primary-400 font-semibold'
               : 'text-stone-700 dark:text-stone-300'}"
             onclick={() => {
               showSpeedMenu = false;
@@ -462,7 +462,7 @@
       step="0.05"
       value={volume}
       oninput={handleVolumeChange}
-      class="w-16 h-1 cursor-pointer accent-emerald-500"
+      class="w-16 h-1 cursor-pointer accent-primary-500"
       aria-label="Volume"
     />
   </div>
@@ -494,7 +494,7 @@
   }
 
   .player-btn:focus-visible {
-    outline: 2px solid #10b981;
+    outline: 2px solid rgb(var(--primary-500));
     outline-offset: 2px;
   }
 

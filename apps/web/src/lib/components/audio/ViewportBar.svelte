@@ -130,10 +130,10 @@
 >
   <!-- Viewport indicator -->
   <div
-    class="absolute h-full rounded-md border border-emerald-500 transition-colors
+    class="absolute h-full rounded-md border border-primary-500 transition-colors
       {isDragging
-        ? 'bg-emerald-500/80 cursor-grabbing'
-        : 'bg-emerald-300 dark:bg-emerald-700 hover:bg-emerald-500/80 cursor-grab'}"
+        ? 'bg-primary-500/80 cursor-grabbing'
+        : 'bg-primary-300 dark:bg-primary-700 hover:bg-primary-500/80 cursor-grab'}"
     style="left: {indicatorPos.left}px; width: {indicatorPos.width}px;"
   ></div>
 

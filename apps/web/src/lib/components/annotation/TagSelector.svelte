@@ -318,8 +318,8 @@
   }
 
   .search-input:focus {
-    border-color: #3b82f6;
-    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+    border-color: rgb(var(--primary-500));
+    box-shadow: 0 0 0 3px rgb(var(--primary-500) / 0.15);
   }
 
   .dropdown {
@@ -327,7 +327,7 @@
     top: calc(100% + 4px);
     left: 0;
     right: 0;
-    background: white;
+    background: rgb(var(--color-card-bg));
     border: 1px solid #d1d5db;
     border-radius: 0.375rem;
     box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);

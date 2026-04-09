@@ -54,10 +54,10 @@
   function getCellColor(siteCount: number, max: number): string {
     if (siteCount === 0) return 'bg-stone-100';
     const ratio = siteCount / max;
-    if (ratio <= 0.25) return 'bg-green-200';
-    if (ratio <= 0.5) return 'bg-green-400';
-    if (ratio <= 0.75) return 'bg-green-600';
-    return 'bg-green-800';
+    if (ratio <= 0.25) return 'bg-primary-200';
+    if (ratio <= 0.5) return 'bg-primary-400';
+    if (ratio <= 0.75) return 'bg-primary-600';
+    return 'bg-primary-800';
   }
 
   /**
@@ -144,10 +144,10 @@
   <div class="mt-3 flex items-center gap-2 text-xs text-stone-500">
     <span>{m.project_overview_calendar_legend_sites({ count: 0 })}</span>
     <div class="h-4 w-4 rounded-sm bg-stone-100"></div>
-    <div class="h-4 w-4 rounded-sm bg-green-200"></div>
-    <div class="h-4 w-4 rounded-sm bg-green-400"></div>
-    <div class="h-4 w-4 rounded-sm bg-green-600"></div>
-    <div class="h-4 w-4 rounded-sm bg-green-800"></div>
+    <div class="h-4 w-4 rounded-sm bg-primary-200"></div>
+    <div class="h-4 w-4 rounded-sm bg-primary-400"></div>
+    <div class="h-4 w-4 rounded-sm bg-primary-600"></div>
+    <div class="h-4 w-4 rounded-sm bg-primary-800"></div>
     <span>{m.project_overview_calendar_legend_sites({ count: maxSiteCount() })}</span>
   </div>
 </div>

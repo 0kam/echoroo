@@ -331,7 +331,7 @@
                 max="1"
                 step="0.05"
                 bind:value={inputMin}
-                class="w-16 rounded border border-stone-300 bg-white px-2 py-1 text-sm text-stone-800 focus:border-primary-400 focus:outline-none"
+                class="w-16 rounded border border-stone-300 bg-surface-card px-2 py-1 text-sm text-stone-800 focus:border-primary-400 focus:outline-none"
               />
               <span class="text-stone-400">–</span>
               <input
@@ -340,7 +340,7 @@
                 max="1"
                 step="0.05"
                 bind:value={inputMax}
-                class="w-16 rounded border border-stone-300 bg-white px-2 py-1 text-sm text-stone-800 focus:border-primary-400 focus:outline-none"
+                class="w-16 rounded border border-stone-300 bg-surface-card px-2 py-1 text-sm text-stone-800 focus:border-primary-400 focus:outline-none"
               />
             </div>
           </label>
@@ -355,7 +355,7 @@
             max="500"
             step="1"
             bind:value={inputLimit}
-            class="w-20 rounded border border-stone-300 bg-white px-2 py-1 text-sm text-stone-800 focus:border-primary-400 focus:outline-none"
+            class="w-20 rounded border border-stone-300 bg-surface-card px-2 py-1 text-sm text-stone-800 focus:border-primary-400 focus:outline-none"
           />
         </label>
 
