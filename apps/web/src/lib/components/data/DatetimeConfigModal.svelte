@@ -341,19 +341,19 @@
         </div>
       {:else if autoDetectResult?.detected && step === 'auto-detect'}
         <!-- Auto-detect success banner -->
-        <div class="rounded-lg border border-green-200 bg-green-50 p-4 space-y-3">
+        <div class="rounded-lg border border-success/30 bg-success-light p-4 space-y-3">
           <div class="flex items-center gap-2">
-            <div class="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full bg-green-600">
+            <div class="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full bg-success">
               <svg class="h-3.5 w-3.5 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 <polyline points="20 6 9 17 4 12"></polyline>
               </svg>
             </div>
-            <p class="text-sm font-medium text-green-800 dark:text-green-400">
+            <p class="text-sm font-medium text-success">
               {m.datetime_config_auto_detected({ name: autoDetectResult.preset_name ?? 'Custom' })}
             </p>
           </div>
 
-          <div class="rounded-md bg-surface-card/60 px-3 py-2 text-xs font-mono text-stone-700 border border-green-200">
+          <div class="rounded-md bg-surface-card/60 px-3 py-2 text-xs font-mono text-stone-700 border border-success/20">
             {autoDetectResult.format_str}
           </div>
 
@@ -368,7 +368,7 @@
           <div class="flex gap-2">
             <button
               onclick={useAutoDetectedPattern}
-              class="rounded-md bg-green-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-green-700"
+              class="rounded-md bg-success px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-success/80"
             >
               {m.datetime_config_use_pattern()}
             </button>
@@ -381,7 +381,7 @@
           </div>
         </div>
       {:else if autoDetectError}
-        <div class="rounded-lg border border-yellow-200 bg-yellow-50 px-4 py-3 text-sm text-yellow-800">
+        <div class="rounded-lg border border-warning/30 bg-warning-light px-4 py-3 text-sm text-warning">
           {m.datetime_config_auto_detect_failed()}
         </div>
       {/if}
@@ -390,18 +390,18 @@
       {#if step === 'auto-confirm'}
         <div class="space-y-4">
           <!-- Confirmed pattern info -->
-          <div class="rounded-lg border border-green-200 bg-green-50 p-4 space-y-3">
+          <div class="rounded-lg border border-success/30 bg-success-light p-4 space-y-3">
             <div class="flex items-center gap-2">
-              <div class="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full bg-green-600">
+              <div class="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full bg-success">
                 <svg class="h-3.5 w-3.5 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                   <polyline points="20 6 9 17 4 12"></polyline>
                 </svg>
               </div>
-              <p class="text-sm font-medium text-green-800 dark:text-green-400">
+              <p class="text-sm font-medium text-success">
                 {m.datetime_config_auto_detected({ name: autoDetectResult?.preset_name ?? 'Custom' })}
               </p>
             </div>
-            <div class="rounded-md bg-surface-card/60 px-3 py-2 text-xs font-mono text-stone-700 border border-green-200">
+            <div class="rounded-md bg-surface-card/60 px-3 py-2 text-xs font-mono text-stone-700 border border-success/20">
               {activeFormat}
             </div>
           </div>
@@ -419,15 +419,15 @@
 
           <!-- Apply feedback -->
           {#if applySuccess}
-            <div class="flex items-center gap-2 rounded-md border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800 dark:border-green-800 dark:bg-green-900/20 dark:text-green-400">
-              <svg class="h-4 w-4 flex-shrink-0 text-green-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <div class="flex items-center gap-2 rounded-md border border-success/30 bg-success-light px-4 py-3 text-sm text-success">
+              <svg class="h-4 w-4 flex-shrink-0 text-success" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 <polyline points="20 6 9 17 4 12"></polyline>
               </svg>
               {applySuccess}
             </div>
           {/if}
           {#if applyError}
-            <div class="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600 dark:border-red-800 dark:bg-red-900/20 dark:text-red-400">
+            <div class="rounded-md border border-danger/30 bg-danger-light px-4 py-3 text-sm text-danger">
               {applyError}
             </div>
           {/if}
@@ -514,7 +514,7 @@
             </div>
 
             {#if previewError}
-              <div class="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-600">
+              <div class="rounded-md border border-danger/30 bg-danger-light px-3 py-2 text-sm text-danger">
                 {previewError}
               </div>
             {/if}
@@ -527,15 +527,15 @@
 
         <!-- Apply feedback -->
         {#if applySuccess}
-          <div class="flex items-center gap-2 rounded-md border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800 dark:border-green-800 dark:bg-green-900/20 dark:text-green-400">
-            <svg class="h-4 w-4 flex-shrink-0 text-green-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <div class="flex items-center gap-2 rounded-md border border-success/30 bg-success-light px-4 py-3 text-sm text-success">
+            <svg class="h-4 w-4 flex-shrink-0 text-success" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <polyline points="20 6 9 17 4 12"></polyline>
             </svg>
             {applySuccess}
           </div>
         {/if}
         {#if applyError}
-          <div class="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600 dark:border-red-800 dark:bg-red-900/20 dark:text-red-400">
+          <div class="rounded-md border border-danger/30 bg-danger-light px-4 py-3 text-sm text-danger">
             {applyError}
           </div>
         {/if}

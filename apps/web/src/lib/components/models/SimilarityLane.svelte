@@ -74,10 +74,10 @@
     if (!match) return 'text-stone-500 bg-stone-50';
     const lower = parseInt(match[1] ?? '0', 10);
     if (lower >= 90) return 'text-emerald-700 bg-emerald-50 border-emerald-200 dark:text-emerald-300 dark:bg-emerald-950/30 dark:border-emerald-800';
-    if (lower >= 80) return 'text-green-700 bg-green-50 border-green-200 dark:text-green-300 dark:bg-green-950/30 dark:border-green-800';
-    if (lower >= 70) return 'text-yellow-700 bg-yellow-50 border-yellow-200 dark:text-yellow-300 dark:bg-yellow-950/30 dark:border-yellow-800';
+    if (lower >= 80) return 'text-success bg-success-light border-success/30';
+    if (lower >= 70) return 'text-warning bg-warning-light border-warning/30';
     if (lower >= 60) return 'text-orange-700 bg-orange-50 border-orange-200 dark:text-orange-300 dark:bg-orange-950/30 dark:border-orange-800';
-    if (lower >= 50) return 'text-red-700 bg-red-50 border-red-200 dark:text-red-300 dark:bg-red-950/30 dark:border-red-800';
+    if (lower >= 50) return 'text-danger bg-danger-light border-danger/30';
     return 'text-stone-600 bg-stone-50 border-stone-200 dark:text-stone-400 dark:bg-stone-800 dark:border-stone-700';
   });
 
@@ -95,10 +95,10 @@
 
   function scoreBadgeClass(similarity: number): string {
     if (similarity >= 0.9) return 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400';
-    if (similarity >= 0.8) return 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400';
-    if (similarity >= 0.7) return 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400';
+    if (similarity >= 0.8) return 'bg-success-light text-success';
+    if (similarity >= 0.7) return 'bg-warning-light text-warning';
     if (similarity >= 0.6) return 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400';
-    if (similarity >= 0.5) return 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400';
+    if (similarity >= 0.5) return 'bg-danger-light text-danger';
     return 'bg-stone-100 text-stone-600 dark:bg-stone-700 dark:text-stone-400';
   }
 </script>

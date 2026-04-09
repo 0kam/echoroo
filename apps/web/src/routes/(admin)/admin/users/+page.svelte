@@ -176,11 +176,11 @@
 
   <!-- Success Message -->
   {#if successMessage}
-    <div class="mb-6 rounded-md bg-green-50 p-4 dark:bg-green-900/20" role="alert">
+    <div class="mb-6 rounded-md bg-success-light p-4" role="alert">
       <div class="flex">
         <div class="flex-shrink-0">
           <svg
-            class="h-5 w-5 text-green-400"
+            class="h-5 w-5 text-success"
             xmlns="http://www.w3.org/2000/svg"
             viewBox="0 0 20 20"
             fill="currentColor"
@@ -193,7 +193,7 @@
           </svg>
         </div>
         <div class="ml-3">
-          <p class="text-sm font-medium text-green-800 dark:text-green-400">{successMessage}</p>
+          <p class="text-sm font-medium text-success">{successMessage}</p>
         </div>
       </div>
     </div>
@@ -201,11 +201,11 @@
 
   <!-- Error Message -->
   {#if error}
-    <div class="mb-6 rounded-md bg-red-50 p-4 dark:bg-red-900/20" role="alert">
+    <div class="mb-6 rounded-md bg-danger-light p-4" role="alert">
       <div class="flex">
         <div class="flex-shrink-0">
           <svg
-            class="h-5 w-5 text-red-400"
+            class="h-5 w-5 text-danger"
             xmlns="http://www.w3.org/2000/svg"
             viewBox="0 0 20 20"
             fill="currentColor"
@@ -218,7 +218,7 @@
           </svg>
         </div>
         <div class="ml-3">
-          <p class="text-sm font-medium text-red-800 dark:text-red-400">{error}</p>
+          <p class="text-sm font-medium text-danger">{error}</p>
         </div>
       </div>
     </div>
@@ -372,8 +372,8 @@
                   <div class="flex flex-col gap-1">
                     <span
                       class="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium {user.is_active
-                        ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400'
-                        : 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400'}"
+                        ? 'bg-success-light text-success'
+                        : 'bg-danger-light text-danger'}"
                     >
                       {user.is_active ? 'Active' : 'Inactive'}
                     </span>
@@ -409,8 +409,8 @@
                     <button
                       onclick={() => toggleUserActive(user)}
                       class="rounded px-3 py-1 text-xs font-medium transition-colors {user.is_active
-                        ? 'bg-red-100 text-red-700 hover:bg-red-200 dark:bg-red-900/30 dark:text-red-400 dark:hover:bg-red-900/50'
-                        : 'bg-green-100 text-green-700 hover:bg-green-200 dark:bg-green-900/30 dark:text-green-400 dark:hover:bg-green-900/50'}"
+                        ? 'bg-danger-light text-danger hover:bg-danger/20'
+                        : 'bg-success-light text-success hover:bg-success/20'}"
                     >
                       {user.is_active ? 'Deactivate' : 'Activate'}
                     </button>

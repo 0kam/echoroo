@@ -49,7 +49,7 @@
       return { level: '', color: 'bg-stone-200', width: 'w-0' };
     }
     if (password.length < 8) {
-      return { level: m.settings_password_strength_short(), color: 'bg-red-500', width: 'w-1/4' };
+      return { level: m.settings_password_strength_short(), color: 'bg-danger', width: 'w-1/4' };
     }
 
     let score = 0;
@@ -60,12 +60,12 @@
     if (password.length >= 12) score++;
 
     if (score <= 2) {
-      return { level: m.settings_password_strength_weak(), color: 'bg-yellow-500', width: 'w-1/2' };
+      return { level: m.settings_password_strength_weak(), color: 'bg-warning', width: 'w-1/2' };
     }
     if (score <= 3) {
       return { level: m.settings_password_strength_good(), color: 'bg-primary-500', width: 'w-3/4' };
     }
-    return { level: m.settings_password_strength_strong(), color: 'bg-green-500', width: 'w-full' };
+    return { level: m.settings_password_strength_strong(), color: 'bg-success', width: 'w-full' };
   }
 
   let passwordStrength = $derived(getPasswordStrength(newPassword));
@@ -230,15 +230,15 @@
 
         <!-- Success Message -->
         {#if successMessage}
-          <div class="mt-4 rounded-md bg-green-50 p-4 dark:bg-green-900/20">
+          <div class="mt-4 rounded-md bg-success-light p-4">
             <div class="flex">
               <div class="flex-shrink-0">
-                <svg class="h-5 w-5 text-green-400" viewBox="0 0 20 20" fill="currentColor">
+                <svg class="h-5 w-5 text-success" viewBox="0 0 20 20" fill="currentColor">
                   <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />
                 </svg>
               </div>
               <div class="ml-3">
-                <p class="text-sm font-medium text-green-800 dark:text-green-400">{successMessage}</p>
+                <p class="text-sm font-medium text-success">{successMessage}</p>
               </div>
             </div>
           </div>
@@ -246,15 +246,15 @@
 
         <!-- Error Message -->
         {#if errorMessage}
-          <div class="mt-4 rounded-md bg-red-50 p-4 dark:bg-red-900/20">
+          <div class="mt-4 rounded-md bg-danger-light p-4">
             <div class="flex">
               <div class="flex-shrink-0">
-                <svg class="h-5 w-5 text-red-400" viewBox="0 0 20 20" fill="currentColor">
+                <svg class="h-5 w-5 text-danger" viewBox="0 0 20 20" fill="currentColor">
                   <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd" />
                 </svg>
               </div>
               <div class="ml-3">
-                <p class="text-sm font-medium text-red-800 dark:text-red-400">{errorMessage}</p>
+                <p class="text-sm font-medium text-danger">{errorMessage}</p>
               </div>
             </div>
           </div>
@@ -424,7 +424,7 @@
         </div>
 
         {#if tokensError}
-          <div class="mb-4 rounded-md bg-red-50 p-3 text-sm text-red-700 dark:bg-red-900/20 dark:text-red-400" role="alert">
+          <div class="mb-4 rounded-md bg-danger-light p-3 text-sm text-danger" role="alert">
             {tokensError}
           </div>
         {/if}

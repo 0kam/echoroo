@@ -346,7 +346,7 @@
 
   {:else if loadError}
     <!-- Error state -->
-    <div class="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700 dark:border-red-800 dark:bg-red-950/30 dark:text-red-400">
+    <div class="rounded-lg border border-danger/30 bg-danger-light p-4 text-sm text-danger">
       {loadError}
     </div>
 
@@ -391,7 +391,7 @@
               </button>
             </div>
             {#if renameError}
-              <p class="mt-1 text-sm text-red-600 dark:text-red-400">{renameError}</p>
+              <p class="mt-1 text-sm text-danger">{renameError}</p>
             {/if}
           {:else}
             <div class="flex items-center gap-2">
@@ -475,7 +475,7 @@
 
       <!-- Error message for failed sessions -->
       {#if session.status === 'failed' && session.error_message}
-        <div class="mt-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-600 dark:border-red-800 dark:bg-red-950/30 dark:text-red-400">
+        <div class="mt-3 rounded-md border border-danger/30 bg-danger-light px-3 py-2 text-sm text-danger">
           {session.error_message}
         </div>
       {/if}

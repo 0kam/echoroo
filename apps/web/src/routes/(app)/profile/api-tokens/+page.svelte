@@ -222,11 +222,11 @@
 
   <!-- Success Message -->
   {#if successMessage}
-    <div class="mb-6 rounded-md bg-green-50 p-4 dark:bg-green-900/20" role="alert">
+    <div class="mb-6 rounded-md bg-success-light p-4" role="alert">
       <div class="flex">
         <div class="flex-shrink-0">
           <svg
-            class="h-5 w-5 text-green-400"
+            class="h-5 w-5 text-success"
             xmlns="http://www.w3.org/2000/svg"
             viewBox="0 0 20 20"
             fill="currentColor"
@@ -239,7 +239,7 @@
           </svg>
         </div>
         <div class="ml-3">
-          <p class="text-sm font-medium text-green-800 dark:text-green-400">{successMessage}</p>
+          <p class="text-sm font-medium text-success">{successMessage}</p>
         </div>
       </div>
     </div>
@@ -247,11 +247,11 @@
 
   <!-- Error Message -->
   {#if error}
-    <div class="mb-6 rounded-md bg-red-50 p-4 dark:bg-red-900/20" role="alert">
+    <div class="mb-6 rounded-md bg-danger-light p-4" role="alert">
       <div class="flex">
         <div class="flex-shrink-0">
           <svg
-            class="h-5 w-5 text-red-400"
+            class="h-5 w-5 text-danger"
             xmlns="http://www.w3.org/2000/svg"
             viewBox="0 0 20 20"
             fill="currentColor"
@@ -264,7 +264,7 @@
           </svg>
         </div>
         <div class="ml-3">
-          <p class="text-sm font-medium text-red-800 dark:text-red-400">{error}</p>
+          <p class="text-sm font-medium text-danger">{error}</p>
         </div>
       </div>
     </div>
@@ -386,8 +386,8 @@
                 <td class="whitespace-nowrap px-6 py-4">
                   <span
                     class="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium {token.is_active
-                      ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400'
-                      : 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400'}"
+                      ? 'bg-success-light text-success'
+                      : 'bg-danger-light text-danger'}"
                   >
                     {token.is_active ? m.api_tokens_status_active() : m.api_tokens_status_inactive()}
                   </span>
@@ -397,7 +397,7 @@
                 <td class="whitespace-nowrap px-6 py-4 text-sm">
                   <button
                     onclick={() => handleRevokeToken(token)}
-                    class="rounded bg-red-100 px-3 py-1 text-xs font-medium text-red-700 transition-colors hover:bg-red-200"
+                    class="rounded bg-danger-light px-3 py-1 text-xs font-medium text-danger transition-colors hover:bg-danger/20"
                   >
                     {m.api_tokens_revoke_button()}
                   </button>
@@ -473,18 +473,18 @@
                   </div>
 
                   <!-- Warning -->
-                  <div class="rounded-md bg-yellow-50 p-4 dark:bg-yellow-900/20">
+                  <div class="rounded-md bg-warning-light p-4">
                     <div class="flex">
                       <div class="flex-shrink-0">
-                        <svg class="h-5 w-5 text-yellow-400 dark:text-yellow-500" viewBox="0 0 20 20" fill="currentColor">
+                        <svg class="h-5 w-5 text-warning" viewBox="0 0 20 20" fill="currentColor">
                           <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd" />
                         </svg>
                       </div>
                       <div class="ml-3">
-                        <h3 class="text-sm font-medium text-yellow-800 dark:text-yellow-400">
+                        <h3 class="text-sm font-medium text-warning">
                           {m.api_tokens_important_warning()}
                         </h3>
-                        <div class="mt-2 text-sm text-yellow-700 dark:text-yellow-500">
+                        <div class="mt-2 text-sm text-warning">
                           <p>
                             {m.api_tokens_important_warning_body()}
                           </p>
@@ -536,8 +536,8 @@
       <div class="inline-block transform overflow-hidden rounded-lg bg-surface-card text-left align-bottom shadow-xl transition-all sm:my-8 sm:w-full sm:max-w-2xl sm:align-middle">
         <div class="bg-surface-card px-4 pb-4 pt-5 sm:p-6 sm:pb-4">
           <div class="sm:flex sm:items-start">
-            <div class="mx-auto flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-full bg-green-100 sm:mx-0 sm:h-10 sm:w-10">
-              <svg class="h-6 w-6 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <div class="mx-auto flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-full bg-success-light sm:mx-0 sm:h-10 sm:w-10">
+              <svg class="h-6 w-6 text-success" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
               </svg>
             </div>
@@ -580,18 +580,18 @@
                 </div>
 
                 <!-- Warning -->
-                <div class="rounded-md bg-red-50 p-4 dark:bg-red-900/20">
+                <div class="rounded-md bg-danger-light p-4">
                   <div class="flex">
                     <div class="flex-shrink-0">
-                      <svg class="h-5 w-5 text-red-400 dark:text-red-500" viewBox="0 0 20 20" fill="currentColor">
+                      <svg class="h-5 w-5 text-danger" viewBox="0 0 20 20" fill="currentColor">
                         <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd" />
                       </svg>
                     </div>
                     <div class="ml-3">
-                      <h3 class="text-sm font-medium text-red-800 dark:text-red-400">
+                      <h3 class="text-sm font-medium text-danger">
                         {m.api_tokens_security_warning()}
                       </h3>
-                      <div class="mt-2 text-sm text-red-700 dark:text-red-500">
+                      <div class="mt-2 text-sm text-danger">
                         <p>
                           {m.api_tokens_security_warning_body()}
                         </p>

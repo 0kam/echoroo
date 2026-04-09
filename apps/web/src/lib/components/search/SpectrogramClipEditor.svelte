@@ -676,7 +676,7 @@
 
   <!-- Short clip warning -->
   {#if clipDuration < minClipDuration}
-    <p class="text-xs text-yellow-600 dark:text-yellow-400">
+    <p class="text-xs text-warning">
       {m.search_clip_short_warning({ seconds: minClipDuration.toString() })}
     </p>
   {/if}

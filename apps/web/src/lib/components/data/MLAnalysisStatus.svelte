@@ -224,13 +224,13 @@
     <!-- Completed state -->
     <div class="flex items-center justify-between gap-4">
       <div class="flex items-center gap-3">
-        <div class="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-green-600">
+        <div class="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-success">
           <svg class="h-4 w-4 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
             <polyline points="20 6 9 17 4 12"></polyline>
           </svg>
         </div>
         <div>
-          <p class="text-sm font-medium text-green-800 dark:text-green-400">
+          <p class="text-sm font-medium text-success">
             {m.ml_analysis_completed({ model: runModelLabel(latestRun) })} — {m.common_detections_count({ count: latestRun.annotation_count })} found
           </p>
           {#if latestRun.completed_at}

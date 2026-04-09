@@ -219,7 +219,7 @@
   {#if activeTab === 'upload' && !selectedFile}
     <!-- Validation error -->
     {#if decodeError}
-      <p class="mb-2 rounded bg-red-50 px-3 py-2 text-sm text-red-600 dark:bg-red-900/20 dark:text-red-400">
+      <p class="mb-2 rounded bg-danger-light px-3 py-2 text-sm text-danger">
         {decodeError}
       </p>
     {/if}

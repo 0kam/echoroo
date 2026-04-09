@@ -188,8 +188,8 @@
           </p>
 
           {#if resendSuccess}
-            <div class="mt-4 rounded-md bg-green-50 p-4 dark:bg-green-900/20">
-              <p class="text-sm font-medium text-green-800 dark:text-green-400">
+            <div class="mt-4 rounded-md bg-success-light p-4">
+              <p class="text-sm font-medium text-success">
                 Verification email sent successfully!
               </p>
             </div>

@@ -405,7 +405,7 @@
 
       <!-- Error display -->
       {#if searchError}
-        <div class="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700 dark:border-red-800 dark:bg-red-950/30 dark:text-red-400">
+        <div class="rounded-lg border border-danger/30 bg-danger-light p-4 text-sm text-danger">
           {searchError}
         </div>
       {/if}

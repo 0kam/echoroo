@@ -27,16 +27,16 @@
 
   const headerClass = $derived(
     variant === 'green'
-      ? 'border-b border-green-100 bg-green-50'
+      ? 'border-b border-success/20 bg-success-light'
       : 'border-b border-stone-200 bg-stone-50'
   );
   const thClass = $derived(
     variant === 'green'
-      ? 'font-medium text-green-700'
+      ? 'font-medium text-success'
       : 'font-medium text-stone-600'
   );
   const borderClass = $derived(
-    variant === 'green' ? 'border-green-200' : 'border-stone-200'
+    variant === 'green' ? 'border-success/20' : 'border-stone-200'
   );
 
   function formatParsedDatetime(dt: string | null): string {

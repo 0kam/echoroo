@@ -150,7 +150,7 @@
         </div>
 
         {#if error}
-          <div class="mb-4 rounded-md bg-red-50 p-3 text-sm text-red-700 dark:bg-red-900/20 dark:text-red-400" role="alert">
+          <div class="mb-4 rounded-md bg-danger-light p-3 text-sm text-danger" role="alert">
             {error}
           </div>
         {/if}
@@ -180,10 +180,10 @@
       </h2>
 
       <!-- Warning -->
-      <div class="mb-4 rounded-md bg-yellow-50 p-4 dark:bg-yellow-900/20">
+      <div class="mb-4 rounded-md bg-warning-light p-4">
         <div class="flex">
           <svg
-            class="h-5 w-5 text-yellow-400"
+            class="h-5 w-5 text-warning"
             xmlns="http://www.w3.org/2000/svg"
             viewBox="0 0 20 20"
             fill="currentColor"
@@ -195,8 +195,8 @@
             />
           </svg>
           <div class="ml-3">
-            <h3 class="text-sm font-medium text-yellow-800 dark:text-yellow-400">{m.token_dialog_important()}</h3>
-            <p class="mt-1 text-sm text-yellow-700 dark:text-yellow-500">
+            <h3 class="text-sm font-medium text-warning">{m.token_dialog_important()}</h3>
+            <p class="mt-1 text-sm text-warning">
               {m.token_dialog_important_body()}
             </p>
           </div>

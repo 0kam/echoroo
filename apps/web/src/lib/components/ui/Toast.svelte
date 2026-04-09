@@ -22,10 +22,10 @@
   };
 
   const colors = {
-    success: 'bg-green-100 border-green-500 text-green-800',
-    error: 'bg-red-100 border-red-500 text-red-800',
-    warning: 'bg-amber-100 border-amber-500 text-amber-800',
-    info: 'bg-primary-100 border-primary-500 text-primary-800',
+    success: 'bg-success-light border-success text-success',
+    error: 'bg-danger-light border-danger text-danger',
+    warning: 'bg-warning-light border-warning text-warning',
+    info: 'bg-info-light border-info text-info',
   };
 
   onMount(() => {
@@ -59,54 +59,6 @@
     box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
     min-width: 320px;
     max-width: 500px;
-  }
-
-  .bg-green-100 {
-    background-color: rgb(var(--color-success-light));
-  }
-
-  .border-green-500 {
-    border-color: rgb(var(--color-success));
-  }
-
-  .text-green-800 {
-    color: rgb(var(--color-success));
-  }
-
-  .bg-red-100 {
-    background-color: rgb(var(--color-danger-light));
-  }
-
-  .border-red-500 {
-    border-color: rgb(var(--color-danger));
-  }
-
-  .text-red-800 {
-    color: rgb(var(--color-danger));
-  }
-
-  .bg-amber-100 {
-    background-color: rgb(var(--color-warning-light));
-  }
-
-  .border-amber-500 {
-    border-color: rgb(var(--color-warning));
-  }
-
-  .text-amber-800 {
-    color: rgb(var(--color-warning));
-  }
-
-  .bg-primary-100 {
-    background-color: rgb(var(--primary-100));
-  }
-
-  .border-primary-500 {
-    border-color: rgb(var(--primary-500));
-  }
-
-  .text-primary-800 {
-    color: rgb(var(--primary-800));
   }
 
   .toast-icon {

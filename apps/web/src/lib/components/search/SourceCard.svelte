@@ -406,7 +406,7 @@
   <!-- Fetch error -->
   {#if fetchAudioError}
     <div class="border-t border-stone-200 px-3 py-2 dark:border-stone-700">
-      <p class="text-xs text-red-500 dark:text-red-400">{fetchAudioError}</p>
+      <p class="text-xs text-danger">{fetchAudioError}</p>
     </div>
   {/if}
 
@@ -447,7 +447,7 @@
     {/if}
     {#if spectrogramLoadError}
       <div class="border-t border-stone-200 px-3 py-2 dark:border-stone-700">
-        <p class="text-xs text-red-500 dark:text-red-400">{spectrogramLoadError}</p>
+        <p class="text-xs text-danger">{spectrogramLoadError}</p>
       </div>
     {/if}
     {#if showSpectrogram && spectrogramAudioData}

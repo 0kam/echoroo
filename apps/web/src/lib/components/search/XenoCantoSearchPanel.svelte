@@ -334,7 +334,7 @@
 
   <!-- Error message -->
   {#if error}
-    <p class="rounded bg-red-50 px-3 py-2 text-sm text-red-600 dark:bg-red-900/20 dark:text-red-400">
+    <p class="rounded bg-danger-light px-3 py-2 text-sm text-danger">
       {error}
     </p>
   {/if}
@@ -433,11 +433,11 @@
                 {#if recording.quality}
                   <span class="rounded px-1.5 py-0.5 text-xs font-medium
                                {recording.quality === 'A'
-                                 ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
+                                 ? 'bg-success-light text-success'
                                  : recording.quality === 'B'
                                    ? 'bg-lime-100 text-lime-700 dark:bg-lime-900/30 dark:text-lime-400'
                                    : recording.quality === 'C'
-                                     ? 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400'
+                                     ? 'bg-warning-light text-warning'
                                      : 'bg-stone-100 text-stone-600 dark:bg-stone-700'}">
                     {recording.quality}
                   </span>
@@ -465,7 +465,7 @@
               onclick={() => toggleAudioPlayback(recording)}
               class="shrink-0 rounded-md border px-1.5 py-1 text-xs transition-colors
                      {hasError
-                       ? 'border-red-300 text-red-500 dark:border-red-700 dark:text-red-400'
+                       ? 'border-danger/50 text-danger'
                        : isPlaying
                          ? 'border-primary-300 bg-primary-50 text-primary-700 dark:border-primary-700 dark:bg-primary-900/30 dark:text-primary-400'
                          : 'border-stone-300 text-stone-500 hover:border-primary-400 hover:text-primary-600 dark:border-stone-600 dark:hover:border-primary-500 dark:hover:text-primary-400'}"

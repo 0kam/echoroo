@@ -522,7 +522,7 @@
         </div>
 
       {:else if $modelsQuery.isError}
-        <div class="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700 dark:border-red-800 dark:bg-red-950/30 dark:text-red-400">
+        <div class="rounded-lg border border-danger/30 bg-danger-light p-4 text-sm text-danger">
           Failed to load models. Please refresh the page.
         </div>
 
@@ -750,7 +750,7 @@
 
         <!-- Error message -->
         {#if model.error_message}
-          <div class="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700 dark:border-red-800 dark:bg-red-950/30 dark:text-red-400">
+          <div class="rounded-lg border border-danger/30 bg-danger-light p-4 text-sm text-danger">
             <span class="font-medium">{m.models_error_prefix()}</span> {model.error_message}
           </div>
         {/if}
@@ -847,21 +847,21 @@
                   {#if metrics.confusion_matrix}
                     {@const [[tn, fp], [fn, tp]] = metrics.confusion_matrix}
                     <div class="grid grid-cols-2 gap-2 text-center text-sm">
-                      <div class="rounded-lg bg-green-50 p-3 dark:bg-green-950/30">
-                        <p class="text-xs font-medium text-green-600 dark:text-green-400">{m.models_detail_true_positive()}</p>
-                        <p class="mt-1 text-xl font-bold text-green-700 dark:text-green-300">{tp}</p>
+                      <div class="rounded-lg bg-success-light p-3">
+                        <p class="text-xs font-medium text-success">{m.models_detail_true_positive()}</p>
+                        <p class="mt-1 text-xl font-bold text-success">{tp}</p>
                       </div>
-                      <div class="rounded-lg bg-red-50 p-3 dark:bg-red-950/30">
-                        <p class="text-xs font-medium text-red-600 dark:text-red-400">{m.models_detail_false_positive()}</p>
-                        <p class="mt-1 text-xl font-bold text-red-700 dark:text-red-300">{fp}</p>
+                      <div class="rounded-lg bg-danger-light p-3">
+                        <p class="text-xs font-medium text-danger">{m.models_detail_false_positive()}</p>
+                        <p class="mt-1 text-xl font-bold text-danger">{fp}</p>
                       </div>
-                      <div class="rounded-lg bg-red-50 p-3 dark:bg-red-950/30">
-                        <p class="text-xs font-medium text-red-600 dark:text-red-400">{m.models_detail_false_negative()}</p>
-                        <p class="mt-1 text-xl font-bold text-red-700 dark:text-red-300">{fn}</p>
+                      <div class="rounded-lg bg-danger-light p-3">
+                        <p class="text-xs font-medium text-danger">{m.models_detail_false_negative()}</p>
+                        <p class="mt-1 text-xl font-bold text-danger">{fn}</p>
                       </div>
-                      <div class="rounded-lg bg-green-50 p-3 dark:bg-green-950/30">
-                        <p class="text-xs font-medium text-green-600 dark:text-green-400">{m.models_detail_true_negative()}</p>
-                        <p class="mt-1 text-xl font-bold text-green-700 dark:text-green-300">{tn}</p>
+                      <div class="rounded-lg bg-success-light p-3">
+                        <p class="text-xs font-medium text-success">{m.models_detail_true_negative()}</p>
+                        <p class="mt-1 text-xl font-bold text-success">{tn}</p>
                       </div>
                     </div>
                   {/if}
@@ -1023,21 +1023,21 @@
                       {m.models_detail_confusion_matrix()}
                     </h3>
                     <div class="grid grid-cols-2 gap-2 text-center text-sm">
-                      <div class="rounded-lg bg-green-50 p-3 dark:bg-green-950/30">
-                        <p class="text-xs font-medium text-green-600 dark:text-green-400">{m.models_detail_true_positive()}</p>
-                        <p class="mt-1 text-xl font-bold text-green-700 dark:text-green-300">{tp}</p>
+                      <div class="rounded-lg bg-success-light p-3">
+                        <p class="text-xs font-medium text-success">{m.models_detail_true_positive()}</p>
+                        <p class="mt-1 text-xl font-bold text-success">{tp}</p>
                       </div>
-                      <div class="rounded-lg bg-red-50 p-3 dark:bg-red-950/30">
-                        <p class="text-xs font-medium text-red-600 dark:text-red-400">{m.models_detail_false_positive()}</p>
-                        <p class="mt-1 text-xl font-bold text-red-700 dark:text-red-300">{fp}</p>
+                      <div class="rounded-lg bg-danger-light p-3">
+                        <p class="text-xs font-medium text-danger">{m.models_detail_false_positive()}</p>
+                        <p class="mt-1 text-xl font-bold text-danger">{fp}</p>
                       </div>
-                      <div class="rounded-lg bg-red-50 p-3 dark:bg-red-950/30">
-                        <p class="text-xs font-medium text-red-600 dark:text-red-400">{m.models_detail_false_negative()}</p>
-                        <p class="mt-1 text-xl font-bold text-red-700 dark:text-red-300">{fn}</p>
+                      <div class="rounded-lg bg-danger-light p-3">
+                        <p class="text-xs font-medium text-danger">{m.models_detail_false_negative()}</p>
+                        <p class="mt-1 text-xl font-bold text-danger">{fn}</p>
                       </div>
-                      <div class="rounded-lg bg-green-50 p-3 dark:bg-green-950/30">
-                        <p class="text-xs font-medium text-green-600 dark:text-green-400">{m.models_detail_true_negative()}</p>
-                        <p class="mt-1 text-xl font-bold text-green-700 dark:text-green-300">{tn}</p>
+                      <div class="rounded-lg bg-success-light p-3">
+                        <p class="text-xs font-medium text-success">{m.models_detail_true_negative()}</p>
+                        <p class="mt-1 text-xl font-bold text-success">{tn}</p>
                       </div>
                     </div>
                   </div>
@@ -1230,7 +1230,7 @@
 
       <!-- Error message -->
       {#if createError}
-        <p class="text-sm text-red-600 dark:text-red-400">{createError}</p>
+        <p class="text-sm text-danger">{createError}</p>
       {/if}
 
       <!-- Footer buttons -->
@@ -1349,7 +1349,7 @@
 
       <!-- Error message -->
       {#if applyError}
-        <p class="text-sm text-red-600 dark:text-red-400">{applyError}</p>
+        <p class="text-sm text-danger">{applyError}</p>
       {/if}
 
       <!-- Footer buttons -->

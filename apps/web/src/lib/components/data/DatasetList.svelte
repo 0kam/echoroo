@@ -91,7 +91,7 @@
               <span class="inline-flex items-center rounded px-2 py-0.5 text-xs font-medium {getDatasetStatusClass(dataset.status)}">
                 {getDatasetStatusLabel(dataset.status)}
               </span>
-              <span class="inline-flex items-center rounded px-2 py-0.5 text-xs font-medium {dataset.visibility === 'public' ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' : 'bg-stone-100 text-stone-600 dark:bg-stone-700 dark:text-stone-400'}">
+              <span class="inline-flex items-center rounded px-2 py-0.5 text-xs font-medium {dataset.visibility === 'public' ? 'bg-success-light text-success' : 'bg-stone-100 text-stone-600 dark:bg-stone-700 dark:text-stone-400'}">
                 {dataset.visibility}
               </span>
             </div>

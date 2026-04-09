@@ -36,8 +36,8 @@
               <dd class="mt-1 text-sm text-stone-900">
                 <span
                   class="inline-flex rounded-full px-2 py-1 text-xs font-semibold leading-5 {authStore.user.is_verified
-                    ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400'
-                    : 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400'}"
+                    ? 'bg-success-light text-success'
+                    : 'bg-warning-light text-warning'}"
                 >
                   {authStore.user.is_verified ? m.dashboard_status_verified() : m.dashboard_status_unverified()}
                 </span>
