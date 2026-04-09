@@ -8,11 +8,12 @@
    */
 
   import * as m from '$lib/paraglide/messages';
+  import type { SamplingRound } from '$lib/types/custom-model';
 
   interface Props {
-    /** Number of results voted as agree (positive) */
+    /** Number of results voted as agree (positive) — from session-based review */
     agreeCount: number;
-    /** Number of results voted as disagree (negative) */
+    /** Number of results voted as disagree (negative) — from session-based review */
     disagreeCount: number;
     /** Total number of results in the session */
     totalCount: number;
@@ -20,6 +21,11 @@
     onTrainRequest: () => void;
     /** Whether a training action is in progress */
     isTraining?: boolean;
+    /**
+     * Optional sampling rounds. When provided and non-empty, the confirmed/rejected
+     * counts from round items take priority over agreeCount/disagreeCount.
+     */
+    samplingRounds?: SamplingRound[];
   }
 
   let {
@@ -28,22 +34,59 @@
     totalCount,
     onTrainRequest,
     isTraining = false,
+    samplingRounds,
   }: Props = $props();
+
+  // Determine whether any AL rounds exist — used for the recommendation message.
+  const hasALRounds = $derived(
+    (samplingRounds ?? []).some((r) => r.round_type === 'active_learning')
+  );
+
+  // Count how many distinct rounds have any reviewed items.
+  const reviewedRoundsCount = $derived(
+    (samplingRounds ?? []).filter((r) =>
+      r.items.some(
+        (it) => it.review_status === 'confirmed' || it.review_status === 'rejected'
+      )
+    ).length
+  );
+
+  // Compute effective counts: sampling rounds take priority over session-based votes
+  const effectiveAgreeCount = $derived.by(() => {
+    if (!samplingRounds || samplingRounds.length === 0) return agreeCount;
+    return samplingRounds
+      .flatMap((r) => r.items)
+      .filter((it) => it.review_status === 'confirmed')
+      .length;
+  });
+
+  const effectiveDisagreeCount = $derived.by(() => {
+    if (!samplingRounds || samplingRounds.length === 0) return disagreeCount;
+    return samplingRounds
+      .flatMap((r) => r.items)
+      .filter((it) => it.review_status === 'rejected')
+      .length;
+  });
+
+  const effectiveTotalCount = $derived.by(() => {
+    if (!samplingRounds || samplingRounds.length === 0) return totalCount;
+    return samplingRounds.flatMap((r) => r.items).length;
+  });
 
   const MIN_POSITIVES = 5;
   const MIN_NEGATIVES = 5;
 
   const positivePercent = $derived(
-    totalCount > 0 ? Math.min(100, (agreeCount / totalCount) * 100) : 0
+    effectiveTotalCount > 0 ? Math.min(100, (effectiveAgreeCount / effectiveTotalCount) * 100) : 0
   );
   const negativePercent = $derived(
-    totalCount > 0 ? Math.min(100, (disagreeCount / totalCount) * 100) : 0
+    effectiveTotalCount > 0 ? Math.min(100, (effectiveDisagreeCount / effectiveTotalCount) * 100) : 0
   );
 
-  const canTrain = $derived(agreeCount >= MIN_POSITIVES && disagreeCount >= MIN_NEGATIVES);
-  const reviewedCount = $derived(agreeCount + disagreeCount);
+  const canTrain = $derived(effectiveAgreeCount >= MIN_POSITIVES && effectiveDisagreeCount >= MIN_NEGATIVES);
+  const reviewedCount = $derived(effectiveAgreeCount + effectiveDisagreeCount);
   const reviewedPercent = $derived(
-    totalCount > 0 ? Math.min(100, (reviewedCount / totalCount) * 100) : 0
+    effectiveTotalCount > 0 ? Math.min(100, (reviewedCount / effectiveTotalCount) * 100) : 0
   );
 </script>
 
@@ -62,7 +105,7 @@
           <div class="mb-1 flex items-center justify-between text-xs">
             <span class="text-success font-medium">{m.models_review_positives()}</span>
             <span class="font-mono text-stone-600">
-              {agreeCount} / {MIN_POSITIVES} {m.models_review_min_label()}
+              {effectiveAgreeCount} / {MIN_POSITIVES} {m.models_review_min_label()}
             </span>
           </div>
           <div class="h-2 w-full overflow-hidden rounded-full bg-stone-100 dark:bg-stone-800">
@@ -70,9 +113,9 @@
               class="h-full rounded-full bg-success transition-all duration-500"
               style="width: {positivePercent}%"
               role="progressbar"
-              aria-valuenow={agreeCount}
+              aria-valuenow={effectiveAgreeCount}
               aria-valuemin={0}
-              aria-valuemax={totalCount}
+              aria-valuemax={effectiveTotalCount}
               aria-label={m.models_review_positives()}
             ></div>
           </div>
@@ -83,7 +126,7 @@
           <div class="mb-1 flex items-center justify-between text-xs">
             <span class="text-danger font-medium">{m.models_review_negatives()}</span>
             <span class="font-mono text-stone-600">
-              {disagreeCount} / {MIN_NEGATIVES} {m.models_review_min_label()}
+              {effectiveDisagreeCount} / {MIN_NEGATIVES} {m.models_review_min_label()}
             </span>
           </div>
           <div class="h-2 w-full overflow-hidden rounded-full bg-stone-100 dark:bg-stone-800">
@@ -91,9 +134,9 @@
               class="h-full rounded-full bg-danger transition-all duration-500"
               style="width: {negativePercent}%"
               role="progressbar"
-              aria-valuenow={disagreeCount}
+              aria-valuenow={effectiveDisagreeCount}
               aria-valuemin={0}
-              aria-valuemax={totalCount}
+              aria-valuemax={effectiveTotalCount}
               aria-label={m.models_review_negatives()}
             ></div>
           </div>
@@ -104,7 +147,7 @@
           <div class="mb-1 flex items-center justify-between text-xs">
             <span class="text-stone-500">{m.models_review_reviewed()}</span>
             <span class="font-mono text-stone-400">
-              {reviewedCount} / {totalCount}
+              {reviewedCount} / {effectiveTotalCount}
               ({Math.round(reviewedPercent)}%)
             </span>
           </div>
@@ -148,6 +191,19 @@
       {#if !canTrain}
         <p class="text-xs text-stone-400 text-right max-w-32">
           {m.models_review_train_hint({ positives: MIN_POSITIVES, negatives: MIN_NEGATIVES })}
+        </p>
+      {:else if hasALRounds}
+        <!-- Model has gone through at least one AL round — recommend training or another round -->
+        <p class="text-xs text-success text-right max-w-40">
+          {m.models_ready_to_train()} &mdash;
+          {effectiveAgreeCount}+/{effectiveDisagreeCount}&minus;
+          &middot; {reviewedRoundsCount} {reviewedRoundsCount === 1 ? 'round' : 'rounds'}
+        </p>
+      {:else if canTrain}
+        <!-- Enough data from seed round; encourage training -->
+        <p class="text-xs text-success text-right max-w-40">
+          {m.models_ready_to_train()} &mdash;
+          {effectiveAgreeCount}+/{effectiveDisagreeCount}&minus;
         </p>
       {/if}
     </div>

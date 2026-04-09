@@ -16,6 +16,7 @@ from echoroo.models.base import Base, TimestampMixin, UUIDMixin
 
 if TYPE_CHECKING:
     from echoroo.models.project import Project
+    from echoroo.models.sampling_round import AuditSetItem, SamplingRound
     from echoroo.models.tag import Tag
     from echoroo.models.user import User
 
@@ -43,10 +44,10 @@ class CustomModel(UUIDMixin, TimestampMixin, Base):
         user_id: Optional foreign key to the user who created the model
         name: Human-readable model name
         description: Optional description of the model's purpose
-        target_tag_id: Optional tag (species) this model classifies for
+        target_tag_id: Tag (species) this model classifies for (required)
         model_type: Classifier architecture (default: self_training_svm)
         status: Lifecycle status (draft/training/trained/deployed/failed/archived)
-        training_session_ids: List of SearchSession UUIDs used as training data
+        training_config: Training configuration (use_unlabeled, max_unlabeled_samples)
         hyperparameters: Best hyperparameters found by cross-validation (e.g. best_c)
         metrics: Evaluation metrics (accuracy, precision, recall, f1, auc_roc, etc.)
         training_stats: Counts of positive/negative/unlabeled samples and duration
@@ -81,10 +82,10 @@ class CustomModel(UUIDMixin, TimestampMixin, Base):
         nullable=True,
         doc="Optional description of the model's purpose",
     )
-    target_tag_id: Mapped[UUID | None] = mapped_column(
+    target_tag_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("tags.id", ondelete="SET NULL"),
-        nullable=True,
+        ForeignKey("tags.id", ondelete="RESTRICT"),
+        nullable=False,
         doc="Target species/sound type tag this model classifies for",
     )
     model_type: Mapped[str] = mapped_column(
@@ -104,10 +105,10 @@ class CustomModel(UUIDMixin, TimestampMixin, Base):
         default=CustomModelStatus.DRAFT,
         doc="Lifecycle status",
     )
-    training_session_ids: Mapped[list[object] | None] = mapped_column(
+    training_config: Mapped[dict[str, object] | None] = mapped_column(
         JSONB,
         nullable=True,
-        doc="List of SearchSession UUIDs used as training data",
+        doc="Training configuration (e.g. use_unlabeled, max_unlabeled_samples)",
     )
     hyperparameters: Mapped[dict[str, object] | None] = mapped_column(
         JSONB,
@@ -150,6 +151,11 @@ class CustomModel(UUIDMixin, TimestampMixin, Base):
         nullable=True,
         doc="Timestamp when training completed or failed",
     )
+    audit_metrics: Mapped[dict[str, object] | None] = mapped_column(
+        JSONB,
+        nullable=True,
+        doc="Evaluation metrics computed from human-audited audit set labels",
+    )
 
     # Relationships
     project: Mapped[Project] = relationship(
@@ -160,8 +166,21 @@ class CustomModel(UUIDMixin, TimestampMixin, Base):
         "User",
         lazy="raise",
     )
-    target_tag: Mapped[Tag | None] = relationship(
+    target_tag: Mapped[Tag] = relationship(
         "Tag",
+        lazy="raise",
+    )
+
+    sampling_rounds: Mapped[list[SamplingRound]] = relationship(
+        "SamplingRound",
+        back_populates="custom_model",
+        cascade="all, delete-orphan",
+        lazy="raise",
+    )
+    audit_set_items: Mapped[list[AuditSetItem]] = relationship(
+        "AuditSetItem",
+        back_populates="custom_model",
+        cascade="all, delete-orphan",
         lazy="raise",
     )
 

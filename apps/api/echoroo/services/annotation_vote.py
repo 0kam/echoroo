@@ -16,7 +16,7 @@ from uuid import UUID
 from fastapi import HTTPException, status
 
 from echoroo.models.annotation import Annotation
-from echoroo.models.enums import ConsensusStatus, DetectionStatus, SignalQuality, VoteType
+from echoroo.models.enums import ConsensusStatus, DetectionSource, DetectionStatus, SignalQuality, VoteType
 from echoroo.repositories.annotation import AnnotationRepository
 from echoroo.repositories.annotation_vote import AnnotationVoteRepository
 from echoroo.schemas.annotation_vote import (
@@ -285,6 +285,9 @@ class AnnotationVoteService:
 
         return ConsensusStatus.DISPUTED
 
+    # Sources that bypass consensus requirements — a single decisive vote is sufficient.
+    _SINGLE_VOTE_SOURCES = frozenset({DetectionSource.SAMPLING_ROUND, DetectionSource.AUDIT_SET})
+
     async def _update_annotation_status(
         self,
         annotation: Annotation,
@@ -293,8 +296,12 @@ class AnnotationVoteService:
     ) -> None:
         """Recompute and persist annotation.status from current vote counts.
 
-        Fetches current vote counts, runs the consensus algorithm, and
-        updates the annotation status in-place via a flush.
+        For annotations sourced from the sampling pipeline (sampling_round,
+        audit_set), a single agree/disagree vote is enough to confirm or reject
+        — the normal consensus thresholds are bypassed entirely.
+
+        For all other sources the standard iNaturalist-inspired consensus
+        algorithm applies (min_votes + threshold).
 
         Args:
             annotation: Annotation model instance to update
@@ -305,11 +312,21 @@ class AnnotationVoteService:
         agree_count = counts.get(VoteType.AGREE, 0)
         disagree_count = counts.get(VoteType.DISAGREE, 0)
 
-        new_status = self.compute_consensus(
-            agree_count=agree_count,
-            disagree_count=disagree_count,
-            min_votes=min_votes,
-            threshold=threshold,
-        )
+        if annotation.source in self._SINGLE_VOTE_SOURCES:
+            # Bypass consensus: first decisive vote wins immediately.
+            if agree_count >= 1:
+                new_status = DetectionStatus.CONFIRMED
+            elif disagree_count >= 1:
+                new_status = DetectionStatus.REJECTED
+            else:
+                new_status = DetectionStatus.UNREVIEWED
+        else:
+            new_status = self.compute_consensus(
+                agree_count=agree_count,
+                disagree_count=disagree_count,
+                min_votes=min_votes,
+                threshold=threshold,
+            )
+
         annotation.status = new_status
         await self.annotation_repo.db.flush()

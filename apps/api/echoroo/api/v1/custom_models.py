@@ -6,6 +6,7 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import BaseModel
 
 from echoroo.core.database import DbSession
 from echoroo.core.permissions import check_project_access
@@ -19,9 +20,30 @@ from echoroo.schemas.custom_model import (
     CustomModelTrainRequest,
     CustomModelUpdate,
 )
+from echoroo.schemas.sampling import (
+    AuditSetEvaluateResponse,
+    AuditSetGenerateResponse,
+    AuditSetItemResponse,
+    AuditSetListResponse,
+    SamplingRoundItemResponse,
+    SamplingRoundListResponse,
+    SamplingRoundResponse,
+    SeedSamplingRequest,
+)
 from echoroo.services.custom_model import CustomModelService
 
 router = APIRouter(prefix="/projects/{project_id}/custom-models", tags=["custom-models"])
+
+
+class SeedSamplingBody(BaseModel):
+    """Request body for the POST /{model_id}/seed-samples endpoint.
+
+    Combines reference embedding IDs (required for query vectors) with
+    optional sampling configuration overrides.
+    """
+
+    reference_embedding_ids: list[UUID]
+    config: SeedSamplingRequest | None = None
 
 
 def get_custom_model_service(db: DbSession) -> CustomModelService:
@@ -318,7 +340,7 @@ async def train_custom_model(
             ),
         )
 
-    updated = await service.start_training(model)
+    updated = await service.start_training(model, train_request=request)
     return CustomModelResponse.model_validate(updated)
 
 
@@ -447,3 +469,463 @@ async def apply_custom_model(
         detection_run_id=detection_run_id,
         status=DetectionRunStatus.PENDING,
     )
+
+
+@router.post(
+    "/{model_id}/seed-samples",
+    response_model=SamplingRoundResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Start seed sampling",
+    description=(
+        "Generate three-category seed samples (easy_positive, boundary, others) "
+        "for a model using the provided reference embeddings as query vectors. "
+        "Only allowed when the model is in DRAFT or FAILED status."
+    ),
+)
+async def create_seed_samples(
+    project_id: UUID,
+    model_id: UUID,
+    body: SeedSamplingBody,
+    current_user: CurrentUser,
+    db: DbSession,
+    service: CustomModelServiceDep,
+) -> SamplingRoundResponse:
+    """Start seed sample generation for a custom model.
+
+    Creates a SamplingRound record in 'pending' status and dispatches a
+    Celery task that will select representative training examples via
+    farthest-first sampling. The returned round can be polled via
+    GET /{model_id}/sampling-rounds/{round_id}.
+
+    Args:
+        project_id: Project's UUID
+        model_id: CustomModel's UUID
+        body: Reference embedding IDs and optional sampling config overrides
+        current_user: Current authenticated user
+        db: Database session
+        service: CustomModelService instance
+
+    Returns:
+        Newly created SamplingRound with status='pending'
+
+    Raises:
+        401: Not authenticated
+        403: Access denied
+        404: Model not found
+        409: Model is not in DRAFT or FAILED status
+        422: No reference_embedding_ids provided
+    """
+    await check_project_access(project_id, current_user.id, db)
+    model = await get_model_or_404(model_id, project_id, service)
+
+    if model.status not in (CustomModelStatus.DRAFT, CustomModelStatus.FAILED):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"Cannot start seed sampling for model with status '{model.status}'. "
+                "Only DRAFT or FAILED models are supported."
+            ),
+        )
+
+    if not body.reference_embedding_ids:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="reference_embedding_ids must not be empty.",
+        )
+
+    round_ = await service.create_seed_sampling_round(
+        model=model,
+        reference_embedding_ids=body.reference_embedding_ids,
+        seed_sampling_request=body.config,
+    )
+
+    return SamplingRoundResponse(
+        id=round_.id,
+        custom_model_id=round_.custom_model_id,
+        round_number=round_.round_number,
+        round_type=round_.round_type,
+        sampling_config=round_.sampling_config,
+        sample_count=round_.sample_count,
+        status=round_.status,
+        job_id=round_.job_id,
+        error_message=round_.error_message,
+        created_at=round_.created_at,
+        completed_at=round_.completed_at,
+        items=[],
+    )
+
+
+@router.post(
+    "/{model_id}/suggest-samples",
+    response_model=SamplingRoundResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Suggest active learning samples",
+    description=(
+        "Run one active learning iteration: trains a lightweight SVM on existing labeled data, "
+        "scores all unlabeled project embeddings to find the most uncertain samples, "
+        "and creates a new SamplingRound for human review. "
+        "Requires at least one completed sampling round with sufficient labels "
+        "(≥5 positive + ≥5 negative)."
+    ),
+)
+async def suggest_next_samples(
+    project_id: UUID,
+    model_id: UUID,
+    current_user: CurrentUser,
+    db: DbSession,
+    service: CustomModelServiceDep,
+) -> SamplingRoundResponse:
+    """Start an active learning iteration for a custom model.
+
+    Validates that sufficient labeled data exists from previous rounds,
+    creates a new SamplingRound in 'pending' status, and dispatches the
+    Celery task that selects uncertain, diverse samples near the SVM decision
+    boundary. Poll the returned round via GET /{model_id}/sampling-rounds/{round_id}.
+
+    Args:
+        project_id: Project's UUID
+        model_id: CustomModel's UUID
+        current_user: Current authenticated user
+        db: Database session
+        service: CustomModelService instance
+
+    Returns:
+        Newly created SamplingRound with status='pending'
+
+    Raises:
+        401: Not authenticated
+        403: Access denied
+        404: Model not found
+        409: No completed rounds or insufficient labeled data
+    """
+    await check_project_access(project_id, current_user.id, db)
+    model = await get_model_or_404(model_id, project_id, service)
+
+    try:
+        round_ = await service.suggest_next_samples(model)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
+
+    return SamplingRoundResponse(
+        id=round_.id,
+        custom_model_id=round_.custom_model_id,
+        round_number=round_.round_number,
+        round_type=round_.round_type,
+        sampling_config=round_.sampling_config,
+        sample_count=round_.sample_count,
+        status=round_.status,
+        job_id=round_.job_id,
+        error_message=round_.error_message,
+        created_at=round_.created_at,
+        completed_at=round_.completed_at,
+        items=[],
+    )
+
+
+@router.get(
+    "/{model_id}/sampling-rounds",
+    response_model=SamplingRoundListResponse,
+    summary="List sampling rounds",
+    description="List all sampling rounds for a custom model, ordered by round_number",
+)
+async def list_sampling_rounds(
+    project_id: UUID,
+    model_id: UUID,
+    current_user: CurrentUser,
+    db: DbSession,
+    service: CustomModelServiceDep,
+) -> SamplingRoundListResponse:
+    """List all sampling rounds for a custom model.
+
+    Args:
+        project_id: Project's UUID
+        model_id: CustomModel's UUID
+        current_user: Current authenticated user
+        db: Database session
+        service: CustomModelService instance
+
+    Returns:
+        List of all sampling rounds ordered by round_number
+
+    Raises:
+        401: Not authenticated
+        403: Access denied
+        404: Model not found
+    """
+    await check_project_access(project_id, current_user.id, db)
+    model = await get_model_or_404(model_id, project_id, service)
+    rounds = await service.list_sampling_rounds(model)
+
+    round_responses = [
+        SamplingRoundResponse(
+            id=r.id,
+            custom_model_id=r.custom_model_id,
+            round_number=r.round_number,
+            round_type=r.round_type,
+            sampling_config=r.sampling_config,
+            sample_count=r.sample_count,
+            status=r.status,
+            job_id=r.job_id,
+            error_message=r.error_message,
+            created_at=r.created_at,
+            completed_at=r.completed_at,
+            items=[],
+        )
+        for r in rounds
+    ]
+
+    return SamplingRoundListResponse(rounds=round_responses, total=len(round_responses))
+
+
+@router.get(
+    "/{model_id}/sampling-rounds/{round_id}",
+    response_model=SamplingRoundResponse,
+    summary="Get sampling round",
+    description="Get a single sampling round with all its items (annotation status included)",
+)
+async def get_sampling_round(
+    project_id: UUID,
+    model_id: UUID,
+    round_id: UUID,
+    current_user: CurrentUser,
+    db: DbSession,
+    service: CustomModelServiceDep,
+) -> SamplingRoundResponse:
+    """Get a single sampling round with items eagerly loaded.
+
+    Returns the round with all SamplingRoundItems, including annotation review
+    status and embedding metadata (recording_id, start_time, end_time) for
+    each item.
+
+    Args:
+        project_id: Project's UUID
+        model_id: CustomModel's UUID
+        round_id: SamplingRound's UUID
+        current_user: Current authenticated user
+        db: Database session
+        service: CustomModelService instance
+
+    Returns:
+        SamplingRound with items populated
+
+    Raises:
+        401: Not authenticated
+        403: Access denied
+        404: Model or round not found
+    """
+    await check_project_access(project_id, current_user.id, db)
+    model = await get_model_or_404(model_id, project_id, service)
+
+    round_ = await service.get_sampling_round(round_id, model)
+    if round_ is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Sampling round not found",
+        )
+
+    item_responses = [
+        SamplingRoundItemResponse(
+            id=item.id,
+            embedding_id=item.embedding_id,
+            sample_type=item.sample_type,
+            similarity=item.similarity,
+            decision_distance=item.decision_distance,
+            annotation_id=item.annotation_id,
+            review_status=item.annotation.status.value if item.annotation else None,
+            recording_id=item.embedding.recording_id if item.embedding else None,
+            start_time=item.embedding.start_time if item.embedding else None,
+            end_time=item.embedding.end_time if item.embedding else None,
+        )
+        for item in round_.items
+    ]
+
+    return SamplingRoundResponse(
+        id=round_.id,
+        custom_model_id=round_.custom_model_id,
+        round_number=round_.round_number,
+        round_type=round_.round_type,
+        sampling_config=round_.sampling_config,
+        sample_count=round_.sample_count,
+        status=round_.status,
+        job_id=round_.job_id,
+        error_message=round_.error_message,
+        created_at=round_.created_at,
+        completed_at=round_.completed_at,
+        items=item_responses,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Audit set endpoints
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/{model_id}/audit-set",
+    response_model=AuditSetGenerateResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Generate audit set",
+    description=(
+        "Dispatch an async task to generate a score-stratified audit set for a "
+        "TRAINED custom model. Returns 202 immediately."
+    ),
+)
+async def create_audit_set(
+    project_id: UUID,
+    model_id: UUID,
+    current_user: CurrentUser,
+    db: DbSession,
+    service: CustomModelServiceDep,
+) -> AuditSetGenerateResponse:
+    """Start audit set generation for a trained custom model.
+
+    Dispatches the generate_audit_set Celery task which will:
+    1. Load the trained classifier from S3.
+    2. Score all project embeddings (excluding already-labeled ones).
+    3. Select a score-stratified sample.
+    4. Create Annotation + AuditSetItem records.
+
+    Args:
+        project_id: Project's UUID
+        model_id: CustomModel's UUID
+        current_user: Current authenticated user
+        db: Database session
+        service: CustomModelService instance
+
+    Returns:
+        202 response with model_id and dispatched status
+
+    Raises:
+        401: Not authenticated
+        403: Access denied
+        404: Model not found
+        409: Model is not in TRAINED status or has no artifact
+    """
+    await check_project_access(project_id, current_user.id, db)
+    model = await get_model_or_404(model_id, project_id, service)
+
+    if model.status != CustomModelStatus.TRAINED:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"Cannot generate audit set for model with status '{model.status}'. "
+                "Only TRAINED models are supported."
+            ),
+        )
+
+    if not model.model_artifact_key:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Model has no artifact. Please retrain before generating an audit set.",
+        )
+
+    await service.create_audit_set(model)
+
+    return AuditSetGenerateResponse(model_id=model_id)
+
+
+@router.get(
+    "/{model_id}/audit-set",
+    response_model=AuditSetListResponse,
+    summary="List audit set items",
+    description="List all audit set items for a custom model, ordered by predicted_proba descending.",
+)
+async def list_audit_set(
+    project_id: UUID,
+    model_id: UUID,
+    current_user: CurrentUser,
+    db: DbSession,
+    service: CustomModelServiceDep,
+) -> AuditSetListResponse:
+    """List all audit set items with annotation status and embedding metadata.
+
+    Args:
+        project_id: Project's UUID
+        model_id: CustomModel's UUID
+        current_user: Current authenticated user
+        db: Database session
+        service: CustomModelService instance
+
+    Returns:
+        List of audit set items with review status, start/end times
+
+    Raises:
+        401: Not authenticated
+        403: Access denied
+        404: Model not found
+    """
+    await check_project_access(project_id, current_user.id, db)
+    await get_model_or_404(model_id, project_id, service)
+
+    rows = await service.get_audit_items(model_id)
+
+    item_responses = [
+        AuditSetItemResponse(
+            id=row.id,
+            embedding_id=row.embedding_id,
+            recording_id=row.recording_id,
+            predicted_proba=row.predicted_proba,
+            annotation_id=row.annotation_id,
+            review_status=str(row.review_status),
+            start_time=row.start_time,
+            end_time=row.end_time,
+            created_at=row.created_at,
+        )
+        for row in rows
+    ]
+
+    return AuditSetListResponse(items=item_responses, total=len(item_responses))
+
+
+@router.post(
+    "/{model_id}/audit-set/evaluate",
+    response_model=AuditSetEvaluateResponse,
+    summary="Evaluate audit set",
+    description=(
+        "Compute classification metrics from all confirmed/rejected audit set "
+        "annotations and persist them as model.audit_metrics."
+    ),
+)
+async def evaluate_audit_set(
+    project_id: UUID,
+    model_id: UUID,
+    current_user: CurrentUser,
+    db: DbSession,
+    service: CustomModelServiceDep,
+) -> AuditSetEvaluateResponse:
+    """Evaluate the model on reviewed audit set items.
+
+    Collects all AuditSetItems whose annotation has been confirmed or rejected,
+    computes classification metrics, and stores them in model.audit_metrics.
+
+    Args:
+        project_id: Project's UUID
+        model_id: CustomModel's UUID
+        current_user: Current authenticated user
+        db: Database session
+        service: CustomModelService instance
+
+    Returns:
+        Computed audit metrics
+
+    Raises:
+        401: Not authenticated
+        403: Access denied
+        404: Model not found
+        422: Fewer than 2 reviewed audit items found
+    """
+    await check_project_access(project_id, current_user.id, db)
+    model = await get_model_or_404(model_id, project_id, service)
+
+    try:
+        metrics = await service.evaluate_audit_set(model)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
+
+    return AuditSetEvaluateResponse(model_id=model_id, audit_metrics=metrics)

@@ -29,7 +29,7 @@ from sklearn.metrics import (
     recall_score,
     roc_auc_score,
 )
-from sklearn.model_selection import StratifiedKFold, train_test_split
+from sklearn.model_selection import StratifiedGroupKFold, StratifiedKFold, train_test_split
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import Normalizer
 from sklearn.semi_supervised import SelfTrainingClassifier
@@ -246,6 +246,59 @@ class UnifiedClassifier:
 
         return self
 
+    def decision_function(self, embeddings: np.ndarray) -> np.ndarray:
+        """Get signed distance from SVM decision boundary.
+
+        Positive values indicate a predicted positive class, negative values
+        indicate a predicted negative class. Magnitude indicates confidence.
+
+        For SelfTrainingClassifier, accesses the underlying fitted estimator
+        to call its decision_function directly. For single-class models, returns
+        a constant large positive or negative value.
+
+        Parameters
+        ----------
+        embeddings
+            Array of shape (n_samples, embedding_dim) containing
+            embedding vectors to score.
+
+        Returns
+        -------
+        np.ndarray
+            Array of shape (n_samples,) containing signed distances
+            from the SVM decision boundary.
+
+        Raises
+        ------
+        RuntimeError
+            If the classifier has not been fitted.
+        """
+        if not self.is_fitted:
+            raise RuntimeError("Classifier has not been fitted. Call fit() first.")
+
+        if self._single_class is not None:
+            val = 10.0 if self._single_class == 1 else -10.0
+            result: np.ndarray = np.full(len(embeddings), val)
+            return result
+
+        # Normalize embeddings through the pipeline's normalizer step
+        normalizer = self.model["normalizer"]
+        normalized: np.ndarray = normalizer.transform(embeddings)
+
+        # SelfTrainingClassifier wraps the base estimator
+        classifier = self.model["classifier"]
+        if hasattr(classifier, "estimator_"):
+            # Fitted SelfTrainingClassifier exposes the trained base estimator
+            distances: np.ndarray = classifier.estimator_.decision_function(normalized)
+            return distances
+        elif hasattr(classifier, "decision_function"):
+            distances = classifier.decision_function(normalized)
+            return distances
+        else:
+            # Fallback: convert predict_proba output to a centered distance proxy
+            proba = self.predict_proba(embeddings)
+            return proba - 0.5
+
     def predict_proba(self, embeddings: np.ndarray) -> np.ndarray:
         """Predict probability of positive class for each embedding.
 
@@ -403,12 +456,21 @@ def train_with_cv(
     c_values: list[float] | None = None,
     n_splits: int = 3,
     random_state: int = 42,
+    recording_ids: np.ndarray | None = None,
+    unlabeled_recording_ids: np.ndarray | None = None,
 ) -> tuple[UnifiedClassifier, dict[str, Any]]:
     """Train a UnifiedClassifier with cross-validation-based C parameter tuning.
 
-    Performs stratified K-Fold CV over each C value, selects the best C by
-    weighted F1 score, retrains on all labeled data, then evaluates on a
-    held-out 20% test split.
+    Follows a strict train/test isolation protocol:
+
+    1. Split 20% of labeled data as a held-out test set (stratified, before CV).
+    2. Run CV on the remaining 80% only to select the best C value.
+    3. Train an evaluation model on the 80% train set (+ unlabeled embeddings
+       whose recordings do NOT appear in the test set) and evaluate it on the
+       held-out 20% — this is the source of reported metrics.
+    4. Train a final deployment model on ALL labeled data (+ all unlabeled
+       embeddings) using the best C.
+    5. Return the final deployment model (step 4) and the metrics from step 3.
 
     Parameters
     ----------
@@ -419,20 +481,38 @@ def train_with_cv(
         Array of shape (n_samples,) with binary labels (0 or 1).
     unlabeled_embeddings
         Optional array of shape (n_unlabeled, embedding_dim) for semi-supervised
-        training. Passed to the final classifier after C selection.
+        training. Used in both the eval model (recordings not in test set) and
+        the final deployment model (all unlabeled).
     c_values
         List of C values to search over. Defaults to [0.1, 1.0, 10.0].
     n_splits
         Number of folds for stratified K-Fold CV. Default is 3.
     random_state
         Random seed for reproducibility. Default is 42.
+    recording_ids
+        Optional array of shape (n_samples,) containing recording IDs for each
+        labeled embedding. When provided and there are at least ``n_splits * 2``
+        unique recordings, StratifiedGroupKFold is used to prevent data leakage
+        across recordings within CV folds. Also used to identify which unlabeled
+        embeddings belong to test recordings so they can be excluded from the
+        eval model.
+    unlabeled_recording_ids
+        Optional array of shape (n_unlabeled,) containing recording IDs for each
+        unlabeled embedding. When both ``recording_ids`` and
+        ``unlabeled_recording_ids`` are provided, unlabeled embeddings whose
+        recording appears in the test split are excluded from the eval model
+        (but still used in the final deployment model).
 
     Returns
     -------
     tuple[UnifiedClassifier, dict]
-        Trained classifier and metrics dictionary containing:
+        Trained classifier (deployment model, fit on ALL data) and metrics
+        dictionary from the eval model (fit on 80% train set only), containing:
         - best_c: chosen C value
         - cv_scores: dict mapping C value to mean CV F1
+        - cv_method: "stratified_group_kfold" | "stratified_kfold"
+        - cv_warning: (optional) "insufficient_recordings" if group CV was
+          requested but fell back to standard CV
         - accuracy, precision, recall, f1
         - roc_auc, pr_auc
         - confusion_matrix (as nested list)
@@ -449,7 +529,6 @@ def train_with_cv(
 
     unique, counts = np.unique(labels, return_counts=True)
     class_counts = dict(zip(unique.tolist(), counts.tolist(), strict=False))
-    min_class_count = int(min(counts))
 
     logger.info(
         "train_with_cv: n_labeled=%d, class_counts=%s, n_unlabeled=%s",
@@ -458,63 +537,14 @@ def train_with_cv(
         len(unlabeled_embeddings) if unlabeled_embeddings is not None else 0,
     )
 
-    # Determine whether CV is feasible
-    skip_cv = min_class_count < 10 or min_class_count < n_splits
-
-    best_c = 1.0
-    cv_scores: dict[float, float] = {}
-
-    if skip_cv:
-        logger.warning(
-            "Insufficient data for CV (min class count=%d, n_splits=%d). "
-            "Skipping CV and using default C=1.0.",
-            min_class_count,
-            n_splits,
-        )
-    else:
-        # Stratified K-Fold CV to select best C
-        skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=random_state)
-
-        for c in c_values:
-            fold_f1_scores: list[float] = []
-
-            for fold_idx, (train_idx, val_idx) in enumerate(skf.split(embeddings, labels)):
-                X_tr, X_val = embeddings[train_idx], embeddings[val_idx]
-                y_tr, y_val = labels[train_idx], labels[val_idx]
-
-                clf = UnifiedClassifier(
-                    classifier_type=ClassifierType.SELF_TRAINING_SVM,
-                    custom_params={"C": c},
-                )
-                # CV uses only labeled data (no unlabeled) for fair comparison
-                clf.fit(X_tr, y_tr)
-
-                if clf._single_class is not None:
-                    # Degenerate fold — assign 0 F1
-                    fold_f1_scores.append(0.0)
-                    logger.debug(
-                        "C=%.3f fold=%d: single class, assigning F1=0", c, fold_idx
-                    )
-                else:
-                    y_pred = clf.predict(X_val)
-                    fold_f1 = float(f1_score(y_val, y_pred, average="weighted", zero_division=0))
-                    fold_f1_scores.append(fold_f1)
-                    logger.debug("C=%.3f fold=%d: F1=%.4f", c, fold_idx, fold_f1)
-
-            mean_f1 = float(np.mean(fold_f1_scores))
-            cv_scores[c] = mean_f1
-            logger.info("C=%.3f: mean CV F1=%.4f", c, mean_f1)
-
-        best_c = max(cv_scores, key=lambda k: cv_scores[k])
-        logger.info("Best C=%.3f (mean CV F1=%.4f)", best_c, cv_scores[best_c])
-
-    # Compute held-out test metrics on a 20% split of labeled data
-    # Use stratification; fall back to no stratification if classes are too small
+    # ------------------------------------------------------------------
+    # Step 1: Split 20% test set UPFRONT — before any CV or model fitting.
+    # This ensures the test set is never seen during hyperparameter selection.
+    # ------------------------------------------------------------------
     test_size = 0.2
     try:
-        _, X_test, _, y_test = train_test_split(
-            embeddings,
-            labels,
+        train_idx, test_idx = train_test_split(
+            np.arange(len(embeddings)),
             test_size=test_size,
             stratify=labels,
             random_state=random_state,
@@ -524,41 +554,240 @@ def train_with_cv(
             "Stratified split failed (too few samples per class). "
             "Falling back to random split."
         )
-        _, X_test, _, y_test = train_test_split(
-            embeddings,
-            labels,
+        train_idx, test_idx = train_test_split(
+            np.arange(len(embeddings)),
             test_size=test_size,
             random_state=random_state,
         )
 
-    # Final classifier: retrain on ALL labeled data with best C
+    X_train, X_test = embeddings[train_idx], embeddings[test_idx]
+    y_train, y_test = labels[train_idx], labels[test_idx]
+    rec_ids_train = recording_ids[train_idx] if recording_ids is not None else None
+
+    # Identify recording IDs that appear in the test split (for unlabeled filtering)
+    test_recording_ids: set[Any] = set()
+    if recording_ids is not None:
+        test_recording_ids = set(recording_ids[test_idx].tolist())
+        logger.info(
+            "train_with_cv: test split contains %d unique recordings",
+            len(test_recording_ids),
+        )
+
+    n_test = len(X_test)
+    n_train = len(X_train)
+
+    logger.info(
+        "train_with_cv: train=%d, test=%d (%.0f%% split)",
+        n_train,
+        n_test,
+        test_size * 100,
+    )
+
+    # ------------------------------------------------------------------
+    # Step 2: Determine whether CV is feasible on the 80% train set.
+    # ------------------------------------------------------------------
+    train_unique, train_counts = np.unique(y_train, return_counts=True)
+    min_train_class_count = int(min(train_counts))
+    skip_cv = min_train_class_count < 10 or min_train_class_count < n_splits
+
+    best_c = 1.0
+    cv_scores: dict[float, float] = {}
+    cv_method = "stratified_kfold"
+    cv_warning: str | None = None
+
+    if skip_cv:
+        logger.warning(
+            "Insufficient data for CV (min train class count=%d, n_splits=%d). "
+            "Skipping CV and using default C=1.0.",
+            min_train_class_count,
+            n_splits,
+        )
+    else:
+        # Decide which CV strategy to use — operate only on the 80% train split
+        use_group_cv = False
+        if rec_ids_train is not None:
+            unique_recordings = np.unique(rec_ids_train)
+            if len(unique_recordings) >= n_splits * 2:
+                use_group_cv = True
+                cv_method = "stratified_group_kfold"
+                logger.info(
+                    "train_with_cv: using StratifiedGroupKFold "
+                    "(unique_recordings=%d, n_splits=%d)",
+                    len(unique_recordings),
+                    n_splits,
+                )
+            else:
+                cv_warning = "insufficient_recordings"
+                logger.warning(
+                    "train_with_cv: recording_ids provided but only %d unique recordings "
+                    "(need >= %d for grouped CV). Falling back to StratifiedKFold.",
+                    len(unique_recordings),
+                    n_splits * 2,
+                )
+
+        if use_group_cv:
+            sgkf = StratifiedGroupKFold(
+                n_splits=n_splits, shuffle=True, random_state=random_state
+            )
+
+            for c in c_values:
+                fold_f1_scores: list[float] = []
+
+                for fold_idx, (train_fold, val_fold) in enumerate(
+                    sgkf.split(X_train, y_train, groups=rec_ids_train)
+                ):
+                    X_tr, X_val = X_train[train_fold], X_train[val_fold]
+                    y_tr, y_val = y_train[train_fold], y_train[val_fold]
+
+                    clf = UnifiedClassifier(
+                        classifier_type=ClassifierType.SELF_TRAINING_SVM,
+                        custom_params={"C": c},
+                    )
+                    # CV uses only labeled data (no unlabeled) for fair comparison
+                    clf.fit(X_tr, y_tr)
+
+                    if clf._single_class is not None:
+                        fold_f1_scores.append(0.0)
+                        logger.debug(
+                            "C=%.3f fold=%d (group): single class, assigning F1=0",
+                            c,
+                            fold_idx,
+                        )
+                    else:
+                        y_pred = clf.predict(X_val)
+                        fold_f1 = float(
+                            f1_score(y_val, y_pred, average="weighted", zero_division=0)
+                        )
+                        fold_f1_scores.append(fold_f1)
+                        logger.debug(
+                            "C=%.3f fold=%d (group): F1=%.4f", c, fold_idx, fold_f1
+                        )
+
+                mean_f1 = float(np.mean(fold_f1_scores))
+                cv_scores[c] = mean_f1
+                logger.info("C=%.3f (group CV): mean CV F1=%.4f", c, mean_f1)
+
+        else:
+            # Standard Stratified K-Fold CV to select best C
+            skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=random_state)
+
+            for c in c_values:
+                fold_f1_scores_std: list[float] = []
+
+                for fold_idx, (train_idx_fold, val_idx_fold) in enumerate(
+                    skf.split(X_train, y_train)
+                ):
+                    X_tr, X_val = X_train[train_idx_fold], X_train[val_idx_fold]
+                    y_tr, y_val = y_train[train_idx_fold], y_train[val_idx_fold]
+
+                    clf = UnifiedClassifier(
+                        classifier_type=ClassifierType.SELF_TRAINING_SVM,
+                        custom_params={"C": c},
+                    )
+                    # CV uses only labeled data (no unlabeled) for fair comparison
+                    clf.fit(X_tr, y_tr)
+
+                    if clf._single_class is not None:
+                        # Degenerate fold — assign 0 F1
+                        fold_f1_scores_std.append(0.0)
+                        logger.debug(
+                            "C=%.3f fold=%d: single class, assigning F1=0", c, fold_idx
+                        )
+                    else:
+                        y_pred = clf.predict(X_val)
+                        fold_f1 = float(
+                            f1_score(y_val, y_pred, average="weighted", zero_division=0)
+                        )
+                        fold_f1_scores_std.append(fold_f1)
+                        logger.debug("C=%.3f fold=%d: F1=%.4f", c, fold_idx, fold_f1)
+
+                mean_f1 = float(np.mean(fold_f1_scores_std))
+                cv_scores[c] = mean_f1
+                logger.info("C=%.3f: mean CV F1=%.4f", c, mean_f1)
+
+        best_c = max(cv_scores, key=lambda k: cv_scores[k])
+        logger.info("Best C=%.3f (mean CV F1=%.4f)", best_c, cv_scores[best_c])
+
+    # ------------------------------------------------------------------
+    # Step 3: Train eval model on 80% train set + filtered unlabeled data.
+    # Unlabeled embeddings whose recordings appear in the test set are excluded
+    # to prevent any indirect leakage into the evaluation metrics.
+    # ------------------------------------------------------------------
+    eval_unlabeled: np.ndarray | None = None
+    if unlabeled_embeddings is not None and len(unlabeled_embeddings) > 0:
+        if unlabeled_recording_ids is not None and len(test_recording_ids) > 0:
+            # Exclude unlabeled samples from test recordings
+            keep_mask = np.array([
+                rid not in test_recording_ids
+                for rid in unlabeled_recording_ids.tolist()
+            ])
+            eval_unlabeled = unlabeled_embeddings[keep_mask]
+            n_excluded = int(np.sum(~keep_mask))
+            logger.info(
+                "train_with_cv: excluded %d unlabeled embeddings from test recordings "
+                "for eval model (%d remaining)",
+                n_excluded,
+                len(eval_unlabeled),
+            )
+            if len(eval_unlabeled) == 0:
+                eval_unlabeled = None
+        else:
+            # No recording-level filtering possible; use all unlabeled for eval model
+            eval_unlabeled = unlabeled_embeddings
+
+    eval_clf = UnifiedClassifier(
+        classifier_type=ClassifierType.SELF_TRAINING_SVM,
+        custom_params={"C": best_c},
+    )
+    eval_clf.fit(X_train, y_train, unlabeled_embeddings=eval_unlabeled)
+    logger.info(
+        "Eval classifier fitted on %d labeled train samples "
+        "(+ %d unlabeled, test-recording-filtered).",
+        n_train,
+        len(eval_unlabeled) if eval_unlabeled is not None else 0,
+    )
+
+    # ------------------------------------------------------------------
+    # Step 4: Train FINAL deployment model on ALL labeled data + all unlabeled.
+    # This model is serialized and deployed — it never uses the test split
+    # for fitting, so there is no leakage; the test split was only used to
+    # measure the eval model above.
+    # ------------------------------------------------------------------
     final_clf = UnifiedClassifier(
         classifier_type=ClassifierType.SELF_TRAINING_SVM,
         custom_params={"C": best_c},
     )
     final_clf.fit(embeddings, labels, unlabeled_embeddings=unlabeled_embeddings)
-    logger.info("Final classifier fitted on all %d labeled samples.", len(embeddings))
+    logger.info(
+        "Final deployment classifier fitted on all %d labeled samples "
+        "(+ %d unlabeled).",
+        len(embeddings),
+        len(unlabeled_embeddings) if unlabeled_embeddings is not None else 0,
+    )
 
-    # Evaluate on held-out test split
-    n_test = len(X_test)
-    n_train = len(embeddings) - n_test
-
+    # ------------------------------------------------------------------
+    # Step 5: Evaluate the eval model on the held-out 20% test set.
+    # Report these metrics (not the final model's performance).
+    # ------------------------------------------------------------------
     metrics: dict[str, Any] = {
         "best_c": best_c,
         "cv_scores": cv_scores,
         "skipped_cv": skip_cv,
+        "cv_method": cv_method,
         "n_train": n_train,
         "n_test": n_test,
     }
+    if cv_warning is not None:
+        metrics["cv_warning"] = cv_warning
 
-    if final_clf._single_class is not None:
+    if eval_clf._single_class is not None:
         # Degenerate case — populate with fallback metrics
         logger.warning(
-            "Final classifier has single class (%d). Metrics are trivial.",
-            final_clf._single_class,
+            "Eval classifier has single class (%d). Metrics are trivial.",
+            eval_clf._single_class,
         )
         metrics.update({
-            "accuracy": float(final_clf._single_class),
+            "accuracy": float(eval_clf._single_class),
             "precision": 0.0,
             "recall": 0.0,
             "f1": 0.0,
@@ -567,8 +796,8 @@ def train_with_cv(
             "confusion_matrix": [[0, 0], [0, 0]],
         })
     else:
-        y_pred = final_clf.predict(X_test)
-        y_proba = final_clf.predict_proba(X_test)
+        y_pred = eval_clf.predict(X_test)
+        y_proba = eval_clf.predict_proba(X_test)
 
         acc = float(accuracy_score(y_test, y_pred))
         prec = float(precision_score(y_test, y_pred, zero_division=0))
@@ -601,8 +830,8 @@ def train_with_cv(
         })
 
         logger.info(
-            "Test metrics: accuracy=%.4f, precision=%.4f, recall=%.4f, "
-            "f1=%.4f, roc_auc=%.4f, pr_auc=%.4f",
+            "Test metrics (eval model on held-out 20%%): accuracy=%.4f, precision=%.4f, "
+            "recall=%.4f, f1=%.4f, roc_auc=%.4f, pr_auc=%.4f",
             acc,
             prec,
             rec,
@@ -611,6 +840,7 @@ def train_with_cv(
             pr_auc,
         )
 
+    # Return the final deployment model (trained on ALL data) + metrics from eval model
     return final_clf, metrics
 
 

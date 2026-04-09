@@ -107,6 +107,8 @@ class DetectionSource(StrEnum):
     SIMILARITY_SEARCH = "similarity_search"
     CUSTOM_SVM = "custom_svm"
     HUMAN = "human"
+    SAMPLING_ROUND = "sampling_round"  # Created by seed sampling or active learning pipeline
+    AUDIT_SET = "audit_set"            # Created as part of a model audit set
 
 
 class DetectionStatus(StrEnum):

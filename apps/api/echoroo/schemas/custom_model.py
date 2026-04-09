@@ -16,14 +16,9 @@ class CustomModelCreate(BaseModel):
 
     name: str = Field(..., min_length=1, max_length=200, description="Human-readable model name")
     description: str | None = Field(default=None, description="Optional description of the model's purpose")
-    target_tag_id: UUID | None = Field(
-        default=None,
-        description="Target species/sound type tag UUID this model classifies for",
-    )
-    training_session_ids: list[UUID] = Field(
+    target_tag_id: UUID = Field(
         ...,
-        min_length=1,
-        description="List of SearchSession UUIDs to use as training data",
+        description="Target species/sound type tag UUID this model classifies for",
     )
     embedding_model_name: str = Field(
         default="perch",
@@ -63,10 +58,10 @@ class CustomModelResponse(BaseModel):
     user_id: UUID | None
     name: str
     description: str | None
-    target_tag_id: UUID | None
+    target_tag_id: UUID
     model_type: str
     status: CustomModelStatus
-    training_session_ids: list[object] | None
+    training_config: dict[str, object] | None
     hyperparameters: dict[str, object] | None
     metrics: dict[str, object] | None
     training_stats: dict[str, object] | None
@@ -77,6 +72,7 @@ class CustomModelResponse(BaseModel):
     completed_at: datetime | None
     created_at: datetime
     updated_at: datetime
+    audit_metrics: dict[str, object] | None = None
 
 
 class CustomModelListItem(BaseModel):
