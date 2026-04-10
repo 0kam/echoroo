@@ -5,6 +5,7 @@ from __future__ import annotations
 from uuid import UUID
 
 from fastapi import HTTPException, status
+from sqlalchemy.exc import IntegrityError
 
 from echoroo.core.pagination import paginate
 from echoroo.models.enums import TagCategory
@@ -79,12 +80,16 @@ class TagService:
     async def create(self, project_id: UUID, request: TagCreate) -> TagResponse:
         """Create a new tag.
 
+        If a tag with the same project_id + name + category already exists
+        (IntegrityError from unique constraint), return the existing tag
+        instead of raising an error.
+
         Args:
             project_id: Project's UUID
             request: Tag creation data
 
         Returns:
-            Created tag response
+            Created or existing tag response
         """
         tag = Tag(
             project_id=project_id,
@@ -96,8 +101,20 @@ class TagService:
             common_name=request.common_name,
         )
 
-        created_tag = await self.tag_repo.create(tag)
-        return TagResponse.model_validate(created_tag)
+        try:
+            created_tag = await self.tag_repo.create(tag)
+            return TagResponse.model_validate(created_tag)
+        except IntegrityError:
+            await self.tag_repo.db.rollback()
+            # Duplicate tag — return the existing one
+            existing = await self.tag_repo.find_by_name_and_category(
+                project_id=project_id,
+                name=request.name,
+                category=request.category,
+            )
+            if existing:
+                return TagResponse.model_validate(existing)
+            raise
 
     async def get_detail(self, tag_id: UUID) -> TagDetailResponse:
         """Get tag detail with children and usage count.

@@ -138,9 +138,23 @@
     gbifResults = [];
   }
 
+  /**
+   * Find an existing project tag matching the given scientific name.
+   * Returns the tag ID if found, or null otherwise.
+   */
+  function findExistingTagId(scientificName: string): string | null {
+    const lower = scientificName.toLowerCase();
+    const match = suggestions.find(
+      (t) => (t.scientific_name ?? t.name).toLowerCase() === lower
+    );
+    return match ? match.id : null;
+  }
+
   function addTaxonSpecies(taxon: TaxonSearchResult) {
+    const existingTagId = findExistingTagId(taxon.scientific_name);
+    if (existingTagId && addedSpeciesIds.has(existingTagId)) return;
     onAdd({
-      tag_id: null,
+      tag_id: existingTagId,
       scientific_name: taxon.scientific_name,
       common_name: taxon.common_name ?? undefined,
     });
@@ -151,8 +165,10 @@
   }
 
   function addGbifSpecies(result: GBIFSpeciesResult) {
+    const existingTagId = findExistingTagId(result.canonical_name);
+    if (existingTagId && addedSpeciesIds.has(existingTagId)) return;
     onAdd({
-      tag_id: null,
+      tag_id: existingTagId,
       scientific_name: result.canonical_name,
       common_name: result.vernacular_name ?? undefined,
     });

@@ -116,6 +116,31 @@ class TagRepository(BaseRepository[Tag]):
         return tag
 
 
+    async def find_by_name_and_category(
+        self,
+        project_id: UUID,
+        name: str,
+        category: TagCategory,
+    ) -> Tag | None:
+        """Find a tag by project, name, and category.
+
+        Args:
+            project_id: Project UUID to scope the lookup.
+            name: Tag name to match.
+            category: Tag category to match.
+
+        Returns:
+            Tag instance or None if not found.
+        """
+        result = await self.db.execute(
+            select(Tag)
+            .where(Tag.project_id == project_id)
+            .where(Tag.name == name)
+            .where(Tag.category == category)
+            .options(selectinload(Tag.project))
+        )
+        return result.scalar_one_or_none()
+
     async def get_or_create_species(
         self,
         project_id: UUID,
