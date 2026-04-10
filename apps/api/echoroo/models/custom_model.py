@@ -15,8 +15,10 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from echoroo.models.base import Base, TimestampMixin, UUIDMixin
 
 if TYPE_CHECKING:
+    from echoroo.models.dataset import Dataset
     from echoroo.models.project import Project
     from echoroo.models.sampling_round import AuditSetItem, SamplingRound
+    from echoroo.models.search_session import SearchSession
     from echoroo.models.tag import Tag
     from echoroo.models.user import User
 
@@ -156,6 +158,19 @@ class CustomModel(UUIDMixin, TimestampMixin, Base):
         nullable=True,
         doc="Evaluation metrics computed from human-audited audit set labels",
     )
+    search_session_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("search_sessions.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+        doc="Source search session whose results were used as training data",
+    )
+    dataset_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("datasets.id", ondelete="SET NULL"),
+        nullable=True,
+        doc="Dataset the model was applied to after training",
+    )
 
     # Relationships
     project: Mapped[Project] = relationship(
@@ -182,6 +197,16 @@ class CustomModel(UUIDMixin, TimestampMixin, Base):
         back_populates="custom_model",
         cascade="all, delete-orphan",
         lazy="raise",
+    )
+    search_session: Mapped[SearchSession | None] = relationship(
+        "SearchSession",
+        lazy="raise",
+        foreign_keys="[CustomModel.search_session_id]",
+    )
+    dataset: Mapped[Dataset | None] = relationship(
+        "Dataset",
+        lazy="raise",
+        foreign_keys="[CustomModel.dataset_id]",
     )
 
     __table_args__ = (

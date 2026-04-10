@@ -94,6 +94,8 @@ export interface CustomModel {
   target_tag_id: string | null;
   model_type: string;
   status: CustomModelStatus;
+  search_session_id: string | null;
+  dataset_id: string | null;
   training_config: Record<string, unknown> | null;
   hyperparameters: Record<string, unknown> | null;
   metrics: CustomModelMetrics | null;
@@ -119,6 +121,8 @@ export interface CustomModelListItem {
   target_tag_id: string | null;
   model_type: string;
   status: CustomModelStatus;
+  search_session_id: string | null;
+  dataset_id: string | null;
   embedding_model_name: string;
   started_at: string | null;
   completed_at: string | null;
@@ -142,6 +146,7 @@ export interface CustomModelCreate {
   description?: string;
   target_tag_id: string;
   embedding_model_name?: string;
+  search_session_id?: string;
 }
 
 /**

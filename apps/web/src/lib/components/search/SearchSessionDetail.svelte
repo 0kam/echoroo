@@ -8,12 +8,16 @@
    */
 
   import * as m from '$lib/paraglide/messages';
-  import { getLocale } from '$lib/paraglide/runtime';
+  import { getLocale, localizeHref } from '$lib/paraglide/runtime';
   import { getSearchSession, getReferenceAudioUrl, updateSearchSession, exportSearchSessionRecordingsCSV } from '$lib/api/search';
+  import { fetchCustomModels } from '$lib/api/custom-models';
   import { generateId } from '$lib/utils/id';
   import type { SearchSession, TargetSpecies, SoundSource } from '$lib/types/search';
+  import type { CustomModelListItem } from '$lib/types/custom-model';
   import ReferenceSoundsPanel from './ReferenceSoundsPanel.svelte';
   import ResultsPanel from './ResultsPanel.svelte';
+  import CreateModelFromSessionDialog from './CreateModelFromSessionDialog.svelte';
+  import ReviewTab from '$lib/components/models/ReviewTab.svelte';
   import {
     getSearchSessionStatusLabel,
     getSearchSessionStatusTextClass,
@@ -42,6 +46,43 @@
 
   // Currently selected species key (tracked from ResultsPanel)
   let currentSpeciesKey = $state<string | null>(null);
+
+  // ============================================
+  // Model Training section state
+  // ============================================
+
+  /** Custom models linked to this session */
+  let sessionModels = $state<CustomModelListItem[]>([]);
+  let isLoadingModels = $state(false);
+  let modelsLoadError = $state<string | null>(null);
+
+  /** Which species' "Train Model" dialog is open (by index in species_config) */
+  let trainDialogSpeciesIndex = $state<number | null>(null);
+
+  async function loadSessionModels(pid: string, sid: string) {
+    isLoadingModels = true;
+    modelsLoadError = null;
+    try {
+      const res = await fetchCustomModels(pid, { search_session_id: sid });
+      sessionModels = res.models;
+    } catch (e) {
+      modelsLoadError = e instanceof Error ? e.message : 'Failed to load models';
+    } finally {
+      isLoadingModels = false;
+    }
+  }
+
+  function handleTrainModelForSpecies(index: number) {
+    trainDialogSpeciesIndex = index;
+  }
+
+  function handleCreateModelSuccess(_modelId: string) {
+    trainDialogSpeciesIndex = null;
+    // Reload models list so the new model appears in the training section
+    if (session) {
+      loadSessionModels(projectId, session.id);
+    }
+  }
 
   // Recordings CSV export state
   let isExportingRecordings = $state(false);
@@ -163,6 +204,7 @@
   // Load session on mount and reload when sessionId changes
   $effect(() => {
     loadSession(projectId, sessionId);
+    loadSessionModels(projectId, sessionId);
   });
 
   // ============================================
@@ -580,6 +622,148 @@
         </svg>
         <p class="font-medium text-stone-500">{m.search_results_no_matches()}</p>
         <p class="mt-1 text-sm text-stone-400">{m.search_results_no_matches_hint()}</p>
+      </div>
+    {/if}
+
+    <!-- ============================================
+         Model Training section
+         Only shown for completed sessions with results.
+    ============================================ -->
+    {#if session.status === 'completed' && session.result_count > 0 && session.species_config && session.species_config.length > 0}
+      <div class="rounded-lg border border-stone-200 bg-surface-card p-5 shadow-sm dark:border-stone-700">
+        <h3 class="mb-4 text-base font-semibold text-stone-800 dark:text-stone-200">
+          Model Training
+        </h3>
+
+        {#if isLoadingModels}
+          <div class="flex items-center gap-2 text-sm text-stone-400">
+            <svg class="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24" aria-hidden="true">
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+            </svg>
+            Loading models...
+          </div>
+        {:else if modelsLoadError}
+          <p class="text-sm text-danger">{modelsLoadError}</p>
+        {:else}
+          <div class="space-y-4">
+            {#each session.species_config as spConfig, idx (spConfig.scientific_name)}
+              {@const linkedModel = sessionModels.find(
+                (mdl) => mdl.target_tag_id === spConfig.tag_id
+              ) ?? sessionModels[0] ?? null}
+
+              <div class="rounded-lg border border-stone-100 p-4 dark:border-stone-800">
+                <!-- Species header -->
+                <div class="mb-3 flex items-center gap-2">
+                  <p class="text-sm font-medium italic text-stone-800 dark:text-stone-200">
+                    {spConfig.scientific_name}
+                  </p>
+                  {#if spConfig.common_name && spConfig.common_name !== spConfig.scientific_name}
+                    <span class="text-xs text-stone-400">({spConfig.common_name})</span>
+                  {/if}
+                </div>
+
+                {#if !linkedModel}
+                  <!-- No model yet — show Train Model button -->
+                  <button
+                    type="button"
+                    class="inline-flex items-center gap-2 rounded-lg bg-primary-600 px-4 py-2 text-sm font-medium text-white
+                           shadow-sm transition-colors hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2
+                           dark:bg-primary-500 dark:hover:bg-primary-400"
+                    onclick={() => handleTrainModelForSpecies(idx)}
+                  >
+                    <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                      <path stroke-linecap="round" stroke-linejoin="round" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.347.347a3.001 3.001 0 01-.468 3.525L12 20.5l-2.626-2.626a3.001 3.001 0 01-.468-3.525l-.347-.347z" />
+                    </svg>
+                    Train Model
+                  </button>
+
+                {:else if linkedModel.status === 'draft'}
+                  <!-- Draft model — show ReviewTab for labeling -->
+                  <div class="mb-2 flex items-center gap-2">
+                    <span class="inline-flex items-center rounded-full border border-stone-200 bg-stone-50 px-2 py-0.5 text-xs font-medium text-stone-600 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-400">
+                      {linkedModel.status}
+                    </span>
+                    <span class="text-xs text-stone-500">{linkedModel.name}</span>
+                  </div>
+
+                  <!-- Show ReviewTab for labeling seed samples -->
+                  <div class="mt-3 rounded-lg border border-stone-100 dark:border-stone-800 overflow-hidden">
+                    <ReviewTab
+                      {projectId}
+                      modelId={linkedModel.id}
+                      onTrainRequest={() => {}}
+                    />
+                  </div>
+
+                {:else if linkedModel.status === 'training'}
+                  <!-- Training in progress -->
+                  <div class="flex items-center gap-2 text-sm text-stone-600 dark:text-stone-400">
+                    <svg class="h-4 w-4 animate-spin text-primary-500" fill="none" viewBox="0 0 24 24" aria-hidden="true">
+                      <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                      <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+                    </svg>
+                    Training in progress...
+                    <span class="text-xs text-stone-400">({linkedModel.name})</span>
+                  </div>
+
+                {:else if linkedModel.status === 'trained' || linkedModel.status === 'deployed'}
+                  <!-- Trained model — show summary + navigation links -->
+                  <div class="space-y-2">
+                    <div class="flex items-center gap-2">
+                      <span class="inline-flex items-center rounded-full border border-success/30 bg-success-light px-2 py-0.5 text-xs font-medium text-success">
+                        {linkedModel.status}
+                      </span>
+                      <span class="text-xs text-stone-500">{linkedModel.name}</span>
+                    </div>
+                    <div class="flex flex-wrap items-center gap-2">
+                      <a
+                        href={localizeHref(`/projects/${projectId}/models`)}
+                        class="inline-flex items-center gap-1.5 rounded-md border border-stone-300 bg-surface-card px-3 py-1.5 text-xs font-medium
+                               text-stone-600 transition-colors hover:bg-stone-50 dark:border-stone-600 dark:hover:bg-stone-700"
+                      >
+                        View in Models
+                        <svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                          <path stroke-linecap="round" stroke-linejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                        </svg>
+                      </a>
+                    </div>
+                  </div>
+
+                {:else if linkedModel.status === 'failed'}
+                  <!-- Failed model -->
+                  <div class="space-y-2">
+                    <div class="flex items-center gap-2">
+                      <span class="inline-flex items-center rounded-full border border-danger/30 bg-danger-light px-2 py-0.5 text-xs font-medium text-danger">
+                        failed
+                      </span>
+                      <span class="text-xs text-stone-500">{linkedModel.name}</span>
+                    </div>
+                    <a
+                      href={localizeHref(`/projects/${projectId}/models`)}
+                      class="inline-flex items-center gap-1.5 rounded-md border border-stone-300 bg-surface-card px-3 py-1.5 text-xs font-medium
+                             text-stone-600 transition-colors hover:bg-stone-50 dark:border-stone-600 dark:hover:bg-stone-700"
+                    >
+                      View in Models
+                    </a>
+                  </div>
+                {/if}
+              </div>
+
+              <!-- CreateModelFromSessionDialog for this species -->
+              {#if trainDialogSpeciesIndex === idx}
+                <CreateModelFromSessionDialog
+                  {projectId}
+                  {session}
+                  speciesConfig={spConfig}
+                  open={true}
+                  onClose={() => { trainDialogSpeciesIndex = null; }}
+                  onSuccess={handleCreateModelSuccess}
+                />
+              {/if}
+            {/each}
+          </div>
+        {/if}
       </div>
     {/if}
   {/if}

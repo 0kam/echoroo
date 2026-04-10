@@ -6,9 +6,8 @@ import logging
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from echoroo.models.custom_model import CustomModel, CustomModelStatus
 from echoroo.models.detection_run import DetectionRun
@@ -62,6 +61,7 @@ class CustomModelService:
         limit: int = 50,
         offset: int = 0,
         tag_id: UUID | None = None,
+        search_session_id: UUID | None = None,
     ) -> tuple[list[CustomModel], int]:
         """List custom models for a project with optional filters.
 
@@ -70,6 +70,7 @@ class CustomModelService:
             limit: Maximum number of results to return
             offset: Number of results to skip
             tag_id: Optional target tag filter
+            search_session_id: Optional filter by source search session
 
         Returns:
             Tuple of (models list, total count)
@@ -79,6 +80,7 @@ class CustomModelService:
             limit=limit,
             offset=offset,
             tag_id=tag_id,
+            search_session_id=search_session_id,
         )
 
     async def create_model(
@@ -89,6 +91,11 @@ class CustomModelService:
     ) -> CustomModel:
         """Create a new CustomModel in DRAFT status.
 
+        If request.search_session_id is provided, the corresponding SearchSession
+        is loaded to extract the dataset_id from its parameters JSONB field. Both
+        search_session_id and dataset_id are then stored on the model for later use
+        during seed sampling and inference scoping.
+
         Args:
             project_id: Project's UUID
             user_id: ID of the user creating the model
@@ -96,6 +103,9 @@ class CustomModelService:
 
         Returns:
             Created CustomModel instance
+
+        Raises:
+            HTTPException 404: If search_session_id is provided but session not found
         """
         model = CustomModel(
             project_id=project_id,
@@ -106,6 +116,25 @@ class CustomModelService:
             embedding_model_name=request.embedding_model_name,
             status=CustomModelStatus.DRAFT,
         )
+
+        if request.search_session_id is not None:
+            # noqa: PLC0415 — lazy imports to avoid circular dependencies
+            from fastapi import HTTPException  # noqa: PLC0415
+
+            from echoroo.models.search_session import (  # noqa: PLC0415
+                SearchSession,
+            )
+
+            session = await self.db.get(SearchSession, request.search_session_id)
+            if session is None:
+                raise HTTPException(status_code=404, detail="Search session not found")
+            model.search_session_id = request.search_session_id
+            if session.parameters and isinstance(session.parameters, dict):
+                dataset_id_val = session.parameters.get("dataset_id")
+                if dataset_id_val is not None:
+                    from uuid import UUID as _UUID  # noqa: PLC0415
+                    model.dataset_id = _UUID(str(dataset_id_val))
+
         return await self._repo.create(model)
 
     async def update_model(

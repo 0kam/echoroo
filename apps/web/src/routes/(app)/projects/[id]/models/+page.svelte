@@ -2,22 +2,27 @@
   /**
    * Custom Models page.
    *
-   * Allows users to create, train, and manage custom SVM classifiers
-   * trained on labeled similarity search session data.
+   * Hub for managing trained custom SVM classifiers. Provides:
+   * - Model list with status badges
+   * - Detail view with metrics, hyperparameters, training stats, audit metrics
+   * - Apply dialog (run model on another dataset)
+   * - Delete dialog
+   * - Navigation to source Search session
    *
    * Uses a 2-mode layout:
-   * - 'list'   : Default view showing all models with create button
+   * - 'list'   : Default view showing all models
    * - 'detail' : Full-width view for a single model with metrics and polling
+   *
+   * Model creation has been moved to the Search page.
    */
 
-  import { flushSync, onDestroy } from 'svelte';
+  import { onDestroy } from 'svelte';
   import { page } from '$app/stores';
   import { createQuery, createMutation, useQueryClient } from '@tanstack/svelte-query';
   import { localizeHref } from '$lib/paraglide/runtime';
   import * as m from '$lib/paraglide/messages';
   import {
     fetchCustomModels,
-    createCustomModel,
     trainCustomModel,
     deleteCustomModel,
     getCustomModelStatus,
@@ -26,14 +31,10 @@
     getAuditSet,
     evaluateAuditSet,
   } from '$lib/api/custom-models';
-  import { createTag } from '$lib/api/tags';
   import { fetchDatasets } from '$lib/api/datasets';
-  import SpeciesSelector from '$lib/components/search/SpeciesSelector.svelte';
   import { toasts } from '$lib/stores/toast';
-  import type { CustomModel, CustomModelListItem, CustomModelCreate, AuditMetrics } from '$lib/types/custom-model';
-  import type { TagCreate } from '$lib/types/annotation';
+  import type { CustomModel, AuditMetrics } from '$lib/types/custom-model';
   import { getCustomModelStatusClass, getCustomModelStatusLabel } from '$lib/utils/statusFormatters';
-  import ReviewTab from '$lib/components/models/ReviewTab.svelte';
 
   const projectId = $derived($page.params.id as string);
   const queryClient = useQueryClient();
@@ -42,29 +43,8 @@
   // View state
   // ============================================
 
-  /** Top-level tab: 'models' shows the model list/detail, 'review' shows the review interface */
-  let activeTab = $state<'models' | 'review'>('models');
-
   let viewMode = $state<'list' | 'detail'>('list');
   let selectedModelId = $state<string | null>(null);
-
-  // ============================================
-  // Create model dialog state
-  // ============================================
-
-  let showCreateDialog = $state(false);
-  let createName = $state('');
-  let createDescription = $state('');
-  let createTargetTagId = $state('');
-  /** Holds the selected species info from SpeciesSelector for deferred tag creation */
-  let createSelectedSpecies = $state<{
-    tag_id: string | null;
-    scientific_name: string;
-    common_name?: string;
-  } | null>(null);
-  let showSpeciesSelector = $state(false);
-  let isCreatingTag = $state(false);
-  let createError = $state<string | null>(null);
 
   // ============================================
   // Delete confirmation state
@@ -182,17 +162,6 @@
   // Mutations
   // ============================================
 
-  const createMutationState = createMutation({
-    mutationFn: (data: CustomModelCreate) => createCustomModel(projectId, data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['custom-models', projectId] });
-      closeCreateDialog();
-    },
-    onError: (err: Error) => {
-      createError = err.message;
-    },
-  });
-
   const trainMutationState = createMutation({
     mutationFn: (modelId: string) => trainCustomModel(projectId, modelId),
     onSuccess: (updated) => {
@@ -255,68 +224,6 @@
   // ============================================
   // Handlers
   // ============================================
-
-  function openCreateDialog() {
-    createName = '';
-    createDescription = '';
-    createTargetTagId = '';
-    createSelectedSpecies = null;
-    showSpeciesSelector = false;
-    isCreatingTag = false;
-    createError = null;
-    showCreateDialog = true;
-  }
-
-  /** Called from ReviewTab when user clicks "Train Custom Model" */
-  function handleReviewTrainRequest(_sessionId: string) {
-    openCreateDialog();
-  }
-
-  function closeCreateDialog() {
-    showCreateDialog = false;
-  }
-
-  async function handleCreate() {
-    createError = null;
-    if (!createName.trim()) {
-      createError = 'Model name is required';
-      return;
-    }
-    if (!createSelectedSpecies) {
-      createError = 'Target species is required';
-      return;
-    }
-
-    let tagId = createTargetTagId;
-
-    // If the selected species has no existing project tag, create one first
-    if (!tagId && createSelectedSpecies) {
-      isCreatingTag = true;
-      try {
-        const tagData: TagCreate = {
-          name: createSelectedSpecies.scientific_name,
-          category: 'species',
-          scientific_name: createSelectedSpecies.scientific_name,
-          common_name: createSelectedSpecies.common_name,
-        };
-        const newTag = await createTag(projectId, tagData);
-        tagId = newTag.id;
-      } catch (err) {
-        createError = err instanceof Error ? err.message : 'Failed to create species tag';
-        isCreatingTag = false;
-        return;
-      }
-      isCreatingTag = false;
-    }
-
-    const payload: CustomModelCreate = {
-      name: createName.trim(),
-      description: createDescription.trim() || undefined,
-      target_tag_id: tagId,
-    };
-
-    $createMutationState.mutate(payload);
-  }
 
   function handleTrain(modelId: string) {
     $trainMutationState.mutate(modelId);
@@ -421,7 +328,7 @@
       {m.search_breadcrumb_project()}
     </a>
     <span>/</span>
-    {#if activeTab === 'models' && viewMode === 'detail' && displayedModel}
+    {#if viewMode === 'detail' && displayedModel}
       <button
         type="button"
         class="hover:text-stone-900 dark:hover:text-stone-200"
@@ -436,57 +343,6 @@
     {/if}
   </nav>
 
-  <!-- Tab bar -->
-  {#if !(activeTab === 'models' && viewMode === 'detail')}
-    <div class="mb-6 flex border-b border-stone-200 dark:border-stone-700">
-      <button
-        type="button"
-        class="relative px-4 py-2.5 text-sm font-medium transition-colors focus:outline-none
-          {activeTab === 'models'
-            ? 'text-primary-600 dark:text-primary-400'
-            : 'text-stone-500 hover:text-stone-800 dark:hover:text-stone-200'}"
-        onclick={() => { activeTab = 'models'; }}
-        aria-selected={activeTab === 'models'}
-        role="tab"
-      >
-        {m.models_tab_models()}
-        {#if activeTab === 'models'}
-          <span class="absolute bottom-0 left-0 right-0 h-0.5 rounded-t bg-primary-500"></span>
-        {/if}
-      </button>
-      <button
-        type="button"
-        class="relative px-4 py-2.5 text-sm font-medium transition-colors focus:outline-none
-          {activeTab === 'review'
-            ? 'text-primary-600 dark:text-primary-400'
-            : 'text-stone-500 hover:text-stone-800 dark:hover:text-stone-200'}"
-        onclick={() => { activeTab = 'review'; }}
-        aria-selected={activeTab === 'review'}
-        role="tab"
-      >
-        {m.models_tab_review()}
-        {#if activeTab === 'review'}
-          <span class="absolute bottom-0 left-0 right-0 h-0.5 rounded-t bg-primary-500"></span>
-        {/if}
-      </button>
-    </div>
-  {/if}
-
-  <!-- ====================================================
-       Tab: Review
-  ==================================================== -->
-  {#if activeTab === 'review'}
-    <ReviewTab
-      {projectId}
-      modelId={selectedModelId ?? undefined}
-      onTrainRequest={handleReviewTrainRequest}
-    />
-
-  <!-- ====================================================
-       Tab: Models
-  ==================================================== -->
-  {:else}
-
   <!-- ====================================================
        Mode: list
   ==================================================== -->
@@ -499,16 +355,6 @@
           <h1 class="text-2xl font-bold text-stone-900">{m.models_title()}</h1>
           <p class="mt-1 text-sm text-stone-500">{m.models_description()}</p>
         </div>
-        <button
-          type="button"
-          class="inline-flex items-center gap-2 rounded-lg bg-primary-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 dark:bg-primary-500 dark:text-stone-50 dark:hover:bg-primary-400"
-          onclick={() => openCreateDialog()}
-        >
-          <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
-          </svg>
-          {m.models_create()}
-        </button>
       </div>
 
       <!-- Model list -->
@@ -527,23 +373,22 @@
         </div>
 
       {:else if $modelsQuery.data && $modelsQuery.data.models.length === 0}
-        <!-- Empty state -->
+        <!-- Empty state: direct users to Search page for model creation -->
         <div class="rounded-xl border-2 border-dashed border-stone-200 bg-surface-card p-12 text-center dark:border-stone-700">
           <svg class="mx-auto h-12 w-12 text-stone-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
           </svg>
-          <h2 class="mt-4 text-base font-semibold text-stone-700">{m.models_no_models()}</h2>
-          <p class="mt-1 text-sm text-stone-500">{m.models_description()}</p>
-          <button
-            type="button"
+          <h2 class="mt-4 text-base font-semibold text-stone-700">No trained models yet</h2>
+          <p class="mt-1 text-sm text-stone-500">Create models from Search sessions.</p>
+          <a
+            href={localizeHref(`/projects/${projectId}/search`)}
             class="mt-6 inline-flex items-center gap-2 rounded-lg bg-primary-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-primary-700 dark:bg-primary-500 dark:text-stone-50 dark:hover:bg-primary-400"
-            onclick={() => openCreateDialog()}
           >
             <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+              <circle cx="11" cy="11" r="8" /><path d="m21 21-4.35-4.35" stroke-linecap="round" stroke-linejoin="round" />
             </svg>
-            {m.models_create()}
-          </button>
+            Go to Search
+          </a>
         </div>
 
       {:else if $modelsQuery.data}
@@ -736,6 +581,34 @@
             </div>
           </div>
         </div>
+
+        <!-- Source session links (only shown when search_session_id is set) -->
+        {#if model.search_session_id}
+          <div class="flex flex-wrap gap-3 rounded-lg border border-stone-200 bg-stone-50 px-4 py-3 dark:border-stone-700 dark:bg-stone-800/40">
+            <span class="text-xs font-medium text-stone-500 self-center">Origin:</span>
+            <a
+              href={localizeHref(`/projects/${projectId}/search`)}
+              class="inline-flex items-center gap-1.5 text-sm text-primary-600 hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300"
+            >
+              <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <circle cx="11" cy="11" r="8" /><path d="m21 21-4.35-4.35" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+              Source: Search Session
+            </a>
+            {#if model.status === 'draft' || model.status === 'training' || model.status === 'failed'}
+              <span class="text-stone-300 dark:text-stone-600 self-center">|</span>
+              <a
+                href={localizeHref(`/projects/${projectId}/search`)}
+                class="inline-flex items-center gap-1.5 text-sm text-warning hover:opacity-80"
+              >
+                <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+                </svg>
+                Continue in Search
+              </a>
+            {/if}
+          </div>
+        {/if}
 
         <!-- Training in progress notice -->
         {#if model.status === 'training'}
@@ -1094,182 +967,7 @@
     </div>
   {/if}
 
-  {/if}<!-- end activeTab === 'review' / else -->
-
 </div>
-
-<!-- ====================================================
-     Create Model Dialog
-==================================================== -->
-{#if showCreateDialog}
-  <!-- Backdrop + centering wrapper -->
-  <div
-    class="fixed inset-0 z-40 flex items-end justify-center bg-black/50 backdrop-blur-sm sm:items-center"
-    onclick={(e) => { if (e.target === e.currentTarget) closeCreateDialog(); }}
-    onkeydown={(e) => e.key === 'Escape' && closeCreateDialog()}
-    role="button"
-    tabindex="-1"
-    aria-label="Close dialog"
-  >
-
-  <!-- Dialog panel -->
-  <div
-    class="max-h-[85vh] w-full max-w-2xl overflow-y-auto rounded-t-2xl border border-card bg-surface-card p-6 shadow-2xl sm:rounded-2xl sm:p-8"
-    role="dialog"
-    aria-modal="true"
-    aria-labelledby="create-dialog-title"
-    onclick={(e) => e.stopPropagation()}
-  >
-    <div class="mb-6">
-      <h2 id="create-dialog-title" class="text-lg font-semibold text-stone-900">
-        {m.models_create_dialog_title()}
-      </h2>
-      <p class="mt-1 text-sm text-stone-500">
-        {m.models_create_dialog_subtitle()}
-      </p>
-    </div>
-
-    <form
-      class="space-y-5"
-      onsubmit={(e) => { e.preventDefault(); void handleCreate(); }}
-    >
-      <!-- Model name -->
-      <div>
-        <label for="model-name" class="block text-sm font-medium text-stone-700">
-          {m.models_name()} <span class="text-danger">*</span>
-        </label>
-        <input
-          id="model-name"
-          type="text"
-          bind:value={createName}
-          class="mt-1.5 block w-full rounded-lg border border-stone-300 bg-surface-card px-3 py-2 text-sm text-stone-900 placeholder:text-stone-400 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500 dark:border-stone-600"
-          placeholder="e.g. Robin detector v1"
-          required
-        />
-      </div>
-
-      <!-- Description -->
-      <div>
-        <label for="model-description" class="block text-sm font-medium text-stone-700">
-          {m.models_description_label()}
-        </label>
-        <textarea
-          id="model-description"
-          bind:value={createDescription}
-          rows="2"
-          class="mt-1.5 block w-full rounded-lg border border-stone-300 bg-surface-card px-3 py-2 text-sm text-stone-900 placeholder:text-stone-400 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500 dark:border-stone-600"
-          placeholder="Optional description..."
-        ></textarea>
-      </div>
-
-      <!-- Target species -->
-      <div>
-        <span class="block text-sm font-medium text-stone-700">
-          {m.models_target_species()} <span class="text-danger">*</span>
-        </span>
-
-        {#if createSelectedSpecies}
-          <!-- Selected species display -->
-          <div class="mt-1.5 flex items-center justify-between rounded-lg border border-stone-200 bg-stone-50 px-3 py-2 dark:border-stone-700 dark:bg-stone-800/50">
-            <div class="min-w-0 flex-1">
-              <span class="text-sm italic text-stone-900">{createSelectedSpecies.scientific_name}</span>
-              {#if createSelectedSpecies.common_name}
-                <span class="ml-2 text-sm text-stone-500">{createSelectedSpecies.common_name}</span>
-              {/if}
-              {#if !createTargetTagId}
-                <span class="ml-2 rounded-full bg-warning-light px-1.5 py-0.5 text-xs text-warning">
-                  new tag will be created
-                </span>
-
-              {/if}
-            </div>
-            <button
-              type="button"
-              class="ml-2 shrink-0 text-stone-400 transition-colors hover:text-stone-600 dark:hover:text-stone-200"
-              onclick={() => {
-                createSelectedSpecies = null;
-                createTargetTagId = '';
-                showSpeciesSelector = true;
-              }}
-              aria-label="Change species"
-            >
-              <!-- Pencil icon -->
-              <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7" stroke-linecap="round" stroke-linejoin="round" />
-                <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" stroke-linecap="round" stroke-linejoin="round" />
-              </svg>
-            </button>
-          </div>
-        {:else if !showSpeciesSelector}
-          <!-- Trigger button to open selector -->
-          <button
-            type="button"
-            class="mt-1.5 flex w-full items-center gap-2 rounded-lg border border-dashed border-stone-300 bg-surface-card px-3 py-2 text-sm text-stone-500 transition-colors hover:border-primary-400 hover:text-primary-600 dark:border-stone-600 dark:hover:border-primary-500 dark:hover:text-primary-400"
-            onclick={() => { showSpeciesSelector = true; }}
-          >
-            <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-              <circle cx="11" cy="11" r="8" /><path d="m21 21-4.35-4.35" />
-            </svg>
-            Search for a species...
-          </button>
-        {:else}
-          <!-- SpeciesSelector inline panel -->
-          <div class="mt-1.5">
-            <SpeciesSelector
-              {projectId}
-              addedSpeciesIds={new Set()}
-              onAdd={(species) => {
-                createSelectedSpecies = species;
-                createTargetTagId = species.tag_id ?? '';
-                showSpeciesSelector = false;
-              }}
-              onClose={() => { showSpeciesSelector = false; }}
-            />
-          </div>
-        {/if}
-      </div>
-
-      <!-- Error message -->
-      {#if createError}
-        <p class="text-sm text-danger">{createError}</p>
-      {/if}
-
-      <!-- Footer buttons -->
-      <div class="flex justify-end gap-3 pt-2">
-        <button
-          type="button"
-          class="rounded-lg border border-stone-300 px-4 py-2 text-sm font-medium text-stone-700 transition-colors hover:bg-stone-50 dark:border-stone-600 dark:hover:bg-stone-800"
-          onclick={closeCreateDialog}
-          disabled={$createMutationState.isPending || isCreatingTag}
-        >
-          {m.models_cancel()}
-        </button>
-        <button
-          type="submit"
-          class="inline-flex items-center gap-2 rounded-lg bg-primary-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 disabled:opacity-50 dark:bg-primary-500 dark:text-stone-50 dark:hover:bg-primary-400"
-          disabled={$createMutationState.isPending || isCreatingTag}
-        >
-          {#if isCreatingTag}
-            <svg class="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24" aria-hidden="true">
-              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
-            </svg>
-            Creating tag...
-          {:else if $createMutationState.isPending}
-            <svg class="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24" aria-hidden="true">
-              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
-            </svg>
-            {m.models_creating()}
-          {:else}
-            {m.models_create()}
-          {/if}
-        </button>
-      </div>
-    </form>
-  </div>
-  </div>
-{/if}
 
 <!-- ====================================================
      Apply to Dataset Dialog

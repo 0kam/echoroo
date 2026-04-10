@@ -6,7 +6,7 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 
 from echoroo.core.database import DbSession
 from echoroo.core.permissions import check_project_access
@@ -38,12 +38,23 @@ router = APIRouter(prefix="/projects/{project_id}/custom-models", tags=["custom-
 class SeedSamplingBody(BaseModel):
     """Request body for the POST /{model_id}/seed-samples endpoint.
 
-    Combines reference embedding IDs (required for query vectors) with
-    optional sampling configuration overrides.
+    Accepts either reference_embedding_ids (explicit embedding UUIDs to use as
+    query vectors) or search_session_id (to load query vectors from the
+    search_query_embeddings table). Exactly one must be provided.
     """
 
-    reference_embedding_ids: list[UUID]
+    reference_embedding_ids: list[UUID] | None = None
+    search_session_id: UUID | None = None
     config: SeedSamplingRequest | None = None
+
+    @model_validator(mode="after")
+    def check_reference_source(self) -> SeedSamplingBody:
+        """Ensure exactly one reference source is provided."""
+        if not self.reference_embedding_ids and not self.search_session_id:
+            raise ValueError(
+                "Either reference_embedding_ids or search_session_id is required."
+            )
+        return self
 
 
 def get_custom_model_service(db: DbSession) -> CustomModelService:
@@ -102,6 +113,7 @@ async def list_custom_models(
     limit: int = 50,
     offset: int = 0,
     tag_id: UUID | None = None,
+    search_session_id: UUID | None = Query(default=None, description="Filter by source search session"),
 ) -> CustomModelListResponse:
     """List custom models for a project.
 
@@ -113,6 +125,7 @@ async def list_custom_models(
         limit: Maximum number of results to return (default: 50)
         offset: Number of results to skip (default: 0)
         tag_id: Optional target tag filter
+        search_session_id: Optional filter by source search session
 
     Returns:
         Paginated list of custom models
@@ -127,6 +140,7 @@ async def list_custom_models(
         limit=limit,
         offset=offset,
         tag_id=tag_id,
+        search_session_id=search_session_id,
     )
     return CustomModelListResponse(models=models, total=total)
 
@@ -331,12 +345,12 @@ async def train_custom_model(
     await check_project_access(project_id, current_user.id, db)
     model = await get_model_or_404(model_id, project_id, service)
 
-    if model.status not in (CustomModelStatus.DRAFT, CustomModelStatus.FAILED):
+    if model.status not in (CustomModelStatus.DRAFT, CustomModelStatus.FAILED, CustomModelStatus.TRAINED):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=(
                 f"Cannot start training for model with status '{model.status}'. "
-                "Only DRAFT or FAILED models can be trained."
+                "Only DRAFT, FAILED, or TRAINED models can be trained."
             ),
         )
 
@@ -518,24 +532,41 @@ async def create_seed_samples(
     await check_project_access(project_id, current_user.id, db)
     model = await get_model_or_404(model_id, project_id, service)
 
-    if model.status not in (CustomModelStatus.DRAFT, CustomModelStatus.FAILED):
+    if model.status not in (CustomModelStatus.DRAFT, CustomModelStatus.FAILED, CustomModelStatus.TRAINED):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=(
                 f"Cannot start seed sampling for model with status '{model.status}'. "
-                "Only DRAFT or FAILED models are supported."
+                "Only DRAFT, FAILED, or TRAINED models are supported."
             ),
         )
 
-    if not body.reference_embedding_ids:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="reference_embedding_ids must not be empty.",
+    # Resolve reference embedding IDs from search_session_id if not provided directly
+    reference_embedding_ids: list[UUID]
+    if body.search_session_id and not body.reference_embedding_ids:
+        from sqlalchemy import select as _select  # noqa: PLC0415
+
+        from echoroo.models.search_query_embedding import SearchQueryEmbedding  # noqa: PLC0415
+
+        result = await db.execute(
+            _select(SearchQueryEmbedding.id).where(
+                SearchQueryEmbedding.search_session_id == body.search_session_id
+            )
         )
+        ref_ids = [row[0] for row in result.all()]
+        if not ref_ids:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No query embeddings found for this search session.",
+            )
+        reference_embedding_ids = ref_ids
+    else:
+        # body.reference_embedding_ids is guaranteed non-None by model_validator
+        reference_embedding_ids = body.reference_embedding_ids  # type: ignore[assignment]
 
     round_ = await service.create_seed_sampling_round(
         model=model,
-        reference_embedding_ids=body.reference_embedding_ids,
+        reference_embedding_ids=reference_embedding_ids,
         seed_sampling_request=body.config,
     )
 

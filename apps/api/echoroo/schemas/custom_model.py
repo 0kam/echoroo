@@ -24,6 +24,10 @@ class CustomModelCreate(BaseModel):
         default="perch",
         description="Which embedding model's vectors to use for training",
     )
+    search_session_id: UUID | None = Field(
+        default=None,
+        description="Source search session for this model",
+    )
 
 
 class CustomModelUpdate(BaseModel):
@@ -73,6 +77,8 @@ class CustomModelResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     audit_metrics: dict[str, object] | None = None
+    search_session_id: UUID | None = None
+    dataset_id: UUID | None = None
 
 
 class CustomModelListItem(BaseModel):
@@ -91,6 +97,8 @@ class CustomModelListItem(BaseModel):
     completed_at: datetime | None
     created_at: datetime
     updated_at: datetime
+    search_session_id: UUID | None = None
+    dataset_id: UUID | None = None
 
 
 class CustomModelListResponse(BaseModel):

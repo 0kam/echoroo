@@ -26,7 +26,7 @@
   import { createQuery, createMutation, useQueryClient } from '@tanstack/svelte-query';
   import { getSearchSession, listSearchSessions, createAnnotationFromSearch } from '$lib/api/search';
   import { castAnnotationVote, deleteAnnotationVote } from '$lib/api/votes';
-  import { getSamplingRounds, getSamplingRound, suggestNextSamples } from '$lib/api/custom-models';
+  import { getSamplingRounds, getSamplingRound, suggestNextSamples, trainCustomModel } from '$lib/api/custom-models';
   import { createReviewNavigation } from '$lib/utils/reviewNavigation.svelte';
   import type { VoteSummary, VoteValue, SignalQuality } from '$lib/types/detection';
   import type { SamplingRound } from '$lib/types/custom-model';
@@ -163,6 +163,21 @@
   function getRoundWithItems(round: SamplingRound): SamplingRound {
     return roundDetailCache[round.id] ?? round;
   }
+
+  // Rounds merged with detail cache, so TrainingMeter sees populated items
+  // without requiring each round to be expanded first.
+  const sortedRoundsWithItems = $derived<SamplingRound[]>(
+    sortedRounds.map(getRoundWithItems)
+  );
+
+  // Auto-fetch detail for all rounds so TrainingMeter gets accurate counts.
+  $effect(() => {
+    for (const round of sortedRounds) {
+      if (!roundDetailCache[round.id] && !roundDetailLoading.has(round.id)) {
+        fetchRoundDetail(round.id);
+      }
+    }
+  });
 
   function toggleRound(roundId: string) {
     const next = new Set(expandedRoundIds);
@@ -495,7 +510,23 @@
     nav.select(0);
   }
 
-  function handleTrainRequest() {
+  async function handleTrainRequest() {
+    // When viewing a specific model's sampling rounds, directly trigger training.
+    if (modelId && hasSamplingRounds) {
+      try {
+        await trainCustomModel(projectId, modelId);
+        await queryClient.invalidateQueries({
+          queryKey: ['sampling-rounds', projectId, modelId],
+        });
+        await queryClient.invalidateQueries({
+          queryKey: ['custom-models', projectId],
+        });
+      } catch (err) {
+        console.error('Failed to start training:', err);
+      }
+      return;
+    }
+    // Legacy session-based flow: open the create-model dialog with the current session.
     if (selectedSessionId) {
       onTrainRequest(selectedSessionId);
     }
@@ -505,7 +536,10 @@
 <div class="flex gap-6 min-h-0">
   <!-- ============================================
        Left column: session picker
+       Hidden when a model already has sampling rounds — in that case the user
+       is labeling samples for a specific model, not browsing raw sessions.
   ============================================ -->
+  {#if !hasSamplingRounds}
   <div class="w-64 shrink-0 space-y-2">
     <h2 class="text-sm font-semibold text-stone-600 uppercase tracking-wider">
       {m.models_review_sessions_title()}
@@ -554,6 +588,7 @@
       </div>
     {/if}
   </div>
+  {/if}
 
   <!-- ============================================
        Right column: review content
@@ -572,7 +607,7 @@
           agreeCount={0}
           disagreeCount={0}
           totalCount={0}
-          samplingRounds={sortedRounds}
+          samplingRounds={sortedRoundsWithItems}
           onTrainRequest={handleTrainRequest}
         />
 

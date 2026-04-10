@@ -144,6 +144,7 @@ async def _run_batch_search(
                     request=batch_request,
                     audio_files=audio_files_abs,
                     job_id=job_id,
+                    search_session=search_session,
                 )
             except Exception as e:
                 # Update session to FAILED
@@ -184,6 +185,7 @@ async def _run_batch_search_with_progress(
     request: Any,
     audio_files: dict[str, str],
     job_id: str = "",
+    search_session: Any = None,
 ) -> dict[str, Any]:
     """Run batch search with per-species progress updates.
 
@@ -200,6 +202,7 @@ async def _run_batch_search_with_progress(
         request: BatchSearchRequest instance
         audio_files: Mapping of file_key to absolute local file paths
         job_id: Job ID used to locate the temp directory for S3 downloads
+        search_session: Optional SearchSession ORM object for persisting query embeddings
 
     Returns:
         Dict matching BatchSearchResponse schema with string UUIDs
@@ -518,6 +521,35 @@ async def _run_batch_search_with_progress(
         for tmp_p in all_clipped_tmp_paths:
             with contextlib.suppress(OSError):
                 os.unlink(tmp_p)
+
+        # Persist query vectors to the database for later reuse as training examples.
+        # This runs regardless of whether vectors were found, so we only save when
+        # there are vectors and a search session is associated with the job.
+        if query_vectors and search_session is not None:
+            from echoroo.models.search_query_embedding import SearchQueryEmbedding
+
+            source_label: str | None = (
+                species_cfg.scientific_name
+                if hasattr(species_cfg, "scientific_name")
+                else None
+            )
+            for qv in query_vectors:
+                service.db.add(
+                    SearchQueryEmbedding(
+                        search_session_id=search_session.id,
+                        species_key=tag_id_key,
+                        source_label=source_label,
+                        vector=qv,
+                    )
+                )
+            try:
+                await service.db.flush()
+            except Exception:
+                logger.exception(
+                    "Failed to persist query embeddings for species='%s' session=%s",
+                    species_cfg.scientific_name,
+                    search_session.id,
+                )
 
         if not query_vectors:
             logger.warning(

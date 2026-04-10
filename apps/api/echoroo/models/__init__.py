@@ -44,6 +44,7 @@ from echoroo.models.project import Project, ProjectInvitation, ProjectMember
 from echoroo.models.recorder import Recorder
 from echoroo.models.recording import Recording
 from echoroo.models.sampling_round import AuditSetItem, SamplingRound, SamplingRoundItem
+from echoroo.models.search_query_embedding import SearchQueryEmbedding
 from echoroo.models.search_session import SearchSession
 from echoroo.models.site import Site
 from echoroo.models.sound_event_annotation import SoundEventAnnotation, sound_event_annotation_tags
@@ -95,6 +96,7 @@ __all__ = [
     "AuditSetItem",
     # Search session models
     "SearchSession",
+    "SearchQueryEmbedding",
     # ML embedding models
     "Embedding",
     # Upload models

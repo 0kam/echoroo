@@ -43,6 +43,7 @@ class CustomModelRepository(BaseRepository[CustomModel]):
         limit: int = 50,
         offset: int = 0,
         tag_id: UUID | None = None,
+        search_session_id: UUID | None = None,
     ) -> tuple[list[CustomModel], int]:
         """List custom models for a project with optional tag filter and pagination.
 
@@ -51,6 +52,7 @@ class CustomModelRepository(BaseRepository[CustomModel]):
             limit: Maximum number of results to return
             offset: Number of results to skip
             tag_id: Optional target tag filter
+            search_session_id: Optional filter by source search session
 
         Returns:
             Tuple of (models list, total count)
@@ -65,6 +67,10 @@ class CustomModelRepository(BaseRepository[CustomModel]):
         if tag_id is not None:
             query = query.where(CustomModel.target_tag_id == tag_id)
             count_query = count_query.where(CustomModel.target_tag_id == tag_id)
+
+        if search_session_id is not None:
+            query = query.where(CustomModel.search_session_id == search_session_id)
+            count_query = count_query.where(CustomModel.search_session_id == search_session_id)
 
         total_result = await self.db.execute(count_query)
         total = total_result.scalar_one()

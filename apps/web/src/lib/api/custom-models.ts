@@ -23,16 +23,17 @@ const API_BASE = '/api/v1';
  * Fetch all custom models for a project.
  *
  * @param projectId - Project UUID
- * @param params - Optional pagination parameters
+ * @param params - Optional filter/pagination parameters
  * @returns Paginated list of custom models
  */
 export async function fetchCustomModels(
   projectId: string,
-  params?: { limit?: number; offset?: number }
+  params?: { limit?: number; offset?: number; search_session_id?: string }
 ): Promise<CustomModelListResponse> {
   const qs = new URLSearchParams();
   if (params?.limit !== undefined) qs.set('limit', String(params.limit));
   if (params?.offset !== undefined) qs.set('offset', String(params.offset));
+  if (params?.search_session_id !== undefined) qs.set('search_session_id', params.search_session_id);
   const queryString = qs.toString() ? `?${qs.toString()}` : '';
 
   return apiClient.get<CustomModelListResponse>(
@@ -123,33 +124,48 @@ export async function getCustomModelStatus(
 // ============================================================
 
 /**
- * Generate a new seed-sampling round for a custom model.
+ * Options for generating a seed-sampling round.
  *
- * Triggers the backend to run the three-category sampling algorithm
- * (easy positives, boundary, others) using the given reference embeddings.
- *
- * @param projectId - Project UUID
- * @param modelId - Custom model UUID
- * @param referenceEmbeddingIds - IDs of the reference embeddings to sample around
- * @param config - Optional tuning parameters for the sampling algorithm
- * @returns The newly created SamplingRound (status will be 'pending' initially)
+ * Either supply `search_session_id` (to derive reference vectors from the
+ * persisted query embedding) or `reference_embedding_ids` (legacy path).
  */
-export async function generateSeedSamples(
-  projectId: string,
-  modelId: string,
-  referenceEmbeddingIds: string[],
+export interface GenerateSeedSamplesOptions {
+  /** ID of the search session whose query embedding acts as the reference vector */
+  search_session_id?: string;
+  /** Explicit list of embedding IDs to sample around (legacy / fallback) */
+  reference_embedding_ids?: string[];
+  /** Tuning parameters for the three-category sampling algorithm */
   config?: {
     easy_positive_k?: number;
     boundary_n?: number;
     boundary_m?: number;
     others_p?: number;
-  }
+  };
+}
+
+/**
+ * Generate a new seed-sampling round for a custom model.
+ *
+ * Triggers the backend to run the three-category sampling algorithm
+ * (easy positives, boundary, others). Either a `search_session_id` or
+ * `reference_embedding_ids` must be provided.
+ *
+ * @param projectId - Project UUID
+ * @param modelId - Custom model UUID
+ * @param options - Search session ID or explicit embedding IDs, plus optional config
+ * @returns The newly created SamplingRound (status will be 'pending' initially)
+ */
+export async function generateSeedSamples(
+  projectId: string,
+  modelId: string,
+  options: GenerateSeedSamplesOptions
 ): Promise<SamplingRound> {
   return apiClient.post<SamplingRound>(
     `${API_BASE}/projects/${projectId}/custom-models/${modelId}/seed-samples`,
     {
-      reference_embedding_ids: referenceEmbeddingIds,
-      config: config ?? null,
+      search_session_id: options.search_session_id ?? null,
+      reference_embedding_ids: options.reference_embedding_ids ?? null,
+      config: options.config ?? null,
     }
   );
 }

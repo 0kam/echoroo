@@ -1017,6 +1017,8 @@ async def _generate_seed_samples(model_id: str, round_id: str) -> dict[str, Any]
             project_id = model.project_id
             embedding_model_name = model.embedding_model_name
             target_tag_id = model.target_tag_id
+            search_session_id = model.search_session_id
+            dataset_id = model.dataset_id
 
             # ------------------------------------------------------------------
             # Step 2: Mark the SamplingRound as running
@@ -1032,46 +1034,72 @@ async def _generate_seed_samples(model_id: str, round_id: str) -> dict[str, Any]
             await db.flush()
 
             # ------------------------------------------------------------------
-            # Step 3: Read reference embedding IDs from training_config
+            # Step 3: Fetch reference (query) vectors
+            # When search_session_id is set, load vectors from search_query_embeddings.
+            # Otherwise fall back to the reference_embedding_ids stored in training_config.
             # ------------------------------------------------------------------
             training_config: dict[str, Any] = model.training_config or {}
-            reference_embedding_ids: list[str] = training_config.get(
-                "reference_embedding_ids", []
-            )
 
-            if not reference_embedding_ids:
-                raise ValueError(
-                    "No reference_embedding_ids found in model.training_config. "
-                    "Set reference_embedding_ids before dispatching seed sampling."
+            if search_session_id is not None:
+                ref_sql = text("""
+                    SELECT id, vector
+                    FROM search_query_embeddings
+                    WHERE search_session_id = :session_id
+                """)
+                ref_rows = (
+                    await db.execute(
+                        ref_sql,
+                        {"session_id": str(search_session_id)},
+                    )
+                ).fetchall()
+
+                if not ref_rows:
+                    raise ValueError(
+                        f"No query embeddings found for search_session_id={search_session_id}"
+                    )
+
+                logger.info(
+                    "Fetching %d query embeddings from search_query_embeddings for model_id=%s",
+                    len(ref_rows),
+                    model_id,
+                )
+            else:
+                reference_embedding_ids: list[str] = training_config.get(
+                    "reference_embedding_ids", []
                 )
 
-            logger.info(
-                "Fetching %d reference embeddings for model_id=%s",
-                len(reference_embedding_ids),
-                model_id,
-            )
+                if not reference_embedding_ids:
+                    raise ValueError(
+                        "No reference_embedding_ids found in model.training_config. "
+                        "Set reference_embedding_ids before dispatching seed sampling."
+                    )
 
-            # Fetch reference (query) vectors
-            ref_sql = text("""
-                SELECT id, vector
-                FROM embeddings
-                WHERE id = ANY(:embedding_ids)
-                  AND model_name = :embedding_model_name
-            """)
-            ref_rows = (
-                await db.execute(
-                    ref_sql,
-                    {
-                        "embedding_ids": reference_embedding_ids,
-                        "embedding_model_name": embedding_model_name,
-                    },
+                logger.info(
+                    "Fetching %d reference embeddings for model_id=%s",
+                    len(reference_embedding_ids),
+                    model_id,
                 )
-            ).fetchall()
 
-            if not ref_rows:
-                raise ValueError(
-                    f"No reference embeddings found for IDs: {reference_embedding_ids}"
-                )
+                ref_sql = text("""
+                    SELECT id, vector
+                    FROM embeddings
+                    WHERE id = ANY(:embedding_ids)
+                      AND model_name = :embedding_model_name
+                """)
+                ref_rows = (
+                    await db.execute(
+                        ref_sql,
+                        {
+                            "embedding_ids": reference_embedding_ids,
+                            "embedding_model_name": embedding_model_name,
+                        },
+                    )
+                ).fetchall()
+
+                if not ref_rows:
+                    raise ValueError(
+                        f"No reference embeddings found for IDs: {reference_embedding_ids}"
+                    )
 
             query_vectors = _parse_vectors([r.vector for r in ref_rows])
 
@@ -1096,6 +1124,10 @@ async def _generate_seed_samples(model_id: str, round_id: str) -> dict[str, Any]
             top_limit = config.easy_positive_k + config.boundary_n + 5  # small buffer
             avg_query = query_vectors.mean(axis=0).tolist()
 
+            # Build exclude list: ref_rows always have an id column regardless of source
+            exclude_ids_for_near: list[str] = [str(r.id) for r in ref_rows]
+            dataset_id_param: str | None = str(dataset_id) if dataset_id is not None else None
+
             near_sql = text("""
                 SELECT e.id, e.vector, e.recording_id, e.start_time, e.end_time
                 FROM embeddings e
@@ -1104,6 +1136,7 @@ async def _generate_seed_samples(model_id: str, round_id: str) -> dict[str, Any]
                 WHERE d.project_id = :project_id
                   AND e.model_name = :embedding_model_name
                   AND NOT (e.id = ANY(:exclude_ids))
+                  AND (CAST(:dataset_id AS uuid) IS NULL OR d.id = CAST(:dataset_id AS uuid))
                 ORDER BY e.vector <=> :query_vector
                 LIMIT :limit
             """)
@@ -1114,7 +1147,8 @@ async def _generate_seed_samples(model_id: str, round_id: str) -> dict[str, Any]
                     {
                         "project_id": str(project_id),
                         "embedding_model_name": embedding_model_name,
-                        "exclude_ids": reference_embedding_ids,
+                        "exclude_ids": exclude_ids_for_near,
+                        "dataset_id": dataset_id_param,
                         "query_vector": str(avg_query),
                         "limit": top_limit,
                     },
@@ -1129,18 +1163,20 @@ async def _generate_seed_samples(model_id: str, round_id: str) -> dict[str, Any]
                 JOIN datasets d ON r.dataset_id = d.id
                 WHERE d.project_id = :project_id
                   AND e.model_name = :embedding_model_name
+                  AND (CAST(:dataset_id AS uuid) IS NULL OR d.id = CAST(:dataset_id AS uuid))
             """)
             total_count_result = await db.execute(
                 count_sql,
                 {
                     "project_id": str(project_id),
                     "embedding_model_name": embedding_model_name,
+                    "dataset_id": dataset_id_param,
                 },
             )
             total_count = total_count_result.scalar() or 0
 
             near_row_ids = [str(r.id) for r in near_rows]
-            all_exclude_ids = reference_embedding_ids + near_row_ids
+            all_exclude_ids = exclude_ids_for_near + near_row_ids
 
             if total_count > 0:
                 # Target ~1000 rows for "others" pool
@@ -1156,6 +1192,7 @@ async def _generate_seed_samples(model_id: str, round_id: str) -> dict[str, Any]
                     WHERE d.project_id = :project_id
                       AND e.model_name = :embedding_model_name
                       AND NOT (e.id = ANY(:exclude_ids))
+                      AND (CAST(:dataset_id AS uuid) IS NULL OR d.id = CAST(:dataset_id AS uuid))
                     LIMIT 1000
                 """)
                 others_rows = (
@@ -1166,6 +1203,7 @@ async def _generate_seed_samples(model_id: str, round_id: str) -> dict[str, Any]
                             "project_id": str(project_id),
                             "embedding_model_name": embedding_model_name,
                             "exclude_ids": all_exclude_ids,
+                            "dataset_id": dataset_id_param,
                         },
                     )
                 ).fetchall()
