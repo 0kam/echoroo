@@ -54,6 +54,12 @@
      */
     compact?: boolean;
     /**
+     * When true, the Agree button skips the signal-quality popover and agrees
+     * directly without signal_quality. Pass-through to ReviewActions.
+     * Default: false.
+     */
+    simpleMode?: boolean;
+    /**
      * Whether this card's audio is currently playing, controlled by a parent
      * navigation hook. When provided, the play button reflects this state
      * instead of the internal player's state.
@@ -68,6 +74,13 @@
      * playback control to the parent instead of using the internal player.
      */
     onPlayToggle?: () => void;
+    /**
+     * Optional callback invoked when the user clicks (or activates via keyboard)
+     * the spectrogram area. When provided, the spectrogram wrapper becomes a
+     * focusable button that calls this handler, enabling click-to-select behaviour
+     * in parent list/grid components.
+     */
+    onClickSelect?: () => void;
     /**
      * Optional snippet injected at the top of the card body,
      * before recording name and time range.
@@ -98,9 +111,11 @@
     onVote,
     onRemoveVote,
     compact = false,
+    simpleMode = false,
     externalIsPlaying,
     externalIsLoadingAudio,
     onPlayToggle,
+    onClickSelect,
     extraHeader,
     extraBody,
   }: Props = $props();
@@ -142,7 +157,9 @@
     return `${formatTime(start)} \u2013 ${formatTime(end)}`;
   }
 
-  function handlePlayToggle() {
+  function handlePlayToggle(event: MouseEvent) {
+    // Prevent click from bubbling up to the spectrogram wrapper's onClickSelect handler
+    event.stopPropagation();
     if (onPlayToggle) {
       onPlayToggle();
     } else {
@@ -150,9 +167,9 @@
     }
   }
 
-  function handleAgree(signalQuality: SignalQuality) {
+  function handleAgree(signalQuality: SignalQuality | undefined) {
     internalPlayer?.stop();
-    onAgree?.(signalQuality);
+    onAgree?.(signalQuality as SignalQuality);
   }
 
   function handleVote(vote: VoteValue) {
@@ -186,7 +203,23 @@
   {/if}
 
   <!-- Spectrogram + overlaid controls -->
-  <div class="relative">
+  <!-- When onClickSelect is provided, the wrapper becomes a focusable button-like region -->
+  <div
+    class="relative {onClickSelect ? 'cursor-pointer' : ''}"
+    role={onClickSelect ? 'button' : undefined}
+    tabindex={onClickSelect ? 0 : undefined}
+    onclick={onClickSelect ? () => onClickSelect?.() : undefined}
+    onkeydown={onClickSelect
+      ? (e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            e.stopPropagation();
+            onClickSelect?.();
+          }
+        }
+      : undefined}
+    aria-label={onClickSelect ? `Select sample: ${recordingName}` : undefined}
+  >
     <MiniSpectrogram
       {projectId}
       {recordingId}
@@ -259,6 +292,7 @@
       {voteSummary}
       {isLoading}
       {compact}
+      {simpleMode}
       onAgree={handleAgree}
       onVote={handleVote}
       onRemoveVote={handleRemoveVote}

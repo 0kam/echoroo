@@ -11,11 +11,13 @@
    * colour-coded from red (very uncertain) to green (more confident).
    */
 
+  import { onDestroy } from 'svelte';
   import * as m from '$lib/paraglide/messages';
   import { castAnnotationVote, deleteAnnotationVote } from '$lib/api/votes';
   import type { SamplingRound, SamplingRoundItem } from '$lib/types/custom-model';
   import type { VoteSummary, VoteValue, SignalQuality } from '$lib/types/detection';
   import ReviewCard from '$lib/components/common/ReviewCard.svelte';
+  import { createReviewNavigation } from '$lib/utils/reviewNavigation.svelte';
 
   interface Props {
     projectId: string;
@@ -35,6 +37,12 @@
   let loadingIds = $state<Set<string>>(new Set());
 
   // ============================================================
+  // Keyboard navigation state
+  // ============================================================
+
+  let cardElements = $state<(HTMLElement | null)[]>([]);
+
+  // ============================================================
   // Derived: items sorted by |decision_distance| ascending
   // ============================================================
 
@@ -45,6 +53,42 @@
       return da - db;
     });
   });
+
+  /** Reviewable items only (must have recording_id and valid times) */
+  const reviewableItems = $derived(
+    sortedItems.filter(
+      (it) => it.recording_id && it.start_time !== null && it.end_time !== null
+    )
+  );
+
+  const nav = createReviewNavigation({
+    projectId,
+    simpleMode: true,
+    itemCount: () => reviewableItems.length,
+    // Legacy callbacks not used in simple mode — provide no-op stubs
+    onConfirm: () => {},
+    onReject: () => {},
+    onAgree: (i) => {
+      const item = reviewableItems[i];
+      if (item) handleVote(item, 'agree', undefined);
+    },
+    onDisagree: (i) => {
+      const item = reviewableItems[i];
+      if (item) handleVote(item, 'disagree', undefined);
+    },
+    onUnsure: (i) => {
+      const item = reviewableItems[i];
+      if (item) handleVote(item, 'unsure', undefined);
+    },
+    getPlaybackInfo: (i) => {
+      const item = reviewableItems[i];
+      if (!item || !item.recording_id || item.start_time === null || item.end_time === null) return null;
+      return { recordingId: item.recording_id, startTime: item.start_time, endTime: item.end_time };
+    },
+    getElement: (i) => cardElements[i] ?? null,
+  });
+
+  onDestroy(() => nav.cleanup());
 
   // ============================================================
   // Decision-distance badge colour helper
@@ -85,7 +129,7 @@
   async function handleVote(
     item: SamplingRoundItem,
     vote: VoteValue,
-    signalQuality?: SignalQuality
+    signalQuality?: SignalQuality | undefined
   ) {
     const annotationId = item.annotation_id;
     if (!annotationId) return;
@@ -119,7 +163,18 @@
   }
 </script>
 
+<svelte:window onkeydown={nav.handleKeydown} />
+
 <div class="space-y-4">
+  <!-- Keyboard shortcut hint -->
+  <div class="flex flex-wrap gap-x-4 gap-y-1 text-xs text-stone-400">
+    <span><kbd class="rounded border border-stone-200 bg-stone-50 px-1 font-mono text-[10px] dark:border-stone-700 dark:bg-stone-800">1</kbd> {m.review_keyboard_agree()}</span>
+    <span><kbd class="rounded border border-stone-200 bg-stone-50 px-1 font-mono text-[10px] dark:border-stone-700 dark:bg-stone-800">2</kbd> {m.review_keyboard_disagree()}</span>
+    <span><kbd class="rounded border border-stone-200 bg-stone-50 px-1 font-mono text-[10px] dark:border-stone-700 dark:bg-stone-800">3</kbd> {m.review_keyboard_unsure()}</span>
+    <span><kbd class="rounded border border-stone-200 bg-stone-50 px-1 font-mono text-[10px] dark:border-stone-700 dark:bg-stone-800">Space</kbd> {m.review_keyboard_play()}</span>
+    <span><kbd class="rounded border border-stone-200 bg-stone-50 px-1 font-mono text-[10px] dark:border-stone-700 dark:bg-stone-800">↑↓</kbd> {m.review_keyboard_navigate()}</span>
+  </div>
+
   <!-- Round header -->
   <div class="flex items-center gap-3">
     <span class="text-sm font-semibold text-stone-700 dark:text-stone-300">
@@ -171,32 +226,36 @@
     </div>
   {:else if round.status === 'completed'}
     <!-- Horizontal scroll lane sorted by |decision_distance| ascending -->
-    {#if sortedItems.length === 0}
+    {#if reviewableItems.length === 0}
       <p class="pl-1 text-xs italic text-stone-400">{m.models_review_lane_empty()}</p>
     {:else}
       <div class="flex gap-3 overflow-x-auto pb-2">
-        {#each sortedItems as item (item.id)}
-          {#if item.recording_id && item.start_time !== null && item.end_time !== null}
-            <div class="w-48 shrink-0">
-              <ReviewCard
-                {projectId}
-                recordingId={item.recording_id}
-                recordingName={item.recording_id}
-                startTime={item.start_time}
-                endTime={item.end_time}
-                status="unreviewed"
-                scoreValue={item.decision_distance}
-                scoreLabel="distance"
-                scoreBadgeClass={distanceBadgeClass(item.decision_distance)}
-                isLoading={loadingIds.has(item.annotation_id)}
-                voteSummary={voteSummaryCache[item.annotation_id] ?? null}
-                compact={true}
-                onAgree={(sq) => handleVote(item, 'agree', sq)}
-                onVote={(v) => handleVote(item, v)}
-                onRemoveVote={() => handleRemoveVote(item)}
-              />
-            </div>
-          {/if}
+        {#each reviewableItems as item, globalIndex (item.id)}
+          <div class="w-48 shrink-0" bind:this={cardElements[globalIndex]}>
+            <ReviewCard
+              {projectId}
+              recordingId={item.recording_id!}
+              recordingName={item.recording_id!}
+              startTime={item.start_time!}
+              endTime={item.end_time!}
+              status="unreviewed"
+              scoreValue={item.decision_distance}
+              scoreLabel="distance"
+              scoreBadgeClass={distanceBadgeClass(item.decision_distance)}
+              isLoading={loadingIds.has(item.annotation_id)}
+              voteSummary={voteSummaryCache[item.annotation_id] ?? null}
+              compact={true}
+              simpleMode={true}
+              isSelected={nav.selectedIndex === globalIndex}
+              externalIsPlaying={nav.playingIndex === globalIndex && nav.isPlaying}
+              externalIsLoadingAudio={nav.playingIndex === globalIndex && nav.isLoadingAudio}
+              onPlayToggle={() => nav.togglePlay(globalIndex)}
+              onClickSelect={() => nav.select(globalIndex)}
+              onAgree={(sq) => handleVote(item, 'agree', sq)}
+              onVote={(v) => handleVote(item, v)}
+              onRemoveVote={() => handleRemoveVote(item)}
+            />
+          </div>
         {/each}
       </div>
     {/if}

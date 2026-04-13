@@ -33,6 +33,8 @@
     sessionId?: string | null;
     /** Called when the selected species tab changes */
     onSpeciesKeyChange?: (speciesKey: string | null) => void;
+    /** Called when the user clicks "Train Model on these results" */
+    onTrainModelRequest?: (speciesKey: string, speciesMeta: SpeciesMatchResult) => void;
   }
 
   let {
@@ -43,6 +45,7 @@
     searchingSpecies,
     sessionId = null,
     onSpeciesKeyChange,
+    onTrainModelRequest,
   }: Props = $props();
 
   // ============================================================================
@@ -367,6 +370,22 @@
         >
           {m.search_filter_apply()}
         </button>
+
+        <!-- Train Model button — only shown when a session exists and a species is selected -->
+        {#if sessionId && onTrainModelRequest}
+          <button
+            type="button"
+            class="ml-auto rounded-md bg-primary-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-primary-700 active:bg-primary-800 disabled:cursor-not-allowed disabled:opacity-50"
+            disabled={!selectedSpeciesKey || !results?.[selectedSpeciesKey]}
+            onclick={() => {
+              if (selectedSpeciesKey && results?.[selectedSpeciesKey]) {
+                onTrainModelRequest?.(selectedSpeciesKey, results[selectedSpeciesKey] as SpeciesMatchResult);
+              }
+            }}
+          >
+            {m.search_results_train_model_button()}
+          </button>
+        {/if}
       </div>
 
       <!-- ================================================================ -->

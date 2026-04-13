@@ -31,14 +31,26 @@ export interface ReviewNavigationOptions {
   onAgreeDominant?: (index: number) => void;
   /** Called when agree-mixed vote is triggered (keyboard 3) on the selected item */
   onAgreeMixed?: (index: number) => void;
-  /** Called when disagree vote is triggered (keyboard D) on the selected item */
+  /**
+   * Simple agree callback used when simpleMode=true.
+   * When provided and simpleMode is true, key "1" triggers this instead of
+   * the onAgreeSolo/Dominant/Mixed trio.
+   */
+  onAgree?: (index: number) => void;
+  /** Called when disagree vote is triggered (keyboard 2 in simpleMode, D otherwise) on the selected item */
   onDisagree?: (index: number) => void;
-  /** Called when unsure vote is triggered (keyboard U) on the selected item */
+  /** Called when unsure vote is triggered (keyboard 3 in simpleMode, U otherwise) on the selected item */
   onUnsure?: (index: number) => void;
   /** Return recording info for the item at `index` to play audio, or null to skip */
   getPlaybackInfo: (index: number) => PlaybackInfo | null;
   /** Return the DOM element for the item at `index` (for scroll-into-view) */
   getElement: (index: number) => HTMLElement | null;
+  /**
+   * When true, keyboard shortcuts are remapped for signal-quality-free review:
+   *   1 = Agree (no quality), 2 = Disagree, 3 = Unsure, Space = Play, ↑↓/←→ = Navigate
+   * When false (default), legacy mode: 1=Solo, 2=Dominant, 3=Mixed, D=Disagree, U=Unsure
+   */
+  simpleMode?: boolean;
 }
 
 export interface ReviewNavigation {
@@ -153,6 +165,52 @@ export function createReviewNavigation(options: ReviewNavigationOptions): Review
     const count = options.itemCount();
     if (count === 0) return;
 
+    if (options.simpleMode) {
+      // Simple mode: 1=Agree, 2=Disagree, 3=Unsure, Space=Play, ↑↓/←→=Navigate
+      switch (e.key) {
+        case ' ':
+          e.preventDefault();
+          togglePlayAtIndex(selectedIndex);
+          break;
+
+        case '1':
+          e.preventDefault();
+          options.onAgree?.(selectedIndex);
+          break;
+
+        case '2':
+          e.preventDefault();
+          options.onDisagree?.(selectedIndex);
+          break;
+
+        case '3':
+          e.preventDefault();
+          options.onUnsure?.(selectedIndex);
+          break;
+
+        case 'ArrowDown':
+        case 'ArrowRight':
+          e.preventDefault();
+          stopPlayback();
+          selectedIndex = Math.min(selectedIndex + 1, count - 1);
+          scrollIntoView();
+          break;
+
+        case 'ArrowUp':
+        case 'ArrowLeft':
+          e.preventDefault();
+          stopPlayback();
+          selectedIndex = Math.max(selectedIndex - 1, 0);
+          scrollIntoView();
+          break;
+
+        default:
+          return; // Don't call preventDefault for unhandled keys
+      }
+      return;
+    }
+
+    // Legacy mode: 1=Solo, 2=Dominant, 3=Mixed, D=Disagree, U=Unsure
     switch (e.key) {
       case ' ':
         e.preventDefault();

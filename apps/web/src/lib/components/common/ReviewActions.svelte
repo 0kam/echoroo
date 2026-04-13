@@ -34,6 +34,13 @@
      * Use on narrow cards to prevent text overflow.
      */
     compact?: boolean;
+    /**
+     * When true, the Agree button bypasses the signal-quality popover and
+     * calls onAgree(undefined) directly. Use for model draft review screens
+     * where signal_quality is not used by the training logic.
+     * Default: false (preserves existing popover behaviour).
+     */
+    simpleMode?: boolean;
   }
 
   let {
@@ -43,6 +50,7 @@
     onVote,
     onRemoveVote,
     compact = false,
+    simpleMode = false,
   }: Props = $props();
 
   const myVote = $derived(voteSummary?.user_vote ?? null);
@@ -96,6 +104,11 @@
       onRemoveVote?.();
       return;
     }
+    if (simpleMode) {
+      // In simple mode, skip the popover and agree directly without signal quality
+      onAgree?.(undefined as unknown as SignalQuality);
+      return;
+    }
     openPopover();
   }
 
@@ -120,6 +133,10 @@
     if (compact) {
       // In compact mode, show count only (or nothing when zero)
       return agreeCount > 0 ? String(agreeCount) : '';
+    }
+    if (simpleMode) {
+      // In simple mode, show "Agree" or the count — no signal quality breakdown
+      return agreeCount > 0 ? String(agreeCount) : m.vote_agree_button();
     }
     if (agreeCount === 0) return m.vote_agree_button();
     if (agreeCount > 0) {
@@ -177,8 +194,8 @@
       title={myVote === 'agree' ? m.vote_agree_title_active() : m.vote_agree_title()}
       aria-label={m.vote_agree_aria()}
       aria-pressed={myVote === 'agree'}
-      aria-haspopup="listbox"
-      aria-expanded={popoverOpen}
+      aria-haspopup={simpleMode ? undefined : 'listbox'}
+      aria-expanded={simpleMode ? undefined : popoverOpen}
     >
       {#if isLoading && myVote === 'agree'}
         <svg class="h-3 w-3 animate-spin" viewBox="0 0 24 24" fill="none">
@@ -194,16 +211,16 @@
       {#if agreeButtonLabel()}
         <span>{agreeButtonLabel()}</span>
       {/if}
-      <!-- Chevron indicator when not yet agreed -->
-      {#if myVote !== 'agree'}
+      <!-- Chevron indicator when not yet agreed (hidden in simple mode) -->
+      {#if !simpleMode && myVote !== 'agree'}
         <svg class="h-2.5 w-2.5 opacity-60" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
           <path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd" />
         </svg>
       {/if}
     </button>
 
-    <!-- Signal quality popover -->
-    {#if popoverOpen}
+    <!-- Signal quality popover (only rendered when not in simple mode) -->
+    {#if !simpleMode && popoverOpen}
       <div
         class="absolute bottom-full left-0 z-50 mb-1 w-48 rounded-lg border border-stone-200 bg-surface-card shadow-lg"
         role="listbox"
