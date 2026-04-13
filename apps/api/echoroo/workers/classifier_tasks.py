@@ -1045,17 +1045,20 @@ async def _generate_seed_samples(model_id: str, round_id: str) -> dict[str, Any]
                     SELECT id, vector
                     FROM search_query_embeddings
                     WHERE search_session_id = :session_id
+                      AND species_key = :species_key
                 """)
+                species_key = str(target_tag_id)
                 ref_rows = (
                     await db.execute(
                         ref_sql,
-                        {"session_id": str(search_session_id)},
+                        {"session_id": str(search_session_id), "species_key": species_key},
                     )
                 ).fetchall()
 
                 if not ref_rows:
                     raise ValueError(
-                        f"No query embeddings found for search_session_id={search_session_id}"
+                        f"No query embeddings found for search_session_id={search_session_id}, "
+                        f"species_key={species_key}"
                     )
 
                 logger.info(

@@ -549,9 +549,9 @@ async def create_seed_samples(
         from echoroo.models.search_query_embedding import SearchQueryEmbedding  # noqa: PLC0415
 
         result = await db.execute(
-            _select(SearchQueryEmbedding.id).where(
-                SearchQueryEmbedding.search_session_id == body.search_session_id
-            )
+            _select(SearchQueryEmbedding.id)
+            .where(SearchQueryEmbedding.search_session_id == body.search_session_id)
+            .where(SearchQueryEmbedding.species_key == str(model.target_tag_id))
         )
         ref_ids = [row[0] for row in result.all()]
         if not ref_ids:
