@@ -7,7 +7,10 @@
 # Commands:
 #   start (default) - Start containers
 #   stop            - Stop containers
-#   restart [svc]   - Restart containers or specific service
+#   restart [svc]   - Restart containers or specific service.
+#                     Use "workers" to restart both worker and worker-cpu
+#                     (required after editing classifier_tasks.py or any
+#                     file imported by the CPU queue).
 #   logs [service]  - Show logs
 #   status          - Show container status
 #   shell [service] - Open shell in container
@@ -105,8 +108,17 @@ case $COMMAND in
         ;;
     restart)
         if [ -n "$SERVICE" ]; then
-            info "Restarting $SERVICE..."
-            $COMPOSE restart "$SERVICE"
+            # "workers" is an alias that restarts both worker queues at once.
+            # Required after editing classifier_tasks.py / sampling.py / any
+            # module imported by the CPU queue, since the default
+            # "restart worker" only touches the GPU worker container.
+            if [ "$SERVICE" = "workers" ]; then
+                info "Restarting worker + worker-cpu..."
+                $COMPOSE restart worker worker-cpu
+            else
+                info "Restarting $SERVICE..."
+                $COMPOSE restart "$SERVICE"
+            fi
         else
             info "Restarting $ENV environment..."
             $COMPOSE down
