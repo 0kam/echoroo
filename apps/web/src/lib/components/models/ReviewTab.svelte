@@ -203,9 +203,14 @@
       await queryClient.invalidateQueries({
         queryKey: ['custom-models', projectId],
       });
+      await queryClient.invalidateQueries({
+        queryKey: ['custom-model', projectId, modelId],
+      });
     } catch (err) {
       console.error('Failed to start training:', err);
     }
+    // Notify parent after all invalidations so it can react to updated state
+    onTrainRequest();
   }
 </script>
 

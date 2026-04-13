@@ -35,6 +35,7 @@
   import { toasts } from '$lib/stores/toast';
   import type { CustomModel, AuditMetrics } from '$lib/types/custom-model';
   import { getCustomModelStatusClass, getCustomModelStatusLabel } from '$lib/utils/statusFormatters';
+  import ReviewTab from '$lib/components/models/ReviewTab.svelte';
 
   const projectId = $derived($page.params.id as string);
   const queryClient = useQueryClient();
@@ -45,6 +46,18 @@
 
   let viewMode = $state<'list' | 'detail'>('list');
   let selectedModelId = $state<string | null>(null);
+
+  // Process deep-link (?model=<id>) only once on mount
+  let initialDeepLinkProcessed = $state(false);
+  $effect(() => {
+    if (initialDeepLinkProcessed) return;
+    initialDeepLinkProcessed = true;
+    const modelParam = $page.url.searchParams.get('model');
+    if (modelParam) {
+      selectedModelId = modelParam;
+      viewMode = 'detail';
+    }
+  });
 
   // ============================================
   // Delete confirmation state
@@ -267,6 +280,9 @@
   function handleSelectModel(modelId: string) {
     selectedModelId = modelId;
     viewMode = 'detail';
+    const url = new URL(window.location.href);
+    url.searchParams.set('model', modelId);
+    history.replaceState({}, '', url.toString());
   }
 
   function handleBackToList() {
@@ -275,6 +291,9 @@
     selectedModelId = null;
     viewMode = 'list';
     metricsTab = 'internal';
+    const url = new URL(window.location.href);
+    url.searchParams.delete('model');
+    history.replaceState({}, '', url.toString());
   }
 
   // ============================================
@@ -379,7 +398,7 @@
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
           </svg>
           <h2 class="mt-4 text-base font-semibold text-stone-700">No trained models yet</h2>
-          <p class="mt-1 text-sm text-stone-500">Create models from Search sessions.</p>
+          <p class="mt-1 text-sm text-stone-500">{m.models_empty_create_from_search()}</p>
           <a
             href={localizeHref(`/projects/${projectId}/search`)}
             class="mt-6 inline-flex items-center gap-2 rounded-lg bg-primary-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-primary-700 dark:bg-primary-500 dark:text-stone-50 dark:hover:bg-primary-400"
@@ -439,7 +458,21 @@
                 <!-- Right: action buttons -->
                 <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
                 <div class="flex shrink-0 items-center gap-2" onclick={(e) => e.stopPropagation()} role="group">
-                  {#if model.status === 'draft' || model.status === 'failed'}
+                  {#if model.status === 'draft'}
+                    <!-- Draft: navigate to detail view with ReviewTab instead of direct train -->
+                    <button
+                      type="button"
+                      class="inline-flex items-center gap-1.5 rounded-lg border border-primary-300 bg-primary-50 px-3 py-1.5 text-xs font-medium text-primary-700 transition-colors hover:bg-primary-100 dark:border-primary-700 dark:bg-primary-900/20 dark:text-primary-400 dark:hover:bg-primary-900/40"
+                      onclick={() => handleSelectModel(model.id)}
+                    >
+                      <svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                      {m.models_review_and_train()}
+                    </button>
+                  {:else if model.status === 'failed'}
+                    <!-- Failed: allow quick retry train -->
                     <button
                       type="button"
                       class="inline-flex items-center gap-1.5 rounded-lg border border-primary-300 bg-primary-50 px-3 py-1.5 text-xs font-medium text-primary-700 transition-colors hover:bg-primary-100 dark:border-primary-700 dark:bg-primary-900/20 dark:text-primary-400 dark:hover:bg-primary-900/40 disabled:opacity-50"
@@ -553,7 +586,7 @@
                   {m.models_apply()}
                 </button>
               {/if}
-              {#if model.status === 'draft' || model.status === 'failed'}
+              {#if model.status === 'failed'}
                 <button
                   type="button"
                   class="inline-flex items-center gap-2 rounded-lg bg-primary-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 disabled:opacity-50 dark:bg-primary-500 dark:text-stone-50 dark:hover:bg-primary-400"
@@ -587,7 +620,7 @@
           <div class="flex flex-wrap gap-3 rounded-lg border border-stone-200 bg-stone-50 px-4 py-3 dark:border-stone-700 dark:bg-stone-800/40">
             <span class="text-xs font-medium text-stone-500 self-center">Origin:</span>
             <a
-              href={localizeHref(`/projects/${projectId}/search`)}
+              href={localizeHref(`/projects/${projectId}/search?session=${model.search_session_id}`)}
               class="inline-flex items-center gap-1.5 text-sm text-primary-600 hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300"
             >
               <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
@@ -598,7 +631,7 @@
             {#if model.status === 'draft' || model.status === 'training' || model.status === 'failed'}
               <span class="text-stone-300 dark:text-stone-600 self-center">|</span>
               <a
-                href={localizeHref(`/projects/${projectId}/search`)}
+                href={localizeHref(`/projects/${projectId}/search?session=${model.search_session_id}`)}
                 class="inline-flex items-center gap-1.5 text-sm text-warning hover:opacity-80"
               >
                 <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
@@ -625,6 +658,22 @@
         {#if model.error_message}
           <div class="rounded-lg border border-danger/30 bg-danger-light p-4 text-sm text-danger">
             <span class="font-medium">{m.models_error_prefix()}</span> {model.error_message}
+          </div>
+        {/if}
+
+        <!-- Review & Labeling section (draft/failed models) -->
+        {#if model.status === 'draft' || model.status === 'failed'}
+          <div class="rounded-xl border border-card bg-surface-card p-5 shadow-sm">
+            <h2 class="mb-4 text-base font-semibold text-stone-800 dark:text-stone-200">
+              {m.models_review_and_labeling()}
+            </h2>
+            <ReviewTab
+              {projectId}
+              modelId={model.id}
+              onTrainRequest={() => {
+                queryClient.invalidateQueries({ queryKey: ['custom-model', projectId, model.id] });
+              }}
+            />
           </div>
         {/if}
 

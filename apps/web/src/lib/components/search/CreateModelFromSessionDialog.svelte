@@ -10,6 +10,7 @@
    * can retry sampling manually.
    */
 
+  import * as m from '$lib/paraglide/messages';
   import { createTag } from '$lib/api/tags';
   import { createCustomModel, generateSeedSamples } from '$lib/api/custom-models';
   import type { SearchSession } from '$lib/types/search';
@@ -28,7 +29,7 @@
     speciesConfig: SpeciesConfig;
     open: boolean;
     onClose: () => void;
-    onSuccess: (modelId: string) => void;
+    onSuccess: (modelId: string, opts?: { samplingFailed?: boolean; error?: string }) => void;
   }
 
   let { projectId, session, speciesConfig, open, onClose, onSuccess }: Props = $props();
@@ -107,11 +108,10 @@
           },
         });
       } catch (samplingErr) {
-        // Sampling failed but model was created — let user navigate and retry
-        const msg =
+        // Sampling failed but model was created — navigate to model page with failure info
+        const errorMessage =
           samplingErr instanceof Error ? samplingErr.message : String(samplingErr);
-        error = `Model created but sampling failed: ${msg}. You can retry sampling on the model page.`;
-        onSuccess(model.id);
+        onSuccess(model.id, { samplingFailed: true, error: errorMessage });
         return;
       }
 
@@ -157,7 +157,7 @@
           id="create-model-dialog-title"
           class="text-base font-semibold text-stone-900 dark:text-stone-100"
         >
-          Train Model from Search
+          {m.models_train_from_search_title()}
         </h2>
         <button
           type="button"

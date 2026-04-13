@@ -39,6 +39,18 @@
   let viewMode = $state<'list' | 'detail' | 'new-search'>('list');
   let selectedSessionId = $state<string | null>(null);
 
+  // Deep-link support: restore session from ?session=<id> on initial mount
+  let deepLinkInitialized = $state(false);
+  $effect(() => {
+    if (deepLinkInitialized) return;
+    deepLinkInitialized = true;
+    const sessionParam = $page.url.searchParams.get('session');
+    if (sessionParam) {
+      selectedSessionId = sessionParam;
+      viewMode = 'detail';
+    }
+  });
+
   // ============================================
   // Search state
   // ============================================
@@ -229,6 +241,10 @@
   function handleSelectSession(sessionId: string) {
     selectedSessionId = sessionId;
     viewMode = 'detail';
+    // Sync session ID to URL for deep-link support
+    const url = new URL(window.location.href);
+    url.searchParams.set('session', sessionId);
+    history.replaceState({}, '', url.toString());
   }
 
   /**
@@ -237,6 +253,10 @@
   function handleBackToList() {
     selectedSessionId = null;
     viewMode = 'list';
+    // Remove session param from URL when navigating back to list
+    const url = new URL(window.location.href);
+    url.searchParams.delete('session');
+    history.replaceState({}, '', url.toString());
   }
 
   /**
