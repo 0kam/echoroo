@@ -6,6 +6,7 @@
   import { adminApi } from '$lib/api/admin';
   import { ApiError } from '$lib/api/client';
   import { getLocale } from '$lib/paraglide/runtime';
+  import * as m from '$lib/paraglide/messages';
   import type { User } from '$lib/types';
 
   // State
@@ -42,7 +43,7 @@
       if (err instanceof ApiError) {
         error = err.detail || err.message;
       } else {
-        error = 'Failed to load users';
+        error = m.admin_users_error_load();
       }
     } finally {
       isLoading = false;
@@ -102,7 +103,9 @@
 
       // Update local state
       user.is_active = !user.is_active;
-      successMessage = `User ${user.is_active ? 'activated' : 'deactivated'} successfully`;
+      successMessage = user.is_active
+        ? m.admin_users_success_activated()
+        : m.admin_users_success_deactivated();
 
       // Clear success message after 3 seconds
       setTimeout(() => {
@@ -112,7 +115,7 @@
       if (err instanceof ApiError) {
         error = err.detail || err.message;
       } else {
-        error = 'Failed to update user';
+        error = m.admin_users_error_update();
       }
     }
   }
@@ -128,7 +131,9 @@
 
       // Update local state
       user.is_superuser = !user.is_superuser;
-      successMessage = `User ${user.is_superuser ? 'promoted to' : 'demoted from'} superuser`;
+      successMessage = user.is_superuser
+        ? m.admin_users_success_promoted()
+        : m.admin_users_success_demoted();
 
       // Clear success message after 3 seconds
       setTimeout(() => {
@@ -138,7 +143,7 @@
       if (err instanceof ApiError) {
         error = err.detail || err.message;
       } else {
-        error = 'Failed to update user';
+        error = m.admin_users_error_update();
       }
     }
   }
@@ -164,14 +169,14 @@
 </script>
 
 <svelte:head>
-  <title>User Management - Admin - Echoroo</title>
+  <title>{m.admin_users_heading()} - Admin - Echoroo</title>
 </svelte:head>
 
 <div class="px-8 py-6">
   <!-- Header -->
   <div class="mb-6">
-    <h1 class="text-3xl font-bold text-stone-900">User Management</h1>
-    <p class="mt-2 text-sm text-stone-600">Manage user accounts and permissions</p>
+    <h1 class="text-3xl font-bold text-stone-900">{m.admin_users_heading()}</h1>
+    <p class="mt-2 text-sm text-stone-600">{m.admin_users_description()}</p>
   </div>
 
   <!-- Success Message -->
@@ -228,7 +233,7 @@
   <div class="mb-6 flex flex-col gap-4 sm:flex-row">
     <!-- Search -->
     <div class="flex-1">
-      <label for="search" class="sr-only">Search users</label>
+      <label for="search" class="sr-only">{m.admin_users_search_placeholder()}</label>
       <div class="relative">
         <div class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
           <svg class="h-5 w-5 text-stone-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -245,7 +250,7 @@
           id="search"
           value={search}
           oninput={handleSearch}
-          placeholder="Search by email or name..."
+          placeholder={m.admin_users_search_placeholder()}
           class="block w-full rounded-lg border border-stone-300 bg-surface-card py-2 pl-10 pr-3 text-sm focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
         />
       </div>
@@ -253,15 +258,15 @@
 
     <!-- Status Filter -->
     <div class="sm:w-48">
-      <label for="status-filter" class="sr-only">Filter by status</label>
+      <label for="status-filter" class="sr-only">{m.admin_users_table_status()}</label>
       <select
         id="status-filter"
         onchange={handleFilterChange}
         class="block w-full rounded-lg border border-stone-300 bg-surface-card py-2 pl-3 pr-10 text-sm focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
       >
-        <option value="all">All Users</option>
-        <option value="active">Active Only</option>
-        <option value="inactive">Inactive Only</option>
+        <option value="all">{m.admin_users_filter_all()}</option>
+        <option value="active">{m.admin_users_filter_active()}</option>
+        <option value="inactive">{m.admin_users_filter_inactive()}</option>
       </select>
     </div>
   </div>
@@ -300,8 +305,8 @@
           d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"
         />
       </svg>
-      <h3 class="mt-2 text-sm font-medium text-stone-900">No users found</h3>
-      <p class="mt-1 text-sm text-stone-500">Try adjusting your search or filters.</p>
+      <h3 class="mt-2 text-sm font-medium text-stone-900">{m.admin_users_empty_title()}</h3>
+      <p class="mt-1 text-sm text-stone-500">{m.admin_users_empty_description()}</p>
     </div>
   {:else}
     <div class="overflow-hidden rounded-lg border border-card bg-surface-card shadow-sm">
@@ -313,37 +318,37 @@
                 scope="col"
                 class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-stone-500"
               >
-                Email
+                {m.admin_users_table_email()}
               </th>
               <th
                 scope="col"
                 class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-stone-500"
               >
-                Display Name
+                {m.admin_users_table_display_name()}
               </th>
               <th
                 scope="col"
                 class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-stone-500"
               >
-                Status
+                {m.admin_users_table_status()}
               </th>
               <th
                 scope="col"
                 class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-stone-500"
               >
-                Role
+                {m.admin_users_table_role()}
               </th>
               <th
                 scope="col"
                 class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-stone-500"
               >
-                Created
+                {m.admin_users_table_created()}
               </th>
               <th
                 scope="col"
                 class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-stone-500"
               >
-                Actions
+                {m.admin_users_table_actions()}
               </th>
             </tr>
           </thead>
@@ -375,13 +380,13 @@
                         ? 'bg-success-light text-success'
                         : 'bg-danger-light text-danger'}"
                     >
-                      {user.is_active ? 'Active' : 'Inactive'}
+                      {user.is_active ? m.admin_users_status_active() : m.admin_users_status_inactive()}
                     </span>
                     {#if user.is_verified}
                       <span
                         class="inline-flex items-center rounded-full bg-primary-100 px-2.5 py-0.5 text-xs font-medium text-primary-800 dark:bg-primary-900/30 dark:text-primary-400"
                       >
-                        Verified
+                        {m.admin_users_badge_verified()}
                       </span>
                     {/if}
                   </div>
@@ -394,7 +399,7 @@
                       ? 'bg-primary-100 text-primary-800 dark:bg-primary-900/30 dark:text-primary-400'
                       : 'bg-stone-100 text-stone-800 dark:bg-stone-700 dark:text-stone-300'}"
                   >
-                    {user.is_superuser ? 'Superuser' : 'User'}
+                    {user.is_superuser ? m.admin_users_role_superuser() : m.admin_users_role_user()}
                   </span>
                 </td>
 
@@ -412,13 +417,13 @@
                         ? 'bg-danger-light text-danger hover:bg-danger/20'
                         : 'bg-success-light text-success hover:bg-success/20'}"
                     >
-                      {user.is_active ? 'Deactivate' : 'Activate'}
+                      {user.is_active ? m.admin_users_button_deactivate() : m.admin_users_button_activate()}
                     </button>
                     <button
                       onclick={() => toggleUserSuperuser(user)}
                       class="rounded bg-primary-100 px-3 py-1 text-xs font-medium text-primary-700 transition-colors hover:bg-primary-200 dark:bg-primary-900/30 dark:text-primary-400 dark:hover:bg-primary-900/50"
                     >
-                      {user.is_superuser ? 'Demote' : 'Promote'}
+                      {user.is_superuser ? m.admin_users_button_demote() : m.admin_users_button_promote()}
                     </button>
                   </div>
                 </td>
@@ -433,12 +438,11 @@
     {#if totalPages > 1}
       <div class="mt-6 flex items-center justify-between">
         <div class="text-sm text-stone-700">
-          Showing <span class="font-medium">{(page - 1) * limit + 1}</span>
-          to
-          <span class="font-medium">{Math.min(page * limit, total)}</span>
-          of
-          <span class="font-medium">{total}</span>
-          users
+          {m.admin_users_pagination_showing({
+            from: (page - 1) * limit + 1,
+            to: Math.min(page * limit, total),
+            total,
+          })}
         </div>
 
         <div class="flex space-x-2">
@@ -447,7 +451,7 @@
             disabled={page === 1}
             class="rounded-md border border-stone-300 bg-surface-card px-4 py-2 text-sm font-medium text-stone-700 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            Previous
+            {m.admin_users_pagination_previous()}
           </button>
 
           {#each Array.from({ length: totalPages }, (_, i) => i + 1) as pageNum}
@@ -470,7 +474,7 @@
             disabled={page === totalPages}
             class="rounded-md border border-stone-300 bg-surface-card px-4 py-2 text-sm font-medium text-stone-700 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            Next
+            {m.admin_users_pagination_next()}
           </button>
         </div>
       </div>

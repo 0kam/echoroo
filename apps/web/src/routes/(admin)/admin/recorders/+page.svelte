@@ -6,6 +6,7 @@
   import { recorderApi } from '$lib/api/recorders';
   import { ApiError } from '$lib/api/client';
   import { getLocale } from '$lib/paraglide/runtime';
+  import * as m from '$lib/paraglide/messages';
   import type { Recorder, RecorderCreateRequest, RecorderUpdateRequest } from '$lib/types';
 
   // State
@@ -51,7 +52,7 @@
       if (err instanceof ApiError) {
         error = err.detail || err.message;
       } else {
-        error = 'Failed to load recorders';
+        error = m.admin_recorders_error_load();
       }
     } finally {
       isLoading = false;
@@ -123,7 +124,7 @@
           version: formData.version.trim() || undefined,
         };
         await recorderApi.create(createData);
-        successMessage = 'Recorder created successfully';
+        successMessage = m.admin_recorders_success_created();
       } else {
         const updateData: RecorderUpdateRequest = {
           manufacturer: formData.manufacturer.trim(),
@@ -131,7 +132,7 @@
           version: formData.version.trim() || undefined,
         };
         await recorderApi.update(editingRecorder!.id, updateData);
-        successMessage = 'Recorder updated successfully';
+        successMessage = m.admin_recorders_success_updated();
       }
 
       closeModal();
@@ -145,7 +146,9 @@
       if (err instanceof ApiError) {
         error = err.detail || err.message;
       } else {
-        error = `Failed to ${modalMode} recorder`;
+        error = modalMode === 'create'
+          ? m.admin_recorders_error_create()
+          : m.admin_recorders_error_update();
       }
     }
   }
@@ -174,7 +177,7 @@
 
     try {
       await recorderApi.delete(deleteConfirmRecorder.id);
-      successMessage = 'Recorder deleted successfully';
+      successMessage = m.admin_recorders_success_deleted();
       closeDeleteConfirm();
       await loadRecorders();
 
@@ -186,7 +189,7 @@
       if (err instanceof ApiError) {
         error = err.detail || err.message;
       } else {
-        error = 'Failed to delete recorder';
+        error = m.admin_recorders_error_delete();
       }
       closeDeleteConfirm();
     }
@@ -213,21 +216,21 @@
 </script>
 
 <svelte:head>
-  <title>Recorder Management - Admin - Echoroo</title>
+  <title>{m.admin_recorders_heading()} - Admin - Echoroo</title>
 </svelte:head>
 
 <div class="px-8 py-6">
   <!-- Header -->
   <div class="mb-6 flex items-center justify-between">
     <div>
-      <h1 class="text-3xl font-bold text-stone-900">Recorder Management</h1>
-      <p class="mt-2 text-sm text-stone-600">Manage audio recorders and their metadata</p>
+      <h1 class="text-3xl font-bold text-stone-900">{m.admin_recorders_heading()}</h1>
+      <p class="mt-2 text-sm text-stone-600">{m.admin_recorders_description()}</p>
     </div>
     <button
       onclick={openCreateModal}
       class="rounded-lg bg-primary-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 dark:bg-primary-500 dark:text-stone-50 dark:hover:bg-primary-400"
     >
-      Add New Recorder
+      {m.admin_recorders_button_add()}
     </button>
   </div>
 
@@ -315,14 +318,14 @@
           d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"
         />
       </svg>
-      <h3 class="mt-2 text-sm font-medium text-stone-900">No recorders found</h3>
-      <p class="mt-1 text-sm text-stone-500">Get started by adding a new recorder.</p>
+      <h3 class="mt-2 text-sm font-medium text-stone-900">{m.admin_recorders_empty_title()}</h3>
+      <p class="mt-1 text-sm text-stone-500">{m.admin_recorders_empty_description()}</p>
       <div class="mt-6">
         <button
           onclick={openCreateModal}
           class="inline-flex items-center rounded-md bg-primary-600 px-4 py-2 text-sm font-medium text-white hover:bg-primary-700 dark:bg-primary-500 dark:text-stone-50 dark:hover:bg-primary-400"
         >
-          Add New Recorder
+          {m.admin_recorders_button_add()}
         </button>
       </div>
     </div>
@@ -342,31 +345,31 @@
                 scope="col"
                 class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-stone-500"
               >
-                Manufacturer
+                {m.admin_recorders_table_manufacturer()}
               </th>
               <th
                 scope="col"
                 class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-stone-500"
               >
-                Recorder Name
+                {m.admin_recorders_table_recorder_name()}
               </th>
               <th
                 scope="col"
                 class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-stone-500"
               >
-                Version
+                {m.admin_recorders_table_version()}
               </th>
               <th
                 scope="col"
                 class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-stone-500"
               >
-                Created
+                {m.admin_recorders_table_created()}
               </th>
               <th
                 scope="col"
                 class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-stone-500"
               >
-                Actions
+                {m.admin_recorders_table_actions()}
               </th>
             </tr>
           </thead>
@@ -405,13 +408,13 @@
                       onclick={() => openEditModal(recorder)}
                       class="rounded bg-primary-100 px-3 py-1 text-xs font-medium text-primary-700 transition-colors hover:bg-primary-200"
                     >
-                      Edit
+                      {m.admin_recorders_button_edit()}
                     </button>
                     <button
                       onclick={() => openDeleteConfirm(recorder)}
                       class="rounded bg-danger-light px-3 py-1 text-xs font-medium text-danger transition-colors hover:opacity-80"
                     >
-                      Delete
+                      {m.admin_recorders_button_delete()}
                     </button>
                   </div>
                 </td>
@@ -426,12 +429,11 @@
     {#if totalPages > 1}
       <div class="mt-6 flex items-center justify-between">
         <div class="text-sm text-stone-700">
-          Showing <span class="font-medium">{(page - 1) * limit + 1}</span>
-          to
-          <span class="font-medium">{Math.min(page * limit, total)}</span>
-          of
-          <span class="font-medium">{total}</span>
-          recorders
+          {m.admin_users_pagination_showing({
+            from: (page - 1) * limit + 1,
+            to: Math.min(page * limit, total),
+            total,
+          })}
         </div>
 
         <div class="flex space-x-2">
@@ -440,7 +442,7 @@
             disabled={page === 1}
             class="rounded-md border border-stone-300 bg-surface-card px-4 py-2 text-sm font-medium text-stone-700 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            Previous
+            {m.admin_users_pagination_previous()}
           </button>
 
           {#each Array.from({ length: totalPages }, (_, i) => i + 1) as pageNum}
@@ -463,7 +465,7 @@
             disabled={page === totalPages}
             class="rounded-md border border-stone-300 bg-surface-card px-4 py-2 text-sm font-medium text-stone-700 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            Next
+            {m.admin_users_pagination_next()}
           </button>
         </div>
       </div>
@@ -492,7 +494,7 @@
             <div class="sm:flex sm:items-start">
               <div class="mt-3 w-full text-center sm:ml-0 sm:mt-0 sm:text-left">
                 <h3 class="text-lg font-medium leading-6 text-stone-900" id="modal-title">
-                  {modalMode === 'create' ? 'Add New Recorder' : 'Edit Recorder'}
+                  {modalMode === 'create' ? m.admin_recorders_modal_create() : m.admin_recorders_modal_edit()}
                 </h3>
                 <div class="mt-4 space-y-4">
                   <!-- ID (only for create) -->
@@ -512,7 +514,7 @@
 
                   <!-- Manufacturer -->
                   <div>
-                    <label for="manufacturer" class="block text-sm font-medium text-stone-700">Manufacturer</label>
+                    <label for="manufacturer" class="block text-sm font-medium text-stone-700">{m.admin_recorders_form_manufacturer()}</label>
                     <input
                       type="text"
                       id="manufacturer"
@@ -525,7 +527,7 @@
 
                   <!-- Recorder Name -->
                   <div>
-                    <label for="recorder_name" class="block text-sm font-medium text-stone-700">Recorder Name</label>
+                    <label for="recorder_name" class="block text-sm font-medium text-stone-700">{m.admin_recorders_form_recorder_name()}</label>
                     <input
                       type="text"
                       id="recorder_name"
@@ -538,7 +540,7 @@
 
                   <!-- Version -->
                   <div>
-                    <label for="version" class="block text-sm font-medium text-stone-700">Version (optional)</label>
+                    <label for="version" class="block text-sm font-medium text-stone-700">{m.admin_recorders_form_version()} (optional)</label>
                     <input
                       type="text"
                       id="version"
@@ -556,14 +558,14 @@
               type="submit"
               class="inline-flex w-full justify-center rounded-md bg-primary-600 px-4 py-2 text-base font-medium text-white shadow-sm hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 sm:ml-3 sm:w-auto sm:text-sm dark:bg-primary-500 dark:text-stone-50 dark:hover:bg-primary-400"
             >
-              {modalMode === 'create' ? 'Create' : 'Save'}
+              {m.admin_recorders_button_save()}
             </button>
             <button
               type="button"
               onclick={closeModal}
               class="mt-3 inline-flex w-full justify-center rounded-md border border-stone-300 bg-surface-card px-4 py-2 text-base font-medium text-stone-700 shadow-sm hover:bg-stone-50 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 sm:ml-3 sm:mt-0 sm:w-auto sm:text-sm"
             >
-              Cancel
+              {m.admin_recorders_button_cancel()}
             </button>
           </div>
         </form>
@@ -608,12 +610,11 @@
             </div>
             <div class="mt-3 text-center sm:ml-4 sm:mt-0 sm:text-left">
               <h3 class="text-lg font-medium leading-6 text-stone-900" id="modal-title">
-                Delete Recorder
+                {m.admin_recorders_button_delete()}
               </h3>
               <div class="mt-2">
                 <p class="text-sm text-stone-500">
-                  Are you sure you want to delete the recorder "{deleteConfirmRecorder.recorder_name}"
-                  ({deleteConfirmRecorder.id})? This action cannot be undone.
+                  {m.admin_recorders_confirm_delete()}
                 </p>
               </div>
             </div>
@@ -625,14 +626,14 @@
             onclick={handleDelete}
             class="inline-flex w-full justify-center rounded-md bg-danger px-4 py-2 text-base font-medium text-white shadow-sm hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-danger/50 focus:ring-offset-2 sm:ml-3 sm:w-auto sm:text-sm"
           >
-            Delete
+            {m.admin_recorders_button_delete()}
           </button>
           <button
             type="button"
             onclick={closeDeleteConfirm}
             class="mt-3 inline-flex w-full justify-center rounded-md border border-stone-300 bg-surface-card px-4 py-2 text-base font-medium text-stone-700 shadow-sm hover:bg-stone-50 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 sm:ml-3 sm:mt-0 sm:w-auto sm:text-sm"
           >
-            Cancel
+            {m.admin_recorders_button_cancel()}
           </button>
         </div>
       </div>

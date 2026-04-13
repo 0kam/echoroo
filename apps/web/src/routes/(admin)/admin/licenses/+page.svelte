@@ -6,6 +6,7 @@
   import { licenseApi } from '$lib/api/licenses';
   import { ApiError } from '$lib/api/client';
   import { getLocale } from '$lib/paraglide/runtime';
+  import * as m from '$lib/paraglide/messages';
   import type { License, LicenseCreateRequest, LicenseUpdateRequest } from '$lib/types';
 
   // State
@@ -41,7 +42,7 @@
       if (err instanceof ApiError) {
         error = err.detail || err.message;
       } else {
-        error = 'Failed to load licenses';
+        error = m.admin_licenses_error_load();
       }
     } finally {
       isLoading = false;
@@ -116,7 +117,7 @@
       };
 
       await licenseApi.create(data);
-      successMessage = 'License created successfully';
+      successMessage = m.admin_licenses_success_created();
       closeModals();
       await loadLicenses();
 
@@ -128,7 +129,7 @@
       if (err instanceof ApiError) {
         error = err.detail || err.message;
       } else {
-        error = 'Failed to create license';
+        error = m.admin_licenses_error_create();
       }
     }
   }
@@ -150,7 +151,7 @@
       };
 
       await licenseApi.update(currentLicense.id, data);
-      successMessage = 'License updated successfully';
+      successMessage = m.admin_licenses_success_updated();
       closeModals();
       await loadLicenses();
 
@@ -162,7 +163,7 @@
       if (err instanceof ApiError) {
         error = err.detail || err.message;
       } else {
-        error = 'Failed to update license';
+        error = m.admin_licenses_error_update();
       }
     }
   }
@@ -177,7 +178,7 @@
 
     try {
       await licenseApi.delete(currentLicense.id);
-      successMessage = 'License deleted successfully';
+      successMessage = m.admin_licenses_success_deleted();
       closeModals();
       await loadLicenses();
 
@@ -189,7 +190,7 @@
       if (err instanceof ApiError) {
         error = err.detail || err.message;
       } else {
-        error = 'Failed to delete license';
+        error = m.admin_licenses_error_delete();
       }
     }
   }
@@ -211,21 +212,21 @@
 </script>
 
 <svelte:head>
-  <title>License Management - Admin - Echoroo</title>
+  <title>{m.admin_licenses_heading()} - Admin - Echoroo</title>
 </svelte:head>
 
 <div class="px-8 py-6">
   <!-- Header -->
   <div class="mb-6 flex items-center justify-between">
     <div>
-      <h1 class="text-3xl font-bold text-stone-900">License Management</h1>
-      <p class="mt-2 text-sm text-stone-600">Manage licenses for recordings and datasets</p>
+      <h1 class="text-3xl font-bold text-stone-900">{m.admin_licenses_heading()}</h1>
+      <p class="mt-2 text-sm text-stone-600">{m.admin_licenses_description()}</p>
     </div>
     <button
       onclick={openCreateModal}
       class="rounded-lg bg-primary-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 dark:bg-primary-500 dark:text-stone-50 dark:hover:bg-primary-400"
     >
-      Add New License
+      {m.admin_licenses_button_add()}
     </button>
   </div>
 
@@ -313,14 +314,14 @@
           d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
         />
       </svg>
-      <h3 class="mt-2 text-sm font-medium text-stone-900">No licenses found</h3>
-      <p class="mt-1 text-sm text-stone-500">Get started by creating a new license.</p>
+      <h3 class="mt-2 text-sm font-medium text-stone-900">{m.admin_licenses_empty_title()}</h3>
+      <p class="mt-1 text-sm text-stone-500">{m.admin_licenses_empty_description()}</p>
       <div class="mt-6">
         <button
           onclick={openCreateModal}
           class="inline-flex items-center rounded-md bg-primary-600 px-4 py-2 text-sm font-medium text-white hover:bg-primary-700 dark:bg-primary-500 dark:text-stone-50 dark:hover:bg-primary-400"
         >
-          Add New License
+          {m.admin_licenses_button_add()}
         </button>
       </div>
     </div>
@@ -334,43 +335,43 @@
                 scope="col"
                 class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-stone-500"
               >
-                ID
+                {m.admin_licenses_table_id()}
               </th>
               <th
                 scope="col"
                 class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-stone-500"
               >
-                Name
+                {m.admin_licenses_table_name()}
               </th>
               <th
                 scope="col"
                 class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-stone-500"
               >
-                Short Name
+                {m.admin_licenses_table_short_name()}
               </th>
               <th
                 scope="col"
                 class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-stone-500"
               >
-                URL
+                {m.admin_licenses_table_url()}
               </th>
               <th
                 scope="col"
                 class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-stone-500"
               >
-                Description
+                {m.admin_licenses_table_description()}
               </th>
               <th
                 scope="col"
                 class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-stone-500"
               >
-                Created
+                {m.admin_licenses_table_created()}
               </th>
               <th
                 scope="col"
                 class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-stone-500"
               >
-                Actions
+                {m.admin_licenses_table_actions()}
               </th>
             </tr>
           </thead>
@@ -427,13 +428,13 @@
                       onclick={() => openEditModal(license)}
                       class="rounded bg-primary-100 px-3 py-1 text-xs font-medium text-primary-700 transition-colors hover:bg-primary-200"
                     >
-                      Edit
+                      {m.admin_licenses_button_edit()}
                     </button>
                     <button
                       onclick={() => openDeleteModal(license)}
                       class="rounded bg-danger-light px-3 py-1 text-xs font-medium text-danger transition-colors hover:opacity-80"
                     >
-                      Delete
+                      {m.admin_licenses_button_delete()}
                     </button>
                   </div>
                 </td>
@@ -461,13 +462,13 @@
       <div class="inline-block transform overflow-hidden rounded-lg bg-surface-card text-left align-bottom shadow-xl transition-all sm:my-8 sm:w-full sm:max-w-lg sm:align-middle">
         <div class="bg-surface-card px-4 pb-4 pt-5 sm:p-6 sm:pb-4">
           <h3 class="text-lg font-medium leading-6 text-stone-900" id="modal-title">
-            Create New License
+            {m.admin_licenses_modal_create()}
           </h3>
           <div class="mt-4 space-y-4">
             <!-- ID -->
             <div>
               <label for="create-id" class="block text-sm font-medium text-stone-700">
-                ID <span class="text-danger">*</span>
+                {m.admin_licenses_form_id()} <span class="text-danger">*</span>
               </label>
               <input
                 type="text"
@@ -482,7 +483,7 @@
             <!-- Name -->
             <div>
               <label for="create-name" class="block text-sm font-medium text-stone-700">
-                Name <span class="text-danger">*</span>
+                {m.admin_licenses_form_name()} <span class="text-danger">*</span>
               </label>
               <input
                 type="text"
@@ -497,7 +498,7 @@
             <!-- Short Name -->
             <div>
               <label for="create-short-name" class="block text-sm font-medium text-stone-700">
-                Short Name <span class="text-danger">*</span>
+                {m.admin_licenses_form_short_name()} <span class="text-danger">*</span>
               </label>
               <input
                 type="text"
@@ -512,7 +513,7 @@
             <!-- URL -->
             <div>
               <label for="create-url" class="block text-sm font-medium text-stone-700">
-                URL
+                {m.admin_licenses_form_url()}
               </label>
               <input
                 type="url"
@@ -526,7 +527,7 @@
             <!-- Description -->
             <div>
               <label for="create-description" class="block text-sm font-medium text-stone-700">
-                Description
+                {m.admin_licenses_form_description()}
               </label>
               <textarea
                 id="create-description"
@@ -544,14 +545,14 @@
             onclick={handleCreate}
             class="inline-flex w-full justify-center rounded-md bg-primary-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 sm:ml-3 sm:w-auto dark:bg-primary-500 dark:text-stone-50 dark:hover:bg-primary-400"
           >
-            Create
+            {m.admin_licenses_button_save()}
           </button>
           <button
             type="button"
             onclick={closeModals}
             class="mt-3 inline-flex w-full justify-center rounded-md bg-surface-card px-4 py-2 text-sm font-medium text-stone-700 shadow-sm hover:bg-stone-50 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 sm:mt-0 sm:w-auto"
           >
-            Cancel
+            {m.admin_licenses_button_cancel()}
           </button>
         </div>
       </div>
@@ -574,13 +575,13 @@
       <div class="inline-block transform overflow-hidden rounded-lg bg-surface-card text-left align-bottom shadow-xl transition-all sm:my-8 sm:w-full sm:max-w-lg sm:align-middle">
         <div class="bg-surface-card px-4 pb-4 pt-5 sm:p-6 sm:pb-4">
           <h3 class="text-lg font-medium leading-6 text-stone-900" id="modal-title">
-            Edit License: {currentLicense.id}
+            {m.admin_licenses_modal_edit()}: {currentLicense.id}
           </h3>
           <div class="mt-4 space-y-4">
             <!-- Name -->
             <div>
               <label for="edit-name" class="block text-sm font-medium text-stone-700">
-                Name <span class="text-danger">*</span>
+                {m.admin_licenses_form_name()} <span class="text-danger">*</span>
               </label>
               <input
                 type="text"
@@ -594,7 +595,7 @@
             <!-- Short Name -->
             <div>
               <label for="edit-short-name" class="block text-sm font-medium text-stone-700">
-                Short Name <span class="text-danger">*</span>
+                {m.admin_licenses_form_short_name()} <span class="text-danger">*</span>
               </label>
               <input
                 type="text"
@@ -608,7 +609,7 @@
             <!-- URL -->
             <div>
               <label for="edit-url" class="block text-sm font-medium text-stone-700">
-                URL
+                {m.admin_licenses_form_url()}
               </label>
               <input
                 type="url"
@@ -621,7 +622,7 @@
             <!-- Description -->
             <div>
               <label for="edit-description" class="block text-sm font-medium text-stone-700">
-                Description
+                {m.admin_licenses_form_description()}
               </label>
               <textarea
                 id="edit-description"
@@ -638,14 +639,14 @@
             onclick={handleUpdate}
             class="inline-flex w-full justify-center rounded-md bg-primary-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 sm:ml-3 sm:w-auto dark:bg-primary-500 dark:text-stone-50 dark:hover:bg-primary-400"
           >
-            Update
+            {m.admin_licenses_button_save()}
           </button>
           <button
             type="button"
             onclick={closeModals}
             class="mt-3 inline-flex w-full justify-center rounded-md bg-surface-card px-4 py-2 text-sm font-medium text-stone-700 shadow-sm hover:bg-stone-50 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 sm:mt-0 sm:w-auto"
           >
-            Cancel
+            {m.admin_licenses_button_cancel()}
           </button>
         </div>
       </div>
@@ -680,12 +681,11 @@
             </div>
             <div class="mt-3 text-center sm:ml-4 sm:mt-0 sm:text-left">
               <h3 class="text-lg font-medium leading-6 text-stone-900" id="modal-title">
-                Delete License
+                {m.admin_licenses_button_delete()}
               </h3>
               <div class="mt-2">
                 <p class="text-sm text-stone-500">
-                  Are you sure you want to delete the license "<strong>{currentLicense.name}</strong>" ({currentLicense.id})?
-                  This action cannot be undone.
+                  {m.admin_licenses_confirm_delete()}
                 </p>
               </div>
             </div>
@@ -697,14 +697,14 @@
             onclick={handleDelete}
             class="inline-flex w-full justify-center rounded-md bg-danger px-4 py-2 text-sm font-medium text-white shadow-sm hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-danger/50 focus:ring-offset-2 sm:ml-3 sm:w-auto"
           >
-            Delete
+            {m.admin_licenses_button_delete()}
           </button>
           <button
             type="button"
             onclick={closeModals}
             class="mt-3 inline-flex w-full justify-center rounded-md bg-surface-card px-4 py-2 text-sm font-medium text-stone-700 shadow-sm hover:bg-stone-50 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 sm:mt-0 sm:w-auto"
           >
-            Cancel
+            {m.admin_licenses_button_cancel()}
           </button>
         </div>
       </div>

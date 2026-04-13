@@ -166,11 +166,12 @@ class DatasetRepository(BaseRepository[Dataset]):
             error: Error message if failed
         """
         dataset = await self.get_by_id(dataset_id)
-        if dataset:
-            dataset.status = status
-            if total_files is not None:
-                dataset.total_files = total_files
-            if processed_files is not None:
-                dataset.processed_files = processed_files
-            dataset.processing_error = error
-            await self.db.flush()
+        if dataset is None:
+            raise ValueError(f"Dataset {dataset_id} not found")
+        dataset.status = status
+        if total_files is not None:
+            dataset.total_files = total_files
+        if processed_files is not None:
+            dataset.processed_files = processed_files
+        dataset.processing_error = error
+        await self.db.flush()

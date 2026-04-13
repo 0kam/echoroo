@@ -1,6 +1,6 @@
 <script lang="ts">
   /**
-   * Admin layout with navigation sidebar
+   * Admin layout with top navigation header, matching the dashboard style.
    */
 
   import { page } from '$app/stores';
@@ -19,26 +19,10 @@
 
   // Navigation items
   const navItems = $derived([
-    {
-      name: m.admin_nav_users(),
-      href: '/admin/users',
-      icon: 'M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z',
-    },
-    {
-      name: m.admin_nav_settings(),
-      href: '/admin/settings',
-      icon: 'M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z M15 12a3 3 0 11-6 0 3 3 0 016 0z',
-    },
-    {
-      name: m.admin_nav_licenses(),
-      href: '/admin/licenses',
-      icon: 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z',
-    },
-    {
-      name: m.admin_nav_recorders(),
-      href: '/admin/recorders',
-      icon: 'M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z',
-    },
+    { name: m.admin_nav_users(), href: '/admin/users' },
+    { name: m.admin_nav_settings(), href: '/admin/settings' },
+    { name: m.admin_nav_licenses(), href: '/admin/licenses' },
+    { name: m.admin_nav_recorders(), href: '/admin/recorders' },
   ]);
 
   // Redirect non-superusers away from admin (client-side guard)
@@ -56,13 +40,6 @@
   }
 
   /**
-   * Navigate to item
-   */
-  function navigateTo(href: string) {
-    goto(localizeHref(href));
-  }
-
-  /**
    * Logout handler
    */
   async function handleLogout() {
@@ -75,83 +52,81 @@
   <title>{m.admin_page_title()}</title>
 </svelte:head>
 
-<div class="flex h-screen bg-surface-page">
-  <!-- Sidebar -->
-  <aside class="w-64 border-r border-card bg-surface-card">
-    <!-- Sidebar Header -->
-    <div class="flex h-16 items-center justify-between border-b border-card px-6">
-      <div class="flex items-center gap-2">
-        <img src="/echoroo.png" alt="Echoroo" class="h-7 w-auto" />
-        <h1 class="text-xl font-bold text-stone-900">{m.admin_sidebar_title()}</h1>
+<div class="flex h-screen flex-col bg-surface-page">
+  <!-- Top navigation header -->
+  <header class="flex h-12 flex-shrink-0 items-center border-b border-card bg-surface-card px-4">
+    {#if authStore.isLoading}
+      <!-- Loading spinner while auth state resolves -->
+      <div class="flex w-full items-center justify-center">
+        <svg
+          class="h-5 w-5 animate-spin text-stone-400"
+          xmlns="http://www.w3.org/2000/svg"
+          fill="none"
+          viewBox="0 0 24 24"
+        >
+          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+          <path
+            class="opacity-75"
+            fill="currentColor"
+            d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+          ></path>
+        </svg>
       </div>
-      <div class="flex items-center gap-1">
+    {:else}
+      <!-- Left: Logo / brand and navigation links -->
+      <div class="flex items-center gap-6">
+        <a
+          href={localizeHref('/admin/users')}
+          class="flex items-center gap-1.5 text-sm font-semibold tracking-wide text-primary-500 hover:text-primary-600"
+        >
+          <img src="/echoroo.png" alt="Echoroo" class="h-6 w-auto" />
+          {m.admin_sidebar_title()}
+        </a>
+        <nav class="flex items-center gap-1">
+          {#each navItems as item}
+            <a
+              href={localizeHref(item.href)}
+              class="rounded px-3 py-1 text-sm font-medium transition-colors {isActive(item.href)
+                ? 'bg-primary-100 text-primary-700 dark:bg-primary-900/30 dark:text-primary-400'
+                : 'text-stone-600 hover:bg-stone-100 hover:text-stone-900 dark:text-stone-400 dark:hover:bg-stone-800 dark:hover:text-stone-100'}"
+            >
+              {item.name}
+            </a>
+          {/each}
+        </nav>
+      </div>
+
+      <!-- Right: user info and actions -->
+      <div class="ml-auto flex items-center gap-2">
+        {#if authStore.user?.display_name || authStore.user?.email}
+          <span class="text-xs text-stone-500 dark:text-stone-400">
+            {authStore.user.display_name || authStore.user.email}
+          </span>
+        {/if}
+
+        <a
+          href={localizeHref('/dashboard')}
+          class="rounded px-3 py-1 text-xs font-medium text-stone-600 transition-colors hover:bg-stone-100 hover:text-stone-900 dark:text-stone-400 dark:hover:bg-stone-800 dark:hover:text-stone-100"
+        >
+          {m.admin_sidebar_dashboard()}
+        </a>
+
+        <button
+          type="button"
+          onclick={handleLogout}
+          class="rounded px-3 py-1 text-xs font-medium text-stone-600 transition-colors hover:bg-stone-100 hover:text-stone-900 dark:text-stone-400 dark:hover:bg-stone-800 dark:hover:text-stone-100"
+        >
+          {m.admin_sidebar_logout()}
+        </button>
+
         <DarkModeToggle />
         <LanguageSwitcher />
       </div>
-    </div>
+    {/if}
+  </header>
 
-    <!-- Navigation -->
-    <nav class="flex-1 space-y-1 p-4">
-      {#each navItems as item}
-        <button
-          onclick={() => navigateTo(item.href)}
-          class="flex w-full items-center rounded-lg px-4 py-3 text-sm font-medium transition-colors {isActive(
-            item.href
-          )
-            ? 'bg-primary-100 text-primary-600'
-            : 'text-stone-700 hover:bg-stone-50'}"
-        >
-          <svg class="mr-3 h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={item.icon} />
-          </svg>
-          {item.name}
-        </button>
-      {/each}
-    </nav>
-
-    <!-- Sidebar Footer -->
-    <div class="border-t border-card p-4">
-      <div class="mb-3 rounded-lg bg-primary-100 p-3">
-        <p class="text-xs font-medium text-primary-900">{m.admin_sidebar_logged_in_as()}</p>
-        <p class="mt-1 truncate text-sm text-primary-600">
-          {authStore.user?.display_name || authStore.user?.email || 'Admin'}
-        </p>
-      </div>
-      <div class="space-y-2">
-        <a
-          href={localizeHref('/dashboard')}
-          class="flex w-full items-center justify-center rounded-lg border border-stone-300 px-4 py-2 text-sm font-medium text-stone-700 transition-colors hover:bg-stone-50"
-        >
-          <svg class="mr-2 h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              stroke-width="2"
-              d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"
-            />
-          </svg>
-          {m.admin_sidebar_dashboard()}
-        </a>
-        <button
-          onclick={handleLogout}
-          class="flex w-full items-center justify-center rounded-lg border border-stone-300 px-4 py-2 text-sm font-medium text-stone-700 transition-colors hover:bg-stone-50"
-        >
-          <svg class="mr-2 h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              stroke-width="2"
-              d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"
-            />
-          </svg>
-          {m.admin_sidebar_logout()}
-        </button>
-      </div>
-    </div>
-  </aside>
-
-  <!-- Main Content -->
-  <main class="flex-1 overflow-auto">
+  <!-- Page content -->
+  <main class="flex-1 overflow-auto p-4 sm:p-6 lg:p-8">
     {@render children()}
   </main>
 </div>

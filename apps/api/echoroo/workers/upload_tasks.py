@@ -550,11 +550,8 @@ async def _run_import(
             # Flush any remaining recordings
             await _flush_batch()
 
-            # Mark session as fully imported
+            # Update both session and dataset status in a single commit
             await session_repo.update_status(upload_session.id, UploadSessionStatus.IMPORTED)
-            await db.commit()
-
-            # Update dataset status to COMPLETED
             await dataset_repo.update_import_status(
                 dataset_id,
                 DatasetStatus.COMPLETED,
