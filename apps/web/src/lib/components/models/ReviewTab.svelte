@@ -102,8 +102,9 @@
   let roundDetailCache = $state<Record<string, SamplingRound>>({});
   let roundDetailLoading = $state<Set<string>>(new Set());
 
-  async function fetchRoundDetail(roundId: string) {
-    if (!modelId || roundDetailCache[roundId] || roundDetailLoading.has(roundId)) return;
+  async function fetchRoundDetail(roundId: string, force = false) {
+    if (!modelId) return;
+    if (!force && (roundDetailCache[roundId] || roundDetailLoading.has(roundId))) return;
     roundDetailLoading = new Set([...roundDetailLoading, roundId]);
     try {
       const detail = await getSamplingRound(projectId, modelId, roundId);
@@ -345,9 +346,10 @@
                     {modelId}
                     round={getRoundWithItems(round)}
                     onVoteChanged={() => {
-                      // Only invalidate the rounds list for header count updates.
-                      // Don't clear roundDetailCache or refetch round detail —
-                      // the local voteSummaryCache in SeedSamplingView already has the correct state.
+                      // Refetch round detail to update confirmed/rejected counts in header.
+                      // Don't delete cache first — that causes card re-mounts and spectrogram re-fetches.
+                      // fetchRoundDetail with force=true overwrites the cache entry atomically.
+                      fetchRoundDetail(round.id, true);
                       queryClient.invalidateQueries({ queryKey: ['sampling-rounds', projectId, modelId] });
                     }}
                   />
@@ -357,7 +359,9 @@
                     {modelId}
                     round={getRoundWithItems(round)}
                     onVoteChanged={() => {
-                      // Only invalidate the rounds list for header count updates
+                      // Refetch round detail to update confirmed/rejected counts in header.
+                      // Don't delete cache first — that causes card re-mounts and spectrogram re-fetches.
+                      fetchRoundDetail(round.id, true);
                       queryClient.invalidateQueries({ queryKey: ['sampling-rounds', projectId, modelId] });
                     }}
                   />
