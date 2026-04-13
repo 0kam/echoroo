@@ -345,10 +345,9 @@
                     {modelId}
                     round={getRoundWithItems(round)}
                     onVoteChanged={() => {
-                      /* Invalidate to refresh confirmed/rejected counts in header */
-                      delete roundDetailCache[round.id];
-                      roundDetailCache = { ...roundDetailCache };
-                      fetchRoundDetail(round.id);
+                      // Only invalidate the rounds list for header count updates.
+                      // Don't clear roundDetailCache or refetch round detail —
+                      // the local voteSummaryCache in SeedSamplingView already has the correct state.
                       queryClient.invalidateQueries({ queryKey: ['sampling-rounds', projectId, modelId] });
                     }}
                   />
@@ -358,9 +357,7 @@
                     {modelId}
                     round={getRoundWithItems(round)}
                     onVoteChanged={() => {
-                      delete roundDetailCache[round.id];
-                      roundDetailCache = { ...roundDetailCache };
-                      fetchRoundDetail(round.id);
+                      // Only invalidate the rounds list for header count updates
                       queryClient.invalidateQueries({ queryKey: ['sampling-rounds', projectId, modelId] });
                     }}
                   />

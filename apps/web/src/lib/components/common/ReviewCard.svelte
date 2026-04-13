@@ -133,19 +133,23 @@
 
   const scorePercent = $derived(scoreValue !== null ? Math.round(scoreValue * 100) : null);
 
-  const borderClass = $derived(
-    // Use consensus-based border when vote summary is available
-    voteSummary
-      ? getConsensusCardBorderClass(voteSummary.consensus_status, isSelected)
-      // Fall back to detection status-based border (used by DetectionCard)
-      : status === 'confirmed'
-        ? 'border-success ring-1 ring-success/50'
-        : status === 'rejected'
-          ? 'border-danger ring-1 ring-danger/50'
-          : isSelected
-            ? 'border-primary-400 ring-1 ring-primary-300'
-            : 'border-stone-200'
-  );
+  const borderClass = $derived.by(() => {
+    if (voteSummary) {
+      // Use consensus-based border when consensus is reached
+      if (voteSummary.consensus_status !== 'needs_votes') {
+        return getConsensusCardBorderClass(voteSummary.consensus_status, isSelected);
+      }
+      // Fallback to user's own vote for single-voter / needs_votes scenarios
+      if (voteSummary.user_vote === 'agree') return 'border-success/60 ring-1 ring-success/30';
+      if (voteSummary.user_vote === 'disagree') return 'border-danger/60 ring-1 ring-danger/30';
+      if (voteSummary.user_vote === 'unsure') return 'border-warning/60 ring-1 ring-warning/30';
+      return isSelected ? 'border-primary-400 ring-1 ring-primary-300' : 'border-stone-200';
+    }
+    // No voteSummary — use annotation status (used by DetectionCard)
+    if (status === 'confirmed') return 'border-success ring-1 ring-success/50';
+    if (status === 'rejected') return 'border-danger ring-1 ring-danger/50';
+    return isSelected ? 'border-primary-400 ring-1 ring-primary-300' : 'border-stone-200';
+  });
 
   function formatTime(seconds: number): string {
     const mins = Math.floor(seconds / 60);
