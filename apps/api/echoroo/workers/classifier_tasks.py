@@ -25,8 +25,8 @@ from echoroo.workers.db_utils import get_worker_engine_and_session_factory
 logger = logging.getLogger(__name__)
 
 # Minimum number of positive and negative examples required to start training
-_MIN_POSITIVE_SAMPLES = 5
-_MIN_NEGATIVE_SAMPLES = 5
+_MIN_POSITIVE_SAMPLES = 15
+_MIN_NEGATIVE_SAMPLES = 15
 
 # Maximum number of unlabeled embeddings to fetch for semi-supervised training
 _MAX_UNLABELED_SAMPLES = 2000

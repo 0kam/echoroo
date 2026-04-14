@@ -73,8 +73,8 @@
     return samplingRounds.flatMap((r) => r.items).length;
   });
 
-  const MIN_POSITIVES = 5;
-  const MIN_NEGATIVES = 5;
+  const MIN_POSITIVES = 15;
+  const MIN_NEGATIVES = 15;
 
   const positivePercent = $derived(
     effectiveTotalCount > 0 ? Math.min(100, (effectiveAgreeCount / effectiveTotalCount) * 100) : 0

@@ -155,7 +155,7 @@
 
   /**
    * Whether the seed round has been labeled enough to allow an AL round.
-   * Backend requires at least 5 confirmed + 5 rejected across completed rounds.
+   * Backend requires at least 15 confirmed + 15 rejected across completed rounds.
    */
   const seedRoundReady = $derived.by(() => {
     const completedRounds = sortedRounds.filter((r) => r.status === 'completed');
@@ -167,7 +167,7 @@
       totalConfirmed += detailed.items.filter((it) => it.review_status === 'confirmed').length;
       totalRejected += detailed.items.filter((it) => it.review_status === 'rejected').length;
     }
-    return totalConfirmed >= 5 && totalRejected >= 5;
+    return totalConfirmed >= 15 && totalRejected >= 15;
   });
 
   /** True when the last round is still pending/running (no new AL round allowed yet). */
