@@ -76,19 +76,6 @@ def h3_to_boundary(h3_index: str) -> list[list[float]]:
     return [[lat, lng] for lat, lng in boundary]
 
 
-def h3_get_resolution(h3_index: str) -> int:
-    """Get the resolution of an H3 index.
-
-    Args:
-        h3_index: H3 cell index
-
-    Returns:
-        Resolution (0-15)
-    """
-    result: int = h3.get_resolution(h3_index)
-    return result
-
-
 def h3_coordinate_uncertainty(h3_index: str) -> float:
     """Estimate coordinate uncertainty based on H3 resolution.
 

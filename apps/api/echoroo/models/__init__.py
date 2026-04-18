@@ -43,6 +43,7 @@ from echoroo.models.enums import (
     ReviewStatus,
     SearchSessionStatus,
     SettingType,
+    SignalQuality,
     TagCategory,
     UploadFileStatus,
     UploadSessionStatus,
@@ -143,6 +144,7 @@ __all__ = [
     "AnnotationTaskStatus",
     "GeometryType",
     "ReviewStatus",
+    "SignalQuality",
     "TagCategory",
     # Enums (detection review)
     "DetectionSource",
