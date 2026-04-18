@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
-from sqlalchemy import DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import DateTime, Float, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -17,7 +17,6 @@ if TYPE_CHECKING:
     from echoroo.models.annotation import Annotation
     from echoroo.models.custom_model import CustomModel
     from echoroo.models.embedding import Embedding
-    from echoroo.models.recording import Recording
 
 
 class SamplingRound(UUIDMixin, TimestampMixin, Base):
@@ -89,6 +88,16 @@ class SamplingRound(UUIDMixin, TimestampMixin, Base):
         DateTime(timezone=True),
         nullable=True,
         doc="Timestamp when the round completed or failed",
+    )
+    score_distribution: Mapped[dict[str, Any] | None] = mapped_column(
+        JSONB,
+        nullable=True,
+        doc=(
+            "Histogram of sigmoid(decision_distance) over all scored unlabeled "
+            "embeddings in this AL iteration. Stored as a dict with keys: "
+            "bin_edges (21 floats), bin_counts (20 ints), mean_score, "
+            "positive_count, negative_count, total_scored."
+        ),
     )
 
     # Relationships
@@ -195,92 +204,4 @@ class SamplingRoundItem(UUIDMixin, TimestampMixin, Base):
         return (
             f"<SamplingRoundItem(id={self.id}, sampling_round_id={self.sampling_round_id}, "
             f"sample_type={self.sample_type!r})>"
-        )
-
-
-class AuditSetItem(UUIDMixin, Base):
-    """A single embedding selected for human audit of a trained CustomModel.
-
-    Created by the ``generate_audit_set`` Celery task. Each item links a
-    specific embedding to the associated Annotation (source='audit_set') and
-    records the classifier's predicted probability so that auditors can
-    prioritise uncertain or high-confidence examples.
-
-    Attributes:
-        id: Unique identifier (UUID)
-        custom_model_id: Foreign key to the owning CustomModel
-        embedding_id: Foreign key to the selected Embedding (unique per model)
-        recording_id: Denormalized recording FK for efficient filtering
-        predicted_proba: Classifier probability for the positive class (0.0–1.0)
-        annotation_id: Foreign key to the Annotation created for this audit item
-        created_at: Timestamp when the item was created
-    """
-
-    __tablename__ = "audit_set_items"
-
-    custom_model_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("custom_models.id", ondelete="CASCADE"),
-        nullable=False,
-        doc="Owning CustomModel ID",
-    )
-    embedding_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("embeddings.id", ondelete="CASCADE"),
-        nullable=False,
-        doc="Selected Embedding ID (unique per model)",
-    )
-    recording_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("recordings.id", ondelete="CASCADE"),
-        nullable=False,
-        doc="Denormalized source Recording ID",
-    )
-    predicted_proba: Mapped[float | None] = mapped_column(
-        Float,
-        nullable=True,
-        doc="Classifier probability for the positive class (0.0–1.0)",
-    )
-    annotation_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("annotations.id", ondelete="CASCADE"),
-        nullable=False,
-        doc="Associated Annotation created for this audit item",
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        nullable=False,
-        doc="Timestamp when the item was created",
-    )
-
-    # Relationships
-    custom_model: Mapped[CustomModel] = relationship(
-        "CustomModel",
-        back_populates="audit_set_items",
-        lazy="raise",
-    )
-    embedding: Mapped[Embedding] = relationship(
-        "Embedding",
-        lazy="raise",
-    )
-    annotation: Mapped[Annotation] = relationship(
-        "Annotation",
-        lazy="raise",
-    )
-    recording: Mapped[Recording] = relationship(
-        "Recording",
-        lazy="raise",
-    )
-
-    __table_args__ = (
-        Index("ix_audit_set_items_custom_model_id", "custom_model_id"),
-        Index("ix_audit_set_items_embedding_id", "embedding_id"),
-        Index("ix_audit_set_items_annotation_id", "annotation_id"),
-        UniqueConstraint("custom_model_id", "embedding_id", name="uq_audit_set_model_embedding"),
-    )
-
-    def __repr__(self) -> str:
-        return (
-            f"<AuditSetItem(id={self.id}, custom_model_id={self.custom_model_id}, "
-            f"embedding_id={self.embedding_id}, predicted_proba={self.predicted_proba})>"
         )

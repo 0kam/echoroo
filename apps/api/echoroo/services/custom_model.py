@@ -20,6 +20,14 @@ from echoroo.schemas.sampling import SeedSamplingRequest
 
 logger = logging.getLogger(__name__)
 
+# Minimum number of confirmed and rejected annotations required (for the
+# model's target tag) before an active-learning round can be dispatched.
+# Kept intentionally below the 15/15 training threshold so users whose seed
+# rounds are unbalanced can keep iterating via additional AL rounds. Must stay
+# in sync with `MIN_LABELS_FOR_AL_ROUND` in the frontend components
+# (ReviewTab.svelte, TrainingMeter.svelte).
+_MIN_LABELS_FOR_AL_ROUND = 5
+
 
 class CustomModelService:
     """Service for creating and managing CustomModel records.
@@ -335,8 +343,11 @@ class CustomModelService:
         """Validate, create a pending AL round, and dispatch the run_al_iteration task.
 
         Requires at least one completed sampling round with sufficient labeled data
-        (at least 5 positive + 5 negative confirmed/rejected annotations) before
-        dispatching the active learning Celery task.
+        (at least _MIN_LABELS_FOR_AL_ROUND positive + _MIN_LABELS_FOR_AL_ROUND
+        negative confirmed/rejected annotations on the model's target tag) before
+        dispatching the active learning Celery task. This threshold is decoupled
+        from — and lower than — the 15/15 training threshold enforced later so
+        that users with unbalanced seed rounds can keep iterating.
 
         Commits the round record before dispatching so the worker can load it immediately.
 
@@ -360,6 +371,47 @@ class CustomModelService:
                 "running active learning."
             )
 
+        # Enforce the documented minimum label count. We count annotations that
+        # are attached to sampling-round items of completed rounds for this
+        # model, scoped to the model's target_tag_id (same scope used by
+        # classifier_tasks._fetch_labeled_embeddings during training).
+        count_sql = text("""
+            SELECT
+                COUNT(*) FILTER (WHERE a.status = 'confirmed') AS confirmed_count,
+                COUNT(*) FILTER (WHERE a.status = 'rejected')  AS rejected_count
+            FROM sampling_round_items sri
+            JOIN sampling_rounds sr
+                ON sr.id = sri.sampling_round_id
+                AND sr.custom_model_id = :model_id
+                AND sr.status = 'completed'
+            JOIN annotations a
+                ON a.id = sri.annotation_id
+                AND a.status IN ('confirmed', 'rejected')
+                AND a.tag_id = :target_tag_id
+        """)
+        count_row = (
+            await self.db.execute(
+                count_sql,
+                {
+                    "model_id": str(model.id),
+                    "target_tag_id": str(model.target_tag_id),
+                },
+            )
+        ).one()
+        confirmed_count = int(count_row.confirmed_count or 0)
+        rejected_count = int(count_row.rejected_count or 0)
+
+        if (
+            confirmed_count < _MIN_LABELS_FOR_AL_ROUND
+            or rejected_count < _MIN_LABELS_FOR_AL_ROUND
+        ):
+            raise ValueError(
+                "Insufficient labeled data: need at least "
+                f"{_MIN_LABELS_FOR_AL_ROUND} confirmed and "
+                f"{_MIN_LABELS_FOR_AL_ROUND} rejected "
+                f"(have {confirmed_count} confirmed, {rejected_count} rejected)."
+            )
+
         next_round_number = max((r.round_number for r in existing_rounds), default=-1) + 1
 
         # Create the pending SamplingRound record
@@ -381,6 +433,38 @@ class CustomModelService:
         al_task.delay(str(model.id), str(round_.id))
 
         return round_
+
+    async def list_detection_runs(
+        self,
+        model: CustomModel,
+        limit: int = 5,
+    ) -> list[DetectionRun]:
+        """List recent DetectionRuns created by applying a custom model.
+
+        Detection runs created via `apply_custom_model` set `model_version` to
+        the model's UUID (as string), so we filter on that column. Results are
+        ordered most-recent-first.
+
+        Args:
+            model: CustomModel instance
+            limit: Maximum number of runs to return
+
+        Returns:
+            List of DetectionRun instances for this model, newest first
+        """
+        from sqlalchemy import select as _select  # noqa: PLC0415
+        from sqlalchemy.orm import selectinload as _selectinload  # noqa: PLC0415
+
+        result = await self.db.execute(
+            _select(DetectionRun)
+            .where(DetectionRun.project_id == model.project_id)
+            .where(DetectionRun.model_name == "custom_svm")
+            .where(DetectionRun.model_version == str(model.id))
+            .options(_selectinload(DetectionRun.dataset))
+            .order_by(DetectionRun.created_at.desc())
+            .limit(limit)
+        )
+        return list(result.scalars().all())
 
     async def create_detection_run(
         self,
@@ -425,121 +509,3 @@ class CustomModelService:
 
         return detection_run
 
-    async def create_audit_set(
-        self,
-        model: CustomModel,
-    ) -> None:
-        """Dispatch the generate_audit_set Celery task for a trained model.
-
-        The model must be in TRAINED status. The task itself handles the full
-        lifecycle: loading the S3 artifact, scoring embeddings, sampling, and
-        creating Annotation + AuditSetItem records.
-
-        Args:
-            model: CustomModel instance in TRAINED status
-
-        Raises:
-            ValueError: If model.status is not TRAINED
-        """
-        from echoroo.workers.classifier_tasks import (  # noqa: PLC0415
-            generate_audit_set as audit_task,
-        )
-
-        audit_task.delay(str(model.id))
-
-    async def get_audit_items(
-        self,
-        model_id: UUID,
-    ) -> list[Any]:
-        """List AuditSetItems with annotation status and embedding metadata.
-
-        Returns items ordered by predicted_proba descending (highest confidence
-        first) so reviewers see the most interesting examples at the top.
-
-        Args:
-            model_id: CustomModel UUID
-
-        Returns:
-            List of row objects with audit item fields, annotation review_status,
-            start_time, and end_time.
-        """
-        from sqlalchemy import text  # noqa: PLC0415
-
-        sql = text("""
-            SELECT
-                asi.id,
-                asi.embedding_id,
-                asi.recording_id,
-                asi.predicted_proba,
-                asi.annotation_id,
-                asi.created_at,
-                a.status AS review_status,
-                e.start_time,
-                e.end_time
-            FROM audit_set_items asi
-            JOIN annotations a ON a.id = asi.annotation_id
-            JOIN embeddings e ON e.id = asi.embedding_id
-            WHERE asi.custom_model_id = :model_id
-            ORDER BY asi.predicted_proba DESC NULLS LAST
-        """)
-
-        result = await self.db.execute(sql, {"model_id": str(model_id)})
-        return list(result.fetchall())
-
-    async def evaluate_audit_set(
-        self,
-        model: CustomModel,
-    ) -> dict[str, Any]:
-        """Compute metrics from human-audited audit set labels and persist them.
-
-        Collects all AuditSetItems for the model whose linked annotation has
-        been reviewed (confirmed or rejected), calls evaluate_on_audit_set(),
-        stores the result in model.audit_metrics, and returns the metrics dict.
-
-        Args:
-            model: CustomModel instance
-
-        Returns:
-            Computed audit metrics dict (accuracy, precision, recall, f1, etc.)
-
-        Raises:
-            ValueError: If fewer than 2 audited items are found (not computable)
-        """
-        from echoroo.ml.evaluation import evaluate_on_audit_set  # noqa: PLC0415
-
-        rows = await self.get_audit_items(model.id)
-
-        true_labels: list[int] = []
-        predicted_probas: list[float] = []
-
-        for row in rows:
-            status_str = str(row.review_status)
-            if status_str == "confirmed":
-                true_labels.append(1)
-            elif status_str == "rejected":
-                true_labels.append(0)
-            else:
-                # Skip unreviewed items
-                continue
-            predicted_probas.append(float(row.predicted_proba) if row.predicted_proba is not None else 0.5)
-
-        if len(true_labels) < 2:
-            raise ValueError(
-                f"Not enough reviewed audit items to compute metrics: "
-                f"found {len(true_labels)} reviewed items (minimum 2 required)."
-            )
-
-        metrics = evaluate_on_audit_set(
-            true_labels=true_labels,
-            predicted_probas=predicted_probas,
-        )
-
-        # Override n_audited / n_total with the correct counts
-        metrics["n_audited"] = len(true_labels)
-        metrics["n_total"] = len(rows)
-
-        # Persist metrics to the model record
-        model.audit_metrics = metrics
-        await self.db.commit()
-
-        return metrics

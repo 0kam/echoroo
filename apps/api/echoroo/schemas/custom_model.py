@@ -76,7 +76,6 @@ class CustomModelResponse(BaseModel):
     completed_at: datetime | None
     created_at: datetime
     updated_at: datetime
-    audit_metrics: dict[str, object] | None = None
     search_session_id: UUID | None = None
     dataset_id: UUID | None = None
 
@@ -113,3 +112,26 @@ class CustomModelApplyResponse(BaseModel):
 
     detection_run_id: UUID = Field(..., description="UUID of the created DetectionRun")
     status: DetectionRunStatus = Field(..., description="Initial status of the detection run")
+
+
+class CustomModelDetectionRunItem(BaseModel):
+    """A DetectionRun created by applying a custom model, with dataset context."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID = Field(..., description="DetectionRun UUID")
+    dataset_id: UUID | None = Field(None, description="Target dataset UUID, if any")
+    dataset_name: str | None = Field(None, description="Human-readable dataset name")
+    status: DetectionRunStatus = Field(..., description="Current execution status")
+    annotation_count: int = Field(..., description="Annotations produced (so far)")
+    started_at: datetime | None = Field(None, description="When the run started executing")
+    completed_at: datetime | None = Field(None, description="When the run finished")
+    error_message: str | None = Field(None, description="Error details if the run failed")
+    created_at: datetime = Field(..., description="When the run was queued")
+
+
+class CustomModelDetectionRunListResponse(BaseModel):
+    """List response for recent detection runs of a custom model."""
+
+    runs: list[CustomModelDetectionRunItem]
+    total: int

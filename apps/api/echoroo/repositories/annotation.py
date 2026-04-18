@@ -333,11 +333,21 @@ class AnnotationRepository(BaseRepository[Annotation]):
         from echoroo.models.dataset import Dataset
         from echoroo.models.recording import Recording
 
+        # Convert each recording's datetime to its dataset's timezone before
+        # extracting date and hour. PostgreSQL's ``AT TIME ZONE`` converts a
+        # ``timestamptz`` to a ``timestamp`` in the given zone, so EXTRACT
+        # will return the local hour. Falls back to UTC if the dataset has
+        # no timezone configured.
+        tz_expr = func.coalesce(Dataset.datetime_timezone, "UTC")
+        local_datetime = Recording.datetime.op("AT TIME ZONE")(tz_expr)
+        date_expr = func.date(local_datetime).label("detection_date")
+        hour_expr = func.extract("hour", local_datetime).label("detection_hour")
+
         query = (
             select(
                 Annotation.tag_id,
-                func.date(Recording.datetime).label("detection_date"),
-                func.extract("hour", Recording.datetime).label("detection_hour"),
+                date_expr,
+                hour_expr,
                 func.count(Annotation.id).label("detection_count"),
             )
             .join(Recording, Annotation.recording_id == Recording.id)
@@ -347,13 +357,13 @@ class AnnotationRepository(BaseRepository[Annotation]):
             .where(Recording.datetime.isnot(None))
             .group_by(
                 Annotation.tag_id,
-                func.date(Recording.datetime),
-                func.extract("hour", Recording.datetime),
+                func.date(local_datetime),
+                func.extract("hour", local_datetime),
             )
             .order_by(
                 Annotation.tag_id,
-                func.date(Recording.datetime),
-                func.extract("hour", Recording.datetime),
+                func.date(local_datetime),
+                func.extract("hour", local_datetime),
             )
         )
 

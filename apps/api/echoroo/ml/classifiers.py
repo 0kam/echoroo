@@ -42,6 +42,7 @@ __all__ = [
     "UnifiedClassifier",
     "train_with_cv",
     "reduce_unlabeled_samples",
+    "cluster_unlabeled_embeddings",
 ]
 
 
@@ -968,5 +969,88 @@ def reduce_unlabeled_samples(
     result: np.ndarray = embeddings[np.array(selected_indices)]
     logger.info(
         "reduce_unlabeled_samples(kmeans): %d → %d samples", n, len(result)
+    )
+    return result
+
+
+def cluster_unlabeled_embeddings(
+    embeddings: np.ndarray,
+    n_clusters: int = 1000,
+    samples_per_cluster: int = 2,
+    random_state: int = 42,
+) -> np.ndarray:
+    """Cluster unlabeled embeddings with MiniBatchKMeans and keep representative samples.
+
+    For each cluster, selects the ``samples_per_cluster`` samples closest to the
+    centroid to maintain diversity while reducing dataset size. This is the
+    preferred method for compressing large unlabeled pools (e.g. 20k -> 2k)
+    before feeding them into a semi-supervised classifier.
+
+    If the input size is already at or below ``n_clusters * samples_per_cluster``
+    the function is a no-op and returns the original array unchanged.
+
+    Parameters
+    ----------
+    embeddings
+        Unlabeled embeddings of shape (n_samples, embedding_dim).
+    n_clusters
+        Number of clusters to create (default 1000).
+    samples_per_cluster
+        Number of samples to keep per cluster (default 2).
+    random_state
+        Random seed for reproducibility (default 42).
+
+    Returns
+    -------
+    np.ndarray
+        Subset of embeddings closest to cluster centroids,
+        shape (<= n_clusters * samples_per_cluster, embedding_dim). The result
+        contains unique rows only (by index).
+    """
+    n_samples = len(embeddings)
+    target_size = n_clusters * samples_per_cluster
+
+    if n_samples <= target_size:
+        logger.debug(
+            "cluster_unlabeled_embeddings: n=%d <= target=%d, returning as-is.",
+            n_samples,
+            target_size,
+        )
+        return embeddings
+
+    actual_n_clusters = min(n_clusters, n_samples)
+
+    logger.info(
+        "cluster_unlabeled_embeddings: running MiniBatchKMeans "
+        "(n=%d, n_clusters=%d, samples_per_cluster=%d)",
+        n_samples,
+        actual_n_clusters,
+        samples_per_cluster,
+    )
+
+    kmeans = MiniBatchKMeans(
+        n_clusters=actual_n_clusters,
+        random_state=random_state,
+        batch_size=1024,
+        n_init=1,
+    )
+    cluster_labels = kmeans.fit_predict(embeddings)
+
+    selected_indices: set[int] = set()
+    for cluster_id in range(actual_n_clusters):
+        cluster_idx = np.where(cluster_labels == cluster_id)[0]
+        if len(cluster_idx) == 0:
+            continue
+
+        centroid = kmeans.cluster_centers_[cluster_id]
+        dists = np.linalg.norm(embeddings[cluster_idx] - centroid, axis=1)
+        k = min(samples_per_cluster, len(cluster_idx))
+        nearest = cluster_idx[np.argsort(dists)[:k]]
+        selected_indices.update(int(i) for i in nearest.tolist())
+
+    idx_array = np.array(sorted(selected_indices), dtype=np.int64)
+    result: np.ndarray = embeddings[idx_array]
+    logger.info(
+        "cluster_unlabeled_embeddings: %d → %d samples", n_samples, len(result)
     )
     return result

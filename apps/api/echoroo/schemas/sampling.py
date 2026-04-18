@@ -21,6 +21,7 @@ class SamplingRoundItemResponse(BaseModel):
     review_status: str | None = None  # 'unreviewed' | 'confirmed' | 'rejected'
     # Embedding metadata for display
     recording_id: UUID | None = None
+    recording_filename: str | None = None
     start_time: float | None = None
     end_time: float | None = None
 
@@ -41,6 +42,9 @@ class SamplingRoundResponse(BaseModel):
     error_message: str | None
     created_at: datetime
     completed_at: datetime | None
+    # Score distribution histogram computed during AL scoring; null for seed
+    # rounds and for legacy rounds produced before this field was introduced.
+    score_distribution: dict[str, object] | None = None
     items: list[SamplingRoundItemResponse] = []
 
     model_config = ConfigDict(from_attributes=True)
@@ -51,45 +55,6 @@ class SamplingRoundListResponse(BaseModel):
 
     rounds: list[SamplingRoundResponse]
     total: int
-
-
-class AuditSetItemResponse(BaseModel):
-    """Response schema for a single audit set item."""
-
-    id: UUID
-    embedding_id: UUID
-    recording_id: UUID
-    predicted_proba: float | None
-    annotation_id: UUID
-    # Annotation status included for convenience
-    review_status: str | None = None  # 'unreviewed' | 'confirmed' | 'rejected'
-    # Embedding metadata for display
-    start_time: float | None = None
-    end_time: float | None = None
-    created_at: datetime
-
-    model_config = ConfigDict(from_attributes=True)
-
-
-class AuditSetListResponse(BaseModel):
-    """List of audit set items for a custom model."""
-
-    items: list[AuditSetItemResponse]
-    total: int
-
-
-class AuditSetGenerateResponse(BaseModel):
-    """Response returned immediately after dispatching audit set generation."""
-
-    model_id: UUID
-    status: str = "dispatched"
-
-
-class AuditSetEvaluateResponse(BaseModel):
-    """Response schema for the audit set evaluation endpoint."""
-
-    model_id: UUID
-    audit_metrics: dict[str, object]
 
 
 class SeedSamplingRequest(BaseModel):

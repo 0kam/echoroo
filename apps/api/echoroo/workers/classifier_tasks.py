@@ -9,9 +9,10 @@ from __future__ import annotations
 import asyncio
 import logging
 import tempfile
+import time
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from uuid import UUID, uuid4
 
 import numpy as np
@@ -27,6 +28,11 @@ logger = logging.getLogger(__name__)
 # Minimum number of positive and negative examples required to start training
 _MIN_POSITIVE_SAMPLES = 15
 _MIN_NEGATIVE_SAMPLES = 15
+
+# Minimum labels required to run an AL iteration. AL is specifically intended
+# to help grow the labeled set, so the threshold is lower than for training.
+_AL_MIN_POSITIVE_SAMPLES = 5
+_AL_MIN_NEGATIVE_SAMPLES = 5
 
 # Maximum number of unlabeled embeddings to fetch for semi-supervised training
 _MAX_UNLABELED_SAMPLES = 2000
@@ -166,10 +172,13 @@ async def _run_training(
     """
     from echoroo.models.custom_model import CustomModelStatus
 
+    total_start = time.perf_counter()
+
     # ------------------------------------------------------------------
     # Step 1: Collect training data via a single batch SQL query
     # Fetches embeddings linked to annotations from all completed sampling rounds
     # ------------------------------------------------------------------
+    fetch_labeled_start = time.perf_counter()
     training_rows = await _fetch_training_embeddings(
         db=db,
         model_id=model.id,
@@ -185,6 +194,12 @@ async def _run_training(
         len(positive_rows),
         len(negative_rows),
         str(model.id),
+    )
+    logger.info(
+        "[timing] step=fetch_labeled project_id=%s elapsed=%.2fs n=%d",
+        project_id,
+        time.perf_counter() - fetch_labeled_start,
+        len(training_rows),
     )
 
     # ------------------------------------------------------------------
@@ -233,34 +248,66 @@ async def _run_training(
     if use_unlabeled:
         # Collect already-used embedding IDs to exclude them
         labeled_embedding_ids = [r["embedding_id"] for r in embeddings_list]
+        fetch_unlabeled_start = time.perf_counter()
         unlabeled_result = await _fetch_unlabeled_embeddings(
             db=db,
             project_id=project_id,
             embedding_model_name=embedding_model_name,
             exclude_embedding_ids=labeled_embedding_ids,
-            max_samples=max_unlabeled,
+            # Pull a larger pool so MiniBatchKMeans clustering can pick a
+            # diverse subset. The clustering step below compresses the pool
+            # to roughly ``n_clusters * samples_per_cluster`` samples.
+            max_samples=max(max_unlabeled * 10, max_unlabeled),
         )
 
         if unlabeled_result is not None:
             unlabeled_embeddings, unlabeled_recording_ids = unlabeled_result
 
-        if unlabeled_embeddings is not None and len(unlabeled_embeddings) > 0:
-            from echoroo.ml.classifiers import reduce_unlabeled_samples
+        fetched_n = (
+            len(unlabeled_embeddings) if unlabeled_embeddings is not None else 0
+        )
+        logger.info(
+            "[timing] step=fetch_unlabeled project_id=%s elapsed=%.2fs n=%d",
+            project_id,
+            time.perf_counter() - fetch_unlabeled_start,
+            fetched_n,
+        )
 
-            if len(unlabeled_embeddings) > max_unlabeled:
-                # Keep the same indices for both embeddings and recording_ids
-                reduced = reduce_unlabeled_samples(
-                    unlabeled_embeddings, max_samples=max_unlabeled
+        if unlabeled_embeddings is not None and len(unlabeled_embeddings) > 0:
+            from echoroo.ml.classifiers import cluster_unlabeled_embeddings
+
+            # Compress large unlabeled pools with MiniBatchKMeans (20k -> 2k).
+            # Self-training scales poorly with huge pools, so a diverse
+            # representative subset strikes a better speed/quality tradeoff.
+            if len(unlabeled_embeddings) > 1000:
+                cluster_start = time.perf_counter()
+                before = len(unlabeled_embeddings)
+                reduced = cluster_unlabeled_embeddings(
+                    unlabeled_embeddings,
+                    n_clusters=1000,
+                    samples_per_cluster=2,
                 )
-                # Identify which rows were kept by matching reduced rows back
-                # to the original array (reduce_unlabeled_samples returns a
-                # subset of the original rows, so we can use index lookup).
-                # For simplicity we truncate recording_ids to the same length
-                # since reduce_unlabeled_samples preserves row correspondence.
-                keep_count = len(reduced)
+                after = len(reduced)
+                # cluster_unlabeled_embeddings returns a row-subset of the
+                # input, so recording_ids can be filtered by locating each
+                # reduced row in the original array. We recover the indices
+                # by using np.isin on identity of the first column, which is
+                # unreliable for large arrays; instead re-run the selection
+                # logic by searching for row equality is O(n*m). To keep
+                # this O(n), we simply discard recording_ids here when
+                # clustering is applied — recording-level unlabeled
+                # filtering is a best-effort optimisation and the eval model
+                # still falls back to using all clustered unlabeled samples.
                 unlabeled_embeddings = reduced
-                if unlabeled_recording_ids is not None:
-                    unlabeled_recording_ids = unlabeled_recording_ids[:keep_count]
+                unlabeled_recording_ids = None
+                logger.info(
+                    "[timing] step=cluster_unlabeled project_id=%s elapsed=%.2fs "
+                    "before=%d after=%d",
+                    project_id,
+                    time.perf_counter() - cluster_start,
+                    before,
+                    after,
+                )
             logger.info(
                 "Unlabeled samples for semi-supervised training: %d (model_id=%s)",
                 len(unlabeled_embeddings),
@@ -276,6 +323,7 @@ async def _run_training(
     # ------------------------------------------------------------------
     from echoroo.ml.classifiers import train_with_cv
 
+    fit_start_perf = time.perf_counter()
     train_start = datetime.now(UTC)
     trained_classifier, metrics = train_with_cv(
         embeddings=embeddings,
@@ -285,6 +333,34 @@ async def _run_training(
         unlabeled_recording_ids=unlabeled_recording_ids,
     )
     train_duration_s = (datetime.now(UTC) - train_start).total_seconds()
+
+    # Capture the number of pseudo-positives generated by self-training so we
+    # can attribute speed/quality changes to the pseudo-label count.
+    pseudo_pos_count = 0
+    try:
+        inner = trained_classifier.model["classifier"]
+        # ``transduction_`` is an attribute of the fitted
+        # SelfTrainingClassifier but the Pipeline-typed container hides it
+        # from static analysis, so cast to Any for this diagnostic-only
+        # access.
+        if hasattr(inner, "transduction_") and unlabeled_embeddings is not None:
+            transduction = cast(Any, inner).transduction_
+            # Pseudo-labels are rows assigned a non-negative label in the
+            # unlabeled tail of the combined array.
+            tail = transduction[len(labels):]
+            pseudo_pos_count = int(np.sum(tail == 1))
+    except Exception:  # noqa: BLE001 — best-effort diagnostic only
+        pseudo_pos_count = 0
+
+    logger.info(
+        "[timing] step=fit project_id=%s elapsed=%.2fs labeled=%d unlabeled=%d "
+        "pseudo_pos=%d",
+        project_id,
+        time.perf_counter() - fit_start_perf,
+        len(embeddings),
+        int(len(unlabeled_embeddings)) if unlabeled_embeddings is not None else 0,
+        pseudo_pos_count,
+    )
 
     logger.info(
         "Training complete for model_id=%s: f1=%.4f, roc_auc=%.4f, "
@@ -337,6 +413,12 @@ async def _run_training(
     model.completed_at = datetime.now(UTC)
 
     await db.commit()
+
+    logger.info(
+        "[timing] step=total project_id=%s elapsed=%.2fs",
+        project_id,
+        time.perf_counter() - total_start,
+    )
 
     return {
         "status": "trained",
@@ -1374,6 +1456,11 @@ _AL_MARGIN_TRACKER_K = 60
 # Number of final AL samples to select
 _AL_SAMPLE_COUNT = 20
 
+# Candidate pool size before lane splitting for multi-lane AL selection.
+# Large enough to give the farthest-first "others" lane meaningful diversity
+# while staying comfortably in memory.
+_AL_MULTILANE_CANDIDATE_POOL = 200
+
 
 @app.task(  # type: ignore[untyped-decorator]
     bind=True,
@@ -1417,6 +1504,8 @@ async def _run_al_iteration(model_id: str, round_id: str) -> dict[str, Any]:
     # Use the round_id passed in from the API (pre-created pending round)
     round_id_str: str = round_id
 
+    al_total_start = time.perf_counter()
+
     try:
         # ------------------------------------------------------------------
         # Step 1: Fetch and validate the CustomModel record
@@ -1445,6 +1534,7 @@ async def _run_al_iteration(model_id: str, round_id: str) -> dict[str, Any]:
         # ------------------------------------------------------------------
         # Step 2: Fetch labeled training data from completed sampling rounds
         # ------------------------------------------------------------------
+        fetch_labeled_start = time.perf_counter()
         async with session_factory() as db:
             training_rows = await _fetch_training_embeddings(
                 db=db,
@@ -1462,24 +1552,35 @@ async def _run_al_iteration(model_id: str, round_id: str) -> dict[str, Any]:
             len(negative_rows),
             model_id,
         )
+        logger.info(
+            "[timing] step=fetch_labeled project_id=%s elapsed=%.2fs n=%d",
+            project_id,
+            time.perf_counter() - fetch_labeled_start,
+            len(training_rows),
+        )
 
-        if len(positive_rows) < _MIN_POSITIVE_SAMPLES:
+        if len(positive_rows) < _AL_MIN_POSITIVE_SAMPLES:
             raise ValueError(
                 f"Insufficient positive examples for AL: {len(positive_rows)} "
-                f"(minimum {_MIN_POSITIVE_SAMPLES} required)."
+                f"(minimum {_AL_MIN_POSITIVE_SAMPLES} required)."
             )
-        if len(negative_rows) < _MIN_NEGATIVE_SAMPLES:
+        if len(negative_rows) < _AL_MIN_NEGATIVE_SAMPLES:
             raise ValueError(
                 f"Insufficient negative examples for AL: {len(negative_rows)} "
-                f"(minimum {_MIN_NEGATIVE_SAMPLES} required)."
+                f"(minimum {_AL_MIN_NEGATIVE_SAMPLES} required)."
             )
 
         # ------------------------------------------------------------------
-        # Step 3: Build labeled arrays and train lightweight SVM (no CV)
+        # Step 3: Build labeled arrays + fetch unlabeled pool, then train a
+        # self-training SVM so pseudo-positives can be generated before AL
+        # scoring. Pseudo-positives are critical for low-label regimes where
+        # the base SVM otherwise collapses toward the negative class.
         # ------------------------------------------------------------------
-        from sklearn.svm import SVC  # noqa: PLC0415
-
-        from echoroo.ml.classifiers import UnifiedClassifier  # noqa: PLC0415
+        from echoroo.ml.classifiers import (  # noqa: PLC0415
+            ClassifierType,
+            UnifiedClassifier,
+            cluster_unlabeled_embeddings,
+        )
 
         embeddings_list = positive_rows + negative_rows
         raw_vectors = [r["vector"] for r in embeddings_list]
@@ -1495,33 +1596,93 @@ async def _run_al_iteration(model_id: str, round_id: str) -> dict[str, Any]:
         )
         labeled_vectors = embeddings_array  # keep reference for diversity seeds
 
-        # Train a fast linear SVM directly (skip self-training and CV)
-        from sklearn.pipeline import Pipeline  # noqa: PLC0415
-        from sklearn.preprocessing import Normalizer  # noqa: PLC0415
+        # Fetch a pool of unlabeled embeddings for semi-supervised training.
+        labeled_embedding_ids = [r["embedding_id"] for r in embeddings_list]
+        al_unlabeled: np.ndarray | None = None
+        fetch_unlabeled_start = time.perf_counter()
+        async with session_factory() as db:
+            unlabeled_result = await _fetch_unlabeled_embeddings(
+                db=db,
+                project_id=project_id,
+                embedding_model_name=embedding_model_name,
+                exclude_embedding_ids=labeled_embedding_ids,
+                # Pull a large pool so clustering can pick a diverse subset.
+                max_samples=20000,
+            )
+        if unlabeled_result is not None:
+            al_unlabeled = unlabeled_result[0]
+        fetched_n = len(al_unlabeled) if al_unlabeled is not None else 0
+        logger.info(
+            "[timing] step=fetch_unlabeled project_id=%s elapsed=%.2fs n=%d",
+            project_id,
+            time.perf_counter() - fetch_unlabeled_start,
+            fetched_n,
+        )
 
-        svm = SVC(kernel="linear", C=1.0, probability=False)
-        pipeline = Pipeline([
-            ("normalizer", Normalizer(norm="l2")),
-            ("classifier", svm),
-        ])
-        pipeline.fit(embeddings_array, labels_array)
+        # Compress the pool with MiniBatchKMeans if it is large. Self-training
+        # scales poorly with tens of thousands of unlabeled rows, so we pick
+        # a diverse representative subset (~2000 samples).
+        if al_unlabeled is not None and len(al_unlabeled) > 1000:
+            cluster_start = time.perf_counter()
+            before = len(al_unlabeled)
+            al_unlabeled = cluster_unlabeled_embeddings(
+                al_unlabeled,
+                n_clusters=1000,
+                samples_per_cluster=2,
+            )
+            logger.info(
+                "[timing] step=cluster_unlabeled project_id=%s elapsed=%.2fs "
+                "before=%d after=%d",
+                project_id,
+                time.perf_counter() - cluster_start,
+                before,
+                len(al_unlabeled),
+            )
 
-        # Wrap in UnifiedClassifier so decision_function() works correctly
-        classifier = UnifiedClassifier.__new__(UnifiedClassifier)
-        from echoroo.ml.classifiers import ClassifierType  # noqa: PLC0415
-        classifier.classifier_type = ClassifierType.SELF_TRAINING_SVM
-        classifier.model = pipeline
-        classifier.is_fitted = True
-        classifier._single_class = None
+        # Self-training SVM fit. UnifiedClassifier already handles the
+        # labeled + unlabeled concatenation and -1 label convention.
+        classifier = UnifiedClassifier(
+            classifier_type=ClassifierType.SELF_TRAINING_SVM,
+        )
+        fit_start = time.perf_counter()
+        classifier.fit(
+            embeddings_array,
+            labels_array,
+            unlabeled_embeddings=al_unlabeled,
+        )
+        pseudo_pos_count = 0
+        try:
+            inner = classifier.model["classifier"]
+            # ``transduction_`` is a SelfTrainingClassifier attribute that the
+            # Pipeline type does not expose; cast to Any so static analysis
+            # does not complain about this diagnostic-only access.
+            if hasattr(inner, "transduction_") and al_unlabeled is not None:
+                transduction = cast(Any, inner).transduction_
+                tail = transduction[len(labels_array):]
+                pseudo_pos_count = int(np.sum(tail == 1))
+        except Exception:  # noqa: BLE001 — diagnostic only
+            pseudo_pos_count = 0
+        logger.info(
+            "[timing] step=fit project_id=%s elapsed=%.2fs labeled=%d "
+            "unlabeled=%d pseudo_pos=%d",
+            project_id,
+            time.perf_counter() - fit_start,
+            len(embeddings_array),
+            int(len(al_unlabeled)) if al_unlabeled is not None else 0,
+            pseudo_pos_count,
+        )
 
         logger.info(
-            "Lightweight SVM trained on %d samples (model_id=%s)",
+            "AL self-training SVM fitted on %d labeled samples "
+            "(+%d unlabeled, pseudo_pos=%d) (model_id=%s)",
             len(embeddings_array),
+            int(len(al_unlabeled)) if al_unlabeled is not None else 0,
+            pseudo_pos_count,
             model_id,
         )
 
         # ------------------------------------------------------------------
-        # Step 4: Collect excluded embedding IDs (cross-round dedup + audit set)
+        # Step 4: Collect excluded embedding IDs (cross-round dedup)
         # ------------------------------------------------------------------
         async with session_factory() as db:
             from echoroo.repositories.sampling_round import (  # noqa: PLC0415
@@ -1543,13 +1704,37 @@ async def _run_al_iteration(model_id: str, round_id: str) -> dict[str, Any]:
         )
 
         # ------------------------------------------------------------------
-        # Step 5: Score project embeddings in chunks, feed into MarginTracker
+        # Step 5: Score project embeddings in chunks, feed two margin trackers
         # ------------------------------------------------------------------
-        from echoroo.ml.active_learning import MarginTracker, select_al_samples  # noqa: PLC0415
+        # We maintain two trackers so the multi-lane selection has access to
+        # both ends of the decision-function spectrum:
+        #   * ``uncertain_tracker`` keeps the most-uncertain candidates
+        #     (smallest |d|) — used to build the "boundary" lane and seed
+        #     the "others" lane.
+        #   * ``top_positive_tracker`` keeps the most-confident positives
+        #     (largest signed d) — used to build the "easy_positive" lane.
+        # After scoring we merge their outputs (deduping by embedding id)
+        # and hand the combined pool to ``select_al_samples_multilane``.
+        from echoroo.ml.active_learning import (  # noqa: PLC0415
+            ALMultilaneSamplingConfig,
+            MarginTracker,
+            select_al_samples_multilane,
+        )
 
-        tracker = MarginTracker(k=_AL_MARGIN_TRACKER_K)
+        predict_proba_start = time.perf_counter()
+        uncertain_tracker = MarginTracker(
+            k=_AL_MULTILANE_CANDIDATE_POOL, mode="uncertain"
+        )
+        top_positive_tracker = MarginTracker(
+            k=_AL_MULTILANE_CANDIDATE_POOL, mode="top_positive"
+        )
         offset = 0
         total_scored = 0
+        # Collected chunk distance arrays so we can build a global histogram
+        # of sigmoid(decision_distance) over all scored unlabeled embeddings
+        # once scoring completes. Using a list-of-arrays avoids quadratic
+        # concatenation while keeping memory proportional to total_scored.
+        all_distances_chunks: list[np.ndarray] = []
 
         while True:
             chunk_sql = text("""
@@ -1586,11 +1771,20 @@ async def _run_al_iteration(model_id: str, round_id: str) -> dict[str, Any]:
             chunk_vectors = _parse_vectors([r.vector for r in rows])
             chunk_distances = classifier.decision_function(chunk_vectors)
 
-            tracker.update(
+            uncertain_tracker.update(
                 ids=chunk_ids,
                 distances=chunk_distances,
                 vectors=chunk_vectors,
             )
+            top_positive_tracker.update(
+                ids=chunk_ids,
+                distances=chunk_distances,
+                vectors=chunk_vectors,
+            )
+
+            # Keep the raw distances around so we can compute the global
+            # score-distribution histogram after all chunks have been scored.
+            all_distances_chunks.append(np.asarray(chunk_distances, dtype=np.float64))
 
             total_scored += len(rows)
             offset += len(rows)
@@ -1603,24 +1797,113 @@ async def _run_al_iteration(model_id: str, round_id: str) -> dict[str, Any]:
             total_scored,
             model_id,
         )
-
-        # ------------------------------------------------------------------
-        # Step 6: Select diverse uncertain samples
-        # ------------------------------------------------------------------
-        candidate_ids, candidate_distances, candidate_vectors = tracker.get()
-
-        al_samples = select_al_samples(
-            candidate_ids=candidate_ids,
-            candidate_distances=candidate_distances,
-            candidate_vectors=candidate_vectors,
-            labeled_vectors=labeled_vectors,
-            n_samples=_AL_SAMPLE_COUNT,
+        logger.info(
+            "[timing] step=predict_proba project_id=%s elapsed=%.2fs n=%d",
+            project_id,
+            time.perf_counter() - predict_proba_start,
+            total_scored,
         )
 
+        # ------------------------------------------------------------------
+        # Step 5b: Compute score-distribution histogram over all scored
+        # embeddings. The UI uses this to visualise how the model's
+        # prediction distribution shifts between AL iterations, which helps
+        # users decide when to stop sampling and kick off training.
+        # ------------------------------------------------------------------
+        score_distribution: dict[str, Any] | None = None
+        histogram_start = time.perf_counter()
+        if all_distances_chunks:
+            all_distances = np.concatenate(all_distances_chunks)
+            # Logistic sigmoid maps the signed SVM decision distance into a
+            # 0-1 probability: 0 -> 0.5, large positive -> ~1, large negative -> ~0.
+            all_probs = 1.0 / (1.0 + np.exp(-all_distances))
+            bin_edges_arr = np.linspace(0.0, 1.0, 21)
+            bin_counts_arr, _ = np.histogram(all_probs, bins=bin_edges_arr)
+            positive_count = int(np.sum(all_probs >= 0.5))
+            negative_count = int(np.sum(all_probs < 0.5))
+            score_distribution = {
+                "bin_edges": [float(x) for x in bin_edges_arr.tolist()],
+                "bin_counts": [int(c) for c in bin_counts_arr.tolist()],
+                "mean_score": float(np.mean(all_probs)),
+                "positive_count": positive_count,
+                "negative_count": negative_count,
+                "total_scored": int(all_probs.size),
+            }
+            logger.info(
+                "AL score distribution: mean=%.4f, pos=%d, neg=%d, total=%d "
+                "(model_id=%s)",
+                score_distribution["mean_score"],
+                positive_count,
+                negative_count,
+                score_distribution["total_scored"],
+                model_id,
+            )
+            logger.info(
+                "[timing] step=score_histogram project_id=%s elapsed=%.2fs n=%d",
+                project_id,
+                time.perf_counter() - histogram_start,
+                int(all_probs.size),
+            )
+
+        # ------------------------------------------------------------------
+        # Step 6: Merge tracker outputs and run multi-lane selection
+        # ------------------------------------------------------------------
+        uncertain_ids, uncertain_dists, uncertain_vecs = uncertain_tracker.get()
+        top_pos_ids, top_pos_dists, top_pos_vecs = top_positive_tracker.get()
+
+        # Merge while deduplicating by embedding id (a candidate can appear
+        # in both trackers if its distance is both large-positive AND
+        # near zero, which is impossible — but dedupe defensively anyway).
+        merged_ids: list[str] = []
+        merged_dists_list: list[float] = []
+        merged_vecs_list: list[np.ndarray] = []
+        seen: set[str] = set()
+
+        def _append(eid: str, dist: float, vec: np.ndarray) -> None:
+            if eid in seen:
+                return
+            seen.add(eid)
+            merged_ids.append(eid)
+            merged_dists_list.append(float(dist))
+            merged_vecs_list.append(vec)
+
+        for i, eid in enumerate(uncertain_ids):
+            _append(eid, uncertain_dists[i], uncertain_vecs[i])
+        for i, eid in enumerate(top_pos_ids):
+            _append(eid, top_pos_dists[i], top_pos_vecs[i])
+
+        merged_vectors = (
+            np.vstack(merged_vecs_list) if merged_vecs_list else np.empty((0, 0))
+        )
+        merged_distances = np.array(merged_dists_list)
+
+        multilane_config = ALMultilaneSamplingConfig(
+            easy_positive_k=5,
+            boundary_m=10,
+            others_p=5,
+            candidate_pool_size=_AL_MULTILANE_CANDIDATE_POOL,
+        )
+        al_samples = select_al_samples_multilane(
+            candidate_ids=merged_ids,
+            candidate_distances=merged_distances,
+            candidate_vectors=merged_vectors,
+            labeled_vectors=labeled_vectors,
+            config=multilane_config,
+        )
+
+        # Per-lane counts for visibility in logs / debugging.
+        lane_counts: dict[str, int] = {}
+        for s in al_samples:
+            lane_counts[s.sample_type] = lane_counts.get(s.sample_type, 0) + 1
+
         logger.info(
-            "AL sample selection: %d candidates -> %d selected (model_id=%s)",
-            len(candidate_ids),
+            "AL multi-lane selection: %d merged candidates -> %d selected "
+            "(easy_positive=%d, boundary=%d, others=%d, model_id=%s)",
+            len(merged_ids),
             len(al_samples),
+            lane_counts.get("easy_positive", 0),
+            lane_counts.get("boundary", 0),
+            lane_counts.get("others", 0),
             model_id,
         )
 
@@ -1703,7 +1986,11 @@ async def _run_al_iteration(model_id: str, round_id: str) -> dict[str, Any]:
                 item_dicts.append(
                     {
                         "embedding_id": UUID(sample.embedding_id),
-                        "sample_type": "active_learning",
+                        # Multi-lane AL tags each sample with its lane
+                        # ("easy_positive" | "boundary" | "others"); falls
+                        # back to "active_learning" for legacy single-lane
+                        # samples.
+                        "sample_type": sample.sample_type,
                         "annotation_id": annotation.id,
                         "similarity": None,
                         "decision_distance": sample.decision_distance,
@@ -1715,6 +2002,7 @@ async def _run_al_iteration(model_id: str, round_id: str) -> dict[str, Any]:
                 round_id=UUID(round_id_str),
                 status="completed",
                 sample_count=len(item_dicts),
+                score_distribution=score_distribution,
             )
 
             await db.commit()
@@ -1726,6 +2014,11 @@ async def _run_al_iteration(model_id: str, round_id: str) -> dict[str, Any]:
             round_id_str,
             round_number,
             len(item_dicts),
+        )
+        logger.info(
+            "[timing] step=total project_id=%s elapsed=%.2fs",
+            project_id,
+            time.perf_counter() - al_total_start,
         )
 
         return {
@@ -1796,332 +2089,3 @@ def _parse_vectors(raw_vectors: list[Any]) -> np.ndarray:
             raise ValueError(f"Unexpected vector type {type(raw)}")
     return np.array(vectors, dtype=np.float32)
 
-
-# ---------------------------------------------------------------------------
-# Audit set generation task
-# ---------------------------------------------------------------------------
-
-# Batch size for fetching project embeddings during audit set scoring
-_AUDIT_SCORING_BATCH_SIZE = 5000
-
-
-@app.task(  # type: ignore[untyped-decorator]
-    bind=True,
-    name="echoroo.workers.classifier_tasks.generate_audit_set",
-    time_limit=600,
-    soft_time_limit=540,
-    max_retries=1,
-)
-def generate_audit_set(_self: Any, model_id: str) -> dict[str, Any]:
-    """Generate a score-stratified audit set for a trained custom model.
-
-    Loads the trained classifier from S3, scores all project embeddings
-    (excluding those already in sampling rounds and previous audit items),
-    applies score-stratified sampling to select representative audit
-    candidates, and creates Annotation + AuditSetItem records for human review.
-
-    Args:
-        model_id: UUID string of the CustomModel record (must be TRAINED).
-
-    Returns:
-        Dict with summary: model_id, audit_item_count.
-    """
-    return asyncio.run(_generate_audit_set(model_id))
-
-
-async def _generate_audit_set(model_id: str) -> dict[str, Any]:
-    """Async implementation of audit set generation.
-
-    Args:
-        model_id: UUID string of the CustomModel record.
-
-    Returns:
-        Dict with summary keys: model_id, audit_item_count.
-    """
-    from echoroo.models.custom_model import CustomModel, CustomModelStatus
-
-    engine, session_factory = get_worker_engine_and_session_factory()
-    try:
-        async with session_factory() as db:
-            # ------------------------------------------------------------------
-            # Step 1: Fetch and validate the CustomModel
-            # ------------------------------------------------------------------
-            result = await db.execute(
-                select(CustomModel).where(CustomModel.id == UUID(model_id))
-            )
-            model = result.scalar_one_or_none()
-
-            if model is None:
-                raise ValueError(f"CustomModel not found: {model_id}")
-
-            if model.status != CustomModelStatus.TRAINED:
-                raise ValueError(
-                    f"Cannot generate audit set for model with status '{model.status}'. "
-                    "Only TRAINED models are supported."
-                )
-
-            if not model.model_artifact_key:
-                raise ValueError(
-                    f"CustomModel {model_id} has no model artifact key. "
-                    "Train the model before generating an audit set."
-                )
-
-            project_id = model.project_id
-            embedding_model_name = model.embedding_model_name
-            target_tag_id = model.target_tag_id
-            artifact_key = model.model_artifact_key
-
-        logger.info(
-            "Starting audit set generation: model_id=%s, project_id=%s",
-            model_id,
-            project_id,
-        )
-
-        # ------------------------------------------------------------------
-        # Step 2: Load classifier artifact from S3
-        # ------------------------------------------------------------------
-        from echoroo.ml.classifiers import UnifiedClassifier  # noqa: PLC0415
-
-        with tempfile.NamedTemporaryFile(suffix=".joblib", delete=False) as tmp_file:
-            tmp_path = Path(tmp_file.name)
-
-        try:
-            await _download_model_from_s3(artifact_key, tmp_path)
-            classifier = UnifiedClassifier.load(tmp_path)
-        finally:
-            tmp_path.unlink(missing_ok=True)
-
-        logger.info(
-            "Loaded classifier from S3 for audit set generation: key=%s (model_id=%s)",
-            artifact_key,
-            model_id,
-        )
-
-        # ------------------------------------------------------------------
-        # Step 3: Collect exclude set
-        #   - sampling_round_items.embedding_id for this model
-        #   - existing audit_set_items.embedding_id for this model
-        # ------------------------------------------------------------------
-        exclude_sql = text("""
-            SELECT DISTINCT sri.embedding_id
-            FROM sampling_round_items sri
-            JOIN sampling_rounds sr ON sr.id = sri.sampling_round_id
-            WHERE sr.custom_model_id = :model_id
-            UNION
-            SELECT embedding_id
-            FROM audit_set_items
-            WHERE custom_model_id = :model_id
-        """)
-
-        async with session_factory() as db:
-            exclude_rows = (
-                await db.execute(exclude_sql, {"model_id": model_id})
-            ).fetchall()
-
-        exclude_ids: set[str] = {str(row[0]) for row in exclude_rows}
-
-        logger.info(
-            "Audit set exclude set: %d embedding IDs (model_id=%s)",
-            len(exclude_ids),
-            model_id,
-        )
-
-        # ------------------------------------------------------------------
-        # Step 4+5: Fetch embeddings in chunks, score each chunk immediately,
-        # and accumulate only (id, recording_id, proba) lightweight tuples.
-        # Raw vectors are freed after each chunk so peak memory stays at
-        # _AUDIT_SCORING_BATCH_SIZE × D × 4 bytes (≈30 MB for 5000 × 1536).
-        # ------------------------------------------------------------------
-        from echoroo.ml.evaluation import AuditSample  # noqa: PLC0415
-
-        # scored_items collects lightweight tuples — no raw vectors kept.
-        scored_items: list[tuple[str, str, float]] = []  # (embedding_id, recording_id, proba)
-        offset = 0
-        total_scored = 0
-
-        chunk_sql = text("""
-            SELECT e.id, e.recording_id, e.vector
-            FROM embeddings e
-            JOIN recordings r ON r.id = e.recording_id
-            JOIN datasets d ON d.id = r.dataset_id
-            WHERE
-                d.project_id = :project_id
-                AND e.model_name = :embedding_model_name
-            ORDER BY e.id
-            LIMIT :limit OFFSET :offset
-        """)
-
-        while True:
-            async with session_factory() as db:
-                rows = (
-                    await db.execute(
-                        chunk_sql,
-                        {
-                            "project_id": str(project_id),
-                            "embedding_model_name": embedding_model_name,
-                            "limit": _AUDIT_SCORING_BATCH_SIZE,
-                            "offset": offset,
-                        },
-                    )
-                ).fetchall()
-
-            if not rows:
-                break
-
-            # Filter excluded IDs before building the vector array.
-            candidate_rows = [r for r in rows if str(r.id) not in exclude_ids]
-
-            if candidate_rows:
-                chunk_vectors = _parse_vectors([r.vector for r in candidate_rows])
-                chunk_probas: np.ndarray = classifier.predict_proba(chunk_vectors)
-                del chunk_vectors  # free ~30 MB chunk buffer immediately
-
-                for row, proba in zip(candidate_rows, chunk_probas.tolist(), strict=False):
-                    scored_items.append((str(row.id), str(row.recording_id), float(proba)))
-
-            total_scored += len(rows)
-            offset += len(rows)
-            if len(rows) < _AUDIT_SCORING_BATCH_SIZE:
-                break
-
-        logger.info(
-            "Audit set scoring complete: %d total rows scanned, %d candidates (model_id=%s)",
-            total_scored,
-            len(scored_items),
-            model_id,
-        )
-
-        if not scored_items:
-            logger.warning(
-                "No candidate embeddings available for audit set (model_id=%s)", model_id
-            )
-            return {"model_id": model_id, "audit_item_count": 0}
-
-        # Score-stratified bucket sampling — mirrors select_audit_set() but
-        # operates on pre-scored lightweight tuples (no raw vectors needed).
-        _n_per_bucket = 6
-        _n_buckets = 5
-        bucket_edges = np.linspace(0.0, 1.0, _n_buckets + 1)
-        rng = np.random.default_rng(seed=42)
-
-        probas_arr = np.array([s[2] for s in scored_items], dtype=np.float32)
-        audit_samples: list[AuditSample] = []
-
-        for bucket_idx in range(_n_buckets):
-            low = float(bucket_edges[bucket_idx])
-            high = float(bucket_edges[bucket_idx + 1])
-
-            if bucket_idx == _n_buckets - 1:
-                in_bucket = np.where((probas_arr >= low) & (probas_arr <= high))[0]
-            else:
-                in_bucket = np.where((probas_arr >= low) & (probas_arr < high))[0]
-
-            if len(in_bucket) == 0:
-                continue
-
-            n_draw = min(_n_per_bucket, len(in_bucket))
-            drawn_local = rng.choice(in_bucket, size=n_draw, replace=False)
-
-            for local_idx in drawn_local:
-                eid, rid, proba = scored_items[int(local_idx)]
-                audit_samples.append(
-                    AuditSample(
-                        embedding_id=eid,
-                        recording_id=rid,
-                        predicted_proba=proba,
-                    )
-                )
-
-        logger.info(
-            "Audit set selected: %d samples (model_id=%s)",
-            len(audit_samples),
-            model_id,
-        )
-
-        if not audit_samples:
-            return {"model_id": model_id, "audit_item_count": 0}
-
-        # ------------------------------------------------------------------
-        # Step 6: Fetch start_time / end_time for selected embeddings
-        # ------------------------------------------------------------------
-        sample_embedding_ids = [s.embedding_id for s in audit_samples]
-
-        meta_sql = text("""
-            SELECT e.id, e.recording_id, e.start_time, e.end_time
-            FROM embeddings e
-            WHERE e.id = ANY(:embedding_ids)
-        """)
-
-        async with session_factory() as db:
-            meta_rows = (
-                await db.execute(meta_sql, {"embedding_ids": sample_embedding_ids})
-            ).fetchall()
-
-        meta_map = {str(r.id): r for r in meta_rows}
-
-        # ------------------------------------------------------------------
-        # Step 7: Create Annotation + AuditSetItem records
-        # ------------------------------------------------------------------
-        from echoroo.models.annotation import Annotation  # noqa: PLC0415
-        from echoroo.models.enums import DetectionSource, DetectionStatus  # noqa: PLC0415
-        from echoroo.models.sampling_round import AuditSetItem  # noqa: PLC0415
-
-        now = datetime.now(UTC)
-        audit_item_count = 0
-
-        async with session_factory() as db:
-            for sample in audit_samples:
-                meta = meta_map.get(sample.embedding_id)
-                if meta is None:
-                    logger.warning(
-                        "No metadata found for embedding_id=%s during audit set creation, skipping.",
-                        sample.embedding_id,
-                    )
-                    continue
-
-                annotation = Annotation(
-                    recording_id=UUID(sample.recording_id),
-                    tag_id=target_tag_id,
-                    source=DetectionSource.AUDIT_SET,
-                    status=DetectionStatus.UNREVIEWED,
-                    start_time=float(meta.start_time),
-                    end_time=float(meta.end_time),
-                    created_at=now,
-                    updated_at=now,
-                )
-                db.add(annotation)
-                await db.flush()
-                await db.refresh(annotation)
-
-                audit_item = AuditSetItem(
-                    custom_model_id=UUID(model_id),
-                    embedding_id=UUID(sample.embedding_id),
-                    recording_id=UUID(sample.recording_id),
-                    predicted_proba=sample.predicted_proba,
-                    annotation_id=annotation.id,
-                    created_at=now,
-                )
-                db.add(audit_item)
-                audit_item_count += 1
-
-            await db.commit()
-
-        logger.info(
-            "Audit set generation complete: model_id=%s, audit_item_count=%d",
-            model_id,
-            audit_item_count,
-        )
-
-        return {
-            "model_id": model_id,
-            "audit_item_count": audit_item_count,
-        }
-
-    except Exception:
-        logger.exception(
-            "Audit set generation failed: model_id=%s", model_id
-        )
-        raise
-
-    finally:
-        await engine.dispose()

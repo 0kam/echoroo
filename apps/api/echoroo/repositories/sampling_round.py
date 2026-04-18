@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
@@ -10,7 +10,6 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from echoroo.models.annotation import Annotation
 from echoroo.models.embedding import Embedding
 from echoroo.models.sampling_round import SamplingRound, SamplingRoundItem
 
@@ -95,6 +94,7 @@ class SamplingRoundRepository:
         status: str,
         error_message: str | None = None,
         sample_count: int | None = None,
+        score_distribution: dict[str, Any] | None = None,
     ) -> SamplingRound | None:
         """Update the status (and optionally sample_count) of a SamplingRound.
 
@@ -105,6 +105,9 @@ class SamplingRoundRepository:
             status: New status value ('pending', 'running', 'completed', or 'failed')
             error_message: Error details to store when status is 'failed'
             sample_count: Updated sample count to store alongside the status change
+            score_distribution: Optional histogram of sigmoid(decision_distance)
+                for all scored unlabeled embeddings. Only meaningful for
+                active-learning rounds.
 
         Returns:
             Updated SamplingRound instance, or None if the round was not found
@@ -121,8 +124,11 @@ class SamplingRoundRepository:
         if sample_count is not None:
             round_.sample_count = sample_count
 
+        if score_distribution is not None:
+            round_.score_distribution = score_distribution
+
         if status in ("completed", "failed"):
-            round_.completed_at = datetime.now(tz=timezone.utc)
+            round_.completed_at = datetime.now(tz=UTC)
 
         await self.db.flush()
         await self.db.refresh(round_)
@@ -182,7 +188,9 @@ class SamplingRoundRepository:
             .options(
                 selectinload(SamplingRound.items).options(
                     selectinload(SamplingRoundItem.annotation),
-                    selectinload(SamplingRoundItem.embedding),
+                    selectinload(SamplingRoundItem.embedding).selectinload(
+                        Embedding.recording
+                    ),
                 )
             )
         )
