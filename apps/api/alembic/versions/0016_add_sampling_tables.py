@@ -14,6 +14,7 @@ training_session_ids column, and enforces NOT NULL on target_tag_id.
 from __future__ import annotations
 
 import sqlalchemy as sa
+
 from alembic import op
 
 # Revision identifiers used by Alembic.

@@ -11,6 +11,7 @@ extracted from recording filenames can be interpreted correctly before storage.
 from __future__ import annotations
 
 import sqlalchemy as sa
+
 from alembic import op
 
 # Revision identifiers used by Alembic.

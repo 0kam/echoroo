@@ -1278,7 +1278,7 @@ async def get_session_time_distribution(
             avg_similarity=float(c["avg_similarity"]),
             count=int(c["count"]),
         )
-        for c in raw_cells  # type: ignore[union-attr]
+        for c in raw_cells  # type: ignore[attr-defined]
     ]
 
     return SessionTimeDistributionResponse(

@@ -13,10 +13,10 @@ embeddings from the database before invoking these functions.
 
 from __future__ import annotations
 
-import numpy as np
-from dataclasses import dataclass, field
-from scipy.spatial.distance import cdist
+from dataclasses import dataclass
 
+import numpy as np
+from scipy.spatial.distance import cdist
 
 # ---------------------------------------------------------------------------
 # Dataclasses

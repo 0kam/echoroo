@@ -16,8 +16,9 @@ links custom models back to their originating search session and dataset:
 from __future__ import annotations
 
 import sqlalchemy as sa
-from alembic import op
 from pgvector.sqlalchemy import Vector
+
+from alembic import op
 
 # Revision identifiers used by Alembic.
 revision: str = "0018"

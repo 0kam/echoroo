@@ -12,8 +12,9 @@ annotations created via search sessions can be traced back to their origin.
 from __future__ import annotations
 
 import sqlalchemy as sa
-from alembic import op
 from sqlalchemy.dialects import postgresql
+
+from alembic import op
 
 # Revision identifiers used by Alembic.
 revision: str = "0011"

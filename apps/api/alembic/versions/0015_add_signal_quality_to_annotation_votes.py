@@ -11,6 +11,7 @@ the target species appears in the audio clip. Only applicable when vote is 'agre
 from __future__ import annotations
 
 import sqlalchemy as sa
+
 from alembic import op
 
 # Revision identifiers used by Alembic.

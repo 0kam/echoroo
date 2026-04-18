@@ -28,7 +28,12 @@ from echoroo.core.s3 import (
     move_object,
     verify_object_exists,
 )
-from echoroo.models.enums import DatasetStatus, DatetimeParseStatus, UploadFileStatus, UploadSessionStatus
+from echoroo.models.enums import (
+    DatasetStatus,
+    DatetimeParseStatus,
+    UploadFileStatus,
+    UploadSessionStatus,
+)
 from echoroo.models.recording import Recording
 from echoroo.models.upload import UploadFile, UploadSession
 from echoroo.repositories.dataset import DatasetRepository

@@ -16,7 +16,13 @@ from uuid import UUID
 from fastapi import HTTPException, status
 
 from echoroo.models.annotation import Annotation
-from echoroo.models.enums import ConsensusStatus, DetectionSource, DetectionStatus, SignalQuality, VoteType
+from echoroo.models.enums import (
+    ConsensusStatus,
+    DetectionSource,
+    DetectionStatus,
+    SignalQuality,
+    VoteType,
+)
 from echoroo.repositories.annotation import AnnotationRepository
 from echoroo.repositories.annotation_vote import AnnotationVoteRepository
 from echoroo.schemas.annotation_vote import (

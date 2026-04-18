@@ -16,8 +16,9 @@ this field populated.
 from __future__ import annotations
 
 import sqlalchemy as sa
-from alembic import op
 from sqlalchemy.dialects.postgresql import JSONB
+
+from alembic import op
 
 # Revision identifiers used by Alembic.
 revision: str = "0019"

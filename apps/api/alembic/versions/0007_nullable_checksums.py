@@ -12,6 +12,7 @@ columns nullable so uploads still succeed without a client-side hash.
 from __future__ import annotations
 
 import sqlalchemy as sa
+
 from alembic import op
 
 # revision identifiers, used by Alembic.
