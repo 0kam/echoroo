@@ -80,13 +80,6 @@ export async function deleteRecording(projectId: string, recordingId: string): P
 }
 
 /**
- * Get URL for streaming audio (returns raw bytes, not JSON).
- */
-export function getStreamUrl(projectId: string, recordingId: string): string {
-  return `${API_BASE}/projects/${projectId}/recordings/${recordingId}/stream`;
-}
-
-/**
  * Get URL for playback with optional speed adjustment.
  */
 export function getPlaybackUrl(projectId: string, recordingId: string, params?: PlaybackParams): string {

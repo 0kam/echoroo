@@ -58,27 +58,13 @@ export async function castVote(
  * Delete the current user's vote on a detection (toggle off).
  *
  * Returns the updated VoteSummary (with recomputed consensus) from the backend.
- * Callers should use the returned summary to update local state directly
- * instead of making a separate getVotes call.
+ * Callers should use the returned summary to update local state directly.
  */
 export async function deleteVote(
   projectId: string,
   detectionId: string
 ): Promise<VoteSummary> {
   return apiClient.delete<VoteSummary>(
-    detectionVoteUrl(projectId, detectionId)
-  );
-}
-
-/**
- * Retrieve the vote summary for a detection, including all votes
- * and the current user's vote.
- */
-export async function getVotes(
-  projectId: string,
-  detectionId: string
-): Promise<VoteSummary> {
-  return apiClient.get<VoteSummary>(
     detectionVoteUrl(projectId, detectionId)
   );
 }
@@ -114,27 +100,13 @@ export async function castAnnotationVote(
  * Delete the current user's vote on an annotation (generic path).
  *
  * Returns the updated VoteSummary (with recomputed consensus) from the backend.
- * Callers should use the returned summary to update local state directly
- * instead of making a separate getAnnotationVotes call.
+ * Callers should use the returned summary to update local state directly.
  */
 export async function deleteAnnotationVote(
   projectId: string,
   annotationId: string
 ): Promise<VoteSummary> {
   return apiClient.delete<VoteSummary>(
-    annotationVoteUrl(projectId, annotationId)
-  );
-}
-
-/**
- * Retrieve the vote summary for an annotation (generic path).
- * Works with any annotation ID, including those from search results.
- */
-export async function getAnnotationVotes(
-  projectId: string,
-  annotationId: string
-): Promise<VoteSummary> {
-  return apiClient.get<VoteSummary>(
     annotationVoteUrl(projectId, annotationId)
   );
 }

@@ -15,9 +15,6 @@ import type {
   SessionDistributionResponse,
   SessionSampleResponse,
   SessionTimeDistributionResponse,
-  SimilarByAudioParams,
-  SimilarByEmbeddingRequest,
-  SimilaritySearchResponse,
   TargetSpecies,
   XenoCantoSearchResponse,
 } from '$lib/types/search';
@@ -25,76 +22,6 @@ import { apiClient } from './client';
 import { ApiError } from './client';
 
 const API_BASE = '/api/v1';
-
-/**
- * Search for similar audio segments using an existing stored embedding.
- *
- * @param projectId - Project UUID
- * @param request - Search parameters including embedding_id and optional filters
- * @returns Similarity search response ordered by descending similarity
- */
-export async function searchSimilarByEmbedding(
-  projectId: string,
-  request: SimilarByEmbeddingRequest
-): Promise<SimilaritySearchResponse> {
-  return apiClient.post<SimilaritySearchResponse>(
-    `${API_BASE}/projects/${projectId}/search/similar`,
-    request
-  );
-}
-
-/**
- * Search for similar audio segments by uploading an audio clip.
- *
- * Sends the file as multipart/form-data alongside search parameters.
- *
- * @param projectId - Project UUID
- * @param audioFile - Audio file to use as the query
- * @param params - Search parameters (model, limit, threshold, dataset filter)
- * @returns Similarity search response ordered by descending similarity
- */
-export async function searchSimilarByAudio(
-  projectId: string,
-  audioFile: File,
-  params: SimilarByAudioParams
-): Promise<SimilaritySearchResponse> {
-  const formData = new FormData();
-  formData.append('audio_file', audioFile);
-
-  if (params.model_name) {
-    formData.append('model_name', params.model_name);
-  }
-  if (params.limit !== undefined) {
-    formData.append('limit', String(params.limit));
-  }
-  if (params.min_similarity !== undefined) {
-    formData.append('min_similarity', String(params.min_similarity));
-  }
-  if (params.dataset_id) {
-    formData.append('dataset_id', params.dataset_id);
-  }
-
-  // Use requestRaw to avoid automatic Content-Type injection (browser sets multipart boundary)
-  const response = await apiClient.requestRaw(
-    `${API_BASE}/projects/${projectId}/search/similar-by-audio`,
-    {
-      method: 'POST',
-      // Do not set Content-Type header — browser sets it with the correct boundary
-      body: formData,
-    }
-  );
-
-  if (!response.ok) {
-    const errorData = await response.json().catch(() => ({ detail: 'An error occurred' }));
-    throw new ApiError(
-      errorData.detail || 'Request failed',
-      response.status,
-      errorData.detail
-    );
-  }
-
-  return response.json() as Promise<SimilaritySearchResponse>;
-}
 
 /**
  * Fetch embedding statistics for a project.
@@ -332,30 +259,6 @@ export async function createAnnotationFromSearch(
     ...data,
     review_status: data.review_status ?? 'confirmed',
     source: data.source ?? 'similarity_search',
-  });
-}
-
-/**
- * Reject a similarity search result by creating a rejected annotation.
- *
- * @param projectId - Project UUID
- * @param data - Result data including recording_id, tag_id, time range, confidence, and optional session
- */
-export async function rejectSearchResult(
-  projectId: string,
-  data: {
-    recording_id: string;
-    tag_id: string;
-    start_time: number;
-    end_time: number;
-    confidence: number;
-    search_session_id?: string;
-  }
-): Promise<unknown> {
-  return apiClient.post<unknown>(`${API_BASE}/projects/${projectId}/annotations`, {
-    ...data,
-    source: 'similarity_search',
-    review_status: 'rejected',
   });
 }
 

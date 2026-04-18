@@ -8,6 +8,7 @@ dist
 
 # Paraglide-JS generated code (auto-generated, do not commit)
 src/lib/paraglide/
+src/paraglide/
 
 # Environment variables
 .env

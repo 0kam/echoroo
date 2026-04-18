@@ -6,9 +6,6 @@ import type {
   ClipAnnotationDetail,
   SoundEventAnnotation,
   SoundEventAnnotationCreate,
-  SoundEventAnnotationUpdate,
-  Note,
-  NoteCreate,
   AddTagRequest,
 } from '$lib/types/annotation';
 import { apiClient } from './client';
@@ -56,18 +53,6 @@ export async function removeClipTag(
 }
 
 /**
- * List all sound event annotations for a clip annotation.
- */
-export async function listSoundEvents(
-  projectId: string,
-  clipAnnotationId: string
-): Promise<SoundEventAnnotation[]> {
-  return apiClient.get<SoundEventAnnotation[]>(
-    `${API_BASE}/projects/${projectId}/clip-annotations/${clipAnnotationId}/sound-events`
-  );
-}
-
-/**
  * Create a new sound event annotation within a clip annotation.
  */
 export async function createSoundEvent(
@@ -77,20 +62,6 @@ export async function createSoundEvent(
 ): Promise<SoundEventAnnotation> {
   return apiClient.post<SoundEventAnnotation>(
     `${API_BASE}/projects/${projectId}/clip-annotations/${clipAnnotationId}/sound-events`,
-    data
-  );
-}
-
-/**
- * Partially update a sound event annotation.
- */
-export async function updateSoundEvent(
-  projectId: string,
-  soundEventId: string,
-  data: SoundEventAnnotationUpdate
-): Promise<SoundEventAnnotation> {
-  return apiClient.patch<SoundEventAnnotation>(
-    `${API_BASE}/projects/${projectId}/sound-events/${soundEventId}`,
     data
   );
 }
@@ -150,32 +121,3 @@ export async function reviewClipAnnotation(
   );
 }
 
-/**
- * Add a note to a clip annotation.
- */
-export async function addNote(
-  projectId: string,
-  clipAnnotationId: string,
-  data: NoteCreate
-): Promise<Note> {
-  return apiClient.post<Note>(
-    `${API_BASE}/projects/${projectId}/clip-annotations/${clipAnnotationId}/notes`,
-    data
-  );
-}
-
-/**
- * Apply a tag to multiple clip annotations in a single batch request.
- * Accepts a list of annotation task IDs; the backend resolves the
- * corresponding clip annotations and attaches the specified tag.
- */
-export async function batchTagClips(
-  projectId: string,
-  taskIds: string[],
-  tagId: string
-): Promise<{ updated_count: number; clip_annotations: ClipAnnotationDetail[] }> {
-  return apiClient.post<{ updated_count: number; clip_annotations: ClipAnnotationDetail[] }>(
-    `${API_BASE}/projects/${projectId}/clip-annotations/batch-tag`,
-    { task_ids: taskIds, tag_id: tagId }
-  );
-}

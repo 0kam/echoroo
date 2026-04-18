@@ -28,7 +28,6 @@ import type {
   ListSegmentsParams,
   PaletteEntry,
   PaletteEntryCreate,
-  SamplingDispatchResponse,
   TimeRangeAnnotation,
   TimeRangeAnnotationCreate,
   TimeRangeAnnotationUpdate,
@@ -91,14 +90,6 @@ export async function updateAnnotationSet(
 /** Delete an annotation set (cascades to segments / annotations). */
 export async function deleteAnnotationSet(id: string): Promise<void> {
   return apiClient.delete<void>(`${API_BASE}/annotation-sets/${id}`);
-}
-
-/** Dispatch the sampling Celery task for a set. */
-export async function sampleAnnotationSet(id: string): Promise<SamplingDispatchResponse> {
-  return apiClient.post<SamplingDispatchResponse>(
-    `${API_BASE}/annotation-sets/${id}/sample`,
-    {},
-  );
 }
 
 // ============================================================

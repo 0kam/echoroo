@@ -6,20 +6,11 @@
 import { apiClient } from './client';
 import type {
   User,
-  SetupStatusResponse,
   SetupInitializeRequest,
 } from '$lib/types';
 
 // Re-export types for convenience
-export type { SetupStatusResponse, SetupInitializeRequest };
-
-/**
- * Get current setup status
- * @returns Setup status indicating if setup is required/completed
- */
-export async function getSetupStatus(): Promise<SetupStatusResponse> {
-  return apiClient.get<SetupStatusResponse>('/api/v1/setup/status');
-}
+export type { SetupInitializeRequest };
 
 /**
  * Initialize system setup by creating first admin user

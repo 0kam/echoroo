@@ -3,10 +3,8 @@
  */
 
 import type {
-  AnnotationTask,
   AnnotationTaskDetail,
   AnnotationTaskListResponse,
-  AnnotationTaskUpdate,
   AnnotationTaskListParams,
   TaskCompletionResponse,
 } from '$lib/types/annotation';
@@ -45,21 +43,6 @@ export async function fetchAnnotationTask(
 ): Promise<AnnotationTaskDetail> {
   return apiClient.get<AnnotationTaskDetail>(
     `${API_BASE}/projects/${projectId}/annotation-projects/${annotationProjectId}/tasks/${taskId}`
-  );
-}
-
-/**
- * Partially update an annotation task.
- */
-export async function updateAnnotationTask(
-  projectId: string,
-  annotationProjectId: string,
-  taskId: string,
-  data: AnnotationTaskUpdate
-): Promise<AnnotationTask> {
-  return apiClient.patch<AnnotationTask>(
-    `${API_BASE}/projects/${projectId}/annotation-projects/${annotationProjectId}/tasks/${taskId}`,
-    data
   );
 }
 

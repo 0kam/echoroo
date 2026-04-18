@@ -7,7 +7,6 @@ import type {
   AnnotationProjectDetail,
   AnnotationProjectListParams,
   AnnotationProjectListResponse,
-  AnnotationProjectUpdate,
   TaskGenerationResponse,
 } from '$lib/types/annotation';
 import { apiClient } from './client';
@@ -50,20 +49,6 @@ export async function createAnnotationProject(
 ): Promise<AnnotationProjectDetail> {
   return apiClient.post<AnnotationProjectDetail>(
     `${API_BASE}/projects/${projectId}/annotation-projects`,
-    data
-  );
-}
-
-/**
- * Update an annotation project.
- */
-export async function updateAnnotationProject(
-  projectId: string,
-  annotationProjectId: string,
-  data: AnnotationProjectUpdate
-): Promise<AnnotationProjectDetail> {
-  return apiClient.patch<AnnotationProjectDetail>(
-    `${API_BASE}/projects/${projectId}/annotation-projects/${annotationProjectId}`,
     data
   );
 }

@@ -79,36 +79,6 @@ export async function fetchDetections(
 // ============================================
 
 /**
- * Confirm (accept) a detection as a valid occurrence.
- *
- * When `timeRange` is provided, the confirmed detection's start/end times
- * are updated to match.  When omitted the backend preserves the original
- * times (quick-confirm).
- */
-export async function confirmDetection(
-  projectId: string,
-  detectionId: string,
-  timeRange?: { start_time: number; end_time: number }
-): Promise<Detection> {
-  return apiClient.post<Detection>(
-    `${API_BASE}/projects/${projectId}/detections/${detectionId}/confirm`,
-    timeRange
-  );
-}
-
-/**
- * Reject a detection as a false positive or incorrect identification.
- */
-export async function rejectDetection(
-  projectId: string,
-  detectionId: string
-): Promise<Detection> {
-  return apiClient.post<Detection>(
-    `${API_BASE}/projects/${projectId}/detections/${detectionId}/reject`
-  );
-}
-
-/**
  * Reassign a detection to a different species (tag).
  */
 export async function changeDetectionSpecies(
@@ -159,14 +129,3 @@ export async function fetchTemporalData(
   );
 }
 
-/**
- * Delete a detection permanently.
- */
-export async function deleteDetection(
-  projectId: string,
-  detectionId: string
-): Promise<void> {
-  return apiClient.delete<void>(
-    `${API_BASE}/projects/${projectId}/detections/${detectionId}`
-  );
-}
