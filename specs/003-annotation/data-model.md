@@ -1,657 +1,404 @@
-# Data Model: Annotation Feature
+# Data Model: Annotation Feature (Revised)
 
-**Date**: 2026-02-19
 **Feature Branch**: `003-annotation`
+**Date**: 2026-04-17 (revision of 2026-02-19)
+
+## Revision Summary vs. Previous Spec
+
+| Previous (Whombat-derived) | New (Cross-model evaluation) |
+|---|---|
+| `AnnotationProject` + `AnnotationTask` + `ClipAnnotation` | `AnnotationSet` + `AnnotationSegment` (flatter) |
+| `SoundEventAnnotation` with `geometry` (BoundingBox w/ frequency) | `TimeRangeAnnotation` (time-only, `[start, end]`) |
+| Hierarchical `Tag` table with parent/children, GBIF fields | Direct FK to existing `Species` table |
+| Multi-tag M2M per sound-event | Single `species_id` per TimeRangeAnnotation |
+| `ClipAnnotation.review_status` (unreviewed/approved/rejected) + reviewer fields | Dropped; single `status` on segment only |
+| `Note.is_review` flag + nullable dual FK | Two association tables (`AnnotationSegmentNote`, `TimeRangeAnnotationNote`); `is_issue` flag replaces `is_review` |
+| `source` (human/model) on sound events | Dropped; TimeRangeAnnotation is ground-truth only; detector output lives in `EvaluationRun` |
+| No explicit "empty" marker | `AnnotationSegment.is_empty` (required for recall denominator) |
+
+The existing detection-review models in `apps/api/echoroo/models/annotation.py` (`Annotation`, `AnnotationVote`) are preserved. The new entity is named `TimeRangeAnnotation` to avoid collision.
+
+---
 
 ## Entity Relationship Diagram
 
 ```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                           EXISTING ENTITIES                                  │
-├─────────────────────────────────────────────────────────────────────────────┤
-│  Project (UUID)      User (UUID)       Clip (UUID)       Dataset (UUID)     │
-│  - name              - username        - recording_id     - project_id      │
-│  - description       - email           - start_time       - name            │
-│  - owner_id                            - end_time                           │
-└─────────────────────────────────────────────────────────────────────────────┘
-         │ 1                │ 1                │ 1               │ N
-         │                  │                  │                 │
-         ▼ N                │                  │                 │
-┌─────────────────────┐     │                  │                 │
-│  AnnotationProject  │     │                  │                 │
-├─────────────────────┤     │                  │                 │
-│ PK id: UUID         │     │                  │                 │
-│ FK project_id       │─────┘                  │                 │
-│ FK created_by_id    │                        │                 │
-│    name             │                        │                 │
-│    description      │                        │                 │
-│    instructions     │                        │                 │
-│    visibility       │                        │                 │
-│    created_at       │                        │                 │
-│    updated_at       │                        │                 │
-└─────────────────────┘                        │                 │
-    │ N          │ 1                           │                 │
-    │            │                             │                 │
-    │            ▼ N                           │                 │
-    │   ┌──────────────────────────┐           │                 │
-    │   │AnnotationProjectDataset │           │                 │
-    │   ├──────────────────────────┤           │                 │
-    │   │ FK annotation_project_id │           │                 │
-    │   │ FK dataset_id            │───────────┼─────────────────┘
-    │   └──────────────────────────┘           │
-    │                                          │
-    ▼ N                                        │
-┌─────────────────────┐                        │
-│   AnnotationTask    │                        │
-├─────────────────────┤                        │
-│ PK id: UUID         │                        │
-│ FK annotation_      │                        │
-│    project_id       │                        │
-│ FK clip_id          │────────────────────────┘
-│ FK assigned_to_id   │
-│    status           │
-│    priority         │
-│    created_at       │
-│    updated_at       │
-└─────────────────────┘
-         │ 1
-         │
-         ▼ 0..1
-┌─────────────────────┐
-│   ClipAnnotation    │
-├─────────────────────┤
-│ PK id: UUID         │
-│ FK task_id          │
-│ FK clip_id          │
-│ FK created_by_id    │
-│    review_status    │
-│ FK reviewed_by_id   │
-│    reviewed_at      │
-│    created_at       │
-│    updated_at       │
-└─────────────────────┘
-    │ N          │ N
-    │            │
-    │            ▼ N
-    │   ┌─────────────────────────┐
-    │   │ SoundEventAnnotation    │
-    │   ├─────────────────────────┤
-    │   │ PK id: UUID             │
-    │   │ FK clip_annotation_id   │
-    │   │ FK created_by_id        │
-    │   │    geometry             │
-    │   │    source               │
-    │   │    confidence           │
-    │   │    created_at           │
-    │   │    updated_at           │
-    │   └─────────────────────────┘
-    │            │ N
-    │            │
-    │            ▼ N (via sound_event_annotation_tag)
-    │   ┌─────────────────────┐
-    │   │        Tag          │
-    │   ├─────────────────────┤
-    │   │ PK id: UUID         │
-    │   │ FK project_id       │
-    │   │ FK parent_id        │──→ self (hierarchy)
-    │   │    name             │
-    │   │    category         │
-    │   │    gbif_taxon_key   │
-    │   │    scientific_name  │
-    │   │    common_name      │
-    │   │    created_at       │
-    │   │    updated_at       │
-    │   └─────────────────────┘
-    │
-    ▼ N (via clip_annotation_tag)
-    (Tag - same entity above)
+ Project (existing)          Dataset (existing)           Species (existing)
+      |1                             |1                         |1
+      |N                             |N                         |N
+      v                              v                          v
+ +---------------------+      +---------------------+     +-----------------------+
+ |  AnnotationSet      |----->| Recording (filtered)|     | AnnotationSetSpecies  | (M2M palette)
+ |---------------------|      +---------------------+     +-----------------------+
+ | PK id: UUID         |              ^                             ^
+ | FK project_id       |              |                             |
+ | FK dataset_id       |              |                             |
+ | FK created_by_id    |              |                             |
+ |    name             |              |                             |
+ |    filter_date_range (jsonb null)  |                             |
+ |    filter_tod_range  (jsonb null)  |                             |
+ |    segment_length_sec (>= 10)      |                             |
+ |    num_segments                    |                             |
+ |    status (sampling|ready|in_progress|completed)                 |
+ |    timestamps                                                    |
+ +---------------------+                                            |
+      |1                                                            |
+      |N                                                            |
+      v                                                             |
+ +---------------------------+                                      |
+ |  AnnotationSegment        |                                      |
+ |---------------------------|                                      |
+ | PK id: UUID               |                                      |
+ | FK annotation_set_id      |                                      |
+ | FK recording_id           |                                      |
+ |    start_time_sec         |  (within recording)                  |
+ |    end_time_sec           |                                      |
+ |    is_empty (bool)        |                                      |
+ |    status (unannotated|annotated|skipped)                        |
+ | FK annotated_by_id (null) |                                      |
+ |    annotated_at (null)    |                                      |
+ |    timestamps             |                                      |
+ +---------------------------+                                      |
+      |1                      |N (AnnotationSegmentNote)            |
+      |N                      v                                     |
+      v                 +---------------------------+               |
+ +--------------------------+  | Note (existing)    |               |
+ | TimeRangeAnnotation      |  +--------------------+               |
+ |--------------------------|           ^                           |
+ | PK id: UUID              |           | N (TimeRangeAnnotationNote)
+ | FK segment_id            |           |                           |
+ |    start_time_sec        |  (within segment)                     |
+ |    end_time_sec          |                                       |
+ | FK species_id            |---------------------------------------+
+ |    confidence (null)     |
+ | FK created_by_id         |
+ |    timestamps            |
+ +--------------------------+
 
-┌─────────────────────┐
-│        Note         │
-├─────────────────────┤
-│ PK id: UUID         │
-│ FK created_by_id    │
-│ FK clip_annotation_id (nullable) │
-│ FK sound_event_annotation_id (nullable) │
-│    content          │
-│    is_review        │
-│    created_at       │
-│    updated_at       │
-└─────────────────────┘
+ +-------------------+       +-----------------------+
+ |  EvaluationRun    |------>| EvaluationResult      |
+ |-------------------|       |-----------------------|
+ | PK id: UUID       |       | PK id: UUID           |
+ | FK set_id         |       | FK run_id             |
+ |    model_kind     |       | FK species_id (null)  |  (null = overall)
+ |    model_ref      |       |    tp_precision       |
+ |    started_at     |       |    tp_recall          |
+ |    finished_at    |       |    fp                 |
+ |    status         |       |    fn                 |
+ |    created_by_id  |       |    precision          |
+ +-------------------+       |    recall             |
+                             |    f1                 |
+                             +-----------------------+
 ```
 
 ---
 
 ## Entity Definitions
 
-### Tag
+### AnnotationSet
 
-Classification label for annotations. Supports hierarchical structure and GBIF integration.
+Top-level container. One set = one ground-truth collection used to evaluate one or more models.
 
 | Field | Type | Constraints | Description |
 |-------|------|-------------|-------------|
-| `id` | UUID | PK, default uuid4 | Unique identifier |
-| `project_id` | UUID | FK projects.id, NOT NULL, ON DELETE CASCADE | Parent project |
-| `parent_id` | UUID | FK tags.id, ON DELETE SET NULL | Parent tag for hierarchy |
+| `id` | UUID | PK, default uuid4 | |
+| `project_id` | UUID | FK projects.id, NOT NULL, ON DELETE CASCADE | Owning project |
+| `dataset_id` | UUID | FK datasets.id, NOT NULL, ON DELETE CASCADE | Source dataset |
+| `created_by_id` | UUID | FK users.id, NOT NULL | Creator |
 | `name` | String(200) | NOT NULL | Display name |
-| `category` | Enum | NOT NULL | species, sound_type, quality |
-| `gbif_taxon_key` | Integer | nullable | GBIF Backbone Taxonomy key |
-| `scientific_name` | String(300) | nullable | Scientific name from GBIF |
-| `common_name` | String(300) | nullable | Common/vernacular name |
-| `created_at` | DateTime | NOT NULL, default now() | Creation timestamp |
-| `updated_at` | DateTime | NOT NULL, auto-update | Last update timestamp |
+| `filter_date_range` | JSONB | nullable | `{"start": "YYYY-MM-DD", "end": "YYYY-MM-DD"}` (both inclusive) |
+| `filter_time_of_day_range` | JSONB | nullable | `{"start": "HH:MM", "end": "HH:MM"}` (local tod; range may wrap midnight) |
+| `segment_length_sec` | Integer | NOT NULL, CHECK >= 10 | Length of each sampled segment |
+| `num_segments` | Integer | NOT NULL, CHECK >= 1 | Requested count |
+| `status` | Enum | NOT NULL, default `sampling` | `sampling | ready | in_progress | completed` |
+| `sampling_warning` | Text | nullable | E.g. "only 42 of 100 segments available after filters" |
+| `created_at` / `updated_at` | DateTime | NOT NULL | |
 
-**Constraints:**
-- `UNIQUE(project_id, name, category)` - Tag names unique within project+category
+**Constraints**: `UNIQUE(project_id, name)`.
+**Indexes**: `ix_annotation_sets_project_id`, `ix_annotation_sets_dataset_id`, `ix_annotation_sets_status`.
+**Relationships**: `project`, `dataset`, `created_by`, `segments` (1:N), `species_palette` (M2N via `AnnotationSetSpecies`).
 
-**Relationships:**
-- `project` → Project (many-to-one)
-- `parent` → Tag (self-referential, many-to-one)
-- `children` → Tag[] (one-to-many)
-
-**Validation Rules:**
-- `name`: 1-200 characters, trimmed
-- `category`: Must be valid TagCategory enum
-- `gbif_taxon_key`: Positive integer if provided
-
----
-
-### AnnotationProject
-
-Manages an annotation workflow targeting specific species or sound types.
-
-| Field | Type | Constraints | Description |
-|-------|------|-------------|-------------|
-| `id` | UUID | PK, default uuid4 | Unique identifier |
-| `project_id` | UUID | FK projects.id, NOT NULL, ON DELETE CASCADE | Parent project |
-| `created_by_id` | UUID | FK users.id, NOT NULL | Creator |
-| `name` | String(200) | NOT NULL | Project name |
-| `description` | Text | nullable | Description |
-| `instructions` | Text | nullable | Annotation guidelines for annotators |
-| `visibility` | Enum | NOT NULL, default 'private' | private, public |
-| `created_at` | DateTime | NOT NULL, default now() | Creation timestamp |
-| `updated_at` | DateTime | NOT NULL, auto-update | Last update timestamp |
-
-**Constraints:**
-- `UNIQUE(project_id, name)` - Name unique within parent project
-
-**Relationships:**
-- `project` → Project (many-to-one)
-- `created_by` → User (many-to-one)
-- `datasets` → Dataset[] (many-to-many via annotation_project_datasets)
-- `tags` → Tag[] (many-to-many via annotation_project_tags)
-- `tasks` → AnnotationTask[] (one-to-many)
-
-**Validation Rules:**
-- `name`: 1-200 characters, trimmed
-
----
-
-### AnnotationProjectDataset (Association Table)
-
-Links annotation projects to datasets.
-
-| Field | Type | Constraints | Description |
-|-------|------|-------------|-------------|
-| `annotation_project_id` | UUID | FK, PK, ON DELETE CASCADE | Annotation project |
-| `dataset_id` | UUID | FK, PK, ON DELETE CASCADE | Dataset |
-
----
-
-### AnnotationProjectTag (Association Table)
-
-Links annotation projects to target tags.
-
-| Field | Type | Constraints | Description |
-|-------|------|-------------|-------------|
-| `annotation_project_id` | UUID | FK, PK, ON DELETE CASCADE | Annotation project |
-| `tag_id` | UUID | FK, PK, ON DELETE CASCADE | Target tag |
-
----
-
-### AnnotationTask
-
-Individual annotation work unit linked to a clip.
-
-| Field | Type | Constraints | Description |
-|-------|------|-------------|-------------|
-| `id` | UUID | PK, default uuid4 | Unique identifier |
-| `annotation_project_id` | UUID | FK annotation_projects.id, NOT NULL, ON DELETE CASCADE | Parent project |
-| `clip_id` | UUID | FK clips.id, NOT NULL, ON DELETE CASCADE | Target clip |
-| `assigned_to_id` | UUID | FK users.id, ON DELETE SET NULL | Assigned annotator |
-| `status` | Enum | NOT NULL, default 'pending' | Task status |
-| `priority` | Integer | NOT NULL, default 0 | Priority (higher = more urgent) |
-| `created_at` | DateTime | NOT NULL, default now() | Creation timestamp |
-| `updated_at` | DateTime | NOT NULL, auto-update | Last update timestamp |
-
-**Constraints:**
-- `UNIQUE(annotation_project_id, clip_id)` - One task per clip per project
-- `INDEX(annotation_project_id, status)` - For filtered task lists
-
-**Relationships:**
-- `annotation_project` → AnnotationProject (many-to-one)
-- `clip` → Clip (many-to-one)
-- `assigned_to` → User (many-to-one, optional)
-- `clip_annotation` → ClipAnnotation (one-to-one, optional)
-
-**Validation Rules:**
-- `priority`: 0-100
-- `status`: Must be valid TaskStatus enum
-
-**State Transitions:**
+**Status transitions**:
 ```
-pending → in_progress → completed
-pending → in_progress → review_pending → completed
-                     ↓
-               review_pending → in_progress (rejected, re-work)
+sampling  -> ready            (background job finished)
+ready     -> in_progress      (first segment annotated)
+in_progress -> completed      (all segments annotated or skipped)
+completed -> in_progress      (edit reopens a segment)
 ```
 
 ---
 
-### ClipAnnotation
+### AnnotationSetSpecies (association)
 
-Annotation result for a clip (created when annotator works on a task).
-
-| Field | Type | Constraints | Description |
-|-------|------|-------------|-------------|
-| `id` | UUID | PK, default uuid4 | Unique identifier |
-| `task_id` | UUID | FK annotation_tasks.id, NOT NULL, UNIQUE, ON DELETE CASCADE | Parent task |
-| `clip_id` | UUID | FK clips.id, NOT NULL, ON DELETE CASCADE | Annotated clip |
-| `created_by_id` | UUID | FK users.id, NOT NULL | Annotator |
-| `review_status` | Enum | NOT NULL, default 'unreviewed' | Review state |
-| `reviewed_by_id` | UUID | FK users.id, ON DELETE SET NULL | Reviewer |
-| `reviewed_at` | DateTime | nullable | Review timestamp |
-| `created_at` | DateTime | NOT NULL, default now() | Creation timestamp |
-| `updated_at` | DateTime | NOT NULL, auto-update | Last update timestamp |
-
-**Constraints:**
-- `UNIQUE(task_id)` - One annotation per task
-
-**Relationships:**
-- `task` → AnnotationTask (one-to-one)
-- `clip` → Clip (many-to-one)
-- `created_by` → User (many-to-one)
-- `reviewed_by` → User (many-to-one, optional)
-- `tags` → Tag[] (many-to-many via clip_annotation_tags)
-- `sound_events` → SoundEventAnnotation[] (one-to-many)
-- `notes` → Note[] (one-to-many)
+| Field | Type | Constraints |
+|-------|------|-------------|
+| `annotation_set_id` | UUID | FK, PK, ON DELETE CASCADE |
+| `species_id` | UUID | FK species.id, PK, ON DELETE CASCADE |
+| `position` | Integer | default 0 (for palette ordering / keyboard slot hints) |
 
 ---
 
-### ClipAnnotationTag (Association Table)
+### AnnotationSegment
 
-Clip-level tags (presence/absence classification).
+Materialized, independently annotatable segment of a recording.
 
 | Field | Type | Constraints | Description |
 |-------|------|-------------|-------------|
-| `clip_annotation_id` | UUID | FK, PK, ON DELETE CASCADE | Clip annotation |
-| `tag_id` | UUID | FK, PK, ON DELETE CASCADE | Tag |
+| `id` | UUID | PK, default uuid4 | |
+| `annotation_set_id` | UUID | FK annotation_sets.id, NOT NULL, ON DELETE CASCADE | |
+| `recording_id` | UUID | FK recordings.id, NOT NULL, ON DELETE CASCADE | |
+| `start_time_sec` | Float | NOT NULL, CHECK >= 0 | Offset inside the recording |
+| `end_time_sec` | Float | NOT NULL, CHECK > start_time_sec | |
+| `is_empty` | Boolean | NOT NULL, default false | Explicit "no target calls" |
+| `status` | Enum | NOT NULL, default `unannotated` | `unannotated | annotated | skipped` |
+| `annotated_by_id` | UUID | FK users.id, nullable, ON DELETE SET NULL | |
+| `annotated_at` | DateTime | nullable | |
+| `created_at` / `updated_at` | DateTime | NOT NULL | |
+
+**Constraints**: `CHECK (end_time_sec - start_time_sec) = annotation_set.segment_length_sec` enforced at service layer (not DB; avoids cross-table check). `CHECK end_time_sec <= recording.duration_sec` enforced at sampling time.
+**Indexes**: `ix_annotation_segments_set_id`, `ix_annotation_segments_recording_id`, `ix_annotation_segments_status`, compound `ix_annotation_segments_set_status`.
+**Relationships**: `annotation_set`, `recording`, `annotated_by`, `annotations` (1:N), `notes` (M2N via `AnnotationSegmentNote`).
+
+**Invariants**:
+- If `status = annotated` and no TimeRangeAnnotations exist then `is_empty = true`.
+- Creating a TimeRangeAnnotation sets `is_empty = false`.
 
 ---
 
-### SoundEventAnnotation
+### TimeRangeAnnotation
 
-Fine-grained annotation of a sound event within a clip.
+One call-event inside a segment.
 
 | Field | Type | Constraints | Description |
 |-------|------|-------------|-------------|
-| `id` | UUID | PK, default uuid4 | Unique identifier |
-| `clip_annotation_id` | UUID | FK clip_annotations.id, NOT NULL, ON DELETE CASCADE | Parent annotation |
-| `created_by_id` | UUID | FK users.id, NOT NULL | Creator |
-| `geometry` | JSONB | NOT NULL | Geometry data (BoundingBox or TimeInterval) |
-| `source` | Enum | NOT NULL, default 'human' | human or model |
-| `confidence` | Float | nullable, 0.0-1.0 | Confidence score |
-| `created_at` | DateTime | NOT NULL, default now() | Creation timestamp |
-| `updated_at` | DateTime | NOT NULL, auto-update | Last update timestamp |
+| `id` | UUID | PK, default uuid4 | |
+| `segment_id` | UUID | FK annotation_segments.id, NOT NULL, ON DELETE CASCADE | |
+| `start_time_sec` | Float | NOT NULL, CHECK >= 0 | Offset inside the segment |
+| `end_time_sec` | Float | NOT NULL, CHECK > start_time_sec | |
+| `species_id` | UUID | FK species.id, NOT NULL, ON DELETE RESTRICT | Single label |
+| `confidence` | Float | nullable, CHECK 0 <= x <= 1 | Annotator-declared confidence |
+| `created_by_id` | UUID | FK users.id, NOT NULL | |
+| `created_at` / `updated_at` | DateTime | NOT NULL | |
 
-**Relationships:**
-- `clip_annotation` → ClipAnnotation (many-to-one)
-- `created_by` → User (many-to-one)
-- `tags` → Tag[] (many-to-many via sound_event_annotation_tags)
-- `notes` → Note[] (one-to-many)
+**Constraints**: `end_time_sec <= segment.end_time_sec - segment.start_time_sec` enforced at service layer.
+**Indexes**: `ix_time_range_annotations_segment_id`, `ix_time_range_annotations_species_id`.
+**Relationships**: `segment`, `species`, `created_by`, `notes` (M2N via `TimeRangeAnnotationNote`).
 
-**Validation Rules:**
-- `geometry`: Must be valid geometry JSON: `{"type": "BoundingBox", "coordinates": [t1, f1, t2, f2]}` or `{"type": "TimeInterval", "coordinates": [t1, t2]}`
-- `confidence`: 0.0-1.0 if provided
-- `source`: Must be AnnotationSource enum
+Overlapping annotations of the same or different species on the same segment are allowed.
 
 ---
 
-### SoundEventAnnotationTag (Association Table)
+### AnnotationSegmentNote / TimeRangeAnnotationNote (association tables)
 
-Tags for sound event annotations.
+Reuse the existing `Note` table (`content`, `created_by_id`, `created_at`, `updated_at`). Add `is_issue: bool` to `Note` if not already present (migration concern; see `research.md`).
 
-| Field | Type | Constraints | Description |
-|-------|------|-------------|-------------|
-| `sound_event_annotation_id` | UUID | FK, PK, ON DELETE CASCADE | Sound event annotation |
-| `tag_id` | UUID | FK, PK, ON DELETE CASCADE | Tag |
+`AnnotationSegmentNote`
+| Field | Type | Constraints |
+|-------|------|-------------|
+| `segment_id` | UUID | FK, PK, ON DELETE CASCADE |
+| `note_id` | UUID | FK notes.id, PK, ON DELETE CASCADE |
+
+`TimeRangeAnnotationNote`
+| Field | Type | Constraints |
+|-------|------|-------------|
+| `annotation_id` | UUID | FK time_range_annotations.id, PK, ON DELETE CASCADE |
+| `note_id` | UUID | FK notes.id, PK, ON DELETE CASCADE |
 
 ---
 
-### Note
+### EvaluationRun
 
-Comments on annotations, supporting review feedback.
+Records one execution of the evaluation for a `(set, model)` pair.
 
 | Field | Type | Constraints | Description |
 |-------|------|-------------|-------------|
-| `id` | UUID | PK, default uuid4 | Unique identifier |
-| `created_by_id` | UUID | FK users.id, NOT NULL | Author |
-| `clip_annotation_id` | UUID | FK clip_annotations.id, ON DELETE CASCADE | nullable |
-| `sound_event_annotation_id` | UUID | FK sound_event_annotations.id, ON DELETE CASCADE | nullable |
-| `content` | Text | NOT NULL | Note content |
-| `is_review` | Boolean | NOT NULL, default false | Whether this is review feedback |
-| `created_at` | DateTime | NOT NULL, default now() | Creation timestamp |
-| `updated_at` | DateTime | NOT NULL, auto-update | Last update timestamp |
+| `id` | UUID | PK | |
+| `annotation_set_id` | UUID | FK, NOT NULL, ON DELETE CASCADE | |
+| `model_kind` | Enum | NOT NULL | `birdnet | perch | custom` |
+| `model_ref` | String(200) | nullable | Custom model UUID or builtin version label |
+| `status` | Enum | NOT NULL | `pending | running | completed | failed` |
+| `started_at` / `finished_at` | DateTime | nullable | |
+| `created_by_id` | UUID | FK users.id, NOT NULL | |
+| `error` | Text | nullable | |
 
-**Constraints:**
-- `CHECK` - Exactly one of `clip_annotation_id` or `sound_event_annotation_id` must be non-null
+**Indexes**: `ix_evaluation_runs_set_model` on `(annotation_set_id, model_kind, model_ref)`.
 
-**Validation Rules:**
-- `content`: 1-5000 characters
+---
+
+### EvaluationResult
+
+One row per `(run, species_id-or-null)`; `species_id = NULL` means overall aggregate.
+
+| Field | Type | Constraints | Description |
+|-------|------|-------------|-------------|
+| `id` | UUID | PK | |
+| `run_id` | UUID | FK evaluation_runs.id, NOT NULL, ON DELETE CASCADE | |
+| `species_id` | UUID | FK species.id, nullable, ON DELETE SET NULL | NULL = overall |
+| `tp_precision` | Integer | NOT NULL, default 0 | # detections with >=1 same-species GT overlap |
+| `fp` | Integer | NOT NULL, default 0 | # detections with no same-species GT overlap |
+| `tp_recall` | Integer | NOT NULL, default 0 | # GTs covered by >=1 same-species detection |
+| `fn` | Integer | NOT NULL, default 0 | # GTs with no same-species detection overlap |
+| `precision` | Float | NOT NULL | = tp_precision / (tp_precision + fp); 0 if denom 0 |
+| `recall` | Float | NOT NULL | = tp_recall / (tp_recall + fn); 0 if denom 0 |
+| `f1` | Float | NOT NULL | harmonic mean |
+| `detections_total` | Integer | NOT NULL | Debug/audit |
+| `ground_truths_total` | Integer | NOT NULL | Debug/audit |
+
+**Indexes**: `UNIQUE(run_id, species_id)` with NULLs treated as distinct via partial index.
 
 ---
 
 ## Enum Definitions
 
-### TagCategory
 ```python
-class TagCategory(str, Enum):
-    SPECIES = "species"
-    SOUND_TYPE = "sound_type"
-    QUALITY = "quality"
-```
-
-### AnnotationProjectVisibility
-```python
-class AnnotationProjectVisibility(str, Enum):
-    PRIVATE = "private"
-    PUBLIC = "public"
-```
-
-### AnnotationTaskStatus
-```python
-class AnnotationTaskStatus(str, Enum):
-    PENDING = "pending"
+class AnnotationSetStatus(str, Enum):
+    SAMPLING = "sampling"
+    READY = "ready"
     IN_PROGRESS = "in_progress"
     COMPLETED = "completed"
-    REVIEW_PENDING = "review_pending"
-```
 
-### ReviewStatus
-```python
-class ReviewStatus(str, Enum):
-    UNREVIEWED = "unreviewed"
-    APPROVED = "approved"
-    REJECTED = "rejected"
-```
+class SegmentStatus(str, Enum):
+    UNANNOTATED = "unannotated"
+    ANNOTATED = "annotated"
+    SKIPPED = "skipped"
 
-### AnnotationSource
-```python
-class AnnotationSource(str, Enum):
-    HUMAN = "human"
-    MODEL = "model"
-```
+class ModelKind(str, Enum):
+    BIRDNET = "birdnet"
+    PERCH = "perch"
+    CUSTOM = "custom"
 
-### GeometryType
-```python
-class GeometryType(str, Enum):
-    BOUNDING_BOX = "BoundingBox"
-    TIME_INTERVAL = "TimeInterval"
+class EvaluationRunStatus(str, Enum):
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
 ```
 
 ---
 
 ## Index Strategy
 
-### Tag
-- `ix_tags_project_id` - Filter by project
-- `ix_tags_category` - Filter by category
-- `ix_tags_gbif_taxon_key` - GBIF lookup
-
-### AnnotationProject
-- `ix_annotation_projects_project_id` - Filter by parent project
-
-### AnnotationTask
-- `ix_annotation_tasks_project_id` - Filter by annotation project
-- `ix_annotation_tasks_status` - Filter by status
-- `ix_annotation_tasks_assigned_to_id` - Filter by assignee
-- `ix_annotation_tasks_project_status` - Compound index for filtered lists
-
-### ClipAnnotation
-- `ix_clip_annotations_clip_id` - Filter by clip
-- `ix_clip_annotations_review_status` - Filter by review status
-
-### SoundEventAnnotation
-- `ix_sound_event_annotations_clip_annotation_id` - Filter by parent
-
-### Note
-- `ix_notes_clip_annotation_id` - Filter by clip annotation
-- `ix_notes_sound_event_annotation_id` - Filter by sound event annotation
+- `annotation_sets(project_id, status)` — list sets filtered by state.
+- `annotation_segments(annotation_set_id, status)` — segment list views.
+- `annotation_segments(recording_id)` — reverse lookup during evaluation detection cropping.
+- `time_range_annotations(segment_id)` — editor loads.
+- `time_range_annotations(species_id)` — per-species evaluation grouping.
+- `evaluation_results(run_id, species_id)` — unique.
 
 ---
 
-## Migration Plan
+## Migration Plan (SQL sketches — implementation owned by backend SSA)
 
-### Migration: Create Tags Table
 ```sql
-CREATE TYPE tag_category AS ENUM ('species', 'sound_type', 'quality');
+CREATE TYPE annotation_set_status AS ENUM ('sampling','ready','in_progress','completed');
+CREATE TYPE segment_status AS ENUM ('unannotated','annotated','skipped');
+CREATE TYPE model_kind AS ENUM ('birdnet','perch','custom');
+CREATE TYPE evaluation_run_status AS ENUM ('pending','running','completed','failed');
 
-CREATE TABLE tags (
+CREATE TABLE annotation_sets (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-    parent_id UUID REFERENCES tags(id) ON DELETE SET NULL,
-    name VARCHAR(200) NOT NULL,
-    category tag_category NOT NULL,
-    gbif_taxon_key INTEGER,
-    scientific_name VARCHAR(300),
-    common_name VARCHAR(300),
-    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
-    UNIQUE(project_id, name, category)
-);
-CREATE INDEX ix_tags_project_id ON tags(project_id);
-CREATE INDEX ix_tags_category ON tags(category);
-CREATE INDEX ix_tags_gbif_taxon_key ON tags(gbif_taxon_key);
-```
-
-### Migration: Create Annotation Projects Table
-```sql
-CREATE TYPE annotation_project_visibility AS ENUM ('private', 'public');
-
-CREATE TABLE annotation_projects (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    dataset_id UUID NOT NULL REFERENCES datasets(id) ON DELETE CASCADE,
     created_by_id UUID NOT NULL REFERENCES users(id),
     name VARCHAR(200) NOT NULL,
-    description TEXT,
-    instructions TEXT,
-    visibility annotation_project_visibility NOT NULL DEFAULT 'private',
-    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    filter_date_range JSONB,
+    filter_time_of_day_range JSONB,
+    segment_length_sec INTEGER NOT NULL CHECK (segment_length_sec >= 10),
+    num_segments INTEGER NOT NULL CHECK (num_segments >= 1),
+    status annotation_set_status NOT NULL DEFAULT 'sampling',
+    sampling_warning TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE(project_id, name)
 );
-CREATE INDEX ix_annotation_projects_project_id ON annotation_projects(project_id);
 
-CREATE TABLE annotation_project_datasets (
-    annotation_project_id UUID NOT NULL REFERENCES annotation_projects(id) ON DELETE CASCADE,
-    dataset_id UUID NOT NULL REFERENCES datasets(id) ON DELETE CASCADE,
-    PRIMARY KEY (annotation_project_id, dataset_id)
+CREATE TABLE annotation_set_species (
+    annotation_set_id UUID REFERENCES annotation_sets(id) ON DELETE CASCADE,
+    species_id UUID REFERENCES species(id) ON DELETE CASCADE,
+    position INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (annotation_set_id, species_id)
 );
 
-CREATE TABLE annotation_project_tags (
-    annotation_project_id UUID NOT NULL REFERENCES annotation_projects(id) ON DELETE CASCADE,
-    tag_id UUID NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
-    PRIMARY KEY (annotation_project_id, tag_id)
-);
-```
-
-### Migration: Create Annotation Tasks Table
-```sql
-CREATE TYPE annotation_task_status AS ENUM ('pending', 'in_progress', 'completed', 'review_pending');
-
-CREATE TABLE annotation_tasks (
+CREATE TABLE annotation_segments (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    annotation_project_id UUID NOT NULL REFERENCES annotation_projects(id) ON DELETE CASCADE,
-    clip_id UUID NOT NULL REFERENCES clips(id) ON DELETE CASCADE,
-    assigned_to_id UUID REFERENCES users(id) ON DELETE SET NULL,
-    status annotation_task_status NOT NULL DEFAULT 'pending',
-    priority INTEGER NOT NULL DEFAULT 0,
-    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
-    UNIQUE(annotation_project_id, clip_id)
+    annotation_set_id UUID NOT NULL REFERENCES annotation_sets(id) ON DELETE CASCADE,
+    recording_id UUID NOT NULL REFERENCES recordings(id) ON DELETE CASCADE,
+    start_time_sec DOUBLE PRECISION NOT NULL CHECK (start_time_sec >= 0),
+    end_time_sec DOUBLE PRECISION NOT NULL,
+    is_empty BOOLEAN NOT NULL DEFAULT FALSE,
+    status segment_status NOT NULL DEFAULT 'unannotated',
+    annotated_by_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    annotated_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CHECK (end_time_sec > start_time_sec)
 );
-CREATE INDEX ix_annotation_tasks_project_id ON annotation_tasks(annotation_project_id);
-CREATE INDEX ix_annotation_tasks_status ON annotation_tasks(status);
-CREATE INDEX ix_annotation_tasks_assigned_to_id ON annotation_tasks(assigned_to_id);
-CREATE INDEX ix_annotation_tasks_project_status ON annotation_tasks(annotation_project_id, status);
-```
 
-### Migration: Create Clip Annotations Table
-```sql
-CREATE TYPE review_status AS ENUM ('unreviewed', 'approved', 'rejected');
-
-CREATE TABLE clip_annotations (
+CREATE TABLE time_range_annotations (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    task_id UUID NOT NULL UNIQUE REFERENCES annotation_tasks(id) ON DELETE CASCADE,
-    clip_id UUID NOT NULL REFERENCES clips(id) ON DELETE CASCADE,
+    segment_id UUID NOT NULL REFERENCES annotation_segments(id) ON DELETE CASCADE,
+    start_time_sec DOUBLE PRECISION NOT NULL CHECK (start_time_sec >= 0),
+    end_time_sec DOUBLE PRECISION NOT NULL,
+    species_id UUID NOT NULL REFERENCES species(id) ON DELETE RESTRICT,
+    confidence DOUBLE PRECISION CHECK (confidence IS NULL OR (confidence BETWEEN 0 AND 1)),
     created_by_id UUID NOT NULL REFERENCES users(id),
-    review_status review_status NOT NULL DEFAULT 'unreviewed',
-    reviewed_by_id UUID REFERENCES users(id) ON DELETE SET NULL,
-    reviewed_at TIMESTAMP WITH TIME ZONE,
-    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CHECK (end_time_sec > start_time_sec)
 );
-CREATE INDEX ix_clip_annotations_clip_id ON clip_annotations(clip_id);
-CREATE INDEX ix_clip_annotations_review_status ON clip_annotations(review_status);
 
-CREATE TABLE clip_annotation_tags (
-    clip_annotation_id UUID NOT NULL REFERENCES clip_annotations(id) ON DELETE CASCADE,
-    tag_id UUID NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
-    PRIMARY KEY (clip_annotation_id, tag_id)
+CREATE TABLE annotation_segment_notes (
+    segment_id UUID NOT NULL REFERENCES annotation_segments(id) ON DELETE CASCADE,
+    note_id UUID NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+    PRIMARY KEY (segment_id, note_id)
 );
-```
 
-### Migration: Create Sound Event Annotations Table
-```sql
-CREATE TYPE annotation_source AS ENUM ('human', 'model');
+CREATE TABLE time_range_annotation_notes (
+    annotation_id UUID NOT NULL REFERENCES time_range_annotations(id) ON DELETE CASCADE,
+    note_id UUID NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+    PRIMARY KEY (annotation_id, note_id)
+);
 
-CREATE TABLE sound_event_annotations (
+-- Ensure notes has is_issue flag (ADD COLUMN IF NOT EXISTS in a dedicated migration).
+
+CREATE TABLE evaluation_runs (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    clip_annotation_id UUID NOT NULL REFERENCES clip_annotations(id) ON DELETE CASCADE,
+    annotation_set_id UUID NOT NULL REFERENCES annotation_sets(id) ON DELETE CASCADE,
+    model_kind model_kind NOT NULL,
+    model_ref VARCHAR(200),
+    status evaluation_run_status NOT NULL DEFAULT 'pending',
+    started_at TIMESTAMPTZ,
+    finished_at TIMESTAMPTZ,
     created_by_id UUID NOT NULL REFERENCES users(id),
-    geometry JSONB NOT NULL,
-    source annotation_source NOT NULL DEFAULT 'human',
-    confidence FLOAT,
-    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
-    CHECK (confidence IS NULL OR (confidence >= 0.0 AND confidence <= 1.0))
+    error TEXT
 );
-CREATE INDEX ix_sound_event_annotations_clip_annotation_id ON sound_event_annotations(clip_annotation_id);
 
-CREATE TABLE sound_event_annotation_tags (
-    sound_event_annotation_id UUID NOT NULL REFERENCES sound_event_annotations(id) ON DELETE CASCADE,
-    tag_id UUID NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
-    PRIMARY KEY (sound_event_annotation_id, tag_id)
-);
-```
-
-### Migration: Create Notes Table
-```sql
-CREATE TABLE notes (
+CREATE TABLE evaluation_results (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    created_by_id UUID NOT NULL REFERENCES users(id),
-    clip_annotation_id UUID REFERENCES clip_annotations(id) ON DELETE CASCADE,
-    sound_event_annotation_id UUID REFERENCES sound_event_annotations(id) ON DELETE CASCADE,
-    content TEXT NOT NULL,
-    is_review BOOLEAN NOT NULL DEFAULT false,
-    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
-    CHECK (
-        (clip_annotation_id IS NOT NULL AND sound_event_annotation_id IS NULL) OR
-        (clip_annotation_id IS NULL AND sound_event_annotation_id IS NOT NULL)
-    )
+    run_id UUID NOT NULL REFERENCES evaluation_runs(id) ON DELETE CASCADE,
+    species_id UUID REFERENCES species(id) ON DELETE SET NULL,
+    tp_precision INTEGER NOT NULL DEFAULT 0,
+    fp INTEGER NOT NULL DEFAULT 0,
+    tp_recall INTEGER NOT NULL DEFAULT 0,
+    fn INTEGER NOT NULL DEFAULT 0,
+    precision DOUBLE PRECISION NOT NULL,
+    recall DOUBLE PRECISION NOT NULL,
+    f1 DOUBLE PRECISION NOT NULL,
+    detections_total INTEGER NOT NULL,
+    ground_truths_total INTEGER NOT NULL
 );
-CREATE INDEX ix_notes_clip_annotation_id ON notes(clip_annotation_id);
-CREATE INDEX ix_notes_sound_event_annotation_id ON notes(sound_event_annotation_id);
-```
 
----
-
-## Query Patterns
-
-### Common Queries
-
-1. **List tasks for annotation project with pagination**
-```sql
-SELECT at.*, c.start_time, c.end_time, r.filename, ca.review_status
-FROM annotation_tasks at
-JOIN clips c ON c.id = at.clip_id
-JOIN recordings r ON r.id = c.recording_id
-LEFT JOIN clip_annotations ca ON ca.task_id = at.id
-WHERE at.annotation_project_id = ?
-  AND (at.status = ? OR ? IS NULL)
-  AND (at.assigned_to_id = ? OR ? IS NULL)
-ORDER BY at.priority DESC, at.created_at
-LIMIT ? OFFSET ?;
-```
-
-2. **Get annotation project progress**
-```sql
-SELECT
-    COUNT(*) as total_tasks,
-    COUNT(*) FILTER (WHERE status = 'completed') as completed_tasks,
-    COUNT(*) FILTER (WHERE status = 'in_progress') as in_progress_tasks,
-    COUNT(*) FILTER (WHERE status = 'pending') as pending_tasks,
-    COUNT(*) FILTER (WHERE status = 'review_pending') as review_pending_tasks
-FROM annotation_tasks
-WHERE annotation_project_id = ?;
-```
-
-3. **Get clip annotation with all sound events and tags**
-```sql
-SELECT ca.*,
-       json_agg(DISTINCT jsonb_build_object('id', t.id, 'name', t.name)) as clip_tags,
-       json_agg(DISTINCT jsonb_build_object(
-           'id', sea.id, 'geometry', sea.geometry, 'confidence', sea.confidence,
-           'tags', (SELECT json_agg(jsonb_build_object('id', t2.id, 'name', t2.name))
-                    FROM sound_event_annotation_tags seat2
-                    JOIN tags t2 ON t2.id = seat2.tag_id
-                    WHERE seat2.sound_event_annotation_id = sea.id)
-       )) as sound_events
-FROM clip_annotations ca
-LEFT JOIN clip_annotation_tags cat ON cat.clip_annotation_id = ca.id
-LEFT JOIN tags t ON t.id = cat.tag_id
-LEFT JOIN sound_event_annotations sea ON sea.clip_annotation_id = ca.id
-WHERE ca.id = ?
-GROUP BY ca.id;
-```
-
-4. **Tag usage statistics**
-```sql
-SELECT t.id, t.name, t.category,
-    (SELECT COUNT(*) FROM clip_annotation_tags cat WHERE cat.tag_id = t.id) +
-    (SELECT COUNT(*) FROM sound_event_annotation_tags seat WHERE seat.tag_id = t.id) as usage_count
-FROM tags t
-WHERE t.project_id = ?
-ORDER BY usage_count DESC;
+CREATE UNIQUE INDEX ux_evaluation_results_overall
+    ON evaluation_results(run_id) WHERE species_id IS NULL;
+CREATE UNIQUE INDEX ux_evaluation_results_species
+    ON evaluation_results(run_id, species_id) WHERE species_id IS NOT NULL;
 ```
 
 ---
 
 ## Data Integrity Rules
 
-1. **Cascading Deletes:**
-   - Delete Project → Delete AnnotationProjects → Delete Tasks → Delete ClipAnnotations → Delete SoundEventAnnotations → Delete Notes
-   - Delete Clip → Delete AnnotationTasks → Delete ClipAnnotations → ...
-   - Delete AnnotationProject → Delete Tasks → ...
-
-2. **Optional References:**
-   - Delete User (assigned_to) → Set AnnotationTask.assigned_to_id to NULL
-   - Delete User (reviewer) → Set ClipAnnotation.reviewed_by_id to NULL
-   - Delete Tag (parent) → Set Tag.parent_id to NULL
-
-3. **Audit Trail:**
-   - All entities have `created_at` and `updated_at` timestamps
-   - ClipAnnotation tracks `created_by_id` for annotator
-   - ClipAnnotation tracks `reviewed_by_id` and `reviewed_at` for review
-   - SoundEventAnnotation tracks `source` (human vs model)
+- Deleting a `Project` cascades to `AnnotationSet`, its `AnnotationSegment`s, `TimeRangeAnnotation`s, notes, palette links, evaluation runs and results.
+- Deleting a `Species` is restricted if any `TimeRangeAnnotation` references it (use ON DELETE RESTRICT) to protect ground truth integrity. Palette links cascade on species delete instead (M2M, safe).
+- `AnnotationSegment.is_empty` and presence of `TimeRangeAnnotation`s are kept consistent by the service layer on every create/delete/edit.
+- `AnnotationSet.status` is recomputed server-side when any child segment's status changes.

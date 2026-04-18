@@ -1,190 +1,200 @@
-# 機能仕様書: 音声イベントアノテーション
+# Feature Specification: Ground Truth Annotation for Cross-Model Evaluation
 
-**フィーチャーブランチ**: `003-annotation`
-**作成日**: 2026-01-15
-**ステータス**: ドラフト
-**入力**: 音声イベントアノテーション（アノテーションプロジェクト、タスク、タグ付け、レビューワークフロー）
+**Feature Branch**: `003-annotation`
+**Created**: 2026-01-15
+**Last Revised**: 2026-04-17
+**Status**: Draft (Revised)
+**Input**: Ground-truth annotation of audio segments to evaluate detection model accuracy (BirdNET 3s / Perch 5s / Custom) on a shared reference set.
 
-## ユーザーシナリオとテスト *(必須)*
+## Context and Goals
 
-### ユーザーストーリー 1 - アノテーションプロジェクトの作成 (優先度: P1)
+The annotation subsystem exists for one primary purpose: **produce a ground-truth reference set that can fairly evaluate multiple detector models regardless of their internal window size**. The previous Whombat-derived design (bounding boxes on spectrograms, hierarchical tags, approval workflows, AOEF export) was heavier than Echoroo needs and coupled annotation semantics to frequency geometry and window-size-dependent matching.
 
-研究者は、特定の種（例：特定の鳥類）を検出するためのアノテーションプロジェクトを作成したい。プロジェクトには対象タグ、アノテーション指示、使用するデータセットを設定する。
+The revised design replaces that with:
 
-**優先度の理由**: アノテーションワークフローの基盤。プロジェクトなしではタスクの作成や管理ができない。
+- **AnnotationSet**: a named collection of randomly sampled fixed-length segments (>= 10 s) drawn from recordings matching a dataset + optional date/time-of-day filters, plus a per-set species palette reused across segments.
+- **AnnotationSegment**: one segment in the set. Annotators either mark it empty (no calls of interest) or add one or more time-range annotations.
+- **TimeRangeAnnotation**: a `[start_sec, end_sec]` interval inside the segment with a single species from the palette. No frequency range, no bounding box.
+- **Symmetric overlap evaluation**: precision and recall computed with order-independent, non-1:1 overlap matching (any positive overlap counts), making the metric invariant to the evaluated model's window length.
 
-**独立テスト**: プロジェクトを作成し、設定を確認することで完全にテスト可能。
+Existing entities (`Species`, `Recording`, `Dataset`, `Note`, `User`, `Project`) are reused. The existing detection-review `Annotation`/`AnnotationVote` models under `apps/api/echoroo/models/annotation.py` are untouched; the new entity is deliberately named `TimeRangeAnnotation` to avoid collision.
 
-**受け入れシナリオ**:
+## User Scenarios and Testing *(mandatory)*
 
-1. **Given** ユーザーがログインしている状態で、**When** 新規アノテーションプロジェクトを作成する、**Then** プロジェクト名、説明、対象タグを設定できる
-2. **Given** プロジェクトが存在する状態で、**When** データセットを関連付ける、**Then** そのデータセットのクリップがアノテーション対象になる
-3. **Given** プロジェクトを作成する際に、**When** アノテーション指示を入力する、**Then** アノテーターに表示されるガイドラインとして保存される
-4. **Given** プロジェクトが存在する状態で、**When** プロジェクト詳細を閲覧する、**Then** 進捗状況（完了タスク数/総タスク数）が表示される
+### User Story 1 - Create an Annotation Set (Priority: P1)
 
----
+A researcher wants to evaluate model accuracy on a target dataset. They create an AnnotationSet by picking a dataset, narrowing with optional date / time-of-day filters, choosing a segment length (>= 10 s) and a target number of segments, then launching sampling.
 
-### ユーザーストーリー 2 - アノテーションタスクの実行 (優先度: P1)
+**Why this priority**: Without an AnnotationSet the rest of the workflow has no input.
 
-アノテーターは、割り当てられたタスクを実行し、音声クリップに対してタグを付けたり、音声イベントの境界を描画したりしたい。
+**Independent Test**: Create a set, wait for sampling to finish, verify `num_segments` AnnotationSegments were materialized, each pointing to a valid Recording and falling within its duration.
 
-**優先度の理由**: コアとなるアノテーション作業。これがなければアノテーションデータを生成できない。
+**Acceptance Scenarios**:
 
-**独立テスト**: タスクを開始し、アノテーションを追加して保存することでテスト可能。
-
-**受け入れシナリオ**:
-
-1. **Given** アノテーターにタスクが割り当てられている状態で、**When** タスクを開始する、**Then** クリップのスペクトログラムと再生コントロールが表示される
-2. **Given** スペクトログラムが表示されている状態で、**When** 時間・周波数範囲を選択してバウンディングボックスを描画する、**Then** 音声イベントとして保存できる
-3. **Given** 音声イベントを作成した状態で、**When** タグを選択する、**Then** そのイベントにタグが関連付けられる
-4. **Given** アノテーション作業中に、**When** タスクを完了としてマークする、**Then** 次のタスクに進むか、完了画面が表示される
+1. **Given** a project with at least one Dataset containing recordings, **When** the user submits the create form with `dataset_id`, `segment_length_sec = 30`, `num_segments = 100`, **Then** an AnnotationSet is created with status `sampling` and a background sampling job is dispatched.
+2. **Given** a filter `date_range = [2025-04-01, 2025-04-30]` and `time_of_day_range = [04:00, 09:00]`, **When** sampling runs, **Then** only recordings whose `recorded_at` falls in that window are candidates for segment extraction.
+3. **Given** sampling completes, **When** the user opens the set, **Then** status is `ready` and exactly `num_segments` segments exist (or fewer if the filtered pool was smaller, in which case a warning is shown).
+4. **Given** the user attempts `segment_length_sec = 5`, **When** the form is submitted, **Then** validation rejects it (minimum is 10 s).
 
 ---
 
-### ユーザーストーリー 3 - タグ管理 (優先度: P2)
+### User Story 2 - Annotate Time Ranges on a Segment (Priority: P1)
 
-研究者は、プロジェクトで使用するタグ（種名、音声タイプなど）を作成・管理したい。
+An annotator opens a segment, plays it, and for every recognizable call drags on the waveform/spectrogram to create a time-range annotation, then picks a species from the set's palette.
 
-**優先度の理由**: タグはアノテーションの分類に必須だが、デフォルトタグでも開始可能。
+**Why this priority**: Core ground-truth production.
 
-**独立テスト**: タグを作成、編集、削除し、アノテーションで使用できることを確認。
+**Independent Test**: On a segment with a known call, create one time-range annotation spanning the call, assign a species, save, reload, confirm it persisted with `status = annotated` on the parent segment.
 
-**受け入れシナリオ**:
+**Acceptance Scenarios**:
 
-1. **Given** タグ管理画面で、**When** 新規タグを作成する、**Then** タグ名とカテゴリ（種、音声タイプ、品質など）を設定できる
-2. **Given** タグが存在する状態で、**When** 親タグを設定する、**Then** 階層構造が作成される
-3. **Given** 種タグを作成する際に、**When** GBIF検索を使用する、**Then** 学名と一般名が自動入力される
-4. **Given** タグ一覧を表示する際に、**When** 使用統計を確認する、**Then** 各タグの使用回数が表示される
-
----
-
-### ユーザーストーリー 4 - クリップレベルアノテーション (優先度: P2)
-
-アノテーターは、クリップ全体に対してタグを付けたい（詳細な境界指定なしで、存在/不在の判定のみ）。
-
-**優先度の理由**: 詳細なバウンディングボックスより簡易で、大量データの初期スクリーニングに有用。
-
-**独立テスト**: クリップを選択し、タグを付けて保存できることを確認。
-
-**受け入れシナリオ**:
-
-1. **Given** クリップ一覧が表示されている状態で、**When** クリップを選択してタグを追加する、**Then** クリップアノテーションとして保存される
-2. **Given** 複数のクリップが選択されている状態で、**When** 一括でタグを適用する、**Then** 選択した全クリップにタグが追加される
-3. **Given** クリップアノテーションが存在する状態で、**When** ノートを追加する、**Then** コメントがアノテーションに関連付けられる
+1. **Given** a `ready` segment is open, **When** the user drags a time range and selects species X from the palette, **Then** a TimeRangeAnnotation is created with `start_time_sec`/`end_time_sec` within `[0, segment_length_sec]` and `species_id = X`.
+2. **Given** multiple overlapping calls exist, **When** the user creates separate time-range annotations for each, **Then** all are stored independently and can share or differ in species.
+3. **Given** a time-range annotation exists, **When** the user edits its range or species, **Then** the change is persisted and reflected on reload.
+4. **Given** the user has added at least one annotation, **When** the user marks the segment complete, **Then** `status` transitions `unannotated -> annotated` and `annotated_by_id`/`annotated_at` are set.
 
 ---
 
-### ユーザーストーリー 5 - アノテーションレビュー (優先度: P2)
+### User Story 3 - Mark a Segment as Empty (Priority: P1)
 
-プロジェクト管理者は、他のアノテーターが作成したアノテーションをレビューし、フィードバックを提供したい。
+An annotator listens to a segment and concludes it contains no target vocalizations. They mark the segment explicitly empty.
 
-**優先度の理由**: 品質管理に重要だが、初期段階ではレビューなしでも運用可能。
+**Why this priority**: Recall's denominator requires knowing which segments were verified empty vs. merely unreviewed. Empty-marked segments contribute zero GT; missing this information biases recall.
 
-**独立テスト**: 他者のアノテーションを閲覧し、承認/却下/コメントできることを確認。
+**Independent Test**: Open an unannotated segment, click "Mark as empty", verify `is_empty = true`, `status = annotated`, no TimeRangeAnnotations attached, and the segment appears in evaluation denominators as a segment with zero GT.
 
-**受け入れシナリオ**:
+**Acceptance Scenarios**:
 
-1. **Given** レビュー待ちのアノテーションがある状態で、**When** レビュー画面を開く、**Then** アノテーション詳細とスペクトログラムが表示される
-2. **Given** アノテーションをレビュー中に、**When** 承認する、**Then** アノテーションステータスが「承認済み」になる
-3. **Given** アノテーションをレビュー中に、**When** 却下してコメントを追加する、**Then** アノテーターに修正依頼が通知される
-4. **Given** レビュー済みアノテーション一覧で、**When** フィルタを適用する、**Then** ステータス別（承認済み/却下/未レビュー）に絞り込める
-
----
-
-### ユーザーストーリー 6 - アノテーションエクスポート (優先度: P3)
-
-研究者は、完成したアノテーションデータを外部形式でエクスポートし、他のツールや論文で使用したい。
-
-**優先度の理由**: データ活用に重要だが、システム内での利用が優先。
-
-**独立テスト**: プロジェクトのアノテーションを各形式でエクスポートし、ファイルを検証。
-
-**受け入れシナリオ**:
-
-1. **Given** アノテーションプロジェクトが存在する状態で、**When** JSON形式でエクスポートする、**Then** 全アノテーションがJSONファイルとしてダウンロードされる
-2. **Given** エクスポート時に、**When** CSV形式を選択する、**Then** 表形式のデータがダウンロードされる
-3. **Given** エクスポート時に、**When** AOEF形式を選択する、**Then** Acoustic Observation Exchange Format仕様に準拠したファイルが生成される
+1. **Given** an `unannotated` segment, **When** the user clicks "Mark as empty", **Then** `is_empty = true`, `status = annotated`, `annotated_by_id` is recorded, and any existing TimeRangeAnnotations are rejected (or the action is only offered when none exist).
+2. **Given** an empty-marked segment, **When** an annotator later adds a time-range annotation, **Then** `is_empty` flips back to `false` automatically.
+3. **Given** evaluation runs, **When** computing recall, **Then** empty segments are included in the covered set of segments but contribute 0 to `TP_R + FN` for that segment.
 
 ---
 
-### エッジケース
+### User Story 4 - Comment on Segments or Annotations (Priority: P2)
 
-- 同じ時間範囲に複数のアノテーションが重複した場合どうなるか？ → 許可し、異なる種や音声タイプとして保存可能
-- アノテーション中にセッションがタイムアウトした場合どうなるか？ → 未保存の作業を自動保存し、再開可能
-- 対象外の音声が含まれるクリップの場合どうなるか？ → 「対象外」タグまたはスキップオプションを提供
-- アノテーターが誤ってタスクを完了マークした場合どうなるか？ → 管理者がステータスを戻せる
-- 大量のタスクを一度に作成した場合のパフォーマンスは？ → バックグラウンド処理で段階的に作成
+An annotator wants to flag uncertainty ("possibly Locustella, low SNR") or raise a correction request on a peer's annotation.
 
-## 要件 *(必須)*
+**Why this priority**: Quality signal; not blocking for basic ground-truth capture.
 
-### 機能要件
+**Independent Test**: Attach a note to a segment and to a specific TimeRangeAnnotation; reload and verify both appear with author and timestamp.
 
-#### アノテーションプロジェクト管理
-- **FR-001**: システムは、名前、説明、対象タグを持つアノテーションプロジェクトを作成できなければならない
-- **FR-002**: システムは、プロジェクトにデータセットを関連付けられなければならない
-- **FR-003**: システムは、プロジェクトのアノテーション指示（ガイドライン）を保存・表示できなければならない
-- **FR-004**: システムは、プロジェクトの進捗状況（完了/未完了タスク数）を追跡できなければならない
-- **FR-005**: システムは、プロジェクトの可視性設定（プライベート/公開）を管理できなければならない
+**Acceptance Scenarios**:
 
-#### タスク管理
-- **FR-006**: システムは、クリップからアノテーションタスクを作成できなければならない
-- **FR-007**: システムは、複数クリップから一括でタスクを生成できなければならない
-- **FR-008**: システムは、タスクのステータス（未着手/進行中/完了/レビュー待ち）を追跡できなければならない
-- **FR-009**: システムは、タスクをアノテーターに割り当てられなければならない
-- **FR-010**: システムは、タスクの優先度とフィルタリングをサポートしなければならない
+1. **Given** a segment is open, **When** the user adds a note, **Then** it is linked to the segment via `AnnotationSegmentNote` and lists author + created_at.
+2. **Given** a TimeRangeAnnotation is selected, **When** the user adds a note with `is_issue = true`, **Then** it is linked via `TimeRangeAnnotationNote` and surfaced as an issue badge in the UI.
+3. **Given** multiple notes exist, **When** the user opens the segment, **Then** they are sorted by `created_at` ascending.
 
-#### 音声イベントアノテーション
-- **FR-011**: システムは、時間・周波数範囲を指定したバウンディングボックスアノテーションを作成できなければならない
-- **FR-012**: システムは、音声イベントにタグを関連付けられなければならない
-- **FR-013**: システムは、音声イベントにノート/コメントを追加できなければならない
-- **FR-014**: システムは、アノテーションのソース（人間/モデル）を記録しなければならない
-- **FR-015**: システムは、アノテーションの信頼度スコアを保存できなければならない
+---
 
-#### クリップアノテーション
-- **FR-016**: システムは、クリップ全体へのタグ付け（存在/不在判定）をサポートしなければならない
-- **FR-017**: システムは、複数クリップへの一括タグ付けをサポートしなければならない
-- **FR-018**: システムは、クリップアノテーションにノートを追加できなければならない
+### User Story 5 - Cross-Model Evaluation (Priority: P2)
 
-#### タグ管理
-- **FR-019**: システムは、カテゴリ別（種、音声タイプ、品質）のタグを作成できなければならない
-- **FR-020**: システムは、タグの階層構造（親子関係）をサポートしなければならない
-- **FR-021**: システムは、GBIF連携による種タグの自動補完をサポートしなければならない
-- **FR-022**: システムは、タグの使用統計を提供しなければならない
+A researcher selects an AnnotationSet and a list of models (BirdNET, Perch, one or more Custom models) and triggers evaluation. The system runs each model against every recording window covered by the set's segments, then computes precision / recall / F1 overall and per species using the symmetric overlap metric.
 
-#### レビュー機能
-- **FR-023**: システムは、アノテーションのレビューワークフローをサポートしなければならない
-- **FR-024**: システムは、レビューステータス（未レビュー/承認/却下）を管理できなければならない
-- **FR-025**: システムは、レビューコメント/フィードバックを保存できなければならない
+**Why this priority**: The entire data model exists to serve this comparison.
 
-#### エクスポート
-- **FR-026**: システムは、アノテーションをJSON形式でエクスポートできなければならない
-- **FR-027**: システムは、アノテーションをCSV形式でエクスポートできなければならない
-- **FR-028**: システムは、アノテーションをAOEF形式でエクスポートできなければならない
+**Independent Test**: On a set with known GT, run BirdNET and Perch evaluation, verify overall P/R/F1 and a per-species breakdown are returned and numerically match a reference hand-calculation for at least one species.
 
-### 主要エンティティ
+**Acceptance Scenarios**:
 
-- **AnnotationProject（アノテーションプロジェクト）**: アノテーション作業を管理する単位。名前、説明、対象タグ、関連データセット、指示を持つ
-- **AnnotationTask（アノテーションタスク）**: 個別のアノテーション作業単位。クリップへの参照、割り当てアノテーター、ステータスを持つ
-- **SoundEventAnnotation（音声イベントアノテーション）**: 音声内の特定イベントを示す。時間範囲、周波数範囲、タグ、信頼度、ソース（人間/モデル）を持つ
-- **ClipAnnotation（クリップアノテーション）**: クリップ全体への分類。タグと存在/不在の判定を持つ
-- **Tag（タグ）**: 分類用のラベル。名前、カテゴリ、親タグ（階層用）を持つ
-- **Note（ノート）**: アノテーションに付随するコメント。内容と作成者を持つ
+1. **Given** a `ready` or `completed` AnnotationSet, **When** the user submits `model_ids = [birdnet, perch]`, **Then** the system runs detections restricted to segment time-ranges, computes metrics per model, and persists the results.
+2. **Given** a Perch detection covers a 5 s window containing three 0.2 s ground-truth pulses of the same species, **When** metrics are computed, **Then** the detection is counted once as `TP_P = 1` (detection matched), three GTs are each counted as covered (`TP_R += 3`), and no FN is incurred for this trio.
+3. **Given** a BirdNET detection of species A and a GT of species B overlap in time, **When** metrics are computed, **Then** this pair contributes nothing to `TP_P` or `TP_R` (species mismatch); the detection is FP and the GT is FN.
+4. **Given** results exist, **When** the user opens the evaluation view, **Then** per-model P/R/F1 and per-species breakdown are displayed, sortable by species F1.
 
-## 成功基準 *(必須)*
+---
 
-### 測定可能な成果
+### User Story 6 - Manage the Species Palette (Priority: P3)
 
-- **SC-001**: アノテーターは1時間あたり100クリップ以上をアノテーションできる
-- **SC-002**: バウンディングボックスの描画が500ms以内に応答する
-- **SC-003**: タスク一覧の読み込みが2秒以内に完了する（1000タスクまで）
-- **SC-004**: 95%のアノテーターが初回使用時にチュートリアルなしでタスクを完了できる
-- **SC-005**: エクスポート処理が1分以内に完了する（10,000アノテーションまで）
-- **SC-006**: アノテーション間の一貫性（Inter-annotator agreement）が80%以上達成可能
-- **SC-007**: レビューワークフローにより品質問題の検出率が50%向上する
+Before or during annotation, a researcher curates the set's species palette so the annotation UI only shows the relevant taxa (and quick-access keyboard slots stay compact).
 
-## 前提条件
+**Why this priority**: Improves annotation speed but a default palette from detector outputs is acceptable initially.
 
-- アノテーション対象のクリップはデータ管理機能で既にインポート済み
-- アノテーターはスペクトログラムの基本的な読み方を理解している
-- 種タグはGBIF（Global Biodiversity Information Facility）のデータベースと互換性がある
-- アノテーションの重複（同じ時間範囲に複数のタグ）は許可される
+**Independent Test**: Add a species via GBIF search, confirm it appears in the palette dropdown; remove a species, confirm it disappears but existing TimeRangeAnnotations using it are preserved.
+
+**Acceptance Scenarios**:
+
+1. **Given** an AnnotationSet, **When** the user searches GBIF and selects a species, **Then** it is added to the palette via `AnnotationSetSpecies` and is selectable in the UI.
+2. **Given** a species in the palette is in use by existing annotations, **When** the user removes it, **Then** the palette link is removed but existing TimeRangeAnnotations keep their `species_id` (the palette is a UI filter, not a foreign-key constraint on annotation species).
+3. **Given** the palette is empty, **When** sampling completes, **Then** a default palette is suggested from detector top-N species observed on the sampled recordings (optional enhancement).
+
+---
+
+### Edge Cases
+
+- **Filter yields too few recordings**: sampling returns fewer segments than `num_segments`; set status becomes `ready` with a `sampling_warning`.
+- **Segment straddles end-of-recording**: sampling MUST constrain `end_time_sec <= recording.duration_sec`; otherwise reject the candidate and resample.
+- **Overlapping TimeRangeAnnotations**: allowed (different species or even same species flagged separately).
+- **Species removed from palette but still referenced**: preserved on existing annotations; re-add to edit cleanly.
+- **Evaluation triggered on an in-progress set**: allowed but flagged as "partial ground truth; metrics provisional".
+- **Detection outside any segment window**: ignored (not counted as FP) — evaluation is scoped to segment time-ranges only.
+- **Empty-marked segment with detections**: each detection is an FP; no TP/FN is possible since there are no GTs.
+- **Two annotators disagree**: v1 assumes single-annotator-per-segment. Multi-annotator consensus is out of scope.
+
+## Requirements *(mandatory)*
+
+### Functional Requirements
+
+#### AnnotationSet Management
+- **FR-001**: The system MUST create an AnnotationSet with `name`, `project_id`, `dataset_id`, optional `filter_date_range`, optional `filter_time_of_day_range`, `segment_length_sec >= 10`, `num_segments >= 1`.
+- **FR-002**: The system MUST launch a background sampling job that selects recordings matching the filters and extracts `num_segments` random non-overlapping segments of the requested length, persisted as AnnotationSegment rows.
+- **FR-003**: The system MUST expose AnnotationSet status (`sampling | ready | in_progress | completed`) and transition it automatically based on segment annotation progress (all segments `annotated` or `skipped` => `completed`).
+- **FR-004**: The system MUST allow updating AnnotationSet metadata (name) but MUST NOT allow changing sampling parameters after `ready`.
+- **FR-005**: The system MUST support deleting an AnnotationSet and cascade to its segments, TimeRangeAnnotations, notes, and palette links.
+
+#### Segment Annotation
+- **FR-006**: The system MUST allow creating, updating, and deleting TimeRangeAnnotations within a segment; `start_time_sec` and `end_time_sec` MUST satisfy `0 <= start < end <= segment_length_sec`.
+- **FR-007**: Each TimeRangeAnnotation MUST reference exactly one `species_id` from the existing `Species` table.
+- **FR-008**: The system MUST allow marking a segment as empty (`is_empty = true`, `status = annotated`), and automatically unset `is_empty` when a TimeRangeAnnotation is added.
+- **FR-009**: The system MUST record `annotated_by_id` and `annotated_at` when a segment transitions to `annotated`.
+- **FR-010**: The system MUST allow skipping a segment (`status = skipped`) which excludes it from evaluation denominators.
+
+#### Notes
+- **FR-011**: The system MUST attach notes to either a segment or a TimeRangeAnnotation (not both in a single note row).
+- **FR-012**: The system MUST support an `is_issue` flag on notes for surfacing quality concerns.
+
+#### Species Palette
+- **FR-013**: The system MUST maintain a per-AnnotationSet species palette via a many-to-many link to the existing `Species` table.
+- **FR-014**: Removing a species from the palette MUST NOT cascade to existing TimeRangeAnnotations.
+
+#### Cross-Model Evaluation
+- **FR-015**: The system MUST run evaluation for a list of model identifiers (built-ins `birdnet`, `perch`, plus Custom model UUIDs) against an AnnotationSet.
+- **FR-016**: The system MUST compute per-model `precision`, `recall`, `f1` overall and per species using the **symmetric overlap rule** defined in `research.md` (any positive time-overlap with matching `species_id` counts; no 1:1 matching, no IoU threshold, no taxonomy fallback).
+- **FR-017**: The system MUST scope detections to segment time-ranges: detections outside any segment are discarded before matching.
+- **FR-018**: The system MUST persist evaluation results (`EvaluationRun` + `EvaluationResult` per model) for later retrieval without re-running.
+- **FR-019**: The system MUST allow re-running evaluation; the latest run per (set, model) is considered current.
+
+### Key Entities
+
+- **AnnotationSet**: Named reference collection scoped to a project + dataset, parameterized by sampling filters and segment geometry, with a species palette.
+- **AnnotationSegment**: Materialized segment of a recording, annotatable independently, with explicit empty/skipped states.
+- **TimeRangeAnnotation**: A `[start, end]` interval inside a segment tagged with a single species.
+- **AnnotationSetSpecies** (association): Palette membership.
+- **AnnotationSegmentNote / TimeRangeAnnotationNote** (association): Link to existing Note entity.
+- **EvaluationRun / EvaluationResult**: Persisted P/R/F1 output per (set, model, species).
+
+## Success Criteria *(mandatory)*
+
+### Measurable Outcomes
+
+- **SC-001**: Sampling of 100 segments over a dataset of 500 recordings completes in under 60 s.
+- **SC-002**: An annotator can process (open, listen, annotate or mark empty, save) 30 s segments at >= 60 segments/hour.
+- **SC-003**: Creating or updating a TimeRangeAnnotation returns in < 200 ms p95.
+- **SC-004**: Evaluating BirdNET + Perch + one Custom model on a 100-segment set completes in under 5 minutes (assumes detections are pre-cached; otherwise bounded by inference throughput).
+- **SC-005**: Per-species P/R/F1 output is numerically reproducible: re-running evaluation with the same inputs yields identical numbers (deterministic aggregation).
+- **SC-006**: Evaluation metric is window-size invariant: swapping a model's internal window length (e.g., BirdNET 3s vs. a hypothetical 1s variant) on the same detections-equivalent output yields identical P/R/F1 per the formula in `research.md`.
+
+## Out of Scope
+
+- Bounding-box / frequency-range annotation.
+- Hierarchical tag taxonomy; only flat single-species labels are used.
+- Multi-annotator consensus or IRR (inter-rater reliability) calculations.
+- Approval / rejection workflow on individual annotations.
+- Export to AOEF / CSV / JSON (can be added later once the core eval loop is trusted).
+- Audit Set feature (scheduled for removal in Phase E).
+
+## Assumptions
+
+- Every recording has a reliable `duration_sec` and, when filters are applied, a reliable `recorded_at`.
+- Detector models already exist and expose a way to run detections on a recording interval, returning `(start_sec, end_sec, species_id, score)` tuples.
+- Species identity is captured solely via `species_id` from the existing `Species` table; taxonomy-aware matching is explicitly out of scope for v1.

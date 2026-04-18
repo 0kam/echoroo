@@ -1,38 +1,37 @@
-# 仕様品質チェックリスト: 音声イベントアノテーション
+# Spec Quality Checklist: Ground-Truth Annotation for Cross-Model Evaluation
 
-**目的**: 計画フェーズに進む前に仕様の完全性と品質を検証
-**作成日**: 2026-01-15
-**対象機能**: [spec.md](../spec.md)
+**Purpose**: Verify spec completeness and quality before moving to the planning phase.
+**Created**: 2026-01-15 (revised 2026-04-17)
+**Target Feature**: [spec.md](../spec.md)
 
-## コンテンツ品質
+## Content Quality
 
-- [x] 実装詳細（言語、フレームワーク、API）が含まれていない
-- [x] ユーザー価値とビジネスニーズに焦点を当てている
-- [x] 非技術者にも理解できる記述
-- [x] 全必須セクションが完了している
+- [x] No implementation details (language, framework, DB) leak into requirements.
+- [x] Focuses on user value and research-evaluation need.
+- [x] Readable by non-engineers (product / research lead).
+- [x] All mandatory sections present.
 
-## 要件の完全性
+## Requirements Completeness
 
-- [x] [NEEDS CLARIFICATION]マーカーが残っていない
-- [x] 要件がテスト可能で明確である
-- [x] 成功基準が測定可能である
-- [x] 成功基準に実装詳細が含まれていない
-- [x] 全受け入れシナリオが定義されている
-- [x] エッジケースが特定されている
-- [x] スコープが明確に限定されている
-- [x] 依存関係と前提条件が特定されている
+- [x] No `[NEEDS CLARIFICATION]` markers remain.
+- [x] Requirements are testable and unambiguous.
+- [x] Success criteria are measurable (SC-001..SC-006).
+- [x] Success criteria free of implementation detail.
+- [x] All acceptance scenarios defined per user story.
+- [x] Edge cases identified.
+- [x] Scope is bounded (out-of-scope list explicit).
+- [x] Dependencies and assumptions listed.
 
-## 機能の準備状況
+## Feature Readiness
 
-- [x] 全機能要件に明確な受け入れ基準がある
-- [x] ユーザーシナリオが主要フローをカバーしている
-- [x] 成功基準で定義された測定可能な成果を満たせる
-- [x] 仕様に実装詳細が漏れていない
+- [x] Every FR has a clear acceptance criterion.
+- [x] User stories cover the happy-path evaluation flow (create set -> sample -> annotate -> evaluate).
+- [x] Success criteria achievable with the defined data model + algorithm.
+- [x] Window-size invariance (SC-006) traced back to algorithm choice (research.md §4).
 
-## ノート
+## Notes
 
-- 全検証項目がパス
-- `/speckit.clarify`または`/speckit.plan`に進む準備完了
-- 6つのユーザーストーリー: プロジェクト作成、タスク実行、タグ管理、クリップアノテーション、レビュー、エクスポート
-- 28の機能要件を定義
-- 7つの測定可能な成功基準を設定
+- Six user stories: US1 set creation, US2 time-range annotation, US3 empty marker, US4 notes, US5 cross-model evaluation, US6 palette management.
+- Nineteen functional requirements (FR-001..FR-019).
+- Six success criteria (SC-001..SC-006), one of which is correctness-invariance (SC-006).
+- Ready for `/speckit.plan` / `/speckit.tasks`.

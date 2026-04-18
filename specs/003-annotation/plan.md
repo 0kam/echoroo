@@ -1,74 +1,68 @@
-# Implementation Plan: Audio Event Annotation
+# Implementation Plan: Ground-Truth Annotation for Cross-Model Evaluation
 
-**Branch**: `003-annotation` | **Date**: 2026-02-19 | **Spec**: [spec.md](./spec.md)
-**Input**: Feature specification from `/specs/003-annotation/spec.md`
+**Branch**: `003-annotation` | **Date**: 2026-04-17 (revised from 2026-02-19) | **Spec**: [spec.md](./spec.md)
 
 ## Summary
 
-This feature implements the annotation workflow for Echoroo v2, including annotation projects, task management, bounding box and clip-level annotations, hierarchical tags with GBIF species integration, review workflow, and multi-format export (JSON/CSV/AOEF). The implementation follows existing Clean Architecture patterns with FastAPI backend and SvelteKit frontend.
+The revised feature implements a lightweight ground-truth annotation subsystem (`AnnotationSet` -> `AnnotationSegment` -> `TimeRangeAnnotation`) plus a symmetric-overlap cross-model evaluation pipeline (BirdNET / Perch / Custom). It intentionally does **not** carry forward Whombat's bounding-box geometry, hierarchical tags, approval workflow, or AOEF export. It reuses the existing `Species`, `Recording`, `Dataset`, `Note`, and GBIF infrastructure, and deliberately avoids the name `Annotation` to preserve the unrelated detection-review model at `apps/api/echoroo/models/annotation.py`.
 
 ## Technical Context
 
 **Language/Version**: Python 3.11 (Backend), TypeScript 5.x (Frontend)
-**Primary Dependencies**: FastAPI, SQLAlchemy 2.0, Pydantic, SvelteKit, Svelte 5, TanStack Query, Tailwind CSS, wavesurfer.js
-**Storage**: PostgreSQL 16+ with pgvector extension
-**Testing**: pytest (contract/integration/unit), vitest (frontend)
+**Primary Dependencies**: FastAPI, SQLAlchemy 2.0 async, Pydantic, Celery + Redis, SvelteKit 2 / Svelte 5, TanStack Query, Tailwind CSS
+**Storage**: PostgreSQL 16 + pgvector (pgvector not used by this feature)
+**Testing**: pytest + pytest-asyncio (backend), vitest + Playwright (frontend)
 **Target Platform**: Linux server (Docker), modern web browsers
-**Project Type**: Web application (frontend + backend)
-**Performance Goals**:
-- 100 clips/hour annotation speed (SC-001)
-- Bounding box drawing response < 500ms (SC-002)
-- Task list load < 2s for 1000 tasks (SC-003)
-- Export < 1 minute for 10,000 annotations (SC-005)
+**Project Type**: Web application (frontend + backend, monorepo)
+
+**Performance Goals (from spec SC-*)**:
+- Sampling 100 segments over 500 recordings < 60 s
+- Annotation throughput >= 60 segments/hour for 30 s segments
+- TimeRangeAnnotation create/update p95 < 200 ms
+- Evaluation of BirdNET + Perch + one Custom on 100 segments < 5 min (with cached detections)
+- Window-size invariant metric (SC-006)
 
 **Constraints**:
-- Annotations must support both human and model sources
-- GBIF integration for species tag autocomplete
-- Batch task generation via Celery for large datasets
-- Auto-save with debounced 500ms interval
+- `segment_length_sec >= 10`
+- Single species per TimeRangeAnnotation; species from existing `Species` table
+- No frequency annotation
+- Sampling and evaluation run as Celery jobs on the CPU worker queue
+- Must not collide with existing `Annotation`/`AnnotationVote` models — new entity is `TimeRangeAnnotation`
 
 **Scale/Scope**:
-- Thousands of tasks per annotation project
-- Hundreds of sound events per clip
-- Dozens of tags per project
+- ~dozens of sets per project, ~100 segments per set typical
+- tens of TimeRangeAnnotations per segment in dense cases
+- evaluation history retained indefinitely (one run per (set, model) kept current, older runs kept for audit)
 
 ## Constitution Check
 
-*GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
+### I. Clean Architecture — WILL COMPLY
+- API layer: `apps/api/echoroo/api/v1/annotation_sets.py`, `segments.py`, `time_range_annotations.py` (or combined into a single `annotation.py` router if cleaner).
+- Service layer: `AnnotationSetService`, `SegmentService`, `TimeRangeAnnotationService`, `EvaluationService`.
+- Repository layer: one repo per aggregate root.
+- Domain models in `apps/api/echoroo/models/`.
 
-### I. Clean Architecture ✅ PASS
-- **API Layer**: FastAPI routers in `apps/api/echoroo/api/v1/` for tags, annotation-projects, annotation-tasks, annotations
-- **Service Layer**: Business logic in `apps/api/echoroo/services/` (TagService, AnnotationProjectService, AnnotationTaskService, AnnotationService)
-- **Repository Layer**: Data access in `apps/api/echoroo/repositories/` (TagRepository, AnnotationProjectRepository, etc.)
-- **Domain Models**: SQLAlchemy models in `apps/api/echoroo/models/`
-- Dependencies injected via FastAPI's `Depends()`
+### II. Test-Driven Development — WILL COMPLY
+- Contract tests for each endpoint group (derived from `contracts/*.yaml`).
+- Integration tests: sampling pipeline, annotation lifecycle (unannotated -> annotated -> edit -> re-annotated), evaluation pipeline with synthetic detections.
+- Unit tests: symmetric-overlap metric (this is the core algorithmic surface, must be exhaustively tested — see research.md examples).
 
-### II. Test-Driven Development ✅ WILL COMPLY
-- Contract tests for all API endpoints (test_tags.py, test_annotation_projects.py, test_annotation_tasks.py, test_annotations.py)
-- Integration tests for annotation workflow and review workflow
-- Unit tests for geometry validation, GBIF integration, export formatting
+### III. Type Safety — WILL COMPLY
+- Pydantic schemas for every request/response.
+- SQLAlchemy 2.0 mapped types.
+- mypy strict on backend; TypeScript strict on frontend.
 
-### III. Type Safety ✅ WILL COMPLY
-- Pydantic schemas for all request/response validation
-- SQLAlchemy 2.0 type hints for all models
-- mypy strict mode validation
-- TypeScript strict mode in frontend
-- Geometry types validated via Pydantic model validators
+### IV. ML Pipeline Architecture — WILL COMPLY
+- Sampling: Celery task on `worker-cpu` queue (consistent with classifier/sampling code per `memory/celery-workers.md`).
+- Evaluation: Celery task that either reuses cached detections or invokes inference on demand.
+- Progress tracked via EvaluationRun.status and polled from the frontend.
 
-### IV. ML Pipeline Architecture ✅ WILL COMPLY
-- Batch task generation via Celery task
-- Large exports (>1000 annotations) via Celery task
-- Progress updates for long-running operations
+### V. API Versioning — WILL COMPLY
+- All endpoints under `/api/v1/`.
 
-### V. API Versioning ✅ WILL COMPLY
-- All endpoints under `/api/v1/`
-- Breaking changes will increment version
-- Backward compatible within v1
-
-### Security Requirements ✅ WILL COMPLY
-- JWT token validation for all endpoints
-- Role-based access: project Admin/Member can annotate, Admin can review
-- Pydantic validation for all inputs including geometry JSON
+### Security — WILL COMPLY
+- JWT / session auth on all endpoints (existing middleware).
+- Project-scoped authorization: user must have access to the parent project to see or modify its AnnotationSets.
 
 ## Project Structure
 
@@ -76,111 +70,165 @@ This feature implements the annotation workflow for Echoroo v2, including annota
 
 ```text
 specs/003-annotation/
-├── plan.md              # This file
-├── research.md          # Phase 0 output
-├── data-model.md        # Phase 1 output
-├── quickstart.md        # Phase 1 output
-├── contracts/           # Phase 1 output
-│   ├── tags.yaml
-│   ├── annotation-projects.yaml
-│   ├── annotation-tasks.yaml
-│   └── annotations.yaml
-└── tasks.md             # Phase 2 output (/speckit.tasks)
+├── plan.md              # This file (revised)
+├── spec.md              # Revised
+├── research.md          # Revised
+├── data-model.md        # Revised
+├── quickstart.md        # Revised
+├── contracts/           # Rewritten
+│   ├── annotation-sets.yaml
+│   ├── segments.yaml
+│   ├── annotations.yaml
+│   └── evaluation.yaml
+├── checklists/
+│   └── requirements.md
+└── tasks.md             # Generated by /speckit.tasks
 ```
 
-### Source Code (repository root)
+### Source Code (repository root — new / modified paths)
 
 ```text
 apps/api/
 ├── echoroo/
 │   ├── api/v1/
-│   │   ├── tags.py                    # Tag CRUD + GBIF suggest
-│   │   ├── annotation_projects.py     # Project CRUD + task generation + export
-│   │   ├── annotation_tasks.py        # Task management + navigation
-│   │   └── annotations.py            # ClipAnnotation + SoundEvent CRUD + review
+│   │   ├── annotation_sets.py          # Set CRUD + sample + palette + evaluate
+│   │   ├── annotation_segments.py      # Segment list + detail + status + notes
+│   │   └── time_range_annotations.py   # TimeRangeAnnotation CRUD + notes
 │   ├── models/
-│   │   ├── tag.py                     # Tag model
-│   │   ├── annotation_project.py      # AnnotationProject + association tables
-│   │   ├── annotation_task.py         # AnnotationTask model
-│   │   ├── clip_annotation.py         # ClipAnnotation model
-│   │   ├── sound_event_annotation.py  # SoundEventAnnotation model
-│   │   └── note.py                    # Note model
+│   │   ├── annotation_set.py
+│   │   ├── annotation_segment.py
+│   │   ├── time_range_annotation.py
+│   │   ├── annotation_set_species.py
+│   │   ├── annotation_segment_note.py
+│   │   ├── time_range_annotation_note.py
+│   │   ├── evaluation_run.py
+│   │   └── evaluation_result.py
 │   ├── schemas/
-│   │   ├── tag.py                     # Tag Pydantic schemas
-│   │   ├── annotation_project.py      # AnnotationProject schemas
-│   │   ├── annotation_task.py         # AnnotationTask schemas
-│   │   ├── annotation.py             # ClipAnnotation + SoundEvent schemas
-│   │   └── note.py                    # Note schemas
+│   │   ├── annotation_set.py
+│   │   ├── annotation_segment.py
+│   │   ├── time_range_annotation.py
+│   │   └── evaluation.py
 │   ├── services/
-│   │   ├── tag.py                     # Tag logic + GBIF
-│   │   ├── annotation_project.py      # Project logic
-│   │   ├── annotation_task.py         # Task management
-│   │   └── annotation.py             # Annotation CRUD + review
+│   │   ├── annotation_set.py
+│   │   ├── annotation_segment.py
+│   │   ├── time_range_annotation.py
+│   │   ├── annotation_sampling.py      # Weighted random sampler
+│   │   └── evaluation.py               # Symmetric overlap metric
 │   ├── repositories/
-│   │   ├── tag.py                     # Tag data access
-│   │   ├── annotation_project.py      # Project data access
-│   │   ├── annotation_task.py         # Task data access
-│   │   ├── clip_annotation.py         # ClipAnnotation data access
-│   │   ├── sound_event_annotation.py  # SoundEvent data access
-│   │   └── note.py                    # Note data access
+│   │   ├── annotation_set.py
+│   │   ├── annotation_segment.py
+│   │   ├── time_range_annotation.py
+│   │   └── evaluation.py
 │   └── workers/
-│       └── annotation_tasks.py        # Celery: batch task generation
-├── alembic/
-│   └── versions/                      # New migrations
+│       ├── annotation_sampling_tasks.py
+│       └── evaluation_tasks.py
+├── alembic/versions/
+│   └── 00XX_add_annotation_sets.py
 └── tests/
     ├── contract/
-    │   ├── test_tags.py
-    │   ├── test_annotation_projects.py
-    │   ├── test_annotation_tasks.py
-    │   └── test_annotations.py
-    └── integration/
-        ├── test_annotation_workflow.py
-        └── test_review_workflow.py
+    │   ├── test_annotation_sets.py
+    │   ├── test_annotation_segments.py
+    │   ├── test_time_range_annotations.py
+    │   └── test_evaluation.py
+    ├── integration/
+    │   ├── test_annotation_sampling.py
+    │   └── test_cross_model_evaluation.py
+    └── unit/
+        └── test_overlap_metric.py      # exhaustive — core correctness
 
 apps/web/
 ├── src/
 │   ├── lib/
 │   │   ├── api/
-│   │   │   ├── tags.ts                # Tag API client
-│   │   │   ├── annotation-projects.ts # Annotation project API
-│   │   │   ├── annotation-tasks.ts    # Task API
-│   │   │   └── annotations.ts         # Annotation API
+│   │   │   ├── annotation-sets.ts
+│   │   │   ├── annotation-segments.ts
+│   │   │   ├── time-range-annotations.ts
+│   │   │   └── evaluation.ts
 │   │   ├── components/
 │   │   │   └── annotation/
-│   │   │       ├── AnnotationCanvas.svelte      # Bounding box drawing
-│   │   │       ├── TagSelector.svelte           # Tag autocomplete + GBIF
-│   │   │       ├── TaskNavigator.svelte         # Previous/Next task nav
-│   │   │       ├── ReviewPanel.svelte           # Approve/reject UI
-│   │   │       ├── AnnotationList.svelte        # Sidebar annotations list
-│   │   │       ├── AnnotationProjectList.svelte # Project list view
-│   │   │       └── AnnotationProjectForm.svelte # Create/edit project form
+│   │   │       ├── AnnotationSetForm.svelte
+│   │   │       ├── AnnotationSetList.svelte
+│   │   │       ├── SegmentList.svelte
+│   │   │       ├── SegmentEditor.svelte            # Waveform + time-range drag
+│   │   │       ├── TimeRangeAnnotationItem.svelte
+│   │   │       ├── SpeciesPalette.svelte
+│   │   │       ├── EmptySegmentButton.svelte
+│   │   │       ├── NotePanel.svelte
+│   │   │       └── EvaluationDashboard.svelte
 │   │   └── types/
-│   │       └── annotation.ts          # TypeScript types
+│   │       └── annotation.ts
 │   └── routes/
-│       └── (app)/
-│           └── projects/
-│               └── [id]/
-│                   └── annotations/
-│                       ├── +page.svelte                           # Project list
-│                       ├── [annotationProjectId]/
-│                       │   ├── +page.svelte                       # Task list
-│                       │   ├── tasks/
-│                       │   │   └── [taskId]/
-│                       │   │       └── +page.svelte               # Annotation workspace
-│                       │   └── review/
-│                       │       └── +page.svelte                   # Review interface
-│                       └── tags/
-│                           └── +page.svelte                       # Tag management
-└── tests/
-    └── *.test.ts
+│       └── (app)/projects/[id]/annotation-sets/
+│           ├── +page.svelte                       # Set list
+│           ├── new/+page.svelte                   # Create form
+│           └── [setId]/
+│               ├── +page.svelte                   # Segment list + palette
+│               ├── segments/[segmentId]/+page.svelte  # Segment editor
+│               └── evaluation/+page.svelte        # Cross-model dashboard
 ```
 
-**Structure Decision**: Web application structure following existing patterns from 001-administration and 002-data-management. Backend follows Clean Architecture with API/Service/Repository layers. Frontend uses SvelteKit route groups with shared annotation components.
+**Structure Decision**: Mirrors 001-administration / 002-data-management conventions. All new backend modules live alongside existing ones; frontend uses a dedicated route group `annotation-sets` (plural to distinguish from the legacy `annotations` routes if any remain temporarily).
+
+## Implementation Phases
+
+Phases are listed with coarse dependencies. Phase D (tests) has sub-phases that run alongside the relevant production code per TDD; they are listed separately only for reporting clarity.
+
+### Phase A — Backend core
+1. Alembic migration for all new tables (see data-model.md) including `notes.is_issue` column if missing.
+2. SQLAlchemy models + repositories.
+3. Pydantic schemas.
+4. Sampling service (weighted random, non-overlapping) + Celery task on `worker-cpu`.
+5. Segment / TimeRangeAnnotation services enforcing invariants (`is_empty` mutual exclusion with TimeRangeAnnotations, auto-transition of `AnnotationSet.status`).
+6. Evaluation service (symmetric overlap metric) + Celery task.
+7. FastAPI routers per `contracts/*.yaml`.
+
+### Phase B — Frontend core
+1. API clients + TanStack Query hooks.
+2. Set list / create / edit pages.
+3. Segment list (with status / empty / annotated counts, palette editor alongside).
+4. Segment editor: waveform, drag-to-create time range, species palette picker, empty-mark button, note panel.
+5. "Mark segment complete" action that wires to `PATCH /segments/{id}`.
+
+### Phase C — Cross-model evaluation dashboard
+1. UI to pick models (BirdNET / Perch / enumerated Custom models) and launch evaluation.
+2. Polling run status, rendering per-model P/R/F1 and per-species breakdown table.
+3. Sort / filter by species; highlight low-recall species.
+
+### Phase D — Tests (runs interleaved with A–C per TDD; listed here for completeness)
+1. Unit tests for `services/evaluation.py` (overlap metric): exhaustive cases — no overlap, partial overlap, full overlap, species mismatch, multi-GT-per-detection (covered 3:1 case), multi-detection-per-GT (3:1 reverse), empty-segment with detections (FP only), empty-GT-set, empty-detection-set.
+2. Contract tests for every endpoint group.
+3. Integration: end-to-end sampling -> annotate -> evaluate flow on a test dataset.
+4. Frontend unit (vitest) for canvas drag math and palette state.
+5. Playwright E2E: full annotation + evaluation flow using `test@echoroo.app`.
+
+### Phase E — Audit Set removal (independent cleanup)
+1. Remove Audit Set backend models / routes / services.
+2. Remove Audit Set frontend pages / components / i18n keys.
+3. Drop corresponding DB tables via Alembic migration.
+4. Update docs / navigation.
+
+This phase is intentionally independent of Phases A–D; it runs in parallel or after, whichever is more convenient.
+
+## Dependencies Between Phases
+
+- Phase A blocks Phase B (frontend cannot integrate without API).
+- Phase C depends on Phase A (evaluation service + endpoint) but not on Phase B's UI polish — can be developed in parallel with Phase B's segment editor.
+- Phase D sub-phases are co-located with their production code.
+- Phase E is independent.
+
+## Parallelism Strategy
+
+- Phase A tasks 1–3 (migration + models + schemas) are sequential. Tasks 4 (sampling), 5 (segment/annotation services), 6 (evaluation) are independent of each other and can be parallelized by separate `backend-developer` SSAs once tasks 1–3 are done.
+- Phase B components are largely independent; parallelize by component.
+- Phase C runs in parallel with Phase B once Phase A task 6 is done.
 
 ## Complexity Tracking
 
-> No constitution violations requiring justification.
+| Concern | Decision | Justification |
+|---|---|---|
+| New entity vs. extend existing `Annotation` | New (`TimeRangeAnnotation`) | Existing `Annotation` is a detection-review model; reusing it would conflate schemas and break the voting flow |
+| Evaluation metric = simple overlap (not IoU/Hungarian) | Simple overlap | Window-size invariance (SC-006); rationale detailed in research.md §4 |
+| Sampling as Celery job | Celery on `worker-cpu` | Sampling scans all recordings + random allocations; may exceed request timeouts; consistent with existing sampling/classifier code |
+| No AOEF/CSV/JSON export in v1 | Dropped | Downstream pipeline consumes metrics directly; export can be added later without schema changes |
 
-| Violation | Why Needed | Simpler Alternative Rejected Because |
-|-----------|------------|-------------------------------------|
-| N/A | N/A | N/A |
+No constitution violations.

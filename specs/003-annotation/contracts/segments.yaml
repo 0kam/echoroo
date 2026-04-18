@@ -1,0 +1,170 @@
+openapi: 3.0.3
+info:
+  title: Echoroo Annotation — Segments API
+  version: 2.0.0
+  description: |
+    Segment detail, status/empty transitions, nested TimeRangeAnnotation creation,
+    and segment-level notes.
+
+paths:
+  /api/v1/segments/{id}:
+    get:
+      summary: Get segment detail (including annotations and notes)
+      operationId: getSegment
+      tags: [segments]
+      parameters:
+        - $ref: '#/components/parameters/SegmentId'
+      responses:
+        '200':
+          description: Segment detail
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SegmentDetailResponse'
+
+    patch:
+      summary: Update segment state (status, is_empty)
+      operationId: updateSegment
+      tags: [segments]
+      parameters:
+        - $ref: '#/components/parameters/SegmentId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SegmentUpdate'
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SegmentDetailResponse'
+        '409':
+          description: |
+            Cannot mark as empty while TimeRangeAnnotations exist. Delete them
+            first or clear is_empty.
+
+  /api/v1/segments/{id}/annotations:
+    post:
+      summary: Create a TimeRangeAnnotation on the segment
+      operationId: createTimeRangeAnnotation
+      tags: [segments, annotations]
+      parameters:
+        - $ref: '#/components/parameters/SegmentId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TimeRangeAnnotationCreate'
+      responses:
+        '201':
+          description: Created (side effect: segment.is_empty -> false)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TimeRangeAnnotationResponse'
+
+  /api/v1/segments/{id}/notes:
+    post:
+      summary: Attach a note to a segment
+      operationId: createSegmentNote
+      tags: [segments, notes]
+      parameters:
+        - $ref: '#/components/parameters/SegmentId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NoteCreate'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NoteResponse'
+
+components:
+  parameters:
+    SegmentId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+
+  schemas:
+    SegmentStatus:
+      type: string
+      enum: [unannotated, annotated, skipped]
+
+    SegmentUpdate:
+      type: object
+      properties:
+        status: { $ref: '#/components/schemas/SegmentStatus' }
+        is_empty: { type: boolean }
+
+    TimeRangeAnnotationCreate:
+      type: object
+      required: [start_time_sec, end_time_sec, species_id]
+      properties:
+        start_time_sec: { type: number, minimum: 0 }
+        end_time_sec: { type: number, minimum: 0 }
+        species_id: { type: string, format: uuid }
+        confidence: { type: number, minimum: 0, maximum: 1, nullable: true }
+
+    TimeRangeAnnotationResponse:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        segment_id: { type: string, format: uuid }
+        start_time_sec: { type: number }
+        end_time_sec: { type: number }
+        species_id: { type: string, format: uuid }
+        species_scientific_name: { type: string }
+        species_common_name: { type: string, nullable: true }
+        confidence: { type: number, nullable: true }
+        created_by_id: { type: string, format: uuid }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        note_count: { type: integer }
+
+    NoteCreate:
+      type: object
+      required: [content]
+      properties:
+        content: { type: string, minLength: 1, maxLength: 5000 }
+        is_issue: { type: boolean, default: false }
+
+    NoteResponse:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        content: { type: string }
+        is_issue: { type: boolean }
+        created_by_id: { type: string, format: uuid }
+        created_at: { type: string, format: date-time }
+
+    SegmentDetailResponse:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        annotation_set_id: { type: string, format: uuid }
+        recording_id: { type: string, format: uuid }
+        recording_filename: { type: string }
+        recording_duration_sec: { type: number }
+        start_time_sec: { type: number }
+        end_time_sec: { type: number }
+        is_empty: { type: boolean }
+        status: { $ref: '#/components/schemas/SegmentStatus' }
+        annotated_by_id: { type: string, format: uuid, nullable: true }
+        annotated_at: { type: string, format: date-time, nullable: true }
+        annotations:
+          type: array
+          items: { $ref: '#/components/schemas/TimeRangeAnnotationResponse' }
+        notes:
+          type: array
+          items: { $ref: '#/components/schemas/NoteResponse' }

@@ -1,234 +1,160 @@
-# Quickstart: Annotation Feature
+# Quickstart: Annotation Feature (Revised)
 
 **Branch**: `003-annotation`
-**Date**: 2026-02-19
+**Date**: 2026-04-17 (revised from 2026-02-19)
 
 ## Prerequisites
 
-1. Development environment running (`./scripts/docker.sh dev`)
-2. 001-administration feature implemented (Users, Projects, Roles)
-3. 002-data-management feature implemented (Sites, Datasets, Recordings, Clips)
+1. Dev environment running (`./scripts/docker.sh dev`).
+2. 001-administration feature implemented (Users, Projects, Roles).
+3. 002-data-management feature implemented (Sites, Datasets, Recordings).
+4. Detection-review models already exist at `apps/api/echoroo/models/annotation.py` — **must remain untouched**.
 
-## Setup Steps
+## Setup
 
-### 1. Install New Dependencies
-
-No new backend or frontend dependencies required. All needed libraries are already installed from previous features.
-
-### 2. Run Database Migrations
+### 1. Migrations
 
 ```bash
 cd apps/api
 uv run alembic upgrade head
 ```
 
-### 3. Verify API Endpoints
+This applies the new tables: `annotation_sets`, `annotation_set_species`, `annotation_segments`, `time_range_annotations`, `annotation_segment_notes`, `time_range_annotation_notes`, `evaluation_runs`, `evaluation_results`, plus the `notes.is_issue` column if absent.
 
-After implementation, verify the following endpoints work:
+### 2. No new dependencies
 
-**Tags:**
-- `GET /api/v1/projects/{id}/tags` - List tags
-- `POST /api/v1/projects/{id}/tags` - Create tag
-- `GET /api/v1/projects/{id}/tags/{id}` - Get tag details
-- `PATCH /api/v1/projects/{id}/tags/{id}` - Update tag
-- `DELETE /api/v1/projects/{id}/tags/{id}` - Delete tag
-- `GET /api/v1/projects/{id}/tags/gbif-suggest?q=...` - GBIF species search
-- `GET /api/v1/projects/{id}/tags/statistics` - Tag usage stats
+Backend: reuses existing Celery, SQLAlchemy, detector inference modules. Frontend: reuses existing waveform/audio components.
 
-**Annotation Projects:**
-- `GET /api/v1/projects/{id}/annotation-projects` - List
-- `POST /api/v1/projects/{id}/annotation-projects` - Create
-- `GET /api/v1/projects/{id}/annotation-projects/{id}` - Get with progress
-- `PATCH /api/v1/projects/{id}/annotation-projects/{id}` - Update
-- `DELETE /api/v1/projects/{id}/annotation-projects/{id}` - Delete
-- `POST /api/v1/projects/{id}/annotation-projects/{id}/generate-tasks` - Generate tasks
-- `GET /api/v1/projects/{id}/annotation-projects/{id}/export?format=json` - Export
+## API Endpoints (summary)
 
-**Annotation Tasks:**
-- `GET /api/v1/projects/{id}/annotation-projects/{id}/tasks` - List tasks
-- `GET /api/v1/projects/{id}/annotation-projects/{id}/tasks/{id}` - Get task
-- `PATCH /api/v1/projects/{id}/annotation-projects/{id}/tasks/{id}` - Update task
-- `POST /api/v1/projects/{id}/annotation-projects/{id}/tasks/{id}/complete` - Complete
-- `GET /api/v1/projects/{id}/annotation-projects/{id}/tasks/next` - Next task
+See `contracts/*.yaml` for the authoritative OpenAPI definitions.
 
-**Annotations:**
-- `GET /api/v1/projects/{id}/annotation-tasks/{id}/clip-annotation` - Get/create clip annotation
-- `POST /api/v1/projects/{id}/clip-annotations/{id}/tags` - Add clip tag
-- `POST /api/v1/projects/{id}/clip-annotations/{id}/sound-events` - Create sound event
-- `PATCH /api/v1/projects/{id}/sound-events/{id}` - Update sound event
-- `DELETE /api/v1/projects/{id}/sound-events/{id}` - Delete sound event
-- `POST /api/v1/projects/{id}/clip-annotations/{id}/review` - Review annotation
+**AnnotationSet**
+- `POST   /api/v1/annotation-sets`
+- `GET    /api/v1/annotation-sets` (filters: `project_id`, `dataset_id`, `status`)
+- `GET    /api/v1/annotation-sets/{id}`
+- `PATCH  /api/v1/annotation-sets/{id}`
+- `DELETE /api/v1/annotation-sets/{id}`
+- `POST   /api/v1/annotation-sets/{id}/sample` (dispatches Celery sampling job)
+- `GET    /api/v1/annotation-sets/{id}/segments` (paginated)
+- `POST   /api/v1/annotation-sets/{id}/palette` (body: `species_id`)
+- `DELETE /api/v1/annotation-sets/{id}/palette/{species_id}`
+- `POST   /api/v1/annotation-sets/{id}/evaluate` (body: `model_ids[]`)
 
-## Quick Test Workflow
+**AnnotationSegment**
+- `GET    /api/v1/segments/{id}`
+- `PATCH  /api/v1/segments/{id}` (body: `status`, `is_empty`)
+- `POST   /api/v1/segments/{id}/annotations` (create TimeRangeAnnotation)
+- `POST   /api/v1/segments/{id}/notes`
 
-### 1. Create Tags
+**TimeRangeAnnotation**
+- `PATCH  /api/v1/annotations/{id}`
+- `DELETE /api/v1/annotations/{id}`
+- `POST   /api/v1/annotations/{id}/notes`
+
+**Evaluation**
+- `GET    /api/v1/annotation-sets/{id}/evaluation-runs` (list history)
+- `GET    /api/v1/evaluation-runs/{id}` (with per-species `EvaluationResult`s)
+
+## End-to-End Quick Test
+
+### 1. Create a set
 
 ```bash
-# Create a species tag
-curl -X POST http://localhost:8000/api/v1/projects/{project_id}/tags \
-  -H "Content-Type: application/json" \
-  -b "session=..." \
+curl -X POST http://localhost:8002/api/v1/annotation-sets \
+  -H "Content-Type: application/json" -b "session=..." \
   -d '{
-    "name": "Parus major",
-    "category": "species",
-    "scientific_name": "Parus major",
-    "common_name": "Great Tit",
-    "gbif_taxon_key": 9806309
+    "project_id": "<uuid>",
+    "dataset_id": "<uuid>",
+    "name": "Spring 2025 ground truth",
+    "filter_date_range": {"start": "2025-04-01", "end": "2025-04-30"},
+    "filter_time_of_day_range": {"start": "04:00", "end": "09:00"},
+    "segment_length_sec": 30,
+    "num_segments": 100
   }'
 ```
 
-### 2. Create an Annotation Project
+### 2. Trigger sampling
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/projects/{project_id}/annotation-projects \
-  -H "Content-Type: application/json" \
-  -b "session=..." \
-  -d '{
-    "name": "Bird Detection 2026",
-    "description": "Annotate bird calls in spring recordings",
-    "instructions": "Mark all bird vocalizations with bounding boxes. Tag each with species if identifiable.",
-    "dataset_ids": ["{dataset_id}"],
-    "tag_ids": ["{tag_id}"]
-  }'
+curl -X POST http://localhost:8002/api/v1/annotation-sets/<id>/sample -b "session=..."
 ```
 
-### 3. Generate Tasks
+Poll `GET /annotation-sets/<id>` until `status = ready`.
+
+### 3. Populate palette
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/projects/{project_id}/annotation-projects/{ap_id}/generate-tasks \
-  -b "session=..."
+curl -X POST http://localhost:8002/api/v1/annotation-sets/<id>/palette \
+  -H "Content-Type: application/json" -b "session=..." \
+  -d '{"species_id": "<species_uuid>"}'
 ```
 
-### 4. Start Annotating
+### 4. Annotate a segment
 
 ```bash
-# Get next task
-curl http://localhost:8000/api/v1/projects/{project_id}/annotation-projects/{ap_id}/tasks/next \
-  -b "session=..."
+# List segments
+curl "http://localhost:8002/api/v1/annotation-sets/<id>/segments?status=unannotated" -b "session=..."
 
-# Create sound event on the clip
-curl -X POST http://localhost:8000/api/v1/projects/{project_id}/clip-annotations/{ca_id}/sound-events \
-  -H "Content-Type: application/json" \
-  -b "session=..." \
+# Create a time-range annotation
+curl -X POST http://localhost:8002/api/v1/segments/<segment_id>/annotations \
+  -H "Content-Type: application/json" -b "session=..." \
   -d '{
-    "geometry": {
-      "type": "BoundingBox",
-      "coordinates": [1.5, 2000, 3.0, 8000]
-    },
-    "tag_ids": ["{tag_id}"],
-    "source": "human"
+    "start_time_sec": 4.2,
+    "end_time_sec": 5.1,
+    "species_id": "<species_uuid>",
+    "confidence": 0.9
   }'
 
-# Complete task
-curl -X POST http://localhost:8000/api/v1/projects/{project_id}/annotation-projects/{ap_id}/tasks/{task_id}/complete \
-  -b "session=..."
+# Or mark segment as empty
+curl -X PATCH http://localhost:8002/api/v1/segments/<segment_id> \
+  -H "Content-Type: application/json" -b "session=..." \
+  -d '{"status": "annotated", "is_empty": true}'
 ```
 
-### 5. Export Annotations
+### 5. Run cross-model evaluation
 
 ```bash
-curl "http://localhost:8000/api/v1/projects/{project_id}/annotation-projects/{ap_id}/export?format=csv" \
-  -b "session=..." \
-  --output annotations.csv
+curl -X POST http://localhost:8002/api/v1/annotation-sets/<id>/evaluate \
+  -H "Content-Type: application/json" -b "session=..." \
+  -d '{"model_ids": ["birdnet", "perch", "<custom_model_uuid>"]}'
 ```
 
-## Key Files to Implement
+Poll `GET /evaluation-runs/<run_id>` until `status = completed`, then read `results[]` for per-model and per-species P/R/F1.
 
-### Backend (Priority Order)
+## Key Files to Implement (priority order)
 
-1. **Models** (apps/api/echoroo/models/)
-   - `tag.py` - Tag model with GBIF fields
-   - `annotation_project.py` - AnnotationProject + association tables
-   - `annotation_task.py` - AnnotationTask model
-   - `clip_annotation.py` - ClipAnnotation model
-   - `sound_event_annotation.py` - SoundEventAnnotation model
-   - `note.py` - Note model
+### Backend
+1. Models: `annotation_set.py`, `annotation_segment.py`, `time_range_annotation.py`, association tables, `evaluation_run.py`, `evaluation_result.py`.
+2. Alembic migration.
+3. Schemas (Pydantic).
+4. Repositories.
+5. Services: `annotation_sampling.py`, `annotation_set.py`, `annotation_segment.py`, `time_range_annotation.py`, `evaluation.py`.
+6. Celery tasks: `annotation_sampling_tasks.py`, `evaluation_tasks.py` (on `worker-cpu` queue).
+7. API routers.
 
-2. **Schemas** (apps/api/echoroo/schemas/)
-   - `tag.py` - Tag Pydantic schemas
-   - `annotation_project.py` - AnnotationProject schemas
-   - `annotation_task.py` - AnnotationTask schemas
-   - `annotation.py` - ClipAnnotation + SoundEventAnnotation schemas
-   - `note.py` - Note schemas
+### Frontend
+1. API clients + TanStack Query hooks.
+2. Routes under `(app)/projects/[id]/annotation-sets/`.
+3. Components: `AnnotationSetForm`, `SegmentList`, `SegmentEditor` (waveform + drag), `SpeciesPalette`, `EvaluationDashboard`.
 
-3. **Repositories** (apps/api/echoroo/repositories/)
-   - `tag.py` - Tag data access
-   - `annotation_project.py` - AnnotationProject data access
-   - `annotation_task.py` - AnnotationTask data access
-   - `clip_annotation.py` - ClipAnnotation data access
-   - `sound_event_annotation.py` - SoundEventAnnotation data access
-   - `note.py` - Note data access
-
-4. **Services** (apps/api/echoroo/services/)
-   - `tag.py` - Tag business logic + GBIF integration
-   - `annotation_project.py` - AnnotationProject logic
-   - `annotation_task.py` - Task management + assignment
-   - `annotation.py` - Annotation CRUD + review workflow
-   - `export.py` - Update with annotation export (JSON/CSV/AOEF)
-
-5. **API Endpoints** (apps/api/echoroo/api/v1/)
-   - `tags.py` - Tag CRUD + GBIF suggest
-   - `annotation_projects.py` - Project CRUD + task generation + export
-   - `annotation_tasks.py` - Task management
-   - `annotations.py` - Annotation CRUD + review
-
-6. **Workers** (apps/api/echoroo/workers/)
-   - `annotation_tasks.py` - Celery task for batch task generation
-
-### Frontend (Priority Order)
-
-1. **API Clients** (apps/web/src/lib/api/)
-   - `tags.ts` - Tag API
-   - `annotation-projects.ts` - Annotation project API
-   - `annotation-tasks.ts` - Task API
-   - `annotations.ts` - Annotation API
-
-2. **Components** (apps/web/src/lib/components/)
-   - `annotation/AnnotationCanvas.svelte` - Bounding box drawing
-   - `annotation/TagSelector.svelte` - Tag selection with GBIF
-   - `annotation/TaskNavigator.svelte` - Task navigation
-   - `annotation/ReviewPanel.svelte` - Review approve/reject
-   - `annotation/AnnotationList.svelte` - Annotations sidebar
-   - `annotation/AnnotationProjectList.svelte` - Project list
-   - `annotation/AnnotationProjectForm.svelte` - Create/edit project
-
-3. **Pages** (apps/web/src/routes/(app)/projects/[id]/)
-   - `annotations/+page.svelte` - Annotation projects list
-   - `annotations/[annotationProjectId]/+page.svelte` - Task list
-   - `annotations/[annotationProjectId]/tasks/[taskId]/+page.svelte` - Annotation workspace
-   - `annotations/[annotationProjectId]/review/+page.svelte` - Review interface
-
-## Type Checking
-
-After implementation, run type checks:
+## Type Check / Tests
 
 ```bash
 # Backend
 cd apps/api
+uv run ruff check .
 uv run mypy .
+uv run pytest tests/unit/test_overlap_metric.py -v
+uv run pytest tests/contract -v
+uv run pytest tests/integration -v
 
 # Frontend
 cd apps/web
 npm run check
-```
-
-## Testing
-
-Run tests after implementation:
-
-```bash
-# Backend
-cd apps/api
-uv run pytest tests/contract/test_tags.py -v
-uv run pytest tests/contract/test_annotation_projects.py -v
-uv run pytest tests/contract/test_annotation_tasks.py -v
-uv run pytest tests/contract/test_annotations.py -v
-
-# Frontend
-cd apps/web
 npm run test
 ```
 
 ## Environment Variables
 
-No new environment variables required for this feature.
+None added.

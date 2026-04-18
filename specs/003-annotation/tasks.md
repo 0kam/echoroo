@@ -1,5 +1,11 @@
 # Tasks: Audio Event Annotation
 
+> **STALE — DO NOT IMPLEMENT FROM THIS FILE.**
+> This task list was generated from the previous Whombat-derived design. The spec
+> was revised on 2026-04-17 (see `spec.md`, `plan.md`, `data-model.md`,
+> `research.md`, `contracts/`). Regenerate this file with `/speckit.tasks`
+> before using.
+
 **Input**: Design documents from `/specs/003-annotation/`
 **Prerequisites**: plan.md (required), spec.md (required), research.md, data-model.md, contracts/
 
