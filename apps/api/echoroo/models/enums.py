@@ -108,7 +108,6 @@ class DetectionSource(StrEnum):
     CUSTOM_SVM = "custom_svm"
     HUMAN = "human"
     SAMPLING_ROUND = "sampling_round"  # Created by seed sampling or active learning pipeline
-    AUDIT_SET = "audit_set"            # Created as part of a model audit set
 
 
 class DetectionStatus(StrEnum):
@@ -186,3 +185,35 @@ class SearchSessionStatus(StrEnum):
     RUNNING = "running"
     COMPLETED = "completed"
     FAILED = "failed"
+
+
+class AnnotationSetStatus(StrEnum):
+    """Lifecycle status for an AnnotationSet (ground-truth reference collection).
+
+    Values:
+        SAMPLING: Background sampling job is materializing segments.
+        READY: Sampling finished; segments are available for annotation.
+        IN_PROGRESS: At least one segment has been annotated or skipped.
+        COMPLETED: Every child segment is either annotated or skipped.
+    """
+
+    SAMPLING = "sampling"
+    READY = "ready"
+    IN_PROGRESS = "in_progress"
+    COMPLETED = "completed"
+
+
+class AnnotationSegmentStatus(StrEnum):
+    """Lifecycle status for an AnnotationSegment.
+
+    Values:
+        UNANNOTATED: Segment has not yet been reviewed by an annotator.
+        ANNOTATED: Annotator finalized the segment (with time-range annotations
+            or explicitly marked empty).
+        SKIPPED: Annotator skipped this segment; it is excluded from evaluation
+            denominators.
+    """
+
+    UNANNOTATED = "unannotated"
+    ANNOTATED = "annotated"
+    SKIPPED = "skipped"

@@ -1,0 +1,15 @@
+{
+  "include": ["echoroo", "tests"],
+  "exclude": [
+    "**/__pycache__",
+    ".venv",
+    "**/.venv",
+    "**/node_modules"
+  ],
+  "pythonVersion": "3.11",
+  "pythonPlatform": "Linux",
+  "venvPath": ".",
+  "venv": ".venv",
+  "reportMissingImports": "warning",
+  "reportMissingTypeStubs": false
+}

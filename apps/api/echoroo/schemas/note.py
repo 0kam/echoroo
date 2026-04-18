@@ -13,6 +13,10 @@ class NoteCreate(BaseModel):
 
     content: str = Field(..., min_length=1, max_length=5000, description="Note text content")
     is_review: bool = Field(default=False, description="Whether this note is a formal review comment")
+    is_issue: bool = Field(
+        default=False,
+        description="Quality-concern flag for ground-truth annotation notes (spec 003-annotation)",
+    )
 
 
 class NoteResponse(BaseModel):
@@ -21,6 +25,7 @@ class NoteResponse(BaseModel):
     id: UUID
     content: str
     is_review: bool
+    is_issue: bool = False
     created_by_id: UUID
     created_at: datetime
 

@@ -6,6 +6,14 @@ from echoroo.models.annotation_project import (
     annotation_project_datasets,
     annotation_project_tags,
 )
+from echoroo.models.annotation_set import (
+    AnnotationSegment,
+    AnnotationSet,
+    TimeRangeAnnotation,
+    annotation_segment_notes,
+    annotation_set_species_palette,
+    time_range_annotation_notes,
+)
 from echoroo.models.annotation_task import AnnotationTask
 from echoroo.models.annotation_vote import AnnotationVote
 from echoroo.models.base import Base, TimestampMixin, UUIDMixin
@@ -18,6 +26,8 @@ from echoroo.models.detection_run import DetectionRun
 from echoroo.models.embedding import Embedding
 from echoroo.models.enums import (
     AnnotationProjectVisibility,
+    AnnotationSegmentStatus,
+    AnnotationSetStatus,
     AnnotationSource,
     AnnotationTaskStatus,
     ConsensusStatus,
@@ -38,12 +48,17 @@ from echoroo.models.enums import (
     UploadSessionStatus,
     VoteType,
 )
+from echoroo.models.evaluation import (
+    EvaluationResult,
+    EvaluationRun,
+    EvaluationRunStatus,
+)
 from echoroo.models.license import License
 from echoroo.models.note import Note
 from echoroo.models.project import Project, ProjectInvitation, ProjectMember
 from echoroo.models.recorder import Recorder
 from echoroo.models.recording import Recording
-from echoroo.models.sampling_round import AuditSetItem, SamplingRound, SamplingRoundItem
+from echoroo.models.sampling_round import SamplingRound, SamplingRoundItem
 from echoroo.models.search_query_embedding import SearchQueryEmbedding
 from echoroo.models.search_session import SearchSession
 from echoroo.models.site import Site
@@ -81,6 +96,10 @@ __all__ = [
     "SoundEventAnnotation",
     "Note",
     "Tag",
+    # Ground-truth annotation models (003-annotation)
+    "AnnotationSet",
+    "AnnotationSegment",
+    "TimeRangeAnnotation",
     # Taxon models
     "Taxon",
     "TaxonVernacularName",
@@ -93,7 +112,6 @@ __all__ = [
     "CustomModel",
     "SamplingRound",
     "SamplingRoundItem",
-    "AuditSetItem",
     # Search session models
     "SearchSession",
     "SearchQueryEmbedding",
@@ -105,8 +123,11 @@ __all__ = [
     # Association tables
     "annotation_project_datasets",
     "annotation_project_tags",
+    "annotation_segment_notes",
+    "annotation_set_species_palette",
     "clip_annotation_tags",
     "sound_event_annotation_tags",
+    "time_range_annotation_notes",
     # Enums (core)
     "DatasetStatus",
     "DatasetVisibility",
@@ -116,6 +137,8 @@ __all__ = [
     "SettingType",
     # Enums (annotation)
     "AnnotationProjectVisibility",
+    "AnnotationSegmentStatus",
+    "AnnotationSetStatus",
     "AnnotationSource",
     "AnnotationTaskStatus",
     "GeometryType",
@@ -129,6 +152,10 @@ __all__ = [
     "ConsensusStatus",
     # Enums (custom model)
     "CustomModelStatus",
+    # Evaluation (003-annotation A3)
+    "EvaluationRun",
+    "EvaluationResult",
+    "EvaluationRunStatus",
     # Enums (search session)
     "SearchSessionStatus",
     # Enums (upload)

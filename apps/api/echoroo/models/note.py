@@ -63,6 +63,16 @@ class Note(UUIDMixin, TimestampMixin, Base):
         nullable=False,
         doc="Whether this note is a formal review comment",
     )
+    is_issue: Mapped[bool] = mapped_column(
+        Boolean,
+        default=False,
+        server_default="false",
+        nullable=False,
+        doc=(
+            "Quality-concern flag for ground-truth annotation notes (see "
+            "spec 003-annotation). Surfaced as an issue badge in the UI."
+        ),
+    )
 
     # Relationships
     created_by: Mapped[User] = relationship(
@@ -83,10 +93,13 @@ class Note(UUIDMixin, TimestampMixin, Base):
     )
 
     __table_args__ = (
+        # Legacy detection-annotation parents are mutually exclusive when set,
+        # but both may now be null because notes can also be attached via the
+        # annotation_segment_notes / time_range_annotation_notes secondary
+        # tables introduced by spec 003-annotation.
         CheckConstraint(
-            "(clip_annotation_id IS NOT NULL AND sound_event_annotation_id IS NULL) OR "
-            "(clip_annotation_id IS NULL AND sound_event_annotation_id IS NOT NULL)",
-            name="ck_note_exactly_one_parent",
+            "NOT (clip_annotation_id IS NOT NULL AND sound_event_annotation_id IS NOT NULL)",
+            name="ck_note_not_both_parents",
         ),
         Index("ix_notes_clip_annotation_id", "clip_annotation_id"),
         Index("ix_notes_sound_event_annotation_id", "sound_event_annotation_id"),
