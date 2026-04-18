@@ -286,7 +286,7 @@ class AnnotationVoteService:
         return ConsensusStatus.DISPUTED
 
     # Sources that bypass consensus requirements — a single decisive vote is sufficient.
-    _SINGLE_VOTE_SOURCES = frozenset({DetectionSource.SAMPLING_ROUND, DetectionSource.AUDIT_SET})
+    _SINGLE_VOTE_SOURCES = frozenset({DetectionSource.SAMPLING_ROUND})
 
     async def _update_annotation_status(
         self,
@@ -296,8 +296,8 @@ class AnnotationVoteService:
     ) -> None:
         """Recompute and persist annotation.status from current vote counts.
 
-        For annotations sourced from the sampling pipeline (sampling_round,
-        audit_set), a single agree/disagree vote is enough to confirm or reject
+        For annotations sourced from the sampling pipeline (sampling_round),
+        a single agree/disagree vote is enough to confirm or reject
         — the normal consensus thresholds are bypassed entirely.
 
         For all other sources the standard iNaturalist-inspired consensus

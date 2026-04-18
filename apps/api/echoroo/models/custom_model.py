@@ -17,7 +17,7 @@ from echoroo.models.base import Base, TimestampMixin, UUIDMixin
 if TYPE_CHECKING:
     from echoroo.models.dataset import Dataset
     from echoroo.models.project import Project
-    from echoroo.models.sampling_round import AuditSetItem, SamplingRound
+    from echoroo.models.sampling_round import SamplingRound
     from echoroo.models.search_session import SearchSession
     from echoroo.models.tag import Tag
     from echoroo.models.user import User
@@ -153,11 +153,6 @@ class CustomModel(UUIDMixin, TimestampMixin, Base):
         nullable=True,
         doc="Timestamp when training completed or failed",
     )
-    audit_metrics: Mapped[dict[str, object] | None] = mapped_column(
-        JSONB,
-        nullable=True,
-        doc="Evaluation metrics computed from human-audited audit set labels",
-    )
     search_session_id: Mapped[UUID | None] = mapped_column(
         PG_UUID(as_uuid=True),
         ForeignKey("search_sessions.id", ondelete="SET NULL"),
@@ -188,12 +183,6 @@ class CustomModel(UUIDMixin, TimestampMixin, Base):
 
     sampling_rounds: Mapped[list[SamplingRound]] = relationship(
         "SamplingRound",
-        back_populates="custom_model",
-        cascade="all, delete-orphan",
-        lazy="raise",
-    )
-    audit_set_items: Mapped[list[AuditSetItem]] = relationship(
-        "AuditSetItem",
         back_populates="custom_model",
         cascade="all, delete-orphan",
         lazy="raise",
