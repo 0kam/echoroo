@@ -69,3 +69,18 @@ api_router.include_router(search_module.annotations_router)
 api_router.include_router(custom_models.router)
 # Xeno-canto proxy router
 api_router.include_router(xeno_canto.router)
+
+# Cross-model evaluation router (003-annotation A3)
+from echoroo.api.v1 import evaluation as _evaluation  # noqa: E402
+
+api_router.include_router(_evaluation.annotation_set_router)
+api_router.include_router(_evaluation.run_router)
+
+# Ground-truth annotation routers (003-annotation A2)
+from echoroo.api.v1 import annotation_sets as _annotation_sets  # noqa: E402
+from echoroo.api.v1 import segments as _segments  # noqa: E402
+from echoroo.api.v1 import time_range_annotations as _time_range_annotations  # noqa: E402
+
+api_router.include_router(_annotation_sets.router)
+api_router.include_router(_segments.router)
+api_router.include_router(_time_range_annotations.router)

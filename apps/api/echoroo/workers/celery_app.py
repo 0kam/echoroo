@@ -57,6 +57,8 @@ app.conf.include = [
     "echoroo.workers.taxon_tasks",
     "echoroo.workers.search_tasks",
     "echoroo.workers.classifier_tasks",
+    "echoroo.workers.annotation_sampling_tasks",
+    "echoroo.workers.evaluation_tasks",
     "echoroo.workers.model_preloader",
 ]
 
