@@ -16,7 +16,7 @@
   import * as m from '$lib/paraglide/messages';
   import { castAnnotationVote, deleteAnnotationVote } from '$lib/api/votes';
   import type { SamplingRound, SamplingRoundItem } from '$lib/types/custom-model';
-  import type { VoteSummary, VoteValue, SignalQuality } from '$lib/types/detection';
+  import type { DetectionStatus, VoteSummary, VoteValue, SignalQuality } from '$lib/types/detection';
   import ReviewCard from '$lib/components/common/ReviewCard.svelte';
   import { createReviewNavigation } from '$lib/utils/reviewNavigation.svelte';
 
@@ -267,10 +267,10 @@
                   <ReviewCard
                     {projectId}
                     recordingId={item.recording_id}
-                    recordingName={item.recording_id}
+                    recordingName={item.recording_filename ?? item.recording_id}
                     startTime={item.start_time}
                     endTime={item.end_time}
-                    status="unreviewed"
+                    status={(item.review_status as DetectionStatus) ?? 'unreviewed'}
                     scoreValue={item.similarity}
                     scoreLabel={m.models_review_similarity_label()}
                     scoreBadgeClass={scoreBadgeClass(item.similarity)}

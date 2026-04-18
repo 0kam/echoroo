@@ -15,7 +15,6 @@
   import type { DetectionStatus, VoteSummary, VoteValue, SignalQuality } from '$lib/types/detection';
   import * as m from '$lib/paraglide/messages';
   import { createAudioPlayer } from '$lib/utils/audioPlayback.svelte';
-  import { getConsensusCardBorderClass } from '$lib/utils/statusFormatters';
   import MiniSpectrogram from './MiniSpectrogram.svelte';
   import ReviewActions from './ReviewActions.svelte';
 
@@ -134,21 +133,16 @@
   const scorePercent = $derived(scoreValue !== null ? Math.round(scoreValue * 100) : null);
 
   const borderClass = $derived.by(() => {
+    // In voting-based review (voteSummary present), the card border is driven
+    // purely by keyboard-selection focus — consensus state and user_vote are
+    // communicated via badges/icons rendered inside ReviewActions instead.
     if (voteSummary) {
-      // Use consensus-based border when consensus is reached
-      if (voteSummary.consensus_status !== 'needs_votes') {
-        return getConsensusCardBorderClass(voteSummary.consensus_status, isSelected);
-      }
-      // Fallback to user's own vote for single-voter / needs_votes scenarios
-      if (voteSummary.user_vote === 'agree') return 'border-success/60 ring-1 ring-success/30';
-      if (voteSummary.user_vote === 'disagree') return 'border-danger/60 ring-1 ring-danger/30';
-      if (voteSummary.user_vote === 'unsure') return 'border-warning/60 ring-1 ring-warning/30';
-      return isSelected ? 'border-primary-400 ring-1 ring-primary-300' : 'border-stone-200';
+      return isSelected ? 'border-orange-400 ring-1 ring-orange-300' : 'border-transparent';
     }
     // No voteSummary — use annotation status (used by DetectionCard)
     if (status === 'confirmed') return 'border-success ring-1 ring-success/50';
     if (status === 'rejected') return 'border-danger ring-1 ring-danger/50';
-    return isSelected ? 'border-primary-400 ring-1 ring-primary-300' : 'border-stone-200';
+    return isSelected ? 'border-orange-400 ring-1 ring-orange-300' : 'border-stone-200';
   });
 
   function formatTime(seconds: number): string {

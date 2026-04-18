@@ -99,21 +99,6 @@ export function getConsensusStatusBadgeClass(consensus: ConsensusStatus): string
 }
 
 /**
- * CSS class string for the card border based on consensus status.
- */
-export function getConsensusCardBorderClass(
-  consensus: ConsensusStatus,
-  isSelected = false,
-): string {
-  if (consensus === 'agreed') return 'border-green-400 ring-1 ring-green-300';
-  if (consensus === 'rejected') return 'border-red-400 ring-1 ring-red-300';
-  if (consensus === 'disputed') return 'border-orange-400 ring-1 ring-orange-300';
-  return isSelected
-    ? 'border-primary-400 ring-1 ring-primary-300'
-    : 'border-stone-200';
-}
-
-/**
  * Human-readable label for a consensus status.
  */
 export function getConsensusStatusLabel(

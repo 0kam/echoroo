@@ -4,7 +4,7 @@
    *
    * Hub for managing trained custom SVM classifiers. Provides:
    * - Model list with status badges
-   * - Detail view with metrics, hyperparameters, training stats, audit metrics
+   * - Detail view with metrics, hyperparameters, training stats
    * - Apply dialog (run model on another dataset)
    * - Delete dialog
    * - Navigation to source Search session
@@ -27,15 +27,13 @@
     deleteCustomModel,
     getCustomModelStatus,
     applyCustomModel,
-    generateAuditSet,
-    getAuditSet,
-    evaluateAuditSet,
   } from '$lib/api/custom-models';
   import { fetchDatasets } from '$lib/api/datasets';
   import { toasts } from '$lib/stores/toast';
-  import type { CustomModel, AuditMetrics } from '$lib/types/custom-model';
+  import type { CustomModel } from '$lib/types/custom-model';
   import { getCustomModelStatusClass, getCustomModelStatusLabel } from '$lib/utils/statusFormatters';
   import ReviewTab from '$lib/components/models/ReviewTab.svelte';
+  import RecentApplications from '$lib/components/models/RecentApplications.svelte';
 
   const projectId = $derived($page.params.id as string);
   const queryClient = useQueryClient();
@@ -73,13 +71,6 @@
   let applyDatasetId = $state('');
   let applyThreshold = $state(0.5);
   let applyError = $state<string | null>(null);
-
-  // ============================================
-  // Audit set state
-  // ============================================
-
-  /** Active metrics tab in the detail view: 'internal' or 'audit' */
-  let metricsTab = $state<'internal' | 'audit'>('internal');
 
   // ============================================
   // Training polling state
@@ -125,16 +116,6 @@
       queryKey: ['custom-model', projectId, selectedModelId],
       queryFn: () =>
         selectedModelId ? getCustomModelStatus(projectId, selectedModelId) : Promise.reject('No model selected'),
-      enabled: !!selectedModelId && viewMode === 'detail',
-      refetchOnWindowFocus: false,
-    })
-  );
-
-  const auditSetQuery = $derived(
-    createQuery({
-      queryKey: ['audit-set', projectId, selectedModelId],
-      queryFn: () =>
-        selectedModelId ? getAuditSet(projectId, selectedModelId) : Promise.reject('No model selected'),
       enabled: !!selectedModelId && viewMode === 'detail',
       refetchOnWindowFocus: false,
     })
@@ -189,7 +170,6 @@
       deletingModelId = null;
       handleBackToList();
       queryClient.removeQueries({ queryKey: ['custom-model', projectId, deletedId] });
-      queryClient.removeQueries({ queryKey: ['audit-set', projectId, deletedId] });
       queryClient.removeQueries({ queryKey: ['sampling-rounds', projectId, deletedId] });
       queryClient.invalidateQueries({ queryKey: ['custom-models', projectId] });
     },
@@ -201,36 +181,19 @@
   const applyMutationState = createMutation({
     mutationFn: ({ modelId, datasetId, threshold }: { modelId: string; datasetId: string; threshold: number }) =>
       applyCustomModel(projectId, modelId, datasetId, threshold),
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
       closeApplyDialog();
-      toasts.success(m.models_apply_success());
+      // Immediate feedback: the job was queued. The RecentApplications panel
+      // will poll and fire the completion/failure toast on status transition.
+      toasts.success(m.models_apply_queued());
+      // Force the RecentApplications panel to pick up the new run right away
+      // rather than waiting for its next polling tick.
+      queryClient.invalidateQueries({
+        queryKey: ['custom-model-detection-runs', projectId, variables.modelId],
+      });
     },
     onError: (err: Error) => {
       applyError = err.message;
-    },
-  });
-
-  const generateAuditSetMutation = createMutation({
-    mutationFn: (modelId: string) => generateAuditSet(projectId, modelId),
-    onSuccess: () => {
-      // Refresh the audit set list after generation is dispatched
-      queryClient.invalidateQueries({ queryKey: ['audit-set', projectId, selectedModelId] });
-      toasts.success('Audit set generation dispatched. Items will appear shortly.');
-    },
-    onError: (err: Error) => {
-      toasts.error(`Failed to generate audit set: ${err.message}`);
-    },
-  });
-
-  const evaluateAuditSetMutation = createMutation({
-    mutationFn: (modelId: string) => evaluateAuditSet(projectId, modelId),
-    onSuccess: (_metrics: AuditMetrics) => {
-      // Refresh the model detail to show updated audit_metrics
-      queryClient.invalidateQueries({ queryKey: ['custom-model', projectId, selectedModelId] });
-      toasts.success('Audit evaluation complete. Metrics updated.');
-    },
-    onError: (err: Error) => {
-      toasts.error(`Evaluation failed: ${err.message}`);
     },
   });
 
@@ -290,7 +253,6 @@
     polledModel = null;
     selectedModelId = null;
     viewMode = 'list';
-    metricsTab = 'internal';
     const url = new URL(window.location.href);
     url.searchParams.delete('model');
     history.replaceState({}, '', url.toString());
@@ -661,15 +623,30 @@
           </div>
         {/if}
 
-        <!-- Review & Labeling section (draft/failed models) -->
-        {#if model.status === 'draft' || model.status === 'failed'}
+        <!-- Recent Applications: show progress/history of Apply-to-Dataset jobs.
+             Only relevant once the model is trainable/trained (trained/deployed),
+             since Apply is only enabled in those states. -->
+        {#if model.status === 'trained' || model.status === 'deployed'}
+          <RecentApplications {projectId} modelId={model.id} />
+        {/if}
+
+        <!-- Review & Labeling section (draft/failed/trained models).
+             For trained models, the user can continue the active-learning loop:
+             label more samples from new AL rounds, then retrain to improve. -->
+        {#if model.status === 'draft' || model.status === 'failed' || model.status === 'trained'}
           <div class="rounded-xl border border-card bg-surface-card p-5 shadow-sm">
             <h2 class="mb-4 text-base font-semibold text-stone-800 dark:text-stone-200">
               {m.models_review_and_labeling()}
             </h2>
+            {#if model.status === 'trained'}
+              <p class="mb-4 text-xs text-stone-500 dark:text-stone-400">
+                {m.models_trained_continue_al_hint()}
+              </p>
+            {/if}
             <ReviewTab
               {projectId}
               modelId={model.id}
+              isTrained={model.status === 'trained'}
               onTrainRequest={() => {
                 queryClient.invalidateQueries({ queryKey: ['custom-model', projectId, model.id] });
               }}
@@ -678,311 +655,110 @@
         {/if}
 
         <!-- Metrics (only shown when trained) -->
-        {#if model.metrics || model.audit_metrics}
-          <!-- Metrics tab bar -->
-          <div class="flex gap-1 rounded-xl border border-card bg-surface-card p-1 shadow-sm">
-            <button
-              type="button"
-              class="flex-1 rounded-lg px-4 py-2 text-sm font-medium transition-colors focus:outline-none
-                {metricsTab === 'internal'
-                  ? 'bg-primary-50 text-primary-700 dark:bg-primary-900/30 dark:text-primary-400'
-                  : 'text-stone-500 hover:text-stone-800 dark:hover:text-stone-200'}"
-              onclick={() => { metricsTab = 'internal'; }}
-            >
-              Internal Validation
-            </button>
-            <button
-              type="button"
-              class="flex-1 rounded-lg px-4 py-2 text-sm font-medium transition-colors focus:outline-none
-                {metricsTab === 'audit'
-                  ? 'bg-warning-light text-warning'
-                  : 'text-stone-500 hover:text-stone-800 dark:hover:text-stone-200'}"
-              onclick={() => { metricsTab = 'audit'; }}
-            >
-              Blind Audit
-              {#if model.audit_metrics}
-                <span class="ml-1.5 rounded-full bg-warning-light px-1.5 py-0.5 text-xs text-warning">
-                  evaluated
+        {#if model.metrics}
+          {@const metrics = model.metrics}
+          <div class="rounded-xl border border-card bg-surface-card p-6 shadow-sm">
+            <div class="mb-5 flex flex-wrap items-center gap-2">
+              <h2 class="text-sm font-semibold uppercase tracking-wider text-stone-500">
+                Internal Validation
+              </h2>
+              {#if metrics.cv_method}
+                <span class="rounded-full bg-stone-100 px-2 py-0.5 text-xs text-stone-500 dark:bg-stone-800">
+                  {metrics.cv_method}
                 </span>
               {/if}
-            </button>
-          </div>
+            </div>
 
-          <!-- Internal Validation panel -->
-          {#if metricsTab === 'internal'}
-            {#if model.metrics}
-              {@const metrics = model.metrics}
-              <div class="rounded-xl border border-card bg-surface-card p-6 shadow-sm">
-                <div class="mb-5 flex flex-wrap items-center gap-2">
-                  <h2 class="text-sm font-semibold uppercase tracking-wider text-stone-500">
-                    Internal Validation
-                  </h2>
-                  {#if metrics.cv_method}
-                    <span class="rounded-full bg-stone-100 px-2 py-0.5 text-xs text-stone-500 dark:bg-stone-800">
-                      {metrics.cv_method}
-                    </span>
-                  {/if}
-                </div>
-
-                {#if metrics.cv_warning}
-                  <div class="mb-4 flex items-start gap-2 rounded-lg border border-warning/20 bg-warning-light p-3 text-xs text-warning">
-                    <svg class="mt-0.5 h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                      <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
-                    </svg>
-                    {metrics.cv_warning}
-                  </div>
-                {/if}
-
-                <!-- Primary metric bars -->
-                <div class="space-y-4">
-                  {#each [
-                    { label: m.models_metrics_f1(), value: metrics.f1 },
-                    { label: m.models_metrics_auc_roc(), value: metrics.roc_auc },
-                    { label: m.models_metrics_pr_auc(), value: metrics.pr_auc },
-                    { label: m.models_metrics_accuracy(), value: metrics.accuracy },
-                    { label: m.models_metrics_precision(), value: metrics.precision },
-                    { label: m.models_metrics_recall(), value: metrics.recall },
-                  ] as metric}
-                    <div>
-                      <div class="mb-1 flex items-center justify-between text-sm">
-                        <span class="font-medium text-stone-700">{metric.label}</span>
-                        <span class="font-mono text-stone-900">{formatPercent(metric.value as number)}</span>
-                      </div>
-                      <div class="h-2 w-full overflow-hidden rounded-full bg-stone-100 dark:bg-stone-800">
-                        <div
-                          class="h-full rounded-full bg-primary-500 transition-all"
-                          style="width: {((metric.value as number) * 100).toFixed(1)}%"
-                        ></div>
-                      </div>
-                    </div>
-                  {/each}
-                </div>
-              </div>
-
-              <!-- Confusion matrix + hyperparameters -->
-              <div class="grid gap-4 sm:grid-cols-2">
-                <!-- Confusion matrix -->
-                <div class="rounded-xl border border-card bg-surface-card p-6 shadow-sm">
-                  <h2 class="mb-4 text-sm font-semibold uppercase tracking-wider text-stone-500">
-                    {m.models_detail_confusion_matrix()}
-                  </h2>
-                  {#if metrics.confusion_matrix}
-                    {@const [[tn, fp], [fn, tp]] = metrics.confusion_matrix}
-                    <div class="grid grid-cols-2 gap-2 text-center text-sm">
-                      <div class="rounded-lg bg-success-light p-3">
-                        <p class="text-xs font-medium text-success">{m.models_detail_true_positive()}</p>
-                        <p class="mt-1 text-xl font-bold text-success">{tp}</p>
-                      </div>
-                      <div class="rounded-lg bg-danger-light p-3">
-                        <p class="text-xs font-medium text-danger">{m.models_detail_false_positive()}</p>
-                        <p class="mt-1 text-xl font-bold text-danger">{fp}</p>
-                      </div>
-                      <div class="rounded-lg bg-danger-light p-3">
-                        <p class="text-xs font-medium text-danger">{m.models_detail_false_negative()}</p>
-                        <p class="mt-1 text-xl font-bold text-danger">{fn}</p>
-                      </div>
-                      <div class="rounded-lg bg-success-light p-3">
-                        <p class="text-xs font-medium text-success">{m.models_detail_true_negative()}</p>
-                        <p class="mt-1 text-xl font-bold text-success">{tn}</p>
-                      </div>
-                    </div>
-                  {/if}
-                </div>
-
-                <!-- Hyperparameters -->
-                <div class="rounded-xl border border-card bg-surface-card p-6 shadow-sm">
-                  <h2 class="mb-4 text-sm font-semibold uppercase tracking-wider text-stone-500">
-                    {m.models_detail_hyperparameters()}
-                  </h2>
-                  <dl class="space-y-2 text-sm">
-                    {#if model.hyperparameters?.best_c !== undefined}
-                      <div class="flex items-center justify-between">
-                        <dt class="text-stone-500">{m.models_detail_best_c()}</dt>
-                        <dd class="font-mono font-semibold text-stone-900">{model.hyperparameters.best_c}</dd>
-                      </div>
-                    {/if}
-                  </dl>
-                  {#if model.hyperparameters}
-                    {#each Object.entries(model.hyperparameters).filter(([k]) => k !== 'best_c') as [key, value]}
-                      <dl class="mt-2 space-y-2 text-sm">
-                        <div class="flex items-center justify-between">
-                          <dt class="text-stone-500">{key}</dt>
-                          <dd class="font-mono font-semibold text-stone-900">{String(value)}</dd>
-                        </div>
-                      </dl>
-                    {/each}
-                  {/if}
-                </div>
+            {#if metrics.cv_warning}
+              <div class="mb-4 flex items-start gap-2 rounded-lg border border-warning/20 bg-warning-light p-3 text-xs text-warning">
+                <svg class="mt-0.5 h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+                </svg>
+                {metrics.cv_warning}
               </div>
             {/if}
-          {/if}
 
-          <!-- Blind Audit panel -->
-          {#if metricsTab === 'audit'}
-            <div class="rounded-xl border border-warning/20 bg-surface-card p-6 shadow-sm">
-              <div class="mb-5 flex flex-wrap items-center justify-between gap-3">
+            <!-- Primary metric bars -->
+            <div class="space-y-4">
+              {#each [
+                { label: m.models_metrics_f1(), value: metrics.f1 },
+                { label: m.models_metrics_auc_roc(), value: metrics.roc_auc },
+                { label: m.models_metrics_pr_auc(), value: metrics.pr_auc },
+                { label: m.models_metrics_accuracy(), value: metrics.accuracy },
+                { label: m.models_metrics_precision(), value: metrics.precision },
+                { label: m.models_metrics_recall(), value: metrics.recall },
+              ] as metric}
                 <div>
-                  <h2 class="text-sm font-semibold uppercase tracking-wider text-warning">
-                    Blind Audit — Independent Evaluation
-                  </h2>
-                  <p class="mt-1 text-xs text-stone-500">
-                    Score-stratified sample of unseen clips reviewed by a human annotator.
-                  </p>
-                </div>
-
-                <!-- Audit set progress + actions -->
-                {#if $auditSetQuery.data}
-                  {@const auditItems = $auditSetQuery.data.items}
-                  {@const reviewedCount = auditItems.filter(i => i.review_status === 'confirmed' || i.review_status === 'rejected').length}
-                  <div class="flex items-center gap-3">
-                    <span class="text-xs text-stone-500">
-                      {reviewedCount}/{auditItems.length} reviewed
-                    </span>
-                    {#if auditItems.length === 0 && model.status === 'trained'}
-                      <button
-                        type="button"
-                        class="inline-flex items-center gap-2 rounded-lg border border-warning/30 bg-warning-light px-3 py-1.5 text-xs font-medium text-warning transition-colors hover:opacity-90 disabled:opacity-50"
-                        onclick={() => selectedModelId && $generateAuditSetMutation.mutate(selectedModelId)}
-                        disabled={$generateAuditSetMutation.isPending}
-                      >
-                        {#if $generateAuditSetMutation.isPending}
-                          <svg class="h-3.5 w-3.5 animate-spin" fill="none" viewBox="0 0 24 24" aria-hidden="true">
-                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
-                          </svg>
-                          Generating...
-                        {:else}
-                          Generate Audit Set
-                        {/if}
-                      </button>
-                    {:else if reviewedCount >= 2}
-                      <button
-                        type="button"
-                        class="inline-flex items-center gap-2 rounded-lg bg-warning px-3 py-1.5 text-xs font-medium text-white transition-colors hover:opacity-90 disabled:opacity-50"
-                        onclick={() => selectedModelId && $evaluateAuditSetMutation.mutate(selectedModelId)}
-                        disabled={$evaluateAuditSetMutation.isPending}
-                      >
-                        {#if $evaluateAuditSetMutation.isPending}
-                          <svg class="h-3.5 w-3.5 animate-spin" fill="none" viewBox="0 0 24 24" aria-hidden="true">
-                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
-                          </svg>
-                          Evaluating...
-                        {:else}
-                          Evaluate
-                        {/if}
-                      </button>
-                    {/if}
+                  <div class="mb-1 flex items-center justify-between text-sm">
+                    <span class="font-medium text-stone-700">{metric.label}</span>
+                    <span class="font-mono text-stone-900">{formatPercent(metric.value as number)}</span>
                   </div>
-                {:else if model.status === 'trained'}
-                  <!-- Audit set not yet generated -->
-                  <button
-                    type="button"
-                    class="inline-flex items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-1.5 text-xs font-medium text-amber-700 transition-colors hover:bg-amber-100 dark:border-amber-700 dark:bg-amber-900/20 dark:text-amber-400 dark:hover:bg-amber-900/40 disabled:opacity-50"
-                    onclick={() => selectedModelId && $generateAuditSetMutation.mutate(selectedModelId)}
-                    disabled={$generateAuditSetMutation.isPending}
-                  >
-                    {#if $generateAuditSetMutation.isPending}
-                      <svg class="h-3.5 w-3.5 animate-spin" fill="none" viewBox="0 0 24 24" aria-hidden="true">
-                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
-                      </svg>
-                      Generating...
-                    {:else}
-                      Generate Audit Set
-                    {/if}
-                  </button>
-                {/if}
-              </div>
-
-              {#if model.audit_metrics}
-                {@const am = model.audit_metrics as { accuracy: number; precision: number; recall: number; f1: number; roc_auc: number | null; pr_auc: number | null; confusion_matrix: [[number, number], [number, number]]; n_audited: number; n_total: number }}
-                <!-- Audit progress summary -->
-                <div class="mb-5 flex items-center gap-4 rounded-lg bg-warning-light p-3 text-xs">
-                  <div>
-                    <span class="text-stone-500">Audited</span>
-                    <span class="ml-1 font-semibold text-stone-800 dark:text-stone-200">{am.n_audited}</span>
-                    <span class="text-stone-400"> / {am.n_total}</span>
-                  </div>
-                  <div class="h-3 w-px bg-stone-200 dark:bg-stone-700"></div>
-                  <div class="text-stone-500">
-                    {am.n_total > 0 ? ((am.n_audited / am.n_total) * 100).toFixed(0) : 0}% coverage
+                  <div class="h-2 w-full overflow-hidden rounded-full bg-stone-100 dark:bg-stone-800">
+                    <div
+                      class="h-full rounded-full bg-primary-500 transition-all"
+                      style="width: {((metric.value as number) * 100).toFixed(1)}%"
+                    ></div>
                   </div>
                 </div>
+              {/each}
+            </div>
+          </div>
 
-                <!-- Audit metric bars -->
-                <div class="space-y-4">
-                  {#each [
-                    { label: m.models_metrics_f1(), value: am.f1 },
-                    { label: m.models_metrics_auc_roc(), value: am.roc_auc },
-                    { label: m.models_metrics_pr_auc(), value: am.pr_auc },
-                    { label: m.models_metrics_accuracy(), value: am.accuracy },
-                    { label: m.models_metrics_precision(), value: am.precision },
-                    { label: m.models_metrics_recall(), value: am.recall },
-                  ] as metric}
-                    {#if metric.value !== null}
-                      <div>
-                        <div class="mb-1 flex items-center justify-between text-sm">
-                          <span class="font-medium text-stone-700">{metric.label}</span>
-                          <span class="font-mono text-stone-900">{formatPercent(metric.value)}</span>
-                        </div>
-                        <div class="h-2 w-full overflow-hidden rounded-full bg-stone-100 dark:bg-stone-800">
-                          <div
-                            class="h-full rounded-full bg-warning transition-all"
-                            style="width: {(metric.value * 100).toFixed(1)}%"
-                          ></div>
-                        </div>
-                      </div>
-                    {/if}
-                  {/each}
-                </div>
-
-                <!-- Audit confusion matrix -->
-                {#if am.confusion_matrix}
-                  {@const [[tn, fp], [fn, tp]] = am.confusion_matrix}
-                  <div class="mt-6">
-                    <h3 class="mb-3 text-xs font-semibold uppercase tracking-wider text-stone-400">
-                      {m.models_detail_confusion_matrix()}
-                    </h3>
-                    <div class="grid grid-cols-2 gap-2 text-center text-sm">
-                      <div class="rounded-lg bg-success-light p-3">
-                        <p class="text-xs font-medium text-success">{m.models_detail_true_positive()}</p>
-                        <p class="mt-1 text-xl font-bold text-success">{tp}</p>
-                      </div>
-                      <div class="rounded-lg bg-danger-light p-3">
-                        <p class="text-xs font-medium text-danger">{m.models_detail_false_positive()}</p>
-                        <p class="mt-1 text-xl font-bold text-danger">{fp}</p>
-                      </div>
-                      <div class="rounded-lg bg-danger-light p-3">
-                        <p class="text-xs font-medium text-danger">{m.models_detail_false_negative()}</p>
-                        <p class="mt-1 text-xl font-bold text-danger">{fn}</p>
-                      </div>
-                      <div class="rounded-lg bg-success-light p-3">
-                        <p class="text-xs font-medium text-success">{m.models_detail_true_negative()}</p>
-                        <p class="mt-1 text-xl font-bold text-success">{tn}</p>
-                      </div>
-                    </div>
+          <!-- Confusion matrix + hyperparameters -->
+          <div class="grid gap-4 sm:grid-cols-2">
+            <!-- Confusion matrix -->
+            <div class="rounded-xl border border-card bg-surface-card p-6 shadow-sm">
+              <h2 class="mb-4 text-sm font-semibold uppercase tracking-wider text-stone-500">
+                {m.models_detail_confusion_matrix()}
+              </h2>
+              {#if metrics.confusion_matrix}
+                {@const [[tn, fp], [fn, tp]] = metrics.confusion_matrix}
+                <div class="grid grid-cols-2 gap-2 text-center text-sm">
+                  <div class="rounded-lg bg-success-light p-3">
+                    <p class="text-xs font-medium text-success">{m.models_detail_true_positive()}</p>
+                    <p class="mt-1 text-xl font-bold text-success">{tp}</p>
                   </div>
-                {/if}
-              {:else}
-                <!-- No audit metrics yet -->
-                <div class="rounded-lg border border-dashed border-warning/20 p-6 text-center text-sm text-stone-400">
-                  {#if $auditSetQuery.data && $auditSetQuery.data.items.length > 0}
-                    {@const reviewedCount = $auditSetQuery.data.items.filter(i => i.review_status === 'confirmed' || i.review_status === 'rejected').length}
-                    {#if reviewedCount < 2}
-                      Review at least 2 audit items to enable evaluation.
-                    {:else}
-                      Click "Evaluate" to compute metrics from {reviewedCount} reviewed items.
-                    {/if}
-                  {:else if model.status === 'trained'}
-                    Generate an audit set to independently validate this model on unseen clips.
-                  {:else}
-                    Blind audit is available for TRAINED models only.
-                  {/if}
+                  <div class="rounded-lg bg-danger-light p-3">
+                    <p class="text-xs font-medium text-danger">{m.models_detail_false_positive()}</p>
+                    <p class="mt-1 text-xl font-bold text-danger">{fp}</p>
+                  </div>
+                  <div class="rounded-lg bg-danger-light p-3">
+                    <p class="text-xs font-medium text-danger">{m.models_detail_false_negative()}</p>
+                    <p class="mt-1 text-xl font-bold text-danger">{fn}</p>
+                  </div>
+                  <div class="rounded-lg bg-success-light p-3">
+                    <p class="text-xs font-medium text-success">{m.models_detail_true_negative()}</p>
+                    <p class="mt-1 text-xl font-bold text-success">{tn}</p>
+                  </div>
                 </div>
               {/if}
             </div>
-          {/if}
+
+            <!-- Hyperparameters -->
+            <div class="rounded-xl border border-card bg-surface-card p-6 shadow-sm">
+              <h2 class="mb-4 text-sm font-semibold uppercase tracking-wider text-stone-500">
+                {m.models_detail_hyperparameters()}
+              </h2>
+              <dl class="space-y-2 text-sm">
+                {#if model.hyperparameters?.best_c !== undefined}
+                  <div class="flex items-center justify-between">
+                    <dt class="text-stone-500">{m.models_detail_best_c()}</dt>
+                    <dd class="font-mono font-semibold text-stone-900">{model.hyperparameters.best_c}</dd>
+                  </div>
+                {/if}
+              </dl>
+              {#if model.hyperparameters}
+                {#each Object.entries(model.hyperparameters).filter(([k]) => k !== 'best_c') as [key, value]}
+                  <dl class="mt-2 space-y-2 text-sm">
+                    <div class="flex items-center justify-between">
+                      <dt class="text-stone-500">{key}</dt>
+                      <dd class="font-mono font-semibold text-stone-900">{String(value)}</dd>
+                    </div>
+                  </dl>
+                {/each}
+              {/if}
+            </div>
+          </div>
         {/if}
 
         <!-- Training stats -->

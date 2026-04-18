@@ -33,46 +33,6 @@ export interface CustomModelMetrics {
 }
 
 /**
- * A single item in the blind audit set.
- */
-export interface AuditSetItem {
-  id: string;
-  embedding_id: string;
-  recording_id: string;
-  predicted_proba: number | null;
-  annotation_id: string;
-  /** Review status from annotation: 'confirmed' | 'rejected' | 'unreviewed' | null */
-  review_status: string | null;
-  start_time: number | null;
-  end_time: number | null;
-  created_at: string;
-}
-
-/**
- * Paginated list response for audit set items.
- */
-export interface AuditSetListResponse {
-  items: AuditSetItem[];
-  total: number;
-}
-
-/**
- * Classification metrics computed from human-reviewed audit set items.
- * Used to independently validate model performance on held-out, unseen data.
- */
-export interface AuditMetrics {
-  accuracy: number;
-  precision: number;
-  recall: number;
-  f1: number;
-  roc_auc: number | null;
-  pr_auc: number | null;
-  confusion_matrix: [[number, number], [number, number]];
-  n_audited: number;
-  n_total: number;
-}
-
-/**
  * Statistics collected during the training run.
  */
 export interface CustomModelTrainingStats {
@@ -107,8 +67,6 @@ export interface CustomModel {
   completed_at: string | null;
   created_at: string;
   updated_at: string;
-  /** Metrics computed from human-reviewed blind audit set items, if evaluated. */
-  audit_metrics: AuditMetrics | null;
 }
 
 /**
@@ -178,8 +136,31 @@ export interface SamplingRoundItem {
   /** 'confirmed' | 'rejected' | 'unsure' | null — set after user labeling */
   review_status: string | null;
   recording_id: string | null;
+  /** Original filename of the source recording, for display in cards */
+  recording_filename?: string | null;
   start_time: number | null;
   end_time: number | null;
+}
+
+/**
+ * Histogram of sigmoid(decision_distance) computed over all scored unlabeled
+ * embeddings during an active-learning iteration. Used to visualise how the
+ * model's prediction distribution shifts between AL rounds so users can
+ * decide when to stop sampling and start training.
+ */
+export interface ScoreDistribution {
+  /** 21 bin edges in [0.0, 1.0] that define 20 equal-width bins. */
+  bin_edges: number[];
+  /** 20 integer counts, one per bin. */
+  bin_counts: number[];
+  /** Mean sigmoid score across all scored embeddings. */
+  mean_score: number;
+  /** Count of scored embeddings with sigmoid score >= 0.5. */
+  positive_count: number;
+  /** Count of scored embeddings with sigmoid score < 0.5. */
+  negative_count: number;
+  /** Total number of embeddings that were scored for this round. */
+  total_scored: number;
 }
 
 /**
@@ -198,6 +179,12 @@ export interface SamplingRound {
   error_message: string | null;
   created_at: string;
   completed_at: string | null;
+  /**
+   * Histogram of sigmoid(decision_distance) over all scored unlabeled
+   * embeddings for this AL iteration. Null for seed rounds and for legacy
+   * rounds produced before this field was introduced.
+   */
+  score_distribution?: ScoreDistribution | null;
   items: SamplingRoundItem[];
 }
 
@@ -206,5 +193,40 @@ export interface SamplingRound {
  */
 export interface SamplingRoundListResponse {
   rounds: SamplingRound[];
+  total: number;
+}
+
+// ============================================================
+// Detection runs (model application jobs)
+// ============================================================
+
+/** Status transitions: pending -> running -> (completed | failed) */
+export type DetectionRunStatus = 'pending' | 'running' | 'completed' | 'failed';
+
+/**
+ * A single detection run, i.e. one "Apply to Dataset" invocation of a
+ * custom model. Used to surface progress of inference jobs in the UI.
+ */
+export interface CustomModelDetectionRun {
+  id: string;
+  dataset_id: string | null;
+  /** Human-readable dataset name if available, for display in the UI. */
+  dataset_name: string | null;
+  status: DetectionRunStatus;
+  /** Annotations produced so far; updated on completion. */
+  annotation_count: number;
+  /** When the Celery worker started executing this run. */
+  started_at: string | null;
+  /** When the run finished (either completed or failed). */
+  completed_at: string | null;
+  /** Error details if status === 'failed'. */
+  error_message: string | null;
+  /** When the run was enqueued. */
+  created_at: string;
+}
+
+/** Response listing recent detection runs for a custom model. */
+export interface CustomModelDetectionRunListResponse {
+  runs: CustomModelDetectionRun[];
   total: number;
 }

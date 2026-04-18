@@ -6,10 +6,9 @@
  */
 
 import type {
-  AuditMetrics,
-  AuditSetListResponse,
   CustomModel,
   CustomModelCreate,
+  CustomModelDetectionRunListResponse,
   CustomModelListResponse,
   CustomModelTrainRequest,
   SamplingRound,
@@ -248,67 +247,24 @@ export async function applyCustomModel(
   );
 }
 
-// ============================================================
-// Audit set API
-// ============================================================
-
 /**
- * Dispatch async task to generate a score-stratified blind audit set.
+ * List recent detection runs created by applying this custom model.
  *
- * Only valid for TRAINED models with an artifact. Returns 202 immediately;
- * poll GET /audit-set to check for items once the task completes.
- *
- * @param projectId - Project UUID
- * @param modelId - Custom model UUID (must be TRAINED)
- * @returns Status object confirming the task was dispatched
- */
-export async function generateAuditSet(
-  projectId: string,
-  modelId: string
-): Promise<{ status: string }> {
-  return apiClient.post<{ status: string }>(
-    `${API_BASE}/projects/${projectId}/custom-models/${modelId}/audit-set`,
-    {}
-  );
-}
-
-/**
- * Fetch all audit set items for a custom model.
- *
- * Items are ordered by predicted_proba descending. Each item includes
- * embedding metadata and the current annotation review_status.
+ * Used by the model detail page to show progress of in-flight "Apply to
+ * Dataset" jobs. Results are ordered most-recent-first.
  *
  * @param projectId - Project UUID
  * @param modelId - Custom model UUID
- * @returns List of audit set items with review status
+ * @param limit - Maximum number of runs to return (default: 5)
+ * @returns List of recent detection runs with dataset context
  */
-export async function getAuditSet(
+export async function listCustomModelDetectionRuns(
   projectId: string,
-  modelId: string
-): Promise<AuditSetListResponse> {
-  return apiClient.get<AuditSetListResponse>(
-    `${API_BASE}/projects/${projectId}/custom-models/${modelId}/audit-set`
+  modelId: string,
+  limit: number = 5
+): Promise<CustomModelDetectionRunListResponse> {
+  return apiClient.get<CustomModelDetectionRunListResponse>(
+    `${API_BASE}/projects/${projectId}/custom-models/${modelId}/detection-runs?limit=${limit}`
   );
 }
 
-/**
- * Evaluate the audit set and compute blind audit metrics.
- *
- * Collects all reviewed (confirmed/rejected) audit items, computes
- * classification metrics, and persists them as model.audit_metrics.
- * Requires at least 2 reviewed items.
- *
- * @param projectId - Project UUID
- * @param modelId - Custom model UUID
- * @returns Computed audit metrics
- */
-export async function evaluateAuditSet(
-  projectId: string,
-  modelId: string
-): Promise<AuditMetrics> {
-  const res = await apiClient.post<{ model_id: string; audit_metrics: AuditMetrics }>(
-    `${API_BASE}/projects/${projectId}/custom-models/${modelId}/audit-set/evaluate`,
-    {}
-  );
-  return res.audit_metrics;
-}

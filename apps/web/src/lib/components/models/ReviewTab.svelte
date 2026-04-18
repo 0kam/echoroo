@@ -22,6 +22,7 @@
    */
 
   import * as m from '$lib/paraglide/messages';
+  import { untrack } from 'svelte';
   import { createQuery, useQueryClient } from '@tanstack/svelte-query';
   import { getSamplingRounds, getSamplingRound, suggestNextSamples, trainCustomModel } from '$lib/api/custom-models';
   import type { SamplingRound } from '$lib/types/custom-model';
@@ -35,9 +36,22 @@
     modelId: string;
     /** Called when the user clicks "Train Custom Model" */
     onTrainRequest: () => void;
+    /**
+     * When true, the model has already been trained at least once.
+     * The training button relabels to "Retrain" to reflect the retraining
+     * semantics used during the active-learning loop.
+     */
+    isTrained?: boolean;
   }
 
-  let { projectId, modelId, onTrainRequest }: Props = $props();
+  let { projectId, modelId, onTrainRequest, isTrained = false }: Props = $props();
+
+  // Minimum confirmed + rejected labels required to dispatch an active-learning
+  // round. Intentionally lower than the training threshold (see TrainingMeter)
+  // so users can request more samples when the seed round is unbalanced and a
+  // full 15/15 training set is not yet reachable. Must stay in sync with the
+  // backend constant `_MIN_LABELS_FOR_AL_ROUND` in services/custom_model.py.
+  const MIN_LABELS_FOR_AL_ROUND = 5;
 
   const queryClient = useQueryClient();
 
@@ -80,21 +94,39 @@
   // The latest round starts expanded by default.
   let expandedRoundId = $state<string | null>(null);
 
+  // Tracks the number of rounds seen during the previous $effect run so we can
+  // detect when a brand-new round appears (e.g. an AL round just finished
+  // dispatching) and auto-switch the accordion to it.
+  let prevRoundCount = 0;
+
   $effect(() => {
     const rounds = sortedRounds;
     if (rounds.length === 0) {
       if (expandedRoundId !== null) expandedRoundId = null;
+      untrack(() => {
+        prevRoundCount = 0;
+      });
       return;
     }
-    // Auto-expand only when there is no expanded round, or the expanded round
-    // no longer exists (e.g. data was refreshed). Never override user's collapse.
-    if (expandedRoundId === null || !rounds.some((r) => r.id === expandedRoundId)) {
-      const latest = rounds[rounds.length - 1];
-      if (latest) {
-        expandedRoundId = latest.id;
-        fetchRoundDetail(latest.id);
-      }
+    const latest = rounds[rounds.length - 1];
+    // Read prevRoundCount inside untrack so writing to it later does not
+    // re-trigger this effect.
+    const prev = untrack(() => prevRoundCount);
+    if (rounds.length > prev && prev > 0 && latest) {
+      // A new round appeared — auto-switch the accordion to it.
+      expandedRoundId = latest.id;
+      fetchRoundDetail(latest.id);
+    } else if (
+      latest &&
+      (expandedRoundId === null || !rounds.some((r) => r.id === expandedRoundId))
+    ) {
+      // Fallback: no expanded round yet, or the expanded round no longer exists.
+      expandedRoundId = latest.id;
+      fetchRoundDetail(latest.id);
     }
+    untrack(() => {
+      prevRoundCount = rounds.length;
+    });
   });
 
   // Cache of fully-loaded round details (with items populated).
@@ -102,17 +134,23 @@
   let roundDetailCache = $state<Record<string, SamplingRound>>({});
   let roundDetailLoading = $state<Set<string>>(new Set());
 
-  async function fetchRoundDetail(roundId: string, force = false) {
+  async function fetchRoundDetail(roundId: string, force = false, silent = false) {
     if (!modelId) return;
     if (!force && (roundDetailCache[roundId] || roundDetailLoading.has(roundId))) return;
-    roundDetailLoading = new Set([...roundDetailLoading, roundId]);
+    // When silent, skip loading-state updates so the accordion body does not
+    // unmount/remount the inner view (preserves scroll position and local state).
+    if (!silent) {
+      roundDetailLoading = new Set([...roundDetailLoading, roundId]);
+    }
     try {
       const detail = await getSamplingRound(projectId, modelId, roundId);
       roundDetailCache = { ...roundDetailCache, [roundId]: detail };
     } catch (err) {
       console.error('Failed to fetch round detail:', err);
     } finally {
-      roundDetailLoading = new Set([...roundDetailLoading].filter((id) => id !== roundId));
+      if (!silent) {
+        roundDetailLoading = new Set([...roundDetailLoading].filter((id) => id !== roundId));
+      }
     }
   }
 
@@ -136,6 +174,21 @@
     }
   });
 
+  // When the list query picks up a status change (e.g. running → completed),
+  // force-refresh the detail cache so the UI reflects the new status immediately.
+  // Silent mode prevents the accordion body from remounting during background polling.
+  $effect(() => {
+    const rounds = $samplingRoundsQuery.data?.rounds ?? [];
+    untrack(() => {
+      for (const round of rounds) {
+        const cached = roundDetailCache[round.id];
+        if (cached && cached.status !== round.status) {
+          fetchRoundDetail(round.id, true, true);
+        }
+      }
+    });
+  });
+
   function toggleRound(roundId: string) {
     if (expandedRoundId === roundId) {
       expandedRoundId = null;
@@ -155,7 +208,9 @@
 
   /**
    * Whether the seed round has been labeled enough to allow an AL round.
-   * Backend requires at least 15 confirmed + 15 rejected across completed rounds.
+   * Decoupled from the 15/15 training threshold: the backend only requires
+   * MIN_LABELS_FOR_AL_ROUND confirmed + MIN_LABELS_FOR_AL_ROUND rejected
+   * across completed rounds to dispatch the next active-learning iteration.
    */
   const seedRoundReady = $derived.by(() => {
     const completedRounds = sortedRounds.filter((r) => r.status === 'completed');
@@ -167,7 +222,10 @@
       totalConfirmed += detailed.items.filter((it) => it.review_status === 'confirmed').length;
       totalRejected += detailed.items.filter((it) => it.review_status === 'rejected').length;
     }
-    return totalConfirmed >= 15 && totalRejected >= 15;
+    return (
+      totalConfirmed >= MIN_LABELS_FOR_AL_ROUND &&
+      totalRejected >= MIN_LABELS_FOR_AL_ROUND
+    );
   });
 
   /** True when the last round is still pending/running (no new AL round allowed yet). */
@@ -256,6 +314,11 @@
           totalCount={0}
           samplingRounds={sortedRoundsWithItems}
           onTrainRequest={handleTrainRequest}
+          canSuggestNextSamples={seedRoundReady && !lastRoundBusy}
+          {isSuggestingNextSamples}
+          {suggestError}
+          onSuggestNextSamples={handleSuggestNextSamples}
+          {isTrained}
         />
 
         <!-- Accordion of rounds -->
@@ -347,10 +410,10 @@
                     round={getRoundWithItems(round)}
                     onVoteChanged={() => {
                       // Refetch round detail to update confirmed/rejected counts in header.
-                      // Don't delete cache first — that causes card re-mounts and spectrogram re-fetches.
-                      // fetchRoundDetail with force=true overwrites the cache entry atomically.
-                      fetchRoundDetail(round.id, true);
-                      queryClient.invalidateQueries({ queryKey: ['sampling-rounds', projectId, modelId] });
+                      // Silent mode prevents the accordion body from toggling its loading
+                      // condition, which would unmount/remount SeedSamplingView (losing
+                      // scroll position and local vote-summary state).
+                      fetchRoundDetail(round.id, true, true);
                     }}
                   />
                 {:else}
@@ -360,9 +423,10 @@
                     round={getRoundWithItems(round)}
                     onVoteChanged={() => {
                       // Refetch round detail to update confirmed/rejected counts in header.
-                      // Don't delete cache first — that causes card re-mounts and spectrogram re-fetches.
-                      fetchRoundDetail(round.id, true);
-                      queryClient.invalidateQueries({ queryKey: ['sampling-rounds', projectId, modelId] });
+                      // Silent mode prevents the accordion body from toggling its loading
+                      // condition, which would unmount/remount ALRoundView (losing
+                      // scroll position and local vote-summary state).
+                      fetchRoundDetail(round.id, true, true);
                     }}
                   />
                 {/if}
@@ -370,34 +434,6 @@
             {/if}
           </div>
         {/each}
-
-        <!-- "Suggest Next Samples" button (shown after seed round is labeled) -->
-        {#if seedRoundReady && !lastRoundBusy}
-          <div class="flex flex-col items-start gap-2">
-            {#if suggestError}
-              <p class="text-xs text-danger">{suggestError}</p>
-            {/if}
-            <button
-              type="button"
-              class="inline-flex items-center gap-2 rounded-lg border border-primary-300 bg-primary-50 px-4 py-2 text-sm font-medium text-primary-700 shadow-sm transition-colors hover:bg-primary-100 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 dark:border-primary-700 dark:bg-primary-950/20 dark:text-primary-400 dark:hover:bg-primary-950/40"
-              disabled={isSuggestingNextSamples}
-              onclick={handleSuggestNextSamples}
-            >
-              {#if isSuggestingNextSamples}
-                <svg class="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24" aria-hidden="true">
-                  <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                  <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
-                </svg>
-                {m.models_suggest_samples_running()}
-              {:else}
-                <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.347.347a3.001 3.001 0 01-.468 3.525L12 20.5l-2.626-2.626a3.001 3.001 0 01-.468-3.525l-.347-.347z" />
-                </svg>
-                {m.models_suggest_samples()}
-              {/if}
-            </button>
-          </div>
-        {/if}
 
       </div>
 

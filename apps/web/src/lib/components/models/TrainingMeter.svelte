@@ -26,6 +26,24 @@
      * counts from round items take priority over agreeCount/disagreeCount.
      */
     samplingRounds?: SamplingRound[];
+    /**
+     * When true, show the "Suggest Next Samples" button below the train button.
+     * The parent is responsible for computing whether the seed/last round state
+     * allows an AL round dispatch.
+     */
+    canSuggestNextSamples?: boolean;
+    /** Whether a "Suggest Next Samples" request is in-flight */
+    isSuggestingNextSamples?: boolean;
+    /** Error message from the most recent "Suggest Next Samples" attempt */
+    suggestError?: string | null;
+    /** Called when the user clicks "Suggest Next Samples" */
+    onSuggestNextSamples?: () => void;
+    /**
+     * When true, the model has already been trained at least once.
+     * The primary action button relabels from "Train" to "Retrain" to
+     * reflect the active-learning retraining semantics.
+     */
+    isTrained?: boolean;
   }
 
   let {
@@ -35,6 +53,11 @@
     onTrainRequest,
     isTraining = false,
     samplingRounds,
+    canSuggestNextSamples = false,
+    isSuggestingNextSamples = false,
+    suggestError = null,
+    onSuggestNextSamples,
+    isTrained = false,
   }: Props = $props();
 
   // Determine whether any AL rounds exist — used for the recommendation message.
@@ -184,12 +207,39 @@
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
           </svg>
-          {m.models_review_train_button()}
+          {isTrained ? m.models_review_retrain_button() : m.models_review_train_button()}
         {/if}
       </button>
 
+      <!-- "Suggest Next Samples" secondary action. Rendered directly beneath the
+           train button so both "next action" buttons are grouped together. -->
+      {#if canSuggestNextSamples}
+        <button
+          type="button"
+          class="inline-flex items-center gap-2 rounded-lg border border-primary-300 bg-primary-50 px-4 py-2 text-sm font-medium text-primary-700 shadow-sm transition-colors hover:bg-primary-100 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 dark:border-primary-700 dark:bg-primary-950/20 dark:text-primary-400 dark:hover:bg-primary-950/40"
+          disabled={isSuggestingNextSamples}
+          onclick={onSuggestNextSamples}
+        >
+          {#if isSuggestingNextSamples}
+            <svg class="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24" aria-hidden="true">
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+            </svg>
+            {m.models_suggest_samples_running()}
+          {:else}
+            <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.347.347a3.001 3.001 0 01-.468 3.525L12 20.5l-2.626-2.626a3.001 3.001 0 01-.468-3.525l-.347-.347z" />
+            </svg>
+            {m.models_suggest_samples()}
+          {/if}
+        </button>
+        {#if suggestError}
+          <p class="text-xs text-danger text-right max-w-40">{suggestError}</p>
+        {/if}
+      {/if}
+
       {#if !canTrain}
-        <p class="text-xs text-stone-400 text-right max-w-32">
+        <p class="text-xs text-stone-400 text-right max-w-40">
           {m.models_review_train_hint({ positives: MIN_POSITIVES, negatives: MIN_NEGATIVES })}
         </p>
       {:else if hasALRounds}
