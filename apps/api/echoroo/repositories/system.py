@@ -90,6 +90,20 @@ class SystemSettingRepository:
             description="Whether initial setup has been completed",
         )
 
+    async def get_embedding_model(self) -> str:
+        """Get the configured embedding model name.
+
+        Reads the 'embedding_model' system setting, defaulting to 'perch'
+        if the setting has not been explicitly configured by an admin.
+
+        Returns:
+            Embedding model name (e.g. 'perch' or 'birdnet').
+        """
+        setting = await self.get_setting("embedding_model")
+        if setting is None or not setting.value:
+            return "perch"
+        return setting.value
+
     async def get_birdnet_settings(self) -> dict[str, object]:
         """Get BirdNET detection settings with defaults.
 
