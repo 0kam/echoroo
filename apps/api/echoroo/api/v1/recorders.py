@@ -5,6 +5,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Query
 
 from echoroo.core.database import DbSession
+from echoroo.core.pagination import paginate
 from echoroo.middleware.auth import CurrentUser
 from echoroo.schemas.recorder import RecorderListResponse
 from echoroo.services.recorder import RecorderService
@@ -53,4 +54,9 @@ async def list_recorders(
     Raises:
         401: Not authenticated
     """
-    return await service.list_recorders(page=page, limit=limit)
+    # Route pagination through the shared helper to apply consistent clamping
+    # while preserving the FE-facing Query names (``page`` / ``limit``).
+    pagination = paginate(page, limit, default_page_size=100, max_page_size=100)
+    return await service.list_recorders(
+        page=pagination.page, limit=pagination.page_size
+    )

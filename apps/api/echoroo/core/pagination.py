@@ -4,7 +4,10 @@ Provides consistent clamping and validation for page/page_size parameters
 across all API endpoints, replacing per-service ad-hoc validation.
 """
 
+from collections.abc import Callable
 from dataclasses import dataclass
+
+from fastapi import Query
 
 DEFAULT_PAGE_SIZE = 50
 MAX_PAGE_SIZE = 200
@@ -62,3 +65,51 @@ def paginate(
     else:
         validated_page_size = page_size
     return PaginationParams(page=validated_page, page_size=validated_page_size)
+
+
+def pagination_params_dep(
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE),
+) -> PaginationParams:
+    """FastAPI dependency that produces a validated :class:`PaginationParams`.
+
+    Uses the module-wide :data:`DEFAULT_PAGE_SIZE` and :data:`MAX_PAGE_SIZE`.
+    For endpoints that need different bounds, use :func:`make_pagination_dep`.
+    """
+    return paginate(
+        page,
+        page_size,
+        default_page_size=DEFAULT_PAGE_SIZE,
+        max_page_size=MAX_PAGE_SIZE,
+    )
+
+
+def make_pagination_dep(
+    *,
+    default_page_size: int = DEFAULT_PAGE_SIZE,
+    max_page_size: int = MAX_PAGE_SIZE,
+) -> Callable[..., PaginationParams]:
+    """Build a FastAPI dependency with endpoint-specific pagination bounds.
+
+    Args:
+        default_page_size: Fallback page size used when the client sends an
+            invalid ``page_size``. Also acts as the Query default.
+        max_page_size: Upper bound for ``page_size``.
+
+    Returns:
+        A callable suitable for ``Depends(...)`` that resolves to a
+        :class:`PaginationParams`.
+    """
+
+    def _dep(
+        page: int = Query(default=1, ge=1),
+        page_size: int = Query(default=default_page_size, ge=1, le=max_page_size),
+    ) -> PaginationParams:
+        return paginate(
+            page,
+            page_size,
+            default_page_size=default_page_size,
+            max_page_size=max_page_size,
+        )
+
+    return _dep

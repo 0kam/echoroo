@@ -6,6 +6,7 @@ from uuid import UUID
 from fastapi import APIRouter, Query, status
 
 from echoroo.core.database import DbSession
+from echoroo.core.pagination import paginate
 from echoroo.middleware.auth import CurrentSuperuser
 from echoroo.schemas.admin import (
     AdminUserListResponse,
@@ -64,10 +65,13 @@ async def list_users(
         401: Not authenticated
         403: Not a superuser
     """
+    # Route pagination through the shared helper to apply consistent clamping
+    # while preserving the FE-facing Query names (``page`` / ``limit``).
+    pagination = paginate(page, limit, default_page_size=20, max_page_size=100)
     admin_service = AdminService(db)
     return await admin_service.list_users(
-        page=page,
-        limit=limit,
+        page=pagination.page,
+        limit=pagination.page_size,
         search=search,
         is_active=is_active,
     )
@@ -348,8 +352,13 @@ async def list_recorders(
         401: Not authenticated
         403: Not a superuser
     """
+    # Route pagination through the shared helper to apply consistent clamping
+    # while preserving the FE-facing Query names (``page`` / ``limit``).
+    pagination = paginate(page, limit, default_page_size=20, max_page_size=100)
     recorder_service = RecorderService(db)
-    return await recorder_service.list_recorders(page=page, limit=limit)
+    return await recorder_service.list_recorders(
+        page=pagination.page, limit=pagination.page_size
+    )
 
 
 @router.post(

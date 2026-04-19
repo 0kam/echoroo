@@ -12,6 +12,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query, status
 
 from echoroo.core.database import DbSession
+from echoroo.core.pagination import PaginationParams, make_pagination_dep
 from echoroo.middleware.auth import CurrentUser
 from echoroo.models.enums import AnnotationSegmentStatus, AnnotationSetStatus
 from echoroo.repositories.annotation_set import (
@@ -50,6 +51,19 @@ AnnotationSetServiceDep = Annotated[
 ]
 
 
+# Pagination dependencies: different endpoints have different bounds, so we
+# build dedicated dependencies via :func:`make_pagination_dep` to preserve the
+# existing API contract (Query defaults and upper limits).
+AnnotationSetListPaginationDep = Annotated[
+    PaginationParams,
+    Depends(make_pagination_dep(default_page_size=20, max_page_size=200)),
+]
+AnnotationSegmentListPaginationDep = Annotated[
+    PaginationParams,
+    Depends(make_pagination_dep(default_page_size=50, max_page_size=500)),
+]
+
+
 # ---------------------------------------------------------------------------
 # CRUD
 # ---------------------------------------------------------------------------
@@ -63,18 +77,17 @@ AnnotationSetServiceDep = Annotated[
 async def list_annotation_sets(
     current_user: CurrentUser,
     service: AnnotationSetServiceDep,
+    pagination: AnnotationSetListPaginationDep,
     project_id: UUID = Query(..., description="Owning project ID"),
     dataset_id: UUID | None = Query(default=None),
     status_filter: AnnotationSetStatus | None = Query(default=None, alias="status"),
-    page: int = Query(default=1, ge=1),
-    page_size: int = Query(default=20, ge=1, le=200),
 ) -> AnnotationSetListResponse:
     return await service.list(
         project_id=project_id,
         dataset_id=dataset_id,
         status_filter=status_filter,
-        page=page,
-        page_size=page_size,
+        page=pagination.page,
+        page_size=pagination.page_size,
     )
 
 
@@ -165,17 +178,16 @@ async def list_set_segments(
     set_id: UUID,
     current_user: CurrentUser,
     service: AnnotationSetServiceDep,
+    pagination: AnnotationSegmentListPaginationDep,
     status_filter: AnnotationSegmentStatus | None = Query(default=None, alias="status"),
     is_empty: bool | None = Query(default=None),
-    page: int = Query(default=1, ge=1),
-    page_size: int = Query(default=50, ge=1, le=500),
 ) -> AnnotationSegmentListResponse:
     return await service.list_segments(
         set_id,
         status_filter=status_filter,
         is_empty=is_empty,
-        page=page,
-        page_size=page_size,
+        page=pagination.page,
+        page_size=pagination.page_size,
     )
 
 
