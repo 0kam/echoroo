@@ -3,7 +3,7 @@
 Tests verify the complete upload lifecycle from session creation through status monitoring.
 """
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -15,13 +15,13 @@ from echoroo.models.enums import DatasetStatus
 from echoroo.models.site import Site
 
 if TYPE_CHECKING:
-    from echoroo.models.project import ProjectMember
+    from echoroo.models.project import Project, ProjectMember
 
 
 @pytest.fixture
 async def test_site(
     db_session: AsyncSession,
-    test_project,  # noqa: F821
+    test_project: "Project",
 ) -> Site:
     """Create a test site for integration tests.
 
@@ -46,7 +46,7 @@ async def test_site(
 @pytest.fixture
 async def test_dataset(
     db_session: AsyncSession,
-    test_project,  # noqa: F821
+    test_project: "Project",
     test_site: Site,
 ) -> Dataset:
     """Create a test dataset for integration tests.
@@ -103,7 +103,7 @@ class TestUploadWorkflow:
         }
 
         # Step 1: Create upload session
-        files_to_upload = [
+        files_to_upload: list[dict[str, Any]] = [
             {
                 "filename": "recording_001.wav",
                 "size": 1024000,
@@ -246,7 +246,7 @@ class TestUploadWorkflow:
         auth_headers_other: dict[str, str],
         test_project_id: str,
         test_dataset: Dataset,
-        test_member: "ProjectMember",  # noqa: F821
+        _test_member: "ProjectMember",  # noqa: F821  # Side-effect: ensures member row exists
     ) -> None:
         """Test access control: Owner manages, member views, outsider denied."""
         mock_get_s3_client.return_value = MagicMock()
@@ -355,7 +355,7 @@ class TestUploadWorkflow:
 
         call_count = [0]
 
-        def verify_side_effect(*args, **kwargs):
+        def verify_side_effect(*args: Any, **kwargs: Any) -> dict[str, Any]:
             result = verification_results[call_count[0]]
             call_count[0] += 1
             return result
@@ -396,7 +396,7 @@ class TestUploadWorkflow:
         mock_presigned_url.return_value = "https://minio:9000/fake-url"
         mock_ensure_bucket.return_value = None
 
-        files = [
+        files: list[dict[str, Any]] = [
             {
                 "filename": "recording_001.wav",
                 "size": 1024000,
@@ -438,15 +438,15 @@ class TestUploadWorkflow:
         assert session_data["total_bytes"] == sum(f["size"] for f in files)
 
         # Verify file-level details
-        file_responses = session_data["files"]
+        file_responses: list[dict[str, Any]] = session_data["files"]
         assert len(file_responses) == 5
 
         # Each file should have unique ID but same presigned URL structure
         file_ids = [f["file_id"] for f in file_responses]
         assert len(file_ids) == len(set(file_ids))  # All unique
 
-        filenames = [f["original_filename"] for f in file_responses]
-        expected_filenames = [f["filename"] for f in files]
+        filenames: list[str] = [f["original_filename"] for f in file_responses]
+        expected_filenames: list[str] = [f["filename"] for f in files]
         assert sorted(filenames) == sorted(expected_filenames)
 
         # Get status and verify files appear there too
@@ -524,7 +524,7 @@ class TestUploadWorkflow:
         mock_presigned_url.return_value = "https://minio:9000/fake-url"
         mock_ensure_bucket.return_value = None
 
-        files = [
+        files: list[dict[str, Any]] = [
             {
                 "filename": "recording_01.wav",
                 "size": 1024000,

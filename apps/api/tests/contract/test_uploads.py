@@ -19,13 +19,13 @@ from echoroo.models.enums import DatasetStatus
 from echoroo.models.site import Site
 
 if TYPE_CHECKING:
-    from echoroo.models.project import ProjectMember
+    from echoroo.models.project import Project, ProjectMember
 
 
 @pytest.fixture
 async def test_site(
     db_session: AsyncSession,
-    test_project,  # noqa: F821
+    test_project: "Project",
 ) -> Site:
     """Create a test site for upload tests.
 
@@ -50,7 +50,7 @@ async def test_site(
 @pytest.fixture
 async def test_dataset(
     db_session: AsyncSession,
-    test_project,  # noqa: F821
+    test_project: "Project",
     test_site: Site,
 ) -> Dataset:
     """Create a test dataset for upload tests.
@@ -179,7 +179,7 @@ class TestCreateUploadSession:
         auth_headers_member: dict[str, str],
         test_project_id: str,
         test_dataset: Dataset,
-        test_member: "ProjectMember",  # noqa: F821
+        _test_member: "ProjectMember",  # noqa: F821  # Side-effect: ensures member row exists
     ) -> None:
         """Test POST upload-sessions requires admin role."""
         mock_get_s3_client.return_value = MagicMock()
@@ -789,7 +789,7 @@ class TestGetUploadSessionStatus:
         auth_headers_member: dict[str, str],
         test_project_id: str,
         test_dataset: Dataset,
-        test_member: "ProjectMember",  # noqa: F821
+        _test_member: "ProjectMember",  # noqa: F821  # Side-effect: ensures member row exists
     ) -> None:
         """Test GET upload-sessions/{session_id} allows member (non-admin) access."""
         mock_get_s3_client.return_value = MagicMock()

@@ -73,7 +73,7 @@ async def test_species_key_filter_only_returns_matching_rows() -> None:
     # Simulate two rows in the DB: one for species A, one for species B.
     # In production the DB WHERE clause filters them; here we verify the params
     # passed to db.execute match the expected values.
-    captured_params: dict = {}
+    captured_params: dict[str, object] = {}
 
     async def mock_execute(_sql, params=None):  # type: ignore[no-untyped-def]
         nonlocal captured_params

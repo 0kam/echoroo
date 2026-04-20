@@ -1,6 +1,7 @@
 """Pytest configuration and fixtures."""
 
 from collections.abc import AsyncGenerator
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -248,7 +249,11 @@ async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
     from starlette.requests import Request
     from starlette.responses import Response
 
-    async def _noop_rate_limiter(self, request: Request, response: Response) -> None:  # noqa: ARG001
+    async def _noop_rate_limiter(
+        self: Any,
+        request: Request,  # noqa: ARG001
+        response: Response,  # noqa: ARG001
+    ) -> None:
         pass
 
     with patch(

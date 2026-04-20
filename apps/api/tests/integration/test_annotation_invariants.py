@@ -107,8 +107,8 @@ def _build_segment_service(
     svc = AnnotationSegmentService(segment_repo, annotation_repo, set_service)
 
     # Mock the db.flush and db.refresh calls.
-    svc.segment_repo.db.flush = AsyncMock()
-    svc.segment_repo.db.refresh = AsyncMock()
+    svc.segment_repo.db.flush = AsyncMock()  # type: ignore[method-assign]
+    svc.segment_repo.db.refresh = AsyncMock()  # type: ignore[method-assign]
 
     # Mock the taxon lookup used by _require_taxon and _annotation_to_response.
     taxon_mock = MagicMock()
@@ -121,7 +121,7 @@ def _build_segment_service(
     else:
         mock_result.scalar_one_or_none = MagicMock(return_value=None)
 
-    svc.segment_repo.db.execute = AsyncMock(return_value=mock_result)
+    svc.segment_repo.db.execute = AsyncMock(return_value=mock_result)  # type: ignore[method-assign]
 
     return svc
 
@@ -252,7 +252,7 @@ class TestCompleteSegmentRequirements:
         detail_response = MagicMock()
         detail_response.status = AnnotationSegmentStatus.ANNOTATED.value
         detail_response.is_empty = True
-        svc.get_detail = AsyncMock(return_value=detail_response)
+        svc.get_detail = AsyncMock(return_value=detail_response)  # type: ignore[method-assign]
 
         result = await svc.update(
             segment.id,
