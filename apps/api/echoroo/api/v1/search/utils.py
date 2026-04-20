@@ -54,64 +54,84 @@ async def _resolve_vernacular_via_gbif(
     from echoroo.models.taxon_vernacular_name import TaxonVernacularName
     from echoroo.services.gbif import GBIFService
 
-    gbif = GBIFService()
-
-    # Step 1: resolve scientific name to GBIF taxon key
-    resolve_result = await gbif.resolve_taxon(scientific_name)
-    if resolve_result is None:
-        logger.debug("GBIF could not resolve scientific name=%r", scientific_name)
-        return None
-
-    taxon_key = resolve_result.taxon_key
-    logger.debug("GBIF resolved %r -> taxon_key=%d", scientific_name, taxon_key)
-
-    # Step 2: fetch vernacular names from GBIF
-    vernacular_entries = await gbif.get_vernacular_names(taxon_key)
-    logger.debug(
-        "GBIF vernacular names for key=%d: %d entries", taxon_key, len(vernacular_entries)
-    )
-
-    # Step 3: persist to local DB for future lookups
+    # Outer guard: any unexpected failure (network, async/greenlet mismatch,
+    # SQLAlchemy state error) must degrade to "no vernacular name" rather than
+    # propagate a 500 to the API caller. Routes that call this function expect
+    # a best-effort enrichment, not a hard dependency.
     try:
-        taxon = Taxon(
-            scientific_name=resolve_result.scientific_name,
-            gbif_taxon_key=taxon_key,
-            rank=resolve_result.rank,
-            gbif_metadata=resolve_result.metadata,
-            gbif_resolved_at=datetime.datetime.now(datetime.UTC),
-        )
-        db.add(taxon)
-        await db.flush()  # populate taxon.id
+        gbif = GBIFService()
 
-        for entry in vernacular_entries:
-            vn = TaxonVernacularName(
-                taxon_id=taxon.id,
-                locale=entry["locale"],
-                name=entry["name"],
-                source="gbif",
-                is_primary=False,
+        # Step 1: resolve scientific name to GBIF taxon key
+        resolve_result = await gbif.resolve_taxon(scientific_name)
+        if resolve_result is None:
+            logger.debug("GBIF could not resolve scientific name=%r", scientific_name)
+            return None
+
+        taxon_key = resolve_result.taxon_key
+        logger.debug("GBIF resolved %r -> taxon_key=%d", scientific_name, taxon_key)
+
+        # Step 2: fetch vernacular names from GBIF
+        vernacular_entries = await gbif.get_vernacular_names(taxon_key)
+        logger.debug(
+            "GBIF vernacular names for key=%d: %d entries", taxon_key, len(vernacular_entries)
+        )
+
+        # Step 3: persist to local DB for future lookups
+        try:
+            taxon = Taxon(
+                scientific_name=resolve_result.scientific_name,
+                gbif_taxon_key=taxon_key,
+                rank=resolve_result.rank,
+                gbif_metadata=resolve_result.metadata,
+                gbif_resolved_at=datetime.datetime.now(datetime.UTC),
             )
-            db.add(vn)
+            db.add(taxon)
+            await db.flush()  # populate taxon.id
 
-        await db.commit()
-        logger.debug(
-            "Cached taxon %r (id=%s) with %d vernacular names",
-            scientific_name,
-            taxon.id,
-            len(vernacular_entries),
-        )
+            for entry in vernacular_entries:
+                vn = TaxonVernacularName(
+                    taxon_id=taxon.id,
+                    locale=entry["locale"],
+                    name=entry["name"],
+                    source="gbif",
+                    is_primary=False,
+                )
+                db.add(vn)
+
+            await db.commit()
+            logger.debug(
+                "Cached taxon %r (id=%s) with %d vernacular names",
+                scientific_name,
+                taxon.id,
+                len(vernacular_entries),
+            )
+        except Exception:
+            # If insertion fails (e.g. race condition / duplicate), roll back and continue
+            try:
+                await db.rollback()
+            except Exception:
+                logger.debug(
+                    "Rollback after cache failure for %r also failed; continuing",
+                    scientific_name,
+                    exc_info=True,
+                )
+            logger.debug(
+                "Could not cache taxon for %r (may already exist); continuing without caching",
+                scientific_name,
+            )
+
+        # Find the requested locale in vernacular_entries (resolved just above)
+        for entry in vernacular_entries:
+            if entry["locale"] == locale:
+                return entry["name"]
     except Exception:
-        # If insertion fails (e.g. race condition / duplicate), roll back and continue
-        await db.rollback()
-        logger.debug(
-            "Could not cache taxon for %r (may already exist); continuing without caching",
+        logger.warning(
+            "Unexpected error resolving vernacular name for %r via GBIF; "
+            "returning None (caller will fall back to scientific name)",
             scientific_name,
+            exc_info=True,
         )
-
-    # Find the requested locale in vernacular_entries (resolved just above)
-    for entry in vernacular_entries:
-        if entry["locale"] == locale:
-            return entry["name"]
+        return None
 
     return None
 

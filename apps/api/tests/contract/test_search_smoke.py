@@ -932,20 +932,47 @@ class TestExportRecordings:
         test_project_id: str,
         test_search_session: SearchSession,
     ) -> None:
-        """locale=en (explicit) returns 200 CSV.
-
-        Note: locale=ja triggers _resolve_vernacular_via_gbif which makes an
-        outbound GBIF HTTP call; that call's error handling has a MissingGreenlet
-        bug (GBIFService uses sync IO inside async context) causing a 500.
-        Testing locale=ja here is therefore out of scope for this smoke test —
-        it is a route bug, not a fixture issue.  See test report for details.
-        """
+        """locale=en (explicit) returns 200 CSV."""
         resp = await client.get(
             f"{_search_base(test_project_id)}/sessions/{test_search_session.id}/export-recordings",
             headers=auth_headers,
             params={"locale": "en"},
         )
         assert resp.status_code == 200
+
+    async def test_locale_ja_no_500_with_gbif_mocked(
+        self,
+        client: AsyncClient,
+        auth_headers: dict[str, str],
+        test_project_id: str,
+        test_search_session: SearchSession,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Regression: locale=ja must not 500 even when GBIF lookup raises.
+
+        Previously the export route called ``_enrich_species_config_with_locale``
+        without an exception guard. A failure inside the GBIF resolution path
+        (e.g. ``MissingGreenlet`` from misuse of the async DB session) bubbled
+        up and produced a 500 to the API caller. The route now catches the
+        failure and degrades to scientific names. We force the failure by
+        patching ``_resolve_vernacular_via_gbif`` to raise.
+        """
+        from echoroo.api.v1.search import utils as search_utils
+
+        async def _boom(*_args: object, **_kwargs: object) -> str | None:
+            raise RuntimeError("simulated GBIF / greenlet failure")
+
+        monkeypatch.setattr(search_utils, "_resolve_vernacular_via_gbif", _boom)
+
+        resp = await client.get(
+            f"{_search_base(test_project_id)}/sessions/{test_search_session.id}/export-recordings",
+            headers=auth_headers,
+            params={"locale": "ja"},
+        )
+        assert resp.status_code == 200
+        assert "text/csv" in resp.headers.get("content-type", "")
+        # The header row must still be present even though enrichment failed
+        assert "recording_filename" in resp.text
 
     async def test_unauthenticated(
         self,

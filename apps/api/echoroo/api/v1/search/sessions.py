@@ -870,13 +870,26 @@ async def export_search_session_recordings_csv(
                 if key in tag_id_to_sci:
                     species_labels[key] = tag_id_to_sci[key]
 
-    # Build common name mapping using the same enrichment as session detail API
+    # Build common name mapping using the same enrichment as session detail API.
+    # Locale enrichment is best-effort: a transient GBIF outage or an internal
+    # SQLAlchemy error must NOT cause the export to fail. Mirror the guard used
+    # by the list/detail routes — degrade to scientific names when enrichment
+    # raises.
     species_common_names: dict[str, str] = {}
     if session.species_config and isinstance(session.species_config, list):
         from echoroo.api.v1.search.utils import _enrich_species_config_with_locale
-        enriched_config = await _enrich_species_config_with_locale(
-            list(session.species_config), locale, db
-        )
+        try:
+            enriched_config = await _enrich_species_config_with_locale(
+                list(session.species_config), locale, db
+            )
+        except Exception:
+            logger.warning(
+                "Failed to enrich species_config for export-recordings (locale=%r); "
+                "falling back to raw species_config",
+                locale,
+                exc_info=True,
+            )
+            enriched_config = list(session.species_config)
         # Build sci_name -> common_name from enriched config
         sci_to_common: dict[str, str] = {}
         for sp_cfg in enriched_config:
