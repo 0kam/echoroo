@@ -19,10 +19,7 @@ from fastapi import (
     status,
 )
 
-from echoroo.api.v1.search.deps import SearchServiceDep
-from echoroo.core.database import DbSession
-from echoroo.core.permissions import check_project_access
-from echoroo.middleware.auth import CurrentUser
+from echoroo.api.v1.search.deps import AuthorizedSearchServiceDep
 from echoroo.schemas.search import (
     EmbeddingStatsResponse,
     SimilaritySearchRequest,
@@ -50,9 +47,7 @@ router = APIRouter()
 async def search_similar(
     project_id: UUID,
     request: SimilaritySearchRequest,
-    current_user: CurrentUser,
-    service: SearchServiceDep,
-    db: DbSession,
+    service: AuthorizedSearchServiceDep,
 ) -> SimilaritySearchResponse:
     """Search for similar audio segments using an existing embedding.
 
@@ -62,9 +57,7 @@ async def search_similar(
     Args:
         project_id: Project UUID (path parameter)
         request: Search parameters including embedding_id and filters
-        current_user: Current authenticated user
-        service: Search service instance
-        db: Database session
+        service: Authorized search service (verifies project access)
 
     Returns:
         Similarity search response ordered by descending similarity
@@ -74,7 +67,6 @@ async def search_similar(
         403: Access denied to project
         404: Embedding not found in project
     """
-    await check_project_access(project_id, current_user.id, db)
     try:
         return await service.search_by_embedding_id(
             project_id=project_id,
@@ -102,9 +94,7 @@ async def search_similar(
 )
 async def search_similar_by_audio(
     project_id: UUID,
-    current_user: CurrentUser,
-    service: SearchServiceDep,
-    db: DbSession,
+    service: AuthorizedSearchServiceDep,
     audio_file: UploadFile = File(..., description="Audio file to use as search query"),
     model_name: str = Form(default="perch", description="Model to generate the embedding"),
     limit: int = Form(default=20, ge=1, le=100, description="Maximum results"),
@@ -121,9 +111,7 @@ async def search_similar_by_audio(
 
     Args:
         project_id: Project UUID (path parameter)
-        current_user: Current authenticated user
-        service: Search service instance
-        db: Database session
+        service: Authorized search service (verifies project access)
         audio_file: Uploaded audio file
         model_name: Model name for embedding generation
         limit: Maximum number of results
@@ -140,8 +128,6 @@ async def search_similar_by_audio(
         413: File too large (max 50 MB)
         422: Model not registered or invalid parameters
     """
-    await check_project_access(project_id, current_user.id, db)
-
     # Read and validate upload before writing to disk
     content = await audio_file.read()
 
@@ -201,9 +187,7 @@ async def search_similar_by_audio(
 )
 async def get_embedding_stats(
     project_id: UUID,
-    current_user: CurrentUser,
-    service: SearchServiceDep,
-    db: DbSession,
+    service: AuthorizedSearchServiceDep,
     dataset_id: UUID | None = None,
 ) -> EmbeddingStatsResponse:
     """Get embedding statistics for a project.
@@ -214,9 +198,7 @@ async def get_embedding_stats(
 
     Args:
         project_id: Project UUID (path parameter)
-        current_user: Current authenticated user
-        service: Search service instance
-        db: Database session
+        service: Authorized search service (verifies project access)
         dataset_id: Optional dataset filter
 
     Returns:
@@ -226,7 +208,6 @@ async def get_embedding_stats(
         401: Not authenticated
         403: Access denied to project
     """
-    await check_project_access(project_id, current_user.id, db)
     return await service.get_embedding_stats(
         project_id=project_id,
         dataset_id=dataset_id,
