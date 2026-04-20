@@ -739,6 +739,51 @@ class TestSessionDistribution:
         )
         assert resp.status_code == 404
 
+    async def test_zero_vector_embedding_does_not_crash(
+        self,
+        client: AsyncClient,
+        auth_headers: dict[str, str],
+        test_project_id: str,
+        db_session: AsyncSession,
+        search_recording: Recording,
+        test_search_session: SearchSession,
+    ) -> None:
+        """Regression: a zero-vector embedding row must not crash /distribution.
+
+        Cosine distance against a zero vector is mathematically undefined and
+        pgvector returns NaN. ``int(NaN)`` previously raised ``ValueError`` from
+        the histogram bin assignment loop, producing a 500. The service now
+        filters NaN at the SQL level, so the zero-vector row is silently
+        skipped and the response is 200 with a sensible bin shape.
+        """
+        # Seed a degenerate zero-vector embedding alongside the existing unit
+        # vector embedding (already created by ``test_search_session`` fixture
+        # via its dependency on ``search_embedding``).
+        zero_vector = [0.0] * _EMBEDDING_DIM
+        zero_emb = Embedding(
+            recording_id=search_recording.id,
+            model_name="perch",
+            start_time=5.0,
+            end_time=10.0,
+            vector=zero_vector,
+        )
+        db_session.add(zero_emb)
+        await db_session.commit()
+
+        resp = await client.get(
+            f"{_search_base(test_project_id)}/sessions/{test_search_session.id}/distribution",
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "bins" in data
+        assert "total_count" in data
+        # Zero-vector row was skipped (not crashed). The non-zero embedding
+        # still contributes, so total_count is at least 1 but never includes
+        # the NaN row.
+        assert isinstance(data["total_count"], int)
+        assert data["total_count"] >= 1
+
 
 # ---------------------------------------------------------------------------
 # Route 6: GET /sessions/{session_id}/time-distribution

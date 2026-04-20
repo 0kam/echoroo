@@ -467,6 +467,12 @@ class SimilaritySearchService:
         union_sql = " UNION ALL ".join(union_parts)
         params["bin_width"] = bin_width
 
+        # Filter out NaN similarities (zero-vector embeddings produce NaN when
+        # divided in cosine distance). The ``similarity = similarity`` predicate
+        # is the SQL idiom for "not NaN" since NaN never equals itself.
+        # FLOOR(NaN / x) returns NaN in Postgres which then breaks the Python
+        # ``int(NaN)`` conversion downstream — filter at SQL so the loop never
+        # sees them.
         dist_sql = text(
             f"""
             WITH all_similarities AS (
@@ -481,6 +487,7 @@ class SimilaritySearchService:
                 FLOOR(similarity / :bin_width) * :bin_width AS bin_lower,
                 COUNT(*) AS cnt
             FROM max_similarities
+            WHERE similarity = similarity
             GROUP BY bin_lower
             ORDER BY bin_lower
             """
@@ -496,8 +503,13 @@ class SimilaritySearchService:
         n_bins = round(1.0 / bin_width)
         bin_counts: dict[int, int] = {}
         for row in rows:
+            bin_lower = float(row.bin_lower)
+            # Defensive guard: if any NaN slipped past the SQL filter, skip the
+            # row rather than raising ``ValueError`` from ``int(NaN)``.
+            if bin_lower != bin_lower:  # NaN check
+                continue
             # Use integer index to avoid floating-point key comparison issues
-            bin_idx = round(float(row.bin_lower) / bin_width)
+            bin_idx = round(bin_lower / bin_width)
             bin_counts[bin_idx] = int(row.cnt)
 
         bins: list[SimilarityBin] = []
