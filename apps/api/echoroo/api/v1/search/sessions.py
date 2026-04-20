@@ -8,9 +8,7 @@ from __future__ import annotations
 
 import collections.abc
 import contextlib
-import json
 import logging
-import uuid as uuid_module
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -25,19 +23,18 @@ from fastapi import (
     Query,
     Request,
     Response,
-    UploadFile,
     status,
 )
 from fastapi.responses import StreamingResponse
 from sqlalchemy import bindparam, text
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 
+from echoroo.api.v1.search.batch import _prepare_batch_job
 from echoroo.api.v1.search.deps import SearchSessionServiceDep
 from echoroo.core.database import DbSession
 from echoroo.core.permissions import check_project_access
 from echoroo.middleware.auth import CurrentUser
 from echoroo.schemas.search import (
-    BatchSearchRequest,
     BatchSearchResponse,
     SearchJobAcceptedResponse,
     SearchSessionListItem,
@@ -46,8 +43,6 @@ from echoroo.schemas.search import (
     SessionDistributionResponse,
     SessionSampleResponse,
     SessionTimeDistributionResponse,
-    SourceConfig,
-    SpeciesSearchConfig,
     TimeDistributionCell,
 )
 
@@ -345,11 +340,6 @@ async def rerun_search_session(
         413: One or more uploaded files exceed 10 MB
         422: Constraint violation or invalid model
     """
-    import contextlib
-    import shutil
-
-    from echoroo.core.s3 import copy_object, delete_objects_by_prefix
-
     await check_project_access(project_id, current_user.id, db)
 
     # Fetch and validate the session
@@ -359,222 +349,16 @@ async def rerun_search_session(
             status_code=status.HTTP_404_NOT_FOUND, detail="Search session not found"
         )
 
-    # Parse the metadata JSON field
-    try:
-        batch_request = BatchSearchRequest.model_validate(json.loads(metadata))
-    except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid metadata JSON: {exc}",
-        ) from exc
-
-    # Strip any client-injected s3_keys (security: s3_key is server-internal only)
-    for sp in batch_request.species:
-        for src in sp.sources:
-            src.s3_key = None
-
-    # Validate constraints (same as batch_search)
-    MAX_SPECIES = 20
-    MAX_SOURCES_PER_SPECIES = 10
-    MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
-    BATCH_AUDIO_EXTENSIONS = {".wav", ".mp3", ".flac", ".ogg", ".opus"}
-
-    if len(batch_request.species) > MAX_SPECIES:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Too many species: {len(batch_request.species)} (max {MAX_SPECIES})",
-        )
-
-    for sp in batch_request.species:
-        if len(sp.sources) > MAX_SOURCES_PER_SPECIES:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=(
-                    f"Species '{sp.scientific_name}' has {len(sp.sources)} sources "
-                    f"(max {MAX_SOURCES_PER_SPECIES})"
-                ),
-            )
-        for src in sp.sources:
-            if src.type == "url" and not src.source_url:
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail=(
-                        f"Species '{sp.scientific_name}' has a URL source with no source_url set"
-                    ),
-                )
-
-    # Generate a new job ID for this re-run
-    job_id = str(uuid_module.uuid4())
-    tmp_dir = Path(f"/data/search_tmp/{job_id}")
-    tmp_dir.mkdir(parents=True, exist_ok=True)
-
-    # Handle S3 sources from the current session (copy to new job prefix)
-    if batch_request.source_session_id:
-        try:
-            source_session_id = UUID(batch_request.source_session_id)
-        except ValueError as exc:
-            shutil.rmtree(tmp_dir, ignore_errors=True)
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid source_session_id: {batch_request.source_session_id}",
-            ) from exc
-
-        source_session = await session_service.get_session(source_session_id, project_id)
-        if not source_session:
-            shutil.rmtree(tmp_dir, ignore_errors=True)
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Source session not found: {batch_request.source_session_id}",
-            )
-
-        # Copy S3 sources from parent session (same logic as batch_search)
-        if source_session.species_config:
-            new_species_by_name: dict[str, SpeciesSearchConfig] = {
-                sp.scientific_name: sp for sp in batch_request.species
-            }
-
-            for _raw_sp in source_session.species_config:
-                parent_sp_dict: dict[str, object] = _raw_sp  # type: ignore[assignment]
-                parent_sci_name = str(parent_sp_dict.get("scientific_name", ""))
-                if not parent_sci_name:
-                    continue
-
-                parent_sources_with_keys: list[SourceConfig] = []
-                raw_sources = parent_sp_dict.get("sources", [])
-                sources_list: list[dict[str, object]] = raw_sources  # type: ignore[assignment]
-                for src_dict in sources_list:
-                    old_s3_key = src_dict.get("s3_key")
-                    if not old_s3_key:
-                        continue
-                    old_s3_key_str = str(old_s3_key)
-                    old_file_part = Path(old_s3_key_str).name
-                    new_s3_key = f"search_reference/{project_id}/{job_id}/{old_file_part}"
-                    try:
-                        copy_object(old_s3_key_str, new_s3_key)
-                    except Exception:
-                        logger.warning(
-                            "Failed to copy S3 object %s -> %s for rerun, skipping",
-                            old_s3_key_str,
-                            new_s3_key,
-                        )
-                        continue
-
-                    _raw_file_key = src_dict.get("file_key")
-                    _raw_start = src_dict.get("start_time")
-                    _raw_end = src_dict.get("end_time")
-                    copied_src = SourceConfig(
-                        type="upload",
-                        file_key=str(_raw_file_key) if _raw_file_key is not None else None,
-                        start_time=float(str(_raw_start)) if _raw_start is not None else None,
-                        end_time=float(str(_raw_end)) if _raw_end is not None else None,
-                    )
-                    copied_src.s3_key = new_s3_key
-                    parent_sources_with_keys.append(copied_src)
-
-                if not parent_sources_with_keys:
-                    continue
-
-                if parent_sci_name in new_species_by_name:
-                    existing_sp = new_species_by_name[parent_sci_name]
-                    existing_sp.sources = list(existing_sp.sources) + parent_sources_with_keys
-                else:
-                    _raw_tag_id = parent_sp_dict.get("tag_id")
-                    merged_sp = SpeciesSearchConfig(
-                        tag_id=str(_raw_tag_id) if _raw_tag_id is not None else None,
-                        scientific_name=parent_sci_name,
-                        sources=parent_sources_with_keys,
-                    )
-                    batch_request.species.append(merged_sp)
-
-    # Read and persist all uploaded audio files
-    form = await request.form()
-    audio_files: dict[str, str] = {}
-    uploaded_file_bytes: dict[str, bytes] = {}
-    uploaded_file_suffixes: dict[str, str] = {}
-
-    try:
-        for field_name, field_value in form.items():
-            if field_name == "metadata":
-                continue
-            if not hasattr(field_value, "read"):
-                continue
-            upload: UploadFile = field_value  # type: ignore[assignment]
-            content = await upload.read()
-            if len(content) > MAX_FILE_SIZE:
-                raise HTTPException(
-                    status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                    detail=f"File '{field_name}' exceeds 10 MB limit",
-                )
-            suffix = Path(upload.filename or "upload.wav").suffix.lower()
-            if suffix not in BATCH_AUDIO_EXTENSIONS:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=(
-                        f"Unsupported file type for '{field_name}': {suffix}. "
-                        f"Allowed: {sorted(BATCH_AUDIO_EXTENSIONS)}"
-                    ),
-                )
-            file_name = f"{field_name}{suffix}"
-            dest_path = tmp_dir / file_name
-            dest_path.write_bytes(content)
-            audio_files[field_name] = file_name
-            uploaded_file_bytes[field_name] = content
-            uploaded_file_suffixes[field_name] = suffix
-    except HTTPException:
-        shutil.rmtree(tmp_dir, ignore_errors=True)
-        raise
-
-    # Upload new files to S3
-    s3_prefix = f"search_reference/{project_id}/{job_id}"
-    uploaded_s3_keys: list[str] = []
-    try:
-        from echoroo.core.s3 import get_s3_client
-        from echoroo.core.settings import get_settings as _get_settings
-
-        s3_settings = _get_settings()
-        s3_client = get_s3_client()
-
-        for field_name, content in uploaded_file_bytes.items():
-            suffix = uploaded_file_suffixes[field_name]
-            s3_key = f"{s3_prefix}/{field_name}{suffix}"
-            s3_client.put_object(
-                Bucket=s3_settings.S3_BUCKET,
-                Key=s3_key,
-                Body=content,
-            )
-            uploaded_s3_keys.append(s3_key)
-            for sp in batch_request.species:
-                for src in sp.sources:
-                    if src.file_key == field_name and src.s3_key is None:
-                        src.s3_key = s3_key
-    except Exception as _s3_exc:
-        logger.exception("Failed to upload reference audio to S3 for rerun job %s", job_id)
-        with contextlib.suppress(Exception):
-            delete_objects_by_prefix(s3_prefix)
-        shutil.rmtree(tmp_dir, ignore_errors=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to persist reference audio to storage",
-        ) from _s3_exc
-
-    # Collect all s3_keys
-    all_s3_keys: list[str] = []
-    for sp in batch_request.species:
-        for src in sp.sources:
-            if src.s3_key and src.s3_key not in all_s3_keys:
-                all_s3_keys.append(src.s3_key)
-
-    species_config_with_s3 = [sp.model_dump() for sp in batch_request.species]
-
-    # Write manifest for the Celery worker
-    manifest = {
-        "request": batch_request.model_dump(exclude={"source_session_id"}),
-        "audio_files": audio_files,
-        "project_id": str(project_id),
-        "user_id": str(current_user.id),
-        "species_config_with_s3": species_config_with_s3,
-    }
-    (tmp_dir / "manifest.json").write_text(json.dumps(manifest))
+    # Validate input, stage S3 reference audio, and build the job manifest.
+    # Any validation / upload failure is already cleaned up inside the helper.
+    artifacts = await _prepare_batch_job(
+        db=db,
+        project_id=project_id,
+        current_user_id=current_user.id,
+        request=request,
+        metadata=metadata,
+        log_tag="rerun job",
+    )
 
     # Delete existing annotations linked to this session
     await db.execute(
@@ -602,19 +386,19 @@ async def rerun_search_session(
     session.error_message = None
     session.started_at = None
     session.completed_at = None
-    session.celery_job_id = job_id
-    session.model_name = batch_request.model_name
+    session.celery_job_id = artifacts.job_id
+    session.model_name = artifacts.batch_request.model_name
     session.parameters = {
-        "min_similarity": batch_request.min_similarity,
-        "limit_per_species": batch_request.limit_per_species,
-        "dataset_id": batch_request.dataset_id,
+        "min_similarity": artifacts.batch_request.min_similarity,
+        "limit_per_species": artifacts.batch_request.limit_per_species,
+        "dataset_id": artifacts.batch_request.dataset_id,
     }
-    session.species_config = species_config_with_s3
-    session.reference_audio_keys = all_s3_keys if all_s3_keys else None
+    session.species_config = artifacts.species_config_with_s3
+    session.reference_audio_keys = artifacts.all_s3_keys if artifacts.all_s3_keys else None
 
     # Auto-generate a new name
     species_names: list[str] = []
-    for sp_cfg in species_config_with_s3:
+    for sp_cfg in artifacts.species_config_with_s3:
         raw_label = sp_cfg.get("common_name") or sp_cfg.get("scientific_name", "Unknown")
         label = str(raw_label) if raw_label is not None else "Unknown"
         species_names.append(label)
@@ -630,11 +414,13 @@ async def rerun_search_session(
     from echoroo.workers.search_tasks import run_batch_search
 
     run_batch_search.apply_async(
-        args=[job_id, str(project_id)],
-        task_id=job_id,
+        args=[artifacts.job_id, str(project_id)],
+        task_id=artifacts.job_id,
     )
 
-    return SearchJobAcceptedResponse(job_id=job_id, status="pending", session_id=session.id)
+    return SearchJobAcceptedResponse(
+        job_id=artifacts.job_id, status="pending", session_id=session.id
+    )
 
 
 @router.get(

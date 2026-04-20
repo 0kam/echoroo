@@ -6,11 +6,14 @@ job status with optional locale enrichment.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
+import shutil
 import uuid as uuid_module
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any, NamedTuple
 from uuid import UUID
 
 from fastapi import (
@@ -22,6 +25,7 @@ from fastapi import (
     status,
 )
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from echoroo.api.v1.search.utils import _clamp_similarity_in_raw, _enrich_search_results_with_locale
 from echoroo.core.database import DbSession
@@ -35,68 +39,94 @@ from echoroo.schemas.search import (
     SourceConfig,
     SpeciesSearchConfig,
 )
+from echoroo.services.search_session import SearchSessionService
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
 
-@router.post(
-    "/batch",
-    response_model=SearchJobAcceptedResponse,
-    status_code=status.HTTP_202_ACCEPTED,
-    summary="Batch species search by uploaded audio (async)",
-    description=(
-        "Upload reference audio clips for multiple species and find similar sounds "
-        "across the project simultaneously. Returns immediately with a job_id; "
-        "poll GET /jobs/{job_id} for status and results. "
-        "Send as multipart/form-data with a 'metadata' JSON field and audio files "
-        "named source_0, source_1, etc. Supports up to 20 species and 10 sources each."
-    ),
-)
-async def batch_search(
+# ---------------------------------------------------------------------------
+# Shared batch-job preparation helper
+# ---------------------------------------------------------------------------
+
+# Validation constants shared between POST /batch and PUT /sessions/{id}/rerun.
+_MAX_SPECIES = 20
+_MAX_SOURCES_PER_SPECIES = 10
+_MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
+_BATCH_AUDIO_EXTENSIONS = {".wav", ".mp3", ".flac", ".ogg", ".opus"}
+
+
+class BatchJobArtifacts(NamedTuple):
+    """Outputs of :func:`_prepare_batch_job` — the ready-to-dispatch batch job.
+
+    The five fields together capture everything a caller needs to either create
+    a new ``SearchSession`` (POST /batch) or reset an existing one
+    (PUT /sessions/{id}/rerun). Returned as a NamedTuple rather than a bare
+    tuple because > 3 fields is past the threshold where positional unpacking
+    at call sites starts to hurt readability.
+    """
+
+    job_id: str
+    batch_request: BatchSearchRequest
+    all_s3_keys: list[str]
+    species_config_with_s3: list[dict[str, Any]]
+    s3_prefix: str
+
+
+async def _prepare_batch_job(
+    db: AsyncSession,
     project_id: UUID,
-    current_user: CurrentUser,
-    db: DbSession,
+    current_user_id: UUID,
     request: Request,
-    metadata: str = Form(
-        ...,
-        description="JSON string of BatchSearchRequest",
-    ),
-) -> SearchJobAcceptedResponse:
-    """Queue a batch species search job and return immediately.
+    metadata: str,
+    *,
+    log_tag: str,
+) -> BatchJobArtifacts:
+    """Validate multipart input, stage reference audio to S3, write a manifest.
 
-    Accepts multipart/form-data where:
-    - ``metadata`` is a JSON-encoded BatchSearchRequest
-    - ``source_0``, ``source_1``, etc. are uploaded audio files referenced by
-      the ``file_key`` fields inside the metadata JSON
+    Performs the mechanical batch-job setup shared by ``POST /batch`` and
+    ``PUT /sessions/{session_id}/rerun``:
 
-    Files are saved to /data/search_tmp/{job_id}/ and a manifest.json is written.
-    The Celery worker picks up the job and processes it asynchronously.
+    1. Parses ``metadata`` as a :class:`BatchSearchRequest` JSON blob.
+    2. Strips any client-injected ``s3_key`` values (security invariant —
+       ``s3_key`` is server-internal only).
+    3. Validates species/sources/file-size/extension constraints.
+    4. Copies S3 sources from ``source_session_id`` (if set) into the new
+       job's S3 prefix.
+    5. Reads uploaded files from the multipart form, validates them, and
+       persists them to ``/data/search_tmp/{job_id}/``.
+    6. Uploads the files to S3 under ``search_reference/{project_id}/{job_id}``.
+    7. Collects the final ``s3_keys`` list and builds the enriched
+       ``species_config_with_s3`` manifest, writing ``manifest.json`` to the
+       temp dir.
+
+    On mid-upload failure the partial S3 uploads under the job's prefix are
+    cleaned up via ``delete_objects_by_prefix``, the temp directory is
+    removed, and an HTTPException is re-raised.
 
     Args:
-        project_id: Project UUID (path parameter)
-        current_user: Current authenticated user
-        db: Database session
-        request: Raw FastAPI request (to access multipart form data)
-        metadata: JSON string encoding a BatchSearchRequest
+        db: Async DB session (used for parent session lookup when
+            ``source_session_id`` is supplied).
+        project_id: Owning project UUID (path parameter from the route).
+        current_user_id: Authenticated user ID (recorded in the manifest).
+        request: Raw FastAPI request — the multipart form is read off this.
+        metadata: JSON-encoded BatchSearchRequest from the ``metadata`` form
+            field.
+        log_tag: Short string embedded in log lines (``"job"`` or
+            ``"rerun job"``) so the source route is obvious in logs.
 
     Returns:
-        202 Accepted with job_id and "pending" status
+        BatchJobArtifacts ready for the caller to persist via the session
+        service and dispatch to the Celery worker.
 
     Raises:
-        400: Malformed metadata JSON
-        403: Access denied to project
-        413: One or more uploaded files exceed 10 MB
-        422: Constraint violation (too many species/sources), invalid model, or missing source_url
+        HTTPException: 400 for malformed metadata / bad ``source_session_id``
+            / unsupported file extension; 404 for missing parent session;
+            413 for oversized files; 422 for constraint violations; 500 for
+            S3 upload failures.
     """
-    await check_project_access(project_id, current_user.id, db)
-
-    import contextlib
-    import shutil
-
     from echoroo.core.s3 import copy_object, delete_objects_by_prefix
-    from echoroo.services.search_session import SearchSessionService
 
     # Parse the metadata JSON field
     try:
@@ -113,24 +143,19 @@ async def batch_search(
             src.s3_key = None
 
     # Validate constraints
-    MAX_SPECIES = 20
-    MAX_SOURCES_PER_SPECIES = 10
-    MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
-    BATCH_AUDIO_EXTENSIONS = {".wav", ".mp3", ".flac", ".ogg", ".opus"}
-
-    if len(batch_request.species) > MAX_SPECIES:
+    if len(batch_request.species) > _MAX_SPECIES:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Too many species: {len(batch_request.species)} (max {MAX_SPECIES})",
+            detail=f"Too many species: {len(batch_request.species)} (max {_MAX_SPECIES})",
         )
 
     for sp in batch_request.species:
-        if len(sp.sources) > MAX_SOURCES_PER_SPECIES:
+        if len(sp.sources) > _MAX_SOURCES_PER_SPECIES:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=(
                     f"Species '{sp.scientific_name}' has {len(sp.sources)} sources "
-                    f"(max {MAX_SOURCES_PER_SPECIES})"
+                    f"(max {_MAX_SOURCES_PER_SPECIES})"
                 ),
             )
         for src in sp.sources:
@@ -199,9 +224,10 @@ async def batch_search(
                         copy_object(old_s3_key_str, new_s3_key)
                     except Exception:
                         logger.warning(
-                            "Failed to copy S3 object %s -> %s for re-execution, skipping",
+                            "Failed to copy S3 object %s -> %s for %s, skipping",
                             old_s3_key_str,
                             new_s3_key,
+                            log_tag,
                         )
                         continue
 
@@ -254,19 +280,19 @@ async def batch_search(
             upload: UploadFile = field_value  # type: ignore[assignment]
             content = await upload.read()
 
-            if len(content) > MAX_FILE_SIZE:
+            if len(content) > _MAX_FILE_SIZE:
                 raise HTTPException(
                     status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
                     detail=f"File '{field_name}' exceeds 10 MB limit",
                 )
 
             suffix = Path(upload.filename or "upload.wav").suffix.lower()
-            if suffix not in BATCH_AUDIO_EXTENSIONS:
+            if suffix not in _BATCH_AUDIO_EXTENSIONS:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=(
                         f"Unsupported file type for '{field_name}': {suffix}. "
-                        f"Allowed: {sorted(BATCH_AUDIO_EXTENSIONS)}"
+                        f"Allowed: {sorted(_BATCH_AUDIO_EXTENSIONS)}"
                     ),
                 )
 
@@ -287,7 +313,6 @@ async def batch_search(
 
     # Upload new files to S3 and set s3_key on each matching source
     s3_prefix = f"search_reference/{project_id}/{job_id}"
-    uploaded_s3_keys: list[str] = []
     try:
         from echoroo.core.s3 import get_s3_client
         from echoroo.core.settings import get_settings as _get_settings
@@ -303,7 +328,6 @@ async def batch_search(
                 Key=s3_key,
                 Body=content,
             )
-            uploaded_s3_keys.append(s3_key)
 
             # Assign s3_key to all matching sources across species
             for sp in batch_request.species:
@@ -312,7 +336,7 @@ async def batch_search(
                         src.s3_key = s3_key
 
     except Exception as _s3_exc:
-        logger.exception("Failed to upload reference audio to S3 for job %s", job_id)
+        logger.exception("Failed to upload reference audio to S3 for %s %s", log_tag, job_id)
         # Roll back S3 uploads
         with contextlib.suppress(Exception):
             delete_objects_by_prefix(s3_prefix)
@@ -330,7 +354,7 @@ async def batch_search(
                 all_s3_keys.append(src.s3_key)
 
     # Build enriched species config list (with s3_keys) for worker manifest and DB storage
-    species_config_with_s3 = [sp.model_dump() for sp in batch_request.species]
+    species_config_with_s3: list[dict[str, Any]] = [sp.model_dump() for sp in batch_request.species]
 
     # Write manifest JSON for the worker
     # species_config_with_s3 is stored separately so the worker gets s3_keys intact
@@ -339,10 +363,81 @@ async def batch_search(
         "request": batch_request.model_dump(exclude={"source_session_id"}),
         "audio_files": audio_files,
         "project_id": str(project_id),
-        "user_id": str(current_user.id),
+        "user_id": str(current_user_id),
         "species_config_with_s3": species_config_with_s3,
     }
     (tmp_dir / "manifest.json").write_text(json.dumps(manifest))
+
+    return BatchJobArtifacts(
+        job_id=job_id,
+        batch_request=batch_request,
+        all_s3_keys=all_s3_keys,
+        species_config_with_s3=species_config_with_s3,
+        s3_prefix=s3_prefix,
+    )
+
+
+@router.post(
+    "/batch",
+    response_model=SearchJobAcceptedResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Batch species search by uploaded audio (async)",
+    description=(
+        "Upload reference audio clips for multiple species and find similar sounds "
+        "across the project simultaneously. Returns immediately with a job_id; "
+        "poll GET /jobs/{job_id} for status and results. "
+        "Send as multipart/form-data with a 'metadata' JSON field and audio files "
+        "named source_0, source_1, etc. Supports up to 20 species and 10 sources each."
+    ),
+)
+async def batch_search(
+    project_id: UUID,
+    current_user: CurrentUser,
+    db: DbSession,
+    request: Request,
+    metadata: str = Form(
+        ...,
+        description="JSON string of BatchSearchRequest",
+    ),
+) -> SearchJobAcceptedResponse:
+    """Queue a batch species search job and return immediately.
+
+    Accepts multipart/form-data where:
+    - ``metadata`` is a JSON-encoded BatchSearchRequest
+    - ``source_0``, ``source_1``, etc. are uploaded audio files referenced by
+      the ``file_key`` fields inside the metadata JSON
+
+    Files are saved to /data/search_tmp/{job_id}/ and a manifest.json is written.
+    The Celery worker picks up the job and processes it asynchronously.
+
+    Args:
+        project_id: Project UUID (path parameter)
+        current_user: Current authenticated user
+        db: Database session
+        request: Raw FastAPI request (to access multipart form data)
+        metadata: JSON string encoding a BatchSearchRequest
+
+    Returns:
+        202 Accepted with job_id and "pending" status
+
+    Raises:
+        400: Malformed metadata JSON
+        403: Access denied to project
+        413: One or more uploaded files exceed 10 MB
+        422: Constraint violation (too many species/sources), invalid model, or missing source_url
+    """
+    await check_project_access(project_id, current_user.id, db)
+
+    from echoroo.core.s3 import delete_objects_by_prefix
+
+    artifacts = await _prepare_batch_job(
+        db=db,
+        project_id=project_id,
+        current_user_id=current_user.id,
+        request=request,
+        metadata=metadata,
+        log_tag="job",
+    )
 
     # Create SearchSession DB record and commit before dispatching the Celery task.
     # This ensures the session row exists in the DB before the worker starts, so
@@ -350,26 +445,29 @@ async def batch_search(
     # cleaned up and no task is dispatched.
     session_service = SearchSessionService(db)
     parameters: dict[str, object] = {
-        "min_similarity": batch_request.min_similarity,
-        "limit_per_species": batch_request.limit_per_species,
-        "dataset_id": batch_request.dataset_id,
+        "min_similarity": artifacts.batch_request.min_similarity,
+        "limit_per_species": artifacts.batch_request.limit_per_species,
+        "dataset_id": artifacts.batch_request.dataset_id,
     }
     search_session = await session_service.create_session(
         project_id=project_id,
         user_id=current_user.id,
-        model_name=batch_request.model_name,
-        species_config=species_config_with_s3,
+        model_name=artifacts.batch_request.model_name,
+        species_config=artifacts.species_config_with_s3,
         parameters=parameters,
-        celery_job_id=job_id,
-        reference_audio_keys=all_s3_keys if all_s3_keys else None,
+        celery_job_id=artifacts.job_id,
+        reference_audio_keys=artifacts.all_s3_keys if artifacts.all_s3_keys else None,
     )
     try:
         await db.commit()
     except Exception as _db_exc:
-        logger.exception("Failed to persist search session for job %s; rolling back S3 uploads", job_id)
+        logger.exception(
+            "Failed to persist search session for job %s; rolling back S3 uploads",
+            artifacts.job_id,
+        )
         with contextlib.suppress(Exception):
-            delete_objects_by_prefix(s3_prefix)
-        shutil.rmtree(tmp_dir, ignore_errors=True)
+            delete_objects_by_prefix(artifacts.s3_prefix)
+        shutil.rmtree(Path(f"/data/search_tmp/{artifacts.job_id}"), ignore_errors=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to create search session",
@@ -379,11 +477,13 @@ async def batch_search(
     from echoroo.workers.search_tasks import run_batch_search
 
     run_batch_search.apply_async(
-        args=[job_id, str(project_id)],
-        task_id=job_id,
+        args=[artifacts.job_id, str(project_id)],
+        task_id=artifacts.job_id,
     )
 
-    return SearchJobAcceptedResponse(job_id=job_id, status="pending", session_id=search_session.id)
+    return SearchJobAcceptedResponse(
+        job_id=artifacts.job_id, status="pending", session_id=search_session.id
+    )
 
 
 @router.get(
