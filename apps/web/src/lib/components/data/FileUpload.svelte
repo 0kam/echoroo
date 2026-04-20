@@ -70,7 +70,7 @@
   let fileUploadProgress = $state<Record<number, number>>({});
 
   let sessionId = $state<string | null>(null);
-  let sessionData = $state<CreateUploadSessionResponse | null>(null);
+  let _sessionData = $state<CreateUploadSessionResponse | null>(null);
 
   // ── Derived values ─────────────────────────────────────────────────────────
   const totalBytes = $derived(selectedFiles.reduce((sum, f) => sum + f.size, 0));
@@ -197,7 +197,7 @@
       step = 'creating';
       const session = await createUploadSession(projectId, datasetId, { files: fileRequests });
       sessionId = session.session_id;
-      sessionData = session;
+      _sessionData = session;
 
       const presignedMap = new Map<string, UploadFilePresignedResponse>(
         session.files.map((f) => [f.original_filename, f])
@@ -298,7 +298,7 @@
     hashingProgress = 0;
     fileUploadProgress = {};
     sessionId = null;
-    sessionData = null;
+    _sessionData = null;
     importTriggered = false;
   }
 </script>

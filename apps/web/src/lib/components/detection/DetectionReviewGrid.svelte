@@ -12,7 +12,7 @@
    * - Shared audio playback via reviewNavigation hook
    */
 
-  import { onDestroy } from 'svelte';
+  import { onDestroy, untrack } from 'svelte';
   import { createQuery, createMutation, useQueryClient } from '@tanstack/svelte-query';
   import { fetchDetections, changeDetectionSpecies } from '$lib/api/detections';
   import { castVote, deleteVote } from '$lib/api/votes';
@@ -103,9 +103,11 @@
     }
   });
 
-  // Shared keyboard navigation and audio playback
+  // Shared keyboard navigation and audio playback. The initial
+  // `projectId` value is captured via untrack() because this navigation
+  // helper is configured once at mount; dynamic reactivity is not needed.
   const nav = createReviewNavigation({
-    projectId,
+    projectId: untrack(() => projectId),
     itemCount: () => detections.length,
     onConfirm: () => {
       // Legacy confirm — no-op in voting mode

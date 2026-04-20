@@ -118,7 +118,7 @@
   bind:this={barEl}
   bind:clientWidth={barWidth}
   class="relative flex items-center w-full h-8 rounded-md cursor-pointer select-none outline outline-1 outline-stone-300 bg-stone-200 dark:bg-stone-800 dark:outline-stone-700"
-  role="scrollbar"
+  role="slider"
   aria-label="Viewport position"
   aria-valuemin={0}
   aria-valuemax={100}

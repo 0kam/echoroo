@@ -13,7 +13,7 @@
    * - Floating action bar showing selected count with "Add Selected" / "Clear" actions
    */
 
-  import { onDestroy } from 'svelte';
+  import { onDestroy, untrack } from 'svelte';
   import * as m from '$lib/paraglide/messages.js';
   import { searchXenoCanto } from '$lib/api/search';
   import { generateId } from '$lib/utils/id';
@@ -30,8 +30,9 @@
 
   let { scientificName, projectId, onAdd }: Props = $props();
 
-  // Search form state
-  let query = $state(scientificName);
+  // Search form state — pre-filled from the `scientificName` prop once;
+  // the user can then edit the query freely.
+  let query = $state(untrack(() => scientificName));
   let country = $state('');
   let area = $state('');
   let qualityMin = $state('');

@@ -9,6 +9,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { goto } from '$app/navigation';
   import { cellToBoundary, cellToLatLng, isValidCell } from 'h3-js';
+  import type * as GeoJSON from 'geojson';
   import 'maplibre-gl/dist/maplibre-gl.css';
   import { localizeHref } from '$lib/paraglide/runtime';
   import type { ProjectOverviewSite } from '$lib/types';

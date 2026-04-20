@@ -43,10 +43,6 @@
     })
   );
 
-  function handleFilterChange(newFilters: DetectionFilters) {
-    filters = newFilters;
-  }
-
   // Client-side filter by status so we can also use confidence range from filters
   const filteredItems = $derived((() => {
     const items = $speciesSummaryQuery.data?.items ?? [];
@@ -70,11 +66,6 @@
   // Extract search text from the filter change callback
   function handleFilterChangeWithSearch(newFilters: DetectionFilters & { _search?: string }) {
     filters = newFilters;
-  }
-
-  // We drive search through the query key via a separate input
-  function handleSearchChange(event: Event) {
-    searchText = (event.target as HTMLInputElement).value;
   }
 
   function openExportDialog() {

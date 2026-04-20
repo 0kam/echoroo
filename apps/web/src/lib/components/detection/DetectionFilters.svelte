@@ -4,6 +4,7 @@
    * Includes status dropdown, confidence range, and species search.
    */
 
+  import { untrack } from 'svelte';
   import type { DetectionFilters, DetectionStatus } from '$lib/types/detection';
   import * as m from '$lib/paraglide/messages';
 
@@ -15,10 +16,19 @@
     onFilterChange: (filters: DetectionFilters) => void;
   } = $props();
 
-  // Local editable copies of filter values
-  let statusValue: DetectionStatus | '' = $state(filters.status ?? '');
-  let confidenceMin: number = $state(filters.confidence_min !== undefined ? Math.round(filters.confidence_min * 100) : 0);
-  let confidenceMax: number = $state(filters.confidence_max !== undefined ? Math.round(filters.confidence_max * 100) : 100);
+  // Local editable copies of filter values. Initial values are captured
+  // once via untrack(); subsequent edits are driven by the UI handlers.
+  let statusValue: DetectionStatus | '' = $state(untrack(() => filters.status ?? ''));
+  let confidenceMin: number = $state(
+    untrack(() =>
+      filters.confidence_min !== undefined ? Math.round(filters.confidence_min * 100) : 0,
+    ),
+  );
+  let confidenceMax: number = $state(
+    untrack(() =>
+      filters.confidence_max !== undefined ? Math.round(filters.confidence_max * 100) : 100,
+    ),
+  );
   let searchValue: string = $state('');
 
   const statusOptions = $derived([

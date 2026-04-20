@@ -67,7 +67,7 @@
   let searchError = $state<string | undefined>(undefined);
 
   // Async job polling state
-  let searchJobId = $state<string | null>(null);
+  let _searchJobId = $state<string | null>(null);
   let searchProgress = $state<{ species_completed: number; species_total: number } | null>(null);
   let pollingInterval = $state<ReturnType<typeof setInterval> | null>(null);
 
@@ -152,7 +152,7 @@
     isSearching = true;
     searchError = undefined;
     results = null;
-    searchJobId = null;
+    _searchJobId = null;
     searchProgress = null;
 
     try {
@@ -164,7 +164,7 @@
       editingSessionId = null;
       rerunSourceSessionId = null;
       isRerunMode = false;
-      searchJobId = response.job_id;
+      _searchJobId = response.job_id;
       searchSessionId = response.session_id ?? null;
 
       // Begin polling the job status endpoint every 2 seconds
@@ -225,7 +225,7 @@
     searchDurationMs = 0;
     isSearching = false;
     searchError = undefined;
-    searchJobId = null;
+    _searchJobId = null;
     searchProgress = null;
     searchSessionId = null;
     isRerunMode = false;
@@ -282,7 +282,7 @@
     isSearching = false;
     searchError = undefined;
     searchProgress = null;
-    searchJobId = null;
+    _searchJobId = null;
     searchSessionId = null;
     selectedSessionId = null;
     viewMode = 'new-search';

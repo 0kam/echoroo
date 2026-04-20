@@ -72,7 +72,19 @@
   role="article"
 >
   <!-- Spectrogram with play overlay -->
-  <div class="relative cursor-pointer" onclick={onPlayToggle}>
+  <div
+    class="relative cursor-pointer"
+    role="button"
+    tabindex="0"
+    onclick={onPlayToggle}
+    onkeydown={(e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        onPlayToggle?.();
+      }
+    }}
+    aria-label={isPlaying ? m.common_pause() : m.common_play()}
+  >
     <MiniSpectrogram
       {projectId}
       {recordingId}

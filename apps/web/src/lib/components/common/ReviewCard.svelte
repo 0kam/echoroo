@@ -11,7 +11,7 @@
    * between the time range and the review actions.
    */
 
-  import { onDestroy, type Snippet } from 'svelte';
+  import { onDestroy, untrack, type Snippet } from 'svelte';
   import type { DetectionStatus, VoteSummary, VoteValue, SignalQuality } from '$lib/types/detection';
   import * as m from '$lib/paraglide/messages';
   import { createAudioPlayer } from '$lib/utils/audioPlayback.svelte';
@@ -119,8 +119,13 @@
     extraBody,
   }: Props = $props();
 
-  // Use an internal player only when no external playback control is provided
-  const internalPlayer = onPlayToggle ? null : createAudioPlayer(projectId);
+  // Use an internal player only when no external playback control is
+  // provided. The player is created once at mount time; untrack() avoids
+  // a state_referenced_locally warning for these props that are only read
+  // at initialization and never reactively reconsidered.
+  const internalPlayer = untrack(() =>
+    onPlayToggle ? null : createAudioPlayer(projectId),
+  );
 
   // Effective playback state: prefer external props when available
   const effectiveIsPlaying = $derived(
@@ -202,6 +207,7 @@
 
   <!-- Spectrogram + overlaid controls -->
   <!-- When onClickSelect is provided, the wrapper becomes a focusable button-like region -->
+  <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
   <div
     class="relative {onClickSelect ? 'cursor-pointer' : ''}"
     role={onClickSelect ? 'button' : undefined}

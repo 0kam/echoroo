@@ -7,7 +7,7 @@
   import * as m from '$lib/paraglide/messages';
   import { fetchAnnotationProject, generateTasks } from '$lib/api/annotation-projects';
   import { apiClient } from '$lib/api/client';
-  import type { AnnotationTaskStatus, AnnotationTask, AnnotationProjectDetail } from '$lib/types/annotation';
+  import type { AnnotationTaskStatus, AnnotationTask } from '$lib/types/annotation';
   import { getAnnotationTaskStatusClass, getAnnotationTaskStatusLabel } from '$lib/utils/statusFormatters';
   import ExportDialog from '$lib/components/annotation/ExportDialog.svelte';
 
@@ -126,12 +126,6 @@
       completed: m.annotation_task_status_completed,
       review_pending: m.annotation_task_status_review_pending,
     });
-  }
-
-  function formatTime(seconds: number): string {
-    const mins = Math.floor(seconds / 60);
-    const secs = (seconds % 60).toFixed(1);
-    return mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
   }
 
   $: progressData = $projectQuery.data?.progress;
@@ -570,9 +564,6 @@
   <!-- svelte-ignore a11y-click-events-have-key-events -->
   <!-- svelte-ignore a11y-no-static-element-interactions -->
   <div class="modal-overlay" on:click={closeBatchTagDialog}>
-    <!-- svelte-ignore a11y-click-events-have-key-events -->
-    <!-- svelte-ignore a11y-no-static-element-interactions -->
-    <!-- svelte-ignore a11y-interactive-supports-focus -->
     <div class="modal" on:click|stopPropagation role="dialog" aria-modal="true" aria-labelledby="batch-tag-title" tabindex="-1">
       <div class="modal-header">
         <h3 id="batch-tag-title">

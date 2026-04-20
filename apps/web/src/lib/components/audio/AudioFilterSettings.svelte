@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import type { AudioSettings } from '$lib/types/audio';
   import { MIN_SAMPLERATE, MAX_SAMPLERATE } from '$lib/types/audio';
 
@@ -10,10 +11,13 @@
 
   let { settings, samplerate, onChange }: Props = $props();
 
-  let localLowFreq = $state<number>(settings.low_freq ?? 0);
-  let localHighFreq = $state<number>(settings.high_freq ?? samplerate / 2);
-  let localSamplerate = $state<number>(settings.samplerate ?? samplerate);
-  let localFilterOrder = $state<number>(settings.filter_order);
+  // Local editable copies of the filter values; synced from `settings`
+  // via the $effect below when the parent updates. Initial values are
+  // captured via untrack() so they are not flagged as non-reactive refs.
+  let localLowFreq = $state<number>(untrack(() => settings.low_freq ?? 0));
+  let localHighFreq = $state<number>(untrack(() => settings.high_freq ?? samplerate / 2));
+  let localSamplerate = $state<number>(untrack(() => settings.samplerate ?? samplerate));
+  let localFilterOrder = $state<number>(untrack(() => settings.filter_order));
 
   const nyquist = $derived(
     settings.resample ? (settings.samplerate ?? samplerate) / 2 : samplerate / 2

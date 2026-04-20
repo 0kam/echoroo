@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import type {
     AnnotationProjectCreate,
     AnnotationProjectDetail,
@@ -8,7 +9,7 @@
   import * as m from '$lib/paraglide/messages';
 
   let {
-    projectId,
+    projectId: _projectId,
     project = null,
     onSubmit,
     onCancel = () => {},
@@ -19,13 +20,17 @@
     onCancel?: () => void;
   } = $props();
 
-  const isEdit = !!project;
+  const isEdit = $derived(!!project);
 
-  // Form fields
-  let name = $state(project?.name ?? '');
-  let description = $state(project?.description ?? '');
-  let instructions = $state(project?.instructions ?? '');
-  let visibility: AnnotationProjectVisibility = $state(project?.visibility ?? 'private');
+  // Form fields — initial values are captured once via untrack() so that the
+  // subsequent user edits are preserved even if the parent re-renders with
+  // the same `project` prop.
+  let name = $state(untrack(() => project?.name ?? ''));
+  let description = $state(untrack(() => project?.description ?? ''));
+  let instructions = $state(untrack(() => project?.instructions ?? ''));
+  let visibility: AnnotationProjectVisibility = $state(
+    untrack(() => project?.visibility ?? 'private'),
+  );
 
   let isSubmitting = $state(false);
   let error = $state('');
@@ -40,7 +45,7 @@
     isSubmitting = true;
 
     try {
-      if (isEdit) {
+      if (project !== null) {
         const updateData: AnnotationProjectUpdate = {
           name: name.trim(),
           description: description.trim() || undefined,
@@ -63,9 +68,6 @@
       isSubmitting = false;
     }
   }
-
-  // projectId is reserved for future use (e.g., fetching datasets/tags for the picker)
-  void projectId;
 </script>
 
 <form class="annotation-project-form" onsubmit={(e) => { e.preventDefault(); handleSubmit(); }}>

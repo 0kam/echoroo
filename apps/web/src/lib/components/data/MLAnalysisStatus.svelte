@@ -5,7 +5,6 @@
   import {
     fetchDetectionRuns,
     createDetectionRun,
-    retryDetectionRun,
     cancelDetectionRun,
     fetchAvailableModels,
   } from '$lib/api/detection-runs';

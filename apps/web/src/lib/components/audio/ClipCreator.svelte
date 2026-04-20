@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import { createMutation, useQueryClient } from '@tanstack/svelte-query';
   import { createClip } from '$lib/api/clips';
   import type { ClipDetail } from '$lib/types/data';
@@ -18,7 +19,9 @@
   } = $props();
 
   let startTime = $state(0);
-  let endTime = $state(Math.min(10, duration));
+  // Initial end time reflects the duration prop at mount; user edits
+  // take over afterwards so we deliberately do not re-sync.
+  let endTime = $state(untrack(() => Math.min(10, duration)));
   let note = $state('');
 
   const queryClient = useQueryClient();

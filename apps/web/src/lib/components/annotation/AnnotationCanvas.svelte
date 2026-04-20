@@ -11,8 +11,8 @@
     annotations = [] as SoundEventAnnotation[],
     selectedAnnotationId = null,
     mode = 'select' as 'select' | 'bbox' | 'timeinterval',
-    // projectTags is reserved for future tag-based color filtering
-    projectTags = [] as TagSummary[],
+    // _projectTags is reserved for future tag-based color filtering
+    projectTags: _projectTags = [] as TagSummary[],
     oncreate,
     onselect,
     ondelete,
@@ -30,9 +30,6 @@
     onselect?: (detail: { id: string }) => void;
     ondelete?: (detail: { id: string }) => void;
   } = $props();
-
-  // projectTags is reserved for future tag-based color filtering.
-  void projectTags;
 
   // Drawing state
   let isDrawing = $state(false);

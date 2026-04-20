@@ -17,7 +17,6 @@
     TagUpdate,
     TagCategory,
     GBIFSuggestion,
-    TagStatistic,
   } from '$lib/types/annotation';
   import ConfirmDialog from '$lib/components/ui/ConfirmDialog.svelte';
 

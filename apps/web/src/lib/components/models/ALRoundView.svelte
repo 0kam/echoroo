@@ -18,7 +18,7 @@
    * magnitude.
    */
 
-  import { onDestroy } from 'svelte';
+  import { onDestroy, untrack } from 'svelte';
   import * as m from '$lib/paraglide/messages';
   import { castAnnotationVote, deleteAnnotationVote } from '$lib/api/votes';
   import type { SamplingRound, SamplingRoundItem } from '$lib/types/custom-model';
@@ -35,7 +35,7 @@
     onVoteChanged: () => void;
   }
 
-  let { projectId, modelId, round, onVoteChanged }: Props = $props();
+  let { projectId, modelId: _modelId, round, onVoteChanged }: Props = $props();
 
   // ============================================================
   // Sigmoid helper
@@ -165,7 +165,9 @@
   });
 
   const nav = createReviewNavigation({
-    projectId,
+    // Captured once at mount — the helper is configured once and not
+    // re-created on prop changes, so untrack() is appropriate here.
+    projectId: untrack(() => projectId),
     simpleMode: true,
     itemCount: () => allItems.length,
     // Legacy callbacks not used in simple mode — provide no-op stubs
@@ -220,10 +222,6 @@
     return 'bg-emerald-100 text-emerald-700 border-emerald-200 dark:bg-emerald-950/30 dark:text-emerald-300 dark:border-emerald-800';
   }
 
-  function formatDistance(distance: number | null): string {
-    if (distance === null) return '—';
-    return distance.toFixed(3);
-  }
 
   // ============================================================
   // Vote mutations

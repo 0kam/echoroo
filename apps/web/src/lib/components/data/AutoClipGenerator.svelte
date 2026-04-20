@@ -32,7 +32,7 @@
         start_time: startTime,
         end_time: endTime ?? undefined,
       }),
-    onSuccess: (result) => {
+    onSuccess: (_result) => {
       queryClient.invalidateQueries({ queryKey: ['clips', projectId, recordingId] });
       queryClient.invalidateQueries({ queryKey: ['recording', projectId, recordingId] });
       // Reset advanced options

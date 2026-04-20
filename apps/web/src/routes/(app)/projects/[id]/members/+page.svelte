@@ -7,7 +7,7 @@
   import { projectsApi } from '$lib/api/projects';
   import { authStore } from '$lib/stores/auth.svelte';
   import { ApiError } from '$lib/api/client';
-  import { localizeHref, getLocale } from '$lib/paraglide/runtime';
+  import { localizeHref } from '$lib/paraglide/runtime';
   import type { Project, ProjectMember } from '$lib/types';
   import type { ProjectRole } from '$lib/stores/permissions';
   import { getRoleDescription, getRoleDisplayName } from '$lib/stores/permissions';

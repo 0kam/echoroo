@@ -4,8 +4,10 @@
   import * as m from '$lib/paraglide/messages';
   import { getAnnotationReviewStatusLabel } from '$lib/utils/statusFormatters';
 
+  // clipAnnotationId is exposed as a prop for parent components that may
+  // need it for API calls or context, but is intentionally unused here.
   let {
-    clipAnnotationId,
+    clipAnnotationId: _clipAnnotationId,
     reviewStatus,
     reviewedById = null,
     reviewedAt = null,
@@ -21,9 +23,6 @@
     onApprove: (comment?: string) => void;
     onReject: (comment: string) => void;
   } = $props();
-
-  // clipAnnotationId is exposed as a prop for parent components that may need it for API calls or context.
-  void clipAnnotationId;
 
   let comment = $state('');
   let rejectError = $state('');

@@ -60,9 +60,6 @@
   <!-- svelte-ignore a11y-click-events-have-key-events -->
   <!-- svelte-ignore a11y-no-static-element-interactions -->
   <div class="modal-overlay" onclick={onClose}>
-    <!-- svelte-ignore a11y-click-events-have-key-events -->
-    <!-- svelte-ignore a11y-no-static-element-interactions -->
-    <!-- svelte-ignore a11y-interactive-supports-focus -->
     <div class="modal" onclick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-labelledby="export-dialog-title" tabindex="-1">
       <div class="modal-header">
         <h3 id="export-dialog-title">Export Annotations</h3>

@@ -418,7 +418,7 @@
                 </div>
 
                 <!-- Right: action buttons -->
-                <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+                <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_noninteractive_element_interactions -->
                 <div class="flex shrink-0 items-center gap-2" onclick={(e) => e.stopPropagation()} role="group">
                   {#if model.status === 'draft'}
                     <!-- Draft: navigate to detail view with ReviewTab instead of direct train -->

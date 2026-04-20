@@ -88,8 +88,11 @@
   });
 
   // Track previous scale values to compute relative zoom on change.
-  let prevTimeScale = $state(spectrogramSettings.time_scale);
-  let prevFreqScale = $state(spectrogramSettings.freq_scale);
+  // Initial values are captured once via untrack(); subsequent updates
+  // happen inside the $effect below where we deliberately wrap the
+  // assignment in untrack() to avoid re-triggering the effect.
+  let prevTimeScale = $state(untrack(() => spectrogramSettings.time_scale));
+  let prevFreqScale = $state(untrack(() => spectrogramSettings.freq_scale));
 
   // When time_scale or freq_scale changes, zoom the viewport relative to
   // its current size (not relative to the full recording bounds).
@@ -243,12 +246,6 @@
     const secs = Math.floor(seconds % 60);
     const ms = Math.round((seconds % 1) * 10);
     return `${mins}:${secs.toString().padStart(2, '0')}.${ms}`;
-  }
-
-  function formatFileSize(bytes: number): string {
-    if (bytes < 1024) return `${bytes} B`;
-    if (bytes < 1048576) return `${(bytes / 1024).toFixed(1)} KB`;
-    return `${(bytes / 1048576).toFixed(1)} MB`;
   }
 
   function formatSamplerate(hz: number): string {

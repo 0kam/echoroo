@@ -2,11 +2,12 @@
   import { onMount, onDestroy } from 'svelte';
   import * as m from '$lib/paraglide/messages';
 
+  // _currentTaskId is exposed for parent components that may need to
+  // identify the active task, but is intentionally unused inside this nav bar.
   let {
     projectId,
     annotationProjectId,
-    // currentTaskId is exposed for parent components to identify the active task
-    currentTaskId,
+    currentTaskId: _currentTaskId,
     totalTasks = 0,
     completedTasks = 0,
     hasUnsavedChanges = false,
@@ -24,9 +25,6 @@
     onNavigateNext: () => void;
     onNavigatePrevious?: (() => void) | null;
   } = $props();
-
-  // currentTaskId is exposed for parent components that may need to identify the active task.
-  void currentTaskId;
 
   const backHref = $derived(`/projects/${projectId}/annotations/${annotationProjectId}`);
   const progressPercent = $derived(totalTasks > 0 ? (completedTasks / totalTasks) * 100 : 0);

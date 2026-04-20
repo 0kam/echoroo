@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
+
   let {
     pattern: patternProp = '',
     format: formatProp = '',
@@ -7,9 +9,11 @@
     format?: string;
   } = $props();
 
-  // Internal state that can be overridden by examples
-  let pattern = $state(patternProp);
-  let format = $state(formatProp);
+  // Internal state that can be overridden by examples. Initial values are
+  // captured once via untrack(); the $effect blocks below re-sync the
+  // internal state whenever the parent's props change.
+  let pattern = $state(untrack(() => patternProp));
+  let format = $state(untrack(() => formatProp));
   let testFilename = $state('');
   let testResult: { success: boolean; matched: string | null; error: string | null } | null =
     $state(null);

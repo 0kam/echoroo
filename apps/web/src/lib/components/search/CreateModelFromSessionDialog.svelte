@@ -42,7 +42,11 @@
     `${speciesConfig.scientific_name} classifier`
   );
 
-  let modelName = $state(suggestedName);
+  // modelName is initialized empty and populated by the $effect below
+  // when the dialog opens (or reopens with a new species), which keeps
+  // the user's edits during the open session while avoiding a
+  // state_referenced_locally warning.
+  let modelName = $state('');
   let easyPositiveK = $state(5);
   let boundaryM = $state(10);
   let othersP = $state(20);
@@ -178,9 +182,9 @@
       >
         <!-- Target species (read-only) -->
         <div>
-          <label class="mb-1 block text-sm font-medium text-stone-700 dark:text-stone-300">
+          <div class="mb-1 block text-sm font-medium text-stone-700 dark:text-stone-300">
             Target Species
-          </label>
+          </div>
           <div class="rounded-lg border border-stone-200 bg-stone-50 px-3 py-2 dark:border-stone-700 dark:bg-stone-800">
             <p class="text-sm font-medium text-stone-800 dark:text-stone-200 italic">
               {speciesConfig.scientific_name}

@@ -9,6 +9,7 @@
    * - FilenameCharGrid: interactive character selection grid
    */
 
+  import { untrack } from 'svelte';
   import { createMutation } from '@tanstack/svelte-query';
   import * as m from '$lib/paraglide/messages';
   import { autoDetectDatetime, testDatetimePattern, applyDatetimePattern } from '$lib/api/datasets';
@@ -68,13 +69,15 @@
   }
 
   // ── Timezone state ────────────────────────────────────────────────────────
-  let timezone = $state(currentTimezone ?? '');
+  // Initial value is captured once from the prop; the user can edit it
+  // afterwards via the timezone dropdown.
+  let timezone = $state(untrack(() => currentTimezone ?? ''));
 
   // ── Manual config state ────────────────────────────────────────────────────
   const sampleFilename = $derived(sampleFilenames[0] ?? '');
 
-  let activePattern = $state<string | null>(currentPattern);
-  let activeFormat = $state<string | null>(currentFormat);
+  let activePattern = $state<string | null>(untrack(() => currentPattern));
+  let activeFormat = $state<string | null>(untrack(() => currentFormat));
 
   // Preview test results
   let previewResults = $state<DatetimeTestResult[] | null>(null);

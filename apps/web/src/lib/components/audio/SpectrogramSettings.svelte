@@ -1,6 +1,7 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import type { SpectrogramSettings, Colormap, WindowFunction } from '$lib/types/audio';
-  import { COLORMAPS, WINDOWS, MIN_DB, MIN_CANVAS_HEIGHT, MAX_CANVAS_HEIGHT, CANVAS_HEIGHT_STEP } from '$lib/types/audio';
+  import { WINDOWS, MIN_DB, MIN_CANVAS_HEIGHT, MAX_CANVAS_HEIGHT, CANVAS_HEIGHT_STEP } from '$lib/types/audio';
   import ColorMapPicker from './ColorMapPicker.svelte';
 
   interface Props {
@@ -12,13 +13,15 @@
 
   let isOpen = $state(true);
 
-  // Local copies for immediate UI feedback
-  let localWindowSize = $state(settings.window_size);
-  let localOverlap = $state(settings.overlap);
-  let localWindow = $state<WindowFunction>(settings.window);
-  let localMinDb = $state(settings.min_dB);
-  let localMaxDb = $state(settings.max_dB);
-  let localHeight = $state(settings.height);
+  // Local copies for immediate UI feedback. Initial values are captured
+  // once via untrack(); the $effect below keeps them in sync with the
+  // parent's settings prop on subsequent changes.
+  let localWindowSize = $state(untrack(() => settings.window_size));
+  let localOverlap = $state(untrack(() => settings.overlap));
+  let localWindow = $state<WindowFunction>(untrack(() => settings.window));
+  let localMinDb = $state(untrack(() => settings.min_dB));
+  let localMaxDb = $state(untrack(() => settings.max_dB));
+  let localHeight = $state(untrack(() => settings.height));
 
   // Debounce timeout for slider changes
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;

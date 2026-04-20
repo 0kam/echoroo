@@ -6,6 +6,8 @@
    * The user drags the handles to adjust the time range of a detection.
    */
 
+  import { untrack } from 'svelte';
+
   let {
     duration,
     initialStart,
@@ -19,8 +21,9 @@
   } = $props();
 
   let containerEl: HTMLDivElement | undefined = $state(undefined);
-  let startTime = $state(initialStart);
-  let endTime = $state(initialEnd);
+  // Captured once at mount; subsequent drag events mutate these values.
+  let startTime = $state(untrack(() => initialStart));
+  let endTime = $state(untrack(() => initialEnd));
 
   // Which handle is being dragged: 'start' | 'end' | null
   let dragging: 'start' | 'end' | null = $state(null);

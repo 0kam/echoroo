@@ -3,9 +3,12 @@
   import { getLocale } from '$lib/paraglide/runtime';
   import * as m from '$lib/paraglide/messages';
 
+  // projectId and clipAnnotationId are exposed as props for parent
+  // components that may need them for API calls, but are intentionally
+  // unused inside this component.
   let {
-    projectId,
-    clipAnnotationId = null,
+    projectId: _projectId,
+    clipAnnotationId: _clipAnnotationId = null,
     /** Currently applied clip-level tags. Rendered as removable chips. */
     clipTags = [] as TagSummary[],
     /** Full list of tags available for this annotation project. */
@@ -25,10 +28,6 @@
     onRemoveTag: (tagId: string) => void;
     onAddNote: (content: string) => void;
   } = $props();
-
-  // projectId and clipAnnotationId are exposed as props for parent components that may need them for API calls.
-  void projectId;
-  void clipAnnotationId;
 
   let noteInput = $state('');
 

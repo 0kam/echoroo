@@ -46,11 +46,11 @@
   let isPlaying = $state(false);
   let loop = $state(false);
   let volume = $state(1);
-  let isDragging = $state(false);
+  let _isDragging = $state(false);
   let lockPlay = false;
   let animFrameId: number | null = null;
 
-  let audioLoadError = $state(false);
+  let _audioLoadError = $state(false);
 
   // Track whether we have already attempted a token refresh for the current
   // audio element error, so we never enter an infinite retry loop.
@@ -91,7 +91,7 @@
     const savedTime = untrack(() => currentTime);
     const wasPlaying = untrack(() => isPlaying);
 
-    audioLoadError = false;
+    _audioLoadError = false;
     // Reset the retry flag whenever we load a new recording
     hasRetriedAfterRefresh = false;
 
@@ -207,7 +207,7 @@
   function handleSliderInput(e: Event) {
     const target = e.target as HTMLInputElement;
     currentTime = parseFloat(target.value);
-    isDragging = true;
+    _isDragging = true;
   }
 
   function handleSliderChange() {
@@ -217,7 +217,7 @@
     onViewportChange?.(
       adjustWindowToBounds(centerWindowOn(viewport, { time: currentTime }), bounds)
     );
-    isDragging = false;
+    _isDragging = false;
   }
 
   function handleVolumeChange(e: Event) {
@@ -281,7 +281,7 @@
       }
     }
 
-    audioLoadError = true;
+    _audioLoadError = true;
     isPlaying = false;
     stopTimeTracking();
   }

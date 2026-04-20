@@ -13,7 +13,6 @@
     adjustWindowToBounds,
     shiftWindow,
     expandWindow,
-    centerWindowOn,
     zoomWindowToPosition,
     getViewportPosition,
     calculateChunkIntervals,
@@ -59,9 +58,10 @@
   let canvas: HTMLCanvasElement | undefined = $state();
   let containerEl: HTMLDivElement | undefined = $state();
 
-  // Canvas dimensions
+  // Canvas dimensions — initial height is taken from settings once; the
+  // $effect that reacts to settings.height later updates this value.
   let canvasWidth = $state(0);
-  let canvasHeight = $state(spectrogramSettings.height);
+  let canvasHeight = $state(untrack(() => spectrogramSettings.height));
 
   // Mouse cursor state
   let mousePos: SpectrogramPosition | null = $state(null);
@@ -709,7 +709,7 @@
     }
   }
 
-  function handleMouseUp(e: MouseEvent) {
+  function handleMouseUp(_e: MouseEvent) {
     if (!isDragging) return;
 
     if (interactionMode === 'zooming' && zoomBox) {
@@ -853,7 +853,6 @@
     class:cursor-grabbing={!readonly && interactionMode === 'panning' && isDragging}
     class:cursor-crosshair-zoom={!readonly && interactionMode === 'zooming'}
     tabindex={readonly ? undefined : 0}
-    role="img"
     aria-label="Spectrogram visualization"
     onmousemove={handleMouseMove}
     onmousedown={handleMouseDown}

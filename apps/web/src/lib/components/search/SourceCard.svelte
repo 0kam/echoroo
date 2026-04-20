@@ -11,7 +11,7 @@
    * - SourceInfo: renders name, clip range, and XC metadata
    */
 
-  import { onDestroy } from 'svelte';
+  import { onDestroy, untrack } from 'svelte';
   import * as m from '$lib/paraglide/messages.js';
   import type { SoundSource } from '$lib/types/search';
   import { fetchXenoCantoAudio } from '$lib/api/search';
@@ -63,9 +63,13 @@
   let isLoadingSpectrogram = $state(false);
   let spectrogramLoadError = $state<string | null>(null);
 
-  // Local mutable clip times for the editor (before confirm)
-  let editorStart = $state(source.start_time ?? 0);
-  let editorEnd = $state(source.end_time ?? (source.duration ?? 0));
+  // Local mutable clip times for the editor (before confirm). Initial
+  // values reflect the source at mount time; subsequent user edits in the
+  // clip editor mutate them directly.
+  let editorStart = $state(untrack(() => source.start_time ?? 0));
+  let editorEnd = $state(
+    untrack(() => source.end_time ?? (source.duration ?? 0)),
+  );
 
   // ── Upload playback helpers ───────────────────────────────────────────────
 

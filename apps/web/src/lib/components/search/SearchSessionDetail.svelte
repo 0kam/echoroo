@@ -45,7 +45,7 @@
   let reconstructedSpecies = $state<TargetSpecies[]>([]);
 
   // Currently selected species key (tracked from ResultsPanel)
-  let currentSpeciesKey = $state<string | null>(null);
+  let _currentSpeciesKey = $state<string | null>(null);
 
   // ============================================
   // Model Training section state
@@ -53,8 +53,8 @@
 
   /** Custom models linked to this session */
   let sessionModels = $state<CustomModelListItem[]>([]);
-  let isLoadingModels = $state(false);
-  let modelsLoadError = $state<string | null>(null);
+  let _isLoadingModels = $state(false);
+  let _modelsLoadError = $state<string | null>(null);
 
   /** Species key for the currently open "Train Model" dialog */
   let trainDialogSpeciesKey = $state<string | null>(null);
@@ -62,15 +62,15 @@
   let trainDialogSpeciesMeta = $state<SpeciesMatchResult | null>(null);
 
   async function loadSessionModels(pid: string, sid: string) {
-    isLoadingModels = true;
-    modelsLoadError = null;
+    _isLoadingModels = true;
+    _modelsLoadError = null;
     try {
       const res = await fetchCustomModels(pid, { search_session_id: sid });
       sessionModels = res.models;
     } catch (e) {
-      modelsLoadError = e instanceof Error ? e.message : 'Failed to load models';
+      _modelsLoadError = e instanceof Error ? e.message : 'Failed to load models';
     } finally {
-      isLoadingModels = false;
+      _isLoadingModels = false;
     }
   }
 
@@ -578,7 +578,7 @@
         searchDurationMs={searchDuration()}
         isSearching={false}
         searchingSpecies={reconstructedSpecies}
-        onSpeciesKeyChange={(key) => { currentSpeciesKey = key; }}
+        onSpeciesKeyChange={(key) => { _currentSpeciesKey = key; }}
         onTrainModelRequest={(key, meta) => {
           trainDialogSpeciesKey = key;
           trainDialogSpeciesMeta = meta;

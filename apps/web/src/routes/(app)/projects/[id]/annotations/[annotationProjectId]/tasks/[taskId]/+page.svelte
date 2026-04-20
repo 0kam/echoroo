@@ -42,8 +42,8 @@
 
   let drawMode: 'select' | 'bbox' | 'timeinterval' = 'select';
   let selectedAnnotationId: string | null = null;
-  let currentTime: number = 0;
-  let isPlaying: boolean = false;
+  let _currentTime: number = 0;
+  let _isPlaying: boolean = false;
   let spectrogramWidth: number = 0;
   let spectrogramHeight: number = 400;
   let showInstructions: boolean = false;
@@ -367,7 +367,7 @@
               {recording}
               clipStart={task.clip.start_time}
               clipEnd={task.clip.end_time}
-              onTimeUpdate={(t) => (currentTime = t)}
+              onTimeUpdate={(t) => (_currentTime = t)}
             />
           {:else}
             <div class="spectrogram-placeholder">
@@ -643,17 +643,6 @@
     height: 100%;
     color: #6b7280;
     font-size: 0.875rem;
-  }
-
-  /* ============================================================
-   * Audio player
-   * ============================================================ */
-
-  .player-wrapper {
-    padding: 0.75rem;
-    background: rgb(var(--color-card-bg));
-    border-top: 1px solid #e5e7eb;
-    flex-shrink: 0;
   }
 
   /* ============================================================

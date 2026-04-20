@@ -13,7 +13,7 @@
    * No voting or review actions — this panel is for exploration only.
    */
 
-  import { onDestroy } from 'svelte';
+  import { onDestroy, untrack } from 'svelte';
   import { createQuery } from '@tanstack/svelte-query';
   import * as m from '$lib/paraglide/messages.js';
   import type { DistributionBin, SimilarityResult, SpeciesMatchResult, TargetSpecies, TimeDistributionCell } from '$lib/types/search';
@@ -40,7 +40,7 @@
   let {
     projectId,
     results,
-    searchDurationMs,
+    searchDurationMs: _searchDurationMs,
     isSearching,
     searchingSpecies,
     sessionId = null,
@@ -216,7 +216,8 @@
   let cardElements: (HTMLElement | null)[] = $state([]);
 
   const nav = createReviewNavigation({
-    projectId,
+    // Captured once at mount — navigation helper is configured once.
+    projectId: untrack(() => projectId),
     itemCount: () => sampleResults.length,
     onConfirm: () => { /* no-op: no review actions in search */ },
     onReject: () => { /* no-op: no review actions in search */ },

@@ -1,6 +1,8 @@
 <script lang="ts">
-  import { onMount, onDestroy } from 'svelte';
+  import { onMount, onDestroy, untrack } from 'svelte';
   import { cellToBoundary, latLngToCell, isValidCell, cellToLatLng } from 'h3-js';
+  import * as maplibregl from 'maplibre-gl';
+  import type * as GeoJSON from 'geojson';
   import 'maplibre-gl/dist/maplibre-gl.css';
 
   interface Props {
@@ -18,7 +20,9 @@
   let map: maplibregl.Map | null = null;
   let mapLoaded = false;
 
-  let selectedH3 = $state<string | null>(h3Index || null);
+  // Initial selected hex taken from the h3Index prop; the map click
+  // handler mutates this later as the user picks new cells.
+  let selectedH3 = $state<string | null>(untrack(() => h3Index || null));
   let hoverH3 = $state<string | null>(null);
 
   const defaultCenter: [number, number] = [139.6917, 35.6895];
