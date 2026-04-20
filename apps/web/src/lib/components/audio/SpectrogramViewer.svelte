@@ -19,6 +19,7 @@
   } from '$lib/utils/viewport';
   import type { RecordingDetail } from '$lib/types/data';
   import type { SpectrogramSettings } from '$lib/types/audio';
+  import { createSpectrogramScheduler } from './useSpectrogramScheduler';
 
   interface Props {
     recording: RecordingDetail;
@@ -85,8 +86,13 @@
   // Guards against concurrent token refresh calls (thundering herd prevention)
   let tokenRefreshPromise: Promise<void> | null = null;
 
-  // Animation frame handle
-  let animFrameId: number | null = null;
+  // RAF scheduler — coalesces redraw requests into one frame.
+  // Initialized lazily so `drawAll` is hoisted by the time it's invoked.
+  const scheduler = createSpectrogramScheduler(() => drawAll());
+
+  function requestRedraw() {
+    scheduler.request();
+  }
 
   // Build a spectrogram URL for a single chunk including the auth token as a
   // query parameter. This allows the browser to load the image directly without
@@ -363,13 +369,7 @@
     requestRedraw();
   });
 
-  function requestRedraw() {
-    if (animFrameId !== null) return;
-    animFrameId = requestAnimationFrame(drawAll);
-  }
-
   function drawAll() {
-    animFrameId = null;
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
@@ -821,7 +821,7 @@
   });
 
   onDestroy(() => {
-    if (animFrameId !== null) cancelAnimationFrame(animFrameId);
+    scheduler.dispose();
     // Cancel all pending retry timers
     retryTimers.forEach((handle) => clearTimeout(handle));
     retryTimers.clear();
