@@ -155,11 +155,14 @@ class SearchSession(UUIDMixin, TimestampMixin, Base):
         lazy="raise",
     )
 
+    # Note: ``created_at`` already has ``index=True`` via ``TimestampMixin``,
+    # which auto-generates ``ix_search_sessions_created_at``. Declaring it here
+    # again would collide with the auto-generated index name and trigger
+    # ``DuplicateTableError`` in ``Base.metadata.create_all``.
     __table_args__ = (
         Index("ix_search_sessions_project_id", "project_id"),
         Index("ix_search_sessions_user_id", "user_id"),
         Index("ix_search_sessions_status", "status"),
-        Index("ix_search_sessions_created_at", "created_at"),
     )
 
     def __repr__(self) -> str:

@@ -29,31 +29,6 @@ TEST_DATABASE_URL = os.environ.get(
 )
 
 
-def _deduplicate_metadata_indexes() -> None:
-    """Remove duplicate index objects from SQLAlchemy metadata tables.
-
-    The SearchSession model has a duplicate index: TimestampMixin.created_at
-    uses ``index=True`` which auto-generates ``ix_search_sessions_created_at``,
-    AND ``__table_args__`` contains an explicit ``Index`` with the same name.
-    SQLAlchemy stores both in the table's ``.indexes`` set, which causes
-    ``DuplicateTableError`` when ``create_all`` emits both CREATE INDEX statements.
-
-    This function deduplicates all table indexes by name, keeping only the first
-    occurrence, so ``create_all`` succeeds.  It modifies the module-level
-    ``Base.metadata`` in place — safe to call once before ``create_all``.
-    """
-    for table in Base.metadata.sorted_tables:
-        seen: set[str | None] = set()
-        to_remove = []
-        for idx in list(table.indexes):
-            if idx.name in seen:
-                to_remove.append(idx)
-            else:
-                seen.add(idx.name)
-        for idx in to_remove:
-            table.indexes.discard(idx)
-
-
 def _make_create_enum_sql(type_name: str, values: list[str]) -> str:
     """Build idempotent DO-block SQL for creating a Postgres enum type.
 
@@ -143,12 +118,6 @@ async def setup_test_database(engine: AsyncEngine) -> None:
         ]
         for type_name, values in enum_defs:
             await conn.execute(sa.text(_make_create_enum_sql(type_name, values)))
-
-        # Deduplicate indexes in SQLAlchemy metadata before calling create_all.
-        # SearchSession has a duplicate index (TimestampMixin.created_at index=True
-        # and an explicit Index in __table_args__ share the same auto-generated name).
-        # We remove the duplicate in-place here to avoid DuplicateTableError.
-        _deduplicate_metadata_indexes()
 
         # Create all tables that don't already exist.
         # Use checkfirst=True to skip tables that are already present so that

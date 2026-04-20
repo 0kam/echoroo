@@ -147,10 +147,12 @@ class EvaluationRun(UUIDMixin, TimestampMixin, Base):
         lazy="raise",
     )
 
+    # Note: ``created_at`` already has ``index=True`` via ``TimestampMixin``,
+    # which auto-generates ``ix_evaluation_runs_created_at``. Declaring it here
+    # again would collide with the auto-generated index name.
     __table_args__ = (
         Index("ix_evaluation_runs_annotation_set_id", "annotation_set_id"),
         Index("ix_evaluation_runs_status", "status"),
-        Index("ix_evaluation_runs_created_at", "created_at"),
     )
 
     def __repr__(self) -> str:

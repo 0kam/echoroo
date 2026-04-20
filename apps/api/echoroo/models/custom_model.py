@@ -198,12 +198,14 @@ class CustomModel(UUIDMixin, TimestampMixin, Base):
         foreign_keys="[CustomModel.dataset_id]",
     )
 
+    # Note: ``created_at`` already has ``index=True`` via ``TimestampMixin``,
+    # which auto-generates ``ix_custom_models_created_at``. Declaring it here
+    # again would collide with the auto-generated index name.
     __table_args__ = (
         Index("ix_custom_models_project_id", "project_id"),
         Index("ix_custom_models_user_id", "user_id"),
         Index("ix_custom_models_status", "status"),
         Index("ix_custom_models_target_tag_id", "target_tag_id"),
-        Index("ix_custom_models_created_at", "created_at"),
     )
 
     def __repr__(self) -> str:
