@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, onDestroy, untrack } from 'svelte';
+  import { onDestroy, untrack } from 'svelte';
   import { getSpectrogramUrl } from '$lib/api/recordings';
   import { apiClient } from '$lib/api/client';
   import type { SpectrogramWindow, SpectrogramPosition, SpectrogramChunk, InteractionMode } from '$lib/types/audio';
@@ -815,10 +815,6 @@
         break;
     }
   }
-
-  onMount(() => {
-    rebuildChunks();
-  });
 
   onDestroy(() => {
     scheduler.dispose();
