@@ -1,21 +1,17 @@
 <script lang="ts">
   import { onDestroy, untrack } from 'svelte';
-  import type { SpectrogramWindow, SpectrogramPosition, InteractionMode } from '$lib/types/audio';
+  import type { SpectrogramWindow, InteractionMode } from '$lib/types/audio';
   import {
     intersectWindows,
     intersectIntervals,
-    pixelsToPosition,
     timeToPixel,
-    adjustWindowToBounds,
-    shiftWindow,
-    expandWindow,
-    zoomWindowToPosition,
     getViewportPosition,
   } from '$lib/utils/viewport';
   import type { RecordingDetail } from '$lib/types/data';
   import type { SpectrogramSettings } from '$lib/types/audio';
   import { createSpectrogramScheduler } from './useSpectrogramScheduler';
   import { useChunkManager } from './useChunkManager.svelte';
+  import { useSpectrogramInteraction } from './useSpectrogramInteraction.svelte';
 
   interface Props {
     recording: RecordingDetail;
@@ -60,14 +56,6 @@
   let canvasWidth = $state(0);
   let canvasHeight = $state(untrack(() => spectrogramSettings.height));
 
-  // Mouse cursor state
-  let mousePos: SpectrogramPosition | null = $state(null);
-
-  // Drag/interaction state
-  let isDragging = $state(false);
-  let dragStart: { x: number; y: number; time: number; freq: number } | null = $state(null);
-  let zoomBox: { start: SpectrogramPosition; end: SpectrogramPosition } | null = $state(null);
-
   // Spectrogram chunk state is owned by the chunk-manager hook.
   // The hook reactively rebuilds on recording/settings changes and lazy-loads
   // on viewport changes. Consumers (this parent) observe `chunkMgr.chunks`
@@ -77,6 +65,33 @@
     projectId: () => projectId,
     spectrogramSettings: () => spectrogramSettings,
     viewport: () => viewport,
+  });
+
+  // Interaction state (mouse/wheel/keyboard) is owned by the interaction hook.
+  // The canvas element and its event-prop wiring remain here in the parent;
+  // the hook only manages the drag/zoom state machine and exposes reactive
+  // getters (`mousePos`, `zoomBox`, `isDragging`) that drive crosshair /
+  // zoom-box drawing.
+  //
+  // Note: `B` (viewport history back) is NOT handled by this hook — the
+  // parent route owns the viewport history stack and handles B via its own
+  // `svelte:window onkeydown`.
+  const interaction = useSpectrogramInteraction({
+    canvas: () => canvas,
+    containerEl: () => containerEl,
+    viewport: () => viewport,
+    bounds: () => bounds,
+    canvasWidth: () => canvasWidth,
+    canvasHeight: () => canvasHeight,
+    spectrogramSettings: () => spectrogramSettings,
+    interactionMode: () => interactionMode,
+    readonly: () => readonly,
+    // Wrap callbacks in closures so the hook always reads the current prop
+    // value (destructured $props bindings are frozen at destructure time).
+    onViewportChange: (vp) => onViewportChange?.(vp),
+    onViewportSave: () => onViewportSave?.(),
+    onSeek: (time) => onSeek?.(time),
+    onModeChange: (mode) => onModeChange?.(mode),
   });
 
   /**
@@ -96,19 +111,22 @@
   }
 
   // Redraw canvas on every render-relevant state change.
-  // Observes `chunkMgr.chunks` (a reactive getter from the hook) so that
-  // chunk image loads / errors / retries trigger a fresh draw.
+  // Observes `chunkMgr.chunks` (a reactive getter from the chunk hook) and
+  // `interaction.{mousePos,zoomBox,isDragging}` (reactive getters from the
+  // interaction hook) so that chunk image loads / errors / retries and
+  // cursor / drag state changes trigger a fresh draw.
   $effect(() => {
     // Read reactive dependencies
     const _vp = viewport;
     const _ct = currentTime;
-    const _mp = mousePos;
-    const _zb = zoomBox;
+    const _mp = interaction.mousePos;
+    const _zb = interaction.zoomBox;
+    const _dr = interaction.isDragging;
     const _chunks = chunkMgr.chunks;
     const _mode = interactionMode;
     const _w = canvasWidth;
     const _h = canvasHeight;
-    void _vp; void _ct; void _mp; void _zb; void _chunks; void _mode; void _w; void _h;
+    void _vp; void _ct; void _mp; void _zb; void _dr; void _chunks; void _mode; void _w; void _h;
     requestRedraw();
   });
 
@@ -238,6 +256,7 @@
   }
 
   function drawMouseCrosshair(ctx: CanvasRenderingContext2D) {
+    const mousePos = interaction.mousePos;
     if (!mousePos) return;
     const x = timeToPixel(mousePos.time, canvasWidth, viewport);
     const y = canvasHeight - ((mousePos.freq - viewport.freq.min) / (viewport.freq.max - viewport.freq.min)) * canvasHeight;
@@ -262,6 +281,7 @@
   }
 
   function drawZoomBox(ctx: CanvasRenderingContext2D) {
+    const zoomBox = interaction.zoomBox;
     if (!zoomBox || !zoomBox.start || !zoomBox.end) return;
 
     const { start, end } = zoomBox;
@@ -406,176 +426,15 @@
     return value.toPrecision(Math.max(precision, 1));
   }
 
-  // ============================================
-  // Event Handlers
-  // ============================================
-
-  function getCanvasPos(e: MouseEvent): { x: number; y: number } {
-    if (!canvas) return { x: 0, y: 0 };
-    const rect = canvas.getBoundingClientRect();
-    return {
-      x: e.clientX - rect.left,
-      y: e.clientY - rect.top,
-    };
-  }
-
-  function handleMouseMove(e: MouseEvent) {
-    if (readonly) return;
-    const { x, y } = getCanvasPos(e);
-    mousePos = pixelsToPosition(x, y, canvasWidth, canvasHeight, viewport);
-
-    if (isDragging && dragStart && interactionMode === 'panning') {
-      // Pan the viewport
-      const dx = x - dragStart.x;
-      const dy = y - dragStart.y;
-      const timeDelta = -(dx / canvasWidth) * (viewport.time.max - viewport.time.min);
-      const freqDelta = (dy / canvasHeight) * (viewport.freq.max - viewport.freq.min);
-
-      const newViewport = adjustWindowToBounds(
-        shiftWindow(viewport, { time: timeDelta, freq: freqDelta }),
-        bounds
-      );
-      onViewportChange?.(newViewport);
-
-      // Reset drag origin to current so delta is incremental
-      dragStart = { x, y, time: mousePos.time, freq: mousePos.freq };
-    } else if (isDragging && dragStart && interactionMode === 'zooming') {
-      zoomBox = {
-        start: { time: dragStart.time, freq: dragStart.freq },
-        end: mousePos,
-      };
-    }
-  }
-
-  function handleMouseDown(e: MouseEvent) {
-    if (readonly || e.button !== 0) return;
-    const { x, y } = getCanvasPos(e);
-    const pos = pixelsToPosition(x, y, canvasWidth, canvasHeight, viewport);
-    isDragging = true;
-    dragStart = { x, y, time: pos.time, freq: pos.freq };
-
-    if (interactionMode === 'panning') {
-      onViewportSave?.();
-    } else if (interactionMode === 'zooming') {
-      zoomBox = { start: pos, end: pos };
-    }
-  }
-
-  function handleMouseUp(_e: MouseEvent) {
-    if (!isDragging) return;
-
-    if (interactionMode === 'zooming' && zoomBox) {
-      const { start, end } = zoomBox;
-      const timeSorted = [start.time, end.time].toSorted((a, b) => a - b);
-      const freqSorted = [start.freq, end.freq].toSorted((a, b) => a - b);
-
-      const t0 = timeSorted[0] ?? 0;
-      const t1 = timeSorted[1] ?? 0;
-      const f0 = freqSorted[0] ?? 0;
-      const f1 = freqSorted[1] ?? 0;
-      if (t1 > t0 && f1 > f0) {
-        const zoomedWindow: SpectrogramWindow = {
-          time: { min: t0, max: t1 },
-          freq: { min: f0, max: f1 },
-        };
-        onViewportSave?.();
-        onViewportChange?.(adjustWindowToBounds(zoomedWindow, bounds));
-        // After zoom, switch to panning mode
-        onModeChange?.('panning');
-      }
-    }
-
-    isDragging = false;
-    dragStart = null;
-    zoomBox = null;
-  }
-
-  function handleMouseLeave() {
-    mousePos = null;
-    if (isDragging) {
-      isDragging = false;
-      dragStart = null;
-      zoomBox = null;
-    }
-  }
-
-  function handleDoubleClick(e: MouseEvent) {
-    if (readonly) return;
-    const { x, y } = getCanvasPos(e);
-    const pos = pixelsToPosition(x, y, canvasWidth, canvasHeight, viewport);
-    onSeek?.(pos.time);
-  }
-
-  function handleWheel(e: WheelEvent) {
-    if (readonly) return;
-    e.preventDefault();
-    const { x, y } = getCanvasPos(e);
-    const pos = pixelsToPosition(x, y, canvasWidth, canvasHeight, viewport);
-
-    const timeFrac = (viewport.time.max - viewport.time.min) * 0.05;
-    const freqFrac = (viewport.freq.max - viewport.freq.min) * 0.05;
-
-    const deltaX = e.deltaX;
-    const deltaY = e.deltaY;
-
-    let newViewport: SpectrogramWindow;
-
-    if (e.altKey) {
-      // Zoom toward cursor position
-      const factor = 1 + 4 * timeFrac * (e.shiftKey ? deltaX : deltaY) / (canvasWidth * timeFrac);
-      newViewport = adjustWindowToBounds(
-        zoomWindowToPosition(viewport, pos, Math.max(0.1, factor)),
-        bounds
-      );
-    } else if (e.ctrlKey) {
-      // Expand/contract viewport
-      newViewport = adjustWindowToBounds(
-        expandWindow(viewport, {
-          time: timeFrac * (e.shiftKey ? deltaX : deltaY) * 0.1,
-          freq: freqFrac * (e.shiftKey ? deltaY : deltaX) * 0.1,
-        }),
-        bounds
-      );
-    } else {
-      // Scroll time/frequency
-      newViewport = adjustWindowToBounds(
-        shiftWindow(viewport, {
-          time: timeFrac * (e.shiftKey ? deltaY : deltaX) * 0.1,
-          freq: -freqFrac * (e.shiftKey ? deltaX : deltaY) * 0.1,
-        }),
-        bounds
-      );
-    }
-
-    onViewportChange?.(newViewport);
-  }
-
-  function handleKeyDown(e: KeyboardEvent) {
-    // Only handle if canvas is focused and not in readonly mode
-    if (readonly) return;
-    if (document.activeElement !== canvas && document.activeElement !== containerEl) return;
-
-    switch (e.key.toLowerCase()) {
-      case 'x':
-        onModeChange?.('panning');
-        break;
-      case 'z':
-        onModeChange?.('zooming');
-        break;
-      case 'b':
-        // Back is handled by parent
-        break;
-    }
-  }
-
   onDestroy(() => {
     scheduler.dispose();
     // Chunk / image / retry-timer cleanup is handled by useChunkManager's
-    // own onDestroy — no need to duplicate it here.
+    // own onDestroy. Interaction cleanup is handled by
+    // useSpectrogramInteraction's own onDestroy. No duplication needed here.
   });
 </script>
 
-<svelte:window onkeydown={handleKeyDown} />
+<svelte:window onkeydown={interaction.handleKeyDown} />
 
 <div
   bind:this={containerEl}
@@ -589,23 +448,23 @@
     height={spectrogramSettings.height}
     class="spectrogram-canvas"
     class:cursor-crosshair={!readonly && interactionMode === 'idle'}
-    class:cursor-grab={!readonly && interactionMode === 'panning' && !isDragging}
-    class:cursor-grabbing={!readonly && interactionMode === 'panning' && isDragging}
+    class:cursor-grab={!readonly && interactionMode === 'panning' && !interaction.isDragging}
+    class:cursor-grabbing={!readonly && interactionMode === 'panning' && interaction.isDragging}
     class:cursor-crosshair-zoom={!readonly && interactionMode === 'zooming'}
     tabindex={readonly ? undefined : 0}
     aria-label="Spectrogram visualization"
-    onmousemove={handleMouseMove}
-    onmousedown={handleMouseDown}
-    onmouseup={handleMouseUp}
-    onmouseleave={handleMouseLeave}
-    ondblclick={handleDoubleClick}
-    onwheel={handleWheel}
+    onmousemove={interaction.handleMouseMove}
+    onmousedown={interaction.handleMouseDown}
+    onmouseup={interaction.handleMouseUp}
+    onmouseleave={interaction.handleMouseLeave}
+    ondblclick={interaction.handleDoubleClick}
+    onwheel={interaction.handleWheel}
   ></canvas>
 
-  {#if mousePos}
+  {#if interaction.mousePos}
     <div class="cursor-info">
-      <span>{mousePos.time.toFixed(3)}s</span>
-      <span>{(mousePos.freq / 1000).toFixed(1)} kHz</span>
+      <span>{interaction.mousePos.time.toFixed(3)}s</span>
+      <span>{(interaction.mousePos.freq / 1000).toFixed(1)} kHz</span>
     </div>
   {/if}
 </div>
