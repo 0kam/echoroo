@@ -75,7 +75,7 @@ SpectrogramViewer.svelte (parent, ~350-400 行)
 │   │   projectId: () => string
 │   │   spectrogramSettings: () => SpectrogramSettings
 │   │   viewport: () => SpectrogramWindow
-│   │   requestRedraw: () => void
+│   │   (※ `requestRedraw` は不採用 — chunks state 変化を親 \$effect が reactive に拾って redraw)
 │   ├─ State: chunks, chunkImages, retryTimers, tokenRefreshPromise
 │   ├─ Out: {
 │   │    get chunks(): SpectrogramChunk[]

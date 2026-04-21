@@ -86,8 +86,9 @@
     spectrogramSettings: () => spectrogramSettings,
     interactionMode: () => interactionMode,
     readonly: () => readonly,
-    // Wrap callbacks in closures so the hook always reads the current prop
-    // value (destructured $props bindings are frozen at destructure time).
+    // Wrap callback props so the hook always invokes the current prop value.
+    // The hook input is built once at init time; a bare `onViewportChange`
+    // would capture the value present at that moment, missing later updates.
     onViewportChange: (vp) => onViewportChange?.(vp),
     onViewportSave: () => onViewportSave?.(),
     onSeek: (time) => onSeek?.(time),
