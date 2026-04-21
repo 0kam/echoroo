@@ -1,13 +1,9 @@
 <script lang="ts">
   import { onDestroy, untrack } from 'svelte';
-  import { getSpectrogramUrl } from '$lib/api/recordings';
-  import { apiClient } from '$lib/api/client';
-  import type { SpectrogramWindow, SpectrogramPosition, SpectrogramChunk, InteractionMode } from '$lib/types/audio';
-  import { SPECTROGRAM_CHUNK_DURATION, SPECTROGRAM_CHUNK_BUFFER } from '$lib/types/audio';
+  import type { SpectrogramWindow, SpectrogramPosition, InteractionMode } from '$lib/types/audio';
   import {
     intersectWindows,
     intersectIntervals,
-    scaleInterval,
     pixelsToPosition,
     timeToPixel,
     adjustWindowToBounds,
@@ -15,11 +11,11 @@
     expandWindow,
     zoomWindowToPosition,
     getViewportPosition,
-    calculateChunkIntervals,
   } from '$lib/utils/viewport';
   import type { RecordingDetail } from '$lib/types/data';
   import type { SpectrogramSettings } from '$lib/types/audio';
   import { createSpectrogramScheduler } from './useSpectrogramScheduler';
+  import { useChunkManager } from './useChunkManager.svelte';
 
   interface Props {
     recording: RecordingDetail;
@@ -72,19 +68,24 @@
   let dragStart: { x: number; y: number; time: number; freq: number } | null = $state(null);
   let zoomBox: { start: SpectrogramPosition; end: SpectrogramPosition } | null = $state(null);
 
-  // Spectrogram chunk state
-  let chunks = $state<SpectrogramChunk[]>([]);
-  // One HTMLImageElement per chunk; src is set lazily based on viewport proximity
-  let chunkImages: HTMLImageElement[] = [];
+  // Spectrogram chunk state is owned by the chunk-manager hook.
+  // The hook reactively rebuilds on recording/settings changes and lazy-loads
+  // on viewport changes. Consumers (this parent) observe `chunkMgr.chunks`
+  // inside a redraw $effect below to request canvas redraws.
+  const chunkMgr = useChunkManager({
+    recording: () => recording,
+    projectId: () => projectId,
+    spectrogramSettings: () => spectrogramSettings,
+    viewport: () => viewport,
+  });
 
-  // Maximum number of retry attempts per chunk before giving up permanently
-  const MAX_CHUNK_RETRIES = 3;
-  // Delay (ms) before retrying a failed chunk to avoid hammering the server
-  const CHUNK_RETRY_DELAY_MS = 1500;
-  // Tracks setTimeout handles for pending retries, keyed by chunk index
-  const retryTimers: Map<number, ReturnType<typeof setTimeout>> = new Map();
-  // Guards against concurrent token refresh calls (thundering herd prevention)
-  let tokenRefreshPromise: Promise<void> | null = null;
+  /**
+   * Refresh the auth token and retry all chunks currently in the error state.
+   * Thin wrapper preserved for external callers that already use this export.
+   */
+  export function refreshTokenAndRetryErrors() {
+    return chunkMgr.refreshTokenAndRetryErrors();
+  }
 
   // RAF scheduler — coalesces redraw requests into one frame.
   // Initialized lazily so `drawAll` is hoisted by the time it's invoked.
@@ -94,269 +95,20 @@
     scheduler.request();
   }
 
-  // Build a spectrogram URL for a single chunk including the auth token as a
-  // query parameter. This allows the browser to load the image directly without
-  // a custom fetch wrapper, which avoids keeping all chunks in memory as blobs.
-  function buildChunkUrl(chunkBufferInterval: { min: number; max: number }): string {
-    const effectiveSamplerate = recording.samplerate;
-    const duration = recording.duration;
-    const n_fft = Math.round(spectrogramSettings.window_size * effectiveSamplerate);
-    const hop_length = Math.round(n_fft * (1 - spectrogramSettings.overlap));
-    const freq_max = effectiveSamplerate / 2;
-
-    const fullUrl = getSpectrogramUrl(projectId, recording.id, {
-      start: Math.max(0, chunkBufferInterval.min),
-      end: Math.min(duration, chunkBufferInterval.max),
-      n_fft,
-      hop_length,
-      freq_min: 0,
-      freq_max,
-      colormap: spectrogramSettings.cmap,
-      pcen: spectrogramSettings.pcen,
-      channel: 0,
-      width: 1200,
-      height: spectrogramSettings.height,
-    });
-
-    // Extract path + query for the Vite proxy (avoids cross-origin issues)
-    const parsed = new URL(fullUrl);
-    const pathWithQuery = parsed.pathname + parsed.search;
-
-    const token = apiClient.getAccessToken();
-    if (token) {
-      return `${pathWithQuery}&token=${encodeURIComponent(token)}`;
-    }
-    return pathWithQuery;
-  }
-
-  // Build all chunk metadata but do NOT start loading images yet.
-  // Loading is deferred to triggerLazyLoad() which checks viewport proximity.
-  function rebuildChunks() {
-    // Cancel all pending retry timers from the previous set
-    retryTimers.forEach((handle) => clearTimeout(handle));
-    retryTimers.clear();
-
-    // Cancel all pending image loads from the previous set
-    chunkImages.forEach((img) => {
-      img.onload = null;
-      img.onerror = null;
-      img.src = '';
-    });
-
-    const duration = recording.duration;
-
-    const intervals = calculateChunkIntervals(
-      duration,
-      spectrogramSettings.window_size,
-      spectrogramSettings.overlap,
-      SPECTROGRAM_CHUNK_DURATION,
-      SPECTROGRAM_CHUNK_BUFFER
-    );
-
-    chunks = intervals.map(({ index, interval, buffer }) => ({
-      index,
-      interval,
-      buffer,
-      isLoading: false,
-      isReady: false,
-      isError: false,
-      retryCount: 0,
-    }));
-
-    // Create image elements without setting src — loading is triggered by triggerLazyLoad()
-    chunkImages = intervals.map(({ index }) => {
-      const img = new Image();
-
-      img.onload = () => {
-        chunks = chunks.map((c) =>
-          c.index === index ? { ...c, isReady: true, isLoading: false, isError: false } : c
-        );
-        requestRedraw();
-      };
-
-      img.onerror = () => {
-        chunks = chunks.map((c) => {
-          if (c.index !== index) return c;
-          const newRetryCount = c.retryCount + 1;
-          return { ...c, isError: true, isLoading: false, isReady: false, retryCount: newRetryCount };
-        });
-        scheduleChunkRetry(index);
-        requestRedraw();
-      };
-
-      return img;
-    });
-
-    // Immediately load chunks near the current viewport
-    triggerLazyLoad();
-  }
-
-  /**
-   * Schedule a delayed retry for a chunk that failed to load.
-   * The retry is skipped if the chunk has exceeded MAX_CHUNK_RETRIES or if it
-   * is no longer near the viewport when the timer fires.
-   * A token refresh is attempted before retrying to handle expired JWT tokens.
-   * Concurrent refresh calls are deduplicated via tokenRefreshPromise.
-   */
-  function scheduleChunkRetry(index: number) {
-    // Clear any existing timer for this chunk
-    const existing = retryTimers.get(index);
-    if (existing !== undefined) {
-      clearTimeout(existing);
-    }
-
-    const chunk = chunks.find((c) => c.index === index);
-    if (!chunk || chunk.retryCount >= MAX_CHUNK_RETRIES) {
-      // Exceeded retry limit — leave the chunk in the permanent error state
-      return;
-    }
-
-    const handle = setTimeout(async () => {
-      retryTimers.delete(index);
-
-      // Refresh the auth token before retrying to handle expired JWT tokens.
-      // Multiple concurrent retries share a single refresh call to avoid
-      // hammering the auth endpoint (thundering herd prevention).
-      if (!tokenRefreshPromise) {
-        tokenRefreshPromise = apiClient.refreshToken().finally(() => {
-          tokenRefreshPromise = null;
-        });
-      }
-      try {
-        await tokenRefreshPromise;
-      } catch {
-        // Refresh failed — proceed with retryChunk which will use whatever
-        // token is currently available (may fail again and exhaust retries).
-      }
-
-      retryChunk(index);
-    }, CHUNK_RETRY_DELAY_MS);
-
-    retryTimers.set(index, handle);
-  }
-
-  /**
-   * Immediately retry loading a single chunk.
-   * If the chunk has already recovered or is being loaded, this is a no-op.
-   */
-  function retryChunk(index: number) {
-    const chunk = chunks.find((c) => c.index === index);
-    if (!chunk || chunk.isReady || chunk.isLoading) return;
-
-    // Only retry chunks that are near the current viewport
-    const loadZone = scaleInterval(viewport.time, 4);
-    if (!intersectIntervals(chunk.interval, loadZone)) return;
-
-    // Mark as loading and reset the image src to trigger a fresh request
-    chunks = chunks.map((c) =>
-      c.index === index ? { ...c, isLoading: true, isError: false } : c
-    );
-
-    const img = chunkImages[index];
-    if (img) {
-      img.src = '';
-      img.src = buildChunkUrl(chunk.buffer);
-    }
-  }
-
-  /**
-   * Refresh the auth token and then retry all chunks that are in the error
-   * state and have not yet exceeded the retry limit.  Called when a token
-   * refresh is needed before re-attempting spectrogram image loads.
-   */
-  async function refreshTokenAndRetryErrors() {
-    try {
-      await apiClient.refreshToken();
-    } catch {
-      // Refresh failed; leave chunks in their current state
-      return;
-    }
-
-    // After a successful refresh, immediately retry all eligible error chunks
-    chunks.forEach((chunk) => {
-      if (chunk.isError && chunk.retryCount < MAX_CHUNK_RETRIES) {
-        retryChunk(chunk.index);
-      }
-    });
-  }
-
-  // Expose for external use if needed (e.g., parent can call after auth update)
-  export { refreshTokenAndRetryErrors };
-
-  // Load chunks whose time interval overlaps with the viewport expanded by
-  // a factor of 4 (2 chunks ahead and behind), matching the old/ strategy.
-  // Chunks that are already loading or ready are skipped.
-  // Chunks in the error state are re-queued for a delayed retry if they
-  // have not yet exceeded MAX_CHUNK_RETRIES and are near the viewport.
-  function triggerLazyLoad() {
-    const loadZone = scaleInterval(viewport.time, 4);
-
-    chunks.forEach((chunk) => {
-      if (chunk.isLoading || chunk.isReady) return;
-
-      const near = intersectIntervals(chunk.interval, loadZone);
-      if (!near) return;
-
-      if (chunk.isError) {
-        // Schedule a retry if the chunk has not exceeded the limit and there
-        // is not already a timer pending for it.
-        if (chunk.retryCount < MAX_CHUNK_RETRIES && !retryTimers.has(chunk.index)) {
-          scheduleChunkRetry(chunk.index);
-        }
-        return;
-      }
-
-      // Mark as loading and set the image src
-      chunks = chunks.map((c) =>
-        c.index === chunk.index ? { ...c, isLoading: true } : c
-      );
-
-      const img = chunkImages[chunk.index];
-      if (img && !img.src) {
-        img.src = buildChunkUrl(chunk.buffer);
-      }
-    });
-  }
-
-  // Build spectrogram chunk images when recording or settings change.
-  // The dependency list is tightly controlled to avoid spurious rebuilds:
-  // only recording identity and spectrogram parameters trigger a full rebuild.
-  // rebuildChunks() reads/writes `chunks` internally, so we call it inside
-  // untrack() to prevent an infinite reactive loop.
-  $effect(() => {
-    // Track only the parameters that require a fresh set of chunk images
-    const _recordingId = recording.id;
-    const _windowSize = spectrogramSettings.window_size;
-    const _overlap = spectrogramSettings.overlap;
-    const _cmap = spectrogramSettings.cmap;
-    const _pcen = spectrogramSettings.pcen;
-    const _height = spectrogramSettings.height;
-
-    // Suppress unused-variable warnings — these are read only to register deps
-    void _recordingId; void _windowSize; void _overlap; void _cmap; void _pcen; void _height;
-
-    untrack(() => rebuildChunks());
-  });
-
-  // When the viewport moves, trigger lazy loading for newly visible chunks.
-  // This is intentionally a separate effect so it does not cause a full rebuild.
-  // triggerLazyLoad() reads/writes `chunks`, so we untrack to avoid a loop.
-  $effect(() => {
-    const _viewport = viewport;
-    void _viewport;
-    untrack(() => triggerLazyLoad());
-  });
-
-  // Redraw canvas on every render-relevant state change
+  // Redraw canvas on every render-relevant state change.
+  // Observes `chunkMgr.chunks` (a reactive getter from the hook) so that
+  // chunk image loads / errors / retries trigger a fresh draw.
   $effect(() => {
     // Read reactive dependencies
     const _vp = viewport;
     const _ct = currentTime;
     const _mp = mousePos;
     const _zb = zoomBox;
-    const _chunks = chunks;
+    const _chunks = chunkMgr.chunks;
     const _mode = interactionMode;
-    void _vp; void _ct; void _mp; void _zb; void _chunks; void _mode;
+    const _w = canvasWidth;
+    const _h = canvasHeight;
+    void _vp; void _ct; void _mp; void _zb; void _chunks; void _mode; void _w; void _h;
     requestRedraw();
   });
 
@@ -389,8 +141,8 @@
     const fullFreq: SpectrogramWindow = { time: viewport.time, freq: { min: 0, max: maxFreq } };
     void fullFreq;
 
-    chunks.forEach((chunk, idx) => {
-      const img = chunkImages[idx];
+    chunkMgr.chunks.forEach((chunk, idx) => {
+      const img = chunkMgr.chunkImages[idx];
       if (!img) return;
 
       const overlap = intersectIntervals(chunk.interval, viewport.time);
@@ -818,16 +570,8 @@
 
   onDestroy(() => {
     scheduler.dispose();
-    // Cancel all pending retry timers
-    retryTimers.forEach((handle) => clearTimeout(handle));
-    retryTimers.clear();
-    // Clear all image sources to cancel any pending network requests
-    chunkImages.forEach((img) => {
-      img.onload = null;
-      img.onerror = null;
-      img.src = '';
-    });
-    chunkImages = [];
+    // Chunk / image / retry-timer cleanup is handled by useChunkManager's
+    // own onDestroy — no need to duplicate it here.
   });
 </script>
 
