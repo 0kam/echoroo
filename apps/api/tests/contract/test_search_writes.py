@@ -1299,20 +1299,35 @@ class TestRerunSession:
         # disturb other commits in the test environment. The target is the
         # AsyncSession class method, which is what the route's dependency-
         # injected session uses.
-        with patch(
-            "sqlalchemy.ext.asyncio.AsyncSession.commit",
-            new_callable=AsyncMock,
-            side_effect=RuntimeError("simulated commit failure"),
+        #
+        # ASGITransport propagates app exceptions to the test (httpx 0.28+
+        # default raise_app_exceptions=True). Starlette's BaseHTTPMiddleware
+        # wraps the RuntimeError in an anyio TaskGroup ExceptionGroup before
+        # it surfaces here, so we catch both shapes rather than assert on an
+        # HTTP 500. The ordering contract is pinned by the mock-call
+        # assertions below.
+        with (
+            patch(
+                "sqlalchemy.ext.asyncio.AsyncSession.commit",
+                new_callable=AsyncMock,
+                side_effect=RuntimeError("simulated commit failure"),
+            ),
+            pytest.raises((RuntimeError, BaseExceptionGroup)) as exc_info,
         ):
-            resp = await client.put(
+            await client.put(
                 f"{_search_base(test_project_id)}/sessions/{completed_session.id}/rerun",
                 headers=auth_headers,
                 data={"metadata": metadata},
                 files={"source_0": ("source_0.wav", wav_bytes, "audio/wav")},
             )
 
-        # The simulated RuntimeError propagates through FastAPI as a 500.
-        assert resp.status_code == 500
+        # Unwrap any ExceptionGroup layers and confirm the simulated commit
+        # failure is what actually surfaced.
+        raised = exc_info.value
+        while isinstance(raised, BaseExceptionGroup) and raised.exceptions:
+            raised = raised.exceptions[0]
+        assert isinstance(raised, RuntimeError)
+        assert "simulated commit failure" in str(raised)
 
         # Old reference-audio keys must be preserved: delete_object must NOT
         # have been called on any of them.
