@@ -1,486 +1,304 @@
-# P2-B: SpectrogramViewer.svelte 分割プラン (v3)
+# P2-B: AnnotationEditor.svelte 分割プラン (v3)
 
-対象: `apps/web/src/lib/components/audio/SpectrogramViewer.svelte` (925 行)
-準備済: Playwright smoke test (`0ec0660b`), RAF scheduler 抽出 (`3a22d9ad`)
-目標: 3 モジュール抽出で parent を ~350-400 行に縮小。behavior 完全保持。
+対象: `apps/web/src/lib/components/annotation-sets/AnnotationEditor.svelte` (768 行)
+準備: Playwright smoke test **未整備** — Step 0 で先行整備
+目標: 2 モジュール抽出で parent を ~400 行に縮小。behavior 完全保持。
+
+SpectrogramViewer 分割 (plan v3.1 で完了) のパターン踏襲:
+- hook = `.svelte.ts` + getter 渡し (`() => value`) で reactivity 維持
+- callback props は `(arg) => prop?.(arg)` で wrap
+- hook 内部に `disposed` フラグ + `dispose()` export で多重防御
+- Step 0 で Playwright smoke 先行、分割は behavior-preserving
+- **DOM ref は親所有** (`bind:this` は親側)、hook には `containerEl: () => HTMLElement | null` getter で渡す (Spectrogram の `canvas: () => canvas` パターン)
 
 **v2 改訂ポイント (Codex 1st review):**
-- 可変入力は**全て getter `() => value`** で渡す
-- 分割順序を **ChunkManager → Interaction → Canvas** に変更
-- **Step 0 (事前 PR)** を追加: 型契約、E2E 追加、`rebuildChunks` 一本化
-- `dispose()` 契約を明示
-- scheduler は Step 3 で Canvas 子に移管
+- **keydown 購読は Step 1 開始時点から親統一に一本化** (v1 の「Escape=Draft hook / Delete=Mutation hook」案は中間コミットで仕様ブレのため破棄)
+- **readonly 検証を Step 0 必須ケースに昇格** (hook の `isDisabled` 入力が挙動を変える以上、optional 扱いは不可)
+- **overlay DOM ref は親所有** (`let overlayEl = $state()` を親に残し、Draft hook には `overlayEl: () => HTMLDivElement | null` を getter で渡す)
+- **`pickSpecies` の分岐は親で行う** (hook の action API は `createFromDraft(range, speciesId)` / `updateSpeciesOf(annotationId, speciesId)` を分離公開、親の `pickSpecies(speciesId)` wrapper が `draftRange` / `selectedAnnotationId` を見て dispatch)
+- **`onCreated` callback に stale-segment ガード** (呼び出し時点で `segmentId` が一致するかを hook 内で再確認してから発火)
 
-**v3 改訂ポイント (Codex 2nd review):**
-- **`requestRedraw` callback を廃止方針で確定** — `chunks` props 駆動の Canvas `$effect` に redraw を一本化。scheduler の実 API は `request()` 引数なしなので `scheduler.request(drawAll)` 等の擬似シグネチャを plan から除去
-- **Canvas resize → redraw 漏れ防止** — Canvas 子の redraw `$effect` 依存に `canvasWidth` / `canvasHeight` を明示的に含める
-- **Step 0 E2E を 2 件強化** — ① readonly 検証用 fixture route を追加（既存画面に readonly=true のマウント先が無い）② `rebuildChunks` 二重実行の回帰を HTTP リクエスト数 assert で自動検知
-- **hook に `disposed` フラグを導入** — dispose 後の async callback（token refresh 待機中の timer、image onload/onerror、retryChunk 継続）を早期 return でガード
-- **canvas ref 方式は `bind:this` を採用** — `{@attach}` は codebase に前例なし、利得小
+**v3 改訂ポイント (Codex Step 0 review):**
+- **純粋 refactor に徹する (Option A 確定)**: 現行 AnnotationEditor は `isReadonly` を **バナー表示のみ** で使用し、drag/mutation handler に guard を持たない。Step 1 で Draft hook から **`isDisabled` 入力を削除**し、readonly 抑止はバナー継続。readonly で drag/mutation を no-op にする UX 改善は **別 PR** で実施 (Option B)。
+  - 理由: Step 0 spec (test #9) は現行挙動 (banner/badge/button 状態) をアサートしており、isDisabled を追加すると挙動変更になり refactor の純度が落ちる
+  - Test #9 は behavior-preserving な regression 検知として機能する (refactor 前後で同じ挙動を維持)
+- **Seed 再利用時の editable state リセット**: Playwright spec の `beforeAll` で既存 `e2e-annotation-editor-*` set を再利用する場合、editable segment に前回残した annotations / is_empty フラグを**ハードリセット**する (annotations 全 DELETE + segment PATCH で status='unannotated', is_empty=false)。ローカル再実行の決定性確保
 
-**v3.1 補足 (Codex 3rd review を反映):**
-- **`InteractionMode` は `'idle' | 'panning' | 'zooming'` の 3 値**（当初想定した 'pan' / 'zoom-time' / 'zoom-box' ではない）
-- **`B` キーは viewport history back 操作**（mode change ではない）。対応するのは parent の `handleViewportBack()` で、Interaction hook 側ではなく親で持つ
-- **`onViewportSave` は引数なし `() => void`**（現行実装に統一）
-- fixture route (`/__test__/spectrogram-readonly`) には `+page.server.ts` の dev/test guard を実装済み
+## 1. 現状マップ (Explore SSA 調査結果)
 
----
+### 1.1 Props / 子構成
+- **Props**: `{projectId, setId, segmentId}` のみ (3 つの route param)
+- **子**: SegmentNavigator (271), AnnotationList (141), SpeciesPalette (239), NotesPanel (128), ClipSpectrogramPlayer
+- **親**: `/projects/[id]/annotation-sets/[setId]/annotate/[segmentId]/+page.svelte` (`{#key segmentId}` で再マウント)
 
-## 1. 現状マップ
+### 1.2 状態 (所有権別)
+| カテゴリ | 変数 | 用途 |
+|---|---|---|
+| Draft | `draftRange`, `isDraggingOverlay`, `dragStartX`, `dragCurrentX`, `overlayEl` | ドラッグ選択 → 時間範囲 |
+| Selection | `selectedAnnotationId` | 既存 annotation 選択（draft と排他） |
+| DOM ref | `spectrogramContainerEl` | 未使用（削除候補） |
 
-### State（所有権別）
-| カテゴリ | 変数 | Line | 用途 |
-|---|---|---|---|
-| Canvas refs | `canvas`, `containerEl` | 59-60 | DOM 参照 |
-| Canvas size | `canvasWidth`, `canvasHeight` | 64-65 | viewport 計算 |
-| Interaction | `mousePos`, `isDragging`, `dragStart`, `zoomBox` | 68-73 | マウス状態 |
-| Chunk | `chunks`, `chunkImages`, `retryTimers`, `tokenRefreshPromise` | 76-87 | 画像ロード管理 |
-| Scheduler | `scheduler` (既抽出) | 91 | RAF coalescing |
+### 1.3 $derived
+- Query data: `setDetail` / `segment` / `recording` / `segmentItems`
+- Selection: `selectedAnnotation` / `currentIndex` / `hasPrevious` / `hasNext`
+- Clip: `clipStart` / `clipEnd` / `clipDuration`
+- Mode: `isReadonly` (`status === 'annotated' | 'skipped'`)
+- Geometry: `dragPreviewLeft` / `dragPreviewWidth` (% 表示)
+- Mutation: `isBusy` (7 mutations の OR)
+- Nav: `backHref`
 
-### 関数（3 モジュール別）
-**A. ChunkManager (~180 行)**
-- `buildChunkUrl` L100-130 / `rebuildChunks` L134-192 / `scheduleChunkRetry` L201-236
-- `retryChunk` L242-260 / `refreshTokenAndRetryErrors` L267-281 / `triggerLazyLoad` L291-319
-- Effect: L326-339 (recording/settings → rebuild), L344-348 (viewport → lazyLoad)
-- **現行バグ**: `onMount` (L819) と `$effect` (L326) が両方 `rebuildChunks()` を呼び初期二重実行
+### 1.4 $effect (3 箇所)
+- L136-141: segmentId 変更で draftRange + selectedAnnotationId クリア
+- L206-213: window `mousemove` / `mouseup` 購読 (ドラッグ)
+- L477-478: window `keydown` 購読 (Escape=キャンセル, Delete=削除)
 
-**B. Canvas (~200 行)**
-- `drawAll` L372-384 / `drawSpectrogram` L386-473 / `drawPlayCursor` L475-486
-- `drawMouseCrosshair` L488-510 / `drawZoomBox` L512-544 / `drawTimeAxis` L546-596
-- `drawFreqAxis` L598-648 / `formatAxisNum` L650-655
-- Effect: L351-361 (state → requestRedraw), L364-370 (size sync)
+### 1.5 Geometry helpers (L161-227)
+- `clientXToTime(clientX)` → 絶対秒。`overlayEl.getBoundingClientRect()` + `clipStart` + `clipDuration`
+- `timeToPercent(t)` → % 位置
+- **時間表現**: `draftRange` は**絶対**秒。API body は **segment 相対**秒 → commit 時に `- clipStart` 変換 (L326 `pickSpecies`)
 
-**C. Interaction (~150 行)**
-- `getCanvasPos` L661-668 / `handleMouseMove` L670-696 / `handleMouseDown` L698-710
-- `handleMouseUp` L712-739 / `handleMouseLeave` L741-748 / `handleDoubleClick` L750-755
-- `handleWheel` L757-799 / `handleKeyDown` L801-817
+### 1.6 Mutations (7 個)
+| 名前 | API | invalidate key |
+|---|---|---|
+| `createAnnotationMutation` | `createAnnotation(segmentId, body)` | segment, set |
+| `updateAnnotationSpeciesMutation` | `updateAnnotation(id, {species_id})` | segment |
+| `deleteAnnotationMutation` | `deleteAnnotation(id)` | segment, set |
+| `updateSegmentMutation` | `updateSegment(segmentId, {...})` | segment, set, segments |
+| `addPaletteMutation` | `addPalette(setId, {species_id})` | set |
+| `createSegmentNoteMutation` | `createSegmentNote(segmentId, body)` | segment |
+| `createAnnotationNoteMutation` | `createAnnotationNote(annotationId, body)` | segment |
 
-### Callers（props 形状は一切変えない）
-- `apps/web/src/lib/components/audio/ClipSpectrogramPlayer.svelte:10`
-- `apps/web/src/routes/(app)/projects/[id]/recordings/[recordingId]/+page.svelte:9`
+- `isBusy = $derived(...7 .isPending の OR)`
+- `onError`: 全て `toasts.error(...)` 表示。**楽観更新なし、rollback なし** (invalidate re-fetch のみ)
 
----
+### 1.7 Action functions (mutation 呼出 wrapper)
+- `pickSpecies(speciesId)` — draft があれば create、selectedAnnotation があれば update
+- `onDeleteAnnotation(id)` — confirm → delete
+- `markNoVocalization()` / `clearNoVocalization()` — updateSegment
+- `addSpeciesToPalette(speciesId)` — addPalette
+- `addSegmentNote(content, isIssue)` — createSegmentNote
+- `addAnnotationNote(content, isIssue)` — createAnnotationNote
+- Navigation: `navigatePrevious/Next/skipAndNext` — `goto()`（mutation 非依存）
 
-## 2. 分割後のアーキテクチャ
+### 1.8 SpectrogramViewer との関係
+**独立**。ClipSpectrogramPlayer は自前で viewport 所有、AnnotationEditor は **pan/zoom 同期なし**。`clipStart`/`clipEnd` は segment メタから取得、overlay div は視覚的に spectrogram の上に重なるが座標系は独立。
 
-```
-SpectrogramViewer.svelte (parent, ~350-400 行)
-├─ Owns: canvas ref, containerEl ref, canvasWidth, canvasHeight
-├─ Template: <canvas bind:this={canvas} on:mousedown={interaction.handleMouseDown} ... />
-│   ↑ canvas element と event binding は **parent に残す**（DOM 境界越え最小化）
-│
-├─ useChunkManager.svelte.ts (~180 行) [Step 1]
-│   ├─ Input (all getter):
-│   │   recording: () => RecordingDetail
-│   │   projectId: () => string
-│   │   spectrogramSettings: () => SpectrogramSettings
-│   │   viewport: () => SpectrogramWindow
-│   │   (※ `requestRedraw` は不採用 — chunks state 変化を親 \$effect が reactive に拾って redraw)
-│   ├─ State: chunks, chunkImages, retryTimers, tokenRefreshPromise
-│   ├─ Out: {
-│   │    get chunks(): SpectrogramChunk[]
-│   │    get chunkImages(): HTMLImageElement[]
-│   │    refreshTokenAndRetryErrors(): Promise<void>
-│   │    dispose(): void
-│   │ }
-│   ├─ Internal: onDestroy で全 retry timer + image.onload/onerror クリア
-│   └─ Effects: rebuild on (recording.id, settings), lazyLoad on viewport
-│
-├─ useSpectrogramInteraction.svelte.ts (~150 行) [Step 2]
-│   ├─ Input (all getter):
-│   │   canvas: () => HTMLCanvasElement | undefined
-│   │   containerEl: () => HTMLDivElement | undefined
-│   │   viewport: () => SpectrogramWindow
-│   │   bounds: () => SpectrogramWindow
-│   │   canvasWidth: () => number
-│   │   canvasHeight: () => number
-│   │   spectrogramSettings: () => SpectrogramSettings
-│   │   interactionMode: () => InteractionMode
-│   │   readonly: () => boolean
-│   │   onViewportChange, onViewportSave, onSeek, onModeChange (値で良い — 不変 callback)
-│   ├─ State: mousePos, isDragging, dragStart, zoomBox
-│   ├─ Out: {
-│   │    get mousePos(), get zoomBox(), get isDragging()
-│   │    handleMouseMove, handleMouseDown, handleMouseUp, handleMouseLeave,
-│   │    handleDoubleClick, handleWheel, handleKeyDown
-│   │    dispose(): void
-│   │ }
-│   └─ 各 handler は canvas() / containerEl() を呼び出して undefined ガード
-│
-└─ SpectrogramCanvas.svelte (~200 行) [Step 3]
-    ├─ Owns: scheduler (parent から引っ越し)
-    ├─ Props (getter or $bindable):
-    │   canvas: $bindable<HTMLCanvasElement | undefined>  // parent が bind:this で受ける
-    │   canvasWidth, canvasHeight, viewport, bounds, chunks, chunkImages,
-    │   currentTime, mousePos, zoomBox, interactionMode, spectrogramSettings
-    ├─ Template: <canvas bind:this={canvas} class={...} />
-    │   ↑ canvas element は子に移動、event handler は親の markup 側で `{@attach}` or `onmount`
-    │   で bind（Step 3 で詳細設計。Svelte 5 の event forwarding 方式を採用）
-    ├─ Pure render (no state mutation)
-    └─ Effects: $effect.pre で size sync → $effect で scheduler.request()
-```
+### 1.9 既存テスト
+- **Playwright**: ゼロ（関連 e2e なし）
+- **vitest**: ゼロ
+- 直近コミット: `5128c575 feat(web): add annotation set management and editor (Phases B + C)` 一発リリース、follow-up なし
 
-### Data flow
-- Parent が `canvas` ref を所有（`bind:this` は Canvas 子にしても親に回送）
-- `useChunkManager` が `chunks/chunkImages` を所有、parent は getter で読み、子へ pass
-- `useSpectrogramInteraction` が `mousePos/zoomBox` を所有、parent は getter で読み、子へ pass
-- **Redraw は reactive props 駆動** — Step 3 の SpectrogramCanvas 子 `$effect` が `chunks` / `mousePos` / `zoomBox` / `viewport` / `currentTime` / `interactionMode` / `canvasWidth` / `canvasHeight` を観測して `scheduler.request()` 発火。明示的 `requestRedraw` callback は廃止
-- Step 1/2 中は parent 側 `$effect` が chunks / mousePos / zoomBox 等を観測して `scheduler.request()` を呼ぶ（既存挙動と等価）
+## 2. 目標ファイル構成
 
----
+| ファイル | 行数目安 | 役割 |
+|---|---|---|
+| `AnnotationEditor.svelte` | ~400 | queries + 子パネル組み立て + 2 hook wiring |
+| `useAnnotationDraft.svelte.ts` (新規) | ~180 | draft state + geometry + drag handlers (keydown は親) |
+| `useAnnotationMutations.svelte.ts` (新規) | ~200 | 7 mutations + isBusy + 高レベル actions |
+| `types.ts` (新規) | ~60 | Draft / Mutation hook API 契約 |
 
-## 3. Step 0: 事前 PR（必須、着手前）
+## 3. 分割の設計判断
 
-**目的**: 分割本番で頻発するであろう runes / event / race 系の足元固め。
+### 3.1 Draft hook の境界
+**含む:**
+- `draftRange`, `isDraggingOverlay`, `dragStartX`, `dragCurrentX`
+- `clientXToTime` / `timeToPercent` geometry
+- `dragPreviewLeft` / `dragPreviewWidth` derived
+- `handleOverlayMouseDown` / `handleWindowMouseMove` / `handleWindowMouseUp`
+- window mousemove/mouseup 購読の `$effect`
+- `clear()` export (外部からキャンセル、Escape/selection/segmentId 変更時に親が呼ぶ)
+- `disposed` フラグ + `dispose()` export
 
-### 0-1. `rebuildChunks` 初期二重実行の解消
-- 現状: `onMount` L819 と `$effect` L326 が両方発火し初期 2 回走る
-- 対処: `$effect` 一本に統一（`untrack` 済み、初回も確実に走る）。`onMount` の呼出を削除
-- **検証**: Playwright で `page.on('request')` により録音ページ初回ロード時の `/spectrogram` エンドポイント呼出数を収集し、同一 chunk が 2 回 fetch されないことを assert（手動 Network 観察ではなく自動回帰検知）
+**含まない:**
+- commit (mutation 呼出) → 親が `mutations.actions.createFromDraft(draft.draftRange, speciesId)` を呼ぶ
+- keydown 購読 (Escape も親で処理して `draft.clear()` を呼ぶ)
+- DOM ref 管理 (overlay element は親で `bind:this`、hook には getter `overlayEl: () => HTMLDivElement | null` で渡す)
+- 絶対 ↔ 相対変換は **Draft 内では行わない**。Draft は絶対秒の `draftRange` を公開、Mutation 側で相対変換。
 
-### 0-2. Hook API 型契約を先行導入
-- `apps/web/src/lib/components/audio/types.ts` (新規) に下記インターフェース定義:
-  - `ChunkManagerInput`, `ChunkManagerApi`
-  - `SpectrogramInteractionInput`, `SpectrogramInteractionApi`
-  - `SpectrogramCanvasProps`
-- まだ実装は移動せず、**型を先行コミット**。これで Step 1-3 の実装は型に合わせるだけ
+**入力 (getter):**
+- `overlayEl: () => HTMLDivElement | null` (DOM ref、親所有)
+- `clipStart: () => number`, `clipDuration: () => number` (geometry 計算用)
 
-### 0-3. E2E smoke test 追加（分割前の回帰検出力確保）
-`apps/web/tests/e2e/spectrogram.spec.ts` に以下ケースを追加:
-- Ctrl+wheel で周波数ズーム、Alt+wheel で時間ズーム、素の wheel で時間 pan
-- `X` → `'panning'`, `Z` → `'zooming'` モード切替（`InteractionMode` は `'idle' | 'panning' | 'zooming'` の 3 値）
-- `B` → `handleViewportBack()`（モード変更ではなく viewport を履歴スタックから戻す操作）
-- `zooming` モードで wheel / ドラッグ → viewport が拡大縮小に収束
-- **chunk リクエスト重複なし** (0-1 検証、`page.on('request')` で `/spectrogram` 呼出を集計)
+**出力 (reactive object):** `{ draftRange, isDragging, dragPreview: {left, width}, handlers: {onMouseDown}, clear, dispose }`
 
-#### readonly 検証用 fixture route
-- `apps/web/src/routes/(app)/__test__/spectrogram-readonly/+page.svelte` (新規、dev / test 環境のみ exposed)
-- 固定 recording / viewport / bounds を注入し `readonly={true}` で `<SpectrogramViewer />` をマウント
-- Playwright で pan / zoom / dblclick を実行し viewport 無変更 + `onViewportChange` 未発火を確認
-- `vite.config.ts` で prod ビルドから除外、または `{#if browser && dev}` ガード
+> **v3 で `isDisabled` 入力を削除**: readonly 時も drag は発火する (現行挙動)。readonly での no-op 化は別 PR (Option B) で実施。
 
-3 連続 pass を確認してからコミット。
+### 3.2 Mutation hook の境界
+**含む:**
+- 7 `createMutation()` 定義
+- `isBusy` derived
+- **明示的 action 群** (親が dispatch する):
+  - `createFromDraft(range: {start, end}, speciesId)` — 絶対秒 range → 相対秒に変換して createAnnotation
+  - `updateSpeciesOf(annotationId, speciesId)` — updateAnnotation
+  - `deleteAnnotation(id)` — confirm → delete
+  - `markEmpty()` / `clearEmpty()` — updateSegment
+  - `addSpeciesToPalette(speciesId)` — addPalette
+  - `addSegmentNote(content, isIssue)`
+  - `addAnnotationNote(annotationId, content, isIssue)` — id を明示引数 (selectedAnnotationId の reactive 依存を持たせない)
+- `onCreated(annotationId: string)` callback export — create 成功時、hook 内で stale-segment ガード (呼出時 `segmentId()` 一致確認) 後に発火
+- Invalidation 戦略（現行通り）
+- Error toast (現行通り)
+- `disposed` フラグ + `dispose()` export
 
-### Step 0 完了ゲート
-- Gate 1: `npm run check` パス
-- Gate 2: `npm run test` + 追加 E2E 3 連続 pass
-- Gate 3: 手動 Playwright で録音ページを開き、chunk リクエスト波・readonly 動作・modifier wheel・キー切替を目視確認
-- 単独 commit（型・テスト・onMount 削除の 3 commit に分割可）
+**含まない:**
+- Navigation (`goto` は親で、mutation 非依存)
+- `pickSpecies` のような分岐ロジック (親の wrapper で `draftRange` / `selectedAnnotationId` を見て `createFromDraft` or `updateSpeciesOf` を選ぶ)
+- keydown 購読 (親で Delete を受けて `mutations.actions.deleteAnnotation(selectedAnnotationId)` を呼ぶ)
 
----
+**入力 (getter):**
+- `segmentId: () => string`, `setId: () => string`
+- `clipStart: () => number`, `clipDuration: () => number` (createFromDraft の相対変換用)
+- `onCreated?: (annotationId: string) => void` (親の selection 同期 callback、optional)
 
-## 4. Step 1: `useChunkManager.svelte.ts` 抽出
+**出力:** `{ isBusy, actions: {createFromDraft, updateSpeciesOf, deleteAnnotation, markEmpty, clearEmpty, addSpeciesToPalette, addSegmentNote, addAnnotationNote}, dispose }`
 
-**ゴール**: chunks / chunkImages / retry / token refresh を hook 化、parent は getter で読む。
+### 3.3 親側に残る責務
+- 4 x `createQuery()` (set / segment / recording / segmentItems)
+- Navigation (`navigatePrevious/Next/skipAndNext`)
+- 子パネルへの props 組み立て
+- `overlayEl` の `bind:this` (DOM ref 所有)
+- `selectedAnnotationId` の `$state` 管理 (両 hook が参照するので親が自然)
+- `draftRange` と `selectedAnnotationId` の**相互排他ロジック**:
+  - annotation select → `draft.clear()` + `selectedAnnotationId = id`
+  - create 成功 → `onCreated(id)` callback で `selectedAnnotationId = id` (draft は hook 内で自動クリア or 親で明示 clear)
+- segmentId 変更時の reset `$effect` (`draft.clear()` + `selectedAnnotationId = null`)
+- `isReadonly` 判定 (バナー表示 + 子パネル isBusy 伝播のみ、hook へは渡さない)
+- **`pickSpecies(speciesId)` wrapper** (draft があれば `createFromDraft`、selectedAnnotation があれば `updateSpeciesOf` を dispatch)
+- **window keydown 購読** (Escape → `draft.clear()` + `selectedAnnotationId = null`、Delete → `selectedAnnotationId` があれば `mutations.actions.deleteAnnotation(id)`)
 
-### 4-1. 実装仕様
+### 3.4 Keydown 処理の分担 — **親統一 (最終方針)**
+Codex review で確定。hook 側の keydown 購読は **両方とも持たない**。
+- 親の `$effect` 1 箇所で `window.addEventListener('keydown', ...)` 購読
+- **IME / 入力中ガード (必須)**: handler 冒頭で `event.target` が `INPUT` / `TEXTAREA` / `contentEditable` 要素のとき早期 return。現行実装 (L463-478) にもあるので必ず保持
+- Escape: `draft.clear(); selectedAnnotationId = null;`
+- Delete / Backspace: `if (selectedAnnotationId) mutations.actions.deleteAnnotation(selectedAnnotationId);`
+- cleanup で removeEventListener
+
+### 3.5 `dispose()` 呼び出し点
+両 hook とも `disposed` フラグ + `dispose()` export を持つ (Spectrogram パターン踏襲)。**親の `onDestroy` で明示呼び出し**:
 ```ts
-export interface ChunkManagerInput {
-  recording: () => RecordingDetail;
-  projectId: () => string;
-  spectrogramSettings: () => SpectrogramSettings;
-  viewport: () => SpectrogramWindow;
-}
-
-export interface ChunkManagerApi {
-  readonly chunks: SpectrogramChunk[];
-  readonly chunkImages: HTMLImageElement[];
-  refreshTokenAndRetryErrors(): Promise<void>;
-  dispose(): void;
-}
-
-export function useChunkManager(input: ChunkManagerInput): ChunkManagerApi;
-```
-
-- `recording()` / `spectrogramSettings()` を読む `$effect` で rebuild
-- `viewport()` を読む `$effect` で lazyLoad
-- **`requestRedraw` callback は持たない** — image onload/onerror は `chunks` state を更新するだけ。parent（Step 1/2）または Canvas 子（Step 3）の `$effect` が `chunks` を観測して `scheduler.request()` を呼ぶ
-- retry timer は Map で所持、`dispose()` で全クリア + `img.onload/onerror = null`
-- **`disposed` フラグを private state で持つ** — `dispose()` で `true` 化、以下の各入口で早期 return:
-  - image.onload / onerror callback
-  - `scheduleChunkRetry` の `setTimeout` callback
-  - `retryChunk()` 本体
-  - `refreshTokenAndRetryErrors()` の `await` 後
-  - `triggerLazyLoad()` 内の非同期 path
-- `onDestroy` を hook 内で呼び `dispose()` を実行
-
-### 4-2. parent 側（Svelte Viewer）
-```svelte
-const chunkMgr = useChunkManager({
-  recording: () => recording,
-  projectId: () => projectId,
-  spectrogramSettings: () => spectrogramSettings,
-  viewport: () => viewport,
-});
-
-export function refreshTokenAndRetryErrors() {
-  return chunkMgr.refreshTokenAndRetryErrors();
-}
-
-// Step 1 終了時点の redraw trigger（Step 3 で Canvas 子に移管）
-$effect(() => {
-  // reactive deps
-  chunkMgr.chunks; viewport; currentTime; mousePos; zoomBox; interactionMode;
-  scheduler.request();
+onDestroy(() => {
+  draft.dispose();
+  mutations.dispose();
 });
 ```
+hook 自身の `onDestroy` だと入れ子に注意 — hook は `.svelte.ts` なので Svelte component 文脈外、親 component が呼ぶ。
 
-- `drawSpectrogram` 等から `chunks` / `chunkImages` を参照する箇所は `chunkMgr.chunks` / `chunkMgr.chunkImages` に置換
-- 既存 export `refreshTokenAndRetryErrors` は thin wrapper で互換維持（callers 2 箇所は無変更）
+## 4. 実装ステップ
 
-### 4-3. 検証
-- Gate 1 + Gate 2（既存 + 0-3 で追加した E2E）3 連続 pass
-- Gate 3: `test1` 30 分録音で chunk ロード / リトライ / token refresh（わざと 401 誘発）を確認
-- 単独 commit: `refactor(web): extract chunk manager from SpectrogramViewer`
+### Step 0 — Playwright smoke 整備 (1 commit)
+**目的**: 分割前に regression 検知網を張る。
 
----
+**追加するテスト** (`apps/web/tests/e2e/annotation-editor.spec.ts`):
+1. ページマウント: `/projects/.../annotate/[segmentId]` で SegmentNavigator + overlay + ClipSpectrogramPlayer + AnnotationList + SpeciesPalette + NotesPanel が表示
+2. Draft 作成: overlay をドラッグ → draft preview (% bar) 表示
+3. Species pick で commit: SpeciesPalette のチップ click → API `POST /annotations` 発火 → AnnotationList に新規 item
+4. 既存 annotation 選択: AnnotationList の item click → `selectedAnnotationId` セット、draft クリア
+5. Escape: draft 表示中に Escape → draft クリア
+6. Delete: annotation 選択中に Delete + confirm → DELETE request → list から消える
+7. Mark empty: SegmentNavigator の「鳥の声なし」toggle → updateSegment PATCH
+8. SegmentNavigator Next/Prev: 遷移 → URL 変化 + `{#key segmentId}` で再マウント
+9. **Readonly 1 ケース** (Codex 指摘で追加): segment.status=`annotated` の segment を開き、ドラッグ/Escape/Delete/species pick が全て no-op、mutation が発火しないことを確認。fixture で seed 済み segment を利用。
 
-## 5. Step 2: `useSpectrogramInteraction.svelte.ts` 抽出
+**fixture 戦略:**
+- 実データ依存せず、test 用 annotation-set + segments を setup fixture で seed
+- auth は SpectrogramViewer test で確立した refresh_token 直接 + cookie 設定方式 (`apps/web/tests/e2e/spectrogram.spec.ts` 参照) を流用
+- **readonly 検証は実データ status seed 経由**。fixture route は作らない (SpectrogramViewer の readonly は prop 分岐ロジックがあったが AnnotationEditor の `isReadonly` は `segment.status` 由来で、status=annotated な segment を seed すれば実画面経路で検証可能)
 
-**ゴール**: mouse/wheel/keyboard handler を hook 化。**canvas 要素と event binding は parent に残す**（DOM 境界越えなし）。
+### Step 1 — `types.ts` + Draft hook 抽出 + keydown 親統一 (1 commit)
+- `types.ts` で `DraftHook`, `DraftHookInput`, `MutationHook`, `MutationHookInput` 型契約定義 (両方を先に宣言しておくと Step 2 で追従必要なし)
+- `useAnnotationDraft.svelte.ts` 新規、L161-227 + L206-213 の drag 処理を移動
+- AnnotationEditor.svelte:
+  - `overlayEl` は親に残す (`<div bind:this={overlayEl}>`)
+  - `const draft = useAnnotationDraft({ overlayEl: () => overlayEl, clipStart: () => clipStart, clipDuration: () => clipDuration, isDisabled: () => isReadonly })`
+  - **window keydown 購読を親で統一**: 既存の L477-478 を親の `$effect` に整理し、handler が `draft.clear()` / `selectedAnnotationId = null` / `onDeleteAnnotation(selectedAnnotationId)` を呼ぶ形に変更
+  - 未使用 `spectrogramContainerEl` を削除
+- `dragPreviewLeft` / `dragPreviewWidth` は `draft.dragPreview.left` / `.width`
+- E2E 9/9 green を維持して commit
 
-### 5-1. 実装仕様
-```ts
-export interface SpectrogramInteractionInput {
-  canvas: () => HTMLCanvasElement | undefined;
-  containerEl: () => HTMLDivElement | undefined;
-  viewport: () => SpectrogramWindow;
-  bounds: () => SpectrogramWindow;
-  canvasWidth: () => number;
-  canvasHeight: () => number;
-  spectrogramSettings: () => SpectrogramSettings;
-  interactionMode: () => InteractionMode;  // 'idle' | 'panning' | 'zooming'
-  readonly: () => boolean;
-  onViewportChange: (vp: SpectrogramWindow) => void;
-  onViewportSave?: () => void;             // no-argument callback
-  onSeek?: (time: number) => void;
-  onModeChange?: (mode: InteractionMode) => void;
-}
-
-export interface SpectrogramInteractionApi {
-  readonly mousePos: SpectrogramPosition | null;
-  readonly zoomBox: { start: ...; end: ... } | null;
-  readonly isDragging: boolean;
-  handleMouseMove(e: MouseEvent): void;
-  handleMouseDown(e: MouseEvent): void;
-  handleMouseUp(e: MouseEvent): void;
-  handleMouseLeave(): void;
-  handleDoubleClick(e: MouseEvent): void;
-  handleWheel(e: WheelEvent): void;
-  handleKeyDown(e: KeyboardEvent): void;
-  dispose(): void;
-}
-```
-
-- 全 getter は呼出時 evaluation、undefined ガード（特に `canvas()`）
-- `mousePos` / `zoomBox` / `isDragging` / `dragStart` は hook 内の `$state`
-- Redraw のフック: mousePos / zoomBox 変更時は parent 側の `$effect` が `chunkMgr.chunks` と一緒に観測して `scheduler.request()` を発火
-- **`handleKeyDown` の責務**:
-  - `X` → `onModeChange('panning')`
-  - `Z` → `onModeChange('zooming')`
-  - `B` は **hook では処理しない** — viewport history back は親の責務（history stack 管理が hook スコープ外）。親側 `handleKeyDown` / `svelte:window` で拾う既存構造を維持
-  - Interaction hook の `handleKeyDown` は `X` / `Z` のみ処理、それ以外は no-op
-
-### 5-2. parent 側
-```svelte
-const interaction = useSpectrogramInteraction({
-  canvas: () => canvas,
-  containerEl: () => containerEl,
-  viewport: () => viewport,
-  bounds: () => bounds,
-  canvasWidth: () => canvasWidth,
-  canvasHeight: () => canvasHeight,
-  spectrogramSettings: () => spectrogramSettings,
-  interactionMode: () => interactionMode,
-  readonly: () => readonly,
-  onViewportChange,
-  onViewportSave,
-  onSeek,
-  onModeChange,
-});
-
-// Markup は変更なし（canvas は parent 所有）
-<canvas
-  bind:this={canvas}
-  onmousemove={interaction.handleMouseMove}
-  onmousedown={interaction.handleMouseDown}
-  ...
-/>
-
-$effect(() => {
-  // reactive trigger — canvasWidth/Height も含める（resize 時 redraw 保証）
-  interaction.mousePos; interaction.zoomBox; interaction.isDragging;
-  chunkMgr.chunks;
-  viewport; currentTime; interactionMode;
-  canvasWidth; canvasHeight;
-  scheduler.request();
-});
-```
-
-### 5-3. 検証
-- Gate 1 + Gate 2（readonly / modifier wheel / X,Z,B キー / zoom 挙動を含む）3 連続 pass
-- Gate 3: 手動で pan / zoom-time / zoom-freq / dblclick seek / readonly / B による viewport back を一通り触る
-- 単独 commit: `refactor(web): extract interaction hook from SpectrogramViewer`
-
----
-
-## 6. Step 3: `SpectrogramCanvas.svelte` 抽出
-
-**ゴール**: 描画関数 8 個 + scheduler を子に移す。canvas 要素も子に移動、`bind:this` で親に露出。
-
-### 6-1. 実装仕様
-```svelte
-<!-- SpectrogramCanvas.svelte -->
-<script lang="ts">
-  interface Props {
-    canvas: HTMLCanvasElement | undefined;  // $bindable
-    canvasWidth: number;
-    canvasHeight: number;
-    viewport: SpectrogramWindow;
-    bounds: SpectrogramWindow;
-    chunks: SpectrogramChunk[];
-    chunkImages: HTMLImageElement[];
-    currentTime: number;
-    mousePos: SpectrogramPosition | null;
-    zoomBox: { start: ...; end: ... } | null;
-    interactionMode: InteractionMode;
-    spectrogramSettings: SpectrogramSettings;
-    // event forwarding
-    onmousemove?: (e: MouseEvent) => void;
-    onmousedown?: (e: MouseEvent) => void;
-    onmouseup?: (e: MouseEvent) => void;
-    onmouseleave?: (e: MouseEvent) => void;
-    ondblclick?: (e: MouseEvent) => void;
-    onwheel?: (e: WheelEvent) => void;
-    onkeydown?: (e: KeyboardEvent) => void;
+### Step 2 — Mutation hook 抽出 (1 commit)
+- `useAnnotationMutations.svelte.ts` 新規、7 mutations + 明示的 action functions + isBusy を移動
+- AnnotationEditor.svelte で `const mutations = useAnnotationMutations({ segmentId: () => segmentId, setId: () => setId, clipStart: () => clipStart, clipDuration: () => clipDuration, onCreated: (id) => { draft.clear(); selectedAnnotationId = id; } })`
+- **親の `pickSpecies(speciesId)` wrapper**:
+  ```ts
+  function pickSpecies(speciesId: string) {
+    if (draft.draftRange) {
+      mutations.actions.createFromDraft(draft.draftRange, speciesId);
+    } else if (selectedAnnotationId) {
+      mutations.actions.updateSpeciesOf(selectedAnnotationId, speciesId);
+    }
   }
-  let { canvas = $bindable(), ... }: Props = $props();
+  ```
+- `onCreated` の stale-segment ガード: hook 内で `if (segmentId() !== capturedSegmentIdAtMutateTime) return;` で発火抑止 (segmentId 変更後に前の segment の create が返ってきた場合のフェイルセーフ)
+- E2E 9/9 green を維持して commit
 
-  const scheduler = useSpectrogramScheduler(drawAll);
+### (行数目安)
+- Step 1 後: parent ~550 行 (draft 抽出分 ~180 + keydown 統一分 ~-10)
+- Step 2 後: parent ~400 行 (mutation 抽出分 ~200 + isBusy derived 整理分)
 
-  function drawAll() { ... }
-  function drawSpectrogram() { ... }
-  // ... 他 6 個
+## 5. 移行リスクと緩和
 
-  $effect.pre(() => {
-    if (!canvas) return;
-    canvas.width = canvasWidth;
-    canvas.height = canvasHeight;
-  });
+### 5.1 時間原点変換の責務境界
+- 親 / Draft / Mutation 3 箇所に散らすと混乱
+- **採用**: Draft は**絶対秒**で `draftRange` を公開。Mutation `pickSpecies` が `clipStart` getter を使って相対変換。
+- 親は変換を一切意識しない
+- **契約のテスト**: `pickSpecies` 呼出時に body が `time_start = draft.start - clipStart` になる unit level か E2E で検証
 
-  $effect(() => {
-    // reactive deps — canvasWidth/Height を含めることで resize 時 redraw 保証
-    viewport; currentTime; mousePos; zoomBox; chunks; interactionMode;
-    canvasWidth; canvasHeight;
-    scheduler.request();
-  });
+### 5.2 hook 間の相互作用
+- draft 作成 → selection クリア: 親の selection setter から `draft.clear()` 呼ばない（逆方向）。hook が annotation select event を知る必要なし。
+- annotation select → draft クリア: 親の `onSelectAnnotation` が `draft.clear()` + `selectedAnnotationId = id`
+- commit 成功 → selection = 新規 id + draft クリア: Mutation の `onCreated` callback で親が両方実行
 
-  onDestroy(() => scheduler.dispose());
-</script>
+### 5.3 Svelte 5 rune gotcha (SpectrogramViewer で学習済み)
+- hook 可変入力は**全て getter** (`() => T`)
+- callback prop は wrap (`(arg) => prop?.(arg)`) — init 時 bare 参照を掴まない
+- `$state_referenced_locally` 警告回避のため module top-level `void x` 禁止、`$effect` 内のみ
+- `$bindable<T>()` for overlay ref
 
-<canvas
-  bind:this={canvas}
-  class="spectrogram-canvas ..."
-  onmousemove={onmousemove}
-  onmousedown={onmousedown}
-  ...
-/>
+### 5.4 window event 購読の二重化
+- Draft (mousemove/mouseup) + 親 (keydown) の 2 系統に限定
+- 各 `$effect` の cleanup で確実に removeEventListener
+
+### 5.5 Query の所有権
+- `createQuery` を hook に入れると getContext の QueryClient が必要。親に残して hook には getter で渡す方が単純。
+- **採用**: Query は全て親。hook 入力は plain reactive getter のみ。
+
+### 5.6 mypy / typecheck 影響
+- BE 変更なし、FE のみ。`npm run check` で swelte-check + tsc。
+- 型契約 `types.ts` を先に書き、各 hook は実装前に interface 準拠を mypy 代わりに担保
+
+## 6. 検証 (Gate 1-4)
+
+- Gate 1: `npm run check` pass
+- Gate 2: `npm run test` は vitest 対象テストがなければ skip、Playwright は該当 spec がブラウザで **9/9 pass**
+- Gate 3: Playwright MCP で `/annotation-sets/[id]/annotate/[segmentId]` を開き、ドラッグ→species pick→list に反映を確認
+- Gate 4: console error 0
+
+## 7. コミット計画
+
+```
+(Step 0) test(web): add Playwright smoke for AnnotationEditor (9 tests, incl. readonly)
+(Step 1) refactor(web): extract annotation draft hook and centralize keydown in parent
+(Step 2) refactor(web): extract annotation mutation hook from AnnotationEditor
 ```
 
-### 6-2. parent 側
-```svelte
-<SpectrogramCanvas
-  bind:canvas
-  canvasWidth={canvasWidth}
-  canvasHeight={canvasHeight}
-  viewport={viewport}
-  bounds={bounds}
-  chunks={chunkMgr.chunks}
-  chunkImages={chunkMgr.chunkImages}
-  currentTime={currentTime}
-  mousePos={interaction.mousePos}
-  zoomBox={interaction.zoomBox}
-  interactionMode={interactionMode}
-  spectrogramSettings={spectrogramSettings}
-  onmousemove={interaction.handleMouseMove}
-  onmousedown={interaction.handleMouseDown}
-  onmouseup={interaction.handleMouseUp}
-  onmouseleave={interaction.handleMouseLeave}
-  ondblclick={interaction.handleDoubleClick}
-  onwheel={interaction.handleWheel}
-  onkeydown={interaction.handleKeyDown}
-/>
-```
+## 8. Codex レビュー結果サマリ (v2 反映済)
 
-- scheduler は子側で生成（`drawAll` と同居）、親は import を削除
-- Step 2 で parent に書いた redraw `$effect` は削除（子側の effect が props 変更を観測）
-- **ChunkManager から `requestRedraw` callback を完全に除去**（v3 方針確定）。image onload で `chunks` state 更新 → Canvas 子 `$effect` が props 経由で reactive に拾う → scheduler.request() 発火
+Codex 1st review (2026-04-22) で **NoGo → 3 点修正で Go**:
 
-### 6-3. 検証
-- Gate 1 + Gate 2 3 連続 pass
-- Gate 3: 描画フレーム落ちがないか（scheduler 移動の影響）、canvas resize（window resize）が即時反映されるかを手動確認
-- 単独 commit: `refactor(web): extract SpectrogramCanvas component`
+1. ✅ keydown 責務の一本化: Step 1 から親統一に確定 (§3.4)
+2. ✅ readonly 検証ケース追加: Step 0 の test #9 として必須化 (§4 Step 0)
+3. ✅ overlay ref の親所有: `bind:this` は親、hook は getter 受取 (§3.1)
 
----
+追加で Codex が推奨した設計変更:
+4. ✅ `pickSpecies` の分岐は親で dispatch: hook は `createFromDraft` / `updateSpeciesOf` を分離公開 (§3.2, §3.3)
+5. ✅ `onCreated` に stale-segment ガード: hook 内 `segmentId()` 一致確認 (§3.2)
 
-## 7. 主な難所と対処（改訂）
-
-| # | 難所 | 対処 |
-|---|---|---|
-| D1 | chunks / chunkImages の parallel array 同期 | useChunkManager 内部に閉じ込め、parent は getter で read-only |
-| D2 | Redraw effect の依存チェーン分断 | Step 3 で Canvas 子の `$effect` に集約、deps は props 経由で自動 reactive |
-| D3 | Canvas resize のタイミング | Canvas 子で `$effect.pre` により size sync → `$effect` で redraw（phase 分離） |
-| D4 | canvas ref が undefined な瞬間 | 全 hook で canvas を getter で受け、undefined ガード |
-| D5 | token refresh thundering herd | useChunkManager 内 private state で dedup 維持 |
-| **D6 (新)** | **Hook 入力の reactivity 切れ** | **可変入力は全 getter (`() => value`)**。callback (onViewportChange 等) は値で可 |
-| **D7 (新)** | **Canvas DOM 境界越え** | **Step 1-2 は canvas を parent markup に残す**。Step 3 で `$bindable` + event props で一度に移管 |
-| **D8 (新)** | **scheduler 所有権の一貫性** | **Step 3 で scheduler を Canvas 子側に移す**。Step 1-2 中は parent 所有のまま使う |
-| **D9 (新)** | **rebuildChunks 初期二重実行** | **Step 0 で `onMount` 呼出を削除**、`$effect` 一本化 |
-| **D10 (新)** | **cleanup 漏れ** | 各 hook で `dispose()` を export + 内部 `onDestroy` で自動呼出の両方 |
-| **D11 (v3)** | **dispose 後の async callback 継続** | hook 内 `disposed` フラグで token refresh / retry timer / image onload の各入口で早期 return |
-| **D12 (v3)** | **Canvas resize 時の redraw 漏れ** | Canvas redraw `$effect` 依存に `canvasWidth` / `canvasHeight` を明示的に含める |
-
----
-
-## 8. リスクと緩和（改訂）
-
-| リスク | 発生シナリオ | 緩和 |
-|---|---|---|
-| Effect 発火順序変化 | resize effect と redraw effect が分離後に逆転 | `$effect.pre` で size を先に、smoke test で canvas 描画確認 |
-| Reactivity 切れ | getter を忘れて値渡しした input | 型契約（Step 0）で `() => T` を強制、`never`-style で違反検知 |
-| Image onload → redraw 未発火 | chunks state 更新の reactive 伝搬が切れる | Canvas 子 `$effect` 依存に `chunks` を明示、getter 渡しで proxy 境界を維持 |
-| dispose 後に timer が発火 | retry timer が dispose 後に実行、または `await` 中に component 破棄 | `disposed` フラグで各入口で早期 return、`clearTimeout` + `img.onload = null` で多重防御 |
-| Callee 2 箇所の props 形状 break | SpectrogramViewer の public API 変更 | **props 形状は一切変更しない** |
-| Event handler が canvas に届かない | Step 3 で event props の書き忘れ | 型契約で全 7 event を必須 or optional 明示、Playwright で全網羅 |
-| Scheduler 二重所有 | Step 3 移管時に parent 側にも残る | Step 3 commit で parent 側 `useSpectrogramScheduler` import を削除、diff で確認 |
-
----
-
-## 9. 完了ゲート（CLAUDE.md 準拠）
-
-各 Step で以下を通過:
-- Gate 1: `npm run check` (web) パス
-- Gate 2: `npm run test` (vitest) パス、`npx playwright test tests/e2e/spectrogram.spec.ts` 3 連続 pass
-- Gate 3: Playwright MCP でテストアカウント (`test@echoroo.app`) + test1 30 分録音で canvas 描画 / hover / pan / zoom / dblclick / readonly / modifier wheel / キー切替を手動確認、console error 0
-- Gate 4: 完了報告テンプレート遵守
-
----
-
-## 10. 見積
-
-| Step | 内容 | 見積 |
-|---|---|---|
-| 0 | 型契約 + E2E 追加 + rebuildChunks 一本化 | 0.5 セッション |
-| 1 | useChunkManager 抽出 | 1 セッション |
-| 2 | useSpectrogramInteraction 抽出 | 1 セッション |
-| 3 | SpectrogramCanvas 抽出 + scheduler 移管 | 1 セッション |
-| 合計 | | 3-3.5 セッション、Step ごとに独立 commit |
-
----
-
-## 11. 確定した設計方針（v3）
-
-- **`requestRedraw` callback は不採用** — ChunkManager は `chunks` state 更新のみ、redraw は Canvas 子 `$effect` の reactive 伝搬に一任（Step 1/2 中は parent `$effect` が暫定）
-- **canvas ref 方式は `bind:this`** — `{@attach}` は codebase 前例なし
-- **Canvas 子は event handler を forwarding only** — 親から event props を受けて内部 `<canvas>` に流すだけ
-- **scheduler 所有権は Canvas 子** — Step 3 で parent から移管、以降 parent は scheduler を保持しない
+7論点への Codex 回答:
+- 時間原点変換 → Mutation 側で相対変換 (v1 採用案と一致)
+- keydown → 親統一 (v2 で確定)
+- pickSpecies 分岐 → 親で dispatch (v2 で変更)
+- readonly fixture route → 不要、実 status seed で OK (v1 採用案と一致)
+- Step 順序 → Draft → Mutation 可、keydown 方針先行が条件
+- 楽観更新 → 今回見送り (refactor と同時は risk 高)
+- `onCreated` → 設計 OK、stale-segment ガード追加推奨
