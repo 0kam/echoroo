@@ -16,7 +16,7 @@
    */
   import { onDestroy } from 'svelte';
   import { goto } from '$app/navigation';
-  import { createQuery, createMutation, useQueryClient } from '@tanstack/svelte-query';
+  import { createQuery } from '@tanstack/svelte-query';
   import * as m from '$lib/paraglide/messages';
   import { localizeHref } from '$lib/paraglide/runtime';
   import { toasts } from '$lib/stores/toast';
@@ -26,25 +26,18 @@
   import AnnotationList from '$lib/components/annotation-sets/AnnotationList.svelte';
   import NotesPanel from '$lib/components/annotation-sets/NotesPanel.svelte';
   import { useAnnotationDraft } from '$lib/components/annotation-sets/useAnnotationDraft.svelte';
+  import { useAnnotationMutations } from '$lib/components/annotation-sets/useAnnotationMutations.svelte';
   import {
-    addPalette,
-    createAnnotation,
-    createAnnotationNote,
-    createSegmentNote,
-    deleteAnnotation,
     getAnnotationSet,
     getSegment,
     listSegments,
-    updateAnnotation,
-    updateSegment,
   } from '$lib/api/annotation-sets';
   import { getRecording } from '$lib/api/recordings';
   import type {
-    AnnotationSegmentDetail,
     AnnotationSegmentSummary,
     AnnotationSetDetail,
+    AnnotationSegmentDetail,
     TimeRangeAnnotation,
-    TimeRangeAnnotationCreate,
   } from '$lib/types/annotation-set';
   import type { RecordingDetail } from '$lib/types/data';
 
@@ -55,8 +48,6 @@
   }
 
   let { projectId, setId, segmentId }: Props = $props();
-
-  const queryClient = useQueryClient();
 
   // ============================================================
   // Queries
@@ -184,126 +175,60 @@
   });
 
   // ============================================================
-  // Mutations
+  // Mutations (Step 2 refactor — see plan.md §3.2, §4 Step 2)
   // ============================================================
-
-  const createAnnotationMutation = createMutation({
-    mutationFn: (body: TimeRangeAnnotationCreate) =>
-      createAnnotation(segmentId, body),
-    onSuccess: () => {
+  //
+  // Every write-side interaction is routed through the mutation hook. The
+  // parent keeps only the "which mutation to dispatch" decisions (e.g.
+  // `pickSpecies` picks between `createFromDraft` and `updateSpeciesOf`)
+  // plus post-write selection management (`onCreated` -> `selectedAnnotationId`).
+  // All TanStack Query invalidation + toast wiring lives in the hook.
+  //
+  // `onCreated` fires from the hook only when it has verified that the
+  // currently-displayed segment still matches the segment the annotation was
+  // committed to (stale-segment guard, plan.md §3.2 last bullet). So here
+  // we can safely sync selection and clear the draft unconditionally.
+  const mutations = useAnnotationMutations({
+    segmentId: () => segmentId,
+    setId: () => setId,
+    clipStart: () => clipStart,
+    clipDuration: () => clipDuration,
+    onCreated: (annotationId) => {
       draft.clear();
-      queryClient.invalidateQueries({ queryKey: ['annotation-segment', segmentId] });
-      queryClient.invalidateQueries({ queryKey: ['annotation-set', setId] });
-      toasts.success(m.annotation_editor_create_success());
+      selectedAnnotationId = annotationId;
     },
-    onError: (err: Error) => {
-      toasts.error(err.message || m.annotation_editor_create_error());
-    },
-  });
-
-  const updateAnnotationSpeciesMutation = createMutation({
-    mutationFn: (args: { id: string; speciesId: string }) =>
-      updateAnnotation(args.id, { species_id: args.speciesId }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['annotation-segment', segmentId] });
-      toasts.success(m.annotation_editor_update_success());
-    },
-    onError: () => toasts.error(m.annotation_editor_update_error()),
-  });
-
-  const deleteAnnotationMutation = createMutation({
-    mutationFn: (id: string) => deleteAnnotation(id),
-    onSuccess: () => {
-      selectedAnnotationId = null;
-      queryClient.invalidateQueries({ queryKey: ['annotation-segment', segmentId] });
-      queryClient.invalidateQueries({ queryKey: ['annotation-set', setId] });
-      toasts.success(m.annotation_editor_delete_success());
-    },
-    onError: () => toasts.error(m.annotation_editor_delete_error()),
-  });
-
-  const updateSegmentMutation = createMutation({
-    mutationFn: (body: { status?: AnnotationSegmentDetail['status']; is_empty?: boolean }) =>
-      updateSegment(segmentId, body),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['annotation-segment', segmentId] });
-      queryClient.invalidateQueries({ queryKey: ['annotation-set', setId] });
-      queryClient.invalidateQueries({ queryKey: ['annotation-set-segments', setId] });
-    },
-    onError: (err: Error) => {
-      toasts.error(err.message || m.annotation_editor_status_update_error());
+    onDeleted: (annotationId) => {
+      // Server has confirmed the delete — drop the selection if it still
+      // points at the removed row. This mirrors the pre-refactor semantics
+      // where the selection was reset inside the mutation's `onSuccess`:
+      // a failed DELETE must leave the selection intact so the user can
+      // retry or inspect the still-present annotation. The id guard also
+      // covers the edge case where the user re-selected a different
+      // annotation while the DELETE was in flight.
+      if (selectedAnnotationId === annotationId) selectedAnnotationId = null;
     },
   });
 
-  const addPaletteMutation = createMutation({
-    mutationFn: (speciesId: string) => addPalette(setId, { species_id: speciesId }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['annotation-set', setId] });
-    },
-    onError: () => toasts.error(m.annotation_sets_palette_add_error()),
-  });
-
-  const createSegmentNoteMutation = createMutation({
-    mutationFn: (body: { content: string; is_issue: boolean }) =>
-      createSegmentNote(segmentId, body),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['annotation-segment', segmentId] });
-      toasts.success(m.annotation_editor_note_create_success());
-    },
-    onError: () => toasts.error(m.annotation_editor_note_create_error()),
-  });
-
-  const createAnnotationNoteMutation = createMutation({
-    mutationFn: (args: { annotationId: string; content: string; is_issue: boolean }) =>
-      createAnnotationNote(args.annotationId, {
-        content: args.content,
-        is_issue: args.is_issue,
-      }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['annotation-segment', segmentId] });
-      toasts.success(m.annotation_editor_note_create_success());
-    },
-    onError: () => toasts.error(m.annotation_editor_note_create_error()),
-  });
-
-  const isBusy = $derived(
-    $createAnnotationMutation.isPending ||
-      $updateAnnotationSpeciesMutation.isPending ||
-      $deleteAnnotationMutation.isPending ||
-      $updateSegmentMutation.isPending ||
-      $addPaletteMutation.isPending ||
-      $createSegmentNoteMutation.isPending ||
-      $createAnnotationNoteMutation.isPending,
-  );
+  const isBusy = $derived(mutations.isBusy);
 
   // ============================================================
   // Actions
   // ============================================================
 
+  /**
+   * Dispatch a species pick. When a draft range is active we commit it as a
+   * new annotation; when an existing annotation is selected we re-assign its
+   * species. This branching lives on the parent so the mutation hook stays
+   * ignorant of draft-hook internals (plan.md §3.2, §3.3).
+   */
   function pickSpecies(speciesId: string) {
     const currentDraft = draft.draftRange;
     if (currentDraft) {
-      // Backend expects seconds relative to the segment start
-      // (0..segment_duration). Convert from the absolute recording-seconds
-      // draft we track internally and clamp to valid range.
-      const relStart = Math.max(0, currentDraft.start - clipStart);
-      const relEnd = Math.min(clipDuration, currentDraft.end - clipStart);
-      if (relEnd <= relStart) {
-        toasts.error(m.annotation_editor_create_error());
-        return;
-      }
-      $createAnnotationMutation.mutate({
-        start_time_sec: relStart,
-        end_time_sec: relEnd,
-        species_id: speciesId,
-      });
+      mutations.actions.createFromDraft(currentDraft, speciesId);
       return;
     }
     if (selectedAnnotationId) {
-      $updateAnnotationSpeciesMutation.mutate({
-        id: selectedAnnotationId,
-        speciesId,
-      });
+      mutations.actions.updateSpeciesOf(selectedAnnotationId, speciesId);
     }
   }
 
@@ -312,9 +237,15 @@
   }
 
   function onDeleteAnnotation(id: string) {
-    if (confirm(m.annotation_editor_annotation_delete_confirm())) {
-      $deleteAnnotationMutation.mutate(id);
-    }
+    // The hook owns the confirm() + mutate dispatch. We intentionally do
+    // NOT clear `selectedAnnotationId` eagerly here: pre-refactor the
+    // selection was only reset inside the mutation's `onSuccess`, so a
+    // failed DELETE leaves the annotation in the list WITH its selection
+    // preserved (the user can retry). The `onDeleted` callback wired
+    // into `useAnnotationMutations` above clears the selection once the
+    // server has confirmed the delete, which is the same moment the
+    // pre-refactor code cleared it.
+    mutations.actions.deleteAnnotation(id);
   }
 
   function onSelectAnnotation(id: string) {
@@ -357,7 +288,7 @@
 
   async function completeAndNext() {
     if (!segment) return;
-    await $updateSegmentMutation.mutateAsync({ status: 'annotated' });
+    await mutations.actions.updateSegmentStatus({ status: 'annotated' });
     const target = findNextUnannotated();
     if (target) {
       navigateToSegment(target.id);
@@ -370,7 +301,7 @@
 
   async function skipAndNext() {
     if (!segment) return;
-    await $updateSegmentMutation.mutateAsync({ status: 'skipped' });
+    await mutations.actions.updateSegmentStatus({ status: 'skipped' });
     const target = findNextUnannotated();
     if (target) {
       navigateToSegment(target.id);
@@ -383,29 +314,29 @@
       toasts.error(m.annotation_editor_no_vocalization_error());
       return;
     }
-    $updateSegmentMutation.mutate({ is_empty: true, status: 'annotated' });
+    mutations.actions.markEmpty();
   }
 
   function clearNoVocalization() {
     if (!segment) return;
-    $updateSegmentMutation.mutate({ is_empty: false, status: 'unannotated' });
+    mutations.actions.clearEmpty();
   }
 
   function addSpeciesToPalette(speciesId: string) {
-    $addPaletteMutation.mutate(speciesId);
+    mutations.actions.addSpeciesToPalette(speciesId);
   }
 
   async function addSegmentNote(content: string, isIssue: boolean) {
-    await $createSegmentNoteMutation.mutateAsync({ content, is_issue: isIssue });
+    await mutations.actions.addSegmentNote(content, isIssue);
   }
 
   async function addAnnotationNote(content: string, isIssue: boolean) {
     if (!selectedAnnotationId) return;
-    await $createAnnotationNoteMutation.mutateAsync({
-      annotationId: selectedAnnotationId,
+    await mutations.actions.addAnnotationNote(
+      selectedAnnotationId,
       content,
-      is_issue: isIssue,
-    });
+      isIssue,
+    );
   }
 
   // ============================================================
@@ -413,9 +344,10 @@
   // ============================================================
   //
   // Keydown is owned exclusively by this parent component (plan.md §3.4).
-  // The draft hook deliberately does NOT subscribe to keyboard events —
-  // centralising here keeps the IME / input-focus guard in one place and
-  // avoids hook-to-hook coupling when the mutation hook lands in Step 2.
+  // Both hooks deliberately stay keyboard-agnostic; centralising here keeps
+  // the IME / input-focus guard in one place. The Delete branch dispatches
+  // through the mutation hook (via `onDeleteAnnotation`), which handles the
+  // confirm() + mutate + selection-reset chain.
   $effect(() => {
     function handleKeyDown(e: KeyboardEvent) {
       // IME / text-entry guard — ignore keystrokes targeting inputs so that
@@ -433,8 +365,6 @@
         }
       } else if (e.key === 'Delete' && selectedAnnotationId) {
         e.preventDefault();
-        // Routed directly to the local action; Step 2 will dispatch this
-        // through the mutation hook instead.
         onDeleteAnnotation(selectedAnnotationId);
       }
     }
@@ -444,6 +374,7 @@
 
   onDestroy(() => {
     draft.dispose();
+    mutations.dispose();
   });
 
   // ============================================================
@@ -712,7 +643,7 @@
           <NotesPanel
             title={m.annotation_editor_notes_segment()}
             notes={segment.notes}
-            isBusy={$createSegmentNoteMutation.isPending}
+            isBusy={mutations.isCreatingSegmentNote}
             onAddNote={addSegmentNote}
           />
 
@@ -721,7 +652,7 @@
               <NotesPanel
                 title={m.annotation_editor_notes_annotation()}
                 notes={[]}
-                isBusy={$createAnnotationNoteMutation.isPending}
+                isBusy={mutations.isCreatingAnnotationNote}
                 onAddNote={addAnnotationNote}
               />
               <p class="mt-1 text-[10px] text-stone-400">

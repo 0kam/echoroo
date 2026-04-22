@@ -85,6 +85,13 @@ export interface MutationHookInput {
    * time before invoking this — guards against stale segment races.
    */
   onCreated?: (annotationId: string) => void;
+  /**
+   * Optional callback fired after a successful `deleteAnnotation`. The
+   * parent uses this to clear `selectedAnnotationId` so the UI drops the
+   * selection ring on the now-removed row. Matches the pre-refactor
+   * behaviour where the mutation's `onSuccess` reset selection inline.
+   */
+  onDeleted?: (annotationId: string) => void;
 }
 
 /**
@@ -97,12 +104,18 @@ export interface MutationHookActions {
   createFromDraft: (range: DraftRange, speciesId: string) => void;
   /** Re-assign the species of an existing annotation. */
   updateSpeciesOf: (annotationId: string, speciesId: string) => void;
-  /** Delete an annotation after confirm. */
-  deleteAnnotation: (annotationId: string) => void;
+  /** Delete an annotation after confirm(). Returns `true` if confirmed. */
+  deleteAnnotation: (annotationId: string) => boolean;
   /** Mark the segment as empty (no vocalisations) + annotated. */
   markEmpty: () => void;
   /** Revert an empty-segment flag back to `unannotated`. */
   clearEmpty: () => void;
+  /**
+   * Set the segment status without touching `is_empty`. Awaitable so that
+   * callers like `completeAndNext` / `skipAndNext` can navigate only after
+   * the server confirms the transition.
+   */
+  updateSegmentStatus: (body: { status: 'annotated' | 'skipped' | 'unannotated' }) => Promise<void>;
   /** Add a species to the set palette. */
   addSpeciesToPalette: (speciesId: string) => void;
   /** Append a note to the segment. */
@@ -121,6 +134,14 @@ export interface MutationHookActions {
 export interface MutationHookApi {
   /** True when any of the owned mutations is pending (drives child busy state). */
   readonly isBusy: boolean;
+  /**
+   * Finer-grained pending flags for the note mutations. `NotesPanel` uses
+   * these to disable its per-panel submit button without flipping the
+   * global busy state; exposing them preserves pre-refactor behaviour
+   * where each NotesPanel watched its own mutation's `isPending`.
+   */
+  readonly isCreatingSegmentNote: boolean;
+  readonly isCreatingAnnotationNote: boolean;
   readonly actions: MutationHookActions;
   /** Detach listeners / short-circuit callbacks. */
   dispose(): void;
