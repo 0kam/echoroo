@@ -107,6 +107,10 @@ export interface SpectrogramCanvasProps {
   zoomBox: ZoomBox | null;
   interactionMode: InteractionMode;
   spectrogramSettings: SpectrogramSettings;
+  /** When true, the canvas loses focusability (tabindex removed) — readonly fixture. */
+  readonly?: boolean;
+  /** Current drag state — drives the `cursor-grabbing` class. */
+  isDragging?: boolean;
   onmousemove?: (e: MouseEvent) => void;
   onmousedown?: (e: MouseEvent) => void;
   onmouseup?: (e: MouseEvent) => void;
