@@ -1039,7 +1039,7 @@ class TestRerunSession:
 
     @patch("echoroo.workers.search_tasks.run_batch_search")
     @patch("echoroo.core.s3.get_s3_client")
-    @patch("echoroo.core.s3.delete_object")
+    @patch("echoroo.api.v1.search.sessions.delete_object")
     async def test_happy_path_reruns_and_clears_annotations(
         self,
         mock_delete_object: MagicMock,
@@ -1227,8 +1227,8 @@ class TestRerunSession:
         assert resp.status_code == 404
 
     @patch("echoroo.workers.search_tasks.run_batch_search")
-    @patch("echoroo.core.s3.delete_object")
-    @patch("echoroo.core.s3.delete_objects_by_prefix")
+    @patch("echoroo.api.v1.search.sessions.delete_object")
+    @patch("echoroo.api.v1.search.sessions.delete_objects_by_prefix")
     @patch("echoroo.core.s3.get_s3_client")
     async def test_rerun_commit_failure_cleans_up_new_s3_and_keeps_old(
         self,
