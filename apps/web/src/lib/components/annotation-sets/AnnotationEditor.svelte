@@ -14,7 +14,7 @@
    * `(app)/projects/[id]/annotation-sets/[setId]/annotate/[segmentId]` for
    * the URL-level navigation wrapper.
    */
-  import { onDestroy, onMount } from 'svelte';
+  import { onDestroy } from 'svelte';
   import { goto } from '$app/navigation';
   import { createQuery, createMutation, useQueryClient } from '@tanstack/svelte-query';
   import * as m from '$lib/paraglide/messages';
@@ -25,6 +25,7 @@
   import SpeciesPalette from '$lib/components/annotation-sets/SpeciesPalette.svelte';
   import AnnotationList from '$lib/components/annotation-sets/AnnotationList.svelte';
   import NotesPanel from '$lib/components/annotation-sets/NotesPanel.svelte';
+  import { useAnnotationDraft } from '$lib/components/annotation-sets/useAnnotationDraft.svelte';
   import {
     addPalette,
     createAnnotation,
@@ -119,11 +120,8 @@
   );
 
   // ============================================================
-  // Draft range selection
+  // Selection + clip geometry
   // ============================================================
-
-  /** Draft range in absolute recording seconds. Null when no draft. */
-  let draftRange = $state<{ start: number; end: number } | null>(null);
 
   /** Currently selected existing annotation id (for edit / note / delete). */
   let selectedAnnotationId = $state<string | null>(null);
@@ -132,99 +130,58 @@
     segment?.annotations.find((a) => a.id === selectedAnnotationId) ?? null,
   );
 
-  // When segment changes, clear draft / selection.
-  $effect(() => {
-    // Reference segmentId to make the dependency explicit.
-    void segmentId;
-    draftRange = null;
-    selectedAnnotationId = null;
-  });
-
-  // ============================================================
-  // Spectrogram overlay — drag to select + annotation overlays
-  // ============================================================
-
-  let spectrogramContainerEl: HTMLDivElement | undefined = $state();
-  let overlayEl: HTMLDivElement | undefined = $state();
-  let isDraggingOverlay = $state(false);
-  let dragStartX = $state(0);
-  let dragCurrentX = $state(0);
-
   const clipStart = $derived(segment?.start_time_sec ?? 0);
   const clipEnd = $derived(segment?.end_time_sec ?? 0);
   const clipDuration = $derived(Math.max(0, clipEnd - clipStart));
 
-  /**
-   * Convert a client-x (CSS px) within the overlay to an absolute recording
-   * time in seconds. Assumes the overlay spans the full clip duration.
-   */
-  function clientXToTime(clientX: number): number {
-    if (!overlayEl) return clipStart;
-    const rect = overlayEl.getBoundingClientRect();
-    if (rect.width === 0) return clipStart;
-    const fraction = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
-    return clipStart + fraction * clipDuration;
-  }
+  // ============================================================
+  // Spectrogram overlay — drag-to-select draft range (hook-owned)
+  // ============================================================
 
+  /**
+   * DOM ref for the overlay. Ownership stays on the parent — the draft hook
+   * only reads it via the getter so the bind:this mechanics remain simple.
+   */
+  let overlayEl: HTMLDivElement | undefined = $state();
+
+  /**
+   * Draft state machine + drag geometry. See
+   * `./useAnnotationDraft.svelte.ts` for details; the hook owns window
+   * mousemove / mouseup subscriptions and exposes the finalised draft range
+   * plus a transient drag-preview bar geometry.
+   */
+  const draft = useAnnotationDraft({
+    overlayEl: () => overlayEl,
+    clipStart: () => clipStart,
+    clipDuration: () => clipDuration,
+  });
+
+  /**
+   * Helper used to position existing annotation overlays. The draft hook
+   * does not expose this — it is trivial and is used only for the rendered
+   * annotation overlays on the spectrogram, not for drag math.
+   */
   function timeToPercent(t: number): number {
     if (clipDuration <= 0) return 0;
     return ((t - clipStart) / clipDuration) * 100;
   }
 
-  function handleOverlayMouseDown(e: MouseEvent) {
-    if (!clipDuration) return;
-    e.preventDefault();
-    isDraggingOverlay = true;
-    dragStartX = e.clientX;
-    dragCurrentX = e.clientX;
-  }
-
-  function handleWindowMouseMove(e: MouseEvent) {
-    if (!isDraggingOverlay) return;
-    dragCurrentX = e.clientX;
-  }
-
-  function handleWindowMouseUp() {
-    if (!isDraggingOverlay) return;
-    isDraggingOverlay = false;
-    const t1 = clientXToTime(dragStartX);
-    const t2 = clientXToTime(dragCurrentX);
-    const start = Math.min(t1, t2);
-    const end = Math.max(t1, t2);
-    // Ignore trivial clicks
-    if (end - start < 0.05) {
-      return;
-    }
-    // Clamp to clip range
-    draftRange = {
-      start: Math.max(clipStart, start),
-      end: Math.min(clipEnd, end),
-    };
+  // When the segment changes, clear both draft and selection state. This
+  // replaces the pre-refactor inline reset + the L136-141 $effect.
+  $effect(() => {
+    // Reference segmentId to make the dependency explicit.
+    void segmentId;
+    draft.clear();
     selectedAnnotationId = null;
-  }
-
-  onMount(() => {
-    window.addEventListener('mousemove', handleWindowMouseMove);
-    window.addEventListener('mouseup', handleWindowMouseUp);
-  });
-  onDestroy(() => {
-    window.removeEventListener('mousemove', handleWindowMouseMove);
-    window.removeEventListener('mouseup', handleWindowMouseUp);
   });
 
-  const dragPreviewLeft = $derived(
-    isDraggingOverlay
-      ? timeToPercent(clientXToTime(Math.min(dragStartX, dragCurrentX)))
-      : 0,
-  );
-  const dragPreviewWidth = $derived(
-    isDraggingOverlay
-      ? Math.abs(
-          timeToPercent(clientXToTime(dragCurrentX)) -
-            timeToPercent(clientXToTime(dragStartX)),
-        )
-      : 0,
-  );
+  // A newly-committed draft should clear any previous annotation selection
+  // (pre-refactor this lived inside handleWindowMouseUp).
+  $effect(() => {
+    if (draft.draftRange) {
+      selectedAnnotationId = null;
+    }
+  });
 
   // ============================================================
   // Mutations
@@ -234,7 +191,7 @@
     mutationFn: (body: TimeRangeAnnotationCreate) =>
       createAnnotation(segmentId, body),
     onSuccess: () => {
-      draftRange = null;
+      draft.clear();
       queryClient.invalidateQueries({ queryKey: ['annotation-segment', segmentId] });
       queryClient.invalidateQueries({ queryKey: ['annotation-set', setId] });
       toasts.success(m.annotation_editor_create_success());
@@ -324,12 +281,13 @@
   // ============================================================
 
   function pickSpecies(speciesId: string) {
-    if (draftRange) {
+    const currentDraft = draft.draftRange;
+    if (currentDraft) {
       // Backend expects seconds relative to the segment start
       // (0..segment_duration). Convert from the absolute recording-seconds
       // draft we track internally and clamp to valid range.
-      const relStart = Math.max(0, draftRange.start - clipStart);
-      const relEnd = Math.min(clipDuration, draftRange.end - clipStart);
+      const relStart = Math.max(0, currentDraft.start - clipStart);
+      const relEnd = Math.min(clipDuration, currentDraft.end - clipStart);
       if (relEnd <= relStart) {
         toasts.error(m.annotation_editor_create_error());
         return;
@@ -350,7 +308,7 @@
   }
 
   function cancelDraft() {
-    draftRange = null;
+    draft.clear();
   }
 
   function onDeleteAnnotation(id: string) {
@@ -361,7 +319,7 @@
 
   function onSelectAnnotation(id: string) {
     selectedAnnotationId = id === selectedAnnotationId ? null : id;
-    if (selectedAnnotationId) draftRange = null;
+    if (selectedAnnotationId) draft.clear();
   }
 
   function navigateToSegment(newSegmentId: string) {
@@ -451,31 +409,42 @@
   }
 
   // ============================================================
-  // Keyboard: Esc cancels draft, Delete removes selection
+  // Keyboard: Esc cancels draft/selection, Delete removes selected annotation
   // ============================================================
-
-  function handleKeyDown(e: KeyboardEvent) {
-    const target = e.target as HTMLElement | null;
-    if (target) {
-      const tag = target.tagName;
-      if (tag === 'INPUT' || tag === 'TEXTAREA' || target.isContentEditable) return;
-    }
-    if (e.key === 'Escape') {
-      if (draftRange) {
-        e.preventDefault();
-        cancelDraft();
-      } else if (selectedAnnotationId) {
-        e.preventDefault();
-        selectedAnnotationId = null;
+  //
+  // Keydown is owned exclusively by this parent component (plan.md §3.4).
+  // The draft hook deliberately does NOT subscribe to keyboard events —
+  // centralising here keeps the IME / input-focus guard in one place and
+  // avoids hook-to-hook coupling when the mutation hook lands in Step 2.
+  $effect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      // IME / text-entry guard — ignore keystrokes targeting inputs so that
+      // typing a species name or a note never triggers editor shortcuts.
+      const target = e.target as HTMLElement | null;
+      if (target) {
+        const tag = target.tagName;
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || target.isContentEditable) return;
       }
-    } else if (e.key === 'Delete' && selectedAnnotationId) {
-      e.preventDefault();
-      onDeleteAnnotation(selectedAnnotationId);
+      if (e.key === 'Escape') {
+        if (draft.draftRange || selectedAnnotationId) {
+          e.preventDefault();
+          draft.clear();
+          selectedAnnotationId = null;
+        }
+      } else if (e.key === 'Delete' && selectedAnnotationId) {
+        e.preventDefault();
+        // Routed directly to the local action; Step 2 will dispatch this
+        // through the mutation hook instead.
+        onDeleteAnnotation(selectedAnnotationId);
+      }
     }
-  }
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  });
 
-  onMount(() => window.addEventListener('keydown', handleKeyDown));
-  onDestroy(() => window.removeEventListener('keydown', handleKeyDown));
+  onDestroy(() => {
+    draft.dispose();
+  });
 
   // ============================================================
   // Navigation helpers
@@ -573,7 +542,7 @@
             <p class="text-sm text-danger">{m.annotation_editor_recording_error()}</p>
           </div>
         {:else}
-          <div bind:this={spectrogramContainerEl} class="relative">
+          <div class="relative">
             <ClipSpectrogramPlayer
               {projectId}
               recording={{
@@ -593,7 +562,7 @@
               style:height="{recording ? '400px' : '0'}"
               style:z-index="3"
               role="presentation"
-              onmousedown={handleOverlayMouseDown}
+              onmousedown={draft.handlers.onMouseDown}
             >
               <!-- Existing annotations -->
               {#each segment.annotations as a (a.id)}
@@ -632,9 +601,9 @@
               {/each}
 
               <!-- Draft range -->
-              {#if draftRange && !isDraggingOverlay}
-                {@const left = timeToPercent(draftRange.start)}
-                {@const width = timeToPercent(draftRange.end) - timeToPercent(draftRange.start)}
+              {#if draft.draftRange && !draft.isDragging}
+                {@const left = timeToPercent(draft.draftRange.start)}
+                {@const width = timeToPercent(draft.draftRange.end) - timeToPercent(draft.draftRange.start)}
                 <div
                   class="pointer-events-none absolute top-0 bottom-0 border-2 border-dashed bg-primary-500/20"
                   style:left="{left}%"
@@ -645,11 +614,11 @@
               {/if}
 
               <!-- Drag preview -->
-              {#if isDraggingOverlay}
+              {#if draft.isDragging}
                 <div
                   class="pointer-events-none absolute top-0 bottom-0 border-2 border-dashed bg-primary-500/20"
-                  style:left="{dragPreviewLeft}%"
-                  style:width="{dragPreviewWidth}%"
+                  style:left="{draft.dragPreview.left}%"
+                  style:width="{draft.dragPreview.width}%"
                   style:border-color="rgb(var(--primary-500))"
                   aria-hidden="true"
                 ></div>
@@ -663,14 +632,14 @@
       <div
         class="flex flex-wrap items-center gap-2 border-b border-stone-200 bg-surface-card px-4 py-1.5 text-xs text-stone-600 dark:border-stone-700 dark:text-stone-300"
       >
-        {#if draftRange}
+        {#if draft.draftRange}
           <span class="font-semibold text-primary-700 dark:text-primary-300">
             {m.annotation_editor_draft_title()}:
           </span>
           <span class="tabular-nums">
             {m.annotation_editor_draft_range({
-              start: (draftRange.start - clipStart).toFixed(2),
-              end: (draftRange.end - clipStart).toFixed(2),
+              start: (draft.draftRange.start - clipStart).toFixed(2),
+              end: (draft.draftRange.end - clipStart).toFixed(2),
             })}
           </span>
           <span>·</span>
