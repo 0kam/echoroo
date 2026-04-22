@@ -18,6 +18,32 @@ from echoroo.models.enums import DetectionStatus, SearchSessionStatus
 from echoroo.models.search_session import SearchSession
 
 
+def _generate_session_name(species_config: list[dict[str, object]]) -> str:
+    """Generate an auto-session-name from the species config.
+
+    Format:
+      - 1-3 species: "name1, name2, name3 - YYYY-MM-DD"
+      - 4+ species:  "name1, name2, name3... - YYYY-MM-DD"
+    Falls back to "Unknown" for any species missing both common_name and
+    scientific_name. Date uses UTC.
+
+    Args:
+        species_config: List of species configuration dicts
+
+    Returns:
+        Auto-generated session name string
+    """
+    species_names: list[str] = []
+    for sp_cfg in species_config:
+        raw_label = sp_cfg.get("common_name") or sp_cfg.get("scientific_name", "Unknown")
+        label = str(raw_label) if raw_label is not None else "Unknown"
+        species_names.append(label)
+    date_str = datetime.now(UTC).strftime("%Y-%m-%d")
+    if len(species_names) > 3:
+        return f"{', '.join(species_names[:3])}... - {date_str}"
+    return f"{', '.join(species_names)} - {date_str}"
+
+
 class SearchSessionService:
     """Service for creating and managing search session records.
 
@@ -64,16 +90,7 @@ class SearchSessionService:
             Newly created SearchSession (not yet committed)
         """
         if not name:
-            species_names: list[str] = []
-            for sp in species_config:
-                raw_label = sp.get("common_name") or sp.get("scientific_name", "Unknown")
-                label = str(raw_label) if raw_label is not None else "Unknown"
-                species_names.append(label)
-            date_str = datetime.now(UTC).strftime("%Y-%m-%d")
-            if len(species_names) > 3:
-                name = f"{', '.join(species_names[:3])}... - {date_str}"
-            else:
-                name = f"{', '.join(species_names)} - {date_str}"
+            name = _generate_session_name(species_config)
 
         session = SearchSession(
             project_id=project_id,
@@ -390,16 +407,7 @@ class SearchSessionService:
         session.reference_audio_keys = reference_audio_keys if reference_audio_keys else None
 
         # Auto-generate a new name from species config
-        species_names: list[str] = []
-        for sp_cfg in species_config:
-            raw_label = sp_cfg.get("common_name") or sp_cfg.get("scientific_name", "Unknown")
-            label = str(raw_label) if raw_label is not None else "Unknown"
-            species_names.append(label)
-        date_str = datetime.now(UTC).strftime("%Y-%m-%d")
-        if len(species_names) > 3:
-            session.name = f"{', '.join(species_names[:3])}... - {date_str}"
-        else:
-            session.name = f"{', '.join(species_names)} - {date_str}"
+        session.name = _generate_session_name(species_config)
 
         await self.db.flush()
         return session
