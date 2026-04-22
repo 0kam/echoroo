@@ -35,7 +35,6 @@
     onmouseleave,
     ondblclick,
     onwheel,
-    onkeydown,
   }: SpectrogramCanvasProps = $props();
 
   // `bounds` and `spectrogramSettings` are declared for API symmetry with the
@@ -60,6 +59,9 @@
     // The recording's samplerate is already baked into `bounds.freq.max` via
     // the parent's viewport/bounds computation, so we derive `maxFreq` from
     // bounds rather than re-reading the recording here.
+    // Invariant: bounds.freq.max == recording.samplerate / 2 (Nyquist). Chunk
+    // URLs are generated at that freq range in useChunkManager, so a narrower
+    // bounds here would mismatch the decoded chunks.
     const maxFreq = bounds.freq.max;
 
     chunks.forEach((chunk, idx) => {
@@ -381,7 +383,6 @@
   {onmouseleave}
   {ondblclick}
   {onwheel}
-  {onkeydown}
 ></canvas>
 
 <style>

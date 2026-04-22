@@ -47,6 +47,8 @@ export function useChunkManager(input: ChunkManagerInput): ChunkManagerApi {
     const duration = recording.duration;
     const n_fft = Math.round(spectrogramSettings.window_size * effectiveSamplerate);
     const hop_length = Math.round(n_fft * (1 - spectrogramSettings.overlap));
+    // Must match bounds.freq.max consumed by SpectrogramCanvas draw code.
+    // Both are expected to equal Nyquist for the viewport to render correctly.
     const freq_max = effectiveSamplerate / 2;
 
     const fullUrl = getSpectrogramUrl(projectId, recording.id, {

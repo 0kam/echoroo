@@ -117,5 +117,4 @@ export interface SpectrogramCanvasProps {
   onmouseleave?: (e: MouseEvent) => void;
   ondblclick?: (e: MouseEvent) => void;
   onwheel?: (e: WheelEvent) => void;
-  onkeydown?: (e: KeyboardEvent) => void;
 }
