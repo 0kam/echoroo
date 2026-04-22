@@ -64,3 +64,35 @@ async def get_authorized_search_service(
 AuthorizedSearchServiceDep = Annotated[
     SimilaritySearchService, Depends(get_authorized_search_service)
 ]
+
+
+async def get_authorized_session_service(
+    project_id: UUID,
+    current_user: CurrentUser,
+    db: DbSession,
+    service: SearchSessionServiceDep,
+) -> SearchSessionService:
+    """Verify project access and return the SearchSessionService.
+
+    Combines the recurring pattern of (1) authorizing the current user against
+    the project and (2) injecting the search session service for session routes.
+
+    Args:
+        project_id: Project UUID (from path)
+        current_user: Authenticated user
+        db: Database session
+        service: Injected SearchSessionService
+
+    Returns:
+        SearchSessionService scoped to the authorized project
+
+    Raises:
+        HTTPException: 403 if the user does not have access to the project
+    """
+    await check_project_access(project_id, current_user.id, db)
+    return service
+
+
+AuthorizedSearchSessionServiceDep = Annotated[
+    SearchSessionService, Depends(get_authorized_session_service)
+]

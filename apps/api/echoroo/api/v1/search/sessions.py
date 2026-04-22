@@ -30,9 +30,8 @@ from sqlalchemy import bindparam, text
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 
 from echoroo.api.v1.search.batch import _prepare_batch_job
-from echoroo.api.v1.search.deps import SearchSessionServiceDep
+from echoroo.api.v1.search.deps import AuthorizedSearchSessionServiceDep
 from echoroo.core.database import DbSession
-from echoroo.core.permissions import check_project_access
 from echoroo.middleware.auth import CurrentUser
 from echoroo.schemas.search import (
     BatchSearchResponse,
@@ -67,9 +66,8 @@ router = APIRouter()
 )
 async def list_search_sessions(
     project_id: UUID,
-    current_user: CurrentUser,
     db: DbSession,
-    session_service: SearchSessionServiceDep,
+    session_service: AuthorizedSearchSessionServiceDep,
     limit: int = Query(default=50, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
     locale: str = "en",
@@ -81,9 +79,8 @@ async def list_search_sessions(
 
     Args:
         project_id: Project UUID (path parameter)
-        current_user: Current authenticated user
         db: Database session
-        session_service: Search session service
+        session_service: Authorized search session service
         limit: Maximum number of results
         offset: Number of results to skip
         locale: Locale code for common name resolution (default: "en")
@@ -96,7 +93,6 @@ async def list_search_sessions(
     """
     from echoroo.api.v1.search.utils import _enrich_species_config_with_locale
 
-    await check_project_access(project_id, current_user.id, db)
     sessions, total = await session_service.list_sessions(project_id, limit, offset)
     items = [SearchSessionListItem.model_validate(s) for s in sessions]
 
@@ -129,9 +125,8 @@ async def list_search_sessions(
 async def get_search_session(
     project_id: UUID,
     session_id: UUID,
-    current_user: CurrentUser,
     db: DbSession,
-    session_service: SearchSessionServiceDep,
+    session_service: AuthorizedSearchSessionServiceDep,
     locale: str = "en",
 ) -> SearchSessionResponse:
     """Get a search session with review status merged into results.
@@ -143,9 +138,8 @@ async def get_search_session(
     Args:
         project_id: Project UUID (path parameter)
         session_id: Session UUID (path parameter)
-        current_user: Current authenticated user
         db: Database session
-        session_service: Search session service
+        session_service: Authorized search session service
         locale: Locale code for common name resolution (default: "en")
 
     Returns:
@@ -160,7 +154,6 @@ async def get_search_session(
         _enrich_species_config_with_locale,
     )
 
-    await check_project_access(project_id, current_user.id, db)
     session = await session_service.get_session(session_id, project_id)
     if not session:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Search session not found")
@@ -210,18 +203,16 @@ async def get_search_session(
 async def delete_search_session(
     project_id: UUID,
     session_id: UUID,
-    current_user: CurrentUser,
     db: DbSession,
-    session_service: SearchSessionServiceDep,
+    session_service: AuthorizedSearchSessionServiceDep,
 ) -> Response:
     """Delete a search session and attempt S3 cleanup of reference audio.
 
     Args:
         project_id: Project UUID (path parameter)
         session_id: Session UUID (path parameter)
-        current_user: Current authenticated user
         db: Database session
-        session_service: Search session service
+        session_service: Authorized search session service
 
     Returns:
         204 No Content
@@ -230,7 +221,6 @@ async def delete_search_session(
         403: Access denied to project
         404: Session not found
     """
-    await check_project_access(project_id, current_user.id, db)
     session = await session_service.get_session(session_id, project_id)
     if not session:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Search session not found")
@@ -259,9 +249,8 @@ async def delete_search_session(
 async def update_search_session(
     project_id: UUID,
     session_id: UUID,
-    current_user: CurrentUser,
     db: DbSession,
-    session_service: SearchSessionServiceDep,
+    session_service: AuthorizedSearchSessionServiceDep,
     name: str = Body(..., embed=True),
 ) -> SearchSessionResponse:
     """Update a search session's name.
@@ -269,9 +258,8 @@ async def update_search_session(
     Args:
         project_id: Project UUID (path parameter)
         session_id: Session UUID (path parameter)
-        current_user: Current authenticated user
         db: Database session
-        session_service: Search session service
+        session_service: Authorized search session service
         name: New session name
 
     Returns:
@@ -281,7 +269,6 @@ async def update_search_session(
         403: Access denied to project
         404: Session not found
     """
-    await check_project_access(project_id, current_user.id, db)
     session = await session_service.get_session(session_id, project_id)
     if not session:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Search session not found")
@@ -309,7 +296,7 @@ async def rerun_search_session(
     session_id: UUID,
     current_user: CurrentUser,
     db: DbSession,
-    session_service: SearchSessionServiceDep,
+    session_service: AuthorizedSearchSessionServiceDep,
     request: Request,
     metadata: str = Form(
         ...,
@@ -340,8 +327,6 @@ async def rerun_search_session(
         413: One or more uploaded files exceed 10 MB
         422: Constraint violation or invalid model
     """
-    await check_project_access(project_id, current_user.id, db)
-
     # Fetch and validate the session
     session = await session_service.get_session(session_id, project_id)
     if not session:
@@ -435,9 +420,7 @@ async def stream_reference_audio(
     project_id: UUID,
     session_id: UUID,
     source_index: int,
-    current_user: CurrentUser,
-    db: DbSession,
-    session_service: SearchSessionServiceDep,
+    session_service: AuthorizedSearchSessionServiceDep,
     range: str | None = Header(None),
 ) -> StreamingResponse:
     """Stream a reference audio file stored in S3 for a search session.
@@ -446,9 +429,7 @@ async def stream_reference_audio(
         project_id: Project UUID (path parameter)
         session_id: Session UUID (path parameter)
         source_index: Index into the session's reference_audio_keys list
-        current_user: Current authenticated user
-        db: Database session
-        session_service: Search session service
+        session_service: Authorized search session service
         range: Optional HTTP Range header for partial content streaming
 
     Returns:
@@ -461,7 +442,6 @@ async def stream_reference_audio(
     """
     import mimetypes
 
-    await check_project_access(project_id, current_user.id, db)
     session = await session_service.get_session(session_id, project_id)
     if not session:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Search session not found")
@@ -549,9 +529,8 @@ async def stream_reference_audio(
 async def export_search_session_recordings_csv(
     project_id: UUID,
     session_id: UUID,
-    current_user: CurrentUser,
     db: DbSession,
-    session_service: SearchSessionServiceDep,
+    session_service: AuthorizedSearchSessionServiceDep,
     locale: str = Query(default="en", description="Locale for common names (en, ja)"),
 ) -> StreamingResponse:
     """Export per-(recording × species) aggregated similarity results as CSV.
@@ -564,9 +543,8 @@ async def export_search_session_recordings_csv(
     Args:
         project_id: Project UUID (path parameter)
         session_id: Session UUID (path parameter)
-        current_user: Current authenticated user
         db: Database session
-        session_service: Search session service
+        session_service: Authorized search session service
 
     Returns:
         CSV file as streaming response with columns:
@@ -580,7 +558,6 @@ async def export_search_session_recordings_csv(
     import csv
     import io
 
-    await check_project_access(project_id, current_user.id, db)
     session = await session_service.get_session(session_id, project_id)
     if not session:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Search session not found")
@@ -876,18 +853,16 @@ async def export_search_session_recordings_csv(
 async def export_search_session_csv(
     project_id: UUID,
     session_id: UUID,
-    current_user: CurrentUser,
     db: DbSession,
-    session_service: SearchSessionServiceDep,
+    session_service: AuthorizedSearchSessionServiceDep,
 ) -> StreamingResponse:
     """Export search session annotations as CSV.
 
     Args:
         project_id: Project UUID (path parameter)
         session_id: Session UUID (path parameter)
-        current_user: Current authenticated user
         db: Database session
-        session_service: Search session service
+        session_service: Authorized search session service
 
     Returns:
         CSV file as streaming response
@@ -896,7 +871,6 @@ async def export_search_session_csv(
         403: Access denied to project
         404: Session not found
     """
-    await check_project_access(project_id, current_user.id, db)
     session = await session_service.get_session(session_id, project_id)
     if not session:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Search session not found")
@@ -935,9 +909,8 @@ async def export_search_session_csv(
 async def get_session_similarity_distribution(
     project_id: UUID,
     session_id: UUID,
-    current_user: CurrentUser,
     db: DbSession,
-    session_service: SearchSessionServiceDep,
+    session_service: AuthorizedSearchSessionServiceDep,
     bin_width: float = Query(default=0.05, ge=0.01, le=0.5, description="Histogram bin width"),
     species_key: str | None = Query(default=None, description="Filter to a single species by its result key"),
 ) -> SessionDistributionResponse:
@@ -953,9 +926,8 @@ async def get_session_similarity_distribution(
     Args:
         project_id: Project UUID (path parameter)
         session_id: Session UUID (path parameter)
-        current_user: Current authenticated user
         db: Database session
-        session_service: Search session service
+        session_service: Authorized search session service
         bin_width: Histogram bin width (default 0.05 = 20 bins from 0.0 to 1.0)
         species_key: Optional species key to filter distribution to a single species
 
@@ -966,7 +938,6 @@ async def get_session_similarity_distribution(
         403: Access denied to project
         404: Session not found or has no results
     """
-    await check_project_access(project_id, current_user.id, db)
     session = await session_service.get_session(session_id, project_id)
     if not session:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Search session not found")
@@ -1015,9 +986,8 @@ async def get_session_similarity_distribution(
 async def get_session_time_distribution(
     project_id: UUID,
     session_id: UUID,
-    current_user: CurrentUser,
     db: DbSession,
-    session_service: SearchSessionServiceDep,
+    session_service: AuthorizedSearchSessionServiceDep,
     species_key: str | None = Query(default=None, description="Filter to a single species by its result key"),
 ) -> SessionTimeDistributionResponse:
     """Get average similarity per (date, hour) for all project embeddings.
@@ -1028,9 +998,8 @@ async def get_session_time_distribution(
     Args:
         project_id: Project UUID (path parameter)
         session_id: Session UUID (path parameter)
-        current_user: Current authenticated user
         db: Database session
-        session_service: Search session service
+        session_service: Authorized search session service
         species_key: Optional species key to filter distribution to a single species
 
     Returns:
@@ -1040,7 +1009,6 @@ async def get_session_time_distribution(
         403: Access denied to project
         404: Session not found or has no results
     """
-    await check_project_access(project_id, current_user.id, db)
     session = await session_service.get_session(session_id, project_id)
     if not session:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Search session not found")
@@ -1100,9 +1068,8 @@ async def get_session_time_distribution(
 async def sample_session_similarity_range(
     project_id: UUID,
     session_id: UUID,
-    current_user: CurrentUser,
     db: DbSession,
-    session_service: SearchSessionServiceDep,
+    session_service: AuthorizedSearchSessionServiceDep,
     min_similarity: float = Query(default=0.0, ge=0.0, le=1.0, description="Lower bound (inclusive)"),
     max_similarity: float = Query(default=1.0, ge=0.0, le=1.0, description="Upper bound (inclusive)"),
     limit: int = Query(default=20, ge=1, le=200, description="Maximum number of results to return"),
@@ -1116,9 +1083,8 @@ async def sample_session_similarity_range(
     Args:
         project_id: Project UUID (path parameter)
         session_id: Session UUID (path parameter)
-        current_user: Current authenticated user
         db: Database session
-        session_service: Search session service
+        session_service: Authorized search session service
         min_similarity: Lower bound of similarity range
         max_similarity: Upper bound of similarity range
         limit: Maximum number of randomly sampled results
@@ -1138,7 +1104,6 @@ async def sample_session_similarity_range(
             detail=f"min_similarity ({min_similarity}) must be <= max_similarity ({max_similarity})",
         )
 
-    await check_project_access(project_id, current_user.id, db)
     session = await session_service.get_session(session_id, project_id)
     if not session:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Search session not found")
