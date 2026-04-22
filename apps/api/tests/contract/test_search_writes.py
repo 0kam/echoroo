@@ -899,7 +899,7 @@ class TestGetSearchJob:
 class TestDeleteSession:
     """Smoke tests for DELETE /sessions/{session_id}."""
 
-    @patch("echoroo.core.s3.delete_object")
+    @patch("echoroo.api.v1.search.sessions.delete_object")
     async def test_happy_path_deletes_row_and_s3(
         self,
         mock_delete_object: MagicMock,
@@ -911,6 +911,11 @@ class TestDeleteSession:
     ) -> None:
         """DELETE /sessions/{session_id} → 204, DB row gone, S3 delete called.
 
+        Patches ``echoroo.api.v1.search.sessions.delete_object`` (the
+        module-level binding bound at import time via ``from ... import``)
+        rather than ``echoroo.core.s3.delete_object`` — the latter would
+        not be seen by the route.
+
         Args:
             mock_delete_object: Patched S3 delete_object function
             client: Test HTTP client
@@ -919,6 +924,15 @@ class TestDeleteSession:
             completed_session: Session to delete
             db_session: DB session for post-assertion queries
         """
+        # Snapshot keys BEFORE the DELETE so we can assert post-commit
+        # cleanup ran over each one (value copy — the ORM attribute may be
+        # cleared when the row is deleted).
+        stale_keys_before = list(completed_session.reference_audio_keys or [])
+        assert stale_keys_before, (
+            "completed_session fixture must seed reference_audio_keys for "
+            "the post-commit-cleanup assertion to be meaningful"
+        )
+
         session_id = str(completed_session.id)
         resp = await client.delete(
             f"{_search_base(test_project_id)}/sessions/{session_id}",
@@ -932,8 +946,18 @@ class TestDeleteSession:
         )
         assert result.scalar_one_or_none() is None
 
-        # Verify S3 delete was attempted for each reference key
-        assert mock_delete_object.call_count >= 1
+        # Verify S3 delete_object was called once per stale reference key,
+        # AFTER the DB commit (the route raises before this loop if commit
+        # fails, so any observed call implies commit succeeded).
+        deleted_keys = {
+            call.args[0] for call in mock_delete_object.call_args_list if call.args
+        }
+        for old_key in stale_keys_before:
+            assert old_key in deleted_keys, (
+                f"expected reference audio {old_key!r} to be cleaned up "
+                f"post-commit; observed delete_object calls: "
+                f"{sorted(deleted_keys)}"
+            )
 
     async def test_unauthenticated(
         self,

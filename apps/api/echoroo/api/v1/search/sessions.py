@@ -226,18 +226,26 @@ async def delete_search_session(
     if not session:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Search session not found")
 
-    # Clean up S3 reference audio files (best effort)
-    if session.reference_audio_keys:
-        import contextlib
-
-        from echoroo.core.s3 import delete_object
-
-        for key in session.reference_audio_keys:
-            with contextlib.suppress(Exception):
-                delete_object(key)
+    # Snapshot old reference-audio S3 keys BEFORE the service mutates the ORM
+    # instance. reference_audio_keys is a JSON column; a value copy ensures the
+    # post-commit cleanup sees the pre-delete key set regardless of what the
+    # service does to the attribute (or ORM state) before commit.
+    stale_keys: list[str] = list(session.reference_audio_keys or [])
 
     await session_service.delete_session(session_id, project_id)
     await db.commit()
+
+    # Post-commit: best-effort cleanup of reference audio. If the commit raised,
+    # we never reach this block, so the session (still referencing stale_keys)
+    # remains consistent with S3.
+    for key in stale_keys:
+        try:
+            delete_object(key)
+        except Exception as exc:  # noqa: BLE001 - best-effort cleanup
+            logger.warning(
+                "Failed to delete reference audio %s after session delete: %s", key, exc
+            )
+
     return Response(status_code=204)
 
 
