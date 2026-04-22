@@ -1049,6 +1049,15 @@ class TestRerunSession:
         mock_s3 = MagicMock()
         mock_get_s3_client.return_value = mock_s3
 
+        # Snapshot stale reference audio keys BEFORE the rerun so we can
+        # assert post-commit cleanup ran over each of them. Using a value
+        # copy here guards against the ORM instance being refreshed later.
+        stale_keys_before = list(completed_session.reference_audio_keys or [])
+        assert stale_keys_before, (
+            "completed_session fixture must have reference_audio_keys so the "
+            "post-commit-cleanup assertion is meaningful"
+        )
+
         # Seed an annotation linked to the session
         annotation = Annotation(
             recording_id=write_recording.id,
@@ -1105,6 +1114,19 @@ class TestRerunSession:
 
         # Verify S3 put_object was called for the uploaded file
         mock_s3.put_object.assert_called_once()
+
+        # Verify the OLD reference audio keys were deleted AFTER commit. The
+        # fixture seeds at least one stale key; delete_object must have been
+        # invoked on each of them once the session no longer references them.
+        deleted_keys = {
+            call.args[0] for call in mock_delete_object.call_args_list if call.args
+        }
+        for old_key in stale_keys_before:
+            assert old_key in deleted_keys, (
+                f"expected old reference audio {old_key!r} to be cleaned "
+                f"up post-commit; observed delete_object calls: "
+                f"{sorted(deleted_keys)}"
+            )
 
     async def test_unauthenticated(
         self,
@@ -1179,6 +1201,117 @@ class TestRerunSession:
             data={"metadata": metadata},
         )
         assert resp.status_code == 404
+
+    @patch("echoroo.workers.search_tasks.run_batch_search")
+    @patch("echoroo.core.s3.delete_object")
+    @patch("echoroo.core.s3.delete_objects_by_prefix")
+    @patch("echoroo.core.s3.get_s3_client")
+    async def test_rerun_commit_failure_cleans_up_new_s3_and_keeps_old(
+        self,
+        mock_get_s3_client: MagicMock,
+        mock_delete_prefix: MagicMock,
+        mock_delete_object: MagicMock,
+        mock_run_batch_search: MagicMock,
+        client: AsyncClient,
+        auth_headers: dict[str, str],
+        test_project_id: str,
+        completed_session: SearchSession,
+    ) -> None:
+        """Pins the S3/DB ordering fix — commit failure must NOT touch old keys.
+
+        Patches ``AsyncSession.commit`` for the duration of the route call
+        only. The patch is scoped to the PUT request so that fixture-side
+        commits (setup) and ``override_get_db``'s rollback (teardown) are
+        not affected. The class-method patch target is
+        ``sqlalchemy.ext.asyncio.AsyncSession.commit`` — the route's session
+        comes from ``override_get_db`` which is distinct from the test's
+        ``db_session``, so a fixture-level monkeypatch would not reach it.
+
+        Expected behavior on commit failure:
+          1. ``delete_objects_by_prefix`` is called once with the new
+             ``artifacts.s3_prefix`` (new-upload cleanup).
+          2. ``delete_object`` is **not** called on any stale reference
+             audio key (old files must be preserved for retry).
+          3. ``run_batch_search.apply_async`` is **not** called (no Celery
+             task should dispatch for a failed rerun).
+
+        Args:
+            mock_get_s3_client: Patched S3 client factory
+            mock_delete_prefix: Patched S3 prefix-delete helper
+            mock_delete_object: Patched S3 single-key delete helper
+            mock_run_batch_search: Patched Celery task module
+            client: Test HTTP client
+            auth_headers: Auth headers for test_user
+            test_project_id: Project UUID string
+            completed_session: Session with seeded reference_audio_keys
+        """
+        mock_s3 = MagicMock()
+        mock_get_s3_client.return_value = mock_s3
+
+        # Snapshot stale keys before the rerun so we can assert they were
+        # NOT touched when the commit fails.
+        old_keys = list(completed_session.reference_audio_keys or [])
+        assert old_keys, (
+            "completed_session fixture must have reference_audio_keys for "
+            "this ordering test to be meaningful"
+        )
+
+        wav_bytes = _make_minimal_wav()
+        metadata = json.dumps(
+            {
+                "species": [
+                    {
+                        "scientific_name": "Turdus merula",
+                        "sources": [{"type": "upload", "file_key": "source_0"}],
+                    }
+                ],
+                "model_name": "perch",
+                "min_similarity": 0.1,
+                "limit_per_species": 50,
+            }
+        )
+
+        # Narrowly scope the commit patch to the route call so we don't
+        # disturb other commits in the test environment. The target is the
+        # AsyncSession class method, which is what the route's dependency-
+        # injected session uses.
+        with patch(
+            "sqlalchemy.ext.asyncio.AsyncSession.commit",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("simulated commit failure"),
+        ):
+            resp = await client.put(
+                f"{_search_base(test_project_id)}/sessions/{completed_session.id}/rerun",
+                headers=auth_headers,
+                data={"metadata": metadata},
+                files={"source_0": ("source_0.wav", wav_bytes, "audio/wav")},
+            )
+
+        # The simulated RuntimeError propagates through FastAPI as a 500.
+        assert resp.status_code == 500
+
+        # Old reference-audio keys must be preserved: delete_object must NOT
+        # have been called on any of them.
+        deleted_keys = {
+            call.args[0]
+            for call in mock_delete_object.call_args_list
+            if call.args
+        }
+        for old_key in old_keys:
+            assert old_key not in deleted_keys, (
+                f"stale reference audio {old_key!r} must be preserved when "
+                f"commit fails; observed delete_object calls: "
+                f"{sorted(deleted_keys)}"
+            )
+
+        # New S3 prefix must be cleaned up exactly once.
+        assert mock_delete_prefix.called, (
+            "new S3 prefix must be cleaned up on commit failure (mirrors "
+            "the POST /batch rollback path)"
+        )
+
+        # No Celery task must be dispatched for a failed rerun.
+        mock_run_batch_search.apply_async.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

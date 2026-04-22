@@ -9,6 +9,7 @@ from __future__ import annotations
 import collections.abc
 import contextlib
 import logging
+import shutil
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -26,12 +27,12 @@ from fastapi import (
     status,
 )
 from fastapi.responses import StreamingResponse
-from sqlalchemy import bindparam, text
-from sqlalchemy.dialects.postgresql import UUID as PGUUID
+from sqlalchemy import text
 
 from echoroo.api.v1.search.batch import _prepare_batch_job
 from echoroo.api.v1.search.deps import AuthorizedSearchSessionServiceDep
 from echoroo.core.database import DbSession
+from echoroo.core.s3 import delete_object, delete_objects_by_prefix
 from echoroo.middleware.auth import CurrentUser
 from echoroo.schemas.search import (
     BatchSearchResponse,
@@ -345,55 +346,51 @@ async def rerun_search_session(
         log_tag="rerun job",
     )
 
-    # Delete existing annotations linked to this session
-    await db.execute(
-        text("DELETE FROM annotations WHERE search_session_id = :sid").bindparams(
-            bindparam("sid", value=session_id, type_=PGUUID())
-        )
-    )
+    # Snapshot old reference-audio S3 keys BEFORE the service mutates the ORM
+    # instance. reference_audio_keys is a JSON column; taking a value copy
+    # ensures the post-commit cleanup sees the pre-rerun key set regardless of
+    # how the service later assigns the attribute.
+    stale_keys: list[str] = list(session.reference_audio_keys or [])
 
-    # Clean up old S3 reference audio (best effort, don't block on failure)
-    if session.reference_audio_keys:
-        from echoroo.core.s3 import delete_object
-
-        for key in session.reference_audio_keys:
-            with contextlib.suppress(Exception):
-                delete_object(key)
-
-    # Reset session fields for the re-run
-    from echoroo.models.enums import SearchSessionStatus
-
-    session.status = SearchSessionStatus.PENDING
-    session.results = None
-    session.result_count = 0
-    session.confirmed_count = 0
-    session.rejected_count = 0
-    session.error_message = None
-    session.started_at = None
-    session.completed_at = None
-    session.celery_job_id = artifacts.job_id
-    session.model_name = artifacts.batch_request.model_name
-    session.parameters = {
+    parameters: dict[str, object] = {
         "min_similarity": artifacts.batch_request.min_similarity,
         "limit_per_species": artifacts.batch_request.limit_per_species,
         "dataset_id": artifacts.batch_request.dataset_id,
     }
-    session.species_config = artifacts.species_config_with_s3
-    session.reference_audio_keys = artifacts.all_s3_keys if artifacts.all_s3_keys else None
 
-    # Auto-generate a new name
-    species_names: list[str] = []
-    for sp_cfg in artifacts.species_config_with_s3:
-        raw_label = sp_cfg.get("common_name") or sp_cfg.get("scientific_name", "Unknown")
-        label = str(raw_label) if raw_label is not None else "Unknown"
-        species_names.append(label)
-    date_str = datetime.now(UTC).strftime("%Y-%m-%d")
-    if len(species_names) > 3:
-        session.name = f"{', '.join(species_names[:3])}... - {date_str}"
-    else:
-        session.name = f"{', '.join(species_names)} - {date_str}"
+    # Delegate annotation DELETE + session field reset + name regeneration to
+    # the service. The service stays S3-free, so cleanup of old reference
+    # audio is orchestrated here (after commit succeeds).
+    await session_service.reset_for_rerun(
+        session=session,
+        job_id=artifacts.job_id,
+        model_name=artifacts.batch_request.model_name,
+        parameters=parameters,
+        species_config=artifacts.species_config_with_s3,
+        reference_audio_keys=artifacts.all_s3_keys if artifacts.all_s3_keys else None,
+    )
 
-    await db.commit()
+    # Commit first; if it fails, roll back the newly uploaded S3 objects and
+    # tmp dir so we don't leak storage. This mirrors the POST /batch path.
+    try:
+        await db.commit()
+    except Exception:
+        with contextlib.suppress(Exception):
+            delete_objects_by_prefix(artifacts.s3_prefix)
+        shutil.rmtree(Path(f"/data/search_tmp/{artifacts.job_id}"), ignore_errors=True)
+        raise
+
+    # Post-commit: best-effort cleanup of the *old* reference audio. Only
+    # delete keys that are no longer referenced by the new session state.
+    new_keys_set: set[str] = set(artifacts.all_s3_keys or [])
+    keys_to_delete = [k for k in stale_keys if k not in new_keys_set]
+    for key in keys_to_delete:
+        try:
+            delete_object(key)
+        except Exception as exc:  # noqa: BLE001 - best-effort cleanup
+            logger.warning(
+                "Failed to delete stale reference audio %s after rerun: %s", key, exc
+            )
 
     # Dispatch Celery task
     from echoroo.workers.search_tasks import run_batch_search
