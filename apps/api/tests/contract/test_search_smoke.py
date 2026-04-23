@@ -21,6 +21,7 @@ Routes covered (all mounted under /api/v1/projects/{project_id}/search):
 
 from __future__ import annotations
 
+import collections.abc
 import csv
 import io
 import re
@@ -45,6 +46,36 @@ from echoroo.models.user import User
 FAKE_UUID = "00000000-0000-0000-0000-000000000000"
 # Perch v2 embedding dimension
 _EMBEDDING_DIM = 1536
+
+
+def _make_expiring_resolver() -> collections.abc.Callable[..., collections.abc.Awaitable[dict[str, str]]]:
+    """Build a fake ``_resolve_locale_common_names`` that expires all ORM objects.
+
+    Returns an async callable with the same (session, species_keys,
+    species_labels, locale, db) signature as the real helper. The callable
+    performs ``await db.rollback()`` as a side-effect — this is the exact
+    state that production hits when ``_resolve_vernacular_via_gbif`` fails
+    to insert a new Taxon (e.g. duplicate race), falls into its
+    rollback-and-continue branch, and inadvertently expires every ORM
+    instance the caller still holds (``rollback()`` expires all
+    instance-tracked attributes regardless of the session's
+    ``expire_on_commit`` setting).
+
+    The returned dict is empty: we only care that the route does not 500
+    when it continues accessing session attributes after this rollback.
+    """
+
+    async def _resolver(
+        _session: object,
+        _species_keys: list[str],
+        _species_labels: dict[str, str],
+        _locale: str,
+        db: AsyncSession,
+    ) -> dict[str, str]:
+        await db.rollback()
+        return {}
+
+    return _resolver
 
 
 # ---------------------------------------------------------------------------
@@ -1054,6 +1085,73 @@ class TestExportRecordings:
         # even though ja-locale enrichment failed.  This is the key regression
         # guarded for the upcoming helper extraction of locale enrichment.
         assert "Common Blackbird" in resp.text
+
+    async def test_locale_ja_no_500_when_enrichment_expires_session(
+        self,
+        client: AsyncClient,
+        auth_headers: dict[str, str],
+        test_project_id: str,
+        test_search_session: SearchSession,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Regression: export must not 500 when enrichment expires ORM objects.
+
+        In production, ``_enrich_species_config_with_locale`` delegates to
+        ``_resolve_vernacular_via_gbif`` for species not yet cached locally.
+        That helper inserts a Taxon row, may hit a duplicate-key race, and
+        on failure runs ``await db.rollback()`` before returning None
+        (best-effort caching, continue-on-error).
+
+        ``rollback()`` EXPIRES every ORM-tracked attribute on every
+        instance in the session — regardless of ``expire_on_commit``. Any
+        later access to ``session.parameters`` / ``session.name`` triggers
+        an implicit lazy-load outside the async context and raises
+        ``MissingGreenlet``.
+
+        The previous unit smoke (``test_locale_ja_no_500_with_gbif_mocked``)
+        forced the GBIF call to raise BEFORE rollback — so the route's
+        ``try/except`` caught it and never exercised the
+        rollback-then-access path. This test simulates the "enrichment
+        returned successfully after rolling back internally" path by
+        monkey-patching ``_resolve_locale_common_names`` to perform
+        ``await db.rollback()`` and return an empty mapping.
+
+        If the route continues to access raw ORM attributes after this
+        rollback, the response is 500 with ``MissingGreenlet`` in the
+        log.  The fix snapshots every needed session attribute to a
+        plain-old-data proxy before any expiration-capable helper is
+        invoked, making the helper chain immune to post-rollback
+        expiration.
+        """
+        from echoroo.api.v1.search import sessions as search_sessions
+
+        monkeypatch.setattr(
+            search_sessions,
+            "_resolve_locale_common_names",
+            _make_expiring_resolver(),
+        )
+
+        resp = await client.get(
+            f"{_search_base(test_project_id)}/sessions/{test_search_session.id}/export-recordings",
+            headers=auth_headers,
+            params={"locale": "ja"},
+        )
+        # Must NOT be 500. If the route still holds the ORM session and
+        # accesses session.parameters / session.name after the rollback,
+        # this would be 500 with MissingGreenlet in the stack trace.
+        assert resp.status_code == 200, (
+            f"export must not 500 when enrichment rolls back; got {resp.status_code}: "
+            f"{resp.text[:500]}"
+        )
+        assert "text/csv" in resp.headers.get("content-type", "")
+        # Header row still emitted (route ran to completion)
+        assert "recording_filename" in resp.text
+        # Content-Disposition filename relies on session.name / session.id;
+        # those attrs must still be accessible post-rollback via the snapshot.
+        cd = resp.headers.get("content-disposition", "")
+        assert re.search(
+            r'^attachment; filename="search_summary_.+_\d{8}\.csv"$', cd
+        ), f"unexpected Content-Disposition (snapshot of session.name failed?): {cd!r}"
 
     async def test_unauthenticated(
         self,

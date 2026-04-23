@@ -1012,9 +1012,33 @@ async def export_search_session_recordings_csv(
             detail="Session has no results to export",
         )
 
+    # Snapshot every ORM attribute we will need into a plain-old-data proxy
+    # BEFORE any helper that may flush/commit/rollback the DB session.  The
+    # locale-enrichment chain (``_resolve_locale_common_names`` ->
+    # ``_enrich_species_config_with_locale`` -> ``_resolve_vernacular_via_gbif``)
+    # transparently caches new GBIF Taxon / TaxonVernacularName rows and runs
+    # ``await db.rollback()`` inside its duplicate-race guard.  SQLAlchemy's
+    # ``rollback()`` EXPIRES every ORM-tracked attribute on every instance in
+    # the session, regardless of ``expire_on_commit``.  Any subsequent access
+    # to ``session.parameters`` / ``session.name`` / ``session.results`` would
+    # then trigger an implicit lazy-load outside the async context and raise
+    # ``MissingGreenlet``.  The POD proxy is immune because its values are
+    # concrete dict/str/UUID copies held in memory.
+    from types import SimpleNamespace
+
+    session_snapshot = SimpleNamespace(
+        id=session.id,
+        name=session.name,
+        project_id=session.project_id,
+        model_name=session.model_name,
+        parameters=dict(session.parameters) if session.parameters else None,
+        results=dict(session.results) if session.results else None,
+        species_config=list(session.species_config) if session.species_config else None,
+    )
+
     # Extract species_labels + species_keys (tag_id lookup + sci_name fallback).
     # The helper owns the two 404 paths for malformed / empty results.
-    species_labels, species_keys = await _build_species_labels(session, db)
+    species_labels, species_keys = await _build_species_labels(session_snapshot, db)
 
     # Build common name mapping using the same enrichment as session detail API.
     # Locale enrichment is best-effort: a transient GBIF outage or an internal
@@ -1022,24 +1046,26 @@ async def export_search_session_recordings_csv(
     # by the list/detail routes — degrade to scientific names when enrichment
     # raises.
     species_common_names = await _resolve_locale_common_names(
-        session, species_keys, species_labels, locale, db
+        session_snapshot, species_keys, species_labels, locale, db
     )
 
     # Fetch all recordings for this project (with the optional dataset filter
     # from session.parameters applied inside the helper).
-    all_recordings = await _fetch_session_recordings(session, project_id, db)
+    all_recordings = await _fetch_session_recordings(session_snapshot, project_id, db)
 
     # For each species, compute similarity against ALL embeddings via SQL
     # (same pattern as distribution/time-distribution APIs).
     # Aggregate per recording: MAX, MIN, AVG similarity.
     agg = (
-        await _compute_similarity_aggregates(session, species_keys, all_recordings, db)
+        await _compute_similarity_aggregates(
+            session_snapshot, species_keys, all_recordings, db
+        )
         if all_recordings
         else {}
     )
 
     csv_content, filename = _write_recordings_csv(
-        session,
+        session_snapshot,
         all_recordings,
         species_labels,
         species_common_names,
