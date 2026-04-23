@@ -20,6 +20,7 @@ from echoroo.schemas.tag import (
     TagStatistic,
     TagUpdate,
 )
+from echoroo.services.vernacular import resolve_vernacular_names
 
 
 class TagService:
@@ -46,6 +47,7 @@ class TagService:
         search: str | None = None,
         page: int = 1,
         page_size: int = 50,
+        locale: str = "en",
     ) -> TagListResponse:
         """List tags for a project with optional filtering and pagination.
 
@@ -55,6 +57,7 @@ class TagService:
             search: Optional search string
             page: Page number (1-indexed)
             page_size: Items per page
+            locale: Locale code used to populate ``vernacular_name`` on each tag
 
         Returns:
             Paginated tag list response
@@ -69,15 +72,48 @@ class TagService:
             page_size=pagination.page_size,
         )
 
+        vernacular_map = await resolve_vernacular_names(
+            self.tag_repo.db,
+            [t.taxon_id for t in tags],
+            locale,
+        )
+
         return TagListResponse(
-            items=[TagResponse.model_validate(t) for t in tags],
+            items=[self._to_response(t, vernacular_map) for t in tags],
             total=total,
             page=pagination.page,
             page_size=pagination.page_size,
             pages=pagination.total_pages(total),
         )
 
-    async def create(self, project_id: UUID, request: TagCreate) -> TagResponse:
+    @staticmethod
+    def _to_response(
+        tag: Tag,
+        vernacular_map: dict[UUID, str] | None = None,
+    ) -> TagResponse:
+        """Convert a Tag model to a TagResponse with optional vernacular name.
+
+        Args:
+            tag: Tag ORM instance
+            vernacular_map: Optional ``{taxon_id: name}`` mapping used to
+                populate ``TagResponse.vernacular_name``. When ``None`` or the
+                tag has no ``taxon_id`` / no matching entry, the field stays
+                ``None``.
+
+        Returns:
+            TagResponse schema instance
+        """
+        response = TagResponse.model_validate(tag)
+        if vernacular_map is not None and tag.taxon_id is not None:
+            response.vernacular_name = vernacular_map.get(tag.taxon_id)
+        return response
+
+    async def create(
+        self,
+        project_id: UUID,
+        request: TagCreate,
+        locale: str = "en",
+    ) -> TagResponse:
         """Create a new tag.
 
         If a tag with the same project_id + name + category already exists
@@ -87,6 +123,7 @@ class TagService:
         Args:
             project_id: Project's UUID
             request: Tag creation data
+            locale: Locale code used to populate ``vernacular_name`` on the response
 
         Returns:
             Created or existing tag response
@@ -103,7 +140,6 @@ class TagService:
 
         try:
             created_tag = await self.tag_repo.create(tag)
-            return TagResponse.model_validate(created_tag)
         except IntegrityError:
             await self.tag_repo.db.rollback()
             # Duplicate tag — return the existing one
@@ -113,14 +149,28 @@ class TagService:
                 category=request.category,
             )
             if existing:
-                return TagResponse.model_validate(existing)
+                vernacular_map = await resolve_vernacular_names(
+                    self.tag_repo.db, [existing.taxon_id], locale
+                )
+                return self._to_response(existing, vernacular_map)
             raise
 
-    async def get_detail(self, tag_id: UUID) -> TagDetailResponse:
+        vernacular_map = await resolve_vernacular_names(
+            self.tag_repo.db, [created_tag.taxon_id], locale
+        )
+        return self._to_response(created_tag, vernacular_map)
+
+    async def get_detail(
+        self,
+        tag_id: UUID,
+        locale: str = "en",
+    ) -> TagDetailResponse:
         """Get tag detail with children and usage count.
 
         Args:
             tag_id: Tag's UUID
+            locale: Locale code used to populate ``vernacular_name`` on the tag
+                and each of its children
 
         Returns:
             Tag detail response with children and usage_count
@@ -135,20 +185,32 @@ class TagService:
                 detail="Tag not found",
             )
 
-        children = [TagResponse.model_validate(child) for child in tag.children]
+        taxon_ids: list[UUID | None] = [tag.taxon_id]
+        taxon_ids.extend(child.taxon_id for child in tag.children)
+        vernacular_map = await resolve_vernacular_names(
+            self.tag_repo.db, taxon_ids, locale
+        )
+
+        children = [self._to_response(child, vernacular_map) for child in tag.children]
 
         return TagDetailResponse(
-            **TagResponse.model_validate(tag).model_dump(),
+            **self._to_response(tag, vernacular_map).model_dump(),
             children=children,
             usage_count=0,
         )
 
-    async def update(self, tag_id: UUID, request: TagUpdate) -> TagResponse:
+    async def update(
+        self,
+        tag_id: UUID,
+        request: TagUpdate,
+        locale: str = "en",
+    ) -> TagResponse:
         """Update tag fields.
 
         Args:
             tag_id: Tag's UUID
             request: Update data
+            locale: Locale code used to populate ``vernacular_name`` on the response
 
         Returns:
             Updated tag response
@@ -171,7 +233,10 @@ class TagService:
             tag.common_name = request.common_name
 
         updated_tag = await self.tag_repo.update(tag)
-        return TagResponse.model_validate(updated_tag)
+        vernacular_map = await resolve_vernacular_names(
+            self.tag_repo.db, [updated_tag.taxon_id], locale
+        )
+        return self._to_response(updated_tag, vernacular_map)
 
     async def delete(self, tag_id: UUID) -> None:
         """Delete a tag.
@@ -233,19 +298,29 @@ class TagService:
 
         return suggestions
 
-    async def get_statistics(self, project_id: UUID) -> list[TagStatistic]:
+    async def get_statistics(
+        self,
+        project_id: UUID,
+        locale: str = "en",
+    ) -> list[TagStatistic]:
         """Get tag usage statistics for a project.
 
         Args:
             project_id: Project's UUID
+            locale: Locale code used to populate ``vernacular_name`` on each tag
 
         Returns:
             List of tag statistics ordered by usage count descending
         """
         rows = await self.tag_repo.get_statistics(project_id)
+        vernacular_map = await resolve_vernacular_names(
+            self.tag_repo.db,
+            [tag.taxon_id for tag, _ in rows],
+            locale,
+        )
         return [
             TagStatistic(
-                tag=TagResponse.model_validate(tag),
+                tag=self._to_response(tag, vernacular_map),
                 usage_count=usage_count,
             )
             for tag, usage_count in rows

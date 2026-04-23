@@ -6,7 +6,7 @@ import io
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Query, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select as sa_select
 
@@ -91,6 +91,11 @@ async def list_detections(
     detection_run_id: UUID | None = None,
     page: int = 1,
     page_size: int = 50,
+    locale: str = Query(
+        "en",
+        pattern="^(en|ja)$",
+        description="Locale code for vernacular name resolution (en, ja)",
+    ),
 ) -> DetectionListResponse:
     """List detection annotations for a project.
 
@@ -108,6 +113,7 @@ async def list_detections(
         detection_run_id: Optional detection run filter
         page: Page number (default: 1)
         page_size: Items per page (default: 50)
+        locale: Locale code used to populate ``vernacular_name`` on embedded tags
 
     Returns:
         Paginated list of detections
@@ -135,6 +141,7 @@ async def list_detections(
         current_user_id=current_user.id,
         min_votes=min_votes,
         threshold=threshold,
+        locale=locale,
     )
 
 
@@ -150,7 +157,11 @@ async def get_species_summary(
     service: DetectionServiceDep,
     dataset_id: UUID | None = None,
     detection_run_id: UUID | None = None,
-    locale: str = "en",
+    locale: str = Query(
+        "en",
+        pattern="^(en|ja)$",
+        description="Locale code for vernacular name resolution (en, ja)",
+    ),
 ) -> SpeciesSummaryResponse:
     """Get species detection summary.
 
@@ -284,7 +295,11 @@ async def get_temporal_data(
     service: DetectionServiceDep,
     dataset_id: UUID | None = None,
     detection_run_id: UUID | None = None,
-    locale: str = "en",
+    locale: str = Query(
+        "en",
+        pattern="^(en|ja)$",
+        description="Locale code for vernacular name resolution (en, ja)",
+    ),
 ) -> DetectionTemporalDataResponse:
     """Get temporal detection data for visualization.
 
@@ -327,6 +342,11 @@ async def get_detection(
     current_user: CurrentUser,
     service: DetectionServiceDep,
     db: DbSession,
+    locale: str = Query(
+        "en",
+        pattern="^(en|ja)$",
+        description="Locale code for vernacular name resolution (en, ja)",
+    ),
 ) -> DetectionResponse:
     """Get detection by ID.
 
@@ -336,6 +356,7 @@ async def get_detection(
         current_user: Current authenticated user
         service: Detection service instance
         db: Database session
+        locale: Locale code used to populate ``vernacular_name`` on the embedded tag
 
     Returns:
         Detection annotation detail
@@ -355,6 +376,7 @@ async def get_detection(
         current_user_id=current_user.id,
         min_votes=min_votes,
         threshold=threshold,
+        locale=locale,
     )
 
 

@@ -13,7 +13,6 @@ from echoroo.models.annotation import Annotation
 from echoroo.models.annotation_vote import AnnotationVote
 from echoroo.models.confirmed_region import ConfirmedRegion
 from echoroo.models.enums import DetectionStatus, SignalQuality, VoteType
-from echoroo.models.taxon_vernacular_name import TaxonVernacularName
 from echoroo.repositories.annotation import AnnotationRepository, TemporalSummaryRow
 from echoroo.repositories.annotation_vote import AnnotationVoteRepository
 from echoroo.repositories.confirmed_region import ConfirmedRegionRepository
@@ -31,6 +30,7 @@ from echoroo.schemas.detection import (
     SpeciesTemporalData,
 )
 from echoroo.schemas.tag import TagResponse
+from echoroo.services.vernacular import resolve_vernacular_names
 
 
 class DetectionService:
@@ -68,6 +68,7 @@ class DetectionService:
         current_user_id: UUID | None = None,
         min_votes: int = 2,
         threshold: float = 0.667,
+        locale: str = "en",
     ) -> DetectionListResponse:
         """List detections for a project with optional filtering and pagination.
 
@@ -85,6 +86,7 @@ class DetectionService:
             current_user_id: Optional current user ID for including their vote
             min_votes: Minimum votes required for consensus (from project settings)
             threshold: Consensus agreement threshold (from project settings)
+            locale: Locale code used to resolve vernacular names on embedded tags
 
         Returns:
             Paginated detection list response
@@ -112,7 +114,21 @@ class DetectionService:
             threshold=threshold,
         )
 
-        items = [self._to_response(a, vote_counts_map.get(a.id)) for a in annotations]
+        # Batch-resolve vernacular names for all distinct taxon IDs so the
+        # embedded TagResponse objects can be populated without N+1 queries.
+        taxon_ids = [
+            a.tag.taxon_id
+            for a in annotations
+            if a.tag is not None and a.tag.taxon_id is not None
+        ]
+        vernacular_map = await resolve_vernacular_names(
+            self.annotation_repo.db, taxon_ids, locale
+        )
+
+        items = [
+            self._to_response(a, vote_counts_map.get(a.id), vernacular_map)
+            for a in annotations
+        ]
 
         return DetectionListResponse(
             items=items,
@@ -129,8 +145,8 @@ class DetectionService:
     ) -> dict[UUID, str]:
         """Batch-resolve vernacular names for a list of taxon IDs.
 
-        Fetches primary vernacular names in one query to avoid N+1 queries.
-        Falls back to any vernacular name for the locale if no primary exists.
+        Thin wrapper around :func:`resolve_vernacular_names` kept for
+        backwards compatibility with internal callers.
 
         Args:
             taxon_ids: List of taxon UUIDs to resolve
@@ -139,27 +155,9 @@ class DetectionService:
         Returns:
             Mapping of taxon_id to vernacular name string
         """
-        if not taxon_ids:
-            return {}
-
-        result = await self.annotation_repo.db.execute(
-            sa_select(TaxonVernacularName)
-            .where(TaxonVernacularName.taxon_id.in_(taxon_ids))
-            .where(TaxonVernacularName.locale == locale)
-            .order_by(
-                TaxonVernacularName.taxon_id,
-                TaxonVernacularName.is_primary.desc(),
-            )
+        return await resolve_vernacular_names(
+            self.annotation_repo.db, taxon_ids, locale
         )
-        vernacular_names = result.scalars().all()
-
-        # Build mapping: keep only the first (highest priority) entry per taxon_id
-        mapping: dict[UUID, str] = {}
-        for vn in vernacular_names:
-            if vn.taxon_id not in mapping:
-                mapping[vn.taxon_id] = vn.name
-
-        return mapping
 
     async def get_species_summary(
         self,
@@ -330,6 +328,7 @@ class DetectionService:
         current_user_id: UUID | None = None,
         min_votes: int = 2,
         threshold: float = 0.667,
+        locale: str = "en",
     ) -> DetectionResponse:
         """Get a detection annotation by ID.
 
@@ -338,6 +337,7 @@ class DetectionService:
             current_user_id: Optional current user ID for including their vote
             min_votes: Minimum votes required for consensus (from project settings)
             threshold: Consensus agreement threshold (from project settings)
+            locale: Locale code used to resolve vernacular names on the embedded tag
 
         Returns:
             Detection response
@@ -357,7 +357,15 @@ class DetectionService:
             min_votes=min_votes,
             threshold=threshold,
         )
-        return self._to_response(annotation, vote_counts_map.get(annotation.id))
+        taxon_ids: list[UUID] = []
+        if annotation.tag is not None and annotation.tag.taxon_id is not None:
+            taxon_ids.append(annotation.tag.taxon_id)
+        vernacular_map = await resolve_vernacular_names(
+            self.annotation_repo.db, taxon_ids, locale
+        )
+        return self._to_response(
+            annotation, vote_counts_map.get(annotation.id), vernacular_map
+        )
 
     async def create(
         self,
@@ -620,12 +628,17 @@ class DetectionService:
     def _to_response(
         annotation: Annotation,
         vote_counts: DetectionVoteCounts | None = None,
+        vernacular_map: dict[UUID, str] | None = None,
     ) -> DetectionResponse:
         """Convert an Annotation model to a DetectionResponse schema.
 
         Args:
             annotation: Annotation model instance
             vote_counts: Optional pre-loaded vote counts for this annotation
+            vernacular_map: Optional mapping of ``taxon_id`` to locale-resolved
+                vernacular name. When the embedded tag has a ``taxon_id`` that
+                is present in the mapping, ``TagResponse.vernacular_name`` is
+                populated; otherwise it remains ``None``.
 
         Returns:
             DetectionResponse instance
@@ -633,6 +646,13 @@ class DetectionService:
         tag_response = None
         if annotation.tag is not None:
             tag_response = TagResponse.model_validate(annotation.tag)
+            if (
+                vernacular_map is not None
+                and annotation.tag.taxon_id is not None
+            ):
+                tag_response.vernacular_name = vernacular_map.get(
+                    annotation.tag.taxon_id
+                )
 
         return DetectionResponse(
             id=annotation.id,

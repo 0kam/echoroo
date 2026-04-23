@@ -3,7 +3,7 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Query, status
 
 from echoroo.core.database import DbSession
 from echoroo.middleware.auth import CurrentUser
@@ -52,6 +52,11 @@ async def list_tags(
     search: str | None = None,
     page: int = 1,
     page_size: int = 50,
+    locale: str = Query(
+        "en",
+        pattern="^(en|ja)$",
+        description="Locale code for vernacular name resolution (en, ja)",
+    ),
 ) -> TagListResponse:
     """List tags for a project.
 
@@ -63,6 +68,7 @@ async def list_tags(
         search: Optional search string
         page: Page number (default: 1)
         page_size: Items per page (default: 50)
+        locale: Locale code used to populate ``vernacular_name`` on each tag
 
     Returns:
         Paginated list of tags
@@ -76,6 +82,7 @@ async def list_tags(
         search=search,
         page=page,
         page_size=page_size,
+        locale=locale,
     )
 
 
@@ -92,6 +99,11 @@ async def create_tag(
     current_user: CurrentUser,
     service: TagServiceDep,
     db: DbSession,
+    locale: str = Query(
+        "en",
+        pattern="^(en|ja)$",
+        description="Locale code for vernacular name resolution (en, ja)",
+    ),
 ) -> TagResponse:
     """Create a new tag.
 
@@ -101,6 +113,7 @@ async def create_tag(
         current_user: Current authenticated user
         service: Tag service instance
         db: Database session
+        locale: Locale code used to populate ``vernacular_name`` on the response
 
     Returns:
         Created tag
@@ -109,7 +122,7 @@ async def create_tag(
         401: Not authenticated
         422: Validation error
     """
-    tag = await service.create(project_id=project_id, request=request)
+    tag = await service.create(project_id=project_id, request=request, locale=locale)
     await db.commit()
     return tag
 
@@ -157,6 +170,11 @@ async def get_statistics(
     project_id: UUID,
     current_user: CurrentUser,
     service: TagServiceDep,
+    locale: str = Query(
+        "en",
+        pattern="^(en|ja)$",
+        description="Locale code for vernacular name resolution (en, ja)",
+    ),
 ) -> list[TagStatistic]:
     """Get tag usage statistics.
 
@@ -166,6 +184,7 @@ async def get_statistics(
         project_id: Project's UUID
         current_user: Current authenticated user
         service: Tag service instance
+        locale: Locale code used to populate ``vernacular_name`` on each tag
 
     Returns:
         List of tag statistics ordered by usage count descending
@@ -173,7 +192,7 @@ async def get_statistics(
     Raises:
         401: Not authenticated
     """
-    return await service.get_statistics(project_id=project_id)
+    return await service.get_statistics(project_id=project_id, locale=locale)
 
 
 @router.get(
@@ -187,6 +206,11 @@ async def get_tag(
     tag_id: UUID,
     current_user: CurrentUser,
     service: TagServiceDep,
+    locale: str = Query(
+        "en",
+        pattern="^(en|ja)$",
+        description="Locale code for vernacular name resolution (en, ja)",
+    ),
 ) -> TagDetailResponse:
     """Get tag by ID with children.
 
@@ -195,6 +219,8 @@ async def get_tag(
         tag_id: Tag's UUID
         current_user: Current authenticated user
         service: Tag service instance
+        locale: Locale code used to populate ``vernacular_name`` on the tag
+            and each of its children
 
     Returns:
         Tag detail with children and usage count
@@ -203,7 +229,7 @@ async def get_tag(
         401: Not authenticated
         404: Tag not found
     """
-    return await service.get_detail(tag_id=tag_id)
+    return await service.get_detail(tag_id=tag_id, locale=locale)
 
 
 @router.patch(
@@ -219,6 +245,11 @@ async def update_tag(
     current_user: CurrentUser,
     service: TagServiceDep,
     db: DbSession,
+    locale: str = Query(
+        "en",
+        pattern="^(en|ja)$",
+        description="Locale code for vernacular name resolution (en, ja)",
+    ),
 ) -> TagResponse:
     """Update tag.
 
@@ -229,6 +260,7 @@ async def update_tag(
         current_user: Current authenticated user
         service: Tag service instance
         db: Database session
+        locale: Locale code used to populate ``vernacular_name`` on the response
 
     Returns:
         Updated tag
@@ -237,7 +269,7 @@ async def update_tag(
         401: Not authenticated
         404: Tag not found
     """
-    tag = await service.update(tag_id=tag_id, request=request)
+    tag = await service.update(tag_id=tag_id, request=request, locale=locale)
     await db.commit()
     return tag
 

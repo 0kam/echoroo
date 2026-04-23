@@ -30,7 +30,14 @@ class TagUpdate(BaseModel):
 
 
 class TagResponse(BaseModel):
-    """Tag response schema."""
+    """Tag response schema.
+
+    The ``common_name`` field is the English common name stored directly on
+    the tag record.  ``vernacular_name`` is resolved from
+    ``taxon_vernacular_names`` for the requested locale (falls back to
+    ``None`` when no entry exists; clients should fall back to
+    ``common_name`` in that case).
+    """
 
     id: UUID
     project_id: UUID
@@ -40,6 +47,10 @@ class TagResponse(BaseModel):
     gbif_taxon_key: int | None
     scientific_name: str | None
     common_name: str | None
+    vernacular_name: str | None = Field(
+        default=None,
+        description="Locale-resolved vernacular name; null if not available",
+    )
     taxon_id: UUID | None = None
     created_at: datetime
     updated_at: datetime
