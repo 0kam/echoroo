@@ -868,6 +868,101 @@ async def _compute_similarity_aggregates(
     return agg
 
 
+_EXPORT_CSV_HEADER: list[str] = [
+    "recording_filename",
+    "recording_datetime",
+    "scientific_name",
+    "common_name",
+    "max_similarity",
+    "min_similarity",
+    "avg_similarity",
+]
+
+
+def _write_recordings_csv(
+    session: Any,
+    all_recordings: list[tuple[str, str, str | None]],
+    species_labels: dict[str, str],
+    species_common_names: dict[str, str],
+    species_keys: list[str],
+    agg: dict[str, dict[str, dict[str, float]]],
+) -> tuple[str, str]:
+    """Serialise the export-recordings CSV body and compute its filename.
+
+    Unifies the empty-state path (no recordings → header-only CSV) and
+    the populated path (one row per ``(recording, species)`` with
+    aggregated similarities). Both paths share the same writer, header
+    row, and ``search_summary_{safe_name}_{YYYYMMDD}.csv`` filename
+    template — a user whose project happens to be empty must still see a
+    correctly-named download.
+
+    The returned body is a ``str``, not ``bytes``: the route streams it
+    via ``StreamingResponse(iter([csv_content]))`` exactly as the original
+    inline code did.  The ``safe_name`` sanitisation used for the filename
+    is byte-for-byte identical to the original (same six replacements in
+    the same order).
+
+    Args:
+        session: SearchSession ORM instance. ``session.name`` and
+            ``session.id`` are used for the filename.
+        all_recordings: Output of ``_fetch_session_recordings`` — iteration
+            order is preserved as the row order in the CSV.
+        species_labels: species_key → scientific_name.
+        species_common_names: species_key → common_name (possibly empty).
+        species_keys: Ordered list of species keys to emit per recording.
+        agg: Output of ``_compute_similarity_aggregates``; ``{}`` when no
+            recordings were found.
+
+    Returns:
+        Tuple of (csv_content, filename).
+    """
+    import csv
+    import io
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(_EXPORT_CSV_HEADER)
+
+    for rec_id, rec_filename, rec_datetime in all_recordings:
+        for sp_key in species_keys:
+            sci_name = species_labels.get(sp_key, sp_key)
+            common_name = species_common_names.get(sp_key, "")
+            rec_agg = agg.get(sp_key, {}).get(rec_id)
+            if rec_agg is not None:
+                writer.writerow([
+                    rec_filename,
+                    rec_datetime or "",
+                    sci_name,
+                    common_name,
+                    f"{rec_agg['max_sim']:.4f}",
+                    f"{rec_agg['min_sim']:.4f}",
+                    f"{rec_agg['avg_sim']:.4f}",
+                ])
+            else:
+                writer.writerow([
+                    rec_filename,
+                    rec_datetime or "",
+                    sci_name,
+                    common_name,
+                    "",
+                    "",
+                    "",
+                ])
+
+    csv_content = output.getvalue()
+    date_str = datetime.now(UTC).strftime("%Y%m%d")
+    safe_name = (
+        (session.name or str(session.id))
+        .replace('"', '_')
+        .replace('\n', '_')
+        .replace('\r', '_')
+        .replace(' ', '_')
+        .replace('/', '-')
+    )
+    filename = f"search_summary_{safe_name}_{date_str}.csv"
+    return csv_content, filename
+
+
 @router.get(
     "/sessions/{session_id}/export-recordings",
     summary="Export search summary: all recordings × all species as CSV",
@@ -907,9 +1002,6 @@ async def export_search_session_recordings_csv(
         403: Access denied to project
         404: Session not found or has no results
     """
-    import csv
-    import io
-
     session = await session_service.get_session(session_id, project_id)
     if not session:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Search session not found")
@@ -937,74 +1029,23 @@ async def export_search_session_recordings_csv(
     # from session.parameters applied inside the helper).
     all_recordings = await _fetch_session_recordings(session, project_id, db)
 
-    if not all_recordings:
-        # No recordings in project — return empty CSV with headers only
-        output = io.StringIO()
-        writer = csv.writer(output)
-        writer.writerow([
-            "recording_filename", "recording_datetime", "scientific_name",
-            "common_name", "max_similarity", "min_similarity", "avg_similarity",
-        ])
-        csv_content = output.getvalue()
-        date_str = datetime.now(UTC).strftime("%Y%m%d")
-        safe_name = (session.name or str(session_id)).replace('"', '_').replace('\n', '_').replace('\r', '_').replace(' ', '_').replace('/', '-')
-        filename = f"search_summary_{safe_name}_{date_str}.csv"
-        return StreamingResponse(
-            iter([csv_content]),
-            media_type="text/csv",
-            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-        )
-
     # For each species, compute similarity against ALL embeddings via SQL
     # (same pattern as distribution/time-distribution APIs).
     # Aggregate per recording: MAX, MIN, AVG similarity.
-    agg = await _compute_similarity_aggregates(
-        session, species_keys, all_recordings, db
+    agg = (
+        await _compute_similarity_aggregates(session, species_keys, all_recordings, db)
+        if all_recordings
+        else {}
     )
 
-    # Build CSV rows: one per (recording × species), sorted by recording_datetime ASC
-    output = io.StringIO()
-    writer = csv.writer(output)
-    writer.writerow([
-        "recording_filename",
-        "recording_datetime",
-        "scientific_name",
-        "common_name",
-        "max_similarity",
-        "min_similarity",
-        "avg_similarity",
-    ])
-
-    for rec_id, rec_filename, rec_datetime in all_recordings:
-        for sp_key in species_keys:
-            sci_name = species_labels.get(sp_key, sp_key)
-            common_name = species_common_names.get(sp_key, "")
-            rec_agg = agg.get(sp_key, {}).get(rec_id)
-            if rec_agg is not None:
-                writer.writerow([
-                    rec_filename,
-                    rec_datetime or "",
-                    sci_name,
-                    common_name,
-                    f"{rec_agg['max_sim']:.4f}",
-                    f"{rec_agg['min_sim']:.4f}",
-                    f"{rec_agg['avg_sim']:.4f}",
-                ])
-            else:
-                writer.writerow([
-                    rec_filename,
-                    rec_datetime or "",
-                    sci_name,
-                    common_name,
-                    "",
-                    "",
-                    "",
-                ])
-
-    csv_content = output.getvalue()
-    date_str = datetime.now(UTC).strftime("%Y%m%d")
-    safe_name = (session.name or str(session_id)).replace('"', '_').replace('\n', '_').replace('\r', '_').replace(' ', '_').replace('/', '-')
-    filename = f"search_summary_{safe_name}_{date_str}.csv"
+    csv_content, filename = _write_recordings_csv(
+        session,
+        all_recordings,
+        species_labels,
+        species_common_names,
+        species_keys,
+        agg,
+    )
     return StreamingResponse(
         iter([csv_content]),
         media_type="text/csv",
