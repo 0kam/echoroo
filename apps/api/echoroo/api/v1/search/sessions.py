@@ -521,6 +521,79 @@ async def stream_reference_audio(
     )
 
 
+async def _resolve_locale_common_names(
+    session: Any,
+    species_keys: list[str],
+    species_labels: dict[str, str],
+    locale: str,
+    db: Any,
+) -> dict[str, str]:
+    """Resolve ``species_key -> common_name`` for the export-recordings CSV.
+
+    Mirrors the locale-enrichment guard used by the list/detail routes: when
+    ``_enrich_species_config_with_locale`` raises (e.g. transient GBIF outage
+    or an internal SQLAlchemy greenlet error), we MUST NOT bubble the failure
+    up as a 500. Instead we log a warning and fall back to the raw
+    ``session.species_config``.  If the raw config still has ``common_name``
+    values populated (typical when the search was created from a local tag),
+    those are preserved in the returned mapping so the CSV does not suddenly
+    lose its ``common_name`` column content.
+
+    Args:
+        session: SearchSession ORM instance (``species_config`` attr read).
+        species_keys: Ordered list of species keys (tag UUIDs) from the
+            session results. Only keys present here are populated in the
+            returned dict.
+        species_labels: Mapping of species_key → scientific_name used to
+            join against the ``sci_name -> common_name`` lookup.
+        locale: Locale string (``en``/``ja``) passed through to the
+            enrichment helper.
+        db: AsyncSession for GBIF / vernacular lookups.
+
+    Returns:
+        Dict keyed by species_key with common_name values. Empty when
+        ``species_config`` is missing/invalid, or when neither the enriched
+        nor the raw config yielded a matching ``common_name`` for any of
+        the given ``species_keys``.
+    """
+    species_common_names: dict[str, str] = {}
+    if not (session.species_config and isinstance(session.species_config, list)):
+        return species_common_names
+
+    from echoroo.api.v1.search.utils import _enrich_species_config_with_locale
+
+    try:
+        enriched_config = await _enrich_species_config_with_locale(
+            list(session.species_config), locale, db
+        )
+    except Exception:
+        logger.warning(
+            "Failed to enrich species_config for export-recordings (locale=%r); "
+            "falling back to raw species_config",
+            locale,
+            exc_info=True,
+        )
+        enriched_config = list(session.species_config)
+
+    # Build sci_name -> common_name from enriched (or raw-fallback) config
+    sci_to_common: dict[str, str] = {}
+    for sp_cfg in enriched_config:
+        if not isinstance(sp_cfg, dict):
+            continue
+        sp_sci = str(sp_cfg.get("scientific_name") or "")
+        sp_common = str(sp_cfg.get("common_name") or "")
+        if sp_sci and sp_common:
+            sci_to_common[sp_sci] = sp_common
+
+    # Map species_key -> common_name using species_labels (key -> sci_name)
+    for key in species_keys:
+        sci_name = species_labels.get(key, "")
+        if sci_name in sci_to_common:
+            species_common_names[key] = sci_to_common[sci_name]
+
+    return species_common_names
+
+
 @router.get(
     "/sessions/{session_id}/export-recordings",
     summary="Export search summary: all recordings × all species as CSV",
@@ -643,35 +716,9 @@ async def export_search_session_recordings_csv(
     # SQLAlchemy error must NOT cause the export to fail. Mirror the guard used
     # by the list/detail routes — degrade to scientific names when enrichment
     # raises.
-    species_common_names: dict[str, str] = {}
-    if session.species_config and isinstance(session.species_config, list):
-        from echoroo.api.v1.search.utils import _enrich_species_config_with_locale
-        try:
-            enriched_config = await _enrich_species_config_with_locale(
-                list(session.species_config), locale, db
-            )
-        except Exception:
-            logger.warning(
-                "Failed to enrich species_config for export-recordings (locale=%r); "
-                "falling back to raw species_config",
-                locale,
-                exc_info=True,
-            )
-            enriched_config = list(session.species_config)
-        # Build sci_name -> common_name from enriched config
-        sci_to_common: dict[str, str] = {}
-        for sp_cfg in enriched_config:
-            if not isinstance(sp_cfg, dict):
-                continue
-            sp_sci = str(sp_cfg.get("scientific_name") or "")
-            sp_common = str(sp_cfg.get("common_name") or "")
-            if sp_sci and sp_common:
-                sci_to_common[sp_sci] = sp_common
-        # Map species_key -> common_name using species_labels (key -> sci_name)
-        for key in species_keys:
-            sci_name = species_labels.get(key, "")
-            if sci_name in sci_to_common:
-                species_common_names[key] = sci_to_common[sci_name]
+    species_common_names = await _resolve_locale_common_names(
+        session, species_keys, species_labels, locale, db
+    )
 
     # Determine optional dataset filter from session parameters
     dataset_id_str: str | None = None
