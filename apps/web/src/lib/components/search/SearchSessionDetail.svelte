@@ -7,22 +7,17 @@
    * the full results panel.
    */
 
+  import { onDestroy } from 'svelte';
   import * as m from '$lib/paraglide/messages';
   import { getLocale, localizeHref } from '$lib/paraglide/runtime';
   import { goto } from '$app/navigation';
-  import { getSearchSession, getReferenceAudioUrl, updateSearchSession, exportSearchSessionRecordingsCSV } from '$lib/api/search';
-  import { fetchCustomModels } from '$lib/api/custom-models';
+  import { updateSearchSession, exportSearchSessionRecordingsCSV } from '$lib/api/search';
   import { generateId } from '$lib/utils/id';
-  import type { SearchSession, TargetSpecies, SoundSource, SpeciesMatchResult } from '$lib/types/search';
-  import type { CustomModelListItem } from '$lib/types/custom-model';
+  import type { TargetSpecies, SpeciesMatchResult } from '$lib/types/search';
   import ReferenceSoundsPanel from './ReferenceSoundsPanel.svelte';
   import ResultsPanel from './ResultsPanel.svelte';
   import CreateModelFromSessionDialog from './CreateModelFromSessionDialog.svelte';
-  import {
-    getSearchSessionStatusLabel,
-    getSearchSessionStatusTextClass,
-    getSearchSessionStatusDetailDotClass,
-  } from '$lib/utils/statusFormatters';
+  import { useSessionReconstruction } from './useSessionReconstruction.svelte';
 
   interface Props {
     projectId: string;
@@ -34,45 +29,31 @@
   let { projectId, sessionId, onBack, onRerun }: Props = $props();
 
   // ============================================
-  // State
+  // Session reconstruction hook (plan.md §4)
+  // Owns: session, isLoading, loadError, reconstructedSpecies,
+  //       sessionModels, datasetName, + 6 derived display values.
   // ============================================
 
-  let session = $state<SearchSession | null>(null);
-  let isLoading = $state(true);
-  let loadError = $state<string | null>(null);
+  const reconstruction = useSessionReconstruction({
+    projectId: () => projectId,
+    sessionId: () => sessionId,
+  });
 
-  // Reconstructed TargetSpecies for the ReferenceSoundsPanel
-  let reconstructedSpecies = $state<TargetSpecies[]>([]);
+  onDestroy(() => {
+    reconstruction.dispose();
+  });
+
+  // ============================================
+  // Parent-owned state (will move in Steps 2/3)
+  // ============================================
 
   // Currently selected species key (tracked from ResultsPanel)
   let _currentSpeciesKey = $state<string | null>(null);
-
-  // ============================================
-  // Model Training section state
-  // ============================================
-
-  /** Custom models linked to this session */
-  let sessionModels = $state<CustomModelListItem[]>([]);
-  let _isLoadingModels = $state(false);
-  let _modelsLoadError = $state<string | null>(null);
 
   /** Species key for the currently open "Train Model" dialog */
   let trainDialogSpeciesKey = $state<string | null>(null);
   /** Species metadata for the currently open "Train Model" dialog */
   let trainDialogSpeciesMeta = $state<SpeciesMatchResult | null>(null);
-
-  async function loadSessionModels(pid: string, sid: string) {
-    _isLoadingModels = true;
-    _modelsLoadError = null;
-    try {
-      const res = await fetchCustomModels(pid, { search_session_id: sid });
-      sessionModels = res.models;
-    } catch (e) {
-      _modelsLoadError = e instanceof Error ? e.message : 'Failed to load models';
-    } finally {
-      _isLoadingModels = false;
-    }
-  }
 
   function handleCreateModelSuccess(modelId: string, _opts?: { samplingFailed?: boolean; error?: string }) {
     trainDialogSpeciesKey = null;
@@ -85,10 +66,11 @@
   let isExportingRecordings = $state(false);
 
   async function handleExportRecordings() {
-    if (!session) return;
+    const current = reconstruction.session;
+    if (!current) return;
     isExportingRecordings = true;
     try {
-      await exportSearchSessionRecordingsCSV(projectId, session.id, getLocale());
+      await exportSearchSessionRecordingsCSV(projectId, current.id, getLocale());
     } catch (e) {
       console.error('Recordings export failed:', e);
     } finally {
@@ -96,10 +78,7 @@
     }
   }
 
-  // Dataset name (resolved from session.parameters.dataset_id)
-  let datasetName = $state<string | null>(null);
-
-  // Inline rename state
+  // Inline rename state (Step 2 will extract this into useSessionRename).
   let isRenaming = $state(false);
   let renameValue = $state('');
   let isSavingRename = $state(false);
@@ -107,165 +86,13 @@
   let renameInputEl = $state<HTMLInputElement | null>(null);
 
   // ============================================
-  // Data fetching
-  // ============================================
-
-  async function loadSession(pid: string, sid: string) {
-    isLoading = true;
-    loadError = null;
-    session = null;
-    reconstructedSpecies = [];
-
-    try {
-      const data = await getSearchSession(pid, sid, getLocale());
-      session = data;
-
-      // Resolve dataset name from parameters.dataset_id
-      datasetName = null;
-      if (data.parameters?.dataset_id) {
-        try {
-          const { fetchDataset } = await import('$lib/api/datasets');
-          const ds = await fetchDataset(pid, data.parameters.dataset_id);
-          datasetName = ds.name ?? null;
-        } catch {
-          // Non-critical — just skip dataset name display
-        }
-      }
-
-      // Reconstruct reference audio sources from persisted session data
-      if (data.species_config) {
-        const loaded: TargetSpecies[] = [];
-
-        for (const spConfig of data.species_config) {
-          const speciesSources = (spConfig.sources ?? []).reduce<SoundSource[]>((acc, srcConfig) => {
-            const src = srcConfig as Record<string, unknown>;
-            const s3Key = src['s3_key'] as string | undefined;
-            const sourceUrl = src['source_url'] as string | undefined;
-            const xcId = src['xc_id'] as string | undefined;
-
-            if (s3Key && data.reference_audio_keys) {
-              // S3-persisted source (uploaded files)
-              const keyIndex = data.reference_audio_keys.indexOf(s3Key);
-              if (keyIndex >= 0) {
-                const fileKey = src['file_key'] as string | undefined;
-                acc.push({
-                  id: generateId(),
-                  origin: 's3' as const,
-                  label: fileKey ?? `Source ${keyIndex + 1}`,
-                  streamUrl: getReferenceAudioUrl(pid, sid, keyIndex),
-                  sourceIndex: keyIndex,
-                  start_time: src['start_time'] as number | undefined,
-                  end_time: src['end_time'] as number | undefined,
-                });
-              }
-            } else if (sourceUrl || xcId) {
-              // URL-based source (Xeno-Canto)
-              // Extract XC ID from URL if not explicitly provided
-              let resolvedXcId = xcId as string | undefined;
-              if (!resolvedXcId && sourceUrl) {
-                const xcMatch = sourceUrl.match(/xeno-canto\.org\/(\d+)/);
-                if (xcMatch) resolvedXcId = xcMatch[1];
-              }
-              acc.push({
-                id: generateId(),
-                origin: 'url' as const,
-                label: resolvedXcId ? `XC${resolvedXcId}` : (sourceUrl ?? 'URL source'),
-                source_url: sourceUrl,
-                xc_id: resolvedXcId,
-                start_time: src['start_time'] as number | undefined,
-                end_time: src['end_time'] as number | undefined,
-              });
-            }
-            return acc;
-          }, []);
-
-          // Include species even if no sources could be reconstructed
-          loaded.push({
-            id: generateId(),
-            tag_id: spConfig.tag_id,
-            scientific_name: spConfig.scientific_name,
-            common_name: spConfig.common_name ?? undefined,
-            sources: speciesSources,
-          });
-        }
-
-        reconstructedSpecies = loaded;
-      }
-    } catch (e) {
-      loadError = e instanceof Error ? e.message : m.search_error_search_failed();
-    } finally {
-      isLoading = false;
-    }
-  }
-
-  // Load session on mount and reload when sessionId changes
-  $effect(() => {
-    loadSession(projectId, sessionId);
-    loadSessionModels(projectId, sessionId);
-  });
-
-  // ============================================
-  // Derived
-  // ============================================
-
-  const statusLabel = $derived(() => {
-    if (!session) return '';
-    return getSearchSessionStatusLabel(session.status, {
-      completed: m.search_session_status_completed,
-      running: m.search_session_status_running,
-      failed: m.search_session_status_failed,
-      pending: m.search_session_status_pending,
-    });
-  });
-
-  const statusColor = $derived(() => {
-    if (!session) return 'text-stone-500';
-    return getSearchSessionStatusTextClass(session.status);
-  });
-
-  const statusDotColor = $derived(() => {
-    if (!session) return 'bg-stone-400';
-    return getSearchSessionStatusDetailDotClass(session.status);
-  });
-
-  const sessionName = $derived(() => {
-    if (!session) return '';
-    if (session.name) return session.name;
-    if (session.species_config && session.species_config.length > 0) {
-      return session.species_config
-        .map((sp) => {
-          if (sp.common_name && sp.common_name !== sp.scientific_name) {
-            return `${sp.common_name} (${sp.scientific_name})`;
-          }
-          return sp.scientific_name;
-        })
-        .join(', ');
-    }
-    return m.search_session_detail();
-  });
-
-  const formattedDate = $derived(() => {
-    if (!session) return '';
-    const dateStr = session.completed_at ?? session.started_at ?? session.created_at;
-    try {
-      return new Date(dateStr).toLocaleString();
-    } catch {
-      return dateStr;
-    }
-  });
-
-  const searchDuration = $derived(() => {
-    if (!session?.results) return 0;
-    return session.results.search_duration_ms;
-  });
-
-  // ============================================
   // Rename handlers
   // ============================================
 
   function startRename() {
-    if (!session) return;
-    renameValue = session.name ?? sessionName();
+    const current = reconstruction.session;
+    if (!current) return;
+    renameValue = current.name ?? reconstruction.sessionName();
     renameError = null;
     isRenaming = true;
     // Focus the input on the next tick after it renders
@@ -278,12 +105,13 @@
   }
 
   async function saveRename() {
-    if (!session || !renameValue.trim()) return;
+    const current = reconstruction.session;
+    if (!current || !renameValue.trim()) return;
     isSavingRename = true;
     renameError = null;
     try {
-      const updated = await updateSearchSession(projectId, session.id, renameValue.trim());
-      session = updated;
+      const updated = await updateSearchSession(projectId, current.id, renameValue.trim());
+      reconstruction.setSession(updated);
       isRenaming = false;
     } catch (e) {
       renameError = e instanceof Error ? e.message : m.search_error_search_failed();
@@ -306,17 +134,19 @@
   // ============================================
 
   function handleEditRerun() {
-    if (reconstructedSpecies.length === 0 || !session) return;
+    const current = reconstruction.session;
+    const species = reconstruction.reconstructedSpecies;
+    if (species.length === 0 || !current) return;
 
     // Deep-clone so edits in new-search mode don't affect this detail view
-    const cloned: TargetSpecies[] = reconstructedSpecies.map((sp) => ({
+    const cloned: TargetSpecies[] = species.map((sp) => ({
       ...sp,
       id: generateId(),
       sources: sp.sources.map((src) => ({ ...src, id: generateId() })),
     }));
 
     // Pass the session ID and dataset_id so the parent restores the correct config
-    onRerun(cloned, session.id, session.parameters?.dataset_id ?? undefined);
+    onRerun(cloned, current.id, current.parameters?.dataset_id ?? undefined);
   }
 
   // ============================================
@@ -324,16 +154,17 @@
   // ============================================
 
   function handleFork() {
-    if (reconstructedSpecies.length === 0) return;
+    const species = reconstruction.reconstructedSpecies;
+    if (species.length === 0) return;
 
     // Deep-clone — pass null session ID to signal "create new"
-    const cloned: TargetSpecies[] = reconstructedSpecies.map((sp) => ({
+    const cloned: TargetSpecies[] = species.map((sp) => ({
       ...sp,
       id: generateId(),
       sources: sp.sources.map((src) => ({ ...src, id: generateId() })),
     }));
 
-    onRerun(cloned, null, session?.parameters?.dataset_id ?? undefined);
+    onRerun(cloned, null, reconstruction.session?.parameters?.dataset_id ?? undefined);
   }
 </script>
 
@@ -353,7 +184,7 @@
     </button>
   </div>
 
-  {#if isLoading}
+  {#if reconstruction.isLoading}
     <!-- Loading skeleton -->
     <div class="space-y-4">
       <!-- Header skeleton -->
@@ -383,13 +214,17 @@
       </div>
     </div>
 
-  {:else if loadError}
+  {:else if reconstruction.loadError}
     <!-- Error state -->
     <div class="rounded-lg border border-danger/30 bg-danger-light p-4 text-sm text-danger">
-      {loadError}
+      {reconstruction.loadError}
     </div>
 
-  {:else if session}
+  {:else if reconstruction.session}
+    {@const session = reconstruction.session}
+    {@const reconstructedSpecies = reconstruction.reconstructedSpecies}
+    {@const sessionModels = reconstruction.sessionModels}
+    {@const datasetName = reconstruction.datasetName}
     <!-- Session header card -->
     <div class="rounded-lg border border-stone-200 bg-surface-card p-5 shadow-sm dark:border-stone-700">
       <div class="flex flex-wrap items-start justify-between gap-3">
@@ -435,7 +270,7 @@
           {:else}
             <div class="flex items-center gap-2">
               <h2 class="truncate text-xl font-semibold text-stone-900">
-                {sessionName()}
+                {reconstruction.sessionName()}
               </h2>
               {#if session.status === 'completed'}
                 <button
@@ -456,15 +291,15 @@
             </div>
           {/if}
           <p class="mt-0.5 text-sm text-stone-500">
-            {formattedDate()}
+            {reconstruction.formattedDate()}
           </p>
 
           <!-- Status + meta row -->
           <div class="mt-2 flex flex-wrap items-center gap-3 text-sm">
             <!-- Status badge -->
-            <span class="inline-flex items-center gap-1.5 font-medium {statusColor()}">
-              <span class="inline-block h-2 w-2 rounded-full {statusDotColor()}"></span>
-              {statusLabel()}
+            <span class="inline-flex items-center gap-1.5 font-medium {reconstruction.statusColor()}">
+              <span class="inline-block h-2 w-2 rounded-full {reconstruction.statusDotColor()}"></span>
+              {reconstruction.statusLabel()}
             </span>
 
             {#if datasetName}
@@ -477,10 +312,10 @@
               <span class="rounded bg-stone-100 px-1.5 py-0.5 text-xs font-medium text-stone-600 dark:bg-stone-700 dark:text-stone-300">{session.model_name}</span>
             {/if}
 
-            {#if searchDuration() > 0}
+            {#if reconstruction.searchDuration() > 0}
               <span class="text-stone-400">·</span>
               <span class="text-stone-500">
-                {m.search_search_duration({ ms: String(searchDuration()) })}
+                {m.search_search_duration({ ms: String(reconstruction.searchDuration()) })}
               </span>
             {/if}
           </div>
@@ -575,7 +410,7 @@
         {projectId}
         sessionId={session.id}
         results={session.results.results}
-        searchDurationMs={searchDuration()}
+        searchDurationMs={reconstruction.searchDuration()}
         isSearching={false}
         searchingSpecies={reconstructedSpecies}
         onSpeciesKeyChange={(key) => { _currentSpeciesKey = key; }}
