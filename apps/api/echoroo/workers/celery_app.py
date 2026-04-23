@@ -66,7 +66,11 @@ app.conf.include = [
 app.conf.beat_schedule = {
     "cleanup-orphan-uploads": {
         "task": "echoroo.workers.upload_tasks.cleanup_orphan_uploads",
-        "schedule": crontab(minute=0),  # Every hour
+        "schedule": crontab(minute=0),  # Every hour at :00
+    },
+    "cleanup-orphan-search-reference": {
+        "task": "echoroo.workers.search_tasks.cleanup_orphan_search_reference",
+        "schedule": crontab(minute=30),  # Every hour at :30 (offset from uploads)
     },
     "fetch-japanese-vernacular-names-weekly": {
         "task": "echoroo.workers.taxon_tasks.fetch_japanese_vernacular_names",
