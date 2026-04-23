@@ -521,6 +521,166 @@ async def stream_reference_audio(
     )
 
 
+async def _build_species_labels(
+    session: Any,
+    db: Any,
+) -> tuple[dict[str, str], list[str]]:
+    """Resolve the species_key list and their scientific-name labels.
+
+    Responsibilities consolidated from the original inline block:
+
+    - Pulls the ``results`` dict out of ``session.results`` and validates
+      its shape, raising 404 on malformed or empty results using the
+      documented detail strings.
+    - Computes ``species_keys`` as the ordered list of result keys
+      (tag UUIDs) in the session's results payload.
+    - Builds ``species_labels`` (species_key → scientific_name) via a
+      two-pass lookup whose ordering MUST be preserved for behaviour
+      parity: first pass matches by ``species_config[*].tag_id``, second
+      pass falls back to a ``tags`` table query by scientific_name for
+      any keys still unmapped (typical when the session was created from
+      a URL-source tag with no pre-existing tag_id).
+
+    Args:
+        session: SearchSession ORM instance. ``results`` is the canonical
+            source for ``species_keys``; ``species_config`` (optional) is
+            used for display labels.
+        db: AsyncSession used for the tags fallback lookup.
+
+    Returns:
+        Tuple of (species_labels, species_keys). ``species_labels`` only
+        contains entries for keys that were successfully resolved.
+
+    Raises:
+        HTTPException 404: When ``session.results["results"]`` is not a
+            dict (``"Session has no results to export"``) or contains no
+            species keys (``"Session has no species results to export"``).
+    """
+    # Extract all species from the session's results.
+    # Each result key matches the species_config tag_id used during search.
+    raw_results = session.results.get("results")
+    if not isinstance(raw_results, dict):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Session has no results to export",
+        )
+
+    species_keys: list[str] = list(raw_results.keys())
+    if not species_keys:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Session has no species results to export",
+        )
+
+    # Build display name mapping: species_key -> scientific name.
+    #
+    # The keys in raw_results are tag UUIDs. species_config entries may have
+    # tag_id=null (when the search was created from a URL source without an
+    # existing tag), so we fall back to looking up the tag by scientific_name.
+    species_labels: dict[str, str] = {}
+
+    # First pass: map by tag_id when available
+    if session.species_config and isinstance(session.species_config, list):
+        for sp_cfg in session.species_config:
+            if not isinstance(sp_cfg, dict):
+                continue
+            sp_tag_id = str(sp_cfg.get("tag_id") or "")
+            sp_sci_name = str(sp_cfg.get("scientific_name") or "")
+            label = sp_sci_name or sp_tag_id or "Unknown"
+            for key in species_keys:
+                if sp_tag_id and key == sp_tag_id:
+                    species_labels[key] = label
+
+    # Second pass: for keys still unmapped, look up tag by scientific_name
+    unmapped_keys = [k for k in species_keys if k not in species_labels]
+    if unmapped_keys and session.species_config and isinstance(session.species_config, list):
+        sci_names_in_config = [
+            str(sp_cfg.get("scientific_name") or "")
+            for sp_cfg in session.species_config
+            if isinstance(sp_cfg, dict) and sp_cfg.get("scientific_name")
+        ]
+        if sci_names_in_config:
+            tag_lookup_sql = text(
+                "SELECT id::text, scientific_name FROM tags "
+                "WHERE id = ANY(:ids) OR scientific_name = ANY(:names)"
+            )
+            tag_rows = (
+                await db.execute(
+                    tag_lookup_sql,
+                    {"ids": unmapped_keys, "names": sci_names_in_config},
+                )
+            ).fetchall()
+            # Build: tag_id -> scientific_name from DB
+            tag_id_to_sci: dict[str, str] = {
+                str(row[0]): str(row[1]) for row in tag_rows if row[1]
+            }
+            for key in unmapped_keys:
+                if key in tag_id_to_sci:
+                    species_labels[key] = tag_id_to_sci[key]
+
+    return species_labels, species_keys
+
+
+async def _fetch_session_recordings(
+    session: Any,
+    project_id: UUID,
+    db: Any,
+) -> list[tuple[str, str, str | None]]:
+    """Fetch the project's recordings (optionally filtered by dataset_id).
+
+    Extracts the ``dataset_id`` filter from ``session.parameters`` (nullable)
+    and returns every recording in the project whose dataset matches.
+    Timestamps are converted into the dataset's configured timezone (falling
+    back to UTC) so the CSV consumer sees wall-clock times consistent with
+    the session-detail UI.
+
+    Args:
+        session: SearchSession ORM instance (``parameters`` attr read).
+        project_id: Project UUID used to scope the recordings query.
+        db: AsyncSession.
+
+    Returns:
+        Ordered list of ``(recording_id, recording_filename, recording_datetime)``
+        tuples sorted by recording_datetime ASC (NULLs last, then filename
+        ASC for stable ordering).
+    """
+    # Determine optional dataset filter from session parameters
+    dataset_id_str: str | None = None
+    if session.parameters and session.parameters.get("dataset_id"):
+        dataset_id_str = str(session.parameters["dataset_id"])
+
+    # Returns: recording_id, recording_filename, recording_datetime (in dataset tz)
+    dataset_filter_sql = "AND d.id = :dataset_id" if dataset_id_str else ""
+    recordings_sql = text(
+        f"""
+        SELECT
+            r.id::text AS recording_id,
+            r.filename AS recording_filename,
+            CASE
+                WHEN r.datetime IS NOT NULL THEN
+                    (r.datetime AT TIME ZONE COALESCE(d.datetime_timezone, 'UTC'))::text
+                ELSE NULL
+            END AS recording_datetime
+        FROM recordings r
+        JOIN datasets d ON r.dataset_id = d.id
+        WHERE d.project_id = :project_id
+          {dataset_filter_sql}
+        ORDER BY r.datetime ASC NULLS LAST, r.filename ASC
+        """
+    )
+    rec_params: dict[str, object] = {"project_id": str(project_id)}
+    if dataset_id_str:
+        rec_params["dataset_id"] = dataset_id_str
+
+    rec_rows = (await db.execute(recordings_sql, rec_params)).fetchall()
+
+    # Build an ordered list of (recording_id, filename, datetime_str)
+    return [
+        (str(row.recording_id), str(row.recording_filename), row.recording_datetime)
+        for row in rec_rows
+    ]
+
+
 async def _resolve_locale_common_names(
     session: Any,
     species_keys: list[str],
@@ -646,70 +806,9 @@ async def export_search_session_recordings_csv(
             detail="Session has no results to export",
         )
 
-    # Extract all species from the session's species_config.
-    # Each entry has: scientific_name, common_name (optional), tag_id (optional).
-    # The result key matches the key used in session.results["results"].
-    raw_results = session.results.get("results")
-    if not isinstance(raw_results, dict):
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Session has no results to export",
-        )
-
-    # Build a mapping of species_key -> display label from species_config and results.
-    # The keys in raw_results match the species keys used during the search.
-    species_keys: list[str] = list(raw_results.keys())
-    if not species_keys:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Session has no species results to export",
-        )
-
-    # Build display name mapping: species_key -> scientific name.
-    #
-    # The keys in raw_results are tag UUIDs. species_config entries may have
-    # tag_id=null (when the search was created from a URL source without an
-    # existing tag), so we fall back to looking up the tag by scientific_name.
-    species_labels: dict[str, str] = {}
-
-    # First pass: map by tag_id when available
-    if session.species_config and isinstance(session.species_config, list):
-        for sp_cfg in session.species_config:
-            if not isinstance(sp_cfg, dict):
-                continue
-            sp_tag_id = str(sp_cfg.get("tag_id") or "")
-            sp_sci_name = str(sp_cfg.get("scientific_name") or "")
-            label = sp_sci_name or sp_tag_id or "Unknown"
-            for key in species_keys:
-                if sp_tag_id and key == sp_tag_id:
-                    species_labels[key] = label
-
-    # Second pass: for keys still unmapped, look up tag by scientific_name
-    unmapped_keys = [k for k in species_keys if k not in species_labels]
-    if unmapped_keys and session.species_config and isinstance(session.species_config, list):
-        sci_names_in_config = [
-            str(sp_cfg.get("scientific_name") or "")
-            for sp_cfg in session.species_config
-            if isinstance(sp_cfg, dict) and sp_cfg.get("scientific_name")
-        ]
-        if sci_names_in_config:
-            tag_lookup_sql = text(
-                "SELECT id::text, scientific_name FROM tags "
-                "WHERE id = ANY(:ids) OR scientific_name = ANY(:names)"
-            )
-            tag_rows = (
-                await db.execute(
-                    tag_lookup_sql,
-                    {"ids": unmapped_keys, "names": sci_names_in_config},
-                )
-            ).fetchall()
-            # Build: tag_id -> scientific_name from DB
-            tag_id_to_sci: dict[str, str] = {
-                str(row[0]): str(row[1]) for row in tag_rows if row[1]
-            }
-            for key in unmapped_keys:
-                if key in tag_id_to_sci:
-                    species_labels[key] = tag_id_to_sci[key]
+    # Extract species_labels + species_keys (tag_id lookup + sci_name fallback).
+    # The helper owns the two 404 paths for malformed / empty results.
+    species_labels, species_keys = await _build_species_labels(session, db)
 
     # Build common name mapping using the same enrichment as session detail API.
     # Locale enrichment is best-effort: a transient GBIF outage or an internal
@@ -720,43 +819,16 @@ async def export_search_session_recordings_csv(
         session, species_keys, species_labels, locale, db
     )
 
-    # Determine optional dataset filter from session parameters
+    # Fetch all recordings for this project (with the optional dataset filter
+    # from session.parameters applied inside the helper).
+    all_recordings = await _fetch_session_recordings(session, project_id, db)
+
+    # NOTE: the similarity aggregation block below still needs the dataset_id
+    # filter string directly. This duplicate extraction is intentional and
+    # temporary — Step 3 of the Phase 4 refactor folds it into the helper.
     dataset_id_str: str | None = None
     if session.parameters and session.parameters.get("dataset_id"):
         dataset_id_str = str(session.parameters["dataset_id"])
-
-    # Fetch all recordings for this project (and optional dataset filter),
-    # including their dataset timezone for correct datetime display.
-    # Returns: recording_id, recording_filename, recording_datetime (in dataset tz)
-    dataset_filter_sql = "AND d.id = :dataset_id" if dataset_id_str else ""
-    recordings_sql = text(
-        f"""
-        SELECT
-            r.id::text AS recording_id,
-            r.filename AS recording_filename,
-            CASE
-                WHEN r.datetime IS NOT NULL THEN
-                    (r.datetime AT TIME ZONE COALESCE(d.datetime_timezone, 'UTC'))::text
-                ELSE NULL
-            END AS recording_datetime
-        FROM recordings r
-        JOIN datasets d ON r.dataset_id = d.id
-        WHERE d.project_id = :project_id
-          {dataset_filter_sql}
-        ORDER BY r.datetime ASC NULLS LAST, r.filename ASC
-        """
-    )
-    rec_params: dict[str, object] = {"project_id": str(project_id)}
-    if dataset_id_str:
-        rec_params["dataset_id"] = dataset_id_str
-
-    rec_rows = (await db.execute(recordings_sql, rec_params)).fetchall()
-
-    # Build an ordered list of (recording_id, filename, datetime_str)
-    all_recordings: list[tuple[str, str, str | None]] = [
-        (str(row.recording_id), str(row.recording_filename), row.recording_datetime)
-        for row in rec_rows
-    ]
 
     if not all_recordings:
         # No recordings in project — return empty CSV with headers only
