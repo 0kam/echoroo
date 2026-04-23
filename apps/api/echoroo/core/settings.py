@@ -120,6 +120,10 @@ class Settings(BaseSettings):
     # Project storage quota
     DEFAULT_STORAGE_QUOTA: int = 100 * 1024 * 1024 * 1024  # 100GB default
 
+    # Janitor (orphan S3 cleanup)
+    JANITOR_DRY_RUN: bool = True  # default True; flip to False after prod monitoring
+    JANITOR_AGE_HOURS: int = 24  # orphan age threshold (hours)
+
     # Celery
     CELERY_BROKER_URL: str = "redis://localhost:6379/0"
     CELERY_RESULT_BACKEND: str = "redis://localhost:6379/1"
