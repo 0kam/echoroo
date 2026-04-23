@@ -10,6 +10,8 @@
   import { fetchTags } from '$lib/api/tags';
   import type { Tag } from '$lib/types/annotation';
   import * as m from '$lib/paraglide/messages';
+  import { getLocale } from '$lib/paraglide/runtime';
+  import { displayCommonName } from '$lib/utils/speciesFormatters';
 
   let {
     currentTagId,
@@ -25,30 +27,40 @@
   let isOpen = $state(false);
   let inputEl: HTMLInputElement | undefined = $state(undefined);
 
+  // Active UI locale so the backend resolves `vernacular_name` per tag.
+  const locale = $derived(getLocale());
+
   // Fetch all tags for this project (load all, filter client-side for responsiveness)
-  const tagsQueryKey = $derived(['tags', projectId]);
+  // Locale is part of the query key so switching language invalidates the cache.
+  const tagsQueryKey = $derived(['tags', projectId, locale]);
 
   const tagsQuery = $derived(
     createQuery({
       queryKey: tagsQueryKey,
-      queryFn: () => fetchTags(projectId, { page_size: 500 }),
+      queryFn: () => fetchTags(projectId, { page_size: 500, locale }),
     })
   );
 
   const allTags = $derived($tagsQuery.data?.items ?? []);
 
-  // Filter tags by search query, exclude the current tag
+  // Filter tags by search query, exclude the current tag.
+  // Searches against all localised/common/scientific names so users can find a
+  // species whether they know its English label, Japanese common name, or
+  // scientific binomial.
   const filteredTags = $derived(allTags.filter((tag: Tag) => {
     if (tag.id === currentTagId) return false;
     if (!searchQuery) return true;
     const q = searchQuery.toLowerCase();
     return (
       tag.name.toLowerCase().includes(q) ||
+      (tag.vernacular_name != null && tag.vernacular_name.toLowerCase().includes(q)) ||
+      (tag.common_name != null && tag.common_name.toLowerCase().includes(q)) ||
       (tag.scientific_name != null && tag.scientific_name.toLowerCase().includes(q))
     );
   }));
 
   const currentTag = $derived(allTags.find((t: Tag) => t.id === currentTagId) ?? null);
+  const currentTagLabel = $derived(currentTag ? displayCommonName(currentTag) ?? currentTag.name : null);
 
   function handleInputFocus() {
     isOpen = true;
@@ -80,8 +92,11 @@
     <span class="text-xs text-stone-500">{m.detection_species_label()}</span>
 
     {#if currentTag}
-      <span class="rounded bg-success-light px-1.5 py-0.5 text-xs font-medium text-success">
-        {currentTag.name}
+      <span
+        class="rounded bg-success-light px-1.5 py-0.5 text-xs font-medium text-success"
+        title={currentTag.scientific_name ?? undefined}
+      >
+        {currentTagLabel ?? currentTag.name}
       </span>
     {:else}
       <span class="text-xs italic text-stone-400">{m.detection_species_unidentified()}</span>
@@ -126,7 +141,9 @@
                 aria-selected="false"
                 onclick={() => handleSelect(tag)}
               >
-                <span class="text-xs font-medium text-stone-800">{tag.name}</span>
+                <span class="text-xs font-medium text-stone-800"
+                  >{displayCommonName(tag) ?? tag.name}</span
+                >
                 {#if tag.scientific_name}
                   <span class="text-xs italic text-stone-500">{tag.scientific_name}</span>
                 {/if}

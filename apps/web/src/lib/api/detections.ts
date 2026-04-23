@@ -19,7 +19,14 @@ const API_BASE = '/api/v1';
 // Query param helpers
 // ============================================
 
-function buildDetectionParams(params?: DetectionFilters & { page?: number; page_size?: number; detection_run_id?: string }): string {
+function buildDetectionParams(
+  params?: DetectionFilters & {
+    page?: number;
+    page_size?: number;
+    detection_run_id?: string;
+    locale?: string;
+  },
+): string {
   if (!params) return '';
   const query = new URLSearchParams();
   if (params.tag_id !== undefined) query.set('tag_id', params.tag_id);
@@ -31,6 +38,7 @@ function buildDetectionParams(params?: DetectionFilters & { page?: number; page_
   if (params.detection_run_id !== undefined) query.set('detection_run_id', params.detection_run_id);
   if (params.page !== undefined) query.set('page', String(params.page));
   if (params.page_size !== undefined) query.set('page_size', String(params.page_size));
+  if (params.locale !== undefined) query.set('locale', params.locale);
   const str = query.toString();
   return str ? `?${str}` : '';
 }
@@ -63,10 +71,18 @@ export async function fetchSpeciesSummary(
 
 /**
  * Fetch a paginated list of detections for a project with optional filters.
+ *
+ * Pass `locale` so embedded `Tag` records carry a locale-resolved
+ * `vernacular_name` suitable for direct rendering.
  */
 export async function fetchDetections(
   projectId: string,
-  params?: DetectionFilters & { page?: number; page_size?: number; detection_run_id?: string }
+  params?: DetectionFilters & {
+    page?: number;
+    page_size?: number;
+    detection_run_id?: string;
+    locale?: string;
+  },
 ): Promise<DetectionListResponse> {
   const qs = buildDetectionParams(params);
   return apiClient.get<DetectionListResponse>(

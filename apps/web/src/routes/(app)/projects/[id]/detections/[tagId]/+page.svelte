@@ -13,6 +13,7 @@
   import { fetchSpeciesSummary, fetchTemporalData } from '$lib/api/detections';
   import { localizeHref, getLocale } from '$lib/paraglide/runtime';
   import * as m from '$lib/paraglide/messages';
+  import { displayCommonName } from '$lib/utils/speciesFormatters';
   import DetectionReviewGrid from '$lib/components/detection/DetectionReviewGrid.svelte';
   import PolarHeatmap from '$lib/components/detection/PolarHeatmap.svelte';
 
@@ -32,7 +33,18 @@
 
   $: speciesSummary = $summaryQuery.data?.items ?? [];
   $: currentSpecies = speciesSummary.find((s) => s.tag_id === tagId) ?? null;
-  $: speciesName = currentSpecies?.common_name ?? currentSpecies?.tag_name ?? 'Species';
+  // Prefer the locale-resolved vernacular name, then English common name,
+  // then the raw tag label. Maps `tag_name` to the formatter's `name` field.
+  $: speciesName =
+    displayCommonName(
+      currentSpecies
+        ? {
+            vernacular_name: currentSpecies.vernacular_name,
+            common_name: currentSpecies.common_name,
+            name: currentSpecies.tag_name,
+          }
+        : null,
+    ) ?? m.detection_species_name_fallback();
   $: scientificName = currentSpecies?.scientific_name ?? null;
 
   $: backUrl = localizeHref(`/projects/${projectId}/detections`);

@@ -8,6 +8,7 @@
   import { getDownloadUrl, updateRecording } from '$lib/api/recordings';
   import { createMutation, useQueryClient } from '@tanstack/svelte-query';
   import { getLocale } from '$lib/paraglide/runtime';
+  import * as m from '$lib/paraglide/messages';
 
   interface Props {
     projectId: string;
@@ -60,43 +61,43 @@
         <polyline points="7 10 12 15 17 10" />
         <line x1="12" y1="15" x2="12" y2="3" />
       </svg>
-      Download
+      {m.recording_detail_download()}
     </a>
   </div>
 
   <!-- Metadata grid -->
   <div class="metadata-grid mb-6">
     <div class="metadata-item">
-      <span class="metadata-label">Duration</span>
+      <span class="metadata-label">{m.recording_detail_metadata_duration()}</span>
       <p class="metadata-value">{formatDuration(recording.duration)}</p>
     </div>
     <div class="metadata-item">
-      <span class="metadata-label">Effective Duration</span>
+      <span class="metadata-label">{m.recording_detail_metadata_effective_duration()}</span>
       <p class="metadata-value">{formatDuration(recording.effective_duration)}</p>
     </div>
     <div class="metadata-item">
-      <span class="metadata-label">Sample Rate</span>
+      <span class="metadata-label">{m.recording_detail_metadata_sample_rate()}</span>
       <p class="metadata-value">{formatSamplerate(recording.samplerate)}</p>
     </div>
     <div class="metadata-item">
-      <span class="metadata-label">Channels</span>
+      <span class="metadata-label">{m.recording_detail_metadata_channels()}</span>
       <p class="metadata-value">{recording.channels}</p>
     </div>
     <div class="metadata-item">
-      <span class="metadata-label">Bit Depth</span>
-      <p class="metadata-value">{recording.bit_depth ?? 'N/A'}</p>
+      <span class="metadata-label">{m.recording_detail_metadata_bit_depth()}</span>
+      <p class="metadata-value">{recording.bit_depth ?? m.recording_detail_metadata_bit_depth_na()}</p>
     </div>
     <div class="metadata-item">
-      <span class="metadata-label">Time Expansion</span>
+      <span class="metadata-label">{m.recording_detail_metadata_time_expansion()}</span>
       <p class="metadata-value">{recording.time_expansion}x</p>
     </div>
     {#if recording.datetime}
       <div class="metadata-item">
-        <span class="metadata-label">Recorded</span>
+        <span class="metadata-label">{m.recording_detail_metadata_recorded()}</span>
         <p class="metadata-value">{new Date(recording.datetime).toLocaleString(getLocale())}</p>
       </div>
       <div class="metadata-item">
-        <span class="metadata-label">DateTime Status</span>
+        <span class="metadata-label">{m.recording_detail_metadata_datetime_status()}</span>
         <p class="metadata-value">
           <span class="status-badge status-{recording.datetime_parse_status}">
             {recording.datetime_parse_status}
@@ -106,46 +107,46 @@
     {/if}
     {#if recording.dataset}
       <div class="metadata-item">
-        <span class="metadata-label">Dataset</span>
+        <span class="metadata-label">{m.recording_detail_metadata_dataset()}</span>
         <p class="metadata-value">{recording.dataset.name}</p>
       </div>
     {/if}
     {#if recording.site}
       <div class="metadata-item">
-        <span class="metadata-label">Site</span>
+        <span class="metadata-label">{m.recording_detail_metadata_site()}</span>
         <p class="metadata-value">{recording.site.name}</p>
       </div>
     {/if}
     <div class="metadata-item">
-      <span class="metadata-label">Clips</span>
+      <span class="metadata-label">{m.recording_detail_metadata_clips()}</span>
       <p class="metadata-value">{recording.clip_count}</p>
     </div>
     <div class="metadata-item">
-      <span class="metadata-label">Hash</span>
+      <span class="metadata-label">{m.recording_detail_metadata_hash()}</span>
       <p class="metadata-value font-mono text-xs break-all">{recording.hash}</p>
     </div>
     <div class="metadata-item">
-      <span class="metadata-label">Created</span>
+      <span class="metadata-label">{m.recording_detail_metadata_created()}</span>
       <p class="metadata-value">{new Date(recording.created_at).toLocaleString(getLocale())}</p>
     </div>
     <div class="metadata-item">
-      <span class="metadata-label">Updated</span>
+      <span class="metadata-label">{m.recording_detail_metadata_updated()}</span>
       <p class="metadata-value">{new Date(recording.updated_at).toLocaleString(getLocale())}</p>
     </div>
   </div>
 
   <!-- Notes -->
   <div>
-    <h3 class="text-sm font-semibold text-stone-700 mb-2">Notes</h3>
+    <h3 class="text-sm font-semibold text-stone-700 mb-2">{m.recording_detail_notes_title()}</h3>
     <NoteEditor
       value={recording.note ?? ''}
-      placeholder="Add notes about this recording..."
+      placeholder={m.recording_detail_notes_placeholder()}
       disabled={$noteMutation.isPending}
       onSave={handleNoteSave}
     />
     {#if $noteMutation.isError}
       <p class="mt-1 text-xs text-danger">
-        Failed to save note: {$noteMutation.error?.message}
+        {m.recording_detail_notes_save_error({ message: $noteMutation.error?.message ?? '' })}
       </p>
     {/if}
   </div>

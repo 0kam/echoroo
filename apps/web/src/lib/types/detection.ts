@@ -246,8 +246,13 @@ export interface SpeciesSummary {
   tag_id: string;
   /** Human-readable tag name */
   tag_name: string;
-  /** Common / vernacular name of the species; null if not available */
+  /** English common name; null if not available */
   common_name: string | null;
+  /**
+   * Locale-resolved vernacular name for the requested `locale` query param.
+   * Null when no vernacular entry is available for the active locale.
+   */
+  vernacular_name?: string | null;
   /** Scientific name of the species; null if not a species tag */
   scientific_name: string | null;
   /** Total number of detections for this species */
@@ -382,8 +387,13 @@ export interface SpeciesTemporalData {
   tag_id: string;
   /** Scientific name of the species */
   scientific_name: string;
-  /** Common / vernacular name; null if not available */
+  /** English common name; null if not available */
   common_name: string | null;
+  /**
+   * Locale-resolved vernacular name for the requested `locale` query param.
+   * Null when no vernacular entry is available for the active locale.
+   */
+  vernacular_name?: string | null;
   /** Total detection count across all time slots */
   total_detections: number;
   /** Hourly detection data points */

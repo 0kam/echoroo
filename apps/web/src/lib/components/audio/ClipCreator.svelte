@@ -1,6 +1,7 @@
 <script lang="ts">
   import { untrack } from 'svelte';
   import { createMutation, useQueryClient } from '@tanstack/svelte-query';
+  import * as m from '$lib/paraglide/messages';
   import { createClip } from '$lib/api/clips';
   import type { ClipDetail } from '$lib/types/data';
 
@@ -76,12 +77,12 @@
 </script>
 
 <div class="clip-creator">
-  <h3 class="title">Create Clip</h3>
+  <h3 class="title">{m.clip_creator_title()}</h3>
 
   <form onsubmit={handleSubmit} class="form">
     <div class="time-inputs">
       <div class="time-field">
-        <label for="start-time" class="label">Start Time (s)</label>
+        <label for="start-time" class="label">{m.clip_creator_start_time_label()}</label>
         <div class="time-input-group">
           <input
             id="start-time"
@@ -96,7 +97,7 @@
             type="button"
             onclick={setStartFromCurrent}
             class="btn-from-current"
-            aria-label="Set start time from current position"
+            aria-label={m.clip_creator_start_from_current_aria()}
           >
             <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor">
               <polyline points="9 11 12 14 22 4" stroke-width="2" />
@@ -108,7 +109,7 @@
       </div>
 
       <div class="time-field">
-        <label for="end-time" class="label">End Time (s)</label>
+        <label for="end-time" class="label">{m.clip_creator_end_time_label()}</label>
         <div class="time-input-group">
           <input
             id="end-time"
@@ -123,7 +124,7 @@
             type="button"
             onclick={setEndFromCurrent}
             class="btn-from-current"
-            aria-label="Set end time from current position"
+            aria-label={m.clip_creator_end_from_current_aria()}
           >
             <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor">
               <polyline points="9 11 12 14 22 4" stroke-width="2" />
@@ -136,31 +137,31 @@
     </div>
 
     <div class="note-field">
-      <label for="clip-note" class="label">Note (optional)</label>
+      <label for="clip-note" class="label">{m.clip_creator_note_label()}</label>
       <input
         id="clip-note"
         type="text"
         bind:value={note}
-        placeholder="Add a note..."
+        placeholder={m.clip_creator_note_placeholder()}
         class="input"
       />
     </div>
 
     <div class="footer">
       <div class="duration-info">
-        <span class="duration-label">Duration:</span>
+        <span class="duration-label">{m.clip_creator_duration_label()}</span>
         <span class="duration-value" class:invalid={!isValid}>
           {isValid ? clipDuration.toFixed(2) : '--'}s
         </span>
         {#if !isValid}
-          <span class="error-text">Invalid time range</span>
+          <span class="error-text">{m.clip_creator_invalid_range()}</span>
         {/if}
       </div>
 
       <div class="actions">
-        <button type="button" onclick={resetSelection} class="btn-reset">Reset</button>
+        <button type="button" onclick={resetSelection} class="btn-reset">{m.clip_creator_reset()}</button>
         <button type="submit" disabled={$createMut.isPending || !isValid} class="btn-create">
-          {$createMut.isPending ? 'Creating...' : 'Create Clip'}
+          {$createMut.isPending ? m.clip_creator_submitting() : m.clip_creator_submit()}
         </button>
       </div>
     </div>

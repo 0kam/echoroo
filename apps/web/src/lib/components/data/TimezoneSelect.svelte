@@ -30,33 +30,33 @@
     class="rounded-md border border-stone-300 bg-surface-card px-3 py-2 text-sm focus:border-primary-400 focus:outline-none focus:ring-1 focus:ring-primary-400"
   >
     <option value="">{m.datetime_config_timezone_none()}</option>
-    <optgroup label="UTC">
-      <option value="UTC">UTC</option>
+    <optgroup label={m.timezone_group_utc()}>
+      <option value="UTC">{m.timezone_utc()}</option>
     </optgroup>
-    <optgroup label="Asia">
-      <option value="Asia/Tokyo">Asia/Tokyo (JST, UTC+9)</option>
-      <option value="Asia/Shanghai">Asia/Shanghai (CST, UTC+8)</option>
-      <option value="Asia/Kolkata">Asia/Kolkata (IST, UTC+5:30)</option>
-      <option value="Asia/Seoul">Asia/Seoul (KST, UTC+9)</option>
+    <optgroup label={m.timezone_group_asia()}>
+      <option value="Asia/Tokyo">{m.timezone_asia_tokyo()}</option>
+      <option value="Asia/Shanghai">{m.timezone_asia_shanghai()}</option>
+      <option value="Asia/Kolkata">{m.timezone_asia_kolkata()}</option>
+      <option value="Asia/Seoul">{m.timezone_asia_seoul()}</option>
     </optgroup>
-    <optgroup label="Australia / Pacific">
-      <option value="Australia/Sydney">Australia/Sydney (AEST, UTC+10)</option>
-      <option value="Pacific/Auckland">Pacific/Auckland (NZST, UTC+12)</option>
+    <optgroup label={m.timezone_group_australia_pacific()}>
+      <option value="Australia/Sydney">{m.timezone_australia_sydney()}</option>
+      <option value="Pacific/Auckland">{m.timezone_pacific_auckland()}</option>
     </optgroup>
-    <optgroup label="Europe">
-      <option value="Europe/London">Europe/London (GMT, UTC+0)</option>
-      <option value="Europe/Paris">Europe/Paris (CET, UTC+1)</option>
-      <option value="Europe/Berlin">Europe/Berlin (CET, UTC+1)</option>
+    <optgroup label={m.timezone_group_europe()}>
+      <option value="Europe/London">{m.timezone_europe_london()}</option>
+      <option value="Europe/Paris">{m.timezone_europe_paris()}</option>
+      <option value="Europe/Berlin">{m.timezone_europe_berlin()}</option>
     </optgroup>
-    <optgroup label="Americas">
-      <option value="America/New_York">America/New_York (EST, UTC-5)</option>
-      <option value="America/Chicago">America/Chicago (CST, UTC-6)</option>
-      <option value="America/Denver">America/Denver (MST, UTC-7)</option>
-      <option value="America/Los_Angeles">America/Los_Angeles (PST, UTC-8)</option>
-      <option value="America/Sao_Paulo">America/Sao Paulo (BRT, UTC-3)</option>
+    <optgroup label={m.timezone_group_americas()}>
+      <option value="America/New_York">{m.timezone_america_new_york()}</option>
+      <option value="America/Chicago">{m.timezone_america_chicago()}</option>
+      <option value="America/Denver">{m.timezone_america_denver()}</option>
+      <option value="America/Los_Angeles">{m.timezone_america_los_angeles()}</option>
+      <option value="America/Sao_Paulo">{m.timezone_america_sao_paulo()}</option>
     </optgroup>
-    <optgroup label="Africa">
-      <option value="Africa/Nairobi">Africa/Nairobi (EAT, UTC+3)</option>
+    <optgroup label={m.timezone_group_africa()}>
+      <option value="Africa/Nairobi">{m.timezone_africa_nairobi()}</option>
     </optgroup>
   </select>
   <p class="text-xs text-stone-500">{m.datetime_config_timezone_hint()}</p>

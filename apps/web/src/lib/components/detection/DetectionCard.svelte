@@ -11,6 +11,7 @@
   import * as m from '$lib/paraglide/messages';
   import { getLocale } from '$lib/paraglide/runtime';
   import { getConsensusStatusBadgeClass, getConsensusStatusLabel } from '$lib/utils/statusFormatters';
+  import { displayCommonName } from '$lib/utils/speciesFormatters';
   import ReviewCard from '$lib/components/common/ReviewCard.svelte';
   import SpeciesCorrector from './SpeciesCorrector.svelte';
 
@@ -54,9 +55,11 @@
   const recordingName = $derived(
     detection.recording?.filename ?? detection.recording_id.slice(0, 8) + '...'
   );
-  const tagName = $derived(
-    detection.tag?.common_name ?? detection.tag?.name ?? 'Unidentified'
-  );
+  // Resolve the species label in the following priority:
+  //   tag.vernacular_name → tag.common_name → tag.name → 'Unidentified'.
+  // `displayCommonName` reads the locale-resolved `vernacular_name` that the
+  // backend attaches when the `locale` query param is passed.
+  const tagName = $derived(displayCommonName(detection.tag) ?? m.detection_species_unidentified());
 
   const confidenceBadgeClass = $derived(
     confidencePercent == null
@@ -89,7 +92,7 @@
       case 'perch_search':
         return 'Perch';
       case 'human':
-        return 'Human';
+        return m.detection_source_human();
       default:
         return source;
     }
@@ -116,7 +119,7 @@
 <div
   class="transition-transform duration-300 ease-in-out {justUpdated ? 'scale-[1.02]' : ''}"
   role="article"
-  aria-label="Detection: {tagName}"
+  aria-label={m.detection_card_aria_label({ name: tagName })}
 >
   <ReviewCard
     {projectId}
@@ -147,7 +150,7 @@
         {#if confidencePercent !== null}
           <span
             class="shrink-0 rounded px-1.5 py-0.5 text-xs font-medium {confidenceBadgeClass}"
-            title="Model confidence"
+            title={m.detection_model_confidence_tooltip()}
           >
             {confidencePercent}%
           </span>
@@ -163,7 +166,12 @@
           <span
             class="rounded border px-1.5 py-0.5 text-xs font-medium {getConsensusStatusBadgeClass(voteSummary.consensus_status)}"
           >
-            {getConsensusStatusLabel(voteSummary.consensus_status)}
+            {getConsensusStatusLabel(voteSummary.consensus_status, {
+              needs_votes: m.consensus_needs_votes,
+              agreed: m.consensus_agreed,
+              disputed: m.consensus_disputed,
+              rejected: m.consensus_rejected,
+            })}
           </span>
           <!-- Vote ratio -->
           <span class="text-xs text-stone-400">

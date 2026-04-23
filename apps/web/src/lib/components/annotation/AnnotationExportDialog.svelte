@@ -2,6 +2,7 @@
   /**
    * Export dialog for annotation project data (annotations, tasks, clip data).
    */
+  import * as m from '$lib/paraglide/messages';
 
   let {
     projectId,
@@ -62,8 +63,8 @@
   <div class="modal-overlay" onclick={onClose}>
     <div class="modal" onclick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-labelledby="export-dialog-title" tabindex="-1">
       <div class="modal-header">
-        <h3 id="export-dialog-title">Export Annotations</h3>
-        <button type="button" class="close-btn" onclick={onClose} aria-label="Close">
+        <h3 id="export-dialog-title">{m.annotation_export_title()}</h3>
+        <button type="button" class="close-btn" onclick={onClose} aria-label={m.annotation_export_close_aria()}>
           <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor">
             <line x1="18" y1="6" x2="6" y2="18" stroke-width="2" />
             <line x1="6" y1="6" x2="18" y2="18" stroke-width="2" />
@@ -73,13 +74,11 @@
 
       <div class="modal-body">
         <p class="description">
-          Export annotation data for
-          <strong>{annotationProjectName || 'this project'}</strong>.
-          Downloads all approved clip annotations and sound event annotations.
+          {m.annotation_export_description({ name: annotationProjectName || m.annotation_export_fallback_name() })}
         </p>
 
         <div class="field-group">
-          <label class="field-label" for="export-format">Export Format</label>
+          <label class="field-label" for="export-format">{m.annotation_export_format_legend()}</label>
           <select id="export-format" class="field-select" bind:value={selectedFormat}>
             <option value="json">JSON</option>
             <option value="csv">CSV</option>
@@ -90,20 +89,20 @@
           <label class="option-item">
             <input type="checkbox" bind:checked={includeRejected} />
             <div class="option-content">
-              <span class="option-label">Include rejected annotations</span>
-              <span class="option-hint">Exports annotations with rejected review status as well</span>
+              <span class="option-label">{m.annotation_export_include_rejected_label()}</span>
+              <span class="option-hint">{m.annotation_export_include_rejected_hint()}</span>
             </div>
           </label>
         </div>
 
         <div class="export-info">
-          <h4>Export contents:</h4>
+          <h4>{m.annotation_export_contents_heading()}</h4>
           <ul>
-            <li>Clip annotations with tags</li>
-            <li>Sound event annotations with geometry</li>
-            <li>Clip and recording metadata</li>
+            <li>{m.annotation_export_contents_clip_annotations()}</li>
+            <li>{m.annotation_export_contents_sound_events()}</li>
+            <li>{m.annotation_export_contents_metadata()}</li>
             {#if includeRejected}
-              <li>Rejected annotations (included)</li>
+              <li>{m.annotation_export_contents_rejected()}</li>
             {/if}
           </ul>
         </div>
@@ -111,7 +110,7 @@
 
       <div class="modal-footer">
         <button type="button" class="btn-secondary" onclick={onClose} disabled={isExporting}>
-          Cancel
+          {m.annotation_export_cancel()}
         </button>
         <button
           type="button"
@@ -124,14 +123,14 @@
               <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" opacity="0.25" />
               <path fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
             </svg>
-            Exporting...
+            {m.annotation_export_exporting()}
           {:else}
             <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor">
               <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" stroke-width="2" />
               <polyline points="7 10 12 15 17 10" stroke-width="2" />
               <line x1="12" y1="15" x2="12" y2="3" stroke-width="2" />
             </svg>
-            Export
+            {m.annotation_export_button()}
           {/if}
         </button>
       </div>
@@ -207,10 +206,6 @@
     color: #6b7280;
     font-size: 0.875rem;
     line-height: 1.5;
-  }
-
-  .description strong {
-    color: #111827;
   }
 
   .field-group {

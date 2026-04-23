@@ -7,6 +7,7 @@
    */
 
   import { untrack } from 'svelte';
+  import * as m from '$lib/paraglide/messages';
 
   let {
     duration,
@@ -101,7 +102,7 @@
   bind:this={containerEl}
   class="relative h-full w-full select-none"
   role="group"
-  aria-label="Time range selector"
+  aria-label={m.time_range_selector_aria()}
   ontouchmove={handleTouchMove}
 >
   <!-- Selection highlight -->
@@ -115,7 +116,7 @@
     type="button"
     class="absolute inset-y-0 z-10 flex cursor-ew-resize items-center justify-center"
     style="left: calc({startPercent}% - 8px); width: 16px;"
-    aria-label="Start time: {formatTime(startTime)}"
+    aria-label={m.time_range_start_aria({ time: formatTime(startTime) })}
     onmousedown={handleMouseDown('start')}
     ontouchstart={() => (dragging = 'start')}
   >
@@ -139,7 +140,7 @@
     type="button"
     class="absolute inset-y-0 z-10 flex cursor-ew-resize items-center justify-center"
     style="left: calc({endPercent}% - 8px); width: 16px;"
-    aria-label="End time: {formatTime(endTime)}"
+    aria-label={m.time_range_end_aria({ time: formatTime(endTime) })}
     onmousedown={handleMouseDown('end')}
     ontouchstart={() => (dragging = 'end')}
   >

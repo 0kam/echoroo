@@ -342,7 +342,7 @@
           d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"
         />
       </svg>
-      <p class="mt-2 text-sm text-stone-400">No detection data available</p>
+      <p class="mt-2 text-sm text-stone-400">{m.polar_heatmap_no_data()}</p>
     </div>
   {:else}
     <!-- SVG Chart -->
@@ -353,7 +353,7 @@
         height={size}
         class="overflow-visible"
         role="img"
-        aria-label="Polar heatmap of detections by hour and date for {commonName ?? scientificName}"
+        aria-label={m.polar_heatmap_aria_label({ name: commonName ?? scientificName })}
         onmousemove={handleMouseMove}
       >
         <!-- Background outline circle -->
@@ -392,7 +392,7 @@
             onmouseenter={(e) => handleMouseEnter(e, wedge.date, wedge.hour, wedge.count)}
             onmouseleave={handleMouseLeave}
             role="img"
-            aria-label="{formatDate(wedge.date)} {formatHour(wedge.hour)}: {wedge.count} detections"
+            aria-label={m.polar_heatmap_wedge_aria({ date: formatDate(wedge.date), hour: formatHour(wedge.hour), count: wedge.count })}
           />
         {/each}
 
@@ -461,7 +461,7 @@
         ></div>
         <span class="text-[10px] text-stone-500">{maxCount}</span>
       </div>
-      <span class="text-[10px] text-stone-400">Detections per hour</span>
+      <span class="text-[10px] text-stone-400">{m.polar_heatmap_detections_per_hour()}</span>
     </div>
 
     <!-- Date range indicator -->
@@ -469,10 +469,10 @@
       {@const firstDate = dates[0] ?? ''}
       {@const lastDate = dates[dates.length - 1] ?? ''}
       <div class="text-center text-[10px] text-stone-400">
-        <span class="font-medium">Center:</span>
+        <span class="font-medium">{m.polar_heatmap_center_label()}</span>
         {formatDate(firstDate)}
         <span class="mx-1 text-stone-300">|</span>
-        <span class="font-medium">Edge:</span>
+        <span class="font-medium">{m.polar_heatmap_edge_label()}</span>
         {formatDate(lastDate)}
       </div>
     {/if}

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { untrack } from 'svelte';
+  import * as m from '$lib/paraglide/messages';
 
   let {
     pattern: patternProp = '',
@@ -28,12 +29,12 @@
 
   function testPattern() {
     if (!testFilename.trim()) {
-      testResult = { success: false, matched: null, error: 'Please enter a filename to test' };
+      testResult = { success: false, matched: null, error: m.datetime_tester_filename_required() };
       return;
     }
 
     if (!pattern.trim()) {
-      testResult = { success: false, matched: null, error: 'Pattern is required' };
+      testResult = { success: false, matched: null, error: m.datetime_tester_pattern_required() };
       return;
     }
 
@@ -45,7 +46,7 @@
         testResult = {
           success: false,
           matched: null,
-          error: 'Pattern did not match the filename',
+          error: m.datetime_tester_no_match(),
         };
         return;
       }
@@ -61,7 +62,7 @@
       testResult = {
         success: false,
         matched: null,
-        error: e instanceof Error ? e.message : 'Invalid regex pattern',
+        error: e instanceof Error ? e.message : m.datetime_tester_invalid_regex(),
       };
     }
   }
@@ -73,29 +74,30 @@
     }
   });
 
-  // Common examples
-  const examples = [
+  // Common examples. Labels are resolved via i18n; filename/pattern/format are
+  // literal and shown as code snippets.
+  const examples = $derived([
     {
-      name: 'Underscore separated (YYYYMMDD_HHMMSS)',
+      name: m.datetime_tester_example_underscore(),
       pattern: '(\\d{8})_(\\d{6})',
       format: '%Y%m%d_%H%M%S',
       filename: 'recording_20240115_143022.wav',
     },
     {
-      name: 'Hyphen separated (YYYY-MM-DD_HH-MM-SS)',
+      name: m.datetime_tester_example_hyphen(),
       pattern: '(\\d{4}-\\d{2}-\\d{2}_\\d{2}-\\d{2}-\\d{2})',
       format: '%Y-%m-%d_%H-%M-%S',
       filename: 'site1_2024-01-15_14-30-22.wav',
     },
     {
-      name: 'Compact format (YYYYMMDDHHMMSS)',
+      name: m.datetime_tester_example_compact(),
       pattern: '(\\d{14})',
       format: '%Y%m%d%H%M%S',
       filename: '20240115143022_recording.wav',
     },
-  ];
+  ]);
 
-  function useExample(example: (typeof examples)[0]) {
+  function useExample(example: { pattern: string; format: string; filename: string }) {
     pattern = example.pattern;
     format = example.format;
     testFilename = example.filename;
@@ -105,12 +107,12 @@
 <div class="datetime-tester">
   <div class="tester-content">
     <div class="input-group">
-      <label for="test-filename">Test Filename</label>
+      <label for="test-filename">{m.datetime_tester_filename_label()}</label>
       <input
         id="test-filename"
         type="text"
         bind:value={testFilename}
-        placeholder="example_20240115_120000.wav"
+        placeholder={m.datetime_tester_filename_placeholder()}
         class="test-input"
       />
     </div>
@@ -120,22 +122,22 @@
         {#if testResult.success}
           <div class="result-header">
             <span class="icon">✓</span>
-            <span class="label">Pattern matched successfully</span>
+            <span class="label">{m.datetime_tester_match_success()}</span>
           </div>
           <div class="matched-text">
-            <span class="matched-label">Matched text:</span>
+            <span class="matched-label">{m.datetime_tester_matched_label()}</span>
             <code>{testResult.matched}</code>
           </div>
           {#if format}
             <div class="format-info">
-              <span class="format-label">Will be parsed using format:</span>
+              <span class="format-label">{m.datetime_tester_format_label()}</span>
               <code>{format}</code>
             </div>
           {/if}
         {:else}
           <div class="result-header">
             <span class="icon">✗</span>
-            <span class="label">Pattern test failed</span>
+            <span class="label">{m.datetime_tester_match_failed()}</span>
           </div>
           <div class="error-message">{testResult.error}</div>
         {/if}
@@ -145,22 +147,22 @@
 
   <!-- Examples section -->
   <div class="examples">
-    <h4>Common Patterns</h4>
+    <h4>{m.datetime_tester_examples_heading()}</h4>
     <div class="example-list">
       {#each examples as example}
         <button class="example-item" onclick={() => useExample(example)}>
           <div class="example-name">{example.name}</div>
           <div class="example-details">
             <div class="example-field">
-              <span class="field-label">Pattern:</span>
+              <span class="field-label">{m.datetime_tester_example_pattern_label()}</span>
               <code>{example.pattern}</code>
             </div>
             <div class="example-field">
-              <span class="field-label">Format:</span>
+              <span class="field-label">{m.datetime_tester_example_format_label()}</span>
               <code>{example.format}</code>
             </div>
             <div class="example-field">
-              <span class="field-label">Example:</span>
+              <span class="field-label">{m.datetime_tester_example_filename_label()}</span>
               <span class="filename">{example.filename}</span>
             </div>
           </div>
@@ -171,9 +173,8 @@
 
   <div class="help-text">
     <p>
-      <strong>Note:</strong> The pattern is a regular expression that extracts the datetime string
-      from the filename. The format specifies how to parse the extracted string using Python's strptime
-      directives (e.g., %Y for year, %m for month, %d for day, %H for hour, %M for minute, %S for second).
+      <strong>{m.datetime_tester_help_note()}</strong>
+      {m.datetime_tester_help_text()}
     </p>
   </div>
 </div>
