@@ -21,6 +21,10 @@ Routes covered (all mounted under /api/v1/projects/{project_id}/search):
 
 from __future__ import annotations
 
+import csv
+import io
+import re
+
 import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -958,7 +962,13 @@ class TestExportRecordings:
         test_project_id: str,
         test_search_session: SearchSession,
     ) -> None:
-        """Returns 200 streaming CSV with Content-Disposition header."""
+        """Returns 200 streaming CSV with Content-Disposition header.
+
+        Strengthened to guard the behavioural contract during the refactor:
+        - Header row is the exact 7-column list (parsed via csv.reader, not substring match).
+        - Content-Disposition filename matches the documented
+          ``search_summary_{safe_name}_{YYYYMMDD}.csv`` shape.
+        """
         resp = await client.get(
             f"{_search_base(test_project_id)}/sessions/{test_search_session.id}/export-recordings",
             headers=auth_headers,
@@ -969,6 +979,26 @@ class TestExportRecordings:
         # CSV must at minimum contain the header row
         content = resp.text
         assert "recording_filename" in content
+        # Header row is an exact, ordered column list. Parsing via csv.reader
+        # avoids brittle substring matches and catches column-order regressions.
+        reader = csv.reader(io.StringIO(content))
+        rows = list(reader)
+        assert rows, "CSV must contain at least the header row"
+        assert rows[0] == [
+            "recording_filename",
+            "recording_datetime",
+            "scientific_name",
+            "common_name",
+            "max_similarity",
+            "min_similarity",
+            "avg_similarity",
+        ]
+        # Content-Disposition filename shape is part of the FE blob-download
+        # contract (apps/web/src/lib/api/search.ts) and must not drift.
+        cd = resp.headers.get("content-disposition", "")
+        assert re.search(
+            r'^attachment; filename="search_summary_.+_\d{8}\.csv"$', cd
+        ), f"unexpected Content-Disposition: {cd!r}"
 
     async def test_locale_en_explicit_no_500(
         self,
@@ -1018,6 +1048,12 @@ class TestExportRecordings:
         assert "text/csv" in resp.headers.get("content-type", "")
         # The header row must still be present even though enrichment failed
         assert "recording_filename" in resp.text
+        # Degrade-to-raw behaviour: when GBIF lookup raises, the route falls
+        # back to the raw species_config. The raw config for this fixture has
+        # common_name="Common Blackbird", so it MUST still appear in the CSV
+        # even though ja-locale enrichment failed.  This is the key regression
+        # guarded for the upcoming helper extraction of locale enrichment.
+        assert "Common Blackbird" in resp.text
 
     async def test_unauthenticated(
         self,
@@ -1056,6 +1092,184 @@ class TestExportRecordings:
             headers=auth_headers,
         )
         assert resp.status_code == 404
+
+    async def test_dataset_id_filter(
+        self,
+        client: AsyncClient,
+        auth_headers: dict[str, str],
+        test_project_id: str,
+        test_project: Project,
+        search_site: Site,
+        search_dataset: Dataset,
+        test_search_session: SearchSession,
+        db_session: AsyncSession,
+    ) -> None:
+        """When session.parameters.dataset_id is set, recordings from other datasets must not appear in the CSV.
+
+        Creates a second dataset + recording in the same project, then updates the
+        session to filter on the original dataset. The "other" filename must be
+        absent from the CSV body.  Guards the dataset_id branch that is otherwise
+        unreachable by the default fixtures (which set dataset_id=None).
+        """
+        # Seed a second dataset + recording in a different dataset within the
+        # same project. Its filename must be absent from the filtered CSV.
+        other_dataset = Dataset(
+            project_id=test_project.id,
+            site_id=search_site.id,
+            created_by_id=test_project.owner_id,
+            name="Other Dataset",
+            audio_dir="/data/audio/other-dataset",
+            status=DatasetStatus.COMPLETED,
+        )
+        db_session.add(other_dataset)
+        await db_session.commit()
+        await db_session.refresh(other_dataset)
+
+        other_recording = Recording(
+            dataset_id=other_dataset.id,
+            filename="should_not_appear.wav",
+            path="should_not_appear.wav",
+            duration=30.0,
+            samplerate=48000,
+            channels=1,
+            datetime_parse_status=DatetimeParseStatus.PENDING,
+            time_expansion=1.0,
+        )
+        db_session.add(other_recording)
+
+        # Pin the session to the original dataset only.
+        test_search_session.parameters = {
+            "min_similarity": 0.1,
+            "limit_per_species": 100,
+            "dataset_id": str(search_dataset.id),
+        }
+        db_session.add(test_search_session)
+        await db_session.commit()
+        await db_session.refresh(test_search_session)
+
+        resp = await client.get(
+            f"{_search_base(test_project_id)}/sessions/{test_search_session.id}/export-recordings",
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        body = resp.text
+        # Original dataset's recording (from the test_search_session fixture)
+        # must still be present; the other-dataset filename must NOT leak in.
+        assert "smoke_test_recording.wav" in body
+        assert "should_not_appear.wav" not in body
+
+    async def test_no_recordings_empty_csv(
+        self,
+        client: AsyncClient,
+        auth_headers: dict[str, str],
+        test_project_id: str,
+        test_project: Project,
+        search_site: Site,
+        test_search_session: SearchSession,
+        db_session: AsyncSession,
+    ) -> None:
+        """Session pinned to an empty dataset → 200 + header-only CSV + filename preserved.
+
+        Covers the ``all_recordings == []`` branch (Block F) which produces a
+        header-only CSV and still emits a well-formed Content-Disposition
+        filename.
+        """
+        empty_dataset = Dataset(
+            project_id=test_project.id,
+            site_id=search_site.id,
+            created_by_id=test_project.owner_id,
+            name="Empty Dataset",
+            audio_dir="/data/audio/empty-dataset",
+            status=DatasetStatus.COMPLETED,
+        )
+        db_session.add(empty_dataset)
+        await db_session.commit()
+        await db_session.refresh(empty_dataset)
+
+        test_search_session.parameters = {
+            "min_similarity": 0.1,
+            "limit_per_species": 100,
+            "dataset_id": str(empty_dataset.id),
+        }
+        db_session.add(test_search_session)
+        await db_session.commit()
+        await db_session.refresh(test_search_session)
+
+        resp = await client.get(
+            f"{_search_base(test_project_id)}/sessions/{test_search_session.id}/export-recordings",
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        assert "text/csv" in resp.headers.get("content-type", "")
+        rows = list(csv.reader(io.StringIO(resp.text)))
+        assert len(rows) == 1, f"expected header-only CSV, got {len(rows)} rows"
+        assert rows[0] == [
+            "recording_filename",
+            "recording_datetime",
+            "scientific_name",
+            "common_name",
+            "max_similarity",
+            "min_similarity",
+            "avg_similarity",
+        ]
+        cd = resp.headers.get("content-disposition", "")
+        assert re.search(
+            r'^attachment; filename="search_summary_.+_\d{8}\.csv"$', cd
+        ), f"unexpected Content-Disposition: {cd!r}"
+
+    async def test_results_malformed_404(
+        self,
+        client: AsyncClient,
+        auth_headers: dict[str, str],
+        test_project_id: str,
+        test_search_session: SearchSession,
+        db_session: AsyncSession,
+    ) -> None:
+        """session.results["results"] is not a dict → 404 with documented detail.
+
+        Regression guard for the H1 ``_build_species_labels`` extraction: the
+        helper must keep raising the same 404 + detail when ``results`` is
+        malformed (e.g. a stringified payload from a legacy run).
+        """
+        test_search_session.results = {"results": "not-a-dict"}
+        db_session.add(test_search_session)
+        await db_session.commit()
+        await db_session.refresh(test_search_session)
+
+        resp = await client.get(
+            f"{_search_base(test_project_id)}/sessions/{test_search_session.id}/export-recordings",
+            headers=auth_headers,
+        )
+        assert resp.status_code == 404
+        assert resp.json().get("detail") == "Session has no results to export"
+
+    async def test_empty_species_results_404(
+        self,
+        client: AsyncClient,
+        auth_headers: dict[str, str],
+        test_project_id: str,
+        test_search_session: SearchSession,
+        db_session: AsyncSession,
+    ) -> None:
+        """session.results["results"] is an empty dict → 404 with species-specific detail.
+
+        Regression guard for the H1 extraction: the "no species" 404 must use
+        the dedicated detail string to stay distinguishable from the generic
+        no-results case.
+        """
+        test_search_session.results = {"results": {}}
+        db_session.add(test_search_session)
+        await db_session.commit()
+        await db_session.refresh(test_search_session)
+
+        resp = await client.get(
+            f"{_search_base(test_project_id)}/sessions/{test_search_session.id}/export-recordings",
+            headers=auth_headers,
+        )
+        assert resp.status_code == 404
+        assert (
+            resp.json().get("detail") == "Session has no species results to export"
+        )
 
 
 # ---------------------------------------------------------------------------
