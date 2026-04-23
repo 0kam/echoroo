@@ -126,8 +126,14 @@ async def _run_batch_search(
             service = SimilaritySearchService(db)
 
             # Update session status to RUNNING
+            # Scope lookup by (celery_job_id, project_id) to match other call sites
+            # (api/v1/search/batch.py, services/search_session.py) and provide
+            # defence-in-depth beyond the unique constraint on celery_job_id.
             session_result = await db.execute(
-                select(SearchSession).where(SearchSession.celery_job_id == job_id)
+                select(SearchSession).where(
+                    SearchSession.celery_job_id == job_id,
+                    SearchSession.project_id == UUID(project_id),
+                )
             )
             search_session = session_result.scalar_one_or_none()
             if search_session is not None:
