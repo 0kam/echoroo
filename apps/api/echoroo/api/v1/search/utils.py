@@ -12,9 +12,10 @@ from __future__ import annotations
 import logging
 import uuid as uuid_module
 
-from sqlalchemy import String, bindparam, text
+from sqlalchemy import String, bindparam, select, text
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from echoroo.core.database import DbSession
 from echoroo.models.annotation import Annotation
@@ -76,49 +77,81 @@ async def _resolve_vernacular_via_gbif(
             "GBIF vernacular names for key=%d: %d entries", taxon_key, len(vernacular_entries)
         )
 
-        # Step 3: persist to local DB for future lookups
-        try:
-            taxon = Taxon(
+        # Step 3: persist to local DB for future lookups.
+        #
+        # Use ``INSERT ... ON CONFLICT DO NOTHING`` (PostgreSQL-specific) so that
+        # duplicate keys do not raise and therefore never require a session-wide
+        # ``rollback()``.  A rollback here would expire every ORM attribute in
+        # the outer request session (regardless of ``expire_on_commit=False``),
+        # which previously caused downstream 500s when attribute access lazily
+        # re-loaded through an already-consumed connection.
+        #
+        # Conflict target is omitted deliberately: ``taxa`` has two uniqueness
+        # sources — ``scientific_name`` (column unique) and the partial unique
+        # index on ``gbif_taxon_key`` where NOT NULL — and specifying a single
+        # target would miss conflicts from the other.  Omitting the target lets
+        # PostgreSQL match any unique/exclusion constraint on the table.
+        taxon_insert = (
+            pg_insert(Taxon)
+            .values(
                 scientific_name=resolve_result.scientific_name,
                 gbif_taxon_key=taxon_key,
                 rank=resolve_result.rank,
                 gbif_metadata=resolve_result.metadata,
                 gbif_resolved_at=datetime.datetime.now(datetime.UTC),
             )
-            db.add(taxon)
-            await db.flush()  # populate taxon.id
+            .on_conflict_do_nothing()
+        )
+        insert_result = await db.execute(taxon_insert.returning(Taxon.id))
+        taxon_id = insert_result.scalar_one_or_none()
 
-            for entry in vernacular_entries:
-                vn = TaxonVernacularName(
-                    taxon_id=taxon.id,
-                    locale=entry["locale"],
-                    name=entry["name"],
-                    source="gbif",
-                    is_primary=False,
+        if taxon_id is None:
+            # Conflict: an existing row already satisfies one of the unique
+            # constraints.  Re-query to obtain the existing taxon id so we can
+            # still attach the freshly-fetched vernacular names.  Try
+            # ``scientific_name`` first (most common path), then fall back to
+            # ``gbif_taxon_key`` in case the conflict was on the key alone.
+            existing = (
+                await db.execute(
+                    select(Taxon.id).where(
+                        Taxon.scientific_name == resolve_result.scientific_name,
+                    )
                 )
-                db.add(vn)
+            ).scalar_one_or_none()
+            if existing is None and taxon_key is not None:
+                existing = (
+                    await db.execute(
+                        select(Taxon.id).where(Taxon.gbif_taxon_key == taxon_key)
+                    )
+                ).scalar_one_or_none()
+            taxon_id = existing
 
-            await db.commit()
-            logger.debug(
-                "Cached taxon %r (id=%s) with %d vernacular names",
-                scientific_name,
-                taxon.id,
-                len(vernacular_entries),
+        if taxon_id is not None and vernacular_entries:
+            vn_values = [
+                {
+                    "taxon_id": taxon_id,
+                    "locale": entry["locale"],
+                    "name": entry["name"],
+                    "source": "gbif",
+                    "is_primary": False,
+                }
+                for entry in vernacular_entries
+            ]
+            vn_insert = pg_insert(TaxonVernacularName).values(vn_values).on_conflict_do_nothing(
+                index_elements=["taxon_id", "locale", "source"],
             )
-        except Exception:
-            # If insertion fails (e.g. race condition / duplicate), roll back and continue
-            try:
-                await db.rollback()
-            except Exception:
-                logger.debug(
-                    "Rollback after cache failure for %r also failed; continuing",
-                    scientific_name,
-                    exc_info=True,
-                )
-            logger.debug(
-                "Could not cache taxon for %r (may already exist); continuing without caching",
-                scientific_name,
-            )
+            await db.execute(vn_insert)
+
+        # ``flush`` is sufficient: the outer ``get_db`` dependency commits the
+        # unit-of-work at request termination.  We intentionally do not commit
+        # here to keep the route's transactional boundary unchanged.
+        await db.flush()
+        logger.debug(
+            "Cached taxon %r (id=%s) with %d vernacular names",
+            scientific_name,
+            taxon_id,
+            len(vernacular_entries),
+        )
 
         # Find the requested locale in vernacular_entries (resolved just above)
         for entry in vernacular_entries:
