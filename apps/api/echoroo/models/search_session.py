@@ -117,6 +117,8 @@ class SearchSession(UUIDMixin, TimestampMixin, Base):
     celery_job_id: Mapped[str | None] = mapped_column(
         String(100),
         nullable=True,
+        unique=True,
+        index=True,
         doc="Celery task ID for async job tracking",
     )
     reference_audio_keys: Mapped[list[str] | None] = mapped_column(
