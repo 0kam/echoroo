@@ -11,13 +11,14 @@
   import * as m from '$lib/paraglide/messages';
   import { getLocale, localizeHref } from '$lib/paraglide/runtime';
   import { goto } from '$app/navigation';
-  import { updateSearchSession, exportSearchSessionRecordingsCSV } from '$lib/api/search';
+  import { exportSearchSessionRecordingsCSV } from '$lib/api/search';
   import { generateId } from '$lib/utils/id';
   import type { TargetSpecies, SpeciesMatchResult } from '$lib/types/search';
   import ReferenceSoundsPanel from './ReferenceSoundsPanel.svelte';
   import ResultsPanel from './ResultsPanel.svelte';
   import CreateModelFromSessionDialog from './CreateModelFromSessionDialog.svelte';
   import { useSessionReconstruction } from './useSessionReconstruction.svelte';
+  import { useSessionRename } from './useSessionRename.svelte';
 
   interface Props {
     projectId: string;
@@ -39,8 +40,27 @@
     sessionId: () => sessionId,
   });
 
+  // ============================================
+  // Session rename hook (plan.md §5)
+  // Owns: isRenaming, renameValue, isSavingRename, renameError +
+  //       startRename / cancelRename / saveRename / handleRenameKeydown.
+  // ============================================
+
+  const rename = useSessionRename({
+    session: () => reconstruction.session,
+    projectId: () => projectId,
+    getDisplayName: () => {
+      // Prefer the explicit session.name when present; fall back to the
+      // hook's computed display name (species list or default label).
+      const current = reconstruction.session;
+      return current?.name ?? reconstruction.sessionName();
+    },
+    onRenameSuccess: (updated) => reconstruction.setSession(updated),
+  });
+
   onDestroy(() => {
     reconstruction.dispose();
+    rename.dispose();
   });
 
   // ============================================
@@ -78,56 +98,23 @@
     }
   }
 
-  // Inline rename state (Step 2 will extract this into useSessionRename).
-  let isRenaming = $state(false);
-  let renameValue = $state('');
-  let isSavingRename = $state(false);
-  let renameError = $state<string | null>(null);
+  // Rename input DOM ref. The hook is DOM-agnostic so focus management
+  // lives here (Step 3 will move this into SessionActionPanel.svelte).
   let renameInputEl = $state<HTMLInputElement | null>(null);
 
-  // ============================================
-  // Rename handlers
-  // ============================================
-
-  function startRename() {
-    const current = reconstruction.session;
-    if (!current) return;
-    renameValue = current.name ?? reconstruction.sessionName();
-    renameError = null;
-    isRenaming = true;
-    // Focus the input on the next tick after it renders
-    setTimeout(() => renameInputEl?.focus(), 0);
-  }
-
-  function cancelRename() {
-    isRenaming = false;
-    renameError = null;
-  }
-
-  async function saveRename() {
-    const current = reconstruction.session;
-    if (!current || !renameValue.trim()) return;
-    isSavingRename = true;
-    renameError = null;
-    try {
-      const updated = await updateSearchSession(projectId, current.id, renameValue.trim());
-      reconstruction.setSession(updated);
-      isRenaming = false;
-    } catch (e) {
-      renameError = e instanceof Error ? e.message : m.search_error_search_failed();
-    } finally {
-      isSavingRename = false;
+  // Rising-edge focus: when `rename.isRenaming` transitions false → true,
+  // focus + select the input. `$effect` runs after Svelte commits the DOM
+  // update, so the <input> is guaranteed mounted — no setTimeout needed
+  // (plan.md §5.2).
+  let prevIsRenaming = $state(false);
+  $effect(() => {
+    const now = rename.isRenaming;
+    if (now && !prevIsRenaming) {
+      renameInputEl?.focus();
+      renameInputEl?.select();
     }
-  }
-
-  function handleRenameKeydown(e: KeyboardEvent) {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      saveRename();
-    } else if (e.key === 'Escape') {
-      cancelRename();
-    }
-  }
+    prevIsRenaming = now;
+  });
 
   // ============================================
   // Edit & Re-search handler (updates existing session in-place)
@@ -230,42 +217,43 @@
       <div class="flex flex-wrap items-start justify-between gap-3">
         <div class="min-w-0 flex-1">
           <!-- Session name with inline rename -->
-          {#if isRenaming}
+          {#if rename.isRenaming}
             <div class="flex items-center gap-2">
               <input
                 bind:this={renameInputEl}
-                bind:value={renameValue}
+                value={rename.renameValue}
+                oninput={(e) => rename.setRenameValue(e.currentTarget.value)}
                 type="text"
                 aria-label={m.search_session_name()}
                 class="min-w-0 flex-1 rounded-md border border-stone-300 bg-surface-card px-3 py-1.5 text-lg font-semibold text-stone-900
                        shadow-sm outline-none ring-primary-500 focus:border-primary-500 focus:ring-2
                        dark:border-stone-600"
-                disabled={isSavingRename}
-                onkeydown={handleRenameKeydown}
+                disabled={rename.isSavingRename}
+                onkeydown={rename.handleRenameKeydown}
               />
               <button
                 type="button"
                 class="shrink-0 rounded-md bg-primary-600 px-3 py-1.5 text-sm font-medium text-white
                        transition-colors hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2
                        disabled:opacity-50 dark:bg-primary-500 dark:text-stone-50 dark:hover:bg-primary-400"
-                disabled={isSavingRename || !renameValue.trim()}
-                onclick={saveRename}
+                disabled={rename.isSavingRename || !rename.renameValue.trim()}
+                onclick={rename.saveRename}
               >
-                {isSavingRename ? m.search_rename_saving() : m.search_rename_save()}
+                {rename.isSavingRename ? m.search_rename_saving() : m.search_rename_save()}
               </button>
               <button
                 type="button"
                 class="shrink-0 rounded-md border border-stone-300 bg-surface-card px-3 py-1.5 text-sm font-medium
                        text-stone-700 transition-colors hover:bg-stone-50 dark:hover:bg-stone-700 disabled:opacity-50
                        dark:border-stone-600"
-                disabled={isSavingRename}
-                onclick={cancelRename}
+                disabled={rename.isSavingRename}
+                onclick={rename.cancelRename}
               >
                 {m.search_rename_cancel()}
               </button>
             </div>
-            {#if renameError}
-              <p class="mt-1 text-sm text-danger">{renameError}</p>
+            {#if rename.renameError}
+              <p class="mt-1 text-sm text-danger">{rename.renameError}</p>
             {/if}
           {:else}
             <div class="flex items-center gap-2">
@@ -279,7 +267,7 @@
                   aria-label={m.search_rename_session()}
                   class="shrink-0 rounded p-1 text-stone-400 transition-colors hover:text-stone-700
                          dark:hover:text-stone-300"
-                  onclick={startRename}
+                  onclick={rename.startRename}
                 >
                   <!-- Pencil icon -->
                   <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
