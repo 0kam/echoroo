@@ -17,6 +17,7 @@
   import ReferenceSoundsPanel from './ReferenceSoundsPanel.svelte';
   import ResultsPanel from './ResultsPanel.svelte';
   import CreateModelFromSessionDialog from './CreateModelFromSessionDialog.svelte';
+  import SessionActionPanel from './SessionActionPanel.svelte';
   import { useSessionReconstruction } from './useSessionReconstruction.svelte';
   import { useSessionRename } from './useSessionRename.svelte';
 
@@ -64,7 +65,7 @@
   });
 
   // ============================================
-  // Parent-owned state (will move in Steps 2/3)
+  // Parent-owned state (not delegated to a hook — used only here).
   // ============================================
 
   // Currently selected species key (tracked from ResultsPanel)
@@ -98,23 +99,9 @@
     }
   }
 
-  // Rename input DOM ref. The hook is DOM-agnostic so focus management
-  // lives here (Step 3 will move this into SessionActionPanel.svelte).
-  let renameInputEl = $state<HTMLInputElement | null>(null);
-
-  // Rising-edge focus: when `rename.isRenaming` transitions false → true,
-  // focus + select the input. `$effect` runs after Svelte commits the DOM
-  // update, so the <input> is guaranteed mounted — no setTimeout needed
-  // (plan.md §5.2).
-  let prevIsRenaming = $state(false);
-  $effect(() => {
-    const now = rename.isRenaming;
-    if (now && !prevIsRenaming) {
-      renameInputEl?.focus();
-      renameInputEl?.select();
-    }
-    prevIsRenaming = now;
-  });
+  // Rename input focus management lives in SessionActionPanel.svelte — the
+  // hook is DOM-agnostic and the panel owns the <input> ref + the
+  // rising-edge `$effect` (plan.md §5.2 / §13.4).
 
   // ============================================
   // Edit & Re-search handler (updates existing session in-place)
@@ -211,186 +198,36 @@
     {@const session = reconstruction.session}
     {@const reconstructedSpecies = reconstruction.reconstructedSpecies}
     {@const sessionModels = reconstruction.sessionModels}
-    {@const datasetName = reconstruction.datasetName}
-    <!-- Session header card -->
-    <div class="rounded-lg border border-stone-200 bg-surface-card p-5 shadow-sm dark:border-stone-700">
-      <div class="flex flex-wrap items-start justify-between gap-3">
-        <div class="min-w-0 flex-1">
-          <!-- Session name with inline rename -->
-          {#if rename.isRenaming}
-            <div class="flex items-center gap-2">
-              <input
-                bind:this={renameInputEl}
-                value={rename.renameValue}
-                oninput={(e) => rename.setRenameValue(e.currentTarget.value)}
-                type="text"
-                aria-label={m.search_session_name()}
-                class="min-w-0 flex-1 rounded-md border border-stone-300 bg-surface-card px-3 py-1.5 text-lg font-semibold text-stone-900
-                       shadow-sm outline-none ring-primary-500 focus:border-primary-500 focus:ring-2
-                       dark:border-stone-600"
-                disabled={rename.isSavingRename}
-                onkeydown={rename.handleRenameKeydown}
-              />
-              <button
-                type="button"
-                class="shrink-0 rounded-md bg-primary-600 px-3 py-1.5 text-sm font-medium text-white
-                       transition-colors hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2
-                       disabled:opacity-50 dark:bg-primary-500 dark:text-stone-50 dark:hover:bg-primary-400"
-                disabled={rename.isSavingRename || !rename.renameValue.trim()}
-                onclick={rename.saveRename}
-              >
-                {rename.isSavingRename ? m.search_rename_saving() : m.search_rename_save()}
-              </button>
-              <button
-                type="button"
-                class="shrink-0 rounded-md border border-stone-300 bg-surface-card px-3 py-1.5 text-sm font-medium
-                       text-stone-700 transition-colors hover:bg-stone-50 dark:hover:bg-stone-700 disabled:opacity-50
-                       dark:border-stone-600"
-                disabled={rename.isSavingRename}
-                onclick={rename.cancelRename}
-              >
-                {m.search_rename_cancel()}
-              </button>
-            </div>
-            {#if rename.renameError}
-              <p class="mt-1 text-sm text-danger">{rename.renameError}</p>
-            {/if}
-          {:else}
-            <div class="flex items-center gap-2">
-              <h2 class="truncate text-xl font-semibold text-stone-900">
-                {reconstruction.sessionName()}
-              </h2>
-              {#if session.status === 'completed'}
-                <button
-                  type="button"
-                  title={m.search_rename_session()}
-                  aria-label={m.search_rename_session()}
-                  class="shrink-0 rounded p-1 text-stone-400 transition-colors hover:text-stone-700
-                         dark:hover:text-stone-300"
-                  onclick={rename.startRename}
-                >
-                  <!-- Pencil icon -->
-                  <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                    <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" stroke-linecap="round" stroke-linejoin="round" />
-                    <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" stroke-linecap="round" stroke-linejoin="round" />
-                  </svg>
-                </button>
-              {/if}
-            </div>
-          {/if}
-          <p class="mt-0.5 text-sm text-stone-500">
-            {reconstruction.formattedDate()}
-          </p>
 
-          <!-- Status + meta row -->
-          <div class="mt-2 flex flex-wrap items-center gap-3 text-sm">
-            <!-- Status badge -->
-            <span class="inline-flex items-center gap-1.5 font-medium {reconstruction.statusColor()}">
-              <span class="inline-block h-2 w-2 rounded-full {reconstruction.statusDotColor()}"></span>
-              {reconstruction.statusLabel()}
-            </span>
-
-            {#if datasetName}
-              <span class="text-stone-400">·</span>
-              <span class="text-stone-500">{datasetName}</span>
-            {/if}
-
-            {#if session.model_name}
-              <span class="text-stone-400">·</span>
-              <span class="rounded bg-stone-100 px-1.5 py-0.5 text-xs font-medium text-stone-600 dark:bg-stone-700 dark:text-stone-300">{session.model_name}</span>
-            {/if}
-
-            {#if reconstruction.searchDuration() > 0}
-              <span class="text-stone-400">·</span>
-              <span class="text-stone-500">
-                {m.search_search_duration({ ms: String(reconstruction.searchDuration()) })}
-              </span>
-            {/if}
-          </div>
-        </div>
-
-        <!-- Export button -->
-        {#if session.status === 'completed' && session.result_count > 0}
-          <div class="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onclick={handleExportRecordings}
-              disabled={isExportingRecordings}
-              class="inline-flex items-center gap-1.5 rounded-lg border border-stone-300 bg-surface-card px-3 py-1.5 text-sm font-medium text-stone-700 shadow-sm transition hover:bg-stone-50 disabled:opacity-50"
-            >
-              {#if isExportingRecordings}
-                <svg class="h-4 w-4 animate-spin text-stone-400" fill="none" viewBox="0 0 24 24" aria-hidden="true">
-                  <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                  <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
-                </svg>
-                Exporting...
-              {:else}
-                <svg class="h-4 w-4 text-stone-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
-                </svg>
-                {m.search_export_csv()}
-              {/if}
-            </button>
-          </div>
+    <!-- Header card + reference audio + action buttons (plan.md §6 / §7) -->
+    <SessionActionPanel
+      {session}
+      statusLabel={reconstruction.statusLabel}
+      statusColor={reconstruction.statusColor}
+      statusDotColor={reconstruction.statusDotColor}
+      sessionName={reconstruction.sessionName}
+      formattedDate={reconstruction.formattedDate}
+      searchDuration={reconstruction.searchDuration}
+      datasetName={reconstruction.datasetName}
+      hasEditableRerun={session.status === 'completed' && reconstructedSpecies.length > 0}
+      {rename}
+      {isExportingRecordings}
+      onExportRecordings={handleExportRecordings}
+      onEditRerun={handleEditRerun}
+      onFork={handleFork}
+    >
+      {#snippet referenceAudio()}
+        {#if reconstructedSpecies.length > 0}
+          <ReferenceSoundsPanel
+            {projectId}
+            species={reconstructedSpecies}
+            modelName={session.model_name}
+            onSpeciesChange={() => {}}
+            readonly={true}
+          />
         {/if}
-      </div>
-
-      <!-- Error message for failed sessions -->
-      {#if session.status === 'failed' && session.error_message}
-        <div class="mt-3 rounded-md border border-danger/30 bg-danger-light px-3 py-2 text-sm text-danger">
-          {session.error_message}
-        </div>
-      {/if}
-    </div>
-
-    <!-- Reference audio section -->
-    {#if reconstructedSpecies.length > 0}
-      <ReferenceSoundsPanel
-        {projectId}
-        species={reconstructedSpecies}
-        modelName={session.model_name}
-        onSpeciesChange={() => {}}
-        readonly={true}
-      />
-    {/if}
-
-    <!-- Action buttons (for completed sessions) -->
-    {#if session.status === 'completed' && reconstructedSpecies.length > 0}
-      <div class="flex items-center justify-end gap-2">
-        <!-- Fork: create a brand-new session preserving old results -->
-        <button
-          type="button"
-          class="inline-flex items-center gap-2 rounded-md border border-stone-300 bg-surface-card px-4 py-2 text-sm font-medium
-                 text-stone-500 shadow-sm transition-colors hover:bg-stone-50 hover:text-stone-700
-                 dark:border-stone-600 dark:hover:bg-stone-700 dark:hover:text-stone-300"
-          onclick={handleFork}
-        >
-          <!-- Fork icon (git-branch) -->
-          <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-            <circle cx="18" cy="18" r="3" stroke-linecap="round" stroke-linejoin="round" />
-            <circle cx="6" cy="6" r="3" stroke-linecap="round" stroke-linejoin="round" />
-            <path d="M13 6h3a2 2 0 0 1 2 2v7M6 9v12" stroke-linecap="round" stroke-linejoin="round" />
-          </svg>
-          {m.search_fork_session()}
-        </button>
-
-        <!-- Edit & Re-search: update existing session in-place -->
-        <button
-          type="button"
-          class="inline-flex items-center gap-2 rounded-md border border-stone-300 bg-surface-card px-4 py-2 text-sm font-medium
-                 text-stone-700 shadow-sm transition-colors hover:bg-stone-50
-                 dark:border-stone-600 dark:hover:bg-stone-700"
-          onclick={handleEditRerun}
-        >
-          <!-- Edit icon -->
-          <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" stroke-linecap="round" stroke-linejoin="round" />
-            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" stroke-linecap="round" stroke-linejoin="round" />
-          </svg>
-          {m.search_edit_rerun()}
-        </button>
-      </div>
-    {/if}
+      {/snippet}
+    </SessionActionPanel>
 
     <!-- Results section -->
     {#if session.status === 'completed' && session.results}
