@@ -1,0 +1,53 @@
+# Mutation testing configuration for the Echoroo permission engine (PR-004).
+#
+# Scope (006 permissions redesign):
+#   * core/permissions.py     — Stage 1 permission gate + matrix + helpers
+#   * core/response_filter.py — Stage 2 response masking / H3 clamp
+#   * core/audit.py           — Added in Phase 2.4 (AuditLogSanitizer, hash chain)
+#   * core/kms.py             — Added in Phase 2.2 (KMS envelope + GenerateMac)
+#
+# Target mutation score: >= 80 % (spec PR-004, SC-012).
+#
+# Phase-2.3 status: this file is authoritative but runs in WARN-ONLY mode.
+# CI job `mutation-testing` (workflow wired up in T009) gathers the score
+# and reports it via label-gated workflow; T995 (Phase 16) flips the gate
+# to hard-fail at the 80 % threshold.
+#
+# Invocation from repo root:
+#   cd apps/api && mutmut run --paths-to-mutate=echoroo/core/
+#
+# After a run:
+#   mutmut results            # summary by file
+#   mutmut show <mutant id>   # inspect a surviving mutant
+
+[mutmut]
+# Restrict mutations to the permission + response filter + audit + kms modules.
+# Other modules are out of scope for the 80 % threshold.
+paths_to_mutate = "echoroo/core/"
+
+# Tests directory relative to mutmut's CWD (apps/api/).
+tests_dir = "tests/"
+
+# Runner command used to validate each mutant. We limit to the permission-
+# engine unit tests because those are (a) fast, (b) deterministic, and
+# (c) the behavioural surface that the spec requires to be covered.
+runner = "/opt/venv/bin/pytest -x --no-cov tests/unit/core/"
+
+# Backup + cache locations (relative to CWD).
+backup = false
+cache_only = false
+
+# Minimum mutation score enforced once T995 flips the CI gate. Kept here as
+# documentation; the actual threshold check lives in the workflow job for
+# easier per-phase overrides.
+# minimum_score = 80.0
+
+# Files / decorators / imports to skip when generating mutants.
+# The legacy `check_project_access` function is scheduled for deletion in
+# Phase 3 and would otherwise pollute the survivor list; skip it explicitly.
+# mutmut uses line-anchored pragma strings, so we also honour inline
+# `# pragma: no mutate` in source code.
+
+# NOTE: we intentionally do NOT exclude any file from the `core/` directory
+# beyond what `# pragma: no mutate` already covers, so reviewers can see the
+# full surface at run time.
