@@ -1,0 +1,356 @@
+openapi: 3.1.0
+info:
+  title: Echoroo Auth API
+  version: "1.0.0"
+  description: >
+    認証エンドポイント契約。全て `/web-api/v1/auth/*` 配下（first-party session API）。
+    programmatic API (`/api/v1/`) 経由の auth は存在しない（API key 発行は認証済みユーザーが Web UI で行う）。
+
+servers:
+  - url: https://echoroo.app/web-api/v1
+    description: Production
+  - url: http://localhost:8002/web-api/v1
+    description: Local dev
+
+paths:
+  /auth/register:
+    post:
+      summary: 新規ユーザー登録
+      operationId: register
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+      responses:
+        "201":
+          description: 登録完了、メール検証リンク送信。セッションはまだ発行されない
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RegisterResponse'
+        "422":
+          description: Password 要件不満（NIST SP 800-63B、HaveIBeenPwned チェック）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /auth/login:
+    post:
+      summary: パスワード認証（TOTP は別エンドポイント）
+      operationId: login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        "200":
+          description: パスワード正解、次は 2FA チャレンジ
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        "401":
+          description: 認証失敗
+        "423":
+          description: アカウントロック（TOTP 10 連続失敗など、FR-070）
+
+  /auth/2fa/challenge:
+    post:
+      summary: TOTP または バックアップコード検証
+      operationId: verify2FA
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '#/components/schemas/TotpChallengeRequest'
+                - $ref: '#/components/schemas/BackupCodeChallengeRequest'
+      responses:
+        "200":
+          description: 2FA 検証成功、セッション発行。バックアップコードの場合は TOTP 再設定へ誘導
+          headers:
+            Set-Cookie:
+              schema:
+                type: string
+                example: "session_id=xxx; Path=/web-api/v1/; HttpOnly; Secure; SameSite=Strict"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TwoFactorVerifyResponse'
+        "401":
+          description: TOTP / バックアップコード不正
+        "429":
+          description: レート制限（TOTP 5/15min、バックアップコード 3/1hour）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /auth/2fa/setup/totp:
+    post:
+      summary: TOTP 初期セットアップ（初回ログイン時強制、FR-069）
+      operationId: setupTotp
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: QR コード URL（otpauth:// スキーム）とバックアップコード 8 個を返す
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TotpSetupResponse'
+
+  /auth/2fa/setup/totp/confirm:
+    post:
+      summary: TOTP 設定確定（QR 読み込み後の最初の 6 桁を入力）
+      operationId: confirmTotp
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [totp_code]
+              properties:
+                totp_code:
+                  type: string
+                  pattern: "^[0-9]{6}$"
+      responses:
+        "204":
+          description: 2FA 有効化完了、バックアップコードはこのタイミングで 1 度のみ再表示
+
+  /auth/2fa/webauthn/register:
+    post:
+      summary: WebAuthn hardware key 登録（superuser 必須、通常ユーザーは optional）
+      operationId: registerWebAuthn
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WebAuthnRegistrationRequest'
+      responses:
+        "201":
+          description: 登録完了
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebAuthnCredentialSummary'
+
+  /auth/2fa/webauthn/challenge:
+    post:
+      summary: WebAuthn 認証（superuser ログイン時）
+      operationId: webauthnChallenge
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WebAuthnAssertionRequest'
+      responses:
+        "200":
+          description: WebAuthn 認証成功、superuser session 発行
+
+  /auth/logout:
+    post:
+      summary: ログアウト（セッション無効化）
+      operationId: logout
+      security:
+        - sessionCookie: []
+      responses:
+        "204":
+          description: 完了、Set-Cookie でセッション削除
+
+  /auth/refresh:
+    post:
+      summary: アクセストークン更新（refresh token rotation、one-time use）
+      operationId: refresh
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: 新アクセストークン + 新 refresh token 発行、旧 refresh token 無効化
+        "401":
+          description: refresh token 再利用検知で family 全 revoke（FR-055 / FR-071）
+
+  /auth/password-reset/request:
+    post:
+      summary: パスワードリセットリクエスト
+      operationId: requestPasswordReset
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email:
+                  type: string
+                  format: email
+      responses:
+        "204":
+          description: メール送信済み（enumeration 対策で存在しない email でも同じレスポンス、FR-055 類似）
+
+  /auth/password-reset/confirm:
+    post:
+      summary: パスワードリセット確定
+      operationId: confirmPasswordReset
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token, new_password]
+              properties:
+                token:
+                  type: string
+                new_password:
+                  type: string
+      responses:
+        "204":
+          description: パスワード変更、security_stamp 更新、全 refresh token 失効（FR-055）
+
+components:
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: session_id
+
+  schemas:
+    Error:
+      type: object
+      required: [error_code, message]
+      properties:
+        error_code:
+          type: string
+        message:
+          type: string
+        request_id:
+          type: string
+        retry_after:
+          type: integer
+          nullable: true
+
+    RegisterRequest:
+      type: object
+      required: [email, password, display_name, accept_terms]
+      additionalProperties: false
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          minLength: 8
+        display_name:
+          type: string
+          maxLength: 100
+        accept_terms:
+          type: boolean
+
+    RegisterResponse:
+      type: object
+      properties:
+        user_id:
+          type: string
+          format: uuid
+        verification_email_sent:
+          type: boolean
+
+    LoginRequest:
+      type: object
+      required: [email, password]
+      additionalProperties: false
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+
+    LoginResponse:
+      type: object
+      properties:
+        challenge_token:
+          type: string
+          description: 2FA チャレンジで使う短期トークン（5 分有効）
+        totp_required:
+          type: boolean
+        webauthn_required:
+          type: boolean
+          description: superuser の場合 true
+
+    TotpChallengeRequest:
+      type: object
+      required: [challenge_token, totp_code]
+      properties:
+        challenge_token:
+          type: string
+        totp_code:
+          type: string
+          pattern: "^[0-9]{6}$"
+
+    BackupCodeChallengeRequest:
+      type: object
+      required: [challenge_token, backup_code]
+      properties:
+        challenge_token:
+          type: string
+        backup_code:
+          type: string
+
+    TwoFactorVerifyResponse:
+      type: object
+      properties:
+        user_id:
+          type: string
+          format: uuid
+        require_totp_reset:
+          type: boolean
+          description: バックアップコードでログインした場合 true
+        is_superuser:
+          type: boolean
+
+    TotpSetupResponse:
+      type: object
+      properties:
+        otpauth_url:
+          type: string
+          description: "otpauth://totp/Echoroo:{email}?secret=...&issuer=Echoroo"
+        backup_codes:
+          type: array
+          items:
+            type: string
+            description: 12 桁 base32、一度のみ表示
+
+    WebAuthnRegistrationRequest:
+      type: object
+      description: WebAuthn registration ceremony の response（PublicKeyCredential）
+      # 詳細は py_webauthn の `RegistrationCredential` に従う
+      additionalProperties: true
+
+    WebAuthnCredentialSummary:
+      type: object
+      properties:
+        credential_id:
+          type: string
+        name:
+          type: string
+
+    WebAuthnAssertionRequest:
+      type: object
+      description: WebAuthn authentication ceremony の response
+      additionalProperties: true

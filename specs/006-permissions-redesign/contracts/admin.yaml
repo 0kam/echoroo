@@ -1,0 +1,220 @@
+openapi: 3.1.0
+info:
+  title: Echoroo Superuser Admin API
+  version: "1.0.0"
+  description: >
+    superuser 専用エンドポイント（FR-084: programmatic API 不可、`/web-api/v1/admin/*` のみ）。
+    WebAuthn hardware key + IP allowlist 必須。全操作が platform_audit_log に記録。
+    SUPERUSER_PROJECT_SCOPE_ALLOWLIST 内の action は Matrix を bypass（FR-008b）。
+
+servers:
+  - url: https://echoroo.app/web-api/v1/admin
+
+security:
+  - superuserSession: []
+
+paths:
+  /projects/{id}/archive:
+    post:
+      summary: プロジェクト手動 archive（通常フロー外、緊急用）
+      operationId: archiveProject
+      security:
+        - superuserSession: []
+          csrfToken: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason: { type: string }
+      responses:
+        "200":
+          description: archived 遷移、監査記録
+
+  /projects/{id}/restore:
+    post:
+      summary: archived → active 復帰（FR-062、新 Owner 事前指定必須）
+      operationId: restoreProject
+      security:
+        - superuserSession: []
+          csrfToken: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [new_owner_user_id, restored_members]
+              additionalProperties: false
+              properties:
+                new_owner_user_id: { type: string, format: uuid }
+                restored_members:
+                  type: array
+                  items: { type: string, format: uuid }
+                  description: 復活させる旧メンバーの allowlist。選ばれなかった旧メンバーは removed_at 設定
+      responses:
+        "200":
+          description: active 復帰完了、全旧メンバー通知
+
+  /projects/{id}/taxon-overrides/{overrideId}/approve:
+    post:
+      summary: looser override 承認（FR-033 / FR-034 / FR-111 OVERRIDE_TAXON_SENSITIVITY looser）
+      operationId: approveLooserOverride
+      security:
+        - superuserSession: []
+          csrfToken: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: overrideId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: approval_status → applied、監査記録
+
+  /projects/{id}/taxon-overrides/{overrideId}/reject:
+    post:
+      summary: looser override 却下
+      operationId: rejectLooserOverride
+      security:
+        - superuserSession: []
+          csrfToken: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: overrideId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason: { type: string }
+      responses:
+        "200":
+          description: rejected
+
+  /users/{userId}/reset-2fa:
+    post:
+      summary: 2FA reset（本人確認 4 要素 + 24h delay、FR-072）
+      operationId: reset2FA
+      security:
+        - superuserSession: []
+          csrfToken: []
+      parameters:
+        - { name: userId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [support_ticket_id, confirmed_factors, reason]
+              properties:
+                support_ticket_id: { type: string }
+                confirmed_factors:
+                  type: array
+                  items: { type: string }
+                  description: ["registered_email_match", "current_password", "last_login_time", "last_api_key_prefix"]
+                reason: { type: string }
+                skip_delay:
+                  type: boolean
+                  default: false
+                  description: 緊急時のみ true、別 superuser 2 名 M-of-N 承認必須（SuperuserApprovalRequest 経由）
+      responses:
+        "200":
+          description: reset 実行、72h cooldown 開始
+
+  /iucn/force-resync:
+    post:
+      summary: IUCN 緊急再同期（通常は週次バッチ、障害時手動）
+      operationId: forceIucnResync
+      security:
+        - superuserSession: []
+          csrfToken: []
+      responses:
+        "202":
+          description: Celery ジョブ投入
+
+  /superusers:
+    get:
+      summary: superuser 一覧（全 superuser が閲覧可）
+      operationId: listSuperusers
+      responses:
+        "200":
+          description: list
+
+    post:
+      summary: superuser 追加（既存 2 名 M-of-N 承認必須、FR-111）
+      operationId: addSuperuser
+      security:
+        - superuserSession: []
+          csrfToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [user_id, allowed_ip_cidrs]
+              properties:
+                user_id: { type: string, format: uuid }
+                allowed_ip_cidrs:
+                  type: array
+                  items: { type: string }
+      responses:
+        "202":
+          description: SuperuserApprovalRequest 作成、2 名承認待ち
+
+  /superusers/{superuserId}:
+    delete:
+      summary: superuser revoke
+      operationId: revokeSuperuser
+      security:
+        - superuserSession: []
+          csrfToken: []
+      parameters:
+        - { name: superuserId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "202":
+          description: SuperuserApprovalRequest 作成、2 名承認 + 1→0 は DB trigger で block（FR-111a）
+
+  /break-glass/activate:
+    post:
+      summary: superuser 空白期間の緊急 break-glass モード起動（残 1 名 + 創業者別チャンネル 2 要素、FR-111）
+      operationId: activateBreakGlass
+      security:
+        - superuserSession: []
+          csrfToken: []
+      responses:
+        "200":
+          description: 72h break-glass モード開始、24h 以内 superuser 追加必須
+
+  /approval-requests/{id}/approve:
+    post:
+      summary: SuperuserApprovalRequest に承認を付与
+      operationId: approveRequest
+      security:
+        - superuserSession: []
+          csrfToken: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: approval 追加、必要数に達すれば自動実行
+
+components:
+  securitySchemes:
+    superuserSession:
+      type: apiKey
+      in: cookie
+      name: session_id
+      description: >
+        WebAuthn hardware key + IP allowlist を通過した superuser セッションのみ。
+        programmatic API は不可（FR-084）。
