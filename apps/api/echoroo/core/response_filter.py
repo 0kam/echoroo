@@ -93,7 +93,7 @@ def apply_response_filter(
     _set_if_attr(obj, "location_generalization", effective_resolution)
 
     # 3. Species masking (FR-020 `mask_species_in_detection`).
-    if _should_mask_species(project, normalized_role, effective_permissions):
+    if _should_mask_species(project, normalized_role):
         _set_if_attr(obj, "species", MASKED_SPECIES_LABEL)
         _set_if_attr(obj, "common_name", MASKED_SPECIES_LABEL)
         _set_if_attr(obj, "scientific_name", MASKED_SPECIES_LABEL)
@@ -175,7 +175,6 @@ def _h3_to_parent(h3_index: str | None, resolution: int) -> str | None:
 def _should_mask_species(
     project: Any,
     normalized_role: str,
-    effective_permissions: frozenset[Permission],  # noqa: ARG001 - reserved for future use
 ) -> bool:
     """FR-020 (`mask_species_in_detection`) — Restricted only, non-members.
 
@@ -207,9 +206,9 @@ def _compute_withheld_reason(
     if effective_resolution == 2:
         return "taxon_sensitivity:hidden"
     taxon_id = getattr(resource, "taxon_id", None)
-    global_res = (
+    global_res: int = (
         taxon_sensitivity_map.get(taxon_id, H3_RES_9)
-        if taxon_sensitivity_map and taxon_id is not None
+        if taxon_sensitivity_map is not None and taxon_id is not None
         else H3_RES_9
     )
     if global_res < member_resolution:
