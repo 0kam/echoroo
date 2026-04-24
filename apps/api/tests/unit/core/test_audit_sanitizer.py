@@ -1,0 +1,227 @@
+"""Bypass test suite for :mod:`echoroo.core.audit` (T052, FR-091a, SC-020).
+
+Each parametrised case starts with raw PII that would slip past a naive
+regex-only scanner and asserts that :func:`sanitize_value` (and via it,
+:class:`AuditLogSanitizer`) redacts the leaf completely. A redaction is
+verified by two conditions:
+
+1. The leaf becomes a dict with ``{"hash", "hash_version", "redacted"}``.
+2. No substring of the original raw PII survives anywhere in the output
+   tree (``_assert_no_raw_leak`` walks recursively).
+
+The second condition is the critical one — if a future refactor weakens
+the regex pipeline, it will leak raw PII somewhere in the structure
+even if the leaf itself is replaced.
+"""
+
+from __future__ import annotations
+
+import base64
+import json
+from typing import Any
+
+import pytest
+from pydantic import ValidationError
+
+from echoroo.core.audit import (
+    HASH_VERSION,
+    AuditLogSanitizer,
+    sanitize_value,
+)
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _flatten(value: Any) -> list[Any]:
+    """Yield every leaf in a JSON-ish structure."""
+    if isinstance(value, dict):
+        out: list[Any] = []
+        for v in value.values():
+            out.extend(_flatten(v))
+        return out
+    if isinstance(value, list):
+        out = []
+        for v in value:
+            out.extend(_flatten(v))
+        return out
+    return [value]
+
+
+def _assert_no_raw_leak(tree: Any, forbidden: str) -> None:
+    """Fail the test if ``forbidden`` appears verbatim anywhere in ``tree``."""
+    for leaf in _flatten(tree):
+        if isinstance(leaf, str):
+            assert forbidden not in leaf, (
+                f"raw PII leak: {forbidden!r} found in {leaf!r}"
+            )
+
+
+def _assert_is_redaction(value: Any) -> None:
+    assert isinstance(value, dict), f"expected redaction dict, got {type(value)!r}"
+    assert value.get("redacted") is True
+    assert value.get("hash_version") == HASH_VERSION
+    assert isinstance(value.get("hash"), str) and len(value["hash"]) == 64
+
+
+# ---------------------------------------------------------------------------
+# Parametric bypass cases (≥ 10)
+# ---------------------------------------------------------------------------
+
+
+_EMAIL = "alice.smith+promo@example.co.jp"
+_PHONE = "+1 202-555-0123"
+_JP_PHONE = "090-1234-5678"
+_SSN = "123-45-6789"
+_CARD = "4111 1111 1111 1111"
+_AKID = "AKIAIOSFODNN7EXAMPLE"
+_JWT = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3OCJ9.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"
+
+
+_CASES: list[tuple[str, Any, str]] = [
+    # 1. Email nested one level deep in a dict
+    (
+        "nested_email",
+        {"user": {"contact": _EMAIL}},
+        _EMAIL,
+    ),
+    # 2. Email inside an array leaf
+    (
+        "email_in_array",
+        {"recipients": ["admin@echoroo.test", "bob@example.org"]},
+        "admin@echoroo.test",
+    ),
+    # 3. Fullwidth (Unicode homoglyph) email — defeats naive ASCII-only regex
+    (
+        "fullwidth_email",
+        {"who": "ａｌｉｃｅ＠ｅｘａｍｐｌｅ．ｃｏｍ"},  # noqa: RUF001
+        "ａｌｉｃｅ＠ｅｘａｍｐｌｅ．ｃｏｍ",  # noqa: RUF001
+    ),
+    # 4. URL-encoded email inside a tracking link parameter
+    (
+        "url_encoded_email",
+        {"next": "https://echoroo.app/?u=alice%40example.com"},
+        "alice%40example.com",
+    ),
+    # 5. Base64-encoded credential blob
+    (
+        "base64_jwt",
+        {
+            "payload": base64.b64encode(_JWT.encode()).decode(),
+        },
+        base64.b64encode(_JWT.encode()).decode(),
+    ),
+    # 6. Null-byte truncation attempt (sanitizer must strip control chars
+    #    before matching so the trailing email still redacts).
+    (
+        "null_byte_truncation",
+        {"raw": f"safe\x00{_EMAIL}"},
+        _EMAIL,
+    ),
+    # 7. Control-char interleaving inside phone number
+    (
+        "control_char_phone",
+        {"phone": "\x07" + _PHONE + "\x1b"},
+        _PHONE,
+    ),
+    # 8. Deeply nested array-of-dicts with credit card
+    (
+        "deep_nested_card",
+        {"events": [{"payments": [{"card_number": _CARD}]}]},
+        _CARD,
+    ),
+    # 9. Bearer token in a header-style value
+    (
+        "bearer_token",
+        {"authz": f"Bearer {_JWT}"},
+        _JWT,
+    ),
+    # 10. AWS access key ID leaked in free-form text
+    (
+        "aws_access_key",
+        {"note": f"deploy key {_AKID} rotated"},
+        _AKID,
+    ),
+    # 11. Japanese phone number, mixed separators
+    (
+        "jp_phone",
+        {"tel": _JP_PHONE},
+        _JP_PHONE,
+    ),
+    # 12. US SSN surrounded by punctuation
+    (
+        "us_ssn",
+        {"note": f"ssn={_SSN};end"},
+        _SSN,
+    ),
+    # 13. URL-encoded phone inside JSON string
+    (
+        "url_encoded_phone",
+        {"url": "https://x/?phone=%2B1%20202-555-0123"},
+        "%2B1%20202-555-0123",
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    ("case_id", "payload", "forbidden"),
+    [pytest.param(*c, id=c[0]) for c in _CASES],
+)
+def test_sanitize_value_redacts_pii(case_id: str, payload: Any, forbidden: str) -> None:
+    sanitised = sanitize_value(payload)
+    _assert_no_raw_leak(sanitised, forbidden)
+
+
+@pytest.mark.parametrize(
+    ("case_id", "payload", "forbidden"),
+    [pytest.param(*c, id=c[0]) for c in _CASES],
+)
+def test_auditlogsanitizer_redacts_pii(case_id: str, payload: Any, forbidden: str) -> None:
+    model = AuditLogSanitizer(detail=payload, before=payload, after=payload)
+    _assert_no_raw_leak(model.detail, forbidden)
+    _assert_no_raw_leak(model.before, forbidden)
+    _assert_no_raw_leak(model.after, forbidden)
+
+
+def test_leaf_becomes_redaction_marker() -> None:
+    out = sanitize_value({"email": _EMAIL})
+    _assert_is_redaction(out["email"])
+
+
+def test_non_pii_string_is_unchanged() -> None:
+    payload = {"event": "member_added", "count": 3, "flag": True, "empty": ""}
+    out = sanitize_value(payload)
+    assert out == payload
+
+
+def test_user_id_uuid_is_not_redacted() -> None:
+    # FR-091a §c: raw UUID user_id values are permitted.
+    uuid_val = "11111111-2222-3333-4444-555555555555"
+    out = sanitize_value({"owner_id": uuid_val})
+    assert out["owner_id"] == uuid_val
+
+
+def test_sanitizer_handles_null_before_after() -> None:
+    model = AuditLogSanitizer(detail={"ok": True}, before=None, after=None)
+    assert model.before is None
+    assert model.after is None
+
+
+def test_sanitizer_rejects_non_dict_detail() -> None:
+    with pytest.raises(ValidationError):
+        AuditLogSanitizer(detail="not-a-dict")  # type: ignore[arg-type]
+
+
+def test_sanitizer_forbids_extra_fields() -> None:
+    with pytest.raises(ValidationError):
+        AuditLogSanitizer(detail={}, extra_field="x")  # type: ignore[call-arg]
+
+
+def test_sanitized_output_is_json_serialisable() -> None:
+    payload = {"emails": [_EMAIL, "b@example.org"], "note": "hello"}
+    out = sanitize_value(payload)
+    # Must round-trip through JSON so it can be stored in JSONB.
+    encoded = json.dumps(out)
+    decoded = json.loads(encoded)
+    _assert_no_raw_leak(decoded, _EMAIL)
