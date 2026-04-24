@@ -27,6 +27,7 @@ from typing import Any
 
 import boto3
 import pytest
+from botocore.exceptions import ClientError
 from moto import mock_aws
 
 # ---------------------------------------------------------------------------
@@ -187,7 +188,7 @@ def test_unwrap_dek_rejects_tampered_blob(kms_env: dict[str, str]) -> None:
     # Flip a byte in the payload (avoid the first byte of AWS metadata).
     wrapped[-1] ^= 0xFF
 
-    with pytest.raises(Exception):
+    with pytest.raises(ClientError):
         kms.unwrap_dek(bytes(wrapped))
 
 
@@ -299,12 +300,14 @@ def test_verify_invitation_hmac_falls_back_to_k_old(
 
     payload = b"pre-rotation-token"
 
-    # Sign directly with the OLD alias to simulate a token issued before
-    # rotation. The module itself only signs with NEW.
+    # Sign directly with the OLD key to simulate a token issued before
+    # rotation. The module itself only signs with NEW. moto's
+    # GenerateMac requires a raw KeyId (not an alias), so we pass the
+    # resolved UUID captured in the fixture.
     kms_client = boto3.client("kms", region_name=AWS_REGION)
     resp = kms_client.generate_mac(
         Message=payload,
-        KeyId=INVITATION_OLD_ALIAS,
+        KeyId=kms_env["inv_old_id"],
         MacAlgorithm="HMAC_SHA_256",
     )
     sig_hex = resp["Mac"].hex()
@@ -326,11 +329,12 @@ def test_verify_invitation_hmac_returns_false_when_old_unconfigured(
     """
     import importlib
 
-    # Capture a k_old signature before removing the env var.
+    # Capture a k_old signature before removing the env var. Use the
+    # raw KeyId UUID (moto's GenerateMac does not resolve aliases).
     kms_client = boto3.client("kms", region_name=AWS_REGION)
     resp = kms_client.generate_mac(
         Message=b"legacy",
-        KeyId=INVITATION_OLD_ALIAS,
+        KeyId=kms_env["inv_old_id"],
         MacAlgorithm="HMAC_SHA_256",
     )
     old_sig = resp["Mac"].hex()
