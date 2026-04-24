@@ -36,18 +36,18 @@ description: "Task list for 006-permissions-redesign (revised after /speckit.ana
 
 ## Phase 1: Setup（Shared Infrastructure）
 
-- [ ] **T001** [ST] feature branch `006-permissions-redesign` の最新化確認 (FR-113)
-- [ ] **T002** [P] [ST] `apps/api/pyproject.toml` に新規依存追加（全て上限付き SemVer pin）: `pyotp>=2.9.0,<3.0`, `webauthn>=2.5.0,<3.0`, `cryptography>=44.0,<46.0`, `mutmut>=3.2,<4.0` (dev), `testcontainers[postgres,redis]>=4.9,<5.0` (dev) — supply chain リスク軽減、major bump は renovate / dependabot PR 経由のみ (research §16)
-- [ ] **T003** [P] [ST] `apps/web/package.json` に新規依存追加（caret は SemVer minor 上限のみ許容、`~` 相当の厳格 pin も検討）: `@simplewebauthn/browser@~13.0`, `openapi-typescript@~7.4` (dev) — major 更新を明示承認制にする (research §16)
-- [ ] **T004** [P] [ST] `scripts/lint_permission_guard.py` 雛形作成（AST、research §18-A、FR-008）
-- [ ] **T005** [P] [ST] `scripts/lint_response_filter.py` 雛形作成（research §18-B、FR-011）
-- [ ] **T006** [P] [ST] `scripts/lint_search_gate.py` 雛形作成（research §18-C、FR-025）
-- [ ] **T007** [P] [ST] `scripts/lint_no_raw_coordinates.py` 雛形（grep + allowlist、FR-028f）
-- [ ] **T008** [P] [ST] `scripts/lint_kms_isolation.py` 雛形（`core/kms.py` 以外からの KMS 直接呼出検出、FR-091b）
-- [ ] **T009** [P] [ST] `.github/workflows/ci.yml` に lint / mutation testing / security test ステップ追加 (SC-001、SC-012、SC-013、SC-019、SC-020)
-- [ ] **T010** [ST] LocalStack KMS 初期化: `scripts/init-localstack.sh` に 4 CMK alias 追加、Redis は TLS + AUTH + ACL を有効化 (FR-051、FR-091b、FR-092、FR-040、NFR-007、NFR-009) (research §1、Runbook 鍵ローテ SLA)
-- [ ] **T011** [ST] `.env.example` に新規環境変数追加（quickstart.md §1 準拠）
-- [ ] **T012** [P] [ST] `.github/pull_request_template.md` 新規作成: TDD Red フェーズ CI ログ URL 欄、mutation score (PR-004)、カバレッジ (PR-005)、セキュリティ test ID (PR-007) のチェックリスト欄を配置 (PR-004、PR-005、PR-006、PR-007)
+- [X] **T001** [ST] feature branch `006-permissions-redesign` の最新化確認 (FR-113)
+- [X] **T002** [P] [ST] `apps/api/pyproject.toml` に新規依存追加（全て上限付き SemVer pin）: `pyotp>=2.9.0,<3.0`, `webauthn>=2.5.0,<3.0`, `cryptography>=44.0,<46.0`, `mutmut>=3.2,<4.0` (dev), `testcontainers[postgres,redis]>=4.9,<5.0` (dev) — supply chain リスク軽減、major bump は renovate / dependabot PR 経由のみ (research §16)
+- [X] **T003** [P] [ST] `apps/web/package.json` に新規依存追加（caret は SemVer minor 上限のみ許容、`~` 相当の厳格 pin も検討）: `@simplewebauthn/browser@~13.0`, `openapi-typescript@~7.4` (dev) — major 更新を明示承認制にする (research §16)
+- [X] **T004** [P] [ST] `scripts/lint_permission_guard.py` 雛形作成（AST、research §18-A、FR-008）
+- [X] **T005** [P] [ST] `scripts/lint_response_filter.py` 雛形作成（research §18-B、FR-011）
+- [X] **T006** [P] [ST] `scripts/lint_search_gate.py` 雛形作成（research §18-C、FR-025）
+- [X] **T007** [P] [ST] `scripts/lint_no_raw_coordinates.py` 雛形（grep + allowlist、FR-028f）
+- [X] **T008** [P] [ST] `scripts/lint_kms_isolation.py` 雛形（`core/kms.py` 以外からの KMS 直接呼出検出、FR-091b）
+- [X] **T009** [P] [ST] `.github/workflows/ci.yml` に lint / mutation testing / security test ステップ追加 (SC-001、SC-012、SC-013、SC-019、SC-020)
+- [X] **T010** [ST] LocalStack KMS 初期化: `scripts/init-localstack.sh` に 4 CMK alias 追加、Redis は TLS + AUTH + ACL を有効化 (FR-051、FR-091b、FR-092、FR-040、NFR-007、NFR-009) (research §1、Runbook 鍵ローテ SLA)
+- [X] **T011** [ST] `.env.example` に新規環境変数追加（quickstart.md §1 準拠）
+- [X] **T012** [P] [ST] `.github/pull_request_template.md` 新規作成: TDD Red フェーズ CI ログ URL 欄、mutation score (PR-004)、カバレッジ (PR-005)、セキュリティ test ID (PR-007) のチェックリスト欄を配置 (PR-004、PR-005、PR-006、PR-007)
 
 ---
 

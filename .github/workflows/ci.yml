@@ -1,0 +1,154 @@
+name: CI (006-permissions-redesign)
+
+# This workflow adds the 006-permissions-redesign specific CI gates on top of
+# the existing `test.yml` workflow. It introduces three categories of jobs:
+#
+#   1. Permission / response / search / raw-coordinates / KMS isolation lint
+#      scripts (T100a-T100e). These are intentionally launched in **warn
+#      mode** (continue-on-error: true) during Phase 1 and will be promoted
+#      to blocking mode in T100f and T995.
+#   2. Mutation testing via `mutmut` against the 4 permission-critical
+#      modules. Phase 1 runs this in warn-only mode; in T995 it is
+#      promoted to a hard gate that requires >= 80% mutation score.
+#   3. Dedicated security pytest job (-m security marker).
+#
+# Security note: no `github.event.*` untrusted inputs are interpolated into
+# `run:` shell commands. The only reference to event data is in the `if:`
+# expression for the mutation-testing job, which is evaluated by the
+# workflow engine and is not susceptible to shell injection.
+
+on:
+  push:
+    branches: ["main", "006-permissions-redesign"]
+  pull_request:
+    branches: ["main"]
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Permission / response / search / raw-coordinate / KMS isolation lints.
+  # Each lint is expected to exit 0 on success. Warn-mode is implemented via
+  # continue-on-error on every step so that failing lints surface as warnings
+  # in the GitHub UI without blocking merges while the codebase is being
+  # migrated to conform to the new invariants (T100a-T100e).
+  # ---------------------------------------------------------------------------
+  permission-lints:
+    name: Permission lint scripts (warn mode)
+    runs-on: ubuntu-latest
+    # Job-level continue-on-error so the overall status is not red while
+    # warn-mode is in effect (T100f will flip this to false).
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv + Python 3.11
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.11"
+          enable-cache: true
+          cache-dependency-glob: "apps/api/uv.lock"
+          pyproject-file: "apps/api/pyproject.toml"
+
+      - name: Install backend dependencies
+        working-directory: apps/api
+        run: uv sync --all-extras --dev
+
+      # T100a - every path operation must go through the Permission guard
+      # (is_allowed / Depends(check_action())).
+      - name: Lint - permission guard coverage (T100a)
+        continue-on-error: true
+        run: python scripts/lint_permission_guard.py
+
+      # T100b - every Recording / Detection / Site response must pass through
+      # the ResponseFilter sanitizer.
+      - name: Lint - response filter coverage (T100b)
+        continue-on-error: true
+        run: python scripts/lint_response_filter.py
+
+      # T100c - every Detection search must go through the SearchGate
+      # abstraction; direct `select(Detection)` in API code is forbidden.
+      - name: Lint - search gate coverage (T100c)
+        continue-on-error: true
+        run: python scripts/lint_search_gate.py
+
+      # T100d (1/2) - migrations / ORM / Pydantic must not introduce raw
+      # lat/lng/gps_* columns or fields (FR-028f).
+      - name: Lint - no raw coordinates (T100d)
+        continue-on-error: true
+        run: python scripts/lint_no_raw_coordinates.py
+
+      # T100d (2/2) - the 4 KMS CMK aliases must remain isolated; no code
+      # path may reuse a single alias across distinct purposes (SC-019).
+      - name: Lint - KMS alias isolation (T100d)
+        continue-on-error: true
+        run: python scripts/lint_kms_isolation.py
+
+  # ---------------------------------------------------------------------------
+  # Mutation testing - warn-mode during Phase 1, promoted to blocking in T995.
+  # Only run on the main branch or when a PR carries the `run-mutation-testing`
+  # label to keep default PR latency low. The mutation score threshold is
+  # enforced by `mutmut` config; warn-mode is implemented via
+  # continue-on-error.
+  # ---------------------------------------------------------------------------
+  mutation-testing:
+    name: Mutation testing (warn mode)
+    if: >-
+      github.ref == 'refs/heads/main' ||
+      contains(github.event.pull_request.labels.*.name, 'run-mutation-testing')
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv + Python 3.11
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.11"
+          enable-cache: true
+          cache-dependency-glob: "apps/api/uv.lock"
+          pyproject-file: "apps/api/pyproject.toml"
+
+      - name: Install backend dependencies
+        working-directory: apps/api
+        run: uv sync --all-extras --dev
+
+      # mutmut is scoped to the 4 permission-critical modules by
+      # `apps/api/mutmut.toml` (see T047). Phase 1 reports only; T995 flips
+      # this to a hard gate (>= 80% mutation score).
+      - name: Run mutmut (warn mode)
+        continue-on-error: true
+        working-directory: apps/api
+        run: uv run mutmut run
+
+      - name: Collect mutmut results
+        if: always()
+        continue-on-error: true
+        working-directory: apps/api
+        run: uv run mutmut results
+
+  # ---------------------------------------------------------------------------
+  # Dedicated security pytest job - always blocking.
+  # Runs only tests tagged with the `security` pytest marker. The marker is
+  # used by the security-focused negative tests under
+  # `apps/api/tests/security/`.
+  # ---------------------------------------------------------------------------
+  security-tests:
+    name: security-tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv + Python 3.11
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.11"
+          enable-cache: true
+          cache-dependency-glob: "apps/api/uv.lock"
+          pyproject-file: "apps/api/pyproject.toml"
+
+      - name: Install backend dependencies
+        working-directory: apps/api
+        run: uv sync --all-extras --dev
+
+      - name: Run pytest -m security
+        working-directory: apps/api
+        run: uv run pytest -m security --maxfail=1 -q

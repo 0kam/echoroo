@@ -1,0 +1,19 @@
+# Allowlist for scripts/lint_no_raw_coordinates.py.
+#
+# Each non-empty / non-comment line is a path (relative to repo root) that
+# MAY legitimately reference raw latitude / longitude / gps_* keys, for
+# example internal admin endpoints that export provenance data for an
+# owner-approved bulk operation.
+#
+# Format:
+#   * One path per line.
+#   * Lines beginning with `#` are comments.
+#   * Trailing whitespace is ignored.
+#   * Globs are NOT expanded in the skeleton; Phase 2 (T044/T045/T092) may
+#     enhance the matcher.
+#
+# Keep this file empty by default. Every addition MUST be justified in the
+# accompanying pull request and cross-referenced in
+# specs/006-permissions-redesign/contracts/admin.yaml.
+#
+# Enforces FR-028f.

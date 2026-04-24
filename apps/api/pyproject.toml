@@ -36,6 +36,10 @@ dependencies = [
     "pgvector>=0.3.0",
     "scikit-learn>=1.5.0",
     "joblib>=1.4.0",
+    # 006 permissions redesign: 2FA / WebAuthn / KMS envelope encryption
+    "pyotp>=2.9.0,<3.0",
+    "webauthn>=2.5.0,<3.0",
+    "cryptography>=44.0,<46.0",
 ]
 
 [project.optional-dependencies]
@@ -49,6 +53,9 @@ dev = [
     "types-passlib>=1.7.7",
     "pyyaml>=6.0",
     "types-pyyaml>=6.0",
+    # 006 permissions redesign: mutation testing + integration test containers
+    "mutmut>=3.2,<4.0",
+    "testcontainers[postgres,redis]>=4.9,<5.0",
 ]
 
 [build-system]

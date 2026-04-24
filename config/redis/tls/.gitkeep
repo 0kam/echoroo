@@ -1,0 +1,2 @@
+# Self-signed dev certificates are generated here by scripts/gen-redis-dev-cert.sh.
+# Do not commit the generated .crt/.key files.
