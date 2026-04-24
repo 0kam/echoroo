@@ -17,3 +17,11 @@
 # specs/006-permissions-redesign/contracts/admin.yaml.
 #
 # Enforces FR-028f.
+
+# Phase 2.7 (T084) — Celery task payload denylist validator. The module
+# enumerates the forbidden coordinate field names so the validator can
+# reject them; this is the single legitimate place that hosts those
+# tokens (they are denylist data, never assignment targets).
+apps/api/echoroo/workers/_celery_payload.py
+apps/api/tests/unit/workers/test_celery_payload_validator.py
+
