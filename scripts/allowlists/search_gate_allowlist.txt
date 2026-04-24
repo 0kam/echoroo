@@ -1,0 +1,8 @@
+# Allowlist for `scripts/lint_search_gate.py` (T092, FR-025, research §18-C).
+#
+# Each line is a path (relative to repo root) that may use
+# `select(Detection)` / `select(Annotation)` directly without going through
+# `services/search_gate.py`. Comments start with `#`; blank lines are ignored.
+#
+# Phase 2 ships an empty allowlist. Add entries ONLY with a code-review-
+# approved exemption + a TODO referencing the migration ticket.

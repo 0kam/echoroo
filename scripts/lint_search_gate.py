@@ -1,25 +1,41 @@
 #!/usr/bin/env python3
-"""Lint: direct SQLAlchemy select() on Detection models is confined to SearchGate.
+"""Lint: direct SQLAlchemy select() on Detection / Annotation models is
+confined to SearchGate.
 
-Enforces FR-025 (all detection/annotation search traffic is forced through
-`services/search_gate.py`, which applies the permission + visibility
-filter). Direct `select(Detection)` calls outside the allowlist risk
-leaking records from projects the caller cannot view.
+Enforces FR-025 (all detection / annotation search traffic is forced
+through ``services/search_gate.py``, which applies the permission +
+visibility filter). Direct ``select(Detection)`` / ``select(Annotation)``
+calls outside the allowlisted files risk leaking records from projects
+the caller cannot view.
 
-Target pattern:
-    * Walk every `apps/api/echoroo/**/*.py` module.
-    * Parse each file with the standard-library `ast` module.
-    * Detect `select(Detection)` / `select(Annotation)` / equivalent
-      SQLAlchemy `select(...)` calls referencing forbidden models.
-    * Fail when such a call appears outside the allowlisted files.
+Detection strategy (research §18-C):
 
-Allowlisted files (only these may call `select(Detection)` directly):
+    * Walk every ``apps/api/echoroo/**/*.py`` module.
+    * Parse each file with the standard-library ``ast`` module.
+    * For every call expression of the form ``select(<X>)``, ``select(<X>,
+      ...)``, ``select(<X>.col)``, or ``select(...).select_from(<X>)`` —
+      where ``<X>`` resolves to a name in :data:`FORBIDDEN_MODELS`
+      (directly or via attribute access such as ``models.Detection``) —
+      emit a violation unless the file is on the allowlist.
+
+Allowlisted files (only these may call ``select(Detection)`` directly):
+
     * apps/api/echoroo/services/search_gate.py
     * apps/api/echoroo/repositories/detection.py
 
-See specs/006-permissions-redesign/research.md §18-C.
+Optional ``--allowlist <path>`` adds further temporary exemptions. The
+shipped allowlist file lives at
+``scripts/allowlists/search_gate_allowlist.txt`` and is empty by default.
 
-Full implementation: T092 (Phase 2).
+Exit codes:
+
+    0 — no violations (or not --fail-on-violation)
+    1 — at least one direct select(...) call found, with --fail-on-violation
+    2 — unexpected internal error
+
+Phase 2 status: lint IS implemented. CI wires it in warn-only mode in
+T100c; T100f flips it to hard-fail once Phase 3 has migrated every
+detection / annotation read path through ``SearchGate``.
 """
 from __future__ import annotations
 
@@ -28,36 +44,196 @@ import ast
 import sys
 from pathlib import Path
 
-ALLOWLISTED_PATHS: tuple[str, ...] = (
+# Models that may NOT be selected directly outside the allowlist.
+FORBIDDEN_MODELS: frozenset[str] = frozenset({"Detection", "Annotation"})
+
+# Hard-coded allowlist (always honoured, regardless of --allowlist file).
+_ALWAYS_ALLOWED: tuple[str, ...] = (
     "apps/api/echoroo/services/search_gate.py",
     "apps/api/echoroo/repositories/detection.py",
 )
 
-FORBIDDEN_MODELS: frozenset[str] = frozenset({"Detection", "Annotation"})
+# Default search root.
+DEFAULT_ROOT = Path("apps/api/echoroo")
+DEFAULT_ALLOWLIST = Path("scripts/allowlists/search_gate_allowlist.txt")
 
 
-def find_violations(root: Path) -> list[str]:
-    """Return a list of human-readable violation descriptions.
+# ---------------------------------------------------------------------------
+# AST helpers
+# ---------------------------------------------------------------------------
 
-    TODO(T092): implement in Phase 2. The skeleton walks the AST but does
-    not yet emit findings.
+
+def _is_select_call(call: ast.Call) -> bool:
+    """True iff ``call`` looks like ``select(...)`` / ``sa.select(...)`` /
+    ``_select(...)`` etc. We match on the trailing identifier so aliased
+    imports (``from sqlalchemy import select as sa_select``) are caught.
     """
+    func = call.func
+    if isinstance(func, ast.Name):
+        return func.id == "select" or func.id.endswith("_select")
+    if isinstance(func, ast.Attribute):
+        return func.attr == "select" or func.attr.endswith("_select")
+    return False
+
+
+def _name_of(node: ast.AST) -> str | None:
+    """Return the trailing identifier of a Name / Attribute / Call.
+
+    ``Detection``  -> "Detection"
+    ``models.Detection`` -> "Detection"
+    ``models.Detection.column`` -> "Detection"  (we walk one level up)
+    ``func.count()`` -> None (function call, not a model reference)
+    """
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        return node.attr
+    return None
+
+
+def _references_forbidden_model(node: ast.AST) -> str | None:
+    """Walk ``node`` and return the first forbidden model name found.
+
+    Handles bare names, ``Detection.column`` attribute chains, and nested
+    expressions (``func.count(Detection.id)`` would also flag).
+    """
+    for sub in ast.walk(node):
+        if isinstance(sub, ast.Name) and sub.id in FORBIDDEN_MODELS:
+            return sub.id
+        if isinstance(sub, ast.Attribute) and sub.attr in FORBIDDEN_MODELS:
+            return sub.attr
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Allowlist loading
+# ---------------------------------------------------------------------------
+
+
+def _load_extra_allowlist(path: Path | None) -> frozenset[str]:
+    if path is None:
+        return frozenset()
+    if not path.exists():
+        return frozenset()
+    entries: set[str] = set()
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.split("#", 1)[0].strip()
+        if line:
+            entries.add(line)
+    return frozenset(entries)
+
+
+def _is_allowlisted(rel_path: str, extra: frozenset[str]) -> bool:
+    """Match against absolute-from-repo-root paths.
+
+    The matcher is exact-equality on POSIX paths so a directory name
+    collision (e.g. a future ``services/search_gate.py`` in a sibling
+    project) cannot accidentally exempt itself.
+    """
+    if rel_path in _ALWAYS_ALLOWED:
+        return True
+    if rel_path in extra:
+        return True
+    return False
+
+
+# ---------------------------------------------------------------------------
+# Scanner
+# ---------------------------------------------------------------------------
+
+
+def find_violations(
+    root: Path,
+    *,
+    extra_allowlist: frozenset[str] = frozenset(),
+    repo_root: Path | None = None,
+) -> list[str]:
+    """Return human-readable violation lines.
+
+    Args:
+        root: Directory to walk.
+        extra_allowlist: User-supplied additional allowlist entries
+            (relative to ``repo_root``).
+        repo_root: Repository root used for path normalisation. Defaults
+            to ``root.parent.parent.parent`` for the standard
+            ``apps/api/echoroo/`` layout, falling back to the file's own
+            absolute path otherwise.
+    """
+    violations: list[str] = []
     if not root.exists():
-        return []
-    for py_file in root.rglob("*.py"):
+        return violations
+
+    if repo_root is None:
+        # Auto-detect: walk upward until a `.git` directory appears.
+        # Stops at the filesystem root if no marker is ever found.
+        candidate = root.resolve()
+        for _ in range(8):
+            if (candidate / ".git").exists():
+                break
+            if candidate.parent == candidate:
+                break
+            candidate = candidate.parent
+        repo_root = candidate
+
+    for py_file in sorted(root.rglob("*.py")):
+        rel_str = _relative_posix(py_file, repo_root)
+        if _is_allowlisted(rel_str, extra_allowlist):
+            continue
         try:
             tree = ast.parse(py_file.read_text(encoding="utf-8"), filename=str(py_file))
-        except (OSError, SyntaxError):
+        except (OSError, SyntaxError) as exc:
+            violations.append(f"{rel_str}: failed to parse ({exc})")
             continue
-        for _ in ast.walk(tree):
-            pass
-    # TODO(T092): accumulate and return violations, honouring ALLOWLISTED_PATHS
-    # and FORBIDDEN_MODELS.
-    print(
-        "[lint_search_gate] skeleton scan complete (TODO: implement in T092)",
-        file=sys.stderr,
-    )
-    return []
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            if _is_select_call(node):
+                model = _select_call_targets_forbidden(node)
+                if model is not None:
+                    violations.append(
+                        f"{rel_str}:{node.lineno}  direct select({model}) outside SearchGate "
+                        f"(use services/search_gate.py)"
+                    )
+                continue
+            # Detect ``.select_from(Detection)`` chained off any earlier
+            # select() — e.g. ``select(func.count()).select_from(Detection)``.
+            if isinstance(node.func, ast.Attribute) and node.func.attr == "select_from":
+                model = _first_arg_targets_forbidden(node)
+                if model is not None:
+                    violations.append(
+                        f"{rel_str}:{node.lineno}  .select_from({model}) outside SearchGate "
+                        f"(use services/search_gate.py)"
+                    )
+    return violations
+
+
+def _select_call_targets_forbidden(call: ast.Call) -> str | None:
+    """Return the forbidden model name referenced as a positional arg, if any."""
+    for arg in call.args:
+        model = _references_forbidden_model(arg)
+        if model is not None:
+            return model
+    return None
+
+
+def _first_arg_targets_forbidden(call: ast.Call) -> str | None:
+    if not call.args:
+        return None
+    return _references_forbidden_model(call.args[0])
+
+
+def _relative_posix(path: Path, repo_root: Path) -> str:
+    abs_path = path.resolve()
+    try:
+        rel = abs_path.relative_to(repo_root.resolve())
+    except ValueError:
+        rel = path
+    return str(rel).replace("\\", "/")
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
 
 
 def main() -> int:
@@ -65,8 +241,23 @@ def main() -> int:
     parser.add_argument(
         "--path",
         type=Path,
-        default=Path("apps/api/echoroo"),
-        help="Root directory to scan (default: apps/api/echoroo).",
+        default=DEFAULT_ROOT,
+        help=f"Root directory to scan (default: {DEFAULT_ROOT}).",
+    )
+    parser.add_argument(
+        "--allowlist",
+        type=Path,
+        default=DEFAULT_ALLOWLIST,
+        help=(
+            f"Optional extra allowlist file (default: {DEFAULT_ALLOWLIST}). "
+            "Each line is a repo-relative path; lines starting with `#` are comments."
+        ),
+    )
+    parser.add_argument(
+        "--repo-root",
+        type=Path,
+        default=None,
+        help="Repository root for path normalisation (default: auto-detect).",
     )
     parser.add_argument(
         "--fail-on-violation",
@@ -76,13 +267,23 @@ def main() -> int:
     args = parser.parse_args()
 
     try:
-        violations = find_violations(args.path)
+        extra = _load_extra_allowlist(args.allowlist)
+        violations = find_violations(
+            args.path,
+            extra_allowlist=extra,
+            repo_root=args.repo_root,
+        )
     except Exception as exc:  # pragma: no cover - defensive
         print(f"[lint_search_gate] unexpected error: {exc}", file=sys.stderr)
         return 2
 
-    for v in violations:
-        print(v, file=sys.stderr)
+    for line in violations:
+        print(line, file=sys.stderr)
+    print(
+        f"[lint_search_gate] scanned {args.path}: "
+        f"{len(violations)} violation(s) found",
+        file=sys.stderr,
+    )
     if violations and args.fail_on_violation:
         return 1
     return 0
