@@ -355,7 +355,8 @@ test.describe('Authentication', () => {
       await page.click('button[type="submit"]');
 
       // Backend instructs the FE to redirect to the 2FA setup page.
-      await expect(page).toHaveURL(/\/account\/2fa\?mode=setup/);
+      // The setup page lives in (auth) so unauthenticated users can reach it.
+      await expect(page).toHaveURL(/\/2fa-setup/);
 
       // 3. Capture the secret rendered on the page, then submit the TOTP code.
       const secretLocator = page.locator('[data-testid="two-factor-secret"]');

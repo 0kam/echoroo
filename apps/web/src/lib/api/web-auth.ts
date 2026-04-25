@@ -19,6 +19,32 @@ import { ApiError } from './client';
 const BASE = '/web-api/v1/auth';
 
 /**
+ * CSRF cookie name. Must match `settings.web_csrf_cookie_name` in the
+ * backend (`apps/api/echoroo/core/settings.py`). The cookie is set with
+ * `httponly=False` so this client can read it from `document.cookie`.
+ */
+const CSRF_COOKIE_NAME = 'echoroo_csrf';
+
+/**
+ * Set of paths (relative to `BASE`) that are CSRF-exempt on the backend
+ * (`PUBLIC_AUTH_PATHS` in `apps/api/echoroo/core/auth_paths.py`). For
+ * these we do NOT fail when the CSRF cookie is missing, since the
+ * pre-session flow may legitimately have no token yet.
+ */
+const CSRF_EXEMPT_PATHS: ReadonlySet<string> = new Set([
+  '/login',
+  '/register',
+  '/refresh',
+  '/2fa/challenge',
+  '/2fa/setup/totp',
+  '/2fa/setup/totp/confirm',
+  '/2fa/webauthn/register',
+  '/2fa/webauthn/challenge',
+  '/2fa/verify',
+  '/password-reset/request',
+]);
+
+/**
  * Resolve the API base URL the same way the shared `apiClient` does:
  * relative URLs in the browser (so requests pass through the Vite proxy)
  * and an explicit URL on the server.
@@ -31,16 +57,45 @@ function resolveBaseUrl(): string {
 }
 
 /**
+ * Read the CSRF token from `document.cookie`. Returns `null` if the
+ * cookie is absent (e.g. pre-session flows) or the helper is invoked on
+ * the server (no `document`).
+ */
+function getCsrfToken(): string | null {
+  if (typeof document === 'undefined') return null;
+  const prefix = `${CSRF_COOKIE_NAME}=`;
+  const parts = document.cookie ? document.cookie.split('; ') : [];
+  for (const part of parts) {
+    if (part.startsWith(prefix)) {
+      try {
+        return decodeURIComponent(part.slice(prefix.length));
+      } catch {
+        return part.slice(prefix.length);
+      }
+    }
+  }
+  return null;
+}
+
+/**
  * Internal helper: POST JSON to the web-auth endpoint and parse the response.
  * Throws an `ApiError` carrying the raw `Response` so callers can inspect
  * status codes (401, 423, 429) and headers (`Retry-After`).
+ *
+ * Automatically attaches `X-CSRF-Token` for state-changing endpoints that
+ * are NOT in the backend's CSRF-exempt allowlist (`PUBLIC_AUTH_PATHS`).
  */
 async function postJson<T>(path: string, body: unknown): Promise<{ data: T; response: Response }> {
   const url = `${resolveBaseUrl()}${BASE}${path}`;
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  const csrfToken = getCsrfToken();
+  if (csrfToken && !CSRF_EXEMPT_PATHS.has(path)) {
+    headers['X-CSRF-Token'] = csrfToken;
+  }
   const response = await fetch(url, {
     method: 'POST',
     credentials: 'include',
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: JSON.stringify(body ?? {}),
   });
 

@@ -110,6 +110,11 @@ class Settings(BaseSettings):
     web_session_cookie_name: str = "echoroo_session"
     web_refresh_cookie_name: str = "echoroo_refresh"
     web_csrf_cookie_name: str = "echoroo_csrf"
+    # Non-sensitive marker cookie set on Path=/ so SvelteKit hooks.server.ts
+    # can detect logged-in state for page-route auth guards. Carries no
+    # sensitive content (literal value "1"); the real session/refresh/csrf
+    # cookies remain scoped to /web-api/v1/* per spec FR-021.
+    web_logged_in_cookie_name: str = "echoroo_logged_in"
     web_session_secret: str = Field(
         default="dev-web-session-secret-change-in-production",
         description="First-party web session HMAC/JWT secret",

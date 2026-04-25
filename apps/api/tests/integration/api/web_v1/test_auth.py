@@ -282,6 +282,91 @@ async def test_refresh_rotates_family_and_reissues_tokens(
 
 
 @pytest.mark.asyncio
+async def test_session_establish_sets_logged_in_marker_cookie_on_root_path(
+    client: AsyncClient,
+    session_factory: object,
+) -> None:
+    """T160-T163 P0: marker cookie must be Path=/ so SvelteKit page guards see it.
+
+    The session/refresh/csrf cookies are scoped to /web-api/v1/* and cannot
+    be read by SvelteKit page-level routes (e.g. /dashboard). The
+    ``echoroo_logged_in`` marker carries no sensitive content (literal "1")
+    and is set on Path=/ so ``hooks.server.ts`` can detect logged-in state.
+    """
+    from echoroo.core.settings import get_settings
+
+    settings = get_settings()
+    user = await _create_user(session_factory)
+    refresh_token = await _seed_refresh_token(session_factory, user)
+    response = await client.post(
+        "/web-api/v1/auth/refresh",
+        cookies={get_settings().web_refresh_cookie_name: refresh_token},
+    )
+    assert response.status_code == 200
+    set_cookie_headers = response.headers.get_list("set-cookie")
+    marker_headers = [
+        h for h in set_cookie_headers
+        if h.startswith(f"{settings.web_logged_in_cookie_name}=")
+    ]
+    assert len(marker_headers) == 1, (
+        f"expected one marker cookie header, got: {set_cookie_headers!r}"
+    )
+    marker_header = marker_headers[0]
+    assert f"{settings.web_logged_in_cookie_name}=1" in marker_header
+    assert "Path=/" in marker_header
+    assert "Path=/web-api" not in marker_header
+    assert "HttpOnly" in marker_header
+    # The session/refresh cookies remain scoped to /web-api/v1/*.
+    session_headers = [
+        h for h in set_cookie_headers
+        if h.startswith(f"{settings.web_session_cookie_name}=")
+    ]
+    assert session_headers, "session cookie must still be set"
+    assert "Path=/web-api/v1/" in session_headers[0]
+
+
+@pytest.mark.asyncio
+async def test_logout_clears_logged_in_marker_cookie(
+    client: AsyncClient,
+    session_factory: object,
+) -> None:
+    """T160-T163 P0: logout must clear the Path=/ marker cookie."""
+    from echoroo.core.settings import get_settings
+
+    settings = get_settings()
+    user = await _create_user(session_factory)
+    refresh_token = await _seed_refresh_token(session_factory, user)
+    refreshed = await client.post(
+        "/web-api/v1/auth/refresh",
+        cookies={get_settings().web_refresh_cookie_name: refresh_token},
+    )
+    assert refreshed.status_code == 200
+    csrf = refreshed.headers["X-CSRF-Token"]
+    response = await client.post(
+        "/web-api/v1/auth/logout",
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert response.status_code == 204
+    set_cookie_headers = response.headers.get_list("set-cookie")
+    marker_clears = [
+        h for h in set_cookie_headers
+        if h.startswith(f"{settings.web_logged_in_cookie_name}=")
+    ]
+    assert marker_clears, (
+        f"expected marker cookie to be cleared on logout, got: {set_cookie_headers!r}"
+    )
+    # Cookie deletion is signalled by an empty value + expired/Max-Age=0.
+    cleared = marker_clears[0]
+    assert "Path=/" in cleared
+    assert (
+        'Max-Age=0' in cleared
+        or 'max-age=0' in cleared
+        or "expires=Thu, 01 Jan 1970" in cleared.lower()
+        or "Expires=Thu, 01 Jan 1970" in cleared
+    )
+
+
+@pytest.mark.asyncio
 async def test_refresh_with_reused_token_revokes_family_and_returns_401(
     client: AsyncClient,
     session_factory: object,

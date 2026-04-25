@@ -711,6 +711,19 @@ def _set_session_cookies(
         httponly=False,
         samesite="strict",
     )
+    # Marker for SvelteKit hooks.server.ts to detect logged-in state;
+    # carries no sensitive content. Path=/ so SvelteKit page routes (e.g.
+    # /dashboard) can read it during their server-side auth check; the
+    # real session/refresh/csrf cookies stay scoped to /web-api/v1/*.
+    response.set_cookie(
+        key=settings.web_logged_in_cookie_name,
+        value="1",
+        max_age=settings.web_refresh_token_ttl_seconds,
+        path="/",
+        secure=secure_cookie,
+        httponly=True,
+        samesite="strict",
+    )
     response.headers[CSRF_HEADER_NAME] = csrf_token
 
 
@@ -734,6 +747,13 @@ def _clear_session_cookies(response: Response) -> None:
         path="/web-api/v1/",
         secure=True,
         httponly=False,
+        samesite="strict",
+    )
+    response.delete_cookie(
+        key=settings.web_logged_in_cookie_name,
+        path="/",
+        secure=True,
+        httponly=True,
         samesite="strict",
     )
 

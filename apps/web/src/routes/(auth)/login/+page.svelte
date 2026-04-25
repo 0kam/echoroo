@@ -5,7 +5,7 @@
    * Two-step flow:
    *   1. Submit email + password → `/web-api/v1/auth/login`.
    *      Backend returns `{login_state, interim_token}` — NO session cookie.
-   *   2a. `login_state == "2fa_setup_required"` → redirect to /account/2fa.
+   *   2a. `login_state == "2fa_setup_required"` → redirect to /2fa-setup.
    *   2b. `login_state == "2fa_required"` → render TOTP / backup-code form.
    *       Submitting calls `/2fa/challenge`, which sets the session cookies
    *       and returns the access token.
@@ -107,11 +107,13 @@
 
       if (state === '2fa_setup_required') {
         // Hand the interim_token to the setup page via session storage so it
-        // is not exposed in the URL bar / browser history.
+        // is not exposed in the URL bar / browser history. The setup page
+        // lives under (auth) (NOT (app)) so unauthenticated users can reach
+        // it — at this point the user has not yet established a session.
         if (typeof window !== 'undefined' && result.interim_token) {
           window.sessionStorage.setItem('echoroo.interim_token', result.interim_token);
         }
-        await goto(localizeHref('/account/2fa?mode=setup'));
+        await goto(localizeHref('/2fa-setup'));
         return;
       }
 

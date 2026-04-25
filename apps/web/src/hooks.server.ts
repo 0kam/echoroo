@@ -145,21 +145,29 @@ async function handleAuth(
     throw redirect(303, localizeHref('/login'));
   }
 
-  // Check if user has refresh token cookie (indicates authenticated session)
+  // Detect logged-in state via the non-sensitive `echoroo_logged_in` marker
+  // cookie set by the new web-auth backend (`/web-api/v1/auth/*`). The real
+  // session/refresh/csrf cookies are scoped to `/web-api/v1/*` and so are
+  // NOT visible to SvelteKit page routes. The marker cookie carries no
+  // sensitive content (literal `"1"`) and exists only so this guard can
+  // tell whether a session was established.
+  //
+  // The legacy `refresh_token` cookie check is kept as a fallback during
+  // the Phase 4 transition; once T140+ is fully rolled out it can be
+  // removed and only the marker cookie checked.
+  const loggedInMarker = cookies.get('echoroo_logged_in');
   const refreshToken = cookies.get('refresh_token');
   let isAuthenticated = false;
 
-  if (refreshToken) {
-    // Only check that the refresh token cookie is present and non-empty.
-    // We deliberately avoid calling the backend /auth/refresh endpoint here
-    // because the client-side auth store also calls it on initialization.
-    // Calling it twice with the same token triggers a replay-attack detection
-    // on the backend and causes the session to be revoked.
-    //
-    // The client is responsible for all token refresh operations.
-    // If the token is actually expired or revoked, the client's /users/me
-    // call will fail with 401, the client will attempt a refresh, and if that
-    // also fails it will redirect to /login.
+  if (loggedInMarker === '1') {
+    isAuthenticated = true;
+  } else if (refreshToken) {
+    // Legacy fallback: only check that the refresh token cookie is present
+    // and non-empty. We deliberately avoid calling the backend
+    // /auth/refresh endpoint here because the client-side auth store also
+    // calls it on initialization. Calling it twice with the same token
+    // triggers a replay-attack detection on the backend and causes the
+    // session to be revoked.
     isAuthenticated = isRefreshTokenPresent(refreshToken);
   }
 
