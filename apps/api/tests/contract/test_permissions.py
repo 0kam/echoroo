@@ -20,8 +20,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from echoroo.core.permissions import (
     ACTIONS,
     ROLE_PERMISSIONS,
+    ComputedRole,
     Permission,
-    ProjectRole,
     ProjectVisibility,
     compute_effective_permissions,
     is_allowed,
@@ -62,7 +62,7 @@ def _make_project(visibility: ProjectVisibility) -> SimpleNamespace:
 def _make_user(
     *,
     user_id: str = "user-matrix",
-    project_role: ProjectRole | None = None,
+    project_role: ComputedRole | None = None,
     owner: bool = False,
 ) -> SimpleNamespace:
     """Build a lightweight user stub for pure-function tests."""
@@ -122,19 +122,19 @@ _RESTRICTED_AUTHENTICATED_EXPECTED: frozenset[Permission] = frozenset(
 )
 
 _RESTRICTED_VIEWER_EXPECTED: frozenset[Permission] = frozenset(
-    ROLE_PERMISSIONS[ProjectRole.VIEWER]
+    ROLE_PERMISSIONS[ComputedRole.VIEWER]
 )
 
 _RESTRICTED_MEMBER_EXPECTED: frozenset[Permission] = frozenset(
-    ROLE_PERMISSIONS[ProjectRole.MEMBER]
+    ROLE_PERMISSIONS[ComputedRole.MEMBER]
 )
 
 _RESTRICTED_ADMIN_EXPECTED: frozenset[Permission] = frozenset(
-    ROLE_PERMISSIONS[ProjectRole.ADMIN]
+    ROLE_PERMISSIONS[ComputedRole.ADMIN]
 )
 
 _RESTRICTED_OWNER_EXPECTED: frozenset[Permission] = frozenset(
-    ROLE_PERMISSIONS[ProjectRole.OWNER]
+    ROLE_PERMISSIONS[ComputedRole.OWNER]
 )
 
 # Member/Admin/Owner have same perms on Public as Restricted (Canonical Matrix
@@ -153,17 +153,17 @@ class TestRolePermissionsMatrix:
     """FR-010 Canonical Matrix: ROLE_PERMISSIONS shapes are exact."""
 
     def test_role_permissions_has_exactly_four_roles(self) -> None:
-        expected = {ProjectRole.VIEWER, ProjectRole.MEMBER, ProjectRole.ADMIN, ProjectRole.OWNER}
+        expected = {ComputedRole.VIEWER, ComputedRole.MEMBER, ComputedRole.ADMIN, ComputedRole.OWNER}
         assert set(ROLE_PERMISSIONS.keys()) == expected
 
     def test_role_permissions_are_frozensets(self) -> None:
         for role, perms in ROLE_PERMISSIONS.items():
             assert isinstance(perms, frozenset), f"{role}: expected frozenset"
 
-    @pytest.mark.parametrize("role", list(ProjectRole))
-    def test_role_permissions_monotone(self, role: ProjectRole) -> None:
+    @pytest.mark.parametrize("role", list(ComputedRole))
+    def test_role_permissions_monotone(self, role: ComputedRole) -> None:
         """Higher roles must include all permissions of lower roles."""
-        order = [ProjectRole.VIEWER, ProjectRole.MEMBER, ProjectRole.ADMIN, ProjectRole.OWNER]
+        order = [ComputedRole.VIEWER, ComputedRole.MEMBER, ComputedRole.ADMIN, ComputedRole.OWNER]
         idx = order.index(role)
         for lower in order[:idx]:
             assert ROLE_PERMISSIONS[lower] <= ROLE_PERMISSIONS[role], (
@@ -310,9 +310,9 @@ def test_is_allowed_matrix(
         user = _make_user(owner=True)
     elif normalized_role in ("Viewer", "Member", "Admin"):
         role_map = {
-            "Viewer": ProjectRole.VIEWER,
-            "Member": ProjectRole.MEMBER,
-            "Admin": ProjectRole.ADMIN,
+            "Viewer": ComputedRole.VIEWER,
+            "Member": ComputedRole.MEMBER,
+            "Admin": ComputedRole.ADMIN,
         }
         user = _make_user(project_role=role_map[normalized_role])
     else:

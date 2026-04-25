@@ -29,8 +29,8 @@ from echoroo.core.permissions import (
     ROLE_PERMISSIONS,
     TRUSTED_ALLOWED_PERMISSIONS,
     USER_SCOPE_PERMISSIONS,
+    ComputedRole,
     Permission,
-    ProjectRole,
     ProjectVisibility,
     compute_effective_permissions,
     normalize_role,
@@ -68,12 +68,12 @@ def _make_project(
     )
 
 
-def _role_str_to_enum(role: str) -> ProjectRole | None:
+def _role_str_to_enum(role: str) -> ComputedRole | None:
     mapping = {
-        "Viewer": ProjectRole.VIEWER,
-        "Member": ProjectRole.MEMBER,
-        "Admin": ProjectRole.ADMIN,
-        "Owner": ProjectRole.OWNER,
+        "Viewer": ComputedRole.VIEWER,
+        "Member": ComputedRole.MEMBER,
+        "Admin": ComputedRole.ADMIN,
+        "Owner": ComputedRole.OWNER,
     }
     return mapping.get(role)
 
@@ -85,15 +85,15 @@ def _role_str_to_enum(role: str) -> ProjectRole | None:
 # Expected ROLE_PERMISSIONS per Canonical Matrix in spec.md.
 # Covers the 26 Project-scope permissions. USER_SCOPE_PERMISSIONS are tested
 # separately because they are Matrix-exempt (spec §Canonical).
-EXPECTED_ROLE_BASE_PERMS: dict[ProjectRole, set[str]] = {
-    ProjectRole.VIEWER: {
+EXPECTED_ROLE_BASE_PERMS: dict[ComputedRole, set[str]] = {
+    ComputedRole.VIEWER: {
         "view_project_metadata",
         "view_dataset_list",
         "view_media",
         "view_detection",
         "search_within_project",
     },
-    ProjectRole.MEMBER: {
+    ComputedRole.MEMBER: {
         "view_project_metadata",
         "view_dataset_list",
         "view_media",
@@ -111,7 +111,7 @@ EXPECTED_ROLE_BASE_PERMS: dict[ProjectRole, set[str]] = {
         "manage_site",
         "run_inference",
     },
-    ProjectRole.ADMIN: {
+    ComputedRole.ADMIN: {
         "view_project_metadata",
         "view_dataset_list",
         "view_media",
@@ -135,7 +135,7 @@ EXPECTED_ROLE_BASE_PERMS: dict[ProjectRole, set[str]] = {
         "edit_project",
         "manage_license",
     },
-    ProjectRole.OWNER: {
+    ComputedRole.OWNER: {
         "view_project_metadata",
         "view_dataset_list",
         "view_media",
@@ -167,7 +167,7 @@ EXPECTED_ROLE_BASE_PERMS: dict[ProjectRole, set[str]] = {
 
 
 @pytest.mark.parametrize("role", list(EXPECTED_ROLE_BASE_PERMS.keys()))
-def test_role_permissions_canonical_matrix(role: ProjectRole) -> None:
+def test_role_permissions_canonical_matrix(role: ComputedRole) -> None:
     """ROLE_PERMISSIONS matches Canonical Matrix (FR-010)."""
     expected = {Permission(v) for v in EXPECTED_ROLE_BASE_PERMS[role]}
     actual = set(ROLE_PERMISSIONS[role])
@@ -185,7 +185,7 @@ def test_role_permissions_keys_are_exactly_four_roles() -> None:
     derived entirely from Restricted toggles + (for Authenticated) Canonical
     base on Public, per spec §Canonical.
     """
-    expected = {ProjectRole.VIEWER, ProjectRole.MEMBER, ProjectRole.ADMIN, ProjectRole.OWNER}
+    expected = {ComputedRole.VIEWER, ComputedRole.MEMBER, ComputedRole.ADMIN, ComputedRole.OWNER}
     assert set(ROLE_PERMISSIONS.keys()) == expected
 
 
@@ -488,7 +488,7 @@ class TestTrustedOverlay:
         )
         # Member Canonical base already has EXPORT, so presence is not
         # diagnostic — assert Trusted overlay did not expand beyond base.
-        assert perms == frozenset(ROLE_PERMISSIONS[ProjectRole.MEMBER])
+        assert perms == frozenset(ROLE_PERMISSIONS[ComputedRole.MEMBER])
 
     def test_trusted_allowlist_runtime_safety(self) -> None:
         """FR-014 runtime filter: out-of-allowlist capability is dropped."""

@@ -43,6 +43,8 @@ from uuid import UUID
 from fastapi import HTTPException, status
 from pydantic import BaseModel, ConfigDict, model_validator
 
+from echoroo.models.enums import ProjectMemberRole
+
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -93,17 +95,25 @@ class Permission(StrEnum):
     MANAGE_2FA = "manage_2fa"
 
 
-class ProjectRole(StrEnum):
-    """Project-scope roles tracked in ``project_members`` (data-model §1).
+class ComputedRole(StrEnum):
+    """Computed project role used by the gate engine.
 
-    Guest / Authenticated / Superuser are NOT entries here — they are derived
-    at the call site by normalize_role / is_superuser().
+    The DB enum equivalent is ``ProjectMemberRole`` in ``models/enums.py`` and
+    does NOT include ``OWNER``; OWNER is derived at runtime from
+    ``projects.owner_id``.
     """
 
     VIEWER = "viewer"
     MEMBER = "member"
     ADMIN = "admin"
     OWNER = "owner"
+
+
+# Backwards-compat shim — DEPRECATED, remove after consumers migrate.
+# TODO(006-permissions Phase 3 cleanup): remove this shim once external
+# consumers (frontend bindings, third-party API clients) have migrated to
+# ComputedRole. Internal code already uses ComputedRole exclusively.
+ProjectRole = ComputedRole
 
 
 class ProjectVisibility(StrEnum):
@@ -302,12 +312,12 @@ _OWNER_PERMS: frozenset[Permission] = _ADMIN_PERMS | frozenset(
 )
 
 
-ROLE_PERMISSIONS: Mapping[ProjectRole, frozenset[Permission]] = MappingProxyType(
+ROLE_PERMISSIONS: Mapping[ComputedRole, frozenset[Permission]] = MappingProxyType(
     {
-        ProjectRole.VIEWER: _VIEWER_PERMS,
-        ProjectRole.MEMBER: _MEMBER_PERMS,
-        ProjectRole.ADMIN: _ADMIN_PERMS,
-        ProjectRole.OWNER: _OWNER_PERMS,
+        ComputedRole.VIEWER: _VIEWER_PERMS,
+        ComputedRole.MEMBER: _MEMBER_PERMS,
+        ComputedRole.ADMIN: _ADMIN_PERMS,
+        ComputedRole.OWNER: _OWNER_PERMS,
     }
 )
 """FR-010: the Canonical Matrix. Immutable (MappingProxyType) to prevent
@@ -315,7 +325,7 @@ runtime mutation that would bypass CI matrix tests."""
 
 
 # Superuser synthetic "role" — receives Owner-equivalent perms when on the
-# project-scope allowlist (FR-008b). Stored separately since ProjectRole is
+# project-scope allowlist (FR-008b). Stored separately since ComputedRole is
 # strictly persisted values.
 _SUPERUSER_PERMS: frozenset[Permission] = _OWNER_PERMS
 
@@ -388,12 +398,12 @@ def resolve_role(user: Any, project: Any) -> str:
     if user_id is not None and owner_id is not None and user_id == owner_id:
         return "Owner"
 
-    # The upstream resolver populates user.project_role as a ProjectRole or str.
+    # The upstream resolver populates user.project_role as a role enum or str.
     raw = getattr(user, "project_role", None)
     if raw is None:
         return "Authenticated"
 
-    role = raw.value if isinstance(raw, ProjectRole) else str(raw).lower()
+    role = raw.value if isinstance(raw, (ComputedRole, ProjectMemberRole)) else str(raw).lower()
 
     return {
         "viewer": "Viewer",
@@ -518,13 +528,13 @@ def compute_effective_permissions(
         # (SC-exempt from matrix but still included here for convenience —
         # callers may also check USER_SCOPE_PERMISSIONS separately).
     elif normalized_role == "Viewer":
-        base |= set(ROLE_PERMISSIONS[ProjectRole.VIEWER])
+        base |= set(ROLE_PERMISSIONS[ComputedRole.VIEWER])
     elif normalized_role == "Member":
-        base |= set(ROLE_PERMISSIONS[ProjectRole.MEMBER])
+        base |= set(ROLE_PERMISSIONS[ComputedRole.MEMBER])
     elif normalized_role == "Admin":
-        base |= set(ROLE_PERMISSIONS[ProjectRole.ADMIN])
+        base |= set(ROLE_PERMISSIONS[ComputedRole.ADMIN])
     elif normalized_role == "Owner":
-        base |= set(ROLE_PERMISSIONS[ProjectRole.OWNER])
+        base |= set(ROLE_PERMISSIONS[ComputedRole.OWNER])
     elif normalized_role == "Superuser":
         base |= set(_SUPERUSER_PERMS)
     # Unknown role: base stays empty (safe default).
@@ -844,13 +854,13 @@ __all__ = [
     # enums / constants
     "ACTIONS",
     "Action",
+    "ComputedRole",
     "H3_RES_15",
     "H3_RES_2",
     "H3_RES_5",
     "H3_RES_7",
     "H3_RES_9",
     "Permission",
-    "ProjectRole",
     "ProjectVisibility",
     "ROLE_PERMISSIONS",
     "SUPERUSER_PROJECT_SCOPE_ALLOWLIST",
