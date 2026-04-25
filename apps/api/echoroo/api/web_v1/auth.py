@@ -33,6 +33,7 @@ from sqlalchemy.exc import IntegrityError
 from echoroo.core.auth import RefreshTokenRecord, SqlTokenStore, issue_access_token
 from echoroo.core.database import AsyncSessionLocal, DbSession
 from echoroo.core.kms import compute_pii_hash
+from echoroo.core.redis import get_redis_connection
 from echoroo.core.security import hash_password
 from echoroo.core.settings import get_settings
 from echoroo.middleware.csrf import CSRF_HEADER_NAME, issue_csrf_token
@@ -44,6 +45,12 @@ from echoroo.schemas.web_v1.auth import (
     RefreshResponse,
     RegisterRequest,
     RegisterResponse,
+    TotpSetupConfirmRequest,
+    TotpSetupConfirmResponse,
+    TotpSetupRequest,
+    TotpSetupResponse,
+    TwoFactorChallengeRequest,
+    TwoFactorChallengeResponse,
 )
 from echoroo.services.audit_service import AuditLogService
 from echoroo.services.auth_service import (
@@ -56,7 +63,18 @@ from echoroo.services.auth_service import (
     authenticate,
     enforce_password_policy,
 )
-from echoroo.services.two_factor_service import TwoFactorService
+from echoroo.services.two_factor_service import (
+    BACKUP_FAIL_WINDOW_SECONDS,
+    ISSUER_NAME,
+    TOTP_FAIL_WINDOW_SECONDS,
+    TOTP_LOCK_SECONDS,
+    TwoFactorAlreadyEnabledError,
+    TwoFactorInvalidCodeError,
+    TwoFactorLockedError,
+    TwoFactorNotEnabledError,
+    TwoFactorRateLimitedError,
+    TwoFactorService,
+)
 
 router = APIRouter(prefix="/auth", tags=["web-auth"])
 settings = get_settings()
@@ -93,6 +111,10 @@ class _RefreshClaims:
     jti: str
     security_stamp: str
     expires_at: datetime
+
+
+class _InterimTokenReplayError(Exception):
+    """Raised when an interim token JTI was already consumed."""
 
 
 def _client_ip(request: Request) -> str:
@@ -204,6 +226,24 @@ def _decode_interim_token(
     expected_user_id: UUID,
     expected_scope: str,
 ) -> dict[str, Any]:
+    payload = _decode_interim_token_unbound(
+        raw_token,
+        expected_scope=expected_scope,
+    )
+    token_user_id = _interim_payload_user_id(payload)
+    if token_user_id != expected_user_id:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid interim token",
+        )
+    return payload
+
+
+def _decode_interim_token_unbound(
+    raw_token: str,
+    *,
+    expected_scope: str,
+) -> dict[str, Any]:
     try:
         payload: dict[str, Any] = jwt.decode(
             raw_token,
@@ -233,19 +273,137 @@ def _decode_interim_token(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid interim token",
         )
+    return payload
+
+
+def _interim_payload_user_id(payload: dict[str, Any]) -> UUID:
+    sub = payload.get("sub")
+    if not isinstance(sub, str):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid interim token",
+        )
     try:
-        token_user_id = UUID(sub)
+        return UUID(sub)
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid interim token",
         ) from exc
-    if token_user_id != expected_user_id:
+
+
+async def _claim_interim_jti(payload: dict[str, Any]) -> None:
+    jti = payload.get("jti")
+    exp_ts = payload.get("exp")
+    if not isinstance(jti, str) or not isinstance(exp_ts, int):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid interim token",
         )
-    return payload
+
+    remaining_ttl = exp_ts - int(datetime.now(UTC).timestamp())
+    if remaining_ttl <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid interim token",
+        )
+
+    redis = await get_redis_connection()
+    claimed = await redis.set(
+        f"2fa:interim_jti:{jti}",
+        "1",
+        ex=remaining_ttl,
+        nx=True,
+    )
+    if not claimed:
+        raise _InterimTokenReplayError
+
+
+async def _consume_interim_token_for_user(
+    *,
+    raw_token: str,
+    expected_scope: str,
+    request: Request,
+    db: DbSession,
+) -> tuple[User, dict[str, Any]]:
+    unbound_payload = _decode_interim_token_unbound(
+        raw_token,
+        expected_scope=expected_scope,
+    )
+    user_id = _interim_payload_user_id(unbound_payload)
+    user = await UserRepository(db).get_by_id(user_id)
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid interim token",
+        )
+
+    payload = _decode_interim_token(
+        raw_token,
+        expected_user_id=user.id,
+        expected_scope=expected_scope,
+    )
+    security_stamp = payload.get("ss")
+    if (
+        not isinstance(security_stamp, str)
+        or not secrets.compare_digest(user.security_stamp, security_stamp)
+        or user.deleted_at is not None
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid interim token",
+        )
+
+    try:
+        await _claim_interim_jti(payload)
+    except _InterimTokenReplayError as exc:
+        await _write_platform_audit(
+            actor_user_id=user.id,
+            action="auth.interim_token_replay_detected",
+            request=request,
+            detail={"scope": expected_scope, "jti": str(payload.get("jti", ""))},
+        )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid interim token",
+        ) from exc
+    return user, payload
+
+
+async def _issue_real_session(
+    *,
+    response: Response,
+    user: User,
+    db: DbSession,
+) -> str:
+    refresh_token, refresh_record = _issue_web_refresh_token(
+        user_id=user.id,
+        security_stamp=user.security_stamp,
+    )
+    await SqlTokenStore(AsyncSessionLocal).record_issued(refresh_record)
+    access_token = issue_access_token(
+        user_id=user.id,
+        security_stamp=user.security_stamp,
+        ttl=timedelta(seconds=settings.web_access_token_ttl_seconds),
+    )
+    user.last_login_at = datetime.now(UTC)
+    user.last_first_party_activity_at = user.last_login_at
+    db.add(user)
+    await db.commit()
+    _set_session_cookies(
+        response,
+        refresh_token=refresh_token,
+        family_id=refresh_record.family_id,
+    )
+    return access_token
+
+
+def _rate_limit_response(retry_after: int) -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+        detail="2FA rate limit exceeded",
+        headers={"Retry-After": str(retry_after)},
+    )
 
 
 def _issue_web_refresh_token(
@@ -524,6 +682,166 @@ async def login(
     return LoginResponse(
         login_state="2fa_required",
         interim_token=_issue_interim_token(user=user, scope="2fa_challenge"),
+    )
+
+
+@router.post("/2fa/setup/totp", response_model=TotpSetupResponse)
+async def setup_totp(
+    payload: TotpSetupRequest,
+    request: Request,
+    db: DbSession,
+) -> TotpSetupResponse:
+    user, _claims = await _consume_interim_token_for_user(
+        raw_token=payload.interim_token,
+        expected_scope="2fa_setup",
+        request=request,
+        db=db,
+    )
+    if user.two_factor_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="2FA already enabled",
+        )
+
+    try:
+        artifacts = await TwoFactorService(
+            db,
+            await get_redis_connection(),
+        ).begin_enrollment(user)
+    except TwoFactorAlreadyEnabledError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="2FA already enabled",
+        ) from exc
+
+    return TotpSetupResponse(
+        secret=artifacts.secret,
+        provisioning_uri=artifacts.provisioning_uri,
+        issuer=ISSUER_NAME,
+        account_name=user.email,
+        next_interim_token=_issue_interim_token(
+            user=user,
+            scope="2fa_setup_confirm",
+        ),
+    )
+
+
+@router.post("/2fa/setup/totp/confirm", response_model=TotpSetupConfirmResponse)
+async def setup_totp_confirm(
+    payload: TotpSetupConfirmRequest,
+    request: Request,
+    response: Response,
+    db: DbSession,
+) -> TotpSetupConfirmResponse:
+    user, _claims = await _consume_interim_token_for_user(
+        raw_token=payload.interim_token,
+        expected_scope="2fa_setup_confirm",
+        request=request,
+        db=db,
+    )
+    if user.two_factor_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="2FA already enabled",
+        )
+
+    try:
+        backup_codes = await TwoFactorService(
+            db,
+            await get_redis_connection(),
+        ).confirm_enrollment(user, payload.secret, payload.totp_code)
+    except TwoFactorAlreadyEnabledError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="2FA already enabled",
+        ) from exc
+    except TwoFactorInvalidCodeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid TOTP code",
+        ) from exc
+    except TwoFactorRateLimitedError as exc:
+        raise _rate_limit_response(TOTP_FAIL_WINDOW_SECONDS) from exc
+
+    access_token = await _issue_real_session(response=response, user=user, db=db)
+    await _write_platform_audit(
+        actor_user_id=user.id,
+        action="auth.two_factor_enrolled_via_login",
+        request=request,
+        detail={"user_id": str(user.id)},
+    )
+    return TotpSetupConfirmResponse(
+        backup_codes=backup_codes,
+        access_token=access_token,
+        expires_in=settings.web_access_token_ttl_seconds,
+    )
+
+
+@router.post("/2fa/challenge", response_model=TwoFactorChallengeResponse)
+async def two_factor_challenge(
+    payload: TwoFactorChallengeRequest,
+    request: Request,
+    response: Response,
+    db: DbSession,
+) -> TwoFactorChallengeResponse:
+    user, _claims = await _consume_interim_token_for_user(
+        raw_token=payload.interim_token,
+        expected_scope="2fa_challenge",
+        request=request,
+        db=db,
+    )
+    if not user.two_factor_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="2FA setup required",
+        )
+
+    service = TwoFactorService(db, await get_redis_connection())
+    try:
+        if payload.method == "totp":
+            verified = await service.verify_totp(user, payload.code)
+        else:
+            verified = await service.verify_backup_code(user, payload.code)
+    except TwoFactorNotEnabledError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="2FA setup required",
+        ) from exc
+    except TwoFactorLockedError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_423_LOCKED,
+            detail="2FA temporarily locked",
+            headers={"Retry-After": str(TOTP_LOCK_SECONDS)},
+        ) from exc
+    except TwoFactorRateLimitedError as exc:
+        retry_after = (
+            TOTP_FAIL_WINDOW_SECONDS
+            if payload.method == "totp"
+            else BACKUP_FAIL_WINDOW_SECONDS
+        )
+        raise _rate_limit_response(retry_after) from exc
+    except TwoFactorInvalidCodeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid 2FA code",
+        ) from exc
+
+    if not verified:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid 2FA code",
+        )
+
+    access_token = await _issue_real_session(response=response, user=user, db=db)
+    await _write_platform_audit(
+        actor_user_id=user.id,
+        action="auth.two_factor_challenge_succeeded",
+        request=request,
+        detail={"method": payload.method},
+    )
+    return TwoFactorChallengeResponse(
+        access_token=access_token,
+        expires_in=settings.web_access_token_ttl_seconds,
     )
 
 

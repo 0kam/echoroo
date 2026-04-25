@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
@@ -48,6 +49,65 @@ class LoginResponse(BaseModel):
 
 class RefreshResponse(BaseModel):
     """Response body for rotated first-party session tokens."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    access_token: str
+    expires_in: int
+
+
+class TotpSetupRequest(BaseModel):
+    """Request body for beginning TOTP enrollment after password verification."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    interim_token: str
+
+
+class TotpSetupResponse(BaseModel):
+    """TOTP enrollment artifacts shown once to the user."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    secret: str
+    provisioning_uri: str
+    issuer: str
+    account_name: str
+    next_interim_token: str
+
+
+class TotpSetupConfirmRequest(BaseModel):
+    """Request body for confirming first-login TOTP enrollment."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    interim_token: str
+    secret: str
+    totp_code: str
+
+
+class TotpSetupConfirmResponse(BaseModel):
+    """Response body after TOTP enrollment succeeds and a session is issued."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    backup_codes: list[str]
+    access_token: str
+    expires_in: int
+
+
+class TwoFactorChallengeRequest(BaseModel):
+    """Request body for completing an existing user's 2FA challenge."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    interim_token: str
+    method: Literal["totp", "backup_code"]
+    code: str
+
+
+class TwoFactorChallengeResponse(BaseModel):
+    """Response body after 2FA challenge succeeds and a session is issued."""
 
     model_config = ConfigDict(extra="forbid")
 
