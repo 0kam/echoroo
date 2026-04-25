@@ -808,10 +808,22 @@ async def request_password_reset(
 ) -> Response:
     """Request a password reset email without exposing account existence.
 
-    T150d decision: active 2FA reset cooldown locks password-reset requests.
+    T150d decision: active 2FA reset cooldown silently drops password-reset
+    requests while leaving an audit record.
     """
     started_at = time.monotonic()
-    email = _normalize_email(payload.email)
+    try:
+        email = _normalize_email(payload.email)
+    except HTTPException:
+        await _write_platform_audit(
+            actor_user_id=None,
+            action="auth.password_reset_requested",
+            request=request,
+            detail={"email_validation_failed": True},
+        )
+        await _sleep_for_minimum_request_time(started_at)
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+
     email_hash = compute_pii_hash(email)
     token = secrets.token_bytes(32)
     token_hash = _reset_token_hash(token)
@@ -829,15 +841,13 @@ async def request_password_reset(
             and user.two_factor_reset_cooldown_until > now
         ):
             await _write_platform_audit(
-                actor_user_id=None,
-                action="auth.password_reset_requested",
+                actor_user_id=user.id,
+                action="auth.password_reset_blocked_during_cooldown",
                 request=request,
-                detail={"email_hash": email_hash, "blocked": "2fa_reset_cooldown"},
+                detail={"email_hash": email_hash, "user_id": str(user.id)},
             )
-            raise HTTPException(
-                status_code=status.HTTP_423_LOCKED,
-                detail="Password reset is temporarily locked",
-            )
+            await _sleep_for_minimum_request_time(started_at)
+            return Response(status_code=status.HTTP_204_NO_CONTENT)
 
         if user is not None and user.deleted_at is None:
             reset_url = _password_reset_url(encoded_token)
@@ -893,11 +903,35 @@ async def confirm_password_reset(
         .with_for_update()
     )
     reset_token = result.scalar_one_or_none()
-    if (
-        reset_token is None
-        or reset_token.expires_at < now
-        or reset_token.used_at is not None
-    ):
+    if reset_token is None:
+        await _write_platform_audit(
+            actor_user_id=None,
+            action="auth.password_reset_token_invalid",
+            request=request,
+            detail={"token_hash_prefix": token_hash[:8]},
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired reset token",
+        )
+    if reset_token.expires_at < now:
+        await _write_platform_audit(
+            actor_user_id=reset_token.user_id,
+            action="auth.password_reset_token_expired",
+            request=request,
+            detail={"token_hash_prefix": token_hash[:8], "user_id": str(reset_token.user_id)},
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired reset token",
+        )
+    if reset_token.used_at is not None:
+        await _write_platform_audit(
+            actor_user_id=reset_token.user_id,
+            action="auth.password_reset_token_reuse_attempted",
+            request=request,
+            detail={"token_hash_prefix": token_hash[:8], "user_id": str(reset_token.user_id)},
+        )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid or expired reset token",
@@ -942,7 +976,10 @@ async def confirm_password_reset(
         request=request,
         detail={"user_id": str(user.id)},
     )
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
+    return Response(
+        status_code=status.HTTP_204_NO_CONTENT,
+        headers={"Cache-Control": "no-store, max-age=0"},
+    )
 
 
 @router.post("/login", response_model=LoginResponse)
@@ -1230,7 +1267,15 @@ async def webauthn_register(
             detail={"user_id": str(user.id)},
         )
         raise _webauthn_http_error(exc) from exc
-    except (WebAuthnChallengeNotFoundError, WebAuthnDuplicateCredentialError) as exc:
+    except WebAuthnDuplicateCredentialError as exc:
+        await _write_platform_audit(
+            actor_user_id=user.id,
+            action="auth.webauthn_duplicate_credential_rejected",
+            request=request,
+            detail={"user_id": str(user.id)},
+        )
+        raise _webauthn_http_error(exc) from exc
+    except WebAuthnChallengeNotFoundError as exc:
         raise _webauthn_http_error(exc) from exc
 
     if payload.name is not None:

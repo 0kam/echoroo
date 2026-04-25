@@ -337,6 +337,13 @@ async def test_webauthn_register_complete_duplicate_credential_returns_409(
         )
 
     assert response.status_code == 409
+    assert client.app.state.audit_events[-1]["action"] == (  # type: ignore[attr-defined]
+        "auth.webauthn_duplicate_credential_rejected"
+    )
+    assert client.app.state.audit_events[-1]["actor_user_id"] == user.id  # type: ignore[attr-defined]
+    assert client.app.state.audit_events[-1]["detail"] == {  # type: ignore[attr-defined]
+        "user_id": str(user.id)
+    }
 
 
 @pytest.mark.asyncio

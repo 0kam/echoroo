@@ -27,6 +27,7 @@ from echoroo.middleware.security import (
     get_production_cors_config,
     get_security_config_for_environment,
 )
+from echoroo.middleware.two_factor_enforcement import TwoFactorEnforcementMiddleware
 
 settings = get_settings()
 
@@ -95,6 +96,7 @@ def create_app() -> FastAPI:
             cookie_name=settings.web_session_cookie_name,
         ),
     )
+    app.add_middleware(TwoFactorEnforcementMiddleware)
 
     # Exception handlers
     app.add_exception_handler(AppException, app_exception_handler)  # type: ignore[arg-type]

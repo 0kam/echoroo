@@ -258,11 +258,35 @@ async def test_request_returns_204_for_unknown_email_no_enumeration_leak(
 
 
 @pytest.mark.asyncio
-async def test_request_during_2fa_reset_cooldown_returns_423(
+async def test_request_with_malformed_email_returns_204_no_enumeration_leak(
     client: AsyncClient,
     session_factory: object,
 ) -> None:
-    await _create_user(
+    await _create_user(session_factory, email="known@example.com")
+
+    response = await client.post(
+        "/web-api/v1/auth/password-reset/request",
+        json={"email": "not-an-email"},
+    )
+
+    assert response.status_code == 204
+    assert response.content == b""
+    assert client.app.state.audit_events[-1]["detail"] == {  # type: ignore[attr-defined]
+        "email_validation_failed": True
+    }
+    async with session_factory() as session:  # type: ignore[operator]
+        event_count = (
+            await session.execute(text("SELECT count(*) FROM outbox_events"))
+        ).scalar_one()
+    assert event_count == 0
+
+
+@pytest.mark.asyncio
+async def test_request_during_2fa_reset_cooldown_returns_204_and_audits_block(
+    client: AsyncClient,
+    session_factory: object,
+) -> None:
+    user = await _create_user(
         session_factory,
         email="cooldown@example.com",
         cooldown_until=datetime.now(UTC) + timedelta(minutes=5),
@@ -273,8 +297,16 @@ async def test_request_during_2fa_reset_cooldown_returns_423(
         json={"email": "cooldown@example.com"},
     )
 
-    assert response.status_code == 423
-    assert response.json()["detail"] == "Password reset is temporarily locked"
+    assert response.status_code == 204
+    assert response.content == b""
+    assert client.app.state.audit_events[-1]["action"] == (  # type: ignore[attr-defined]
+        "auth.password_reset_blocked_during_cooldown"
+    )
+    assert client.app.state.audit_events[-1]["actor_user_id"] == user.id  # type: ignore[attr-defined]
+    assert client.app.state.audit_events[-1]["detail"] == {  # type: ignore[attr-defined]
+        "email_hash": "hash:cooldown@example.com",
+        "user_id": str(user.id),
+    }
     async with session_factory() as session:  # type: ignore[operator]
         event_count = (
             await session.execute(text("SELECT count(*) FROM outbox_events"))
@@ -299,6 +331,7 @@ async def test_confirm_with_valid_token_rotates_password_and_security_stamp(
     )
 
     assert response.status_code == 204
+    assert response.headers["Cache-Control"] == "no-store, max-age=0"
     async with session_factory() as session:  # type: ignore[operator]
         updated = await session.get(User, user.id)
         assert updated is not None
@@ -329,6 +362,14 @@ async def test_confirm_with_expired_token_returns_400_generic(
 
     assert response.status_code == 400
     assert response.json()["detail"] == "Invalid or expired reset token"
+    assert client.app.state.audit_events[-1]["action"] == (  # type: ignore[attr-defined]
+        "auth.password_reset_token_expired"
+    )
+    assert client.app.state.audit_events[-1]["actor_user_id"] == user.id  # type: ignore[attr-defined]
+    assert client.app.state.audit_events[-1]["detail"] == {  # type: ignore[attr-defined]
+        "token_hash_prefix": _hash_token(b"a" * 32)[:8],
+        "user_id": str(user.id),
+    }
 
 
 @pytest.mark.asyncio
@@ -350,6 +391,14 @@ async def test_confirm_with_used_token_returns_400_generic(
 
     assert response.status_code == 400
     assert response.json()["detail"] == "Invalid or expired reset token"
+    assert client.app.state.audit_events[-1]["action"] == (  # type: ignore[attr-defined]
+        "auth.password_reset_token_reuse_attempted"
+    )
+    assert client.app.state.audit_events[-1]["actor_user_id"] == user.id  # type: ignore[attr-defined]
+    assert client.app.state.audit_events[-1]["detail"] == {  # type: ignore[attr-defined]
+        "token_hash_prefix": _hash_token(b"a" * 32)[:8],
+        "user_id": str(user.id),
+    }
 
 
 @pytest.mark.asyncio
@@ -364,6 +413,13 @@ async def test_confirm_with_unknown_token_returns_400_generic(client: AsyncClien
 
     assert response.status_code == 400
     assert response.json()["detail"] == "Invalid or expired reset token"
+    assert client.app.state.audit_events[-1]["action"] == (  # type: ignore[attr-defined]
+        "auth.password_reset_token_invalid"
+    )
+    assert client.app.state.audit_events[-1]["actor_user_id"] is None  # type: ignore[attr-defined]
+    assert client.app.state.audit_events[-1]["detail"] == {  # type: ignore[attr-defined]
+        "token_hash_prefix": _hash_token(b"z" * 32)[:8]
+    }
 
 
 @pytest.mark.asyncio
