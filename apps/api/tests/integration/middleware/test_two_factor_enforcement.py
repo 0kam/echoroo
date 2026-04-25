@@ -62,6 +62,7 @@ def _build_client(
     user: _User | None = None,
     *,
     user_resolver_override: Callable[[UUID], Awaitable[_User | None]] | None = None,
+    audit_calls: list[dict[str, Any]] | None = None,
 ) -> TestClient:
     app = FastAPI()
 
@@ -114,9 +115,15 @@ def _build_client(
             return captured_user  # type: ignore[return-value]
         return None
 
-    async def _audit_writer(**_kwargs: Any) -> None:
-        # Silenced in unit tests — the integration test exercises the
-        # real audit writer end-to-end against Postgres.
+    captured_audit_calls = audit_calls
+
+    async def _audit_writer(**kwargs: Any) -> None:
+        # Default behaviour is silent — the integration test exercises
+        # the real audit writer end-to-end against Postgres. Tests that
+        # need to lock audit emission pass an ``audit_calls`` list and
+        # we append the kwargs payload for assertion.
+        if captured_audit_calls is not None:
+            captured_audit_calls.append(kwargs)
         return None
 
     resolver: Callable[[UUID], Awaitable[_User | None]] = (
@@ -245,10 +252,29 @@ def test_soft_deleted_user_is_failed_closed() -> None:
         deleted_at=datetime.now(UTC),
     )
 
-    response = _build_client(user).get("/web-api/v1/projects")
+    audit_calls: list[dict[str, Any]] = []
+    response = _build_client(user, audit_calls=audit_calls).get(
+        "/web-api/v1/projects"
+    )
 
     assert response.status_code == 403
     assert response.json()["detail"] == "2FA enrollment required"
+
+    # Lock the audit telemetry contract: the soft-deleted fail-closed
+    # branch MUST emit ``auth.two_factor_enforcement_blocked`` with
+    # ``detail["reason"] == "user_missing_or_deleted"`` so the audit
+    # chain can distinguish this signal from the standard
+    # enrollment-required path (Codex round 2 review remediation).
+    assert len(audit_calls) >= 1
+    matching = [
+        call
+        for call in audit_calls
+        if call.get("action") == "auth.two_factor_enforcement_blocked"
+        and call.get("detail", {}).get("reason") == "user_missing_or_deleted"
+    ]
+    assert len(matching) == 1, (
+        f"expected exactly one fail-closed audit call, got {audit_calls!r}"
+    )
 
 
 def test_legacy_api_v1_path_bypasses_enforcement_until_phase15() -> None:
@@ -278,7 +304,12 @@ def test_principal_pointing_at_nonexistent_user_fails_closed_403() -> None:
     async def _resolver_returning_none(_user_id: UUID) -> _User | None:
         return None
 
-    client = _build_client(phantom, user_resolver_override=_resolver_returning_none)
+    audit_calls: list[dict[str, Any]] = []
+    client = _build_client(
+        phantom,
+        user_resolver_override=_resolver_returning_none,
+        audit_calls=audit_calls,
+    )
     response = client.get("/web-api/v1/projects")
 
     assert response.status_code == 403
@@ -287,3 +318,20 @@ def test_principal_pointing_at_nonexistent_user_fails_closed_403() -> None:
         "detail": "2FA enrollment required",
         "next_action": "/web-api/v1/auth/2fa/setup/totp",
     }
+
+    # Lock the audit telemetry contract: the missing-user fail-closed
+    # branch MUST emit ``auth.two_factor_enforcement_blocked`` with
+    # ``detail["reason"] == "user_missing_or_deleted"`` so the audit
+    # chain can distinguish this signal from the standard
+    # enrollment-required path (Codex round 2 review remediation).
+    assert len(audit_calls) >= 1
+    matching = [
+        call
+        for call in audit_calls
+        if call.get("action") == "auth.two_factor_enforcement_blocked"
+        and call.get("detail", {}).get("reason") == "user_missing_or_deleted"
+    ]
+    assert len(matching) == 1, (
+        f"expected exactly one fail-closed audit call, got {audit_calls!r}"
+    )
+    assert matching[0]["actor_user_id"] == phantom.id
