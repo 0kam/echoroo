@@ -8,7 +8,7 @@ Action catalog in :mod:`echoroo.core.actions`.
 from __future__ import annotations
 
 import io
-from typing import Annotated
+from typing import Annotated, TypeVar
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
@@ -28,7 +28,12 @@ from echoroo.core.actions import (
     DETECTION_REJECT_ACTION,
 )
 from echoroo.core.database import DbSession
-from echoroo.core.permissions import gate_action
+from echoroo.core.permissions import Permission, gate_action
+from echoroo.core.response_filter import (
+    MASKED_SPECIES_LABEL,
+    _should_mask_species,
+    apply_response_filter,
+)
 from echoroo.middleware.auth import CurrentUser
 from echoroo.models.enums import DetectionStatus
 from echoroo.repositories.annotation import AnnotationRepository
@@ -91,6 +96,47 @@ def get_vote_service(db: DbSession) -> AnnotationVoteService:
 
 DetectionServiceDep = Annotated[DetectionService, Depends(get_detection_service)]
 VoteServiceDep = Annotated[AnnotationVoteService, Depends(get_vote_service)]
+ResponseT = TypeVar("ResponseT")
+
+
+def _apply_detection_response_filter(
+    obj: ResponseT,
+    *,
+    request: Request,
+    project: object,
+) -> ResponseT:
+    """Apply FR-011 response filtering with Phase 11 sensitivity placeholders."""
+    state = request.state
+    effective: frozenset[Permission] = getattr(state, "effective_permissions", frozenset())
+    role: str = getattr(state, "normalized_role", "Guest")
+
+    # TODO(Phase 11): replace empty maps with taxon_sensitivity_map /
+    # override_map bulk preloaders.
+    apply_response_filter(
+        obj=obj,
+        effective_permissions=effective,
+        normalized_role=role,
+        project=project,
+        resource=obj,
+        taxon_sensitivity_map={},
+        override_map={},
+    )
+    return obj
+
+
+def _mask_species_summary_item_names(
+    *,
+    item: object,
+    request: Request,
+    project: object,
+) -> None:
+    """Mask aggregate species labels that are outside DetectionResponse shapes."""
+    role: str = getattr(request.state, "normalized_role", "Guest")
+    if not _should_mask_species(project, role):
+        return
+    for field in ("tag_name", "scientific_name", "common_name"):
+        if hasattr(item, field):
+            setattr(item, field, MASKED_SPECIES_LABEL)
 
 
 @router.get(
@@ -159,13 +205,11 @@ async def list_detections(
     )
     min_votes = project.review_min_votes
     threshold = project.review_consensus_threshold
+    state = request.state
+    effective: frozenset[Permission] = getattr(state, "effective_permissions", frozenset())
+    role: str = getattr(state, "normalized_role", "Guest")
 
-    # TODO(T130-T134, FR-006/011/016): apply Stage-2 response filter
-    # (mask_species_in_detection / H3 generalisation) using the
-    # ``effective_permissions`` + ``normalized_role`` stashed on
-    # ``request.state`` by ``is_allowed``. Pending the bulk taxon
-    # sensitivity preload utility.
-    return await service.list_detections(
+    result = await service.list_detections(
         project_id=project_id,
         tag_id=tag_id,
         status=status,
@@ -181,6 +225,19 @@ async def list_detections(
         threshold=threshold,
         locale=locale,
     )
+    # TODO(Phase 11): replace empty maps with taxon_sensitivity_map /
+    # override_map bulk preloaders.
+    for item in result.items:
+        apply_response_filter(
+            obj=item,
+            effective_permissions=effective,
+            normalized_role=role,
+            project=project,
+            resource=item,
+            taxon_sensitivity_map={},
+            override_map={},
+        )
+    return result
 
 
 @router.get(
@@ -227,19 +284,31 @@ async def get_species_summary(
         401: Not authenticated
         403: Permission denied
     """
-    await gate_action(
+    project = await gate_action(
         action=DETECTION_LIST_ACTION,
         project_id=project_id,
         current_user=current_user,
         request=request,
         db=db,
     )
-    return await service.get_species_summary(
+    result = await service.get_species_summary(
         project_id=project_id,
         dataset_id=dataset_id,
         detection_run_id=detection_run_id,
         locale=locale,
     )
+    for item in result.items:
+        _apply_detection_response_filter(
+            item,
+            request=request,
+            project=project,
+        )
+        _mask_species_summary_item_names(
+            item=item,
+            request=request,
+            project=project,
+        )
+    return result
 
 
 @router.get(
@@ -409,19 +478,26 @@ async def get_temporal_data(
         401: Not authenticated
         403: Permission denied
     """
-    await gate_action(
+    project = await gate_action(
         action=DETECTION_LIST_ACTION,
         project_id=project_id,
         current_user=current_user,
         request=request,
         db=db,
     )
-    return await service.get_temporal_data(
+    result = await service.get_temporal_data(
         project_id=project_id,
         dataset_id=dataset_id,
         detection_run_id=detection_run_id,
         locale=locale,
     )
+    for item in result.species:
+        _apply_detection_response_filter(
+            item,
+            request=request,
+            project=project,
+        )
+    return result
 
 
 @router.get(
@@ -484,17 +560,29 @@ async def get_detection(
             detail="Detection not found",
         )
 
-    # TODO(T130-T134, FR-006/011/016): apply Stage-2 response filter using
-    # the stashed ``request.state.effective_permissions`` /
-    # ``request.state.normalized_role`` once the bulk taxon-sensitivity
-    # preloader is wired up.
-    return await service.get(
+    state = request.state
+    effective: frozenset[Permission] = getattr(state, "effective_permissions", frozenset())
+    role: str = getattr(state, "normalized_role", "Guest")
+
+    result = await service.get(
         detection_id=detection_id,
         current_user_id=current_user.id,
         min_votes=min_votes,
         threshold=threshold,
         locale=locale,
     )
+    # TODO(Phase 11): replace empty maps with taxon_sensitivity_map /
+    # override_map bulk preloaders.
+    apply_response_filter(
+        obj=result,
+        effective_permissions=effective,
+        normalized_role=role,
+        project=project,
+        resource=result,
+        taxon_sensitivity_map={},
+        override_map={},
+    )
+    return result
 
 
 @router.post(
@@ -532,7 +620,7 @@ async def create_detection(
         403: Permission denied
         422: Validation error
     """
-    await gate_action(
+    project = await gate_action(
         action=DETECTION_CREATE_ACTION,
         project_id=project_id,
         current_user=current_user,
@@ -541,7 +629,11 @@ async def create_detection(
     )
     detection = await service.create(project_id=project_id, request=request)
     await db.commit()
-    return detection
+    return _apply_detection_response_filter(
+        detection,
+        request=http_request,
+        project=project,
+    )
 
 
 @router.post(
@@ -581,7 +673,7 @@ async def confirm_detection(
         403: Permission denied
         404: Detection not found
     """
-    await gate_action(
+    project = await gate_action(
         action=DETECTION_CONFIRM_ACTION,
         project_id=project_id,
         current_user=current_user,
@@ -600,7 +692,11 @@ async def confirm_detection(
         request=request,
     )
     await db.commit()
-    return detection
+    return _apply_detection_response_filter(
+        detection,
+        request=http_request,
+        project=project,
+    )
 
 
 @router.post(
@@ -637,7 +733,7 @@ async def reject_detection(
         403: Permission denied
         404: Detection not found
     """
-    await gate_action(
+    project = await gate_action(
         action=DETECTION_REJECT_ACTION,
         project_id=project_id,
         current_user=current_user,
@@ -655,7 +751,11 @@ async def reject_detection(
         user_id=current_user.id,
     )
     await db.commit()
-    return detection
+    return _apply_detection_response_filter(
+        detection,
+        request=http_request,
+        project=project,
+    )
 
 
 @router.post(
@@ -692,7 +792,7 @@ async def change_species(
         403: Permission denied
         404: Detection not found
     """
-    await gate_action(
+    project = await gate_action(
         action=DETECTION_CHANGE_SPECIES_ACTION,
         project_id=project_id,
         current_user=current_user,
@@ -712,7 +812,11 @@ async def change_species(
         project_id=project_id,
     )
     await db.commit()
-    return detection
+    return _apply_detection_response_filter(
+        detection,
+        request=http_request,
+        project=project,
+    )
 
 
 @router.get(

@@ -33,7 +33,8 @@ from echoroo.core.actions import (
     RECORDING_UPDATE_ACTION,
 )
 from echoroo.core.database import DbSession
-from echoroo.core.permissions import gate_action
+from echoroo.core.permissions import Permission, gate_action
+from echoroo.core.response_filter import apply_response_filter
 from echoroo.core.settings import get_settings
 from echoroo.middleware.auth import API_TOKEN_PREFIX, CurrentUser
 from echoroo.models.user import User
@@ -210,19 +211,17 @@ async def list_recordings(
         401: Not authenticated
         403: Permission denied
     """
-    await gate_action(
+    project = await gate_action(
         action=RECORDING_LIST_ACTION,
         project_id=project_id,
         current_user=current_user,
         request=request,
         db=db,
     )
+    state = request.state
+    effective: frozenset[Permission] = getattr(state, "effective_permissions", frozenset())
+    role: str = getattr(state, "normalized_role", "Guest")
 
-    # TODO(T130-T134, FR-011/016): apply Stage-2 response filter
-    # (H3 generalisation / sensitive species masking) using the
-    # ``effective_permissions`` + ``normalized_role`` stashed on
-    # ``request.state`` by ``is_allowed``. Pending the bulk taxon
-    # sensitivity preload utility.
     if dataset_id:
         # BOLA / IDOR guard (FR-008): the dataset must belong to the
         # gated project — a dataset UUID from another project must not
@@ -250,9 +249,22 @@ async def list_recordings(
         )
 
     pages = (total + page_size - 1) // page_size
+    items = [RecordingResponse.model_validate(r) for r in recordings]
+    # TODO(Phase 11): replace empty maps with taxon_sensitivity_map /
+    # override_map bulk preloaders.
+    for item in items:
+        apply_response_filter(
+            obj=item,
+            effective_permissions=effective,
+            normalized_role=role,
+            project=project,
+            resource=item,
+            taxon_sensitivity_map={},
+            override_map={},
+        )
 
     return RecordingListResponse(
-        items=[RecordingResponse.model_validate(r) for r in recordings],
+        items=items,
         total=total,
         page=page,
         page_size=page_size,
@@ -298,7 +310,7 @@ async def get_recording(
         403: Permission denied
         404: Recording not found
     """
-    await gate_action(
+    project = await gate_action(
         action=RECORDING_LIST_ACTION,
         project_id=project_id,
         current_user=current_user,
@@ -308,9 +320,9 @@ async def get_recording(
     recording = await service.get_by_id_in_project(recording_id, project_id)
     if not recording:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Recording not found")
-
-    # TODO(T130-T134, FR-011/016): apply Stage-2 response filter once the
-    # bulk taxon-sensitivity preloader is wired up.
+    state = request.state
+    effective: frozenset[Permission] = getattr(state, "effective_permissions", frozenset())
+    role: str = getattr(state, "normalized_role", "Guest")
 
     # Build detail response
     clip_count = await service.clip_repo.count_by_recording(recording_id)
@@ -332,7 +344,7 @@ async def get_recording(
             "h3_index": recording.dataset.site.h3_index,
         }
 
-    return RecordingDetailResponse(
+    response = RecordingDetailResponse(
         **RecordingResponse.model_validate(recording).model_dump(),
         dataset=dataset_summary,
         site=site_summary,
@@ -340,6 +352,18 @@ async def get_recording(
         effective_duration=service.get_effective_duration(recording),
         is_ultrasonic=service.is_ultrasonic(recording),
     )
+    # TODO(Phase 11): replace empty maps with taxon_sensitivity_map /
+    # override_map bulk preloaders.
+    apply_response_filter(
+        obj=response,
+        effective_permissions=effective,
+        normalized_role=role,
+        project=project,
+        resource=response,
+        taxon_sensitivity_map={},
+        override_map={},
+    )
+    return response
 
 
 @router.patch(
@@ -381,13 +405,16 @@ async def update_recording(
         403: Access denied
         404: Recording not found
     """
-    await gate_action(
+    project = await gate_action(
         action=RECORDING_UPDATE_ACTION,
         project_id=project_id,
         current_user=current_user,
         request=http_request,
         db=db,
     )
+    state = http_request.state
+    effective: frozenset[Permission] = getattr(state, "effective_permissions", frozenset())
+    role: str = getattr(state, "normalized_role", "Guest")
 
     # BOLA / IDOR guard (FR-008a): verify the recording belongs to the
     # gated project before mutating it. Without this check a member of
@@ -426,7 +453,7 @@ async def update_recording(
             "h3_index": recording.dataset.site.h3_index,
         }
 
-    return RecordingDetailResponse(
+    response = RecordingDetailResponse(
         **RecordingResponse.model_validate(recording).model_dump(),
         dataset=dataset_summary,
         site=site_summary,
@@ -434,6 +461,18 @@ async def update_recording(
         effective_duration=service.get_effective_duration(recording),
         is_ultrasonic=service.is_ultrasonic(recording),
     )
+    # TODO(Phase 11): replace empty maps with taxon_sensitivity_map /
+    # override_map bulk preloaders.
+    apply_response_filter(
+        obj=response,
+        effective_permissions=effective,
+        normalized_role=role,
+        project=project,
+        resource=response,
+        taxon_sensitivity_map={},
+        override_map={},
+    )
+    return response
 
 
 @router.delete(
