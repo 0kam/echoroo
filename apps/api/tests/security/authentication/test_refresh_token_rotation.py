@@ -339,31 +339,44 @@ async def test_atomic_consume_and_issue_returns_false_on_already_consumed(
 
 
 # ---------------------------------------------------------------------------
-# SqlTokenStore skeleton — atomic_consume_and_issue is the only documented
-# Phase 2.10 surface; everything else raises NotImplementedError pending
-# Phase 3 wiring.
+# SqlTokenStore production surface — Phase 2.11 P0-d
+#
+# Phase 2.10 left every SqlTokenStore method as NotImplementedError; the
+# previous test asserted that. Phase 2.11 P0-d implements all methods
+# against the new ``refresh_tokens`` / ``token_families`` tables shipped
+# in alembic migration 0002. Behaviour against a live PostgreSQL is
+# verified end-to-end in ``tests/integration/test_sql_token_store.py``
+# (testcontainers-based, skipped if unavailable). Here we keep a
+# unit-level smoke that the public API exists, accepts the documented
+# argument shapes, and is async — anything more requires a real DB.
 # ---------------------------------------------------------------------------
 
 
-async def test_sql_token_store_skeleton_raises_not_implemented(user_id: UUID) -> None:
-    store = SqlTokenStore(session_factory=lambda: None)
-    _, record = issue_refresh_token(user_id=user_id)
+def test_sql_token_store_production_methods_present() -> None:
+    """All TokenStore protocol methods are concrete (no NotImplementedError)."""
+    import inspect
 
-    with pytest.raises(NotImplementedError):
-        await store.get_family_state(record.family_id)
-    with pytest.raises(NotImplementedError):
-        await store.record_issued(record)
-    with pytest.raises(NotImplementedError):
-        await store.mark_consumed(record.family_id, record.jti)
-    with pytest.raises(NotImplementedError):
-        await store.is_consumed(record.family_id, record.jti)
-    with pytest.raises(NotImplementedError):
-        await store.revoke_family(record.family_id)
-    with pytest.raises(NotImplementedError):
-        await store.is_family_revoked(record.family_id)
-    with pytest.raises(NotImplementedError):
-        await store.atomic_consume_and_issue(
-            family_id=record.family_id,
-            old_jti=record.jti,
-            new_record=record,
+    store = SqlTokenStore(session_factory=lambda: None)
+    for method_name in (
+        "get_family_state",
+        "record_issued",
+        "mark_consumed",
+        "is_consumed",
+        "revoke_family",
+        "is_family_revoked",
+        "atomic_consume_and_issue",
+    ):
+        method = getattr(store, method_name)
+        # Must be an async coroutine function (Phase 3 wiring relies
+        # on awaiting these in request handlers).
+        assert inspect.iscoroutinefunction(method), (
+            f"SqlTokenStore.{method_name} must be a coroutine function"
+        )
+        # The source must NOT mention NotImplementedError — that was
+        # the Phase 2.10 skeleton marker.
+        src = inspect.getsource(method)
+        assert "NotImplementedError" not in src, (
+            f"SqlTokenStore.{method_name} still contains a "
+            f"NotImplementedError stub (Phase 2.11 P0-d expected this "
+            f"to be implemented)"
         )

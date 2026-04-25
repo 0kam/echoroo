@@ -284,20 +284,27 @@ class InMemoryTokenStore:
 
 
 class SqlTokenStore:
-    """Skeleton SQL-backed TokenStore.
+    """SQL-backed :class:`TokenStore` (Phase 2.11 P0-d).
 
-    Phase 2.10 lands the shape so the production wiring (Phase 3) has a
-    concrete starting point. The atomic primitive is the only method
-    fleshed out; everything else raises ``NotImplementedError`` with a
-    clear pointer to the Phase 3 task.
+    Backed by the ``refresh_tokens`` and ``token_families`` tables that
+    migration ``0002_refresh_token_storage`` creates. The atomic
+    primitive uses PostgreSQL's row-level lock via
+    ``UPDATE refresh_tokens SET consumed_at = NOW() WHERE jti = :old
+    AND consumed_at IS NULL RETURNING jti``: only one concurrent caller
+    can flip ``consumed_at`` from NULL to a non-NULL value, so two
+    simultaneous rotations cannot both observe the row as
+    "unconsumed". The losing caller treats the empty RETURNING as a
+    reuse signal and revokes the family.
 
-    The atomic primitive uses ``UPDATE refresh_tokens SET consumed_at =
-    :now WHERE jti = :old AND consumed_at IS NULL RETURNING jti`` to
-    guarantee the check + mutation happen in a single statement
-    (PostgreSQL's row-level lock makes this serialisable). On a hit the
-    new record is INSERTed in the same transaction; on a miss the
-    transaction commits without the INSERT and the method returns
-    ``False``.
+    Phase 3 owns the FastAPI / Celery wiring that calls this class —
+    we deliberately do NOT touch ``main.py`` here.
+
+    Args:
+        session_factory: A zero-arg callable returning an
+            :class:`sqlalchemy.ext.asyncio.AsyncSession` instance.
+            Typically passed as ``echoroo.core.database.AsyncSessionLocal``.
+            Each method opens its own short-lived session so the store
+            does not pin a connection between calls.
     """
 
     def __init__(self, session_factory: Any) -> None:
@@ -305,48 +312,240 @@ class SqlTokenStore:
         # forcing a SQLAlchemy import on modules that just want the type.
         self._session_factory = session_factory
 
+    # -- helpers ----------------------------------------------------------
+
+    @staticmethod
+    def _to_uuid(value: str) -> UUID:
+        """Coerce string family_id / jti to UUID for asyncpg binding."""
+        if isinstance(value, UUID):
+            return value
+        return UUID(value)
+
+    # -- TokenStore protocol ---------------------------------------------
+
     async def get_family_state(self, family_id: str) -> dict[str, Any] | None:
-        raise NotImplementedError("Phase 3: implement against refresh_token_families")
+        """Return ``{"revoked", "consumed_jtis"}`` for the family, or None."""
+        # Local import to keep module-level import surface minimal — only
+        # SqlTokenStore consumers need SQLAlchemy.
+        from sqlalchemy import text
+
+        family_uuid = self._to_uuid(family_id)
+        async with self._session_factory() as session:
+            family_row = await session.execute(
+                text(
+                    "SELECT family_id, revoked_at FROM token_families "
+                    "WHERE family_id = :family_id"
+                ),
+                {"family_id": family_uuid},
+            )
+            family = family_row.mappings().first()
+            if family is None:
+                return None
+            consumed_rows = await session.execute(
+                text(
+                    "SELECT jti FROM refresh_tokens "
+                    "WHERE family_id = :family_id AND consumed_at IS NOT NULL"
+                ),
+                {"family_id": family_uuid},
+            )
+            consumed = {str(r["jti"]) for r in consumed_rows.mappings().all()}
+            return {
+                "revoked": family["revoked_at"] is not None,
+                "consumed_jtis": consumed,
+            }
 
     async def record_issued(self, record: RefreshTokenRecord) -> None:
-        raise NotImplementedError("Phase 3: implement against refresh_tokens insert")
+        """INSERT ``record`` into ``refresh_tokens`` (creates the family if absent).
+
+        Used on initial login (no prior token) — every rotation goes
+        through :meth:`atomic_consume_and_issue` instead so the new
+        record + the swap commit together.
+        """
+        from sqlalchemy import text
+
+        family_uuid = self._to_uuid(record.family_id)
+        jti_uuid = self._to_uuid(record.jti)
+        async with self._session_factory() as session, session.begin():
+            await session.execute(
+                text(
+                    "INSERT INTO token_families (family_id, user_id, created_at) "
+                    "VALUES (:family_id, :user_id, :created_at) "
+                    "ON CONFLICT (family_id) DO NOTHING"
+                ),
+                {
+                    "family_id": family_uuid,
+                    "user_id": record.user_id,
+                    "created_at": record.issued_at,
+                },
+            )
+            await session.execute(
+                text(
+                    "INSERT INTO refresh_tokens "
+                    "(jti, user_id, family_id, issued_at, expires_at) "
+                    "VALUES (:jti, :user_id, :family_id, :issued_at, :expires_at)"
+                ),
+                {
+                    "jti": jti_uuid,
+                    "user_id": record.user_id,
+                    "family_id": family_uuid,
+                    "issued_at": record.issued_at,
+                    "expires_at": record.expires_at,
+                },
+            )
 
     async def mark_consumed(self, family_id: str, jti: str) -> None:
-        raise NotImplementedError(
-            "Phase 3: prefer atomic_consume_and_issue over standalone mark_consumed"
-        )
+        """Flip ``consumed_at`` for one token (idempotent).
+
+        :meth:`atomic_consume_and_issue` is the preferred path — this
+        method exists for completeness and for tools that need to
+        invalidate a single token without rotating to a successor.
+        """
+        from sqlalchemy import text
+
+        async with self._session_factory() as session, session.begin():
+            await session.execute(
+                text(
+                    "UPDATE refresh_tokens SET consumed_at = COALESCE(consumed_at, now()) "
+                    "WHERE jti = :jti AND family_id = :family_id"
+                ),
+                {
+                    "jti": self._to_uuid(jti),
+                    "family_id": self._to_uuid(family_id),
+                },
+            )
 
     async def is_consumed(self, family_id: str, jti: str) -> bool:
-        raise NotImplementedError(
-            "Phase 3: prefer atomic_consume_and_issue over standalone is_consumed"
-        )
+        """SELECT ``consumed_at IS NOT NULL`` for a single (family, jti)."""
+        from sqlalchemy import text
+
+        async with self._session_factory() as session:
+            row = await session.execute(
+                text(
+                    "SELECT consumed_at FROM refresh_tokens "
+                    "WHERE jti = :jti AND family_id = :family_id"
+                ),
+                {
+                    "jti": self._to_uuid(jti),
+                    "family_id": self._to_uuid(family_id),
+                },
+            )
+            first = row.mappings().first()
+            if first is None:
+                return False
+            return first["consumed_at"] is not None
 
     async def revoke_family(self, family_id: str) -> None:
-        raise NotImplementedError("Phase 3: implement family revoke UPDATE")
+        """Set ``revoked_at`` on every member of the family (idempotent)."""
+        from sqlalchemy import text
+
+        family_uuid = self._to_uuid(family_id)
+        async with self._session_factory() as session, session.begin():
+            await session.execute(
+                text(
+                    "UPDATE token_families "
+                    "SET revoked_at = COALESCE(revoked_at, now()) "
+                    "WHERE family_id = :family_id"
+                ),
+                {"family_id": family_uuid},
+            )
+            await session.execute(
+                text(
+                    "UPDATE refresh_tokens "
+                    "SET revoked_at = COALESCE(revoked_at, now()) "
+                    "WHERE family_id = :family_id AND revoked_at IS NULL"
+                ),
+                {"family_id": family_uuid},
+            )
 
     async def is_family_revoked(self, family_id: str) -> bool:
-        raise NotImplementedError("Phase 3: implement family revoke check")
+        """SELECT ``revoked_at IS NOT NULL`` on the family row."""
+        from sqlalchemy import text
+
+        async with self._session_factory() as session:
+            row = await session.execute(
+                text(
+                    "SELECT revoked_at FROM token_families "
+                    "WHERE family_id = :family_id"
+                ),
+                {"family_id": self._to_uuid(family_id)},
+            )
+            first = row.mappings().first()
+            if first is None:
+                # No row = treat as not revoked. The caller has to
+                # mint the family on first use via record_issued /
+                # atomic_consume_and_issue.
+                return False
+            return first["revoked_at"] is not None
 
     async def atomic_consume_and_issue(
         self, *, family_id: str, old_jti: str, new_record: RefreshTokenRecord
     ) -> bool:
-        """SQL-backed atomic swap (Phase 3 wiring task).
+        """Atomic rotate: consume ``old_jti``, INSERT ``new_record``, commit.
 
-        Reference SQL — implementation deferred to Phase 3:
+        SQL semantics (PostgreSQL):
 
-            BEGIN;
-              UPDATE refresh_tokens
-                 SET consumed_at = NOW()
-               WHERE jti = :old_jti AND consumed_at IS NULL
-              RETURNING jti;
-              -- if RETURNING was empty, ROLLBACK and return False
-              INSERT INTO refresh_tokens (jti, family_id, ...)
-                VALUES (:new_jti, :family_id, ...);
-            COMMIT;
+            UPDATE refresh_tokens
+               SET consumed_at = now()
+             WHERE jti = :old_jti
+               AND family_id = :family_id
+               AND consumed_at IS NULL
+            RETURNING jti;
+
+        Only one concurrent caller can flip ``consumed_at`` from NULL
+        to a value because PostgreSQL takes a row-level lock during
+        the UPDATE. The losing caller's RETURNING is empty -> we
+        treat that as reuse and return ``False`` (the caller must
+        revoke the family).
+
+        On success we INSERT the new record in the SAME transaction so
+        the visible state always advances "old consumed + new issued"
+        atomically.
         """
-        raise NotImplementedError(
-            "Phase 3: wire to refresh_tokens UPDATE ... WHERE consumed_at IS NULL RETURNING"
-        )
+        from sqlalchemy import text
+
+        family_uuid = self._to_uuid(family_id)
+        old_jti_uuid = self._to_uuid(old_jti)
+        new_jti_uuid = self._to_uuid(new_record.jti)
+
+        async with self._session_factory() as session, session.begin():
+            # Step 1: atomic compare-and-swap on consumed_at.
+            consume_result = await session.execute(
+                text(
+                    "UPDATE refresh_tokens "
+                    "SET consumed_at = now() "
+                    "WHERE jti = :old_jti "
+                    "  AND family_id = :family_id "
+                    "  AND consumed_at IS NULL "
+                    "RETURNING jti"
+                ),
+                {"old_jti": old_jti_uuid, "family_id": family_uuid},
+            )
+            consumed_jti = consume_result.scalar()
+            if consumed_jti is None:
+                # Lost the race — either the row never existed, the
+                # token was already consumed, or the family is gone.
+                # Returning False signals "treat as reuse" to the
+                # rotation flow.
+                return False
+
+            # Step 2: INSERT the successor in the same TX. The (family_id,
+            # jti) UNIQUE index guards against duplicate inserts under
+            # bizarre clock-skew scenarios.
+            await session.execute(
+                text(
+                    "INSERT INTO refresh_tokens "
+                    "(jti, user_id, family_id, issued_at, expires_at) "
+                    "VALUES (:jti, :user_id, :family_id, :issued_at, :expires_at)"
+                ),
+                {
+                    "jti": new_jti_uuid,
+                    "user_id": new_record.user_id,
+                    "family_id": family_uuid,
+                    "issued_at": new_record.issued_at,
+                    "expires_at": new_record.expires_at,
+                },
+            )
+            return True
 
 
 # =============================================================================
