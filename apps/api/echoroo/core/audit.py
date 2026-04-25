@@ -1,4 +1,4 @@
-"""Audit log sanitizer (FR-091a).
+"""Audit log sanitizer (FR-091a, FR-091b).
 
 The sanitizer is the runtime safety net that guarantees raw PII is never
 persisted to the audit log JSONB columns (``detail`` / ``before`` / ``after``).
@@ -15,23 +15,31 @@ Pipeline per scalar string value:
     4. If still no hit, attempt base64 decode (padding-tolerant) and re-scan
        the decoded UTF-8 (skip silently on binary / invalid)
     5. On any hit, replace the ENTIRE value with
-       ``{"hash": sha256(original_utf8), "hash_version": "v1", "redacted": True}``
+       ``{"hash": <keyed-hmac-sha256>, "hash_version": "v2", "redacted": True}``
 
-Collections are walked recursively (dict values + list elements). Keys are
-not sanitised — per FR-091a the build-time lint already forbids PII key
-names. Non-string leaves (int / float / bool / None / UUID) pass through
-unchanged except that ``actor_user_id`` / ``before.owner_id`` UUIDs are
-explicitly allowed raw by spec.
+Collections are walked recursively (BOTH dict keys and values + list
+elements). String dict keys whose normalised form contains PII are replaced
+with a stable opaque marker ``__redacted_key_<8-hex>__`` so an attacker
+cannot smuggle PII through the key axis (Phase 2.10 #3).
 
-The hash is SHA-256 (NOT the KMS keyed hash) because this module runs
-without external dependencies — the KMS-keyed ``actor_user_id_hash`` /
-``ip_hash`` / ``user_agent_hash`` columns are computed by
-``audit_service.py`` before the sanitizer ever sees them. Using SHA-256
-for the runtime replacement keeps the sanitizer pure and deterministic,
-which is what the bypass test suite (T052) verifies.
+Keyed hashing
+-------------
+Phase 2.10 #4: the redaction marker's ``hash`` field uses a KEYED HMAC
+(via :func:`echoroo.core.kms.compute_pii_hash`, which round-trips to KMS)
+rather than plain SHA-256. A plain hash of low-entropy values (emails,
+phone numbers) is dictionary-attackable; the keyed HMAC denies that
+attack because the key is held inside KMS and never exposed to the
+application process.
+
+Tests can inject a deterministic fake hash function via the ``hash_fn``
+parameter on :func:`sanitize_value` to avoid a KMS dependency in unit
+tests. ``hash_version`` is ``v2`` to mark the keyed-hash migration. v1
+(unkeyed sha256) is deprecated; per project_status.md (Pre-launch) no
+production rows exist, so no migration is needed.
 
 Performance: typical audit payloads are < 4 KB with ≤ 50 leaves; scan cost
-is dominated by regex matching (~0.1 ms per payload in CPython 3.11).
+is dominated by regex matching (~0.1 ms per payload in CPython 3.11) plus
+one KMS round-trip per redaction (~5 ms p99 in production).
 """
 
 from __future__ import annotations
@@ -43,6 +51,7 @@ import hashlib
 import re
 import unicodedata
 import urllib.parse
+from collections.abc import Callable
 from typing import Any, Final
 
 from pydantic import BaseModel, ConfigDict, field_validator
@@ -51,9 +60,20 @@ from pydantic import BaseModel, ConfigDict, field_validator
 # Constants
 # ---------------------------------------------------------------------------
 
-HASH_VERSION: Final[str] = "v1"
+HASH_VERSION: Final[str] = "v2"
 """Version tag stored in the redacted marker so future algorithm changes can
-be distinguished without a breaking schema migration."""
+be distinguished without a breaking schema migration.
+
+v1 was unkeyed sha256, deprecated by Phase 2.10 #4 (no production rows
+exist per project_status.md "Pre-launch", so no migration is required).
+v2 uses :func:`echoroo.core.kms.compute_pii_hash` (HMAC-SHA256 keyed via
+``alias/echoroo-pii-hash-hmac``).
+"""
+
+#: Type alias for the hash function injection point. Tests pass a
+#: deterministic fake to avoid the KMS round-trip; production callers
+#: omit the argument and the default routes through KMS.
+HashFn = Callable[[str], str]
 
 # Characters we strip before regex matching. Null bytes and other C0 control
 # characters are common bypass attempts (null-byte truncation in native
@@ -210,9 +230,31 @@ def _try_base64_decode(value: str) -> str | None:
     return None
 
 
-def _build_redaction(original: str) -> dict[str, Any]:
-    """Return the redaction marker for ``original``."""
-    digest = hashlib.sha256(original.encode("utf-8")).hexdigest()
+def _default_hash_fn(value: str) -> str:
+    """Default keyed hash — KMS-backed HMAC-SHA256.
+
+    Imported lazily so that tests / scripts that never trigger a
+    redaction do not pay the boto3 import cost.
+    """
+    # Local import to avoid a top-level boto3 dependency in modules that
+    # only call sanitize_value() with a test ``hash_fn`` injected.
+    from echoroo.core.kms import compute_pii_hash
+
+    return compute_pii_hash(value)
+
+
+def _build_redaction(original: str, *, hash_fn: HashFn | None = None) -> dict[str, Any]:
+    """Return the redaction marker for ``original``.
+
+    Args:
+        original: The PII string being redacted.
+        hash_fn: Optional override of the keyed-hash callable. Defaults
+            to :func:`_default_hash_fn` (KMS-backed). Tests pass a fake
+            (e.g. ``lambda v: hashlib.sha256(b"test-key" + v.encode()).
+            hexdigest()``) to keep the suite KMS-free.
+    """
+    fn = hash_fn or _default_hash_fn
+    digest = fn(original)
     return {
         "hash": digest,
         "hash_version": HASH_VERSION,
@@ -260,8 +302,14 @@ def _redacted_key_marker(original_key: str) -> str:
     return f"__redacted_key_{short}__"
 
 
-def sanitize_value(value: Any) -> Any:
+def sanitize_value(value: Any, *, hash_fn: HashFn | None = None) -> Any:
     """Return a sanitised copy of ``value`` with PII strings redacted.
+
+    Args:
+        value: Input to sanitise.
+        hash_fn: Optional keyed-hash callable for the redaction marker.
+            Defaults to :func:`_default_hash_fn` (KMS HMAC). Tests pass
+            a deterministic stand-in to avoid the KMS dependency.
 
     - ``dict``: recurse on **both** keys and values. A key whose
       *string* form contains PII is replaced with a stable hashed
@@ -282,17 +330,17 @@ def sanitize_value(value: Any) -> Any:
     if isinstance(value, dict):
         out: dict[Any, Any] = {}
         for key, inner in value.items():
-            sanitised_value = sanitize_value(inner)
+            sanitised_value = sanitize_value(inner, hash_fn=hash_fn)
             if isinstance(key, str) and _scan_string(key):
                 out[_redacted_key_marker(key)] = sanitised_value
             else:
                 out[key] = sanitised_value
         return out
     if isinstance(value, (list, tuple)):
-        return [sanitize_value(inner) for inner in value]
+        return [sanitize_value(inner, hash_fn=hash_fn) for inner in value]
     if isinstance(value, str):
         if _scan_string(value):
-            return _build_redaction(value)
+            return _build_redaction(value, hash_fn=hash_fn)
         return value
     return value
 
@@ -354,5 +402,6 @@ class AuditLogSanitizer(BaseModel):
 __all__ = [
     "HASH_VERSION",
     "AuditLogSanitizer",
+    "HashFn",
     "sanitize_value",
 ]

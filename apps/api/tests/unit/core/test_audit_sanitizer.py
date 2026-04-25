@@ -17,6 +17,7 @@ even if the leaf itself is replaced.
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 from typing import Any
 
@@ -28,6 +29,32 @@ from echoroo.core.audit import (
     AuditLogSanitizer,
     sanitize_value,
 )
+
+
+# ---------------------------------------------------------------------------
+# Autouse hash_fn stub
+# ---------------------------------------------------------------------------
+#
+# Phase 2.10 #4 replaced the plain SHA-256 redaction hash with a KMS-keyed
+# HMAC via ``_default_hash_fn`` → ``echoroo.core.kms.compute_pii_hash``.
+# Unit tests must not round-trip to KMS, so this autouse fixture patches
+# the default to a deterministic local keyed hash.
+
+
+_FAKE_TEST_KEY = b"test-key-phase-2.10"
+
+
+def _fake_keyed_hash(value: str) -> str:
+    """Deterministic stand-in for ``compute_pii_hash`` used by unit tests."""
+    return hashlib.sha256(_FAKE_TEST_KEY + value.encode("utf-8")).hexdigest()
+
+
+@pytest.fixture(autouse=True)
+def _patch_default_hash_fn(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Force the sanitizer's default hash to the deterministic test stub."""
+    from echoroo.core import audit as _audit_module
+
+    monkeypatch.setattr(_audit_module, "_default_hash_fn", _fake_keyed_hash)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -325,3 +352,49 @@ def test_non_pii_keys_are_preserved_verbatim() -> None:
     payload = {"event": "x", "count": 5, "nested": {"safe_key": "safe_value"}}
     out = sanitize_value(payload)
     assert out == payload
+
+
+# ---------------------------------------------------------------------------
+# Phase 2.10 #4 — keyed-hash redaction + HASH_VERSION == "v2"
+# ---------------------------------------------------------------------------
+
+
+def test_hash_version_is_v2_indicating_keyed_hash_migration() -> None:
+    """HASH_VERSION bumped from v1 (unkeyed sha256, deprecated) to v2."""
+    assert HASH_VERSION == "v2"
+
+
+def test_redaction_hash_uses_injected_hash_fn_rather_than_default() -> None:
+    """Explicit ``hash_fn`` overrides the (patched) default."""
+    marker_bytes = b"override-key"
+
+    def other_hash(value: str) -> str:
+        return hashlib.sha256(marker_bytes + value.encode()).hexdigest()
+
+    out = sanitize_value({"email": _EMAIL}, hash_fn=other_hash)
+    _assert_is_redaction(out["email"])
+    assert out["email"]["hash"] == other_hash(_EMAIL)
+    # Explicit override must differ from the autouse fake.
+    assert out["email"]["hash"] != _fake_keyed_hash(_EMAIL)
+
+
+def test_redaction_hash_is_keyed_not_plain_sha256() -> None:
+    """Plain sha256(email) must no longer appear in the redaction marker.
+
+    The keyed hash uses a secret prepended to the message; the resulting
+    digest is indistinguishable from random to an attacker who does not
+    know the key, defeating dictionary attacks on low-entropy PII
+    values.
+    """
+    out = sanitize_value({"email": _EMAIL})
+    plain_digest = hashlib.sha256(_EMAIL.encode()).hexdigest()
+    assert out["email"]["hash"] != plain_digest
+    # Our autouse stub concatenates a specific test key; verify exact match.
+    assert out["email"]["hash"] == _fake_keyed_hash(_EMAIL)
+
+
+def test_pydantic_model_also_uses_keyed_hash() -> None:
+    """AuditLogSanitizer runs via sanitize_value so keyed-hash propagates."""
+    model = AuditLogSanitizer(detail={"email": _EMAIL})
+    assert model.detail["email"]["hash"] == _fake_keyed_hash(_EMAIL)
+    assert model.detail["email"]["hash_version"] == "v2"
