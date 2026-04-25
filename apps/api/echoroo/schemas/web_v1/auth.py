@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
@@ -108,6 +108,62 @@ class TwoFactorChallengeRequest(BaseModel):
 
 class TwoFactorChallengeResponse(BaseModel):
     """Response body after 2FA challenge succeeds and a session is issued."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    access_token: str
+    expires_in: int
+
+
+class WebAuthnRegisterRequest(BaseModel):
+    """Request body for beginning or completing WebAuthn registration."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    interim_token: str
+    credential: dict[str, Any] | None = None
+    name: str | None = None
+
+
+class WebAuthnRegisterBeginResponse(BaseModel):
+    """WebAuthn registration options and next one-time interim token."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    options: dict[str, Any]
+    next_interim_token: str
+
+
+class WebAuthnRegisterCompleteResponse(BaseModel):
+    """Persisted WebAuthn credential metadata."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    credential_id: str
+    name: str
+    registered_at: str
+
+
+class WebAuthnChallengeRequest(BaseModel):
+    """Request body for beginning or completing WebAuthn authentication."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    interim_token: str
+    credential: dict[str, Any] | None = None
+
+
+class WebAuthnChallengeBeginResponse(BaseModel):
+    """WebAuthn authentication options and next one-time interim token."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    options: dict[str, Any]
+    next_interim_token: str
+
+
+class WebAuthnChallengeCompleteResponse(BaseModel):
+    """Response body after WebAuthn authentication issues a session."""
 
     model_config = ConfigDict(extra="forbid")
 

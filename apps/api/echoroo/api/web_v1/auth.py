@@ -1,17 +1,8 @@
 """First-party authentication router for ``/web-api/v1/auth``."""
 
-# T150b interim token verifier requirements:
-# When implementing T150b's `/2fa/challenge` and `/2fa/setup/totp/confirm`
-# endpoints, the interim_token verifier MUST:
-# 1. Verify JWT signature with `web_session_secret`
-# 2. Check `type == "interim"` and `scope` matches the endpoint exactly
-#    (`2fa_challenge` for challenge, `2fa_setup` for setup confirm)
-# 3. Resolve `sub` (user UUID) and require it matches the user being verified
-# 4. Re-check `ss` (security_stamp) against the live DB row; reject on mismatch
-# 5. Track `jti` in Redis with TTL = remaining exp; reject any second use
-#    (one-time)
-# 6. Reject if user.security_stamp has rotated since issuance
-# 7. Reject if user has been deleted (`deleted_at IS NOT NULL`)
+# Interim token validation is centralized in `_consume_interim_token_for_user`.
+# The helper verifies signature, type/scope, subject, live security stamp,
+# deletion state, and one-time JTI consumption before an endpoint proceeds.
 
 from __future__ import annotations
 
@@ -28,7 +19,9 @@ import httpx
 import jwt
 from email_validator import EmailNotValidError, validate_email
 from fastapi import APIRouter, HTTPException, Request, Response, status
+from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
+from webauthn.helpers import options_to_json_dict
 
 from echoroo.core.auth import RefreshTokenRecord, SqlTokenStore, issue_access_token
 from echoroo.core.database import AsyncSessionLocal, DbSession
@@ -38,6 +31,7 @@ from echoroo.core.security import hash_password
 from echoroo.core.settings import get_settings
 from echoroo.middleware.csrf import CSRF_HEADER_NAME, issue_csrf_token
 from echoroo.models.user import User
+from echoroo.repositories.superuser_credentials import get_default_store
 from echoroo.repositories.user import UserRepository
 from echoroo.schemas.web_v1.auth import (
     LoginRequest,
@@ -51,6 +45,12 @@ from echoroo.schemas.web_v1.auth import (
     TotpSetupResponse,
     TwoFactorChallengeRequest,
     TwoFactorChallengeResponse,
+    WebAuthnChallengeBeginResponse,
+    WebAuthnChallengeCompleteResponse,
+    WebAuthnChallengeRequest,
+    WebAuthnRegisterBeginResponse,
+    WebAuthnRegisterCompleteResponse,
+    WebAuthnRegisterRequest,
 )
 from echoroo.services.audit_service import AuditLogService
 from echoroo.services.auth_service import (
@@ -75,6 +75,14 @@ from echoroo.services.two_factor_service import (
     TwoFactorRateLimitedError,
     TwoFactorService,
 )
+from echoroo.services.webauthn_service import (
+    StoredCredential,
+    WebAuthnChallengeNotFoundError,
+    WebAuthnDuplicateCredentialError,
+    WebAuthnReplayDetectedError,
+    WebAuthnService,
+    WebAuthnVerificationError,
+)
 
 router = APIRouter(prefix="/auth", tags=["web-auth"])
 settings = get_settings()
@@ -96,10 +104,13 @@ class _HttpxHibpChecker:
 
 
 _hibp_checker: HibpChecker = _HttpxHibpChecker()
+webauthn_service = WebAuthnService()
+_superuser_credential_store = get_default_store()
 
 _REGISTER_IP_LIMIT = 10
 _REGISTER_EMAIL_LIMIT = 5
 _REGISTER_WINDOW_SECONDS = 60 * 60
+_WEBAUTHN_INTERIM_TTL_SECONDS = 5 * 60
 # TODO(T178): process-local; multi-worker NOT consistent. Replace with Redis.
 _register_windows: dict[str, list[float]] = {}
 
@@ -201,9 +212,16 @@ async def _write_platform_audit(
             raise
 
 
-def _issue_interim_token(*, user: User, scope: str) -> str:
+def _issue_interim_token(
+    *,
+    user: User,
+    scope: str,
+    ttl_seconds: int | None = None,
+) -> str:
     now = datetime.now(UTC)
-    expires_at = now + timedelta(seconds=settings.web_interim_token_ttl_seconds)
+    expires_at = now + timedelta(
+        seconds=ttl_seconds or settings.web_interim_token_ttl_seconds
+    )
     claims: dict[str, Any] = {
         "sub": str(user.id),
         "type": "interim",
@@ -224,7 +242,7 @@ def _decode_interim_token(
     raw_token: str,
     *,
     expected_user_id: UUID,
-    expected_scope: str,
+    expected_scope: str | tuple[str, ...],
 ) -> dict[str, Any]:
     payload = _decode_interim_token_unbound(
         raw_token,
@@ -242,7 +260,7 @@ def _decode_interim_token(
 def _decode_interim_token_unbound(
     raw_token: str,
     *,
-    expected_scope: str,
+    expected_scope: str | tuple[str, ...],
 ) -> dict[str, Any]:
     try:
         payload: dict[str, Any] = jwt.decode(
@@ -261,7 +279,13 @@ def _decode_interim_token_unbound(
             detail="Invalid interim token",
         ) from exc
 
-    if payload.get("type") != "interim" or payload.get("scope") != expected_scope:
+    token_scope = payload.get("scope")
+    scope_matches = (
+        token_scope in expected_scope
+        if isinstance(expected_scope, tuple)
+        else token_scope == expected_scope
+    )
+    if payload.get("type") != "interim" or not scope_matches:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid interim token",
@@ -322,7 +346,7 @@ async def _claim_interim_jti(payload: dict[str, Any]) -> None:
 async def _consume_interim_token_for_user(
     *,
     raw_token: str,
-    expected_scope: str,
+    expected_scope: str | tuple[str, ...],
     request: Request,
     db: DbSession,
 ) -> tuple[User, dict[str, Any]]:
@@ -361,13 +385,93 @@ async def _consume_interim_token_for_user(
             actor_user_id=user.id,
             action="auth.interim_token_replay_detected",
             request=request,
-            detail={"scope": expected_scope, "jti": str(payload.get("jti", ""))},
+            detail={"scope": payload.get("scope", ""), "jti": str(payload.get("jti", ""))},
         )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid interim token",
         ) from exc
     return user, payload
+
+
+async def _consume_interim_token_for_user_with_scopes(
+    *,
+    raw_token: str,
+    expected_scopes: tuple[str, ...],
+    request: Request,
+    db: DbSession,
+) -> tuple[User, dict[str, Any]]:
+    unbound_payload = _decode_interim_token_unbound(
+        raw_token,
+        expected_scope=expected_scopes,
+    )
+    token_scope = unbound_payload.get("scope")
+    if token_scope not in expected_scopes:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid interim token",
+        )
+    return await _consume_interim_token_for_user(
+        raw_token=raw_token,
+        expected_scope=cast(str, token_scope),
+        request=request,
+        db=db,
+    )
+
+
+async def _is_superuser(db: DbSession, user_id: UUID) -> bool:
+    # TODO Phase 15 T950: replace this raw SQL check with the Superuser ORM.
+    result = await db.execute(
+        text(
+            "SELECT 1 FROM superusers "
+            "WHERE user_id = :uid AND revoked_at IS NULL LIMIT 1"
+        ),
+        {"uid": user_id},
+    )
+    return result.scalar_one_or_none() is not None
+
+
+async def _require_superuser(db: DbSession, user_id: UUID) -> None:
+    if not await _is_superuser(db, user_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="WebAuthn registration is restricted to superusers",
+        )
+
+
+def _serialize_webauthn_options(options: Any) -> dict[str, Any]:
+    if isinstance(options, dict):
+        return options
+    return options_to_json_dict(options)
+
+
+def _webauthn_http_error(exc: Exception) -> HTTPException:
+    if isinstance(exc, WebAuthnDuplicateCredentialError):
+        return HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="WebAuthn credential is already registered",
+        )
+    return HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="WebAuthn verification failed",
+    )
+
+
+def _replace_stored_credential(
+    credentials: list[StoredCredential],
+    updated: StoredCredential,
+) -> list[StoredCredential]:
+    replaced = False
+    next_credentials: list[StoredCredential] = []
+    for credential in credentials:
+        if credential["credential_id"] == updated["credential_id"]:
+            next_credentials.append(updated)
+            replaced = True
+        else:
+            next_credentials.append(credential)
+    if not replaced:
+        next_credentials.append(updated)
+    return next_credentials
 
 
 async def _issue_real_session(
@@ -689,8 +793,10 @@ async def login(
 async def setup_totp(
     payload: TotpSetupRequest,
     request: Request,
+    response: Response,
     db: DbSession,
 ) -> TotpSetupResponse:
+    response.headers["Cache-Control"] = "no-store, max-age=0"
     user, _claims = await _consume_interim_token_for_user(
         raw_token=payload.interim_token,
         expected_scope="2fa_setup",
@@ -733,6 +839,7 @@ async def setup_totp_confirm(
     response: Response,
     db: DbSession,
 ) -> TotpSetupConfirmResponse:
+    response.headers["Cache-Control"] = "no-store, max-age=0"
     user, _claims = await _consume_interim_token_for_user(
         raw_token=payload.interim_token,
         expected_scope="2fa_setup_confirm",
@@ -840,6 +947,145 @@ async def two_factor_challenge(
         detail={"method": payload.method},
     )
     return TwoFactorChallengeResponse(
+        access_token=access_token,
+        expires_in=settings.web_access_token_ttl_seconds,
+    )
+
+
+@router.post(
+    "/2fa/webauthn/register",
+    response_model=WebAuthnRegisterBeginResponse | WebAuthnRegisterCompleteResponse,
+)
+async def webauthn_register(
+    payload: WebAuthnRegisterRequest,
+    request: Request,
+    db: DbSession,
+) -> WebAuthnRegisterBeginResponse | WebAuthnRegisterCompleteResponse:
+    if payload.credential is None:
+        user, _claims = await _consume_interim_token_for_user_with_scopes(
+            raw_token=payload.interim_token,
+            expected_scopes=("webauthn_register", "2fa_setup_confirm"),
+            request=request,
+            db=db,
+        )
+        await _require_superuser(db, user.id)
+        existing = await _superuser_credential_store.get_credentials(user.id)
+        options = await webauthn_service.begin_registration(
+            user_id=user.id,
+            user_email=user.email,
+            existing_credentials=existing,
+        )
+        return WebAuthnRegisterBeginResponse(
+            options=_serialize_webauthn_options(options),
+            next_interim_token=_issue_interim_token(
+                user=user,
+                scope="webauthn_register_complete",
+                ttl_seconds=_WEBAUTHN_INTERIM_TTL_SECONDS,
+            ),
+        )
+
+    user, _claims = await _consume_interim_token_for_user(
+        raw_token=payload.interim_token,
+        expected_scope="webauthn_register_complete",
+        request=request,
+        db=db,
+    )
+    await _require_superuser(db, user.id)
+    existing = await _superuser_credential_store.get_credentials(user.id)
+    try:
+        credential = await webauthn_service.complete_registration(
+            user_id=user.id,
+            registration_response=payload.credential,
+            existing_credentials=existing,
+        )
+    except (
+        WebAuthnChallengeNotFoundError,
+        WebAuthnDuplicateCredentialError,
+        WebAuthnVerificationError,
+    ) as exc:
+        raise _webauthn_http_error(exc) from exc
+
+    if payload.name is not None:
+        credential["name"] = payload.name
+    await _superuser_credential_store.save_credentials(user.id, [*existing, credential])
+    await _write_platform_audit(
+        actor_user_id=user.id,
+        action="auth.webauthn_credential_registered",
+        request=request,
+        detail={"credential_id": credential["credential_id"]},
+    )
+    return WebAuthnRegisterCompleteResponse(
+        credential_id=credential["credential_id"],
+        name=credential["name"],
+        registered_at=credential["registered_at"],
+    )
+
+
+@router.post(
+    "/2fa/webauthn/challenge",
+    response_model=WebAuthnChallengeBeginResponse | WebAuthnChallengeCompleteResponse,
+)
+async def webauthn_challenge(
+    payload: WebAuthnChallengeRequest,
+    request: Request,
+    response: Response,
+    db: DbSession,
+) -> WebAuthnChallengeBeginResponse | WebAuthnChallengeCompleteResponse:
+    if payload.credential is None:
+        user, _claims = await _consume_interim_token_for_user(
+            raw_token=payload.interim_token,
+            expected_scope="2fa_challenge",
+            request=request,
+            db=db,
+        )
+        await _require_superuser(db, user.id)
+        existing = await _superuser_credential_store.get_credentials(user.id)
+        options = await webauthn_service.begin_authentication(
+            user_id=user.id,
+            existing_credentials=existing,
+        )
+        return WebAuthnChallengeBeginResponse(
+            options=_serialize_webauthn_options(options),
+            next_interim_token=_issue_interim_token(
+                user=user,
+                scope="webauthn_challenge_complete",
+                ttl_seconds=_WEBAUTHN_INTERIM_TTL_SECONDS,
+            ),
+        )
+
+    user, _claims = await _consume_interim_token_for_user(
+        raw_token=payload.interim_token,
+        expected_scope="webauthn_challenge_complete",
+        request=request,
+        db=db,
+    )
+    await _require_superuser(db, user.id)
+    existing = await _superuser_credential_store.get_credentials(user.id)
+    try:
+        updated = await webauthn_service.complete_authentication(
+            user_id=user.id,
+            authentication_response=payload.credential,
+            existing_credentials=existing,
+        )
+    except (
+        WebAuthnChallengeNotFoundError,
+        WebAuthnReplayDetectedError,
+        WebAuthnVerificationError,
+    ) as exc:
+        raise _webauthn_http_error(exc) from exc
+
+    await _superuser_credential_store.save_credentials(
+        user.id,
+        _replace_stored_credential(existing, updated),
+    )
+    access_token = await _issue_real_session(response=response, user=user, db=db)
+    await _write_platform_audit(
+        actor_user_id=user.id,
+        action="auth.webauthn_authentication_succeeded",
+        request=request,
+        detail={"credential_id": updated["credential_id"]},
+    )
+    return WebAuthnChallengeCompleteResponse(
         access_token=access_token,
         expires_in=settings.web_access_token_ttl_seconds,
     )

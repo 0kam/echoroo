@@ -16,6 +16,8 @@ Decision matrix
 * ``/web-api/v1/auth/2fa/challenge``   — pre-session 2FA prompt.
 * ``/web-api/v1/auth/2fa/setup/totp``  — pre-session first-login 2FA setup.
 * ``/web-api/v1/auth/2fa/setup/totp/confirm`` — pre-session setup confirmation.
+* ``/web-api/v1/auth/2fa/webauthn/register`` — pre-session hardware-key setup.
+* ``/web-api/v1/auth/2fa/webauthn/challenge`` — pre-session hardware-key challenge.
 * ``/web-api/v1/auth/2fa/verify``      — pre-session 2FA confirmation.
 * ``/web-api/v1/auth/refresh``         — refresh-token rotation.
 * ``/web-api/v1/auth/forgot-password`` — pre-session password reset.
@@ -51,6 +53,8 @@ PUBLIC_AUTH_PATHS: Final[tuple[str, ...]] = (
     "/web-api/v1/auth/2fa/challenge",
     "/web-api/v1/auth/2fa/setup/totp",
     "/web-api/v1/auth/2fa/setup/totp/confirm",
+    "/web-api/v1/auth/2fa/webauthn/register",
+    "/web-api/v1/auth/2fa/webauthn/challenge",
     "/web-api/v1/auth/2fa/verify",
     "/web-api/v1/auth/refresh",
     "/web-api/v1/auth/forgot-password",
