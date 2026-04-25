@@ -136,15 +136,49 @@ def _function_has_guard(
 
 
 def _load_allowlist(path: Path) -> frozenset[str]:
-    """Load a per-line file path allowlist (``# comments`` permitted)."""
+    """Load a fingerprint allowlist (``# comments`` permitted).
+
+    Phase 2.11 P1-a — allowlist entries are now fingerprints in the form
+    ``<file>:<fingerprint>:<short-signature>`` (or, for backwards
+    compatibility during migration, a bare repo-relative path). The
+    fingerprint locks the allowlist to a SPECIFIC violation rather than
+    silently ignoring every future violation that lands in the same
+    file.
+
+    Lines starting with ``#`` are comments. Trailing whitespace is
+    ignored. Trailing inline ``# comment`` text is stripped.
+
+    Returns the set of full ``<file>:<fingerprint>...`` strings up to
+    the first ``  #`` inline comment (two spaces + hash, the canonical
+    separator) — the lint's matcher then does prefix comparison so an
+    entry like
+    ``apps/api/foo.py:my_handler:missing-guard  # legacy``
+    matches the fingerprint
+    ``apps/api/foo.py:my_handler:missing-guard``.
+    """
     if not path.exists():
         return frozenset()
     entries: set[str] = set()
     for raw_line in path.read_text(encoding="utf-8").splitlines():
-        line = raw_line.split("#", 1)[0].strip()
-        if line:
-            entries.add(line)
+        # First strip the inline "  # comment" form (two spaces + hash);
+        # then if the WHOLE line is a hash-comment, drop it.
+        stripped = raw_line.split("  #", 1)[0].strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        entries.add(stripped)
     return frozenset(entries)
+
+
+def _violation_fingerprint(rel_str: str, function_name: str) -> str:
+    """Return the stable fingerprint for one permission-guard violation.
+
+    Format: ``<file>:<function_name>:missing-permission-guard``. The
+    function name is the AST node's identifier so it is robust against
+    line-number drift across edits and refactors. The trailing
+    ``missing-permission-guard`` token is the violation kind, kept short
+    so allowlist diffs read cleanly.
+    """
+    return f"{rel_str}:{function_name}:missing-permission-guard"
 
 
 def _detect_repo_root(start: Path) -> Path:
@@ -172,7 +206,13 @@ def find_violations(
     file_allowlist: frozenset[str] | None = None,
     repo_root: Path | None = None,
 ) -> list[str]:
-    """Return human-readable violation lines."""
+    """Return human-readable violation lines, skipping fingerprinted allowlist entries.
+
+    Phase 2.11 P1-a: the allowlist is now keyed by a stable PER-VIOLATION
+    fingerprint (file + function name + violation kind), not by file
+    path. Adding a new unguarded endpoint to a file that has other
+    allowlisted endpoints will now correctly fail the lint.
+    """
     violations: list[str] = []
     if not root.exists():
         return violations
@@ -185,8 +225,6 @@ def find_violations(
         if py_file.name in ALLOWLIST_FILES:
             continue
         rel_str = _relative_posix(py_file, repo_root)
-        if rel_str in file_allowlist:
-            continue
         try:
             tree = ast.parse(py_file.read_text(encoding="utf-8"), filename=str(py_file))
         except (OSError, SyntaxError) as exc:
@@ -207,10 +245,14 @@ def find_violations(
                 continue
             if _function_has_guard(node):
                 continue
+            fingerprint = _violation_fingerprint(rel_str, node.name)
+            if fingerprint in file_allowlist:
+                continue
             rel = py_file.relative_to(root.parent) if py_file.is_absolute() else py_file
             violations.append(
                 f"{rel}:{node.lineno} {node.name} lacks Permission guard "
-                f"(expected Depends(check_action(...)) or is_allowed(...))"
+                f"(expected Depends(check_action(...)) or is_allowed(...))  "
+                f"[fingerprint: {fingerprint}]"
             )
     return violations
 

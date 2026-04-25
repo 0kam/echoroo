@@ -76,18 +76,27 @@ _YAML_KEY_RE = re.compile(
 
 
 def _load_allowlist(path: Path) -> frozenset[str]:
+    """Load a fingerprint allowlist (Phase 2.11 P1-a).
+
+    Format: ``<file>:<kind>-<name>:forbidden-coordinate-identifier``
+    where ``<kind>`` is ``field`` / ``dict-key`` / ``yaml-key``.
+    Inline comments use ``  #`` (two spaces + hash). Bare ``#`` lines
+    are full-line comments.
+    """
     if not path.exists():
         return frozenset()
     entries: set[str] = set()
     for raw_line in path.read_text(encoding="utf-8").splitlines():
-        line = raw_line.split("#", 1)[0].strip()
-        if line:
-            entries.add(line)
+        stripped = raw_line.split("  #", 1)[0].strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        entries.add(stripped)
     return frozenset(entries)
 
 
-def _is_allowlisted(rel_path: str, allowlist: frozenset[str]) -> bool:
-    return rel_path in allowlist
+def _violation_fingerprint(rel_str: str, kind: str, name: str) -> str:
+    """Stable fingerprint for one forbidden-identifier violation."""
+    return f"{rel_str}:{kind}-{name}:forbidden-coordinate-identifier"
 
 
 # ---------------------------------------------------------------------------
@@ -108,7 +117,9 @@ def _is_forbidden(name: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def _scan_python_file(rel_str: str, source: str) -> list[str]:
+def _scan_python_file(
+    rel_str: str, source: str, allowlist: frozenset[str]
+) -> list[str]:
     """Return violation strings for a single Python source string."""
     violations: list[str] = []
     try:
@@ -122,10 +133,12 @@ def _scan_python_file(rel_str: str, source: str) -> list[str]:
         if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
             name = node.target.id
             if _is_forbidden(name):
-                violations.append(
-                    f"{rel_str}:{node.lineno}  forbidden field name "
-                    f"'{name}' (use h3_index instead)"
-                )
+                fp = _violation_fingerprint(rel_str, "field", name)
+                if fp not in allowlist:
+                    violations.append(
+                        f"{rel_str}:{node.lineno}  forbidden field name "
+                        f"'{name}' (use h3_index instead)  [fingerprint: {fp}]"
+                    )
             continue
 
         # 2) Plain assignments:
@@ -134,10 +147,13 @@ def _scan_python_file(rel_str: str, source: str) -> list[str]:
         if isinstance(node, ast.Assign):
             for target in node.targets:
                 if isinstance(target, ast.Name) and _is_forbidden(target.id):
-                    violations.append(
-                        f"{rel_str}:{node.lineno}  forbidden field name "
-                        f"'{target.id}' (use h3_index instead)"
-                    )
+                    fp = _violation_fingerprint(rel_str, "field", target.id)
+                    if fp not in allowlist:
+                        violations.append(
+                            f"{rel_str}:{node.lineno}  forbidden field name "
+                            f"'{target.id}' (use h3_index instead)  "
+                            f"[fingerprint: {fp}]"
+                        )
             continue
 
         # 3) Dict literals — only flag string-literal keys; non-literal
@@ -147,10 +163,15 @@ def _scan_python_file(rel_str: str, source: str) -> list[str]:
             for key in node.keys:
                 if isinstance(key, ast.Constant) and isinstance(key.value, str):
                     if _is_forbidden(key.value):
-                        violations.append(
-                            f"{rel_str}:{node.lineno}  forbidden dict key "
-                            f"'{key.value}' (use h3_index instead)"
+                        fp = _violation_fingerprint(
+                            rel_str, "dict-key", key.value
                         )
+                        if fp not in allowlist:
+                            violations.append(
+                                f"{rel_str}:{node.lineno}  forbidden dict key "
+                                f"'{key.value}' (use h3_index instead)  "
+                                f"[fingerprint: {fp}]"
+                            )
             continue
 
     return violations
@@ -161,7 +182,9 @@ def _scan_python_file(rel_str: str, source: str) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
-def _scan_yaml_file(rel_str: str, source: str) -> list[str]:
+def _scan_yaml_file(
+    rel_str: str, source: str, allowlist: frozenset[str]
+) -> list[str]:
     """Flag YAML mapping keys (``key:``) that match the denylist.
 
     Strings inside descriptions / values / comments are ignored — only
@@ -171,10 +194,13 @@ def _scan_yaml_file(rel_str: str, source: str) -> list[str]:
     for match in _YAML_KEY_RE.finditer(source):
         key = match.group("key")
         if _is_forbidden(key):
+            fp = _violation_fingerprint(rel_str, "yaml-key", key)
+            if fp in allowlist:
+                continue
             line_no = source[: match.start()].count("\n") + 1
             violations.append(
                 f"{rel_str}:{line_no}  forbidden YAML key "
-                f"'{key}' (use h3_index instead)"
+                f"'{key}' (use h3_index instead)  [fingerprint: {fp}]"
             )
     return violations
 
@@ -217,28 +243,24 @@ def find_violations(
     if py_root.exists():
         for py_file in sorted(py_root.rglob("*.py")):
             rel_str = _relative_posix(py_file, repo_root)
-            if _is_allowlisted(rel_str, allowlist):
-                continue
             try:
                 source = py_file.read_text(encoding="utf-8")
             except OSError as exc:
                 violations.append(f"{rel_str}: failed to read ({exc})")
                 continue
-            violations.extend(_scan_python_file(rel_str, source))
+            violations.extend(_scan_python_file(rel_str, source, allowlist))
 
     if contracts_root is not None and contracts_root.exists():
         for yaml_file in sorted(contracts_root.rglob("*")):
             if not yaml_file.is_file() or yaml_file.suffix not in (".yaml", ".yml"):
                 continue
             rel_str = _relative_posix(yaml_file, repo_root)
-            if _is_allowlisted(rel_str, allowlist):
-                continue
             try:
                 source = yaml_file.read_text(encoding="utf-8")
             except OSError as exc:
                 violations.append(f"{rel_str}: failed to read ({exc})")
                 continue
-            violations.extend(_scan_yaml_file(rel_str, source))
+            violations.extend(_scan_yaml_file(rel_str, source, allowlist))
 
     return violations
 

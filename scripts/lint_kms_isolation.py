@@ -38,15 +38,41 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 
 ALLOWLISTED_PATHS: tuple[str, ...] = ("apps/api/echoroo/core/kms.py",)
-"""Paths (as POSIX suffixes) allowed to call boto3.client('kms', ...).
+"""Hard-coded file-level always-allow: the wrapper itself.
 
-Stored as substring suffixes rather than absolute paths so the check
-works regardless of where the repository is checked out (CI runners,
-git worktrees, developer laptops).
+Stored as POSIX suffixes rather than absolute paths so the check works
+regardless of where the repository is checked out (CI runners, git
+worktrees, developer laptops). Phase 2.11 P1-a: a SECONDARY
+fingerprint allowlist (``--allowlist-file``) covers per-call
+exemptions for legacy modules during migration.
 """
+
+DEFAULT_ALLOWLIST = Path("scripts/allowlists/kms_isolation_allowlist.txt")
 
 TARGET_SERVICE = "kms"
 TARGET_METHODS = frozenset({"client", "resource"})
+
+
+def _load_allowlist(path: Path) -> frozenset[str]:
+    """Load a fingerprint allowlist (``# comments`` permitted).
+
+    Format: ``<file>:boto3-<method>-kms:kms-call-outside-wrapper``.
+    Inline comments use ``  #`` (two spaces + hash).
+    """
+    if not path.exists():
+        return frozenset()
+    entries: set[str] = set()
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        stripped = raw_line.split("  #", 1)[0].strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        entries.add(stripped)
+    return frozenset(entries)
+
+
+def _violation_fingerprint(rel_str: str, method: str) -> str:
+    """Stable fingerprint for one boto3.<method>('kms', ...) violation."""
+    return f"{rel_str}:boto3-{method}-kms:kms-call-outside-wrapper"
 
 
 # ---------------------------------------------------------------------------
@@ -146,14 +172,46 @@ def _is_allowlisted(py_file: Path) -> bool:
     return any(posix.endswith(allowed) for allowed in ALLOWLISTED_PATHS)
 
 
-def find_violations(root: Path) -> list[str]:
+def _detect_repo_root(start: Path) -> Path:
+    candidate = start.resolve()
+    for _ in range(8):
+        if (candidate / ".git").exists():
+            return candidate
+        if candidate.parent == candidate:
+            return candidate
+        candidate = candidate.parent
+    return candidate
+
+
+def _relative_posix(path: Path, repo_root: Path) -> str:
+    abs_path = path.resolve()
+    try:
+        rel = abs_path.relative_to(repo_root.resolve())
+    except ValueError:
+        rel = path
+    return str(rel).replace("\\", "/")
+
+
+def find_violations(
+    root: Path,
+    *,
+    fingerprint_allowlist: frozenset[str] = frozenset(),
+    repo_root: Path | None = None,
+) -> list[str]:
     """Scan ``root`` for boto3.client('kms', ...) violations.
 
     Returns a list of ``"<file>:<line>: <message>"`` strings — one per
     violation — suitable for printing directly to stderr.
+
+    Phase 2.11 P1-a: per-call allowlist via ``fingerprint_allowlist``.
+    Entries are of the form
+    ``<file>:boto3-<method>-kms:kms-call-outside-wrapper``.
     """
     if not root.exists():
         return []
+
+    if repo_root is None:
+        repo_root = _detect_repo_root(root)
 
     findings: list[str] = []
     for py_file in sorted(root.rglob("*.py")):
@@ -168,10 +226,16 @@ def find_violations(root: Path) -> list[str]:
         except SyntaxError as exc:
             raise RuntimeError(f"syntax error in {py_file}: {exc}") from exc
 
+        rel_str = _relative_posix(py_file, repo_root)
         visitor = _Boto3KmsVisitor(py_file)
         visitor.visit(tree)
         for lineno, detail in visitor.violations:
-            findings.append(f"{py_file}:{lineno}: {detail}")
+            # Detail format: "boto3.<method>('kms', ...) outside core/kms.py".
+            method = detail.split(".", 1)[1].split("(", 1)[0]
+            fp = _violation_fingerprint(rel_str, method)
+            if fp in fingerprint_allowlist:
+                continue
+            findings.append(f"{py_file}:{lineno}: {detail}  [fingerprint: {fp}]")
     return findings
 
 
@@ -189,6 +253,16 @@ def main() -> int:
         help="Root directory to scan (default: apps/api/echoroo).",
     )
     parser.add_argument(
+        "--allowlist-file",
+        type=Path,
+        default=DEFAULT_ALLOWLIST,
+        help=(
+            f"Fingerprint allowlist (default: {DEFAULT_ALLOWLIST}). Each "
+            "non-comment line is a stable fingerprint of the form "
+            "<file>:boto3-<method>-kms:kms-call-outside-wrapper."
+        ),
+    )
+    parser.add_argument(
         "--no-fail",
         action="store_true",
         help=(
@@ -199,7 +273,8 @@ def main() -> int:
     args = parser.parse_args()
 
     try:
-        violations = find_violations(args.path)
+        allowlist = _load_allowlist(args.allowlist_file)
+        violations = find_violations(args.path, fingerprint_allowlist=allowlist)
     except Exception as exc:  # noqa: BLE001 — defensive top-level catch
         print(f"[lint_kms_isolation] unexpected error: {exc}", file=sys.stderr)
         return 2

@@ -1,0 +1,14 @@
+# Allowlist for scripts/lint_kms_isolation.py.
+#
+# Phase 2.11 P1-a: line-level fingerprint format. Each non-comment
+# line is ``<file>:boto3-<method>-kms:kms-call-outside-wrapper``.
+#
+# This file is INTENTIONALLY EMPTY at the Phase 2.11 baseline — the
+# only legitimate KMS construction site is
+# ``apps/api/echoroo/core/kms.py`` (handled by the file-level
+# ``ALLOWLISTED_PATHS`` constant in the lint script). Every NEW
+# ``boto3.client('kms', ...)`` call elsewhere is a regression and MUST
+# fail the lint until it is migrated to the wrapper.
+#
+# Inline comments use TWO SPACES + ``#``. Lines beginning with ``#``
+# are full-line comments. See scripts/allowlists/README.md.

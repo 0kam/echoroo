@@ -1,42 +1,29 @@
 # Allowlist for scripts/lint_no_raw_coordinates.py.
 #
-# Each non-empty / non-comment line is a path (relative to repo root) that
-# MAY legitimately reference raw latitude / longitude / gps_* keys, for
-# example internal admin endpoints that export provenance data for an
-# owner-approved bulk operation.
+# Phase 2.11 P1-a: line-level fingerprint format. Each non-comment
+# line is ``<file>:<kind>-<name>:forbidden-coordinate-identifier``
+# where ``<kind>`` is ``field``, ``dict-key``, or ``yaml-key``.
 #
-# Format:
-#   * One path per line.
-#   * Lines beginning with `#` are comments.
-#   * Trailing whitespace is ignored.
-#   * Globs are NOT expanded in the skeleton; Phase 2 (T044/T045/T092) may
-#     enhance the matcher.
+# Phase 3 (US11 T1xx) must drive each entry to empty before final
+# cleanup. Adding a new entry MUST be justified in the accompanying
+# pull request and cross-referenced in admin.yaml.
 #
-# Keep this file empty by default. Every addition MUST be justified in the
-# accompanying pull request and cross-referenced in
-# specs/006-permissions-redesign/contracts/admin.yaml.
-#
-# Enforces FR-028f.
+# Inline comments use TWO SPACES + ``#``. Lines beginning with ``#``
+# are full-line comments. See scripts/allowlists/README.md.
 
-# Phase 2.7 (T084) — Celery task payload denylist validator. The module
-# enumerates the forbidden coordinate field names so the validator can
-# reject them; this is the single legitimate place that hosts those
-# tokens (they are denylist data, never assignment targets).
-apps/api/echoroo/workers/_celery_payload.py
-apps/api/tests/unit/workers/test_celery_payload_validator.py
-
-# Phase 2.10 #7 baseline — legacy schema / service modules carrying raw
-# lat/lng/coordinates fields predate the H3 redesign (FR-028f). The
-# strict gate is enabled for every push starting 2026-04-25; Phase 3
-# US11 must rewrite each entry to use h3_index columns and drop the
-# allowlist entry. Allowlist baseline established 2026-04-25.
-
-# legacy: cleaned in Phase 3 US11 T1xx
-apps/api/echoroo/schemas/annotation.py
-apps/api/echoroo/schemas/project.py
-apps/api/echoroo/schemas/site.py
-apps/api/echoroo/schemas/xeno_canto.py
-apps/api/echoroo/services/annotation.py
-apps/api/echoroo/services/annotation_export.py
-apps/api/echoroo/services/export.py
-
+# Phase 2.11 P1-a baseline 2026-04-25 (legacy schema / service modules
+# carrying raw lat/lng/coordinates fields predate the H3 redesign).
+# Each entry inherits the previous Phase 2.10 #7 cleanup target.
+apps/api/echoroo/schemas/annotation.py:field-coordinates:forbidden-coordinate-identifier  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/schemas/project.py:field-latitude:forbidden-coordinate-identifier  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/schemas/project.py:field-longitude:forbidden-coordinate-identifier  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/schemas/site.py:field-latitude:forbidden-coordinate-identifier  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/schemas/site.py:field-longitude:forbidden-coordinate-identifier  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/schemas/xeno_canto.py:field-latitude:forbidden-coordinate-identifier  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/schemas/xeno_canto.py:field-longitude:forbidden-coordinate-identifier  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/services/annotation.py:dict-key-coordinates:forbidden-coordinate-identifier  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/services/annotation_export.py:field-coordinates:forbidden-coordinate-identifier  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/services/export.py:dict-key-coordinates:forbidden-coordinate-identifier  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/services/export.py:field-coordinates:forbidden-coordinate-identifier  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/services/export.py:field-lat:forbidden-coordinate-identifier  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/services/export.py:field-lng:forbidden-coordinate-identifier  # legacy: Phase 3 US11 T1xx

@@ -133,15 +133,27 @@ def _return_annotation_names(
 
 
 def _load_allowlist(path: Path) -> frozenset[str]:
-    """Load a per-line file path allowlist (``# comments`` permitted)."""
+    """Load a fingerprint allowlist (``# comments`` permitted).
+
+    Phase 2.11 P1-a — entries are fingerprints of the form
+    ``<file>:<function_name>:missing-response-filter``. Inline comments
+    use ``  #`` (two spaces + hash) so they are stripped before
+    matching. Bare ``#`` lines are full-line comments.
+    """
     if not path.exists():
         return frozenset()
     entries: set[str] = set()
     for raw_line in path.read_text(encoding="utf-8").splitlines():
-        line = raw_line.split("#", 1)[0].strip()
-        if line:
-            entries.add(line)
+        stripped = raw_line.split("  #", 1)[0].strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        entries.add(stripped)
     return frozenset(entries)
+
+
+def _violation_fingerprint(rel_str: str, function_name: str) -> str:
+    """Stable fingerprint for one missing-response-filter violation."""
+    return f"{rel_str}:{function_name}:missing-response-filter"
 
 
 def _detect_repo_root(start: Path) -> Path:
@@ -179,8 +191,6 @@ def find_violations(
 
     for py_file in sorted(root.rglob("*.py")):
         rel_str = _relative_posix(py_file, repo_root)
-        if rel_str in allowlist:
-            continue
         try:
             tree = ast.parse(py_file.read_text(encoding="utf-8"), filename=str(py_file))
         except (OSError, SyntaxError) as exc:
@@ -202,10 +212,13 @@ def find_violations(
                 continue
             if _uses_filter_in_body(node) or _has_filter_decorator(node):
                 continue
+            fingerprint = _violation_fingerprint(rel_str, node.name)
+            if fingerprint in allowlist:
+                continue
             rel = py_file.relative_to(root.parent) if py_file.is_absolute() else py_file
             violations.append(
                 f"{rel}:{node.lineno} {node.name} returns Recording/Detection/Site "
-                f"without apply_response_filter(...)"
+                f"without apply_response_filter(...)  [fingerprint: {fingerprint}]"
             )
     return violations
 

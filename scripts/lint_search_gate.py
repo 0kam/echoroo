@@ -111,30 +111,39 @@ def _references_forbidden_model(node: ast.AST) -> str | None:
 
 
 def _load_extra_allowlist(path: Path | None) -> frozenset[str]:
+    """Load a fingerprint allowlist (Phase 2.11 P1-a).
+
+    Format: ``<file>:select-<MODEL>:direct-select-outside-search-gate``
+    or ``<file>:select_from-<MODEL>:direct-select_from-outside-search-gate``.
+    Inline comments use ``  #`` (two spaces + hash).
+    """
     if path is None:
         return frozenset()
     if not path.exists():
         return frozenset()
     entries: set[str] = set()
     for raw_line in path.read_text(encoding="utf-8").splitlines():
-        line = raw_line.split("#", 1)[0].strip()
-        if line:
-            entries.add(line)
+        stripped = raw_line.split("  #", 1)[0].strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        entries.add(stripped)
     return frozenset(entries)
 
 
-def _is_allowlisted(rel_path: str, extra: frozenset[str]) -> bool:
-    """Match against absolute-from-repo-root paths.
+def _is_always_allowed(rel_path: str) -> bool:
+    """File-level always-allow (the SearchGate implementation itself)."""
+    return rel_path in _ALWAYS_ALLOWED
 
-    The matcher is exact-equality on POSIX paths so a directory name
-    collision (e.g. a future ``services/search_gate.py`` in a sibling
-    project) cannot accidentally exempt itself.
+
+def _violation_fingerprint(rel_str: str, kind: str, model: str) -> str:
+    """Stable fingerprint for one direct-select violation.
+
+    Args:
+        rel_str: Repo-relative POSIX path.
+        kind: ``"select"`` or ``"select_from"``.
+        model: Forbidden model name (``"Detection"`` / ``"Annotation"``).
     """
-    if rel_path in _ALWAYS_ALLOWED:
-        return True
-    if rel_path in extra:
-        return True
-    return False
+    return f"{rel_str}:{kind}-{model}:direct-{kind}-outside-search-gate"
 
 
 # ---------------------------------------------------------------------------
@@ -177,7 +186,7 @@ def find_violations(
 
     for py_file in sorted(root.rglob("*.py")):
         rel_str = _relative_posix(py_file, repo_root)
-        if _is_allowlisted(rel_str, extra_allowlist):
+        if _is_always_allowed(rel_str):
             continue
         try:
             tree = ast.parse(py_file.read_text(encoding="utf-8"), filename=str(py_file))
@@ -190,9 +199,12 @@ def find_violations(
             if _is_select_call(node):
                 model = _select_call_targets_forbidden(node)
                 if model is not None:
+                    fingerprint = _violation_fingerprint(rel_str, "select", model)
+                    if fingerprint in extra_allowlist:
+                        continue
                     violations.append(
                         f"{rel_str}:{node.lineno}  direct select({model}) outside SearchGate "
-                        f"(use services/search_gate.py)"
+                        f"(use services/search_gate.py)  [fingerprint: {fingerprint}]"
                     )
                 continue
             # Detect ``.select_from(Detection)`` chained off any earlier
@@ -200,9 +212,14 @@ def find_violations(
             if isinstance(node.func, ast.Attribute) and node.func.attr == "select_from":
                 model = _first_arg_targets_forbidden(node)
                 if model is not None:
+                    fingerprint = _violation_fingerprint(
+                        rel_str, "select_from", model
+                    )
+                    if fingerprint in extra_allowlist:
+                        continue
                     violations.append(
                         f"{rel_str}:{node.lineno}  .select_from({model}) outside SearchGate "
-                        f"(use services/search_gate.py)"
+                        f"(use services/search_gate.py)  [fingerprint: {fingerprint}]"
                     )
     return violations
 
