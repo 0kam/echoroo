@@ -1,11 +1,8 @@
-"""Annotation comment endpoints (Phase 3 scaffolding).
+"""Annotation comment endpoints.
 
 Phase 3 (T125, FR-008 / FR-008a / FR-040): exposes the canonical comment
 endpoints behind the central :func:`is_allowed` gate so the routing surface
-and the Action wiring lock in early. Full persistence is deferred until the
-``AnnotationComment`` ORM model + repository land (baseline migration 0001
-already provisions the ``annotation_comments`` table — see
-``apps/api/alembic/versions/0001_baseline_permissions_redesign.py`` §T020c).
+and the Action wiring lock in early.
 
 Action wiring:
 
@@ -14,16 +11,8 @@ Action wiring:
 * ``POST /annotations/{annotation_id}/comments`` (create) → :data:`ANNOTATION_COMMENT_CREATE_ACTION`
   (:data:`Permission.COMMENT`)
 
-The service / repository layer is intentionally not implemented in this task;
-both handlers raise ``HTTPException(501)`` after the gate succeeds. This makes
-the Stage-1 contract testable today (matrix-by-matrix unauth/forbidden cases
-return the canonical 401/403) while keeping the 200/201 response stub
-explicitly opt-out so the harness will not silently accept fake data.
-
 FR-040 source determination follows the same algorithm as
-:func:`echoroo.api.v1.annotation_votes._determine_vote_source` and will be
-wired at the same time as :class:`AnnotationComment` persistence — see the
-TODO blocks below.
+:func:`echoroo.api.v1.annotation_votes._determine_vote_source`.
 
 The router is **not** registered with the FastAPI app factory yet. That step
 lives in a follow-up Phase 3 task per the implementation plan.
@@ -34,7 +23,6 @@ from __future__ import annotations
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Request, status
-from pydantic import BaseModel, Field
 
 from echoroo.core.actions import (
     ANNOTATION_COMMENT_CREATE_ACTION,
@@ -43,46 +31,21 @@ from echoroo.core.actions import (
 from echoroo.core.database import DbSession
 from echoroo.core.permissions import gate_action
 from echoroo.middleware.auth import CurrentUser
+from echoroo.models.enums import AnnotationVoteSource
 from echoroo.models.project import Project
+from echoroo.repositories.annotation import AnnotationRepository
+from echoroo.repositories.annotation_comment import AnnotationCommentRepository
 from echoroo.repositories.project import ProjectRepository
+from echoroo.schemas.annotation_comment import (
+    AnnotationCommentCreate,
+    AnnotationCommentListResponse,
+    AnnotationCommentResponse,
+)
 
 router = APIRouter(
     prefix="/projects/{project_id}/annotations",
     tags=["annotation-comments"],
 )
-
-
-# ---------------------------------------------------------------------------
-# Request / response stubs
-# ---------------------------------------------------------------------------
-
-
-class AnnotationCommentCreate(BaseModel):
-    """Request body for ``POST /annotations/{annotation_id}/comments``.
-
-    Mirrors the contract in
-    ``specs/006-permissions-redesign/contracts/detections.yaml`` (FR-040).
-    """
-
-    body: str = Field(..., max_length=2000, description="Comment body, ≤ 2000 chars")
-
-
-class AnnotationCommentResponse(BaseModel):
-    """Single comment record (FR-040 source badge)."""
-
-    id: UUID
-    annotation_id: UUID
-    body: str
-    source: str = Field(
-        ...,
-        description="FR-040 author badge: member / guest_authenticated / trusted_user",
-    )
-
-
-class AnnotationCommentListResponse(BaseModel):
-    """``GET /annotations/{annotation_id}/comments`` response wrapper."""
-
-    items: list[AnnotationCommentResponse] = Field(default_factory=list)
 
 
 async def _determine_comment_source(
@@ -91,24 +54,24 @@ async def _determine_comment_source(
     project: Project,
     user_id: UUID,
     db: DbSession,
-) -> str:
+) -> AnnotationVoteSource:
     """Determine the FR-040 ``source`` value for a freshly-posted comment.
 
-    Returns one of ``"member" | "guest_authenticated" | "trusted_user"``,
+    Returns one of ``member | guest_authenticated | trusted_user``,
     using the same resolution order as
     :func:`echoroo.api.v1.annotation_votes._determine_vote_source`.
     """
     project_repo = ProjectRepository(db)
     if await project_repo.is_project_owner(project_id, user_id):
-        return "member"
+        return AnnotationVoteSource.MEMBER
     if (await project_repo.get_member(project_id, user_id)) is not None:
-        return "member"
+        return AnnotationVoteSource.MEMBER
 
     # TODO(T501 / US5 — FR-041〜046): wire ``ProjectTrustedUser`` lookup here
     # once the model + repository are introduced; an unexpired overlay row
-    # for ``(project_id, user_id)`` should map to ``"trusted_user"``.
+    # for ``(project_id, user_id)`` should map to ``TRUSTED_USER``.
     _ = project
-    return "guest_authenticated"
+    return AnnotationVoteSource.GUEST_AUTHENTICATED
 
 
 # ---------------------------------------------------------------------------
@@ -143,12 +106,12 @@ async def list_annotation_comments(
         db: Database session
 
     Returns:
-        Paginated list of comments (currently empty — see scaffolding note).
+        List of comments for the annotation.
 
     Raises:
         401: Not authenticated
         403: Permission denied
-        501: Persistence not yet implemented (see module docstring)
+        404: Annotation not found
     """
     await gate_action(
         action=ANNOTATION_COMMENT_LIST_ACTION,
@@ -157,14 +120,18 @@ async def list_annotation_comments(
         request=request,
         db=db,
     )
-    # TODO(T020c / future US task): once ``AnnotationComment`` model + repo
-    # land, replace this stub with an actual list query scoped to
-    # ``annotation_id`` and a paginated response. Until then, surface a clear
-    # 501 so callers do not interpret an empty 200 list as authoritative.
-    _ = annotation_id
-    raise HTTPException(
-        status.HTTP_501_NOT_IMPLEMENTED,
-        detail="annotation comments persistence not yet implemented",
+
+    annotation_repo = AnnotationRepository(db)
+    if not await annotation_repo.exists_in_project(annotation_id, project_id):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Annotation not found",
+        )
+
+    comment_repo = AnnotationCommentRepository(db)
+    comments = await comment_repo.list_by_annotation(annotation_id, project_id)
+    return AnnotationCommentListResponse(
+        items=[AnnotationCommentResponse.model_validate(comment) for comment in comments]
     )
 
 
@@ -205,7 +172,7 @@ async def create_annotation_comment(
         401: Not authenticated
         403: Permission denied (e.g. Viewer attempting to comment)
         422: Validation error
-        501: Persistence not yet implemented (see module docstring)
+        404: Annotation not found
     """
     project = await gate_action(
         action=ANNOTATION_COMMENT_CREATE_ACTION,
@@ -215,9 +182,15 @@ async def create_annotation_comment(
         db=db,
     )
 
+    annotation_repo = AnnotationRepository(db)
+    if not await annotation_repo.exists_in_project(annotation_id, project_id):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Annotation not found",
+        )
+
     # FR-040: classify the commenter's source. Recorded on request.state for
-    # downstream observability; persistence happens once the
-    # ``AnnotationComment`` ORM model is introduced.
+    # downstream observability and persisted on the comment row.
     source = await _determine_comment_source(
         project_id=project_id,
         project=project,
@@ -225,11 +198,14 @@ async def create_annotation_comment(
         db=db,
     )
     request.state.annotation_comment_source = source
-    # TODO(T020c / future US task): once ``AnnotationComment`` model + repo
-    # exist, persist ``payload.body`` together with ``source`` (immutable
-    # FR-040) and return the canonical row.
-    _ = annotation_id, payload
-    raise HTTPException(
-        status.HTTP_501_NOT_IMPLEMENTED,
-        detail="annotation comments persistence not yet implemented",
+
+    comment_repo = AnnotationCommentRepository(db)
+    comment = await comment_repo.create(
+        annotation_id=annotation_id,
+        project_id=project_id,
+        commenter_user_id=current_user.id,
+        body=payload.body.strip(),
+        source=source,
     )
+    await db.commit()
+    return AnnotationCommentResponse.model_validate(comment)

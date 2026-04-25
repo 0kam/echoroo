@@ -143,6 +143,14 @@ class VoteType(StrEnum):
     UNSURE = "unsure"
 
 
+class AnnotationVoteSource(StrEnum):
+    """Source classification for annotation votes and comments."""
+
+    MEMBER = "member"
+    GUEST_AUTHENTICATED = "guest_authenticated"
+    TRUSTED_USER = "trusted_user"
+
+
 class SignalQuality(StrEnum):
     """Signal quality assessment for agree votes.
 

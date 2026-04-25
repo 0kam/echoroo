@@ -1,6 +1,7 @@
 """Database models."""
 
 from echoroo.models.annotation import Annotation
+from echoroo.models.annotation_comment import AnnotationComment
 from echoroo.models.annotation_project import (
     AnnotationProject,
     annotation_project_datasets,
@@ -30,6 +31,7 @@ from echoroo.models.enums import (
     AnnotationSetStatus,
     AnnotationSource,
     AnnotationTaskStatus,
+    AnnotationVoteSource,
     ConsensusStatus,
     DatasetStatus,
     DatasetVisibility,
@@ -109,6 +111,7 @@ __all__ = [
     "TaxonVernacularName",
     # Detection review models (003-detection-review)
     "Annotation",
+    "AnnotationComment",
     "AnnotationVote",
     "ConfirmedRegion",
     "DetectionRun",
@@ -155,6 +158,7 @@ __all__ = [
     "DetectionSource",
     "DetectionStatus",
     "DetectionRunStatus",
+    "AnnotationVoteSource",
     "VoteType",
     "ConsensusStatus",
     # Enums (custom model)
