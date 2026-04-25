@@ -386,6 +386,7 @@ description: "Task list for 006-permissions-redesign (revised after /speckit.ana
 - [ ] **T956** [P] [CR] `apps/api/tests/security/authorization/test_superuser_api_key_forbidden.py` TDD: superuser 操作が API key 経由で 403 (FR-084、PR-007 Superuser)
 - [ ] **T957** [P] [CR] `apps/api/tests/security/race_conditions/test_superuser_break_glass_mode.py` TDD: 1→1 で break-glass 発動、72h タイマー (FR-111)
 - [ ] **T958** [P] [CR] `apps/api/tests/security/authorization/test_superuser_response_filter_raw_forbidden.py` TDD: 全 response filter 経路（detections / recordings / sites / tags / exports）を parametric fixture で列挙、superuser 主体でも生 lat/lng / 生座標 / HIDDEN 対象が raw で返らないことを検証（superuser は project-scope allowlist 経由の場合のみ対象読み取り可、raw 生データ bypass は不可）(FR-112a)
+- [ ] **T155b** [CR] Wire real `ApiKeyVerifier` (Phase 15 scope) into `AuthRouterMiddleware` and re-enable 2FA enforcement (`TwoFactorEnforcementMiddleware`) for `/api/v1/*`. T155 polish round 2 narrowed the enforcement prefix to `/web-api/v1/*` only because the auth router's `programmatic_prefix` is currently a sentinel — `/api/v1/*` requests never populate `request.state.principal`. Once T950+ ships the KMS-backed verifier, flip `programmatic_prefix` back to `/api/v1` and broaden `TwoFactorEnforcementMiddleware.enforcement_prefix` so FR-069 / FR-073 cover both surfaces (FR-069、FR-073、FR-077)
 
 ---
 

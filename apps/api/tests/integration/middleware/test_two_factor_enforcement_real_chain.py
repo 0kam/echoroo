@@ -12,6 +12,15 @@ We seed:
 
 Each test then makes a request with that family id set in the session
 cookie and asserts the right block code (or pass-through) lands.
+
+T155 polish round 2: real-route coverage
+----------------------------------------
+The enforcement-positive assertions previously hit
+``/web-api/v1/projects`` which Phase 4 has not registered yet — a 404
+response would have looked indistinguishable from the 403/423 we
+expect, silently weakening coverage. The fixture below registers a
+test-only ``/web-api/v1/_test/ping`` router on the booted app so the
+route exists end-to-end and confounding 404s are impossible.
 """
 
 from __future__ import annotations
@@ -25,12 +34,32 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from fastapi import APIRouter
 from httpx import ASGITransport, AsyncClient
 
 try:
     from testcontainers.postgres import PostgresContainer
 except ImportError:  # pragma: no cover - dev extra may be absent locally
     PostgresContainer = None  # type: ignore[assignment,misc]
+
+# Test-only route mounted on the booted app to confirm enforcement
+# without depending on a Phase 5/6 production route. ``/web-api/v1/*``
+# is the enforcement scope, so we sit just inside it.
+TEST_PING_PATH = "/web-api/v1/_test/ping"
+
+
+def _build_test_router() -> APIRouter:
+    router = APIRouter(prefix="/web-api/v1/_test")
+
+    @router.get("/ping")
+    async def ping_get() -> dict[str, bool]:
+        return {"ok": True}
+
+    @router.post("/ping")
+    async def ping_post() -> dict[str, bool]:
+        return {"ok": True}
+
+    return router
 
 API_ROOT = Path(__file__).resolve().parents[3]
 ALEMBIC_INI = API_ROOT / "alembic.ini"
@@ -146,6 +175,10 @@ async def client(
 
     app = create_app()
     app.dependency_overrides[get_db] = override_get_db
+    # Mount the test-only router *after* create_app so the production
+    # middleware stack is wrapped around it identically to a real
+    # ``/web-api/v1/*`` route.
+    app.include_router(_build_test_router())
     async with AsyncClient(
         transport=ASGITransport(app=app),
         base_url="https://testserver",
@@ -240,14 +273,15 @@ async def test_user_without_2fa_is_blocked_with_403(
     _, session_id, access_token = await _seed_user_and_session(
         session_factory, two_factor_enabled=False
     )
-    response = await client.post(
-        "/web-api/v1/projects",
+    response = await client.get(
+        TEST_PING_PATH,
         cookies={_session_cookie_name(): session_id},
         headers=_auth_headers(access_token),
     )
-    # 2FA enforcement is the layer that owns the 403 response. Anything
-    # else (CSRF, validation) would land on a different status code, so
-    # asserting both code and detail keeps the test specific.
+    # 2FA enforcement is the layer that owns the 403 response. The GET
+    # request is exempt from CSRF (read-only method), so a 403 here can
+    # only come from this middleware. Asserting both code and detail
+    # keeps the test specific.
     assert response.status_code == 403
     body = response.json()
     assert body == {
@@ -264,23 +298,16 @@ async def test_user_with_2fa_passes_through_enforcement(
     _, session_id, access_token = await _seed_user_and_session(
         session_factory, two_factor_enabled=True
     )
-    response = await client.post(
-        "/web-api/v1/projects",
+    response = await client.get(
+        TEST_PING_PATH,
         cookies={_session_cookie_name(): session_id},
         headers=_auth_headers(access_token),
     )
-    # 2FA enforcement should NOT block this request. Downstream layers
-    # (CSRF rejection because no CSRF token is sent, route-level
-    # validation, etc.) may still return 403 — but the body shape will
-    # NOT carry the enforcement contract, and the cooldown 423 must
-    # not surface either.
-    assert response.status_code != 423
-    if response.status_code == 403:
-        body = response.json()
-        # The 2FA-enforcement 403 has both ``detail`` and
-        # ``next_action``. Any other 403 (CSRF, etc.) does not.
-        assert body.get("next_action") != "/web-api/v1/auth/2fa/setup/totp"
-        assert body.get("detail") != "2FA enrollment required"
+    # 2FA enforcement should NOT block this request. The GET method
+    # bypasses CSRF, the route is registered, and 2FA is enabled — so
+    # we expect a clean 200 from the test ping handler.
+    assert response.status_code == 200
+    assert response.json() == {"ok": True}
 
 
 @pytest.mark.asyncio
@@ -294,6 +321,12 @@ async def test_cooldown_user_blocked_with_423_on_protected_post(
         two_factor_enabled=True,
         cooldown_until=cooldown_until,
     )
+    # Cooldown enforcement targets state-changing methods; the test
+    # ping POST falls outside the cooldown_restricted_patterns regex,
+    # so we instead exercise the project-create POST contract on the
+    # session surface — same path style as production. The enforcement
+    # middleware runs *before* route resolution, so a 423 lands even
+    # though no concrete project handler is registered yet.
     response = await client.post(
         "/web-api/v1/projects",
         cookies={_session_cookie_name(): session_id},
@@ -310,13 +343,12 @@ async def test_cooldown_user_get_request_not_blocked_by_enforcement(
     client: AsyncClient,
     session_factory: object,
 ) -> None:
-    """``GET /api/v1/projects`` is outside the cooldown pattern set.
+    """``GET /web-api/v1/_test/ping`` is outside the cooldown pattern set.
 
-    The ``/api/v1/*`` prefix is currently disabled in the auth router
-    (Phase 15 swap-in) so the response may surface a 401 from the
-    legacy auth dependency. The contract tested here is that the 2FA
-    enforcement middleware is NOT what blocks the request — i.e. the
-    response code is anything *other than* 423.
+    The cooldown gate only applies to state-changing patterns
+    (project create/delete, member management, exports, etc.). A
+    plain GET — even on the enforcement-scoped ``/web-api/v1/*``
+    prefix — must pass through with the route's own response.
     """
     cooldown_until = datetime.now(UTC) + timedelta(hours=1)
     _, session_id, access_token = await _seed_user_and_session(
@@ -325,8 +357,67 @@ async def test_cooldown_user_get_request_not_blocked_by_enforcement(
         cooldown_until=cooldown_until,
     )
     response = await client.get(
+        TEST_PING_PATH,
+        cookies={_session_cookie_name(): session_id},
+        headers=_auth_headers(access_token),
+    )
+    assert response.status_code != 423
+    assert response.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_real_chain_logged_out_request_passes_through(
+    client: AsyncClient,
+) -> None:
+    """No cookies + no Authorization header MUST NOT trip 2FA enforcement.
+
+    The auth router does not populate ``request.state.principal`` for
+    anonymous requests on ``/web-api/v1/*`` — instead it returns 401
+    early. The contract this test enforces is narrower: the 2FA
+    enforcement middleware's contract codes (403 enrollment-required
+    and 423 cooldown) MUST NOT surface for an anonymous caller. A 401
+    from the auth router is the expected outcome and proves the
+    enforcement middleware stayed out of the way.
+    """
+    response = await client.get(TEST_PING_PATH)
+
+    assert response.status_code != 423
+    if response.status_code == 403:
+        body = response.json()
+        # The 2FA-enforcement 403 has both ``detail`` and
+        # ``next_action`` set to the contract values. Any other 403
+        # (e.g. CSRF) does not.
+        assert body.get("next_action") != "/web-api/v1/auth/2fa/setup/totp"
+        assert body.get("detail") != "2FA enrollment required"
+    # The auth router blocks anonymous access to ``/web-api/v1/*``
+    # with 401. Confirming that exact code keeps the assertion tight.
+    assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_real_chain_legacy_api_v1_bypasses_enforcement(
+    client: AsyncClient,
+    session_factory: object,
+) -> None:
+    """``/api/v1/*`` requests must NOT be blocked by this middleware.
+
+    Phase 15 task T155b (when ``ApiKeyVerifier`` lands) will extend
+    enforcement to the programmatic surface. Until then, the
+    middleware MUST scope to ``/web-api/v1/*`` only — even an
+    unenrolled user reaching ``/api/v1/projects`` must see something
+    other than the enforcement 403/423 (typically a 401 from the
+    legacy Depends-based auth).
+    """
+    _, session_id, access_token = await _seed_user_and_session(
+        session_factory, two_factor_enabled=False
+    )
+    response = await client.get(
         "/api/v1/projects",
         cookies={_session_cookie_name(): session_id},
         headers=_auth_headers(access_token),
     )
     assert response.status_code != 423
+    if response.status_code == 403:
+        body = response.json()
+        assert body.get("next_action") != "/web-api/v1/auth/2fa/setup/totp"
+        assert body.get("detail") != "2FA enrollment required"

@@ -104,6 +104,14 @@ def create_app() -> FastAPI:
         ),
     )
     app.add_middleware(TwoFactorEnforcementMiddleware)
+    # NOTE: ``TwoFactorEnforcementMiddleware`` only enforces on the
+    # ``/web-api/v1/*`` first-party session surface (its
+    # ``DEFAULT_ENFORCEMENT_PREFIX``). The ``/api/v1/*`` programmatic
+    # surface is deliberately left out until Phase 15 task **T155b**
+    # wires the real :class:`ApiKeyVerifier` and switches the auth
+    # router's ``programmatic_prefix`` back to ``/api/v1``. See the
+    # module docstring of ``two_factor_enforcement`` for the full
+    # rationale.
 
     # AuthRouter must run BEFORE TwoFactorEnforcement so the latter can
     # read ``request.state.principal``. Starlette's ``add_middleware``
@@ -113,8 +121,8 @@ def create_app() -> FastAPI:
     # ``programmatic_prefix`` is set to a sentinel that does not match
     # any real path so ``/api/v1/*`` continues to authenticate via the
     # legacy :mod:`echoroo.middleware.auth` Depends helpers (Phase 15
-    # T950+ swaps in the real KMS-backed API key verifier and flips
-    # this prefix back to ``/api/v1``).
+    # T950+ / T155b swaps in the real KMS-backed API key verifier and
+    # flips this prefix back to ``/api/v1``).
     #
     # ``/web-api/v1/auth/logout`` is added to the auth-router allowlist
     # because it is the one session-management endpoint that operates

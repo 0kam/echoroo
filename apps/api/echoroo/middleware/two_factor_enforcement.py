@@ -11,6 +11,28 @@ existing ``two_factor_enabled`` / ``two_factor_reset_cooldown_until``
 checks have real data to evaluate (Option A in the T155 polish brief —
 chosen over a translator middleware to keep DB work in one place).
 
+Enforcement scope (T155 polish round 2 — IMPORTANT)
+---------------------------------------------------
+This middleware enforces 2FA on the **first-party session surface**
+(``/web-api/v1/*``) ONLY. The ``/api/v1/*`` programmatic surface is
+deliberately left out of enforcement until **Phase 15 task T155b**
+wires the real :class:`ApiKeyVerifier` into
+:class:`AuthRouterMiddleware`. Rationale:
+
+* :class:`AuthRouterMiddleware` is currently configured with a
+  sentinel ``programmatic_prefix`` so ``/api/v1/*`` falls through to
+  the legacy :mod:`echoroo.middleware.auth` ``Depends``-based stack
+  (which never populates ``request.state.principal``).
+* If we left enforcement scope open across both prefixes, every
+  authenticated ``/api/v1/*`` request would surface as
+  ``principal is None`` and silently bypass FR-069 / FR-073 — a real
+  production gap, not a benign edge case.
+* Narrowing to ``/web-api/v1/*`` makes the deferral explicit: until
+  T155b lands, ``/api/v1/*`` 2FA enforcement is a documented
+  follow-up rather than a silent loophole. The session UI surface
+  (which is the *only* surface end-users currently hit) is fully
+  covered.
+
 Fail-closed posture
 ~~~~~~~~~~~~~~~~~~~
 If the ``users`` row is missing or carries ``deleted_at IS NOT NULL``
@@ -56,6 +78,14 @@ logger = logging.getLogger(__name__)
 
 
 DEFAULT_ALLOWLIST_PATHS: Final[tuple[str, ...]] = ("/health", "/metrics")
+DEFAULT_ENFORCEMENT_PREFIX: Final[str] = "/web-api/v1/"
+"""Path prefix this middleware applies to.
+
+Anything outside this prefix bypasses enforcement entirely (see module
+docstring for the ``/api/v1/*`` deferral rationale). Phase 15 T155b
+extends coverage once :class:`ApiKeyVerifier` lands.
+"""
+
 TWO_FACTOR_SETUP_PATH: Final[str] = "/web-api/v1/auth/2fa/setup/totp"
 """Module-public alias kept for callers that already imported it.
 
@@ -125,12 +155,14 @@ class TwoFactorEnforcementMiddleware(BaseHTTPMiddleware):
         cooldown_restricted_patterns: Sequence[CooldownRestrictedPattern] = (
             COOLDOWN_RESTRICTED_PATTERNS
         ),
+        enforcement_prefix: str = DEFAULT_ENFORCEMENT_PREFIX,
         user_resolver: Callable[[UUID], Awaitable[User | None]] | None = None,
         audit_writer: Callable[..., Awaitable[None]] | None = None,
     ) -> None:
         super().__init__(app)
         self.allowlist_paths = frozenset(allowlist_paths)
         self.cooldown_restricted_patterns = tuple(cooldown_restricted_patterns)
+        self.enforcement_prefix = enforcement_prefix
         # ``user_resolver`` and ``audit_writer`` are pluggable so the
         # existing fast unit tests can avoid spinning up Postgres while
         # the production wiring goes through ``AsyncSessionLocal``.
@@ -143,6 +175,14 @@ class TwoFactorEnforcementMiddleware(BaseHTTPMiddleware):
         call_next: Callable[[Request], Awaitable[Response]],
     ) -> Response:
         path = request.url.path
+
+        # Scope short-circuit. Anything outside the enforcement prefix
+        # (``/web-api/v1/*`` by default) bypasses the middleware so
+        # ``/api/v1/*`` and any other surface remains unaffected until
+        # Phase 15 T155b extends coverage to programmatic auth. See the
+        # module docstring for the full rationale.
+        if not path.startswith(self.enforcement_prefix):
+            return await _call_next_with_response_polish(request, call_next)
 
         # Public allowlist short-circuit. ``TWO_FACTOR_SETUP_PATH`` is a
         # member of ``PUBLIC_AUTH_PATHS`` so we no longer need a
@@ -368,6 +408,7 @@ __all__ = [
     "COOLDOWN_RESTRICTED_PATTERNS",
     "CooldownRestrictedPattern",
     "DEFAULT_ALLOWLIST_PATHS",
+    "DEFAULT_ENFORCEMENT_PREFIX",
     "ENFORCEMENT_AUDIT_ACTION",
     "PASSWORD_RESET_CONFIRM_CACHE_CONTROL",
     "PASSWORD_RESET_CONFIRM_PATH",
