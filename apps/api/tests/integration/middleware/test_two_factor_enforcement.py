@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from typing import Any
+from uuid import UUID
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -13,17 +16,22 @@ from starlette.requests import Request
 from starlette.responses import Response
 from starlette.types import ASGIApp
 
+from echoroo.middleware.auth_router import Principal
 from echoroo.middleware.two_factor_enforcement import TwoFactorEnforcementMiddleware
 
 
 @dataclass
 class _User:
+    id: UUID
     two_factor_enabled: bool
+    deleted_at: datetime | None = None
     two_factor_reset_cooldown_until: datetime | None = None
 
 
-class _UserStateMiddleware(BaseHTTPMiddleware):
-    def __init__(self, app: ASGIApp, *, user: _User) -> None:
+class _PrincipalStateMiddleware(BaseHTTPMiddleware):
+    """Stand-in for :class:`AuthRouterMiddleware` in fast unit tests."""
+
+    def __init__(self, app: ASGIApp, *, user: _User | None) -> None:
         super().__init__(app)
         self.user = user
 
@@ -32,7 +40,13 @@ class _UserStateMiddleware(BaseHTTPMiddleware):
         request: Request,
         call_next: Callable[[Request], Awaitable[Response]],
     ) -> Response:
-        request.state.user = self.user
+        if self.user is not None:
+            request.state.principal = Principal.for_session(
+                user_id=self.user.id,
+                security_stamp="s" * 64,
+            )
+        else:
+            request.state.principal = None
         return await call_next(request)
 
 
@@ -44,7 +58,7 @@ def _build_client(user: _User | None = None) -> TestClient:
         return {"ok": True}
 
     @app.post("/api/v1/invitations/{token}/accept")
-    async def accept_invitation(token: str) -> dict[str, bool]:
+    async def accept_invitation(token: str) -> dict[str, bool]:  # noqa: ARG001
         return {"ok": True}
 
     @app.api_route("/api/v1/api-keys", methods=["GET", "POST", "DELETE"])
@@ -56,11 +70,11 @@ def _build_client(user: _User | None = None) -> TestClient:
         return {"ok": True}
 
     @app.api_route("/api/v1/projects/{project_id}/members", methods=["GET", "POST", "DELETE"])
-    async def members(project_id: str) -> dict[str, bool]:
+    async def members(project_id: str) -> dict[str, bool]:  # noqa: ARG001
         return {"ok": True}
 
     @app.post("/api/v1/projects/{project_id}/join")
-    async def join_project(project_id: str) -> dict[str, bool]:
+    async def join_project(project_id: str) -> dict[str, bool]:  # noqa: ARG001
         return {"ok": True}
 
     @app.get("/web-api/v1/auth/2fa/setup/totp")
@@ -71,14 +85,38 @@ def _build_client(user: _User | None = None) -> TestClient:
     async def health() -> dict[str, bool]:
         return {"ok": True}
 
-    app.add_middleware(TwoFactorEnforcementMiddleware)
-    if user is not None:
-        app.add_middleware(_UserStateMiddleware, user=user)
+    captured_user = user
+
+    async def _resolver(user_id: UUID) -> _User | None:
+        if captured_user is not None and captured_user.id == user_id:
+            return captured_user  # type: ignore[return-value]
+        return None
+
+    async def _audit_writer(**_kwargs: Any) -> None:
+        # Silenced in unit tests — the integration test exercises the
+        # real audit writer end-to-end against Postgres.
+        return None
+
+    app.add_middleware(
+        TwoFactorEnforcementMiddleware,
+        user_resolver=_resolver,
+        audit_writer=_audit_writer,
+    )
+    app.add_middleware(_PrincipalStateMiddleware, user=user)
     return TestClient(app)
+
+
+def _enabled_user() -> _User:
+    return _User(id=uuid.uuid4(), two_factor_enabled=True)
+
+
+def _unenrolled_user() -> _User:
+    return _User(id=uuid.uuid4(), two_factor_enabled=False)
 
 
 def _cooldown_user() -> _User:
     return _User(
+        id=uuid.uuid4(),
         two_factor_enabled=True,
         two_factor_reset_cooldown_until=datetime.now(UTC) + timedelta(hours=1),
     )
@@ -91,17 +129,17 @@ def test_unauthenticated_request_passes_through() -> None:
 
 
 def test_user_without_2fa_blocked_on_protected_endpoint() -> None:
-    response = _build_client(_User(two_factor_enabled=False)).get("/api/v1/projects")
+    response = _build_client(_unenrolled_user()).get("/api/v1/projects")
 
     assert response.status_code == 403
     assert response.json() == {
         "detail": "2FA enrollment required",
-        "next_action": "/2fa/setup/totp",
+        "next_action": "/web-api/v1/auth/2fa/setup/totp",
     }
 
 
 def test_user_without_2fa_can_access_2fa_setup() -> None:
-    response = _build_client(_User(two_factor_enabled=False)).get(
+    response = _build_client(_unenrolled_user()).get(
         "/web-api/v1/auth/2fa/setup/totp"
     )
 
@@ -109,7 +147,7 @@ def test_user_without_2fa_can_access_2fa_setup() -> None:
 
 
 def test_user_with_2fa_can_access_protected_endpoint() -> None:
-    response = _build_client(_User(two_factor_enabled=True)).get("/api/v1/projects")
+    response = _build_client(_enabled_user()).get("/api/v1/projects")
 
     assert response.status_code == 200
 
@@ -154,6 +192,7 @@ def test_user_in_2fa_cooldown_can_view_projects() -> None:
 
 def test_2fa_disabled_after_cooldown_expires() -> None:
     user = _User(
+        id=uuid.uuid4(),
         two_factor_enabled=True,
         two_factor_reset_cooldown_until=datetime.now(UTC) - timedelta(seconds=1),
     )
@@ -164,6 +203,19 @@ def test_2fa_disabled_after_cooldown_expires() -> None:
 
 
 def test_health_endpoint_bypassed() -> None:
-    response = _build_client(_User(two_factor_enabled=False)).get("/health")
+    response = _build_client(_unenrolled_user()).get("/health")
 
     assert response.status_code == 200
+
+
+def test_soft_deleted_user_is_failed_closed() -> None:
+    user = _User(
+        id=uuid.uuid4(),
+        two_factor_enabled=True,
+        deleted_at=datetime.now(UTC),
+    )
+
+    response = _build_client(user).get("/api/v1/projects")
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "2FA enrollment required"

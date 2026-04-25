@@ -1,26 +1,73 @@
-"""2FA enrollment and reset-cooldown enforcement middleware (FR-069, FR-073)."""
+"""2FA enrollment and reset-cooldown enforcement middleware (FR-069, FR-073).
+
+T155 polish wiring (this revision)
+----------------------------------
+The middleware reads ``request.state.principal`` (a :class:`Principal`
+populated by :class:`AuthRouterMiddleware`) instead of the never-set
+``request.state.user`` attribute the original draft inspected. When a
+principal is present we open a fresh :class:`AsyncSessionLocal` and
+fetch the corresponding ``User`` row by ``principal.user_id`` so the
+existing ``two_factor_enabled`` / ``two_factor_reset_cooldown_until``
+checks have real data to evaluate (Option A in the T155 polish brief —
+chosen over a translator middleware to keep DB work in one place).
+
+Fail-closed posture
+~~~~~~~~~~~~~~~~~~~
+If the ``users`` row is missing or carries ``deleted_at IS NOT NULL``
+we treat the request as if 2FA enrollment is required. The principal
+came from the auth router which already validated the session cookie,
+so a missing ORM row is a corruption / race condition we fail closed
+on rather than silently grant. Returning 403 ``2FA enrollment required``
+keeps the user experience consistent and gives the security audit a
+single, distinct telemetry signal to track.
+
+Forensic audit
+~~~~~~~~~~~~~~
+Every block (403 enrollment + 423 cooldown) emits a structured WARNING
+log line with ``user_id``, ``path``, ``method``, ``reason`` and writes
+an ``auth.two_factor_enforcement_blocked`` platform-audit event so
+operators can detect attempted evasion patterns even when other audit
+hooks remain silent.
+"""
 
 from __future__ import annotations
 
+import logging
 import math
 import re
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Final
+from typing import Any, Final
+from uuid import UUID
 
+import sqlalchemy as sa
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.types import ASGIApp
 
 from echoroo.core.auth_paths import PUBLIC_AUTH_PATHS
+from echoroo.core.database import AsyncSessionLocal
 from echoroo.models.user import User
+from echoroo.services.audit_service import AuditLogService
+
+logger = logging.getLogger(__name__)
+
 
 DEFAULT_ALLOWLIST_PATHS: Final[tuple[str, ...]] = ("/health", "/metrics")
 TWO_FACTOR_SETUP_PATH: Final[str] = "/web-api/v1/auth/2fa/setup/totp"
+"""Module-public alias kept for callers that already imported it.
+
+The constant is a member of :data:`PUBLIC_AUTH_PATHS` and is therefore
+already covered by the public-allowlist short-circuit. The middleware
+no longer references it directly because doing so would be dead code.
+"""
+
 PASSWORD_RESET_CONFIRM_PATH: Final[str] = "/web-api/v1/auth/password-reset/confirm"
 PASSWORD_RESET_CONFIRM_CACHE_CONTROL: Final[str] = "no-store, max-age=0"
+
+ENFORCEMENT_AUDIT_ACTION: Final[str] = "auth.two_factor_enforcement_blocked"
 
 
 @dataclass(frozen=True)
@@ -78,10 +125,17 @@ class TwoFactorEnforcementMiddleware(BaseHTTPMiddleware):
         cooldown_restricted_patterns: Sequence[CooldownRestrictedPattern] = (
             COOLDOWN_RESTRICTED_PATTERNS
         ),
+        user_resolver: Callable[[UUID], Awaitable[User | None]] | None = None,
+        audit_writer: Callable[..., Awaitable[None]] | None = None,
     ) -> None:
         super().__init__(app)
         self.allowlist_paths = frozenset(allowlist_paths)
         self.cooldown_restricted_patterns = tuple(cooldown_restricted_patterns)
+        # ``user_resolver`` and ``audit_writer`` are pluggable so the
+        # existing fast unit tests can avoid spinning up Postgres while
+        # the production wiring goes through ``AsyncSessionLocal``.
+        self._user_resolver = user_resolver or _default_user_resolver
+        self._audit_writer = audit_writer or _default_audit_writer
 
     async def dispatch(
         self,
@@ -90,24 +144,36 @@ class TwoFactorEnforcementMiddleware(BaseHTTPMiddleware):
     ) -> Response:
         path = request.url.path
 
-        if (
-            path in PUBLIC_AUTH_PATHS
-            or path == TWO_FACTOR_SETUP_PATH
-            or path in self.allowlist_paths
-        ):
+        # Public allowlist short-circuit. ``TWO_FACTOR_SETUP_PATH`` is a
+        # member of ``PUBLIC_AUTH_PATHS`` so we no longer need a
+        # standalone branch for it (T155 polish — dead-branch removal).
+        if path in PUBLIC_AUTH_PATHS or path in self.allowlist_paths:
             return await _call_next_with_response_polish(request, call_next)
 
-        user = getattr(request.state, "user", None)
-        if user is None:
+        principal = getattr(request.state, "principal", None)
+        if principal is None or principal.user_id is None:
+            # No authenticated principal — auth router already passed
+            # the request through, so there is no enforcement context.
             return await _call_next_with_response_polish(request, call_next)
+
+        user = await self._user_resolver(principal.user_id)
+        if user is None or user.deleted_at is not None:
+            # Fail-closed: see module docstring. The principal is
+            # internally consistent (signature + security_stamp ok) but
+            # the ORM row is missing or soft-deleted — surface the same
+            # 403 the enrollment-required path uses so a consistent
+            # signal reaches both clients and the audit chain.
+            return await self._block_enrollment(
+                request=request,
+                user_id=principal.user_id,
+                reason="user_missing_or_deleted",
+            )
 
         if _two_factor_enrollment_required(user):
-            return JSONResponse(
-                status_code=403,
-                content={
-                    "detail": "2FA enrollment required",
-                    "next_action": "/2fa/setup/totp",
-                },
+            return await self._block_enrollment(
+                request=request,
+                user_id=user.id,
+                reason="two_factor_enrollment_required",
             )
 
         cooldown_until = _cooldown_until(user)
@@ -117,13 +183,10 @@ class TwoFactorEnforcementMiddleware(BaseHTTPMiddleware):
         now = datetime.now(UTC)
         if cooldown_until > now and self._is_cooldown_restricted(request):
             retry_after_seconds = max(1, math.ceil((cooldown_until - now).total_seconds()))
-            return JSONResponse(
-                status_code=423,
-                headers={"Retry-After": str(retry_after_seconds)},
-                content={
-                    "detail": "2FA reset cooldown active",
-                    "retry_after_seconds": retry_after_seconds,
-                },
+            return await self._block_cooldown(
+                request=request,
+                user_id=user.id,
+                retry_after_seconds=retry_after_seconds,
             )
 
         return await _call_next_with_response_polish(request, call_next)
@@ -135,6 +198,99 @@ class TwoFactorEnforcementMiddleware(BaseHTTPMiddleware):
             restricted.matches(path=path, method=method)
             for restricted in self.cooldown_restricted_patterns
         )
+
+    # -- block helpers ----------------------------------------------------
+
+    async def _block_enrollment(
+        self,
+        *,
+        request: Request,
+        user_id: UUID,
+        reason: str,
+    ) -> JSONResponse:
+        logger.warning(
+            "2FA enforcement blocked request",
+            extra={
+                "user_id": str(user_id),
+                "path": request.url.path,
+                "method": request.method.upper(),
+                "reason": reason,
+            },
+        )
+        await self._safe_audit(
+            request=request,
+            user_id=user_id,
+            detail={
+                "reason": reason,
+                "status_code": 403,
+                "path": request.url.path,
+                "method": request.method.upper(),
+            },
+        )
+        return JSONResponse(
+            status_code=403,
+            content={
+                "detail": "2FA enrollment required",
+                "next_action": "/web-api/v1/auth/2fa/setup/totp",
+            },
+        )
+
+    async def _block_cooldown(
+        self,
+        *,
+        request: Request,
+        user_id: UUID,
+        retry_after_seconds: int,
+    ) -> JSONResponse:
+        logger.warning(
+            "2FA enforcement blocked request",
+            extra={
+                "user_id": str(user_id),
+                "path": request.url.path,
+                "method": request.method.upper(),
+                "reason": "two_factor_reset_cooldown_active",
+            },
+        )
+        await self._safe_audit(
+            request=request,
+            user_id=user_id,
+            detail={
+                "reason": "two_factor_reset_cooldown_active",
+                "status_code": 423,
+                "path": request.url.path,
+                "method": request.method.upper(),
+                "retry_after_seconds": retry_after_seconds,
+            },
+        )
+        return JSONResponse(
+            status_code=423,
+            headers={"Retry-After": str(retry_after_seconds)},
+            content={
+                "detail": "2FA reset cooldown active",
+                "retry_after_seconds": retry_after_seconds,
+            },
+        )
+
+    async def _safe_audit(
+        self,
+        *,
+        request: Request,
+        user_id: UUID,
+        detail: dict[str, Any],
+    ) -> None:
+        """Best-effort audit write — never raise out of the middleware."""
+        try:
+            await self._audit_writer(
+                request=request,
+                actor_user_id=user_id,
+                action=ENFORCEMENT_AUDIT_ACTION,
+                detail=detail,
+            )
+        except Exception:  # pragma: no cover - defensive
+            logger.exception(
+                "audit write failed for 2FA enforcement block",
+                extra={"user_id": str(user_id), "path": request.url.path},
+            )
 
 
 def _two_factor_enrollment_required(user: User) -> bool:
@@ -160,10 +316,59 @@ async def _call_next_with_response_polish(
     return response
 
 
+async def _default_user_resolver(user_id: UUID) -> User | None:
+    """Open a fresh session and load the ``User`` row by id."""
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(sa.select(User).where(User.id == user_id))
+        return result.scalar_one_or_none()
+
+
+async def _default_audit_writer(
+    *,
+    request: Request,
+    actor_user_id: UUID,
+    action: str,
+    detail: dict[str, Any],
+) -> None:
+    """Open a fresh session and append a platform-audit row.
+
+    Mirrors the pattern in :func:`echoroo.api.web_v1.auth._write_platform_audit`.
+    Failures are swallowed by the caller (``_safe_audit``) — the audit
+    write is forensic, never a hard dependency of the enforcement
+    response itself.
+    """
+    request_id = (
+        request.headers.get("x-request-id")
+        or getattr(request.state, "request_id", None)
+        or "internal"
+    )
+    ip = (request.client.host or "0.0.0.0") if request.client is not None else "0.0.0.0"
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        ip = forwarded.split(",", 1)[0].strip() or ip
+    user_agent = request.headers.get("user-agent") or ""
+    async with AsyncSessionLocal() as session:
+        try:
+            audit = AuditLogService(session)
+            await audit.write_platform_event(
+                actor_user_id=actor_user_id,
+                action=action,
+                request_id=str(request_id),
+                ip=ip,
+                user_agent=user_agent,
+                detail=detail,
+            )
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
+
+
 __all__ = [
     "COOLDOWN_RESTRICTED_PATTERNS",
     "CooldownRestrictedPattern",
     "DEFAULT_ALLOWLIST_PATHS",
+    "ENFORCEMENT_AUDIT_ACTION",
     "PASSWORD_RESET_CONFIRM_CACHE_CONTROL",
     "PASSWORD_RESET_CONFIRM_PATH",
     "TWO_FACTOR_SETUP_PATH",

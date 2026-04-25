@@ -10,6 +10,8 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from echoroo.api.v1 import api_router
 from echoroo.api.web_v1 import web_v1_router
+from echoroo.core.auth_paths import PUBLIC_AUTH_PATHS
+from echoroo.core.database import AsyncSessionLocal
 from echoroo.core.exceptions import (
     AppException,
     app_exception_handler,
@@ -18,6 +20,7 @@ from echoroo.core.exceptions import (
 )
 from echoroo.core.redis import close_redis_connection, get_redis_connection
 from echoroo.core.settings import get_settings
+from echoroo.middleware.auth_router import AuthRouterConfig, AuthRouterMiddleware
 from echoroo.middleware.csrf import CsrfConfig, CsrfMiddleware
 from echoroo.middleware.logging import RequestLoggingMiddleware
 from echoroo.middleware.rate_limit import close_rate_limiter, init_rate_limiter
@@ -28,6 +31,10 @@ from echoroo.middleware.security import (
     get_security_config_for_environment,
 )
 from echoroo.middleware.two_factor_enforcement import TwoFactorEnforcementMiddleware
+from echoroo.services.session_verification import (
+    JwtSessionVerifier,
+    StubApiKeyVerifier,
+)
 
 settings = get_settings()
 
@@ -97,6 +104,38 @@ def create_app() -> FastAPI:
         ),
     )
     app.add_middleware(TwoFactorEnforcementMiddleware)
+
+    # AuthRouter must run BEFORE TwoFactorEnforcement so the latter can
+    # read ``request.state.principal``. Starlette's ``add_middleware``
+    # is LIFO — the last call wraps the chain outermost — so add the
+    # auth router AFTER the 2FA enforcement middleware here.
+    #
+    # ``programmatic_prefix`` is set to a sentinel that does not match
+    # any real path so ``/api/v1/*`` continues to authenticate via the
+    # legacy :mod:`echoroo.middleware.auth` Depends helpers (Phase 15
+    # T950+ swaps in the real KMS-backed API key verifier and flips
+    # this prefix back to ``/api/v1``).
+    #
+    # ``/web-api/v1/auth/logout`` is added to the auth-router allowlist
+    # because it is the one session-management endpoint that operates
+    # purely off the session cookie + CSRF token — it intentionally
+    # does NOT carry an access JWT (the user is logging out, after
+    # all). It is *not* in ``PUBLIC_AUTH_PATHS`` so CSRF enforcement
+    # still applies.
+    auth_router_allowlist = (
+        *PUBLIC_AUTH_PATHS,
+        "/web-api/v1/auth/logout",
+    )
+    app.add_middleware(
+        AuthRouterMiddleware,
+        config=AuthRouterConfig(
+            api_key_verifier=StubApiKeyVerifier(),
+            session_verifier=JwtSessionVerifier(AsyncSessionLocal),
+            programmatic_prefix="/__auth_router_disabled_until_phase15__",
+            session_cookie_name=settings.web_session_cookie_name,
+            public_path_allowlist=auth_router_allowlist,
+        ),
+    )
 
     # Exception handlers
     app.add_exception_handler(AppException, app_exception_handler)  # type: ignore[arg-type]
