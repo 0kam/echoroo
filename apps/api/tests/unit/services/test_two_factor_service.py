@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import struct
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pyotp
@@ -16,7 +18,9 @@ from echoroo.services.two_factor_service import (
     BACKUP_CODE_LENGTH,
     TOTP_SECRET_LENGTH,
     TwoFactorEnrollmentArtifacts,
+    TwoFactorError,
     TwoFactorInvalidCodeError,
+    TwoFactorLockedError,
     TwoFactorRateLimitedError,
     TwoFactorService,
 )
@@ -35,12 +39,14 @@ class _FakeSession:
     def __init__(self, user: User) -> None:
         self.user = user
         self.commits = 0
+        self.committed_two_factor_enabled = user.two_factor_enabled
 
     def add(self, _obj: Any) -> None:
         return None
 
     async def commit(self) -> None:
         self.commits += 1
+        self.committed_two_factor_enabled = self.user.two_factor_enabled
 
     async def execute(self, statement: Any, _params: Any = None) -> _Result:
         if isinstance(statement, Select):
@@ -192,6 +198,76 @@ async def test_totp_rate_limit_raises_on_sixth_failure() -> None:
 
     with pytest.raises(TwoFactorRateLimitedError):
         await service.verify_totp(user, "not-a-code")
+
+
+@pytest.mark.asyncio
+async def test_backup_code_rate_limit_raises_on_fourth_failure() -> None:
+    user = _user()
+    service, _backup_codes = await _confirmed_user(user)
+
+    for _ in range(3):
+        assert await service.verify_backup_code(user, "not-a-backup-code") is False
+
+    with pytest.raises(TwoFactorRateLimitedError):
+        await service.verify_backup_code(user, "not-a-backup-code")
+
+
+@pytest.mark.asyncio
+async def test_totp_consecutive_lockout_raises_after_ten_failures() -> None:
+    user = _user()
+    service, _backup_codes = await _confirmed_user(user)
+
+    for _ in range(5):
+        assert await service.verify_totp(user, "not-a-code") is False
+
+    for _ in range(4):
+        with pytest.raises(TwoFactorRateLimitedError):
+            await service.verify_totp(user, "not-a-code")
+
+    with pytest.raises(TwoFactorLockedError):
+        await service.verify_totp(user, "not-a-code")
+
+    redis = service.redis
+    assert redis is not None
+    assert await redis.get(service._totp_lock_key(user.id)) == "1"
+
+
+def test_decrypt_totp_secret_rejects_malformed_payloads() -> None:
+    malformed_payloads = [
+        b"",
+        b"x" * 15,
+        struct.pack("<I", 0) + b"x" * 13,
+        struct.pack("<I", 1) + b"x" * 13,
+    ]
+
+    for payload in malformed_payloads:
+        with pytest.raises(TwoFactorError, match="malformed"):
+            two_factor_module._decrypt_totp_secret(payload)
+
+
+@pytest.mark.asyncio
+async def test_audit_event_written_only_after_commit_for_confirm_enrollment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user = _user()
+    fake_session = _FakeSession(user)
+    service = TwoFactorService(fake_session, _FakeRedis())  # type: ignore[arg-type]
+    artifacts = await service.begin_enrollment(user)
+
+    async def audit_side_effect(*_args: Any, **_kwargs: Any) -> None:
+        assert fake_session.commits == 1
+        assert fake_session.committed_two_factor_enabled is True
+
+    audit = AsyncMock(side_effect=audit_side_effect)
+    monkeypatch.setattr(service, "_record_audit_event", audit)
+
+    await service.confirm_enrollment(user, artifacts.secret, pyotp.TOTP(artifacts.secret).now())
+
+    assert fake_session.commits == 1
+    assert [call.kwargs["action"] for call in audit.call_args_list] == [
+        "two_factor.backup_code_remaining",
+        "two_factor.enroll_confirmed",
+    ]
 
 
 @pytest.mark.asyncio

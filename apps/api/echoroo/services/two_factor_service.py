@@ -162,6 +162,8 @@ def _encrypt_totp_secret(secret: str) -> bytes:
 
 
 def _decrypt_totp_secret(payload: bytes) -> str:
+    # TODO Phase 6 T080: read users.two_factor_secret_dek_version and route to
+    # the correct historical KMS key alias when CMK rotation is implemented.
     if len(payload) < WRAPPED_DEK_LEN_BYTES + AES_GCM_NONCE_BYTES:
         raise TwoFactorError("encrypted TOTP secret payload is malformed")
 
@@ -237,6 +239,7 @@ class TwoFactorService:
         await self._take_setup_lock(user.id)
 
         if not _totp(secret).verify(_normalize_totp_code(totp_code), valid_window=TOTP_VALID_WINDOW):
+            await self.db.commit()
             await self._record_audit_event(
                 actor_id=user.id,
                 target_user=user,
@@ -256,19 +259,19 @@ class TwoFactorService:
         self.db.add(user)
 
         await self._clear_totp_failures(user.id)
-        await self._record_audit_event(
-            actor_id=user.id,
-            target_user=user,
-            action="two_factor.enroll_confirmed",
-            detail={"backup_code_count": len(backup_codes), "dek_version": TOTP_DEK_VERSION},
-        )
+        await self.db.commit()
         await self._record_audit_event(
             actor_id=user.id,
             target_user=user,
             action="two_factor.backup_code_remaining",
             detail={"remaining": len(backup_codes)},
         )
-        await self.db.commit()
+        await self._record_audit_event(
+            actor_id=user.id,
+            target_user=user,
+            action="two_factor.enroll_confirmed",
+            detail={"backup_code_count": len(backup_codes), "dek_version": TOTP_DEK_VERSION},
+        )
         return backup_codes
 
     async def verify_totp(self, user: User, code: str) -> bool:
@@ -341,14 +344,18 @@ class TwoFactorService:
                 BACKUP_FAIL_WINDOW_SECONDS,
             )
             if fail_count > BACKUP_FAIL_LIMIT:
+                await self.db.commit()
                 raise TwoFactorRateLimitedError("too many backup-code verification failures")
             if fail_count in {1, BACKUP_FAIL_LIMIT}:
+                await self.db.commit()
                 await self._record_audit_event(
                     actor_id=user.id,
                     target_user=user,
                     action="two_factor.verify_failed",
                     detail={"method": "backup_code", "failure_count": fail_count},
                 )
+            else:
+                await self.db.commit()
             return False
 
         remaining = [hashed for hashed in original_codes if hashed != matched_hash]
@@ -367,6 +374,7 @@ class TwoFactorService:
         locked_user.two_factor_backup_codes_hashed = remaining
         user.two_factor_backup_codes_hashed = remaining
         await self._clear_backup_failures(user.id)
+        await self.db.commit()
         await self._record_audit_event(
             actor_id=user.id,
             target_user=user,
@@ -379,17 +387,10 @@ class TwoFactorService:
             action="two_factor.backup_code_remaining",
             detail={"remaining": len(remaining)},
         )
-        await self.db.commit()
         return True
 
     async def reset_user_two_factor(self, user: User, *, actor_id: UUID, reason: str) -> None:
         """Admin-driven 2FA reset primitive."""
-        await self._record_audit_event(
-            actor_id=actor_id,
-            target_user=user,
-            action="two_factor.reset_initiated",
-            detail={"target_user_id": str(user.id), "reason": reason},
-        )
         user.two_factor_secret_encrypted = None
         user.two_factor_secret_dek_version = None
         user.two_factor_backup_codes_hashed = None
@@ -399,13 +400,13 @@ class TwoFactorService:
         self.db.add(user)
         await self._clear_totp_failures(user.id)
         await self._clear_backup_failures(user.id)
+        await self.db.commit()
         await self._record_audit_event(
             actor_id=actor_id,
             target_user=user,
             action="two_factor.reset_completed",
             detail={"target_user_id": str(user.id), "reason": reason, "cooldown_hours": 72},
         )
-        await self.db.commit()
 
     @staticmethod
     def is_two_factor_required(user: User) -> bool:

@@ -39,6 +39,7 @@ dependencies = [
     "joblib>=1.4.0",
     # 006 permissions redesign: 2FA / WebAuthn / KMS envelope encryption
     "pyotp>=2.9.0,<3.0",
+    # webauthn: scheduled for use in T146 WebAuthnService
     "webauthn>=2.5.0,<3.0",
     "cryptography>=44.0,<46.0",
 ]
