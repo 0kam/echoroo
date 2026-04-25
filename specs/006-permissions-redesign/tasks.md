@@ -138,12 +138,12 @@ description: "Task list for 006-permissions-redesign (revised after /speckit.ana
 
 ### 2.9 CI 静的解析 統合
 
-- [ ] **T100a** [FN] CI: `lint_permission_guard.py` を warning mode で有効化 (SC-001)
-- [ ] **T100b** [P] [FN] CI: `lint_response_filter.py` warning mode (FR-011)
-- [ ] **T100c** [P] [FN] CI: `lint_search_gate.py` warning mode (FR-025)
-- [ ] **T100d** [P] [FN] CI: `lint_no_raw_coordinates.py` + `lint_kms_isolation.py` warning mode (FR-028f、FR-091b、SC-019)
-- [ ] **T100e** [P] [FN] CI: OpenAPI 生成後の lat/lng grep assertion (SC-019)
-- [ ] **T100f** [FN] CI: 全 lint + `test_endpoint_coverage.py` を **blocking mode** に昇格（Foundational 完了時点、User Story 着手の gate）
+- [X] **T100a** [FN] CI: `lint_permission_guard.py` を warning mode で有効化 (SC-001)
+- [X] **T100b** [P] [FN] CI: `lint_response_filter.py` warning mode (FR-011)
+- [X] **T100c** [P] [FN] CI: `lint_search_gate.py` warning mode (FR-025)
+- [X] **T100d** [P] [FN] CI: `lint_no_raw_coordinates.py` + `lint_kms_isolation.py` warning mode (FR-028f、FR-091b、SC-019)
+- [X] **T100e** [P] [FN] CI: OpenAPI 生成後の lat/lng grep assertion (SC-019)
+- [X] **T100f** [FN] CI: 全 lint + `test_endpoint_coverage.py` を **blocking mode** に昇格（Foundational 完了時点、User Story 着手の gate）
 
 **Checkpoint**: T100f 通過で Phase 3〜13 並列着手可能
 

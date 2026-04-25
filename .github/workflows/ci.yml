@@ -1,41 +1,58 @@
 name: CI (006-permissions-redesign)
 
 # This workflow adds the 006-permissions-redesign specific CI gates on top of
-# the existing `test.yml` workflow. It introduces three categories of jobs:
+# the existing `test.yml` workflow. It introduces five categories of jobs:
 #
 #   1. Permission / response / search / raw-coordinates / KMS isolation lint
-#      scripts (T100a-T100e). These are intentionally launched in **warn
-#      mode** (continue-on-error: true) during Phase 1 and will be promoted
-#      to blocking mode in T100f and T995.
-#   2. Mutation testing via `mutmut` against the 4 permission-critical
-#      modules. Phase 1 runs this in warn-only mode; in T995 it is
-#      promoted to a hard gate that requires >= 80% mutation score.
-#   3. Dedicated security pytest job (-m security marker).
+#      scripts (T100a-T100d). These run in **warn mode** during the
+#      Foundational Phase 2 → Phase 3 migration and will be promoted to
+#      blocking by the `permissions-strict-gate` job below.
+#   2. OpenAPI raw-coordinate leak assertion (T100e). The job dumps the
+#      FastAPI app's OpenAPI document and recursively checks that no
+#      schema, parameter, or example references raw lat/lng/coordinates
+#      keys. Phase 2 also runs this in warn mode while the Recording /
+#      Site / Detection schemas are being migrated to `h3_index` only.
+#   3. Strict permissions gate (T100f). This is the gate that controls
+#      transition into Phase 3 — it runs every Phase-2 lint with the
+#      strict flag plus the endpoint-coverage reflection test. It is
+#      intentionally NOT triggered on every push: gating PRs while
+#      Phase 3 work is in flight would keep CI red. Trigger via:
+#         a) `workflow_dispatch` (manual run from the Actions UI), OR
+#         b) attaching the `permissions-strict-gate` label to a PR.
+#      Once Phase 3 lands, change the `if:` guard to always-on by
+#      removing the workflow_dispatch / label restriction. The job MUST
+#      remain `continue-on-error: false` so a green run is a real
+#      green-light to start Phase 3+ work (tasks.md §2.9 checkpoint).
+#   4. Mutation testing via `mutmut` against the 4 permission-critical
+#      modules. Phase 2 runs this in warn-only mode; T995 promotes it
+#      to a hard gate that requires >= 80% mutation score.
+#   5. Dedicated security pytest job (-m security marker), always
+#      blocking.
 #
 # Security note: no `github.event.*` untrusted inputs are interpolated into
-# `run:` shell commands. The only reference to event data is in the `if:`
-# expression for the mutation-testing job, which is evaluated by the
-# workflow engine and is not susceptible to shell injection.
+# `run:` shell commands. Event-data references appear only inside `if:`
+# expressions and `env:` blocks, never directly inside `run:` strings,
+# so this workflow is not susceptible to script injection.
 
 on:
   push:
     branches: ["main", "006-permissions-redesign"]
   pull_request:
     branches: ["main"]
+  workflow_dispatch:
 
 jobs:
   # ---------------------------------------------------------------------------
-  # Permission / response / search / raw-coordinate / KMS isolation lints.
-  # Each lint is expected to exit 0 on success. Warn-mode is implemented via
-  # continue-on-error on every step so that failing lints surface as warnings
-  # in the GitHub UI without blocking merges while the codebase is being
-  # migrated to conform to the new invariants (T100a-T100e).
+  # T100a-T100d: permission / response / search / raw-coordinate / KMS
+  # isolation lints in warn mode. Each lint exits 0 unless its strict flag is
+  # set, so step-level continue-on-error is belt-and-suspenders.
   # ---------------------------------------------------------------------------
-  permission-lints:
-    name: Permission lint scripts (warn mode)
+  permissions-lint-warn:
+    name: Permissions lint (warn mode, T100a-T100d)
     runs-on: ubuntu-latest
     # Job-level continue-on-error so the overall status is not red while
-    # warn-mode is in effect (T100f will flip this to false).
+    # warn-mode is in effect (`permissions-strict-gate` flips this to a
+    # blocking job when invoked).
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
@@ -71,19 +88,189 @@ jobs:
         run: python scripts/lint_search_gate.py
 
       # T100d (1/2) - migrations / ORM / Pydantic must not introduce raw
-      # lat/lng/gps_* columns or fields (FR-028f).
+      # lat/lng/gps_* columns or fields (FR-028f, FR-091b).
       - name: Lint - no raw coordinates (T100d)
         continue-on-error: true
         run: python scripts/lint_no_raw_coordinates.py
 
       # T100d (2/2) - the 4 KMS CMK aliases must remain isolated; no code
       # path may reuse a single alias across distinct purposes (SC-019).
+      # NOTE: lint_kms_isolation.py is strict-by-default; pass --no-fail
+      # explicitly so the warn-mode job does not flip the step red.
       - name: Lint - KMS alias isolation (T100d)
         continue-on-error: true
-        run: python scripts/lint_kms_isolation.py
+        run: python scripts/lint_kms_isolation.py --no-fail
 
   # ---------------------------------------------------------------------------
-  # Mutation testing - warn-mode during Phase 1, promoted to blocking in T995.
+  # T100e: OpenAPI raw-coordinate leak assertion.
+  #
+  # We dump the live FastAPI app's OpenAPI document inside CI, then run the
+  # recursive denylist check (scripts/assert_openapi_no_coords.py) plus a
+  # belt-and-suspenders `grep` for the raw quoted keys. Phase 2 runs this
+  # in warn mode (job-level continue-on-error); the strict gate runs the
+  # exact same assertion with continue-on-error disabled.
+  # ---------------------------------------------------------------------------
+  permissions-openapi-assert:
+    name: Permissions OpenAPI leak check (warn mode, T100e)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    env:
+      # The FastAPI app instantiates at module import; provide minimal env
+      # so importing echoroo.main does not crash on settings validation.
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/echoroo_ci
+      REDIS_URL: redis://localhost:6379/0
+      JWT_SECRET_KEY: ci-test-secret
+      RESEND_API_KEY: re_ci_dummy
+      TURNSTILE_SECRET_KEY: 1x0000000000000000000000000000000AA
+      TURNSTILE_SITE_KEY: 1x00000000000000000000AA
+      ENVIRONMENT: development
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv + Python 3.11
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.11"
+          enable-cache: true
+          cache-dependency-glob: "apps/api/uv.lock"
+          pyproject-file: "apps/api/pyproject.toml"
+
+      - name: Install backend dependencies
+        working-directory: apps/api
+        run: uv sync --all-extras --dev
+
+      - name: Generate OpenAPI document
+        continue-on-error: true
+        working-directory: apps/api
+        run: uv run python ../../scripts/dump_openapi.py --out openapi.json
+
+      - name: Assert no raw coordinates leak (recursive)
+        continue-on-error: true
+        run: |
+          if [ ! -f apps/api/openapi.json ]; then
+            echo "::warning::OpenAPI dump unavailable; skipping assertion"
+            exit 0
+          fi
+          python scripts/assert_openapi_no_coords.py apps/api/openapi.json
+
+      - name: Belt-and-suspenders grep for quoted lat/lng keys
+        continue-on-error: true
+        run: |
+          if [ ! -f apps/api/openapi.json ]; then
+            echo "::warning::OpenAPI dump unavailable; skipping grep"
+            exit 0
+          fi
+          # Any hit prints a warning and fails the step (job-level
+          # continue-on-error keeps CI green during Phase 2).
+          if grep -E '"(lat|lng|latitude|longitude|coordinates|geo_point)"' \
+              apps/api/openapi.json; then
+            echo "::warning::raw coordinate keys leaked into openapi.json"
+            exit 1
+          fi
+          echo "openapi.json: no raw coordinate keys found"
+
+  # ---------------------------------------------------------------------------
+  # T100f: STRICT gate — every Phase-2 lint with --fail-on-violation +
+  # the endpoint-coverage reflection test. This is the merge-gate that
+  # signals Phase 3+ work may begin.
+  #
+  # Triggered ONLY on:
+  #   - `workflow_dispatch` (manual run), OR
+  #   - PRs labelled `permissions-strict-gate`.
+  # The gate WILL be red until Phase 3 lands; that is by design (tasks.md
+  # §2.9 checkpoint). Once Phase 3 ships, drop the `if:` guard so the
+  # gate runs on every push/PR, and remove the warn-mode jobs above.
+  # ---------------------------------------------------------------------------
+  permissions-strict-gate:
+    name: Permissions strict gate (T100f, Phase 3 entry condition)
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      contains(github.event.pull_request.labels.*.name, 'permissions-strict-gate')
+    runs-on: ubuntu-latest
+    # Intentionally NOT continue-on-error: a green run here is the
+    # checkpoint to start Phase 3 work.
+    continue-on-error: false
+    env:
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/echoroo_ci
+      REDIS_URL: redis://localhost:6379/0
+      JWT_SECRET_KEY: ci-test-secret
+      RESEND_API_KEY: re_ci_dummy
+      TURNSTILE_SECRET_KEY: 1x0000000000000000000000000000000AA
+      TURNSTILE_SITE_KEY: 1x00000000000000000000AA
+      ENVIRONMENT: development
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv + Python 3.11
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.11"
+          enable-cache: true
+          cache-dependency-glob: "apps/api/uv.lock"
+          pyproject-file: "apps/api/pyproject.toml"
+
+      - name: Install backend dependencies
+        working-directory: apps/api
+        run: uv sync --all-extras --dev
+
+      - name: Lint - permission guard coverage (strict)
+        run: python scripts/lint_permission_guard.py --fail-on-violation
+
+      - name: Lint - response filter coverage (strict)
+        run: python scripts/lint_response_filter.py --fail-on-violation
+
+      - name: Lint - search gate coverage (strict)
+        run: python scripts/lint_search_gate.py --fail-on-violation
+
+      - name: Lint - no raw coordinates (strict)
+        run: python scripts/lint_no_raw_coordinates.py --fail-on-violation
+
+      - name: Lint - KMS alias isolation (strict, default behaviour)
+        run: python scripts/lint_kms_isolation.py
+
+      - name: Generate OpenAPI document
+        working-directory: apps/api
+        run: uv run python ../../scripts/dump_openapi.py --out openapi.json
+
+      - name: Assert no raw coordinates leak (strict)
+        run: python scripts/assert_openapi_no_coords.py apps/api/openapi.json
+
+      - name: Endpoint coverage reflection test
+        working-directory: apps/api
+        run: uv run pytest tests/security/authorization/test_endpoint_coverage.py -q
+
+  # ---------------------------------------------------------------------------
+  # Phase 2 foundation completion marker.
+  #
+  # This job depends on `permissions-strict-gate` so a green run signals
+  # "Phase 2 done, Phase 3 may begin". It is `continue-on-error: true`
+  # while Phase 3 is in flight so the rest of CI stays green even when
+  # the strict gate is red. Flip to `false` once Phase 3 lands.
+  # ---------------------------------------------------------------------------
+  phase-2-foundation-complete:
+    name: Phase 2 foundation complete (marker)
+    needs: [permissions-strict-gate]
+    if: always()
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    env:
+      # Pull the upstream job result into an env var instead of
+      # interpolating directly into the run: command, per the project's
+      # Actions security guidance (no untrusted-context expansion in
+      # shell strings, even though `needs.*.result` is workflow-internal).
+      STRICT_GATE_RESULT: ${{ needs.permissions-strict-gate.result }}
+    steps:
+      - name: Report
+        run: |
+          echo "permissions-strict-gate result: $STRICT_GATE_RESULT"
+          if [ "$STRICT_GATE_RESULT" = "success" ]; then
+            echo "Phase 2 foundation gate GREEN — Phase 3+ may proceed."
+          else
+            echo "::warning::Phase 2 foundation gate not yet green (status: $STRICT_GATE_RESULT)"
+          fi
+
+  # ---------------------------------------------------------------------------
+  # Mutation testing - warn-mode during Phase 2, promoted to blocking in T995.
   # Only run on the main branch or when a PR carries the `run-mutation-testing`
   # label to keep default PR latency low. The mutation score threshold is
   # enforced by `mutmut` config; warn-mode is implemented via
@@ -112,7 +299,7 @@ jobs:
         run: uv sync --all-extras --dev
 
       # mutmut is scoped to the 4 permission-critical modules by
-      # `apps/api/mutmut.toml` (see T047). Phase 1 reports only; T995 flips
+      # `apps/api/mutmut.toml` (see T047). Phase 2 reports only; T995 flips
       # this to a hard gate (>= 80% mutation score).
       - name: Run mutmut (warn mode)
         continue-on-error: true

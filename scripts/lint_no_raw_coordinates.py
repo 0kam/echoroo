@@ -1,90 +1,246 @@
 #!/usr/bin/env python3
-"""Lint: raw latitude / longitude / gps_* keys must not leak from the API.
+"""Lint: raw latitude / longitude / gps_* names must not leak from the API.
 
-Enforces FR-028f (coordinate privacy): raw `lat`, `lng`, `latitude`,
-`longitude`, and `gps_*` fields must never appear in:
-    * API response models (`apps/api/echoroo/schemas/**/*.py`)
-    * FastAPI path-operation return annotations / response_model keywords
-    * OpenAPI contract YAML files
-    * Celery task payload schemas
+Enforces FR-028f / FR-091b / SC-019 (coordinate privacy): raw ``lat``,
+``lng``, ``latitude``, ``longitude``, ``coordinates``, ``geo_point`` and
+``gps_*`` identifiers must never appear as:
 
-Target pattern (regex-based):
-    * Scan `apps/api/echoroo/**/*.py`,
-      `apps/api/echoroo/**/*.yaml`, and
-      `specs/006-permissions-redesign/contracts/*.yaml`.
-    * Match the forbidden token set: `latitude`, `longitude`, `\blat\b`,
-      `\blng\b`, and any identifier starting with `gps_`.
-    * Skip whole files listed in the allowlist (default:
-      `scripts/allowlists/raw_coordinates_allowlist.txt`).
-    * Skip comment-only matches that reference `h3_index` or Markdown
-      documentation (handled in Phase 2).
+    * Pydantic model field names (class-level annotated attributes, or
+      ``Field(...)`` assignments).
+    * SQLAlchemy ``Column(...)`` / ``mapped_column(...)`` declarations.
+    * Dict-literal STRING keys (``{"lat": ...}``) — only string-literal
+      keys are checked so docstrings, URLs, and comments cannot trigger
+      false positives.
 
-See specs/006-permissions-redesign/research.md §18-E/F.
+Detection strategy (research §18-E/F, mirrors ``lint_search_gate.py``):
 
-Full implementation: T044 (Phase 2).
+    * Walk every ``apps/api/echoroo/**/*.py`` module plus the contracts
+      directory ``specs/006-permissions-redesign/contracts/`` (as YAML
+      text, not parsed AST).
+    * Parse Python files with the standard-library ``ast`` module and
+      flag the three categories above.
+    * Skip whole files listed in
+      ``scripts/allowlists/raw_coordinates_allowlist.txt``. The
+      allowlist hosts intentional uses (e.g. the Celery payload
+      validator, which enumerates the denylist as data).
+
+Exit codes:
+
+    0 — no violations (or not --fail-on-violation)
+    1 — at least one forbidden identifier found, with --fail-on-violation
+    2 — unexpected internal error
+
+Phase 2 status: lint IS implemented. CI wires it in warn-only mode in
+T100d; T100f flips it to hard-fail once Phase 3 has migrated all
+recording / site / detection schemas to ``h3_index`` only.
 """
 from __future__ import annotations
 
 import argparse
+import ast
 import re
 import sys
 from pathlib import Path
 
-# Forbidden token pattern. Phase 2 will refine the regex (e.g. word
-# boundaries, ignoring `h3_index`, honouring inline suppression pragmas).
-FORBIDDEN_PATTERN = re.compile(
-    r"\b(latitude|longitude|lat|lng)\b|\bgps_[A-Za-z0-9_]+",
+# Forbidden identifiers, matched as exact tokens.
+FORBIDDEN_NAMES: frozenset[str] = frozenset(
+    {
+        "lat",
+        "lng",
+        "latitude",
+        "longitude",
+        "coordinates",
+        "geo_point",
+    }
 )
 
-DEFAULT_SCAN_TARGETS: tuple[Path, ...] = (
-    Path("apps/api/echoroo"),
-    Path("specs/006-permissions-redesign/contracts"),
+# Forbidden prefixes (matched as ``name.startswith(prefix)``).
+FORBIDDEN_PREFIXES: tuple[str, ...] = ("gps_",)
+
+# Default scan roots.
+DEFAULT_PY_ROOT = Path("apps/api/echoroo")
+DEFAULT_CONTRACTS_ROOT = Path("specs/006-permissions-redesign/contracts")
+DEFAULT_ALLOWLIST = Path("scripts/allowlists/raw_coordinates_allowlist.txt")
+
+# YAML key regex used for the contracts directory (text-based check only;
+# we are not pulling in a YAML parser to keep this script dep-free).
+_YAML_KEY_RE = re.compile(
+    r"^\s*[-]?\s*(?P<key>[A-Za-z_][A-Za-z0-9_]*)\s*:",
+    re.MULTILINE,
 )
 
 
-def load_allowlist(allowlist_file: Path) -> set[str]:
-    """Load the allowlist file. Missing file == empty allowlist."""
-    if not allowlist_file.exists():
-        return set()
+# ---------------------------------------------------------------------------
+# Allowlist loading
+# ---------------------------------------------------------------------------
+
+
+def _load_allowlist(path: Path) -> frozenset[str]:
+    if not path.exists():
+        return frozenset()
     entries: set[str] = set()
-    for raw_line in allowlist_file.read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#"):
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.split("#", 1)[0].strip()
+        if line:
+            entries.add(line)
+    return frozenset(entries)
+
+
+def _is_allowlisted(rel_path: str, allowlist: frozenset[str]) -> bool:
+    return rel_path in allowlist
+
+
+# ---------------------------------------------------------------------------
+# Token classification
+# ---------------------------------------------------------------------------
+
+
+def _is_forbidden(name: str) -> bool:
+    if not name:
+        return False
+    if name in FORBIDDEN_NAMES:
+        return True
+    return any(name.startswith(prefix) for prefix in FORBIDDEN_PREFIXES)
+
+
+# ---------------------------------------------------------------------------
+# Python AST scanner
+# ---------------------------------------------------------------------------
+
+
+def _scan_python_file(rel_str: str, source: str) -> list[str]:
+    """Return violation strings for a single Python source string."""
+    violations: list[str] = []
+    try:
+        tree = ast.parse(source, filename=rel_str)
+    except SyntaxError as exc:
+        return [f"{rel_str}: failed to parse ({exc})"]
+
+    for node in ast.walk(tree):
+        # 1) Class-level Pydantic / dataclass / SQLAlchemy fields:
+        #    ``lat: float`` (AnnAssign with Name target).
+        if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            name = node.target.id
+            if _is_forbidden(name):
+                violations.append(
+                    f"{rel_str}:{node.lineno}  forbidden field name "
+                    f"'{name}' (use h3_index instead)"
+                )
             continue
-        entries.add(line)
-    return entries
+
+        # 2) Plain assignments:
+        #    ``lat = Column(...)`` / ``lat = mapped_column(...)`` /
+        #    ``lat = Field(...)``.
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name) and _is_forbidden(target.id):
+                    violations.append(
+                        f"{rel_str}:{node.lineno}  forbidden field name "
+                        f"'{target.id}' (use h3_index instead)"
+                    )
+            continue
+
+        # 3) Dict literals — only flag string-literal keys; non-literal
+        #    keys (variables / expressions) are ignored to avoid
+        #    false positives.
+        if isinstance(node, ast.Dict):
+            for key in node.keys:
+                if isinstance(key, ast.Constant) and isinstance(key.value, str):
+                    if _is_forbidden(key.value):
+                        violations.append(
+                            f"{rel_str}:{node.lineno}  forbidden dict key "
+                            f"'{key.value}' (use h3_index instead)"
+                        )
+            continue
+
+    return violations
+
+
+# ---------------------------------------------------------------------------
+# YAML (contracts) text scanner
+# ---------------------------------------------------------------------------
+
+
+def _scan_yaml_file(rel_str: str, source: str) -> list[str]:
+    """Flag YAML mapping keys (``key:``) that match the denylist.
+
+    Strings inside descriptions / values / comments are ignored — only
+    the line-leading mapping key is matched.
+    """
+    violations: list[str] = []
+    for match in _YAML_KEY_RE.finditer(source):
+        key = match.group("key")
+        if _is_forbidden(key):
+            line_no = source[: match.start()].count("\n") + 1
+            violations.append(
+                f"{rel_str}:{line_no}  forbidden YAML key "
+                f"'{key}' (use h3_index instead)"
+            )
+    return violations
+
+
+# ---------------------------------------------------------------------------
+# Driver
+# ---------------------------------------------------------------------------
+
+
+def _relative_posix(path: Path, repo_root: Path) -> str:
+    abs_path = path.resolve()
+    try:
+        rel = abs_path.relative_to(repo_root.resolve())
+    except ValueError:
+        rel = path
+    return str(rel).replace("\\", "/")
+
+
+def _detect_repo_root(start: Path) -> Path:
+    candidate = start.resolve()
+    for _ in range(8):
+        if (candidate / ".git").exists():
+            return candidate
+        if candidate.parent == candidate:
+            return candidate
+        candidate = candidate.parent
+    return candidate
 
 
 def find_violations(
-    root: Path,
-    allowlist: set[str],
+    py_root: Path,
+    contracts_root: Path | None,
+    allowlist: frozenset[str],
+    repo_root: Path | None = None,
 ) -> list[str]:
-    """Return a list of human-readable violation descriptions.
+    violations: list[str] = []
+    if repo_root is None:
+        repo_root = _detect_repo_root(py_root)
 
-    TODO(T044): implement in Phase 2. The skeleton exercises the file
-    discovery pipeline without yet emitting findings.
-    """
-    if not root.exists():
-        return []
-    suffixes = (".py", ".yaml", ".yml")
-    for candidate in root.rglob("*"):
-        if not candidate.is_file() or candidate.suffix not in suffixes:
-            continue
-        rel = str(candidate)
-        if rel in allowlist:
-            continue
-        # Read the file to prove the pipeline works; Phase 2 will scan.
-        try:
-            candidate.read_text(encoding="utf-8")
-        except OSError:
-            continue
-    # TODO(T044): accumulate and return violations using FORBIDDEN_PATTERN.
-    print(
-        "[lint_no_raw_coordinates] skeleton scan complete "
-        "(TODO: implement in T044)",
-        file=sys.stderr,
-    )
-    return []
+    if py_root.exists():
+        for py_file in sorted(py_root.rglob("*.py")):
+            rel_str = _relative_posix(py_file, repo_root)
+            if _is_allowlisted(rel_str, allowlist):
+                continue
+            try:
+                source = py_file.read_text(encoding="utf-8")
+            except OSError as exc:
+                violations.append(f"{rel_str}: failed to read ({exc})")
+                continue
+            violations.extend(_scan_python_file(rel_str, source))
+
+    if contracts_root is not None and contracts_root.exists():
+        for yaml_file in sorted(contracts_root.rglob("*")):
+            if not yaml_file.is_file() or yaml_file.suffix not in (".yaml", ".yml"):
+                continue
+            rel_str = _relative_posix(yaml_file, repo_root)
+            if _is_allowlisted(rel_str, allowlist):
+                continue
+            try:
+                source = yaml_file.read_text(encoding="utf-8")
+            except OSError as exc:
+                violations.append(f"{rel_str}: failed to read ({exc})")
+                continue
+            violations.extend(_scan_yaml_file(rel_str, source))
+
+    return violations
 
 
 def main() -> int:
@@ -92,17 +248,32 @@ def main() -> int:
     parser.add_argument(
         "--path",
         type=Path,
-        default=DEFAULT_SCAN_TARGETS[0],
+        default=DEFAULT_PY_ROOT,
+        help=f"Python root to scan (default: {DEFAULT_PY_ROOT}).",
+    )
+    parser.add_argument(
+        "--contracts",
+        type=Path,
+        default=DEFAULT_CONTRACTS_ROOT,
         help=(
-            "Root directory to scan (default: apps/api/echoroo). "
-            "Phase 2 will additionally scan contracts/*.yaml."
+            f"Contracts directory to scan (default: {DEFAULT_CONTRACTS_ROOT}). "
+            "Pass an empty string to skip."
         ),
     )
     parser.add_argument(
         "--allowlist-file",
         type=Path,
-        default=Path("scripts/allowlists/raw_coordinates_allowlist.txt"),
-        help="Path to the allowlist file (one entry per line).",
+        default=DEFAULT_ALLOWLIST,
+        help=(
+            f"Allowlist file (default: {DEFAULT_ALLOWLIST}). "
+            "Each non-empty / non-comment line is a repo-relative path."
+        ),
+    )
+    parser.add_argument(
+        "--repo-root",
+        type=Path,
+        default=None,
+        help="Repository root (default: auto-detect via .git marker).",
     )
     parser.add_argument(
         "--fail-on-violation",
@@ -111,15 +282,29 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    contracts_root: Path | None = args.contracts
+    if contracts_root is not None and str(contracts_root) == "":
+        contracts_root = None
+
     try:
-        allowlist = load_allowlist(args.allowlist_file)
-        violations = find_violations(args.path, allowlist)
+        allowlist = _load_allowlist(args.allowlist_file)
+        violations = find_violations(
+            args.path,
+            contracts_root,
+            allowlist,
+            repo_root=args.repo_root,
+        )
     except Exception as exc:  # pragma: no cover - defensive
         print(f"[lint_no_raw_coordinates] unexpected error: {exc}", file=sys.stderr)
         return 2
 
-    for v in violations:
-        print(v, file=sys.stderr)
+    for line in violations:
+        print(line, file=sys.stderr)
+    print(
+        f"[lint_no_raw_coordinates] scanned {args.path}: "
+        f"{len(violations)} violation(s) found",
+        file=sys.stderr,
+    )
     if violations and args.fail_on_violation:
         return 1
     return 0
