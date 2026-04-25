@@ -13,9 +13,9 @@ from __future__ import annotations
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 
-from echoroo.core.actions import TAG_CREATE_ACTION
+from echoroo.core.actions import TAG_CREATE_ACTION, TAG_DELETE_ACTION, TAG_UPDATE_ACTION
 from echoroo.core.database import DbSession
 from echoroo.core.permissions import gate_action
 from echoroo.middleware.auth import CurrentUser
@@ -272,6 +272,7 @@ async def update_tag(
     project_id: UUID,
     tag_id: UUID,
     request: TagUpdate,
+    http_request: Request,
     current_user: CurrentUser,
     service: TagServiceDep,
     db: DbSession,
@@ -287,6 +288,9 @@ async def update_tag(
         project_id: Project's UUID
         tag_id: Tag's UUID
         request: Update data
+        http_request: FastAPI :class:`Request` used by the gate to stash
+            stage-1 state on ``request.state``. Named ``http_request`` to
+            avoid colliding with the body parameter ``request``.
         current_user: Current authenticated user
         service: Tag service instance
         db: Database session
@@ -297,8 +301,20 @@ async def update_tag(
 
     Raises:
         401: Not authenticated
+        403: Permission denied
         404: Tag not found
     """
+    await gate_action(
+        action=TAG_UPDATE_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=http_request,
+        db=db,
+    )
+    existing_tag = await service.tag_repo.get_by_id_in_project(tag_id, project_id)
+    if existing_tag is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="tag not found")
+
     tag = await service.update(tag_id=tag_id, request=request, locale=locale)
     await db.commit()
     return tag
@@ -313,6 +329,7 @@ async def update_tag(
 async def delete_tag(
     project_id: UUID,
     tag_id: UUID,
+    http_request: Request,
     current_user: CurrentUser,
     service: TagServiceDep,
     db: DbSession,
@@ -322,13 +339,27 @@ async def delete_tag(
     Args:
         project_id: Project's UUID
         tag_id: Tag's UUID
+        http_request: FastAPI :class:`Request` used by the gate to stash
+            stage-1 state on ``request.state``.
         current_user: Current authenticated user
         service: Tag service instance
         db: Database session
 
     Raises:
         401: Not authenticated
+        403: Permission denied
         404: Tag not found
     """
+    await gate_action(
+        action=TAG_DELETE_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=http_request,
+        db=db,
+    )
+    existing_tag = await service.tag_repo.get_by_id_in_project(tag_id, project_id)
+    if existing_tag is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="tag not found")
+
     await service.delete(tag_id=tag_id)
     await db.commit()

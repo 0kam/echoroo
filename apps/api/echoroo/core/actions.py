@@ -204,6 +204,22 @@ TAG_CREATE_ACTION: Action = register_action(
     )
 )
 
+TAG_UPDATE_ACTION: Action = register_action(
+    Action(
+        name="tag.update",
+        required_permission=Permission.EDIT_PROJECT,
+        is_mutating=True,
+    )
+)
+
+TAG_DELETE_ACTION: Action = register_action(
+    Action(
+        name="tag.delete",
+        required_permission=Permission.EDIT_PROJECT,
+        is_mutating=True,
+    )
+)
+
 UPLOAD_CREATE_ACTION: Action = register_action(
     Action(
         name="upload.create",
@@ -236,6 +252,22 @@ RECORDING_MEDIA_ACTION: Action = register_action(
     )
 )
 
+RECORDING_UPDATE_ACTION: Action = register_action(
+    Action(
+        name="recording.update",
+        required_permission=Permission.MANAGE_DATASET,
+        is_mutating=True,
+    )
+)
+
+RECORDING_DELETE_ACTION: Action = register_action(
+    Action(
+        name="recording.delete",
+        required_permission=Permission.MANAGE_DATASET,
+        is_mutating=True,
+    )
+)
+
 
 __all__ = [
     # Project
@@ -260,8 +292,12 @@ __all__ = [
     "DETECTION_EXPORT_ML_DATASET_ACTION",
     "DETECTION_GET_ACTION",
     "DETECTION_LIST_ACTION",
+    "RECORDING_DELETE_ACTION",
     "RECORDING_LIST_ACTION",
     "RECORDING_MEDIA_ACTION",
+    "RECORDING_UPDATE_ACTION",
     "TAG_CREATE_ACTION",
+    "TAG_DELETE_ACTION",
+    "TAG_UPDATE_ACTION",
     "UPLOAD_CREATE_ACTION",
 ]

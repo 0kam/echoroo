@@ -8,11 +8,10 @@ endpoints (``/audio``, ``/stream``, ``/playback``, ``/spectrogram``,
 (:data:`Permission.VIEW_MEDIA`) so Restricted projects can independently
 gate raw audio access via ``restricted_config.allow_media``.
 
-Mutating endpoints (``PATCH``, ``DELETE``) keep the legacy
-:func:`check_project_access` membership check until a dedicated
-``recording.update`` / ``recording.delete`` Action lands. Stage-2 response
-filtering (FR-011 H3 generalisation, FR-016 sensitive species masking) is
-deferred to T130-T134.
+Mutating endpoints (``PATCH``, ``DELETE``) route through
+``recording.update`` / ``recording.delete`` Actions. Stage-2 response filtering
+(FR-011 H3 generalisation, FR-016 sensitive species masking) is deferred to
+T130-T134.
 """
 
 from __future__ import annotations
@@ -27,9 +26,14 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, R
 from fastapi.responses import StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-from echoroo.core.actions import RECORDING_LIST_ACTION, RECORDING_MEDIA_ACTION
+from echoroo.core.actions import (
+    RECORDING_DELETE_ACTION,
+    RECORDING_LIST_ACTION,
+    RECORDING_MEDIA_ACTION,
+    RECORDING_UPDATE_ACTION,
+)
 from echoroo.core.database import DbSession
-from echoroo.core.permissions import check_project_access, gate_action
+from echoroo.core.permissions import gate_action
 from echoroo.core.settings import get_settings
 from echoroo.middleware.auth import API_TOKEN_PREFIX, CurrentUser
 from echoroo.models.user import User
@@ -348,23 +352,23 @@ async def update_recording(
     project_id: UUID,
     recording_id: UUID,
     request: RecordingUpdate,
+    http_request: Request,
     current_user: CurrentUser,
     service: RecordingServiceDep,
     db: DbSession,
 ) -> RecordingDetailResponse:
     """Update recording (time_expansion, note).
 
-    Mutating endpoint — Phase 3 will introduce a dedicated
-    ``RECORDING_UPDATE_ACTION``; until then we keep the legacy membership
-    check so contract tests still pass.
-
-    TODO(Phase 3 follow-up, FR-008a): register ``recording.update`` in
-    ``core/actions.py`` and switch to ``gate_action(...)`` here.
+    Guarded by :data:`RECORDING_UPDATE_ACTION`
+    (:data:`Permission.MANAGE_DATASET`).
 
     Args:
         project_id: Project's UUID
         recording_id: Recording's UUID
         request: Update data
+        http_request: FastAPI :class:`Request` used by the gate to stash
+            stage-1 state on ``request.state``. Named ``http_request`` to
+            avoid colliding with the body parameter ``request``.
         current_user: Current authenticated user
         service: Recording service instance
         db: Database session
@@ -377,7 +381,13 @@ async def update_recording(
         403: Access denied
         404: Recording not found
     """
-    await check_project_access(project_id, current_user.id, db)
+    await gate_action(
+        action=RECORDING_UPDATE_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=http_request,
+        db=db,
+    )
 
     # BOLA / IDOR guard (FR-008a): verify the recording belongs to the
     # gated project before mutating it. Without this check a member of
@@ -435,22 +445,21 @@ async def update_recording(
 async def delete_recording(
     project_id: UUID,
     recording_id: UUID,
+    http_request: Request,
     current_user: CurrentUser,
     service: RecordingServiceDep,
     db: DbSession,
 ) -> None:
     """Delete recording.
 
-    Mutating endpoint — Phase 3 will introduce a dedicated
-    ``RECORDING_DELETE_ACTION``; until then we keep the legacy membership
-    check so contract tests still pass.
-
-    TODO(Phase 3 follow-up, FR-008a): register ``recording.delete`` in
-    ``core/actions.py`` and switch to ``gate_action(...)`` here.
+    Guarded by :data:`RECORDING_DELETE_ACTION`
+    (:data:`Permission.MANAGE_DATASET`).
 
     Args:
         project_id: Project's UUID
         recording_id: Recording's UUID
+        http_request: FastAPI :class:`Request` used by the gate to stash
+            stage-1 state on ``request.state``.
         current_user: Current authenticated user
         service: Recording service instance
         db: Database session
@@ -460,7 +469,13 @@ async def delete_recording(
         403: Access denied
         404: Recording not found
     """
-    await check_project_access(project_id, current_user.id, db)
+    await gate_action(
+        action=RECORDING_DELETE_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=http_request,
+        db=db,
+    )
 
     # BOLA / IDOR guard (FR-008a): verify the recording belongs to the
     # gated project before deleting. Without this check a member of
