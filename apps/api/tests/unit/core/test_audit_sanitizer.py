@@ -225,3 +225,103 @@ def test_sanitized_output_is_json_serialisable() -> None:
     encoded = json.dumps(out)
     decoded = json.loads(encoded)
     _assert_no_raw_leak(decoded, _EMAIL)
+
+
+# ---------------------------------------------------------------------------
+# Phase 2.10 #3 — PII embedded in dict KEYS must also be redacted.
+# Previously the sanitizer only walked dict values; an attacker / buggy
+# caller passing PII in the key position bypassed the guard entirely.
+# ---------------------------------------------------------------------------
+
+
+def _assert_no_raw_key_leak(tree: Any, forbidden: str) -> None:
+    """Walk the structure and fail if ``forbidden`` appears in any KEY."""
+
+    def _walk(node: Any) -> None:
+        if isinstance(node, dict):
+            for k, v in node.items():
+                if isinstance(k, str):
+                    assert forbidden not in k, (
+                        f"raw PII leak in dict KEY: {forbidden!r} found in {k!r}"
+                    )
+                _walk(v)
+        elif isinstance(node, list):
+            for item in node:
+                _walk(item)
+
+    _walk(tree)
+
+
+def test_redacts_top_level_email_key() -> None:
+    """An email used as a top-level dict key must be replaced with a marker."""
+    payload = {_EMAIL: {"role": "admin"}}
+    out = sanitize_value(payload)
+    assert _EMAIL not in out
+    _assert_no_raw_key_leak(out, _EMAIL)
+    # Marker must follow the documented shape.
+    assert any(k.startswith("__redacted_key_") for k in out)
+    # The value (which is itself non-PII) is preserved.
+    marker_key = next(k for k in out if k.startswith("__redacted_key_"))
+    assert out[marker_key] == {"role": "admin"}
+
+
+def test_redacts_nested_dict_key_with_email() -> None:
+    """PII keys at any depth must be redacted."""
+    payload = {"audit": {"contacts": {_EMAIL: "primary"}}}
+    out = sanitize_value(payload)
+    _assert_no_raw_key_leak(out, _EMAIL)
+    inner = out["audit"]["contacts"]
+    assert _EMAIL not in inner
+    assert any(k.startswith("__redacted_key_") for k in inner)
+
+
+def test_redacts_url_encoded_key() -> None:
+    """URL-encoded PII key must be caught by the URL-decode pass."""
+    encoded = "alice%40example.com"
+    payload = {encoded: "value"}
+    out = sanitize_value(payload)
+    _assert_no_raw_key_leak(out, encoded)
+    assert encoded not in out
+    assert any(k.startswith("__redacted_key_") for k in out)
+
+
+def test_redacts_base64_encoded_key() -> None:
+    """Base64-encoded PII key must be caught by the base64-decode pass."""
+    import base64 as _b64
+
+    encoded = _b64.b64encode(_EMAIL.encode()).decode()
+    payload = {encoded: "value"}
+    out = sanitize_value(payload)
+    _assert_no_raw_key_leak(out, encoded)
+    assert encoded not in out
+    assert any(k.startswith("__redacted_key_") for k in out)
+
+
+def test_redacts_both_key_and_value_when_both_are_pii() -> None:
+    """PII in both key AND value must yield a marker key + redaction marker value."""
+    other_email = "bob@example.org"
+    payload = {_EMAIL: other_email}
+    out = sanitize_value(payload)
+    _assert_no_raw_key_leak(out, _EMAIL)
+    _assert_no_raw_leak(out, _EMAIL)
+    _assert_no_raw_leak(out, other_email)
+    assert _EMAIL not in out
+    marker_key = next(k for k in out if k.startswith("__redacted_key_"))
+    # Value is replaced with the standard redaction dict marker.
+    _assert_is_redaction(out[marker_key])
+
+
+def test_redacted_key_marker_is_stable_for_same_input() -> None:
+    """Two payloads with the same PII key produce the same marker (cardinality)."""
+    out_a = sanitize_value({_EMAIL: 1})
+    out_b = sanitize_value({_EMAIL: 2})
+    marker_a = next(k for k in out_a if k.startswith("__redacted_key_"))
+    marker_b = next(k for k in out_b if k.startswith("__redacted_key_"))
+    assert marker_a == marker_b
+
+
+def test_non_pii_keys_are_preserved_verbatim() -> None:
+    """Existing key-name semantics must not break for safe keys."""
+    payload = {"event": "x", "count": 5, "nested": {"safe_key": "safe_value"}}
+    out = sanitize_value(payload)
+    assert out == payload

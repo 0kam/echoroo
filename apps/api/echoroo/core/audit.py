@@ -247,11 +247,30 @@ def _scan_string(value: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
+def _redacted_key_marker(original_key: str) -> str:
+    """Return a stable opaque marker for a redacted dict key.
+
+    The marker preserves enough information to count distinct redacted
+    keys (different inputs yield different markers, modulo SHA-256
+    collision probability) without leaking the original PII. The first
+    8 hex chars of the SHA-256 hash are sufficient for that — collisions
+    only matter for cardinality dashboards, not for security.
+    """
+    short = hashlib.sha256(original_key.encode("utf-8")).hexdigest()[:8]
+    return f"__redacted_key_{short}__"
+
+
 def sanitize_value(value: Any) -> Any:
     """Return a sanitised copy of ``value`` with PII strings redacted.
 
-    - ``dict``: recurse on values (keys are NOT touched; the build-time lint
-      owns the key-name guardrail).
+    - ``dict``: recurse on **both** keys and values. A key whose
+      *string* form contains PII is replaced with a stable hashed
+      marker (:func:`_redacted_key_marker`); its associated value is
+      still sanitised recursively. Non-string keys (e.g. ``int``) are
+      passed through. The build-time lint (FR-091a layer a) catches
+      *literal* PII key names in source; this runtime guard catches
+      dynamic injection of PII into key positions (e.g.
+      ``{user_email: payload}``).
     - ``list`` / ``tuple``: recurse on each element; tuples are returned as
       lists because JSONB has no tuple type.
     - ``str``: if it contains PII, return the redaction marker; otherwise
@@ -261,7 +280,14 @@ def sanitize_value(value: Any) -> Any:
     - anything else: returned unchanged.
     """
     if isinstance(value, dict):
-        return {key: sanitize_value(inner) for key, inner in value.items()}
+        out: dict[Any, Any] = {}
+        for key, inner in value.items():
+            sanitised_value = sanitize_value(inner)
+            if isinstance(key, str) and _scan_string(key):
+                out[_redacted_key_marker(key)] = sanitised_value
+            else:
+                out[key] = sanitised_value
+        return out
     if isinstance(value, (list, tuple)):
         return [sanitize_value(inner) for inner in value]
     if isinstance(value, str):
