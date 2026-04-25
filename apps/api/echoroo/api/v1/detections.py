@@ -11,7 +11,7 @@ existing test suite continues to pass.
 from __future__ import annotations
 
 import io
-from typing import Annotated, Any
+from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
@@ -26,9 +26,8 @@ from echoroo.core.actions import (
 )
 from echoroo.core.database import DbSession
 from echoroo.core.permissions import (
-    Action,
     check_project_access,
-    is_allowed,
+    gate_action,
 )
 from echoroo.middleware.auth import CurrentUser
 from echoroo.models.enums import DetectionStatus
@@ -89,50 +88,6 @@ DetectionServiceDep = Annotated[DetectionService, Depends(get_detection_service)
 VoteServiceDep = Annotated[AnnotationVoteService, Depends(get_vote_service)]
 
 
-# ---------------------------------------------------------------------------
-# Internal helpers (Phase 3 permission gate)
-# ---------------------------------------------------------------------------
-
-
-async def _load_project(db: DbSession, project_id: UUID) -> Project:
-    """Load the Project ORM row needed by :func:`is_allowed`.
-
-    The gate reads ``visibility`` / ``restricted_config`` / ``status`` /
-    ``owner_id`` from the row, so a regular ORM load is sufficient.
-    """
-    project_result = await db.execute(sa_select(Project).where(Project.id == project_id))
-    project = project_result.scalar_one_or_none()
-    if project is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="project not found")
-    return project
-
-
-async def _gate(
-    *,
-    action: Action,
-    project_id: UUID,
-    current_user: Any,
-    request: Request,
-    db: DbSession,
-) -> Project:
-    """Run the Stage-1 :func:`is_allowed` gate for ``action`` on ``project_id``.
-
-    Returns the loaded :class:`Project` row so callers can pass it through to
-    the service layer (e.g. for response filtering / restricted_config reads)
-    without issuing a second SELECT.
-    """
-    project = await _load_project(db, project_id)
-    allowed, _ = is_allowed(
-        action=action,
-        user=current_user,
-        project=project,
-        request=request,
-    )
-    if not allowed:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="action denied")
-    return project
-
-
 @router.get(
     "",
     response_model=DetectionListResponse,
@@ -190,7 +145,7 @@ async def list_detections(
         401: Not authenticated
         403: Permission denied
     """
-    project = await _gate(
+    project = await gate_action(
         action=DETECTION_LIST_ACTION,
         project_id=project_id,
         current_user=current_user,
@@ -267,7 +222,7 @@ async def get_species_summary(
         401: Not authenticated
         403: Permission denied
     """
-    await _gate(
+    await gate_action(
         action=DETECTION_LIST_ACTION,
         project_id=project_id,
         current_user=current_user,
@@ -322,7 +277,7 @@ async def export_csv(
         401: Not authenticated
         403: Permission denied
     """
-    await _gate(
+    await gate_action(
         action=DETECTION_EXPORT_CSV_ACTION,
         project_id=project_id,
         current_user=current_user,
@@ -383,7 +338,7 @@ async def export_ml_dataset(
         401: Not authenticated
         403: Permission denied
     """
-    await _gate(
+    await gate_action(
         action=DETECTION_EXPORT_ML_DATASET_ACTION,
         project_id=project_id,
         current_user=current_user,
@@ -449,7 +404,7 @@ async def get_temporal_data(
         401: Not authenticated
         403: Permission denied
     """
-    await _gate(
+    await gate_action(
         action=DETECTION_LIST_ACTION,
         project_id=project_id,
         current_user=current_user,
@@ -505,7 +460,7 @@ async def get_detection(
         403: Permission denied
         404: Detection not found
     """
-    project = await _gate(
+    project = await gate_action(
         action=DETECTION_GET_ACTION,
         project_id=project_id,
         current_user=current_user,

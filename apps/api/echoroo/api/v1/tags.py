@@ -5,23 +5,21 @@ routes through the central :func:`is_allowed` gate using
 :data:`TAG_CREATE_ACTION` (:data:`Permission.CREATE_TAG`). Read endpoints keep
 their existing behaviour — they are not yet wrapped because tag visibility is
 implicit through the parent project read permission, but the gate hook is in
-place via ``_gate`` and can be enabled when the matrix entry is finalised.
+place via ``gate_action`` and can be enabled when the matrix entry is finalised.
 """
 
 from __future__ import annotations
 
-from typing import Annotated, Any
+from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from sqlalchemy import select as sa_select
+from fastapi import APIRouter, Depends, Query, Request, status
 
 from echoroo.core.actions import TAG_CREATE_ACTION
 from echoroo.core.database import DbSession
-from echoroo.core.permissions import Action, is_allowed
+from echoroo.core.permissions import gate_action
 from echoroo.middleware.auth import CurrentUser
 from echoroo.models.enums import TagCategory
-from echoroo.models.project import Project
 from echoroo.repositories.tag import TagRepository
 from echoroo.schemas.tag import (
     GBIFSuggestion,
@@ -50,41 +48,6 @@ def get_tag_service(db: DbSession) -> TagService:
 
 
 TagServiceDep = Annotated[TagService, Depends(get_tag_service)]
-
-
-# ---------------------------------------------------------------------------
-# Internal helpers (Phase 3 permission gate)
-# ---------------------------------------------------------------------------
-
-
-async def _load_project(db: DbSession, project_id: UUID) -> Project:
-    """Load the Project ORM row needed by :func:`is_allowed`."""
-    project_result = await db.execute(sa_select(Project).where(Project.id == project_id))
-    project = project_result.scalar_one_or_none()
-    if project is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="project not found")
-    return project
-
-
-async def _gate(
-    *,
-    action: Action,
-    project_id: UUID,
-    current_user: Any,
-    request: Request,
-    db: DbSession,
-) -> Project:
-    """Run the Stage-1 :func:`is_allowed` gate for ``action`` on ``project_id``."""
-    project = await _load_project(db, project_id)
-    allowed, _ = is_allowed(
-        action=action,
-        user=current_user,
-        project=project,
-        request=request,
-    )
-    if not allowed:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="action denied")
-    return project
 
 
 @router.get(
@@ -182,7 +145,7 @@ async def create_tag(
         403: Permission denied
         422: Validation error
     """
-    await _gate(
+    await gate_action(
         action=TAG_CREATE_ACTION,
         project_id=project_id,
         current_user=current_user,

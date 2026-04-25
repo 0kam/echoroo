@@ -10,19 +10,17 @@ be introduced by subsequent tasks.
 
 from __future__ import annotations
 
-from typing import Annotated, Any
+from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, model_validator
-from sqlalchemy import select as sa_select
 
 from echoroo.core.actions import CUSTOM_MODEL_TRAIN_ACTION
 from echoroo.core.database import DbSession
-from echoroo.core.permissions import Action, check_project_access, is_allowed
+from echoroo.core.permissions import check_project_access, gate_action
 from echoroo.middleware.auth import CurrentUser
 from echoroo.models.custom_model import CustomModel, CustomModelStatus
-from echoroo.models.project import Project
 from echoroo.schemas.custom_model import (
     CustomModelApplyResponse,
     CustomModelCreate,
@@ -79,50 +77,6 @@ def get_custom_model_service(db: DbSession) -> CustomModelService:
 
 
 CustomModelServiceDep = Annotated[CustomModelService, Depends(get_custom_model_service)]
-
-
-# ---------------------------------------------------------------------------
-# Internal helpers (Phase 3 permission gate)
-# ---------------------------------------------------------------------------
-
-
-async def _load_project(db: DbSession, project_id: UUID) -> Project:
-    """Load the Project ORM row needed by :func:`is_allowed`.
-
-    The gate reads ``visibility`` / ``restricted_config`` / ``status`` /
-    ``owner_id`` from the row, so a regular ORM load is sufficient.
-    """
-    project_result = await db.execute(sa_select(Project).where(Project.id == project_id))
-    project = project_result.scalar_one_or_none()
-    if project is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="project not found")
-    return project
-
-
-async def _gate(
-    *,
-    action: Action,
-    project_id: UUID,
-    current_user: Any,
-    request: Request,
-    db: DbSession,
-) -> Project:
-    """Run the Stage-1 :func:`is_allowed` gate for ``action`` on ``project_id``.
-
-    Returns the loaded :class:`Project` row so callers can pass it through to
-    the service layer (e.g. for response filtering / restricted_config reads)
-    without issuing a second SELECT.
-    """
-    project = await _load_project(db, project_id)
-    allowed, _ = is_allowed(
-        action=action,
-        user=current_user,
-        project=project,
-        request=request,
-    )
-    if not allowed:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="action denied")
-    return project
 
 
 async def get_model_or_404(
@@ -238,7 +192,7 @@ async def create_custom_model(
         403: Permission denied
         422: Validation error
     """
-    await _gate(
+    await gate_action(
         action=CUSTOM_MODEL_TRAIN_ACTION,
         project_id=project_id,
         current_user=current_user,
@@ -330,7 +284,7 @@ async def update_custom_model(
         404: Model not found
         409: Model is not in DRAFT status
     """
-    await _gate(
+    await gate_action(
         action=CUSTOM_MODEL_TRAIN_ACTION,
         project_id=project_id,
         current_user=current_user,
@@ -430,7 +384,7 @@ async def train_custom_model(
         404: Model not found
         409: Model is not in DRAFT, FAILED, or TRAINED status
     """
-    await _gate(
+    await gate_action(
         action=CUSTOM_MODEL_TRAIN_ACTION,
         project_id=project_id,
         current_user=current_user,
@@ -542,7 +496,7 @@ async def apply_custom_model(
         404: Model not found
         409: Model is not in TRAINED or DEPLOYED status, or lacks a model artifact
     """
-    await _gate(
+    await gate_action(
         action=CUSTOM_MODEL_TRAIN_ACTION,
         project_id=project_id,
         current_user=current_user,
@@ -704,7 +658,7 @@ async def create_seed_samples(
         409: Model is not in DRAFT or FAILED status
         422: No reference_embedding_ids provided
     """
-    await _gate(
+    await gate_action(
         action=CUSTOM_MODEL_TRAIN_ACTION,
         project_id=project_id,
         current_user=current_user,
@@ -817,7 +771,7 @@ async def suggest_next_samples(
         404: Model not found
         409: No completed rounds or insufficient labeled data
     """
-    await _gate(
+    await gate_action(
         action=CUSTOM_MODEL_TRAIN_ACTION,
         project_id=project_id,
         current_user=current_user,

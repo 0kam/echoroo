@@ -20,20 +20,18 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Generator
 from datetime import datetime
-from typing import Annotated, Any
+from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response, status
 from fastapi.responses import StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from sqlalchemy import select as sa_select
 
 from echoroo.core.actions import RECORDING_LIST_ACTION, RECORDING_MEDIA_ACTION
 from echoroo.core.database import DbSession
-from echoroo.core.permissions import Action, check_project_access, is_allowed
+from echoroo.core.permissions import check_project_access, gate_action
 from echoroo.core.settings import get_settings
 from echoroo.middleware.auth import API_TOKEN_PREFIX, CurrentUser
-from echoroo.models.project import Project
 from echoroo.models.user import User
 from echoroo.schemas.recording import (
     RecordingDetailResponse,
@@ -154,50 +152,6 @@ AudioServiceDep = Annotated[AudioService, Depends(get_audio_service)]
 RecordingServiceDep = Annotated[RecordingService, Depends(get_recording_service)]
 
 
-# ---------------------------------------------------------------------------
-# Internal helpers (Phase 3 permission gate — mirrors v1/detections.py)
-# ---------------------------------------------------------------------------
-
-
-async def _load_project(db: DbSession, project_id: UUID) -> Project:
-    """Load the Project ORM row needed by :func:`is_allowed`.
-
-    The gate reads ``visibility`` / ``restricted_config`` / ``status`` /
-    ``owner_id`` from the row, so a regular ORM load is sufficient.
-    """
-    project_result = await db.execute(sa_select(Project).where(Project.id == project_id))
-    project = project_result.scalar_one_or_none()
-    if project is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="project not found")
-    return project
-
-
-async def _gate(
-    *,
-    action: Action,
-    project_id: UUID,
-    current_user: Any,
-    request: Request,
-    db: DbSession,
-) -> Project:
-    """Run the Stage-1 :func:`is_allowed` gate for ``action`` on ``project_id``.
-
-    Returns the loaded :class:`Project` row so callers can pass it through to
-    the service layer (e.g. for response filtering / restricted_config reads)
-    without issuing a second SELECT.
-    """
-    project = await _load_project(db, project_id)
-    allowed, _ = is_allowed(
-        action=action,
-        user=current_user,
-        project=project,
-        request=request,
-    )
-    if not allowed:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="action denied")
-    return project
-
-
 # T060: List and search endpoints
 @router.get(
     "",
@@ -252,7 +206,7 @@ async def list_recordings(
         401: Not authenticated
         403: Permission denied
     """
-    await _gate(
+    await gate_action(
         action=RECORDING_LIST_ACTION,
         project_id=project_id,
         current_user=current_user,
@@ -340,7 +294,7 @@ async def get_recording(
         403: Permission denied
         404: Recording not found
     """
-    await _gate(
+    await gate_action(
         action=RECORDING_LIST_ACTION,
         project_id=project_id,
         current_user=current_user,
@@ -405,7 +359,7 @@ async def update_recording(
     check so contract tests still pass.
 
     TODO(Phase 3 follow-up, FR-008a): register ``recording.update`` in
-    ``core/actions.py`` and switch to ``_gate(...)`` here.
+    ``core/actions.py`` and switch to ``gate_action(...)`` here.
 
     Args:
         project_id: Project's UUID
@@ -492,7 +446,7 @@ async def delete_recording(
     check so contract tests still pass.
 
     TODO(Phase 3 follow-up, FR-008a): register ``recording.delete`` in
-    ``core/actions.py`` and switch to ``_gate(...)`` here.
+    ``core/actions.py`` and switch to ``gate_action(...)`` here.
 
     Args:
         project_id: Project's UUID
@@ -589,7 +543,7 @@ async def stream_audio(
         403: Permission denied.
         404: Recording or audio file not found.
     """
-    await _gate(
+    await gate_action(
         action=RECORDING_MEDIA_ACTION,
         project_id=project_id,
         current_user=current_user,
@@ -969,7 +923,7 @@ async def get_spectrogram(
         404: Recording not found
         400: Invalid spectrogram parameters
     """
-    await _gate(
+    await gate_action(
         action=RECORDING_MEDIA_ACTION,
         project_id=project_id,
         current_user=current_user,
@@ -1052,7 +1006,7 @@ async def download_recording(
         403: Permission denied
         404: Recording or audio file not found
     """
-    await _gate(
+    await gate_action(
         action=RECORDING_MEDIA_ACTION,
         project_id=project_id,
         current_user=current_user,

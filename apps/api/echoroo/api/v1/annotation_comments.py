@@ -31,19 +31,17 @@ lives in a follow-up Phase 3 task per the implementation plan.
 
 from __future__ import annotations
 
-from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel, Field
-from sqlalchemy import select as sa_select
 
 from echoroo.core.actions import (
     ANNOTATION_COMMENT_CREATE_ACTION,
     ANNOTATION_COMMENT_LIST_ACTION,
 )
 from echoroo.core.database import DbSession
-from echoroo.core.permissions import Action, is_allowed
+from echoroo.core.permissions import gate_action
 from echoroo.middleware.auth import CurrentUser
 from echoroo.models.project import Project
 from echoroo.repositories.project import ProjectRepository
@@ -85,41 +83,6 @@ class AnnotationCommentListResponse(BaseModel):
     """``GET /annotations/{annotation_id}/comments`` response wrapper."""
 
     items: list[AnnotationCommentResponse] = Field(default_factory=list)
-
-
-# ---------------------------------------------------------------------------
-# Internal helpers (Phase 3 permission gate — mirrors annotation_votes.py)
-# ---------------------------------------------------------------------------
-
-
-async def _load_project(db: DbSession, project_id: UUID) -> Project:
-    """Load the Project ORM row needed by :func:`is_allowed`."""
-    project_result = await db.execute(sa_select(Project).where(Project.id == project_id))
-    project = project_result.scalar_one_or_none()
-    if project is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="project not found")
-    return project
-
-
-async def _gate(
-    *,
-    action: Action,
-    project_id: UUID,
-    current_user: Any,
-    request: Request,
-    db: DbSession,
-) -> Project:
-    """Run the Stage-1 :func:`is_allowed` gate for ``action`` on ``project_id``."""
-    project = await _load_project(db, project_id)
-    allowed, _ = is_allowed(
-        action=action,
-        user=current_user,
-        project=project,
-        request=request,
-    )
-    if not allowed:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="action denied")
-    return project
 
 
 async def _determine_comment_source(
@@ -187,7 +150,7 @@ async def list_annotation_comments(
         403: Permission denied
         501: Persistence not yet implemented (see module docstring)
     """
-    await _gate(
+    await gate_action(
         action=ANNOTATION_COMMENT_LIST_ACTION,
         project_id=project_id,
         current_user=current_user,
@@ -244,7 +207,7 @@ async def create_annotation_comment(
         422: Validation error
         501: Persistence not yet implemented (see module docstring)
     """
-    project = await _gate(
+    project = await gate_action(
         action=ANNOTATION_COMMENT_CREATE_ACTION,
         project_id=project_id,
         current_user=current_user,

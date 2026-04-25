@@ -1,9 +1,10 @@
 """Permission engine for 006-permissions-redesign.
 
 This module is the SINGLE source of truth for authorization decisions.
-No SQLAlchemy session / database access is performed here — callers resolve
-state upstream (role, project, trusted capabilities, API key scopes, taxon
-sensitivity maps) and pass it in.
+The decision engine itself does not perform SQLAlchemy session / database
+access; callers resolve state upstream (role, project, trusted capabilities,
+API key scopes, taxon sensitivity maps) and pass it in. Small FastAPI helper
+wrappers at the end of the file load Project rows for router call sites.
 
 Section layout (matches T040a-g):
 
@@ -29,25 +30,23 @@ Spec references (Rev.3.2):
     SC-001 / SC-017 (structural safety nets)
 
 Legacy compatibility: ``check_project_access`` is retained below because
-Phase 3 has not yet rewritten the existing routers that import it. The
-function is DB-dependent and sits at the end of the file, clearly marked.
+Phase 3 has not yet rewritten the existing routers that import it.
 """
 from __future__ import annotations
 
 from collections.abc import Mapping
 from enum import StrEnum
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any
+from typing import Any
 from uuid import UUID
 
-from fastapi import HTTPException, status
+from fastapi import HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, model_validator
+from sqlalchemy import select as sa_select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from echoroo.models.enums import ProjectMemberRole
-
-if TYPE_CHECKING:  # pragma: no cover - typing only
-    from sqlalchemy.ext.asyncio import AsyncSession
-
+from echoroo.models.project import Project
 
 # =============================================================================
 # T040a. Enums + constants
@@ -825,6 +824,40 @@ def _stash_state(
 # Legacy compatibility — used by Phase 2 routers until Phase 3 rewrite
 # =============================================================================
 
+async def load_project_or_404(db: AsyncSession, project_id: UUID) -> Project:
+    """Load the Project ORM row needed by :func:`is_allowed`. 404 if absent."""
+    project_result = await db.execute(sa_select(Project).where(Project.id == project_id))
+    project = project_result.scalar_one_or_none()
+    if project is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="project not found")
+    return project
+
+
+async def gate_action(
+    *,
+    action: Action,
+    project_id: UUID,
+    current_user: Any,
+    request: Request,
+    db: AsyncSession,
+) -> Project:
+    """Run the Stage-1 :func:`is_allowed` gate for ``action`` on ``project_id``.
+
+    Returns the loaded :class:`Project` row so callers can pass it through to
+    the service layer without issuing a second SELECT.
+    """
+    project = await load_project_or_404(db, project_id)
+    allowed, _ = is_allowed(
+        action=action,
+        user=current_user,
+        project=project,
+        request=request,
+    )
+    if not allowed:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="action denied")
+    return project
+
+
 async def check_project_access(
     project_id: UUID,
     user_id: UUID,
@@ -874,7 +907,9 @@ __all__ = [
     "check_project_access",
     "compute_effective_permissions",
     "compute_effective_resolution",
+    "gate_action",
     "is_allowed",
+    "load_project_or_404",
     "normalize_role",
     "permissions_from_toggles_for_authenticated",
     "permissions_from_toggles_for_guest",

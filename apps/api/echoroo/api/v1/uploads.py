@@ -17,23 +17,21 @@ Both are flagged with TODO comments below.
 
 from __future__ import annotations
 
-from typing import Annotated, Any
+from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from sqlalchemy import select as sa_select
 
 from echoroo.core import s3
 from echoroo.core.actions import UPLOAD_CREATE_ACTION
 from echoroo.core.database import DbSession
-from echoroo.core.permissions import Action, is_allowed
+from echoroo.core.permissions import gate_action
 from echoroo.middleware.auth import CurrentUser
 from echoroo.middleware.rate_limit import (
     upload_session_complete_rate_limiter,
     upload_session_create_rate_limiter,
 )
 from echoroo.models.enums import UploadSessionStatus
-from echoroo.models.project import Project
 from echoroo.repositories.dataset import DatasetRepository
 from echoroo.repositories.project import ProjectRepository
 from echoroo.repositories.upload import UploadFileRepository, UploadSessionRepository
@@ -70,50 +68,6 @@ def get_upload_service(db: DbSession) -> UploadService:
 
 
 UploadServiceDep = Annotated[UploadService, Depends(get_upload_service)]
-
-
-# ---------------------------------------------------------------------------
-# Internal helpers (Phase 3 permission gate)
-# ---------------------------------------------------------------------------
-
-
-async def _load_project(db: DbSession, project_id: UUID) -> Project:
-    """Load the Project ORM row needed by :func:`is_allowed`.
-
-    The gate reads ``visibility`` / ``restricted_config`` / ``status`` /
-    ``owner_id`` from the row, so a regular ORM load is sufficient.
-    """
-    project_result = await db.execute(sa_select(Project).where(Project.id == project_id))
-    project = project_result.scalar_one_or_none()
-    if project is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="project not found")
-    return project
-
-
-async def _gate(
-    *,
-    action: Action,
-    project_id: UUID,
-    current_user: Any,
-    request: Request,
-    db: DbSession,
-) -> Project:
-    """Run the Stage-1 :func:`is_allowed` gate for ``action`` on ``project_id``.
-
-    Returns the loaded :class:`Project` row so callers can pass it through to
-    the service layer (e.g. for response filtering / restricted_config reads)
-    without issuing a second SELECT.
-    """
-    project = await _load_project(db, project_id)
-    allowed, _ = is_allowed(
-        action=action,
-        user=current_user,
-        project=project,
-        request=request,
-    )
-    if not allowed:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="action denied")
-    return project
 
 
 def _compute_progress_percent(
@@ -191,7 +145,7 @@ async def create_upload_session(
         409: Active upload session already exists for this dataset
         422: Validation failure (extension, size, quota, or file count)
     """
-    await _gate(
+    await gate_action(
         action=UPLOAD_CREATE_ACTION,
         project_id=project_id,
         current_user=current_user,
@@ -273,7 +227,7 @@ async def complete_upload_session(
         404: Session not found or does not belong to this dataset/project
         409: Session is not in ISSUED state
     """
-    await _gate(
+    await gate_action(
         action=UPLOAD_CREATE_ACTION,
         project_id=project_id,
         current_user=current_user,
