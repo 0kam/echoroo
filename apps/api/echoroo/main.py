@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from echoroo.api.v1 import api_router
+from echoroo.api.web_v1 import web_v1_router
 from echoroo.core.exceptions import (
     AppException,
     app_exception_handler,
@@ -17,6 +18,7 @@ from echoroo.core.exceptions import (
 )
 from echoroo.core.redis import close_redis_connection, get_redis_connection
 from echoroo.core.settings import get_settings
+from echoroo.middleware.csrf import CsrfConfig, CsrfMiddleware
 from echoroo.middleware.logging import RequestLoggingMiddleware
 from echoroo.middleware.rate_limit import close_rate_limiter, init_rate_limiter
 from echoroo.middleware.security import (
@@ -85,6 +87,15 @@ def create_app() -> FastAPI:
         **cors_config,
     )
 
+    app.add_middleware(
+        CsrfMiddleware,
+        config=CsrfConfig(
+            session_secret=settings.web_session_secret,
+            protected_prefix="/web-api/v1",
+            cookie_name=settings.web_session_cookie_name,
+        ),
+    )
+
     # Exception handlers
     app.add_exception_handler(AppException, app_exception_handler)  # type: ignore[arg-type]
     app.add_exception_handler(RequestValidationError, validation_exception_handler)  # type: ignore[arg-type]
@@ -92,6 +103,7 @@ def create_app() -> FastAPI:
 
     # Include API routers
     app.include_router(api_router)
+    app.include_router(web_v1_router)
 
     @app.get("/health")
     async def health_check() -> dict[str, str]:

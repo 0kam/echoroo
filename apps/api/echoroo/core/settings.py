@@ -107,6 +107,16 @@ class Settings(BaseSettings):
 
     # Session
     SESSION_TIMEOUT_MINUTES: int = 120  # 2 hours
+    web_session_cookie_name: str = "echoroo_session"
+    web_refresh_cookie_name: str = "echoroo_refresh"
+    web_csrf_cookie_name: str = "echoroo_csrf"
+    web_session_secret: str = Field(
+        default="dev-web-session-secret-change-in-production",
+        description="First-party web session HMAC/JWT secret",
+    )
+    web_access_token_ttl_seconds: int = 900
+    web_refresh_token_ttl_seconds: int = 30 * 24 * 3600
+    web_interim_token_ttl_seconds: int = 900
 
     # API Tokens
     API_TOKEN_PREFIX: str = "ecr_"
@@ -167,6 +177,13 @@ class Settings(BaseSettings):
             if self.JWT_SECRET_KEY in weak_defaults or len(self.JWT_SECRET_KEY) < 32:
                 raise ValueError(
                     "JWT_SECRET_KEY must be a strong secret (min 32 chars) in production/staging"
+                )
+            if (
+                self.web_session_secret == "dev-web-session-secret-change-in-production"
+                or len(self.web_session_secret) < 32
+            ):
+                raise ValueError(
+                    "web_session_secret must be a strong secret (min 32 chars) in production/staging"
                 )
             if self.S3_SECRET_KEY == "echoroo-dev":
                 raise ValueError(

@@ -1,11 +1,10 @@
-"""First-party session API (Cookie + CSRF) under ``/web-api/v1/*``.
+"""First-party session API (Cookie + CSRF) under ``/web-api/v1/*``."""
 
-This package hosts endpoints that are callable only from the Echoroo
-web UI (session cookie authentication, CSRF double-submit). The
-programmatic API remains in :mod:`echoroo.api.v1` and uses Bearer API
-keys.
+from fastapi import APIRouter
 
-Phase 2.4 adds the audit log read endpoints here (T056) but does NOT
-wire the router into FastAPI's app factory — Phase 3 (T070+) takes
-ownership of the middleware split and endpoint registration.
-"""
+from echoroo.api.web_v1 import auth as auth_module
+
+web_v1_router = APIRouter(prefix="/web-api/v1")
+web_v1_router.include_router(auth_module.router)
+
+__all__ = ["web_v1_router"]
