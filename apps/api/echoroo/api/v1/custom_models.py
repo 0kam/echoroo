@@ -21,8 +21,8 @@ from echoroo.core.actions import (
 from echoroo.core.database import DbSession
 from echoroo.core.permissions import gate_action
 from echoroo.middleware.auth import CurrentUser
-from echoroo.models.custom_model import CustomModel, CustomModelStatus
-from echoroo.repositories.custom_model import CustomModelRepository
+from echoroo.models.custom_model import CustomModelStatus
+from echoroo.repositories.search_session import SearchSessionRepository
 from echoroo.schemas.custom_model import (
     CustomModelApplyResponse,
     CustomModelCreate,
@@ -60,9 +60,7 @@ class SeedSamplingBody(BaseModel):
     def check_reference_source(self) -> SeedSamplingBody:
         """Ensure exactly one reference source is provided."""
         if not self.reference_embedding_ids and not self.search_session_id:
-            raise ValueError(
-                "Either reference_embedding_ids or search_session_id is required."
-            )
+            raise ValueError("Either reference_embedding_ids or search_session_id is required.")
         return self
 
 
@@ -81,47 +79,6 @@ def get_custom_model_service(db: DbSession) -> CustomModelService:
 CustomModelServiceDep = Annotated[CustomModelService, Depends(get_custom_model_service)]
 
 
-async def get_model_or_404(
-    model_id: UUID,
-    project_id: UUID,
-    service: CustomModelService,
-) -> CustomModel:
-    """Fetch a CustomModel by ID, scoped to the given project.
-
-    Args:
-        model_id: CustomModel's UUID
-        project_id: Project's UUID (used for scoping)
-        service: CustomModelService instance
-
-    Returns:
-        CustomModel instance
-
-    Raises:
-        HTTPException: 404 if model not found in project
-    """
-    model = await service.get_model(model_id, project_id)
-    if model is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Custom model not found",
-        )
-    return model
-
-
-async def ensure_model_in_project_or_404(
-    model_id: UUID,
-    project_id: UUID,
-    db: DbSession,
-) -> None:
-    """Raise 404 when the custom model does not belong to the project."""
-    repo = CustomModelRepository(db)
-    if not await repo.exists_in_project(model_id, project_id):
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Custom model not found",
-        )
-
-
 @router.get(
     "",
     response_model=CustomModelListResponse,
@@ -137,7 +94,9 @@ async def list_custom_models(
     limit: int = 50,
     offset: int = 0,
     tag_id: UUID | None = None,
-    search_session_id: UUID | None = Query(default=None, description="Filter by source search session"),
+    search_session_id: UUID | None = Query(
+        default=None, description="Filter by source search session"
+    ),
 ) -> CustomModelListResponse:
     """List custom models for a project.
 
@@ -168,6 +127,14 @@ async def list_custom_models(
         request=request,
         db=db,
     )
+    if search_session_id is not None:
+        session_repo = SearchSessionRepository(db)
+        if not await session_repo.exists_in_project(search_session_id, project_id):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Search session not found",
+            )
+
     models, total = await service.list_models(
         project_id=project_id,
         limit=limit,
@@ -271,8 +238,7 @@ async def get_custom_model(
         request=request,
         db=db,
     )
-    await ensure_model_in_project_or_404(model_id, project_id, db)
-    model = await get_model_or_404(model_id, project_id, service)
+    model = await service.get_model_or_404(model_id, project_id)
     return CustomModelResponse.model_validate(model)
 
 
@@ -322,7 +288,7 @@ async def update_custom_model(
         request=request,
         db=db,
     )
-    model = await get_model_or_404(model_id, project_id, service)
+    model = await service.get_model_or_404(model_id, project_id)
 
     if model.status != CustomModelStatus.DRAFT:
         raise HTTPException(
@@ -376,8 +342,7 @@ async def delete_custom_model(
         request=request,
         db=db,
     )
-    await ensure_model_in_project_or_404(model_id, project_id, db)
-    model = await get_model_or_404(model_id, project_id, service)
+    model = await service.get_model_or_404(model_id, project_id)
     await service.delete_model(model)
 
 
@@ -428,9 +393,13 @@ async def train_custom_model(
         request=request,
         db=db,
     )
-    model = await get_model_or_404(model_id, project_id, service)
+    model = await service.get_model_or_404(model_id, project_id)
 
-    if model.status not in (CustomModelStatus.DRAFT, CustomModelStatus.FAILED, CustomModelStatus.TRAINED):
+    if model.status not in (
+        CustomModelStatus.DRAFT,
+        CustomModelStatus.FAILED,
+        CustomModelStatus.TRAINED,
+    ):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=(
@@ -484,8 +453,7 @@ async def get_custom_model_status(
         request=request,
         db=db,
     )
-    await ensure_model_in_project_or_404(model_id, project_id, db)
-    model = await get_model_or_404(model_id, project_id, service)
+    model = await service.get_model_or_404(model_id, project_id)
     return CustomModelResponse.model_validate(model)
 
 
@@ -548,7 +516,7 @@ async def apply_custom_model(
         request=request,
         db=db,
     )
-    model = await get_model_or_404(model_id, project_id, service)
+    model = await service.get_model_or_404(model_id, project_id)
 
     if model.status not in (CustomModelStatus.TRAINED, CustomModelStatus.DEPLOYED):
         raise HTTPException(
@@ -638,8 +606,7 @@ async def list_custom_model_detection_runs(
         request=request,
         db=db,
     )
-    await ensure_model_in_project_or_404(model_id, project_id, db)
-    model = await get_model_or_404(model_id, project_id, service)
+    model = await service.get_model_or_404(model_id, project_id)
     runs = await service.list_detection_runs(model, limit=limit)
 
     items = [
@@ -718,9 +685,13 @@ async def create_seed_samples(
         request=request,
         db=db,
     )
-    model = await get_model_or_404(model_id, project_id, service)
+    model = await service.get_model_or_404(model_id, project_id)
 
-    if model.status not in (CustomModelStatus.DRAFT, CustomModelStatus.FAILED, CustomModelStatus.TRAINED):
+    if model.status not in (
+        CustomModelStatus.DRAFT,
+        CustomModelStatus.FAILED,
+        CustomModelStatus.TRAINED,
+    ):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=(
@@ -831,7 +802,7 @@ async def suggest_next_samples(
         request=request,
         db=db,
     )
-    model = await get_model_or_404(model_id, project_id, service)
+    model = await service.get_model_or_404(model_id, project_id)
 
     try:
         round_ = await service.suggest_next_samples(model)
@@ -899,8 +870,7 @@ async def list_sampling_rounds(
         request=request,
         db=db,
     )
-    await ensure_model_in_project_or_404(model_id, project_id, db)
-    model = await get_model_or_404(model_id, project_id, service)
+    model = await service.get_model_or_404(model_id, project_id)
     rounds = await service.list_sampling_rounds(model)
 
     round_responses = [
@@ -972,8 +942,7 @@ async def get_sampling_round(
         request=request,
         db=db,
     )
-    await ensure_model_in_project_or_404(model_id, project_id, db)
-    model = await get_model_or_404(model_id, project_id, service)
+    model = await service.get_model_or_404(model_id, project_id)
 
     round_ = await service.get_sampling_round(round_id, model)
     if round_ is None:
