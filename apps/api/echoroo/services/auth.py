@@ -2,6 +2,7 @@
 
 import logging
 import time
+from typing import NoReturn
 from uuid import UUID
 
 from fastapi import HTTPException, status
@@ -22,6 +23,18 @@ from echoroo.schemas.auth import (
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
+
+_PHASE4_STUB_DETAIL = (
+    "This endpoint is being rewritten in Phase 4 T150a-d / T155. "
+    "Use the new auth flow when available."
+)
+
+
+def _raise_phase4_stub() -> NoReturn:
+    raise HTTPException(
+        status_code=status.HTTP_501_NOT_IMPLEMENTED,
+        detail=_PHASE4_STUB_DETAIL,
+    )
 
 
 class AuthService:
@@ -111,7 +124,7 @@ class AuthService:
             HTTPException: If email already exists, CAPTCHA invalid, or validation fails
         """
         del request, client_ip
-        raise NotImplementedError("Phase 4 T150a: replace this")
+        _raise_phase4_stub()
 
     async def login(
         self, request: LoginRequest, client_ip: str, user_agent: str | None = None
@@ -130,7 +143,7 @@ class AuthService:
             HTTPException: If credentials invalid, account locked, or rate limited
         """
         del request, client_ip, user_agent
-        raise NotImplementedError("Phase 4 T150a: replace this")
+        _raise_phase4_stub()
 
     async def logout(self, user_id: UUID) -> None:
         """Logout user by revoking all active tokens via Redis.
@@ -277,7 +290,7 @@ class AuthService:
             HTTPException: If token is invalid or expired
         """
         del token
-        raise NotImplementedError("Phase 4 T150a: replace this")
+        _raise_phase4_stub()
 
     async def request_password_reset(self, email: str) -> None:
         """Request password reset (always returns success for security).
@@ -289,7 +302,7 @@ class AuthService:
             Always returns success even if email doesn't exist (security best practice)
         """
         del email
-        raise NotImplementedError("Phase 4 T150d: replace this")
+        _raise_phase4_stub()
 
     async def confirm_password_reset(self, request: PasswordResetConfirm) -> None:
         """Reset password using token.
@@ -301,7 +314,7 @@ class AuthService:
             HTTPException: If token is invalid or expired
         """
         del request
-        raise NotImplementedError("Phase 4 T150d: replace this")
+        _raise_phase4_stub()
 
     async def get_current_user(self, token: str) -> User:
         """Get current user from access token.

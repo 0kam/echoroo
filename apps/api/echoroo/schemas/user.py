@@ -12,12 +12,10 @@ class UserResponse(BaseModel):
     id: UUID
     email: str
     display_name: str | None
-    organization: str | None
-    is_active: bool
-    is_superuser: bool
-    is_verified: bool
     created_at: datetime
+    updated_at: datetime
     last_login_at: datetime | None
+    two_factor_enabled: bool
 
     model_config = {"from_attributes": True}
 
@@ -26,9 +24,6 @@ class UserUpdateRequest(BaseModel):
     """User profile update request schema."""
 
     display_name: str | None = Field(None, max_length=100, description="Display name")
-    organization: str | None = Field(
-        None, max_length=200, description="Organization or affiliation"
-    )
 
 
 class PasswordChangeRequest(BaseModel):

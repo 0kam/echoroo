@@ -7,12 +7,26 @@ old call sites importable until that replacement lands.
 
 import hashlib
 import secrets
+from typing import NoReturn
 from uuid import UUID
 
+from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from echoroo.models.user import User
 from echoroo.schemas.token import APITokenCreateRequest
+
+_PHASE4_STUB_DETAIL = (
+    "This endpoint is being rewritten in Phase 4 T150a-d / T155. "
+    "Use the new auth flow when available."
+)
+
+
+def _raise_phase4_stub() -> NoReturn:
+    raise HTTPException(
+        status_code=status.HTTP_501_NOT_IMPLEMENTED,
+        detail=_PHASE4_STUB_DETAIL,
+    )
 
 
 class TokenService:
@@ -41,26 +55,26 @@ class TokenService:
         new ``api_keys`` model/service with the baseline schema.
         """
         del user_id
-        raise NotImplementedError("Phase 4: replace legacy api_tokens with api_keys")
+        _raise_phase4_stub()
 
     async def create_token(
         self, user_id: UUID, request: APITokenCreateRequest
     ) -> tuple[object, str]:
         """Create an API token."""
         del user_id, request
-        raise NotImplementedError("Phase 4: replace legacy api_tokens with api_keys")
+        _raise_phase4_stub()
 
     async def revoke_token(self, user_id: UUID, token_id: UUID) -> None:
         """Revoke an API token."""
         del user_id, token_id
-        raise NotImplementedError("Phase 4: replace legacy api_tokens with api_keys")
+        _raise_phase4_stub()
 
     async def authenticate_by_token(self, token: str) -> User | None:
         """Authenticate a user by API token."""
         del token
-        raise NotImplementedError("Phase 4: replace legacy api_tokens with api_keys")
+        _raise_phase4_stub()
 
     async def get_token_by_id(self, user_id: UUID, token_id: UUID) -> object | None:
         """Get a specific API token by ID."""
         del user_id, token_id
-        raise NotImplementedError("Phase 4: replace legacy api_tokens with api_keys")
+        _raise_phase4_stub()

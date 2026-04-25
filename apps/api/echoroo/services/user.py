@@ -74,8 +74,6 @@ class UserService:
         # Update fields if provided
         if request.display_name is not None:
             user.display_name = request.display_name
-        if request.organization is not None:
-            raise NotImplementedError("Phase 4 T150a: replace this")
 
         await self.user_repo.update(user)
         await self.db.commit()

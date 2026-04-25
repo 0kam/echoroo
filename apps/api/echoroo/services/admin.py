@@ -1,8 +1,10 @@
 """Admin service for user and system management."""
 
 import json
+from typing import NoReturn
 from uuid import UUID
 
+from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -16,6 +18,18 @@ from echoroo.schemas.admin import (
     SystemSettingResponse,
     SystemSettingsUpdateRequest,
 )
+
+_PHASE4_STUB_DETAIL = (
+    "This endpoint is being rewritten in Phase 4 T150a-d / T155. "
+    "Use the new auth flow when available."
+)
+
+
+def _raise_phase4_stub() -> NoReturn:
+    raise HTTPException(
+        status_code=status.HTTP_501_NOT_IMPLEMENTED,
+        detail=_PHASE4_STUB_DETAIL,
+    )
 
 
 class AdminService:
@@ -50,7 +64,7 @@ class AdminService:
             Paginated user list with total count
         """
         del page, limit, search, is_active
-        raise NotImplementedError("Phase 4 T150a: replace this")
+        _raise_phase4_stub()
 
     async def update_user(
         self,
@@ -72,7 +86,7 @@ class AdminService:
             HTTPException: If user not found or trying to disable last superuser
         """
         del user_id, request, admin_id
-        raise NotImplementedError("Phase 4 T150a: replace this")
+        _raise_phase4_stub()
 
     async def get_system_settings(self) -> dict[str, SystemSettingResponse]:
         """Get all system settings.

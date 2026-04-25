@@ -1,11 +1,26 @@
 """Setup service for initial system configuration."""
 
+from typing import NoReturn
+
+from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from echoroo.models.user import User
 from echoroo.repositories.system import SystemSettingRepository
 from echoroo.schemas.setup import SetupInitializeRequest, SetupStatusResponse
+
+_PHASE4_STUB_DETAIL = (
+    "This endpoint is being rewritten in Phase 4 T150a-d / T155. "
+    "Use the new auth flow when available."
+)
+
+
+def _raise_phase4_stub() -> NoReturn:
+    raise HTTPException(
+        status_code=status.HTTP_501_NOT_IMPLEMENTED,
+        detail=_PHASE4_STUB_DETAIL,
+    )
 
 
 class SetupService:
@@ -58,4 +73,4 @@ class SetupService:
             HTTPException: 403 if setup is already completed or users exist
         """
         del request
-        raise NotImplementedError("Phase 4 T150a: replace this")
+        _raise_phase4_stub()

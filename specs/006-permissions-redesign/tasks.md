@@ -209,6 +209,7 @@ description: "Task list for 006-permissions-redesign (revised after /speckit.ana
 - [ ] **T150b** [P] [US8] `api/web_v1/auth.py` TOTP: `/2fa/challenge` + `/2fa/setup/totp` + `/2fa/setup/totp/confirm` (FR-065、FR-068、FR-069、FR-070)
 - [ ] **T150c** [P] [US8] `api/web_v1/auth.py` WebAuthn: `/2fa/webauthn/register` + `/2fa/webauthn/challenge` (FR-111)
 - [ ] **T150d** [P] [US8] `api/web_v1/auth.py` password-reset: `/password-reset/request` + `/password-reset/confirm`（security_stamp 更新）(FR-055、FR-071)
+- [ ] **T150e** [US8] `apps/api/pyproject.toml`: drop `tests.* ignore_errors = true` mypy override after T150a-d migrate tests off legacy User attrs
 
 ### 4.4 Middleware
 
