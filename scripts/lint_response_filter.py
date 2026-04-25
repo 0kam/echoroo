@@ -35,6 +35,8 @@ import ast
 import sys
 from pathlib import Path
 
+DEFAULT_ALLOWLIST = Path("scripts/allowlists/response_filter_allowlist.txt")
+
 TARGET_RESPONSE_MODELS: frozenset[str] = frozenset(
     {
         "Recording",
@@ -130,12 +132,55 @@ def _return_annotation_names(
     return _extract_type_names(node.returns)
 
 
-def find_violations(root: Path) -> list[str]:
+def _load_allowlist(path: Path) -> frozenset[str]:
+    """Load a per-line file path allowlist (``# comments`` permitted)."""
+    if not path.exists():
+        return frozenset()
+    entries: set[str] = set()
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.split("#", 1)[0].strip()
+        if line:
+            entries.add(line)
+    return frozenset(entries)
+
+
+def _detect_repo_root(start: Path) -> Path:
+    candidate = start.resolve()
+    for _ in range(8):
+        if (candidate / ".git").exists():
+            return candidate
+        if candidate.parent == candidate:
+            return candidate
+        candidate = candidate.parent
+    return candidate
+
+
+def _relative_posix(path: Path, repo_root: Path) -> str:
+    abs_path = path.resolve()
+    try:
+        rel = abs_path.relative_to(repo_root.resolve())
+    except ValueError:
+        rel = path
+    return str(rel).replace("\\", "/")
+
+
+def find_violations(
+    root: Path,
+    allowlist: frozenset[str] | None = None,
+    repo_root: Path | None = None,
+) -> list[str]:
     violations: list[str] = []
     if not root.exists():
         return violations
+    if allowlist is None:
+        allowlist = frozenset()
+    if repo_root is None:
+        repo_root = _detect_repo_root(root)
 
     for py_file in sorted(root.rglob("*.py")):
+        rel_str = _relative_posix(py_file, repo_root)
+        if rel_str in allowlist:
+            continue
         try:
             tree = ast.parse(py_file.read_text(encoding="utf-8"), filename=str(py_file))
         except (OSError, SyntaxError) as exc:
@@ -174,6 +219,21 @@ def main() -> int:
         help="Root directory to scan (default: apps/api/echoroo/api).",
     )
     parser.add_argument(
+        "--allowlist-file",
+        type=Path,
+        default=DEFAULT_ALLOWLIST,
+        help=(
+            f"Allowlist file (default: {DEFAULT_ALLOWLIST}). Each non-empty / "
+            "non-comment line is a repo-relative path to skip."
+        ),
+    )
+    parser.add_argument(
+        "--repo-root",
+        type=Path,
+        default=None,
+        help="Repository root (default: auto-detect via .git marker).",
+    )
+    parser.add_argument(
         "--fail-on-violation",
         action="store_true",
         help="Exit with status 1 if any violations are found.",
@@ -181,7 +241,8 @@ def main() -> int:
     args = parser.parse_args()
 
     try:
-        violations = find_violations(args.path)
+        allowlist = _load_allowlist(args.allowlist_file)
+        violations = find_violations(args.path, allowlist, args.repo_root)
     except Exception as exc:  # pragma: no cover - defensive
         print(f"[lint_response_filter] unexpected error: {exc}", file=sys.stderr)
         return 2

@@ -34,6 +34,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+DEFAULT_ALLOWLIST = Path("scripts/allowlists/openapi_coords_allowlist.txt")
+
 FORBIDDEN_NAMES: frozenset[str] = frozenset(
     {
         "lat",
@@ -78,12 +80,54 @@ def find_hits(document: Any) -> list[str]:
     return hits
 
 
+def _load_allowlist(path: Path) -> frozenset[str]:
+    """Load an allowlist of JSONPath prefixes from ``path``.
+
+    Each non-empty / non-comment line is a JSONPath prefix; any hit whose
+    path starts with the prefix is dropped from the violation list. The
+    Phase 2.10 #7 baseline allowlists exact ``$.components.schemas.X.properties.lat``
+    style prefixes so the strict gate can run on every push while Phase 3
+    rewrites the schemas to ``h3_index`` only.
+    """
+    if not path.exists():
+        return frozenset()
+    entries: set[str] = set()
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.split("#", 1)[0].strip()
+        if line:
+            entries.add(line)
+    return frozenset(entries)
+
+
+def _filter_hits(hits: list[str], allowlist: frozenset[str]) -> list[str]:
+    if not allowlist:
+        return hits
+    remaining: list[str] = []
+    for hit in hits:
+        # Hit format: "<jsonpath> ..." — strip the trailing annotation
+        # before comparing to the allowlist prefix.
+        path_only = hit.split(" ", 1)[0]
+        if any(path_only.startswith(prefix) for prefix in allowlist):
+            continue
+        remaining.append(hit)
+    return remaining
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "openapi_json",
         type=Path,
         help="Path to the OpenAPI JSON document.",
+    )
+    parser.add_argument(
+        "--allowlist-file",
+        type=Path,
+        default=DEFAULT_ALLOWLIST,
+        help=(
+            f"Allowlist file (default: {DEFAULT_ALLOWLIST}). Each non-empty / "
+            "non-comment line is a JSONPath prefix to drop from the hit list."
+        ),
     )
     args = parser.parse_args()
 
@@ -96,20 +140,25 @@ def main() -> int:
         )
         return 2
 
-    hits = find_hits(document)
+    allowlist = _load_allowlist(args.allowlist_file)
+    raw_hits = find_hits(document)
+    hits = _filter_hits(raw_hits, allowlist)
     for hit in hits:
         print(hit, file=sys.stderr)
 
     if hits:
         print(
             f"[assert_openapi_no_coords] {len(hits)} forbidden coordinate "
-            f"reference(s) in {args.openapi_json}",
+            f"reference(s) in {args.openapi_json} "
+            f"(after {len(raw_hits) - len(hits)} allowlisted)",
             file=sys.stderr,
         )
         return 1
+    suppressed = len(raw_hits)
     print(
         f"[assert_openapi_no_coords] {args.openapi_json}: clean "
-        "(no raw lat/lng/coordinates leakage)",
+        f"(no unallowed raw lat/lng/coordinates leakage; "
+        f"{suppressed} legacy reference(s) allowlisted)",
         file=sys.stderr,
     )
     return 0

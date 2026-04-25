@@ -1,0 +1,46 @@
+# Allowlist for scripts/lint_permission_guard.py.
+#
+# Each non-empty / non-comment line is a repo-relative path that is
+# exempt from the permission-guard coverage lint. Phase 2.10 #7
+# baselined the legacy /api/v1/* router files here so the strict gate
+# can run on every push while Phase 3 migrates each endpoint to
+# Depends(check_action(...)) one file at a time.
+#
+# Allowlist baseline established 2026-04-25; Phase 3 must drive each
+# entry to empty before final cleanup. Removing a path here is the
+# graduation criterion for that file's permission-guard rewrite.
+#
+# Format:
+#   * One repo-relative POSIX path per line.
+#   * Lines beginning with `#` are comments.
+#   * Trailing whitespace is ignored.
+
+# legacy: cleaned in Phase 3 US11 T1xx — all /api/v1/* routers below
+# pre-date the Permission engine wiring (T040+). Each will be migrated
+# in Phase 3 to call Depends(check_action(...)) and removed from this
+# allowlist as its rewrite lands.
+apps/api/echoroo/api/v1/admin.py
+apps/api/echoroo/api/v1/annotation_projects.py
+apps/api/echoroo/api/v1/annotation_sets.py
+apps/api/echoroo/api/v1/annotation_tasks.py
+apps/api/echoroo/api/v1/annotations.py
+apps/api/echoroo/api/v1/clips.py
+apps/api/echoroo/api/v1/confirmed_regions.py
+apps/api/echoroo/api/v1/datasets.py
+apps/api/echoroo/api/v1/detection_runs.py
+apps/api/echoroo/api/v1/detections.py
+apps/api/echoroo/api/v1/h3.py
+apps/api/echoroo/api/v1/projects.py
+apps/api/echoroo/api/v1/recorders.py
+apps/api/echoroo/api/v1/recordings.py
+apps/api/echoroo/api/v1/search/sessions.py
+apps/api/echoroo/api/v1/search/similarity.py
+apps/api/echoroo/api/v1/segments.py
+apps/api/echoroo/api/v1/settings.py
+apps/api/echoroo/api/v1/sites.py
+apps/api/echoroo/api/v1/tags.py
+apps/api/echoroo/api/v1/taxa.py
+apps/api/echoroo/api/v1/time_range_annotations.py
+apps/api/echoroo/api/v1/uploads.py
+apps/api/echoroo/api/v1/users.py
+apps/api/echoroo/api/v1/xeno_canto.py

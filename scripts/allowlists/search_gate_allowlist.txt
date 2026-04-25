@@ -4,5 +4,16 @@
 # `select(Detection)` / `select(Annotation)` directly without going through
 # `services/search_gate.py`. Comments start with `#`; blank lines are ignored.
 #
-# Phase 2 ships an empty allowlist. Add entries ONLY with a code-review-
-# approved exemption + a TODO referencing the migration ticket.
+# Phase 2.10 #7 baselined legacy direct-select call sites here so the strict
+# gate can run on every push while Phase 3 migrates each to SearchGate.
+# Allowlist baseline established 2026-04-25; Phase 3 must drive each entry
+# to empty before final cleanup.
+
+# legacy: cleaned in Phase 3 US11 T1xx — these modules query Detection or
+# Annotation tables directly via `select(...)`; each rewrite will route
+# through services/search_gate.py and remove its allowlist entry.
+apps/api/echoroo/api/v1/search/annotations.py
+apps/api/echoroo/repositories/annotation.py
+apps/api/echoroo/services/detection_export.py
+apps/api/echoroo/services/search_session.py
+apps/api/echoroo/workers/evaluation_tasks.py

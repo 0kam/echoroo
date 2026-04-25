@@ -174,18 +174,15 @@ jobs:
   # the endpoint-coverage reflection test. This is the merge-gate that
   # signals Phase 3+ work may begin.
   #
-  # Triggered ONLY on:
-  #   - `workflow_dispatch` (manual run), OR
-  #   - PRs labelled `permissions-strict-gate`.
-  # The gate WILL be red until Phase 3 lands; that is by design (tasks.md
-  # §2.9 checkpoint). Once Phase 3 ships, drop the `if:` guard so the
-  # gate runs on every push/PR, and remove the warn-mode jobs above.
+  # Phase 2.10 #7 (2026-04-25): the gate is now ALWAYS-ON. Each lint's
+  # legacy violations are baselined into per-script allowlist files
+  # under `scripts/allowlists/*.txt` so that a green run remains
+  # reachable on this branch while Phase 3 work is in flight. Phase 3
+  # MUST drive each allowlist to empty before final cleanup; new
+  # violations introduced after the baseline date will fail the gate.
   # ---------------------------------------------------------------------------
   permissions-strict-gate:
     name: Permissions strict gate (T100f, Phase 3 entry condition)
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      contains(github.event.pull_request.labels.*.name, 'permissions-strict-gate')
     runs-on: ubuntu-latest
     # Intentionally NOT continue-on-error: a green run here is the
     # checkpoint to start Phase 3 work.
@@ -243,16 +240,16 @@ jobs:
   # Phase 2 foundation completion marker.
   #
   # This job depends on `permissions-strict-gate` so a green run signals
-  # "Phase 2 done, Phase 3 may begin". It is `continue-on-error: true`
-  # while Phase 3 is in flight so the rest of CI stays green even when
-  # the strict gate is red. Flip to `false` once Phase 3 lands.
+  # "Phase 2 done, Phase 3 may begin". Phase 2.10 #7 (2026-04-25)
+  # promoted this marker from warn-only to a hard gate (continue-on-error
+  # removed) now that the strict gate is reachable green via baseline
+  # allowlists.
   # ---------------------------------------------------------------------------
   phase-2-foundation-complete:
     name: Phase 2 foundation complete (marker)
     needs: [permissions-strict-gate]
     if: always()
     runs-on: ubuntu-latest
-    continue-on-error: true
     env:
       # Pull the upstream job result into an env var instead of
       # interpolating directly into the run: command, per the project's

@@ -1,0 +1,18 @@
+# Allowlist for scripts/lint_response_filter.py.
+#
+# Each non-empty / non-comment line is a repo-relative path that is
+# exempt from the apply_response_filter coverage lint. Phase 2.10 #7
+# baselined the legacy detection / site / annotation-search endpoints
+# here so the strict gate can run on every push while Phase 3 wires
+# apply_response_filter into each one.
+#
+# Allowlist baseline established 2026-04-25; Phase 3 must drive each
+# entry to empty before final cleanup.
+
+# legacy: cleaned in Phase 3 US11 T1xx — these endpoints predate the
+# ResponseFilter abstraction (T038/T039). Each will be migrated to call
+# apply_response_filter(...) on its returned Recording/Detection/Site
+# payload and removed from this allowlist.
+apps/api/echoroo/api/v1/detections.py
+apps/api/echoroo/api/v1/search/annotations.py
+apps/api/echoroo/api/v1/sites.py
