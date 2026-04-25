@@ -117,6 +117,8 @@ class Settings(BaseSettings):
     web_access_token_ttl_seconds: int = 900
     web_refresh_token_ttl_seconds: int = 30 * 24 * 3600
     web_interim_token_ttl_seconds: int = 900
+    webauthn_interim_token_ttl_seconds: int = 300
+    web_app_base_url: str = "https://echoroo.app"
 
     # API Tokens
     API_TOKEN_PREFIX: str = "ecr_"

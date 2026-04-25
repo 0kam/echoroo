@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import unicodedata
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from echoroo.core.text import has_control_chars
 
 
 class RegisterRequest(BaseModel):
@@ -122,7 +125,17 @@ class WebAuthnRegisterRequest(BaseModel):
 
     interim_token: str
     credential: dict[str, Any] | None = None
-    name: str | None = None
+    name: str | None = Field(default=None, max_length=100)
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def normalize_name(cls, value: Any) -> str | None:
+        if value is None:
+            return None
+        normalized = unicodedata.normalize("NFKC", str(value))
+        if has_control_chars(normalized):
+            raise ValueError("name contains control characters")
+        return normalized.strip()
 
 
 class WebAuthnRegisterBeginResponse(BaseModel):
@@ -169,3 +182,20 @@ class WebAuthnChallengeCompleteResponse(BaseModel):
 
     access_token: str
     expires_in: int
+
+
+class PasswordResetRequest(BaseModel):
+    """Request body for beginning password reset."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    email: str
+
+
+class PasswordResetConfirmRequest(BaseModel):
+    """Request body for confirming password reset with a one-time token."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    token: str
+    new_password: str

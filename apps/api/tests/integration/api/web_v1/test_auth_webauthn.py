@@ -14,7 +14,11 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
 
-from echoroo.services.webauthn_service import StoredCredential
+from echoroo.services.webauthn_service import (
+    StoredCredential,
+    WebAuthnDuplicateCredentialError,
+    WebAuthnReplayDetectedError,
+)
 from tests.integration.api.web_v1.test_auth import _create_user
 
 try:
@@ -127,6 +131,7 @@ async def client_fixture(
         transport=ASGITransport(app=app),
         base_url="https://testserver",
     ) as test_client:
+        test_client.app = app  # type: ignore[attr-defined]
         yield test_client
     app.dependency_overrides.clear()
 
@@ -244,6 +249,28 @@ async def test_webauthn_register_begin_rejects_non_superuser_403(
 
 
 @pytest.mark.asyncio
+async def test_webauthn_register_complete_rejects_non_superuser_403(
+    client: AsyncClient,
+    session_factory: object,
+) -> None:
+    user = await _create_user(session_factory, two_factor_enabled=True)
+
+    response = await client.post(
+        "/web-api/v1/auth/2fa/webauthn/register",
+        json={
+            "interim_token": await _issue_interim_token_for_user(
+                session_factory,
+                user.id,
+                "webauthn_register_complete",
+            ),
+            "credential": {"id": "credential-1"},
+        },
+    )
+
+    assert response.status_code == 403
+
+
+@pytest.mark.asyncio
 async def test_webauthn_register_complete_persists_credential(
     client: AsyncClient,
     session_factory: object,
@@ -280,6 +307,36 @@ async def test_webauthn_register_complete_persists_credential(
     }
     credentials = await auth_module._superuser_credential_store.get_credentials(user.id)  # noqa: SLF001
     assert credentials[0]["name"] == "Primary hardware key"
+
+
+@pytest.mark.asyncio
+async def test_webauthn_register_complete_duplicate_credential_returns_409(
+    client: AsyncClient,
+    session_factory: object,
+) -> None:
+    from echoroo.api.web_v1 import auth as auth_module
+
+    user = await _create_user(session_factory, two_factor_enabled=True)
+    await _seed_superuser(session_factory, user.id)
+
+    with patch.object(
+        auth_module.webauthn_service,
+        "complete_registration",
+        new=AsyncMock(side_effect=WebAuthnDuplicateCredentialError()),
+    ):
+        response = await client.post(
+            "/web-api/v1/auth/2fa/webauthn/register",
+            json={
+                "interim_token": await _issue_interim_token_for_user(
+                    session_factory,
+                    user.id,
+                    "webauthn_register_complete",
+                ),
+                "credential": {"id": "credential-1"},
+            },
+        )
+
+    assert response.status_code == 409
 
 
 @pytest.mark.asyncio
@@ -386,6 +443,44 @@ async def test_webauthn_challenge_complete_issues_real_session(
     credentials = await auth_module._superuser_credential_store.get_credentials(user.id)  # noqa: SLF001
     assert credentials[0]["sign_count"] == 2
     assert credentials[0]["last_used_at"] == "2026-01-01T00:01:00Z"
+
+
+@pytest.mark.asyncio
+async def test_webauthn_challenge_complete_sign_count_regression_returns_401(
+    client: AsyncClient,
+    session_factory: object,
+) -> None:
+    from echoroo.api.web_v1 import auth as auth_module
+
+    user = await _create_user(session_factory, two_factor_enabled=True)
+    await _seed_superuser(session_factory, user.id)
+    await auth_module._superuser_credential_store.save_credentials(  # noqa: SLF001
+        user.id,
+        [_stored_credential()],
+    )
+
+    with patch.object(
+        auth_module.webauthn_service,
+        "complete_authentication",
+        new=AsyncMock(side_effect=WebAuthnReplayDetectedError()),
+    ):
+        response = await client.post(
+            "/web-api/v1/auth/2fa/webauthn/challenge",
+            json={
+                "interim_token": await _issue_interim_token_for_user(
+                    session_factory,
+                    user.id,
+                    "webauthn_challenge_complete",
+                ),
+                "credential": {"id": "credential-1"},
+            },
+        )
+
+    assert response.status_code == 401
+    assert any(
+        event["action"] == "auth.webauthn_replay_detected"
+        for event in client.app.state.audit_events  # type: ignore[attr-defined]
+    )
 
 
 @pytest.mark.asyncio

@@ -60,6 +60,7 @@ from echoroo.models.evaluation import (
 )
 from echoroo.models.license import License
 from echoroo.models.note import Note
+from echoroo.models.password_reset_token import PasswordResetToken
 from echoroo.models.project import Project, ProjectInvitation, ProjectLicenseHistory, ProjectMember
 from echoroo.models.recorder import Recorder
 from echoroo.models.recording import Recording
@@ -88,6 +89,7 @@ __all__ = [
     "ProjectInvitation",
     "ProjectLicenseHistory",
     "ProjectMember",
+    "PasswordResetToken",
     "Recorder",
     "Recording",
     "Site",

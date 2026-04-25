@@ -6,6 +6,10 @@
 
 from __future__ import annotations
 
+import asyncio
+import base64
+import binascii
+import hashlib
 import secrets
 import time
 import unicodedata
@@ -19,7 +23,7 @@ import httpx
 import jwt
 from email_validator import EmailNotValidError, validate_email
 from fastapi import APIRouter, HTTPException, Request, Response, status
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 from webauthn.helpers import options_to_json_dict
 
@@ -27,15 +31,19 @@ from echoroo.core.auth import RefreshTokenRecord, SqlTokenStore, issue_access_to
 from echoroo.core.database import AsyncSessionLocal, DbSession
 from echoroo.core.kms import compute_pii_hash
 from echoroo.core.redis import get_redis_connection
-from echoroo.core.security import hash_password
+from echoroo.core.security import hash_password, verify_password
 from echoroo.core.settings import get_settings
+from echoroo.core.text import has_control_chars
 from echoroo.middleware.csrf import CSRF_HEADER_NAME, issue_csrf_token
+from echoroo.models.password_reset_token import PasswordResetToken
 from echoroo.models.user import User
 from echoroo.repositories.superuser_credentials import get_default_store
 from echoroo.repositories.user import UserRepository
 from echoroo.schemas.web_v1.auth import (
     LoginRequest,
     LoginResponse,
+    PasswordResetConfirmRequest,
+    PasswordResetRequest,
     RefreshResponse,
     RegisterRequest,
     RegisterResponse,
@@ -52,6 +60,7 @@ from echoroo.schemas.web_v1.auth import (
     WebAuthnRegisterCompleteResponse,
     WebAuthnRegisterRequest,
 )
+from echoroo.services import outbox_service
 from echoroo.services.audit_service import AuditLogService
 from echoroo.services.auth_service import (
     AccountLockedError,
@@ -110,7 +119,8 @@ _superuser_credential_store = get_default_store()
 _REGISTER_IP_LIMIT = 10
 _REGISTER_EMAIL_LIMIT = 5
 _REGISTER_WINDOW_SECONDS = 60 * 60
-_WEBAUTHN_INTERIM_TTL_SECONDS = 5 * 60
+_PASSWORD_RESET_MIN_RESPONSE_SECONDS = 0.05
+_PASSWORD_RESET_TOKEN_TTL = timedelta(minutes=60)
 # TODO(T178): process-local; multi-worker NOT consistent. Replace with Redis.
 _register_windows: dict[str, list[float]] = {}
 
@@ -144,7 +154,7 @@ def _user_agent(request: Request) -> str:
 
 
 def _has_control_chars(value: str) -> bool:
-    return any(ord(ch) < 32 or ord(ch) == 127 for ch in value)
+    return has_control_chars(value)
 
 
 def _normalize_email(raw_email: str) -> str:
@@ -186,6 +196,69 @@ def _rate_limit_register(*, ip: str, email: str) -> None:
             )
         window.append(now)
         _register_windows[key] = window
+
+
+def _encode_reset_token(token: bytes) -> str:
+    return base64.urlsafe_b64encode(token).decode("ascii").rstrip("=")
+
+
+def _decode_reset_token(encoded: str) -> bytes:
+    try:
+        padded = encoded + ("=" * (-len(encoded) % 4))
+        token = base64.urlsafe_b64decode(padded.encode("ascii"))
+    except (binascii.Error, ValueError, UnicodeEncodeError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired reset token",
+        ) from exc
+    if len(token) != 32:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired reset token",
+        )
+    return token
+
+
+def _reset_token_hash(token: bytes) -> str:
+    return hashlib.sha256(token).hexdigest()
+
+
+def _password_reset_url(encoded_token: str) -> str:
+    return (
+        f"{settings.web_app_base_url.rstrip('/')}"
+        f"/password-reset/confirm?token={encoded_token}"
+    )
+
+
+async def _sleep_for_minimum_request_time(started_at: float) -> None:
+    remaining = _PASSWORD_RESET_MIN_RESPONSE_SECONDS - (time.monotonic() - started_at)
+    if remaining > 0:
+        await asyncio.sleep(remaining)
+
+
+async def _revoke_refresh_families_for_user(db: DbSession, user_id: UUID) -> None:
+    """Revoke all known refresh-token families for ``user_id``.
+
+    ``SqlTokenStore`` currently exposes family-level revocation but no
+    user-wide helper, so password reset enumerates families inside the same
+    transaction as the password/security-stamp update.
+    """
+    await db.execute(
+        text(
+            "UPDATE token_families "
+            "SET revoked_at = COALESCE(revoked_at, now()) "
+            "WHERE user_id = :user_id"
+        ),
+        {"user_id": user_id},
+    )
+    await db.execute(
+        text(
+            "UPDATE refresh_tokens "
+            "SET revoked_at = COALESCE(revoked_at, now()) "
+            "WHERE user_id = :user_id AND revoked_at IS NULL"
+        ),
+        {"user_id": user_id},
+    )
 
 
 async def _write_platform_audit(
@@ -727,6 +800,151 @@ async def register(
     return RegisterResponse(user_id=user.id, email=user.email)
 
 
+@router.post("/password-reset/request", status_code=status.HTTP_204_NO_CONTENT)
+async def request_password_reset(
+    payload: PasswordResetRequest,
+    request: Request,
+    db: DbSession,
+) -> Response:
+    """Request a password reset email without exposing account existence.
+
+    T150d decision: active 2FA reset cooldown locks password-reset requests.
+    """
+    started_at = time.monotonic()
+    email = _normalize_email(payload.email)
+    email_hash = compute_pii_hash(email)
+    token = secrets.token_bytes(32)
+    token_hash = _reset_token_hash(token)
+    encoded_token = _encode_reset_token(token)
+    now = datetime.now(UTC)
+
+    repo = UserRepository(db)
+    user = await repo.get_by_email(email)
+
+    try:
+        if (
+            user is not None
+            and user.deleted_at is None
+            and user.two_factor_reset_cooldown_until is not None
+            and user.two_factor_reset_cooldown_until > now
+        ):
+            await _write_platform_audit(
+                actor_user_id=None,
+                action="auth.password_reset_requested",
+                request=request,
+                detail={"email_hash": email_hash, "blocked": "2fa_reset_cooldown"},
+            )
+            raise HTTPException(
+                status_code=status.HTTP_423_LOCKED,
+                detail="Password reset is temporarily locked",
+            )
+
+        if user is not None and user.deleted_at is None:
+            reset_url = _password_reset_url(encoded_token)
+            expires_at = now + _PASSWORD_RESET_TOKEN_TTL
+            db.add(
+                PasswordResetToken(
+                    user_id=user.id,
+                    token_hash=token_hash,
+                    expires_at=expires_at,
+                    requested_ip=_client_ip(request)[:45],
+                    requested_user_agent=_user_agent(request)[:500],
+                )
+            )
+            await outbox_service.enqueue(
+                db,
+                event_type="password_reset_email",
+                payload={
+                    "user_id": str(user.id),
+                    "reset_url": reset_url,
+                    "expires_at": expires_at.isoformat(),
+                },
+                idempotency_key=f"password-reset:{token_hash}",
+            )
+
+        await _write_platform_audit(
+            actor_user_id=None,
+            action="auth.password_reset_requested",
+            request=request,
+            detail={"email_hash": email_hash},
+        )
+        await _sleep_for_minimum_request_time(started_at)
+    except HTTPException:
+        await _sleep_for_minimum_request_time(started_at)
+        raise
+
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/password-reset/confirm", status_code=status.HTTP_204_NO_CONTENT)
+async def confirm_password_reset(
+    payload: PasswordResetConfirmRequest,
+    request: Request,
+    db: DbSession,
+) -> Response:
+    """Reset a password with a one-time token; does not issue a session."""
+    token = _decode_reset_token(payload.token)
+    token_hash = _reset_token_hash(token)
+    now = datetime.now(UTC)
+
+    result = await db.execute(
+        select(PasswordResetToken)
+        .where(PasswordResetToken.token_hash == token_hash)
+        .with_for_update()
+    )
+    reset_token = result.scalar_one_or_none()
+    if (
+        reset_token is None
+        or reset_token.expires_at < now
+        or reset_token.used_at is not None
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired reset token",
+        )
+
+    user = await UserRepository(db).get_by_id(reset_token.user_id)
+    if user is None or user.deleted_at is not None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired reset token",
+        )
+
+    try:
+        await enforce_password_policy(
+            payload.new_password,
+            hibp=_hibp_checker,
+        )
+    except PasswordPolicyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=exc.reason,
+        ) from exc
+
+    if verify_password(payload.new_password, user.password_hash):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="new password must differ from current password",
+        )
+
+    user.password_hash = hash_password(payload.new_password)
+    user.security_stamp = secrets.token_urlsafe(48)
+    user.last_first_party_activity_at = now
+    reset_token.used_at = now
+    db.add(user)
+    db.add(reset_token)
+    await _revoke_refresh_families_for_user(db, user.id)
+    await db.commit()
+
+    await _write_platform_audit(
+        actor_user_id=user.id,
+        action="auth.password_reset_completed",
+        request=request,
+        detail={"user_id": str(user.id)},
+    )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
 @router.post("/login", response_model=LoginResponse)
 async def login(
     payload: LoginRequest,
@@ -961,6 +1179,12 @@ async def webauthn_register(
     request: Request,
     db: DbSession,
 ) -> WebAuthnRegisterBeginResponse | WebAuthnRegisterCompleteResponse:
+    """Begin or complete WebAuthn registration.
+
+    Endpoint-level failure audits supplement service-level WebAuthn audits so
+    mocked service failures and route-specific exits are still visible in the
+    platform audit stream.
+    """
     if payload.credential is None:
         user, _claims = await _consume_interim_token_for_user_with_scopes(
             raw_token=payload.interim_token,
@@ -980,7 +1204,7 @@ async def webauthn_register(
             next_interim_token=_issue_interim_token(
                 user=user,
                 scope="webauthn_register_complete",
-                ttl_seconds=_WEBAUTHN_INTERIM_TTL_SECONDS,
+                ttl_seconds=settings.webauthn_interim_token_ttl_seconds,
             ),
         )
 
@@ -998,11 +1222,15 @@ async def webauthn_register(
             registration_response=payload.credential,
             existing_credentials=existing,
         )
-    except (
-        WebAuthnChallengeNotFoundError,
-        WebAuthnDuplicateCredentialError,
-        WebAuthnVerificationError,
-    ) as exc:
+    except WebAuthnVerificationError as exc:
+        await _write_platform_audit(
+            actor_user_id=user.id,
+            action="auth.webauthn_registration_failed",
+            request=request,
+            detail={"user_id": str(user.id)},
+        )
+        raise _webauthn_http_error(exc) from exc
+    except (WebAuthnChallengeNotFoundError, WebAuthnDuplicateCredentialError) as exc:
         raise _webauthn_http_error(exc) from exc
 
     if payload.name is not None:
@@ -1031,6 +1259,12 @@ async def webauthn_challenge(
     response: Response,
     db: DbSession,
 ) -> WebAuthnChallengeBeginResponse | WebAuthnChallengeCompleteResponse:
+    """Begin or complete WebAuthn auth.
+
+    Endpoint-level failure/replay audits supplement service-level WebAuthn
+    audits so mocked service failures and route-specific exits are still
+    visible in the platform audit stream.
+    """
     if payload.credential is None:
         user, _claims = await _consume_interim_token_for_user(
             raw_token=payload.interim_token,
@@ -1049,7 +1283,7 @@ async def webauthn_challenge(
             next_interim_token=_issue_interim_token(
                 user=user,
                 scope="webauthn_challenge_complete",
-                ttl_seconds=_WEBAUTHN_INTERIM_TTL_SECONDS,
+                ttl_seconds=settings.webauthn_interim_token_ttl_seconds,
             ),
         )
 
@@ -1067,11 +1301,23 @@ async def webauthn_challenge(
             authentication_response=payload.credential,
             existing_credentials=existing,
         )
-    except (
-        WebAuthnChallengeNotFoundError,
-        WebAuthnReplayDetectedError,
-        WebAuthnVerificationError,
-    ) as exc:
+    except WebAuthnReplayDetectedError as exc:
+        await _write_platform_audit(
+            actor_user_id=user.id,
+            action="auth.webauthn_replay_detected",
+            request=request,
+            detail={"user_id": str(user.id)},
+        )
+        raise _webauthn_http_error(exc) from exc
+    except WebAuthnVerificationError as exc:
+        await _write_platform_audit(
+            actor_user_id=user.id,
+            action="auth.webauthn_authentication_failed",
+            request=request,
+            detail={"user_id": str(user.id)},
+        )
+        raise _webauthn_http_error(exc) from exc
+    except WebAuthnChallengeNotFoundError as exc:
         raise _webauthn_http_error(exc) from exc
 
     await _superuser_credential_store.save_credentials(

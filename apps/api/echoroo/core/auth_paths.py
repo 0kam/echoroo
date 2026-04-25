@@ -22,6 +22,8 @@ Decision matrix
 * ``/web-api/v1/auth/refresh``         — refresh-token rotation.
 * ``/web-api/v1/auth/forgot-password`` — pre-session password reset.
 * ``/web-api/v1/auth/reset-password``  — pre-session password reset.
+* ``/web-api/v1/auth/password-reset/request`` — pre-session password reset.
+* ``/web-api/v1/auth/password-reset/confirm`` — pre-session password reset.
 
 Refresh CSRF decision
 ---------------------
@@ -59,6 +61,8 @@ PUBLIC_AUTH_PATHS: Final[tuple[str, ...]] = (
     "/web-api/v1/auth/refresh",
     "/web-api/v1/auth/forgot-password",
     "/web-api/v1/auth/reset-password",
+    "/web-api/v1/auth/password-reset/request",
+    "/web-api/v1/auth/password-reset/confirm",
 )
 
 
