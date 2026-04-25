@@ -245,7 +245,14 @@ class AuthRouterMiddleware(BaseHTTPMiddleware):
         path = request.url.path
 
         # Public allowlist: skip credential checks altogether.
-        if any(path.startswith(p) for p in self.config.public_path_allowlist):
+        # Phase 2.11 P0-b: match exactly (no startswith). The previous
+        # prefix match would let an attacker (or a future maintainer who
+        # adds e.g. ``/web-api/v1/auth/login-history``) bypass auth
+        # because the new path startswith the allowlisted ``/login``.
+        # Exact match is also the convention used by CsrfMiddleware via
+        # ``is_public_auth_path``; keeping the two middlewares in sync
+        # closes the door on auth-vs-CSRF drift bugs.
+        if path in self.config.public_path_allowlist:
             request.state.principal = None
             return await call_next(request)
 
