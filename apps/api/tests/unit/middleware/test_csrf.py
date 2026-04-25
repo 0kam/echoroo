@@ -90,3 +90,129 @@ def test_csrf_rejects_malformed() -> None:
             session_id="session",
             session_secret="x" * 32,
         )
+
+
+# ---------------------------------------------------------------------------
+# Phase 2.10 #6 — middleware-level path exemption
+# ---------------------------------------------------------------------------
+
+
+def _build_app() -> object:
+    """Build a tiny Starlette app wrapped in :class:`CsrfMiddleware`."""
+    from starlette.applications import Starlette
+    from starlette.responses import PlainTextResponse
+    from starlette.routing import Route
+
+    from echoroo.middleware.csrf import CsrfConfig, CsrfMiddleware
+
+    async def _ok(_request):  # type: ignore[no-untyped-def]
+        return PlainTextResponse("ok")
+
+    routes = [
+        Route("/web-api/v1/auth/login", _ok, methods=["POST"]),
+        Route("/web-api/v1/auth/refresh", _ok, methods=["POST"]),
+        Route("/web-api/v1/auth/forgot-password", _ok, methods=["POST"]),
+        Route("/web-api/v1/projects", _ok, methods=["POST"]),
+        Route("/web-api/v1/projects/123/members", _ok, methods=["POST"]),
+    ]
+    app = Starlette(routes=routes)
+    config = CsrfConfig(session_secret="test-secret-32-bytes-of-entropy-padding")
+    app.add_middleware(CsrfMiddleware, config=config)
+    return app
+
+
+def test_exempt_login_path_passes_without_csrf_token() -> None:
+    """``/web-api/v1/auth/login`` POST must not require a CSRF token."""
+    from starlette.testclient import TestClient
+
+    app = _build_app()
+    with TestClient(app) as client:
+        # No session cookie, no CSRF header — must still succeed.
+        resp = client.post("/web-api/v1/auth/login")
+    assert resp.status_code == 200
+    assert resp.text == "ok"
+
+
+def test_exempt_refresh_path_passes_without_csrf_token() -> None:
+    """The refresh endpoint is exempt by design (token IS the proof)."""
+    from starlette.testclient import TestClient
+
+    app = _build_app()
+    with TestClient(app) as client:
+        resp = client.post("/web-api/v1/auth/refresh")
+    assert resp.status_code == 200
+
+
+def test_exempt_forgot_password_passes_without_csrf_token() -> None:
+    """Phase 2.10 #6 added forgot-password to the exemption list."""
+    from starlette.testclient import TestClient
+
+    app = _build_app()
+    with TestClient(app) as client:
+        resp = client.post("/web-api/v1/auth/forgot-password")
+    assert resp.status_code == 200
+
+
+def test_non_exempt_path_is_blocked_without_csrf_credentials() -> None:
+    """A POST to a non-allowlisted ``/web-api/v1/*`` path must be 403."""
+    from starlette.testclient import TestClient
+
+    app = _build_app()
+    with TestClient(app) as client:
+        resp = client.post("/web-api/v1/projects")
+    assert resp.status_code == 403
+    body = resp.json()
+    assert body["error_code"] == "csrf_failed"
+
+
+def test_non_exempt_path_is_blocked_with_invalid_csrf_token() -> None:
+    """Even with a session cookie, an invalid CSRF token yields 403."""
+    from starlette.testclient import TestClient
+
+    app = _build_app()
+    with TestClient(app) as client:
+        client.cookies.set("session_id", "session-xyz")
+        resp = client.post(
+            "/web-api/v1/projects",
+            headers={"X-CSRF-Token": "garbage"},
+        )
+    assert resp.status_code == 403
+
+
+def test_post_login_session_path_enforces_csrf() -> None:
+    """A valid session + valid CSRF token combo passes through."""
+    from starlette.testclient import TestClient
+
+    app = _build_app()
+    secret = "test-secret-32-bytes-of-entropy-padding"
+    token = issue_csrf_token("session-abc", session_secret=secret)
+
+    with TestClient(app) as client:
+        client.cookies.set("session_id", "session-abc")
+        resp = client.post(
+            "/web-api/v1/projects/123/members",
+            headers={"X-CSRF-Token": token},
+        )
+    assert resp.status_code == 200
+    assert resp.text == "ok"
+
+
+def test_csrf_exempt_paths_match_auth_router_allowlist() -> None:
+    """Phase 2.10 #6: CSRF and auth-router allowlists must be in sync."""
+    from echoroo.middleware.auth_router import AuthRouterConfig
+    from echoroo.middleware.csrf import EXEMPT_PATHS
+
+    auth_allowlist = tuple(AuthRouterConfig().public_path_allowlist)
+    assert EXEMPT_PATHS == auth_allowlist, (
+        "CSRF EXEMPT_PATHS and AuthRouter public_path_allowlist must be "
+        "exact-match (sourced from core.auth_paths.PUBLIC_AUTH_PATHS). "
+        f"csrf={EXEMPT_PATHS!r} auth={auth_allowlist!r}"
+    )
+
+
+def test_csrf_exempt_paths_includes_2fa_verify() -> None:
+    """Sanity: 2FA verify path is in the exemption list."""
+    from echoroo.middleware.csrf import EXEMPT_PATHS
+
+    assert "/web-api/v1/auth/2fa/verify" in EXEMPT_PATHS
+    assert "/web-api/v1/auth/2fa/challenge" in EXEMPT_PATHS

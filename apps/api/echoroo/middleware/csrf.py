@@ -25,9 +25,24 @@ Security properties:
   HMAC is correct.
 
 The middleware enforces CSRF on **non-GET / non-HEAD / non-OPTIONS**
-requests under ``/web-api/v1/*``. Programmatic API (``/api/v1/*``)
-relies on Bearer API keys and is exempt — a CSRF token would only add
-ceremony for clients that already include a strong credential.
+requests under ``/web-api/v1/*``, EXCEPT for the public pre-session
+endpoints listed in :data:`echoroo.core.auth_paths.PUBLIC_AUTH_PATHS`
+(login, register, 2FA challenge / verify, refresh, forgot-password,
+reset-password). Those endpoints cannot present a CSRF token by
+construction — the user has not yet established the session that
+issues the token.
+
+Refresh CSRF decision (Phase 2.10 #6)
+-------------------------------------
+``/web-api/v1/auth/refresh`` is intentionally exempt from CSRF: the
+refresh token itself is the proof of the request, and adding a CSRF
+layer on top would require a steady-state session cookie that doesn't
+exist yet during refresh. See ``core/auth_paths.py`` for the full
+decision rationale.
+
+Programmatic API (``/api/v1/*``) relies on Bearer API keys and is
+exempt globally — a CSRF token would only add ceremony for clients
+that already include a strong credential.
 """
 
 from __future__ import annotations
@@ -45,6 +60,8 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.types import ASGIApp
 
+from echoroo.core.auth_paths import PUBLIC_AUTH_PATHS, is_public_auth_path
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -60,6 +77,14 @@ WEB_API_PREFIX: Final[str] = "/web-api/v1"
 
 SAFE_METHODS: Final[frozenset[str]] = frozenset({"GET", "HEAD", "OPTIONS"})
 """HTTP methods exempt from CSRF enforcement (read-only / preflight)."""
+
+EXEMPT_PATHS: Final[tuple[str, ...]] = PUBLIC_AUTH_PATHS
+"""Path-exact CSRF exemption list (Phase 2.10 #6).
+
+Synced with ``echoroo.core.auth_paths.PUBLIC_AUTH_PATHS`` so the CSRF
+exemption and the auth router's public allowlist cannot drift apart.
+Match is exact (no prefix wildcarding).
+"""
 
 
 # ---------------------------------------------------------------------------
@@ -236,6 +261,12 @@ class CsrfMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
         if not request.url.path.startswith(self.config.protected_prefix):
             return await call_next(request)
+        # Phase 2.10 #6: pre-session auth endpoints (login / register /
+        # 2FA / refresh / forgot-password / reset-password) cannot
+        # produce a CSRF token because no session cookie has been
+        # issued yet. Bypass the check for those exact paths.
+        if is_public_auth_path(request.url.path):
+            return await call_next(request)
 
         session_id = request.cookies.get(self.config.cookie_name)
         token = request.headers.get(self.config.header_name)
@@ -267,6 +298,7 @@ def _csrf_failure(message: str) -> JSONResponse:
 __all__ = [
     "CSRF_HEADER_NAME",
     "DEFAULT_CSRF_TTL_SECONDS",
+    "EXEMPT_PATHS",
     "WEB_API_PREFIX",
     "CsrfConfig",
     "CsrfError",

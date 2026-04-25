@@ -53,6 +53,7 @@ from echoroo.core.auth import (
     StaleTokenError,
     verify_access_token,
 )
+from echoroo.core.auth_paths import PUBLIC_AUTH_PATHS
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -215,13 +216,12 @@ class AuthRouterConfig:
     session_prefix: str = SESSION_PREFIX
     session_cookie_name: str = DEFAULT_SESSION_COOKIE
     access_cookie_name: str = DEFAULT_ACCESS_COOKIE
+    # Phase 2.10 #6: source the allowlist from the shared
+    # ``core.auth_paths.PUBLIC_AUTH_PATHS`` constant so the auth router
+    # and the CSRF middleware cannot drift apart. Adding a new public
+    # auth endpoint must update the constant in one place.
     public_path_allowlist: tuple[str, ...] = field(
-        default_factory=lambda: (
-            "/web-api/v1/auth/login",
-            "/web-api/v1/auth/register",
-            "/web-api/v1/auth/2fa/challenge",
-            "/web-api/v1/auth/refresh",
-        )
+        default_factory=lambda: PUBLIC_AUTH_PATHS
     )
 
 
