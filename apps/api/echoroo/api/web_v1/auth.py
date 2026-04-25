@@ -1,5 +1,18 @@
 """First-party authentication router for ``/web-api/v1/auth``."""
 
+# T150b interim token verifier requirements:
+# When implementing T150b's `/2fa/challenge` and `/2fa/setup/totp/confirm`
+# endpoints, the interim_token verifier MUST:
+# 1. Verify JWT signature with `web_session_secret`
+# 2. Check `type == "interim"` and `scope` matches the endpoint exactly
+#    (`2fa_challenge` for challenge, `2fa_setup` for setup confirm)
+# 3. Resolve `sub` (user UUID) and require it matches the user being verified
+# 4. Re-check `ss` (security_stamp) against the live DB row; reject on mismatch
+# 5. Track `jti` in Redis with TTL = remaining exp; reject any second use
+#    (one-time)
+# 6. Reject if user.security_stamp has rotated since issuance
+# 7. Reject if user has been deleted (`deleted_at IS NOT NULL`)
+
 from __future__ import annotations
 
 import secrets
@@ -19,6 +32,7 @@ from sqlalchemy.exc import IntegrityError
 
 from echoroo.core.auth import RefreshTokenRecord, SqlTokenStore, issue_access_token
 from echoroo.core.database import AsyncSessionLocal, DbSession
+from echoroo.core.kms import compute_pii_hash
 from echoroo.core.security import hash_password
 from echoroo.core.settings import get_settings
 from echoroo.middleware.csrf import CSRF_HEADER_NAME, issue_csrf_token
@@ -46,7 +60,13 @@ from echoroo.services.two_factor_service import TwoFactorService
 
 router = APIRouter(prefix="/auth", tags=["web-auth"])
 settings = get_settings()
+if settings.ENVIRONMENT == "production":
+    raise RuntimeError(
+        "InMemoryLoginAttemptRecorder is not production-safe. "
+        "Wire a Redis-backed recorder via T178 before production deploy."
+    )
 
+# TODO(T178): process-local; multi-worker NOT consistent. Replace with Redis.
 _login_attempts = InMemoryLoginAttemptRecorder()
 
 
@@ -62,6 +82,7 @@ _hibp_checker: HibpChecker = _HttpxHibpChecker()
 _REGISTER_IP_LIMIT = 10
 _REGISTER_EMAIL_LIMIT = 5
 _REGISTER_WINDOW_SECONDS = 60 * 60
+# TODO(T178): process-local; multi-worker NOT consistent. Replace with Redis.
 _register_windows: dict[str, list[float]] = {}
 
 
@@ -177,6 +198,56 @@ def _issue_interim_token(*, user: User, scope: str) -> str:
     )
 
 
+def _decode_interim_token(
+    raw_token: str,
+    *,
+    expected_user_id: UUID,
+    expected_scope: str,
+) -> dict[str, Any]:
+    try:
+        payload: dict[str, Any] = jwt.decode(
+            raw_token,
+            settings.web_session_secret,
+            algorithms=[settings.JWT_ALGORITHM],
+        )
+    except jwt.ExpiredSignatureError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid interim token",
+        ) from exc
+    except jwt.InvalidTokenError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid interim token",
+        ) from exc
+
+    if payload.get("type") != "interim" or payload.get("scope") != expected_scope:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid interim token",
+        )
+
+    sub = payload.get("sub")
+    if not isinstance(sub, str):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid interim token",
+        )
+    try:
+        token_user_id = UUID(sub)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid interim token",
+        ) from exc
+    if token_user_id != expected_user_id:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid interim token",
+        )
+    return payload
+
+
 def _issue_web_refresh_token(
     *,
     user_id: UUID,
@@ -276,12 +347,14 @@ def _set_session_cookies(
         family_id,
         session_secret=settings.web_session_secret,
     )
+    # Development uses plain HTTP; staging/production cookies remain Secure.
+    secure_cookie = settings.ENVIRONMENT != "development"
     response.set_cookie(
         key=settings.web_refresh_cookie_name,
         value=refresh_token,
         max_age=settings.web_refresh_token_ttl_seconds,
         path="/web-api/v1/auth/refresh",
-        secure=True,
+        secure=secure_cookie,
         httponly=True,
         samesite="strict",
     )
@@ -290,7 +363,7 @@ def _set_session_cookies(
         value=family_id,
         max_age=settings.web_refresh_token_ttl_seconds,
         path="/web-api/v1/",
-        secure=True,
+        secure=secure_cookie,
         httponly=True,
         samesite="strict",
     )
@@ -299,7 +372,7 @@ def _set_session_cookies(
         value=csrf_token,
         max_age=settings.web_access_token_ttl_seconds,
         path="/web-api/v1/",
-        secure=True,
+        secure=secure_cookie,
         httponly=False,
         samesite="strict",
     )
@@ -414,7 +487,7 @@ async def login(
             actor_user_id=None,
             action="auth.login_failed",
             request=request,
-            detail={"reason": "backoff"},
+            detail={"reason": "backoff", "email_hash": compute_pii_hash(email)},
         )
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
@@ -422,19 +495,15 @@ async def login(
             headers={"Retry-After": str(exc.retry_after_seconds)},
         ) from exc
     except InvalidCredentialsError as exc:
-        snapshot = await _login_attempts.recent_failures(
-            email=email,
-            ip=_client_ip(request),
-            window_seconds=900,
-            now=datetime.now(UTC),
+        await _write_platform_audit(
+            actor_user_id=None,
+            action="auth.login_failed",
+            request=request,
+            detail={
+                "reason": "invalid_credentials",
+                "email_hash": compute_pii_hash(email),
+            },
         )
-        if snapshot.failure_count % 5 == 0:
-            await _write_platform_audit(
-                actor_user_id=None,
-                action="auth.login_failed",
-                request=request,
-                detail={"reason": "invalid_credentials"},
-            )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid credentials",

@@ -9,6 +9,7 @@ from collections.abc import AsyncGenerator, AsyncIterator, Iterator
 from pathlib import Path
 from typing import Any
 
+import jwt
 import pytest
 from httpx import ASGITransport, AsyncClient
 
@@ -104,6 +105,7 @@ async def client(
 
     monkeypatch.setattr(auth_module, "AsyncSessionLocal", session_factory)
     monkeypatch.setattr(auth_module, "_write_platform_audit", record_audit)
+    monkeypatch.setattr(auth_module, "compute_pii_hash", lambda value: f"hash:{value}")
     monkeypatch.setattr(auth_module, "_login_attempts", InMemoryLoginAttemptRecorder())
     monkeypatch.setattr(auth_module, "_hibp_checker", AlwaysFreshHibp())
     auth_module._register_windows.clear()  # noqa: SLF001 - test isolation
@@ -356,6 +358,118 @@ async def test_logout_revokes_family_and_clears_cookies(
     set_cookie = response.headers.get("set-cookie", "")
     assert get_settings().web_session_cookie_name in set_cookie
     assert get_settings().web_csrf_cookie_name in set_cookie
+
+
+@pytest.mark.asyncio
+async def test_logout_without_csrf_returns_403_and_keeps_family_active(
+    client: AsyncClient,
+    session_factory: object,
+) -> None:
+    from echoroo.api.web_v1.auth import _decode_web_refresh_token
+    from echoroo.core.auth import SqlTokenStore
+    from echoroo.core.settings import get_settings
+
+    user = await _create_user(session_factory)
+    refresh_token = await _seed_refresh_token(session_factory, user)
+    claims = _decode_web_refresh_token(refresh_token)
+    refreshed = await client.post(
+        "/web-api/v1/auth/refresh",
+        cookies={get_settings().web_refresh_cookie_name: refresh_token},
+    )
+    assert refreshed.status_code == 200
+
+    response = await client.post("/web-api/v1/auth/logout")
+
+    assert response.status_code == 403
+    assert response.json()["error_code"] == "csrf_failed"
+    assert not await SqlTokenStore(session_factory).is_family_revoked(claims.family_id)
+
+
+@pytest.mark.asyncio
+async def test_interim_token_claims_bind_scope_subject_and_ttl(
+    client: AsyncClient,
+    session_factory: object,
+) -> None:
+    from echoroo.core.settings import get_settings
+
+    settings = get_settings()
+    setup_user = await _create_user(
+        session_factory,
+        email="setup@example.com",
+        two_factor_enabled=False,
+    )
+    challenge_user = await _create_user(
+        session_factory,
+        email="challenge@example.com",
+        two_factor_enabled=True,
+    )
+
+    setup_response = await client.post(
+        "/web-api/v1/auth/login",
+        json={"email": "setup@example.com", "password": "correct horse battery staple"},
+    )
+    challenge_response = await client.post(
+        "/web-api/v1/auth/login",
+        json={
+            "email": "challenge@example.com",
+            "password": "correct horse battery staple",
+        },
+    )
+    assert setup_response.status_code == 200
+    assert challenge_response.status_code == 200
+
+    def decode_claims(token: str) -> dict[str, Any]:
+        return jwt.decode(
+            token,
+            settings.web_session_secret,
+            algorithms=[settings.JWT_ALGORITHM],
+        )
+
+    setup_claims = decode_claims(setup_response.json()["interim_token"])
+    challenge_claims = decode_claims(challenge_response.json()["interim_token"])
+
+    assert setup_claims["type"] == "interim"
+    assert setup_claims["scope"] == "2fa_setup"
+    assert setup_claims["sub"] == str(setup_user.id)
+    assert abs(
+        (setup_claims["exp"] - setup_claims["iat"])
+        - settings.web_interim_token_ttl_seconds
+    ) <= 1
+    assert challenge_claims["type"] == "interim"
+    assert challenge_claims["scope"] == "2fa_challenge"
+    assert challenge_claims["sub"] == str(challenge_user.id)
+    assert abs(
+        (challenge_claims["exp"] - challenge_claims["iat"])
+        - settings.web_interim_token_ttl_seconds
+    ) <= 1
+
+
+@pytest.mark.asyncio
+async def test_interim_token_cross_user_replay_is_rejected(
+    session_factory: object,
+) -> None:
+    from fastapi import HTTPException
+
+    from echoroo.api.web_v1.auth import _decode_interim_token, _issue_interim_token
+
+    user_a = await _create_user(session_factory, email="a@example.com")
+    user_b = await _create_user(session_factory, email="b@example.com")
+    token = _issue_interim_token(user=user_a, scope="2fa_setup")
+
+    decoded = _decode_interim_token(
+        token,
+        expected_user_id=user_a.id,
+        expected_scope="2fa_setup",
+    )
+    assert decoded["sub"] == str(user_a.id)
+
+    with pytest.raises(HTTPException) as exc_info:
+        _decode_interim_token(
+            token,
+            expected_user_id=user_b.id,
+            expected_scope="2fa_setup",
+        )
+    assert exc_info.value.status_code == 401
 
 
 @pytest.mark.asyncio
