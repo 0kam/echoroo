@@ -39,7 +39,13 @@ class SiteService:
         self.project_repo = project_repo
 
     async def list_sites(
-        self, user_id: UUID, project_id: UUID, page: int = 1, page_size: int = 20
+        self,
+        user_id: UUID,
+        project_id: UUID,
+        page: int = 1,
+        page_size: int = 20,
+        *,
+        enforce_access: bool = True,
     ) -> SiteListResponse:
         """List all sites for a project.
 
@@ -55,13 +61,13 @@ class SiteService:
         Raises:
             HTTPException: If access denied
         """
-        # Check project access
-        has_access = await self.project_repo.has_project_access(project_id, user_id)
-        if not has_access:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Access denied to project",
-            )
+        if enforce_access:
+            has_access = await self.project_repo.has_project_access(project_id, user_id)
+            if not has_access:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Access denied to project",
+                )
 
         # Validate pagination
         pagination = paginate(page, page_size, default_page_size=20, max_page_size=100)
@@ -77,7 +83,12 @@ class SiteService:
         )
 
     async def create_site(
-        self, user_id: UUID, project_id: UUID, request: SiteCreate
+        self,
+        user_id: UUID,
+        project_id: UUID,
+        request: SiteCreate,
+        *,
+        enforce_access: bool = True,
     ) -> SiteResponse:
         """Create a new site in a project.
 
@@ -92,13 +103,13 @@ class SiteService:
         Raises:
             HTTPException: If not admin, invalid H3 index, or duplicate site
         """
-        # Check project access
-        is_admin = await self.project_repo.is_project_admin(project_id, user_id)
-        if not is_admin:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Admin access required to create sites",
-            )
+        if enforce_access:
+            is_admin = await self.project_repo.is_project_admin(project_id, user_id)
+            if not is_admin:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Admin access required to create sites",
+                )
 
         # Validate H3 index
         is_valid, resolution, error = validate_h3_index(request.h3_index)
@@ -135,7 +146,12 @@ class SiteService:
         return SiteResponse.model_validate(created_site)
 
     async def get_site(
-        self, user_id: UUID, project_id: UUID, site_id: UUID
+        self,
+        user_id: UUID,
+        project_id: UUID,
+        site_id: UUID,
+        *,
+        enforce_access: bool = True,
     ) -> SiteDetailResponse:
         """Get site details.
 
@@ -150,13 +166,13 @@ class SiteService:
         Raises:
             HTTPException: If access denied or site not found
         """
-        # Check project access
-        has_access = await self.project_repo.has_project_access(project_id, user_id)
-        if not has_access:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Access denied to project",
-            )
+        if enforce_access:
+            has_access = await self.project_repo.has_project_access(project_id, user_id)
+            if not has_access:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Access denied to project",
+                )
 
         site = await self.site_repo.get_by_id_with_stats(site_id)
         if not site or site.project_id != project_id:
@@ -201,7 +217,13 @@ class SiteService:
         )
 
     async def update_site(
-        self, user_id: UUID, project_id: UUID, site_id: UUID, request: SiteUpdate
+        self,
+        user_id: UUID,
+        project_id: UUID,
+        site_id: UUID,
+        request: SiteUpdate,
+        *,
+        enforce_access: bool = True,
     ) -> SiteResponse:
         """Update site settings.
 
@@ -217,13 +239,13 @@ class SiteService:
         Raises:
             HTTPException: If not admin, site not found, or duplicate site
         """
-        # Check admin access
-        is_admin = await self.project_repo.is_project_admin(project_id, user_id)
-        if not is_admin:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Admin access required to update sites",
-            )
+        if enforce_access:
+            is_admin = await self.project_repo.is_project_admin(project_id, user_id)
+            if not is_admin:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Admin access required to update sites",
+                )
 
         site = await self.site_repo.get_by_id(site_id)
         if not site or site.project_id != project_id:
@@ -265,7 +287,12 @@ class SiteService:
         return SiteResponse.model_validate(updated_site)
 
     async def delete_site(
-        self, user_id: UUID, project_id: UUID, site_id: UUID
+        self,
+        user_id: UUID,
+        project_id: UUID,
+        site_id: UUID,
+        *,
+        enforce_access: bool = True,
     ) -> None:
         """Delete a site and all associated data.
 
@@ -277,13 +304,13 @@ class SiteService:
         Raises:
             HTTPException: If not admin or site not found
         """
-        # Check admin access
-        is_admin = await self.project_repo.is_project_admin(project_id, user_id)
-        if not is_admin:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Admin access required to delete sites",
-            )
+        if enforce_access:
+            is_admin = await self.project_repo.is_project_admin(project_id, user_id)
+            if not is_admin:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Admin access required to delete sites",
+                )
 
         site = await self.site_repo.get_by_id(site_id)
         if not site or site.project_id != project_id:

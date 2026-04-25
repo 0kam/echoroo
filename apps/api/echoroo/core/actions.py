@@ -332,6 +332,46 @@ RECORDING_DELETE_ACTION: Action = register_action(
     )
 )
 
+SITE_LIST_ACTION: Action = register_action(
+    Action(
+        name="site.list",
+        required_permission=Permission.VIEW_DETECTION,
+        is_mutating=False,
+    )
+)
+
+SITE_GET_ACTION: Action = register_action(
+    Action(
+        name="site.get",
+        required_permission=Permission.VIEW_DETECTION,
+        is_mutating=False,
+    )
+)
+
+SITE_CREATE_ACTION: Action = register_action(
+    Action(
+        name="site.create",
+        required_permission=Permission.MANAGE_SITE,
+        is_mutating=True,
+    )
+)
+
+SITE_UPDATE_ACTION: Action = register_action(
+    Action(
+        name="site.update",
+        required_permission=Permission.MANAGE_SITE,
+        is_mutating=True,
+    )
+)
+
+SITE_DELETE_ACTION: Action = register_action(
+    Action(
+        name="site.delete",
+        required_permission=Permission.MANAGE_SITE,
+        is_mutating=True,
+    )
+)
+
 
 __all__ = [
     # Project
@@ -368,6 +408,11 @@ __all__ = [
     "RECORDING_LIST_ACTION",
     "RECORDING_MEDIA_ACTION",
     "RECORDING_UPDATE_ACTION",
+    "SITE_CREATE_ACTION",
+    "SITE_DELETE_ACTION",
+    "SITE_GET_ACTION",
+    "SITE_LIST_ACTION",
+    "SITE_UPDATE_ACTION",
     "TAG_CREATE_ACTION",
     "TAG_DELETE_ACTION",
     "TAG_UPDATE_ACTION",

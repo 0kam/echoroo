@@ -768,7 +768,7 @@ class SimilaritySearchService:
                 "date": row.date,
                 "hour": int(row.hour),
                 "avg_similarity": float(row.avg_similarity),
-                "count": int(row.count),
+                "count": int(row._mapping["count"]),
             }
             for row in rows
         ]

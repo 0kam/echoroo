@@ -159,7 +159,7 @@ def _max_cosine_similarity(
     # cdist with cosine gives cosine *distance* = 1 - cosine_similarity.
     dist = cdist(candidate_vectors, query_vectors, metric="cosine")  # (N, Q)
     # Convert distance → similarity, then take per-row maximum.
-    return 1.0 - dist.min(axis=1)  # max similarity = 1 - min distance
+    return np.asarray(1.0 - dist.min(axis=1))  # max similarity = 1 - min distance
 
 
 # ---------------------------------------------------------------------------

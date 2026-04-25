@@ -1,6 +1,6 @@
 """Password hashing service using Argon2id."""
 
-from passlib.context import CryptContext  # type: ignore[import-untyped]
+from passlib.context import CryptContext
 
 from echoroo.core.settings import get_settings
 

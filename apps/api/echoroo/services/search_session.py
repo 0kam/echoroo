@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
-from typing import Annotated
+from typing import Annotated, cast
 from uuid import UUID
 
 from fastapi import Depends
@@ -337,9 +337,7 @@ class SearchSessionService:
         """
         session.status = SearchSessionStatus.COMPLETED
         session.results = raw_results
-        session.result_count = (
-            raw_results.get("total_matches", 0) if isinstance(raw_results, dict) else 0
-        )
+        session.result_count = cast(int, raw_results.get("total_matches", 0))
         session.completed_at = datetime.now(UTC)
         await self.db.flush()
 
@@ -403,7 +401,7 @@ class SearchSessionService:
         session.celery_job_id = job_id
         session.model_name = model_name
         session.parameters = parameters
-        session.species_config = species_config
+        session.species_config = cast(list[object], species_config)
         session.reference_audio_keys = reference_audio_keys if reference_audio_keys else None
 
         # Auto-generate a new name from species config
