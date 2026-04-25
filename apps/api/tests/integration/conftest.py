@@ -8,7 +8,7 @@ import soundfile as sf
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from echoroo.core.jwt import create_access_token
-from echoroo.models.enums import ProjectRole
+from echoroo.models.enums import ProjectMemberRole
 from echoroo.models.project import Project, ProjectMember
 from echoroo.models.site import Site
 from echoroo.models.user import User
@@ -165,7 +165,7 @@ async def test_project(db_session: AsyncSession, test_user: User, member_user: U
     admin_member = ProjectMember(
         project_id=project.id,
         user_id=test_user.id,
-        role=ProjectRole.ADMIN,
+        role=ProjectMemberRole.ADMIN,
         invited_by_id=test_user.id,
     )
     db_session.add(admin_member)
@@ -174,7 +174,7 @@ async def test_project(db_session: AsyncSession, test_user: User, member_user: U
     member = ProjectMember(
         project_id=project.id,
         user_id=member_user.id,
-        role=ProjectRole.MEMBER,
+        role=ProjectMemberRole.MEMBER,
         invited_by_id=test_user.id,
     )
     db_session.add(member)
@@ -211,7 +211,7 @@ async def test_member(db_session: AsyncSession, test_project: Project, member_us
     member = ProjectMember(
         project_id=test_project.id,
         user_id=member_user.id,
-        role=ProjectRole.MEMBER,
+        role=ProjectMemberRole.MEMBER,
         invited_by_id=test_project.owner_id,
     )
     db_session.add(member)
