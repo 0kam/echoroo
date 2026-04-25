@@ -1,10 +1,13 @@
 <script lang="ts">
   /**
-   * Registration page
+   * Registration page (web-auth, Phase 4 redesign).
+   *
+   * Posts to `/web-api/v1/auth/register`. Does NOT log the user in — the
+   * backend always requires a separate login + 2FA setup on first sign-in.
    */
 
   import { goto } from '$app/navigation';
-  import { register } from '$lib/api/auth';
+  import { registerUser, WebAuthError } from '$lib/api/web-auth';
   import { ApiError } from '$lib/api/client';
   import { localizeHref } from '$lib/paraglide/runtime';
   import * as m from '$lib/paraglide/messages';
@@ -18,6 +21,7 @@
   let password = $state('');
   let confirmPassword = $state('');
   let displayName = $state('');
+  let timezone = $state('UTC');
   let captchaToken = $state<string | null>(null);
 
   // UI state
@@ -32,18 +36,25 @@
   let turnstileSiteKey = $state('');
 
   onMount(() => {
-    // Get Turnstile site key from environment
     turnstileSiteKey = import.meta.env.PUBLIC_TURNSTILE_SITE_KEY || '1x00000000000000000000AA';
+
+    // Auto-detect timezone from the browser. Fall back to UTC if unavailable.
+    try {
+      const detected = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      if (detected) timezone = detected;
+    } catch {
+      timezone = 'UTC';
+    }
   });
 
   /**
-   * Validate form fields
+   * Validate form fields client-side. The backend re-validates everything,
+   * but client-side checks reduce round-trips for obvious mistakes.
    */
   function validateForm(): boolean {
     fieldErrors = {};
     error = null;
 
-    // Email validation
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!email) {
       fieldErrors.email = m.error_email_required();
@@ -51,7 +62,6 @@
       fieldErrors.email = m.error_invalid_email();
     }
 
-    // Password validation
     if (!password) {
       fieldErrors.password = m.error_password_required();
     } else if (password.length < 8) {
@@ -60,19 +70,16 @@
       fieldErrors.password = m.error_password_complexity();
     }
 
-    // Confirm password validation
     if (!confirmPassword) {
       fieldErrors.confirmPassword = m.error_confirm_password_required();
     } else if (password !== confirmPassword) {
       fieldErrors.confirmPassword = m.error_passwords_do_not_match();
     }
 
-    // Display name validation (optional)
     if (displayName && displayName.length > 100) {
       fieldErrors.displayName = m.error_display_name_too_long();
     }
 
-    // CAPTCHA validation
     if (!captchaToken) {
       error = m.error_captcha_required();
       return false;
@@ -81,39 +88,44 @@
     return Object.keys(fieldErrors).length === 0;
   }
 
-  /**
-   * Handle form submission
-   */
   async function handleSubmit(e: Event) {
     e.preventDefault();
-
-    if (!validateForm()) {
-      return;
-    }
+    if (!validateForm()) return;
 
     isSubmitting = true;
     error = null;
 
     try {
-      // Call register API
-      await register({
+      await registerUser({
         email,
         password,
         display_name: displayName || undefined,
-        captcha_token: captchaToken || undefined,
+        timezone,
       });
 
-      // Redirect to email verification page
-      await goto(localizeHref('/verify-email?registered=true'));
+      // Backend does NOT log the user in. Direct them to login with a hint
+      // that they must set up 2FA on first sign-in.
+      await goto(
+        localizeHref(`/login?registered=true&email=${encodeURIComponent(email)}`),
+      );
     } catch (err) {
-      if (err instanceof ApiError) {
-        error = err.detail || err.message;
+      if (err instanceof WebAuthError) {
+        if (err.status === 422) {
+          // Password policy / validation error — surface the specific reason.
+          error = err.detail || err.message;
+        } else if (err.status === 409) {
+          // Generic message to avoid email-enumeration.
+          error = m.error_unexpected();
+        } else {
+          error = err.detail || err.message;
+        }
 
-        // Reset CAPTCHA
         if (captchaComponent) {
           captchaComponent.reset();
           captchaToken = null;
         }
+      } else if (err instanceof ApiError) {
+        error = err.detail || err.message;
       } else {
         error = m.error_unexpected();
       }
@@ -122,24 +134,15 @@
     }
   }
 
-  /**
-   * Handle CAPTCHA verification
-   */
   function handleCaptchaVerify(token: string) {
     captchaToken = token;
   }
 
-  /**
-   * Handle CAPTCHA error
-   */
   function handleCaptchaError() {
     captchaToken = null;
     error = m.error_captcha_failed();
   }
 
-  /**
-   * Handle CAPTCHA expiry
-   */
   function handleCaptchaExpire() {
     captchaToken = null;
   }
@@ -151,13 +154,11 @@
 
 <div class="flex min-h-screen items-center justify-center bg-stone-50 px-4 py-12 sm:px-6 lg:px-8">
   <div class="w-full max-w-md space-y-8">
-    <!-- Language switcher and dark mode toggle -->
     <div class="flex justify-end gap-1">
       <DarkModeToggle />
       <LanguageSwitcher />
     </div>
 
-    <!-- Header -->
     <div class="flex flex-col items-center">
       <img src="/echoroo.png" alt="Echoroo" class="h-16 w-auto mb-4" />
       <h2 class="text-center text-3xl font-extrabold text-stone-900">
@@ -168,10 +169,17 @@
       </p>
     </div>
 
-    <!-- Registration Form -->
+    <!-- 2FA enrollment notice (FR-069) -->
+    <div
+      class="rounded-md border border-info/30 bg-info/10 p-3 text-sm text-stone-700"
+      role="note"
+      data-testid="register-2fa-notice"
+    >
+      {m.auth_register_two_factor_required_notice()}
+    </div>
+
     <form class="mt-8 space-y-6" onsubmit={handleSubmit}>
       <div class="space-y-4 rounded-md shadow-sm">
-        <!-- Email Input -->
         <div>
           <label for="email" class="block text-sm font-medium text-stone-700">
             {m.auth_register_email_label()} <span class="text-danger">*</span>
@@ -193,7 +201,6 @@
           {/if}
         </div>
 
-        <!-- Display Name Input (Optional) -->
         <div>
           <label for="displayName" class="block text-sm font-medium text-stone-700">
             {m.auth_register_display_name_label()}
@@ -214,7 +221,6 @@
           {/if}
         </div>
 
-        <!-- Password Input -->
         <div>
           <label for="password" class="block text-sm font-medium text-stone-700">
             {m.auth_register_password_label()} <span class="text-danger">*</span>
@@ -240,7 +246,6 @@
           {/if}
         </div>
 
-        <!-- Confirm Password Input -->
         <div>
           <label for="confirmPassword" class="block text-sm font-medium text-stone-700">
             {m.auth_register_confirm_password_label()} <span class="text-danger">*</span>
@@ -263,7 +268,6 @@
         </div>
       </div>
 
-      <!-- CAPTCHA -->
       <div class="mt-4">
         <Captcha
           bind:this={captchaComponent}
@@ -274,7 +278,6 @@
         />
       </div>
 
-      <!-- Error Message -->
       {#if error}
         <div class="rounded-md bg-danger-light p-4" role="alert">
           <div class="flex">
@@ -300,7 +303,6 @@
         </div>
       {/if}
 
-      <!-- Submit Button -->
       <div>
         <button
           type="submit"
@@ -337,7 +339,6 @@
         </button>
       </div>
 
-      <!-- Login Link -->
       <div class="text-center text-sm">
         <span class="text-stone-600">{m.auth_register_already_have_account()}</span>
         <a href={localizeHref('/login')} class="ml-1 font-medium text-primary-600 hover:text-primary-500">
