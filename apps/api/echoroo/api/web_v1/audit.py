@@ -31,7 +31,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from echoroo.core.audit import sanitize_value
-from echoroo.core.database import DbSession
+from echoroo.core.database import AsyncSessionLocal, DbSession
 from echoroo.core.permissions import (
     Action,
     Permission,
@@ -299,7 +299,8 @@ async def list_project_audit_log(
         page=page,
     )
 
-    await AuditLogService(db).write_project_event(
+    await _write_meta_audit_in_fresh_session(
+        table="project_audit_log",
         actor_user_id=current_user.id,
         project_id=project_id,
         action="project.audit_log.read",
@@ -357,7 +358,8 @@ async def list_platform_audit_log(
         page=page,
     )
 
-    await AuditLogService(db).write_platform_event(
+    await _write_meta_audit_in_fresh_session(
+        table="platform_audit_log",
         actor_user_id=current_user.id,
         action="platform.audit_log.read",
         request_id=_request_id(request),
@@ -428,7 +430,8 @@ async def verify_audit_chain(
             )
             break
 
-    await AuditLogService(db).write_platform_event(
+    await _write_meta_audit_in_fresh_session(
+        table="platform_audit_log",
         actor_user_id=current_user.id,
         action="platform.audit_log.chain_verify",
         request_id=_request_id(request),
@@ -502,6 +505,67 @@ def _request_id(request: Request | None) -> str:
         return ""
     candidate = request.headers.get("x-request-id")
     return candidate or ""
+
+
+async def _write_meta_audit_in_fresh_session(
+    *,
+    table: str,
+    actor_user_id: UUID | None,
+    action: str,
+    request_id: str,
+    ip: str,
+    user_agent: str,
+    detail: dict[str, Any],
+    project_id: UUID | None = None,
+) -> None:
+    """Open a brand-new AsyncSession + TX dedicated to the meta-audit write.
+
+    Phase 2.10 #5: ``AuditLogService._write`` issues
+    ``SET TRANSACTION ISOLATION LEVEL SERIALIZABLE`` as its first
+    statement. PostgreSQL rejects that command if any prior SELECT has
+    already touched the connection, so the meta-audit row written after
+    a paginated read MUST run on a connection that has not yet been
+    used. Reusing the request-scoped ``DbSession`` (which has already
+    executed the page SELECTs) would fail at runtime in production.
+
+    The fresh session is committed independently. Failures are logged
+    but not raised — the user still receives the page they requested,
+    and the FR-096 guarantee is "every successful read SHOULD produce a
+    meta-entry" rather than "ATOMIC with the read".
+    """
+    try:
+        async with AsyncSessionLocal() as audit_session, audit_session.begin():
+            service = AuditLogService(audit_session)
+            if table == "project_audit_log":
+                if project_id is None:
+                    raise ValueError("project_id required for project_audit_log")
+                await service.write_project_event(
+                    actor_user_id=actor_user_id,
+                    project_id=project_id,
+                    action=action,
+                    request_id=request_id,
+                    ip=ip,
+                    user_agent=user_agent,
+                    detail=detail,
+                )
+            else:
+                await service.write_platform_event(
+                    actor_user_id=actor_user_id,
+                    action=action,
+                    request_id=request_id,
+                    ip=ip,
+                    user_agent=user_agent,
+                    detail=detail,
+                )
+    except Exception:
+        # Defer to module logging — failure to record the meta-audit
+        # must not break the read response (FR-096 best-effort
+        # semantics).
+        import logging
+
+        logging.getLogger(__name__).exception(
+            "meta-audit write failed (action=%s request_id=%s)", action, request_id
+        )
 
 
 __all__ = [

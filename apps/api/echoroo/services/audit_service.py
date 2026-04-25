@@ -196,16 +196,27 @@ class AuditLogService:
         after: dict[str, Any] | None,
         created_at: datetime | None,
     ) -> UUID:
+        """Write a single audit row.
+
+        REQUIREMENT (FR-093, Phase 2.10 #5): the caller MUST pass a
+        **fresh** AsyncSession that has not yet executed any SQL on its
+        underlying connection. PostgreSQL rejects ``SET TRANSACTION
+        ISOLATION LEVEL SERIALIZABLE`` once any statement has run on the
+        connection, so a session that has already issued a SELECT (e.g.
+        the audit *read* endpoints fetching the page rows) cannot be
+        reused for the meta-audit write.
+
+        The two read endpoints in ``api/web_v1/audit.py`` honour this by
+        opening a second AsyncSession dedicated to the meta-audit write;
+        future writers MUST follow the same pattern.
+        """
         if table not in ("project_audit_log", "platform_audit_log"):
             raise ValueError(f"unsupported audit table: {table!r}")
 
-        # FR-093: SERIALIZABLE + advisory lock. Issuing SET TRANSACTION here
-        # is a no-op if the caller's TX is already serialisable, and a
-        # failure if the TX has already executed a read (Postgres rejects
-        # the isolation downgrade/upgrade rule). Callers therefore MUST
-        # invoke this method before any other SELECT in the same TX — the
-        # audit insert is the last side-effect of the business transaction
-        # by convention.
+        # FR-093: SERIALIZABLE + advisory lock. Issued at the very start
+        # of the transaction so PostgreSQL accepts the upgrade. The
+        # session arrived "fresh" (see docstring contract above), so no
+        # prior SELECT has fixed the connection's isolation level.
         await self.session.execute(
             sa.text("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE")
         )
