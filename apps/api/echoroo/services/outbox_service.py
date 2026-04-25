@@ -352,6 +352,66 @@ async def mark_failed(
     return STATUS_FAILED
 
 
+async def requeue_stuck_processing(
+    session: AsyncSession,
+    age: timedelta,
+) -> int:
+    """Reset stuck ``processing`` rows back to ``pending``.
+
+    A worker that crashes between :func:`claim_batch` and
+    :func:`mark_done` / :func:`mark_failed` leaves its row in the
+    ``processing`` state with no scheduling future; without a reaper the
+    row is invisible to :func:`claim_batch` (which only selects
+    ``pending``) and to the SLO dashboard (which only counts
+    ``pending``). This helper sweeps any such orphaned row whose
+    ``next_retry_at`` (the most recent scheduling timestamp the row
+    carries pre-claim) is older than ``age`` back to ``pending`` and
+    bumps ``retry_count`` so the per-row retry budget still applies.
+
+    Phase 3 follow-up: add a dedicated ``claimed_at`` column to the
+    baseline migration so the reaper threshold is grounded in the actual
+    claim time rather than a heuristic timestamp. Until then we use
+    ``next_retry_at`` (set on every transition) as a conservative proxy
+    — it is at most ``BACKOFF_CAP_SECONDS`` older than the real claim,
+    so the reaper window must be sized accordingly.
+
+    Returns the number of rows requeued.
+    """
+    threshold = datetime.now(UTC) - age
+    stmt = sa.text(
+        """
+        UPDATE outbox_events
+           SET status = :pending,
+               retry_count = retry_count + 1,
+               next_retry_at = :now,
+               last_error = COALESCE(last_error, '') || ' | reaped:stuck_processing'
+         WHERE status = :processing
+           AND (next_retry_at IS NULL OR next_retry_at < :threshold)
+        """
+    )
+    result = await session.execute(
+        stmt,
+        {
+            "pending": STATUS_PENDING,
+            "processing": STATUS_PROCESSING,
+            "now": datetime.now(UTC),
+            "threshold": threshold,
+        },
+    )
+    # ``rowcount`` is exposed on ``CursorResult`` (the concrete subclass for
+    # DML), but ``AsyncSession.execute`` is typed as returning the abstract
+    # ``Result``. The attribute is always available at runtime for UPDATE /
+    # DELETE statements.
+    rowcount = getattr(result, "rowcount", 0) or 0
+    if rowcount:
+        logger.warning(
+            "outbox reaper requeued %d stuck processing row(s) (age >= %s)",
+            rowcount,
+            age,
+        )
+    return int(rowcount)
+
+
 async def count_pending_older_than(
     session: AsyncSession,
     age: timedelta,
@@ -436,4 +496,5 @@ __all__ = [
     "enqueue",
     "mark_done",
     "mark_failed",
+    "requeue_stuck_processing",
 ]

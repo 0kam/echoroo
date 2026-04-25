@@ -44,6 +44,7 @@ import logging
 import os
 import socket
 from collections.abc import Awaitable, Callable
+from datetime import timedelta
 from typing import Any
 from uuid import UUID
 
@@ -56,7 +57,15 @@ from echoroo.services.outbox_service import (
     claim_batch,
     mark_done,
     mark_failed,
+    requeue_stuck_processing,
 )
+
+#: How long a row may sit in ``status='processing'`` before the reaper
+#: assumes the worker that claimed it crashed and resets it back to
+#: pending. Set to 10 minutes — comfortably greater than the
+#: documented p99 of 60s plus the worst-case backoff (256s) so that
+#: long-running but live work is not yanked out from under itself.
+STALE_PROCESSING_RESET_AGE = timedelta(minutes=10)
 
 logger = logging.getLogger(__name__)
 
@@ -138,28 +147,52 @@ async def _process_one(
 
     The function does **not** commit — the caller controls the
     transaction so that handler effects + ``mark_done`` either both
-    commit or both roll back. On handler failure, the function calls
-    :func:`mark_failed` with the current ``retry_count`` so the row is
-    rescheduled or dead-lettered as appropriate, and re-raises so the
-    Celery task can retry transient errors.
+    commit or both roll back. On handler failure, the function rolls
+    back the work transaction and re-raises; the caller is then
+    responsible for opening a *fresh* transaction to record the failure
+    via :func:`mark_failed`. Inlining ``mark_failed`` here would
+    silently lose the failure-state UPDATE because the surrounding
+    rollback would discard it (issue #1, Phase 2.10).
     """
     event_id: UUID = row["id"]
     event_type: str = row["event_type"]
     payload: dict[str, Any] = row["payload"] or {}
-    retry_count: int = int(row.get("retry_count", 0))
 
     handler = _resolve_handler(event_type)
-    try:
-        await handler(session, payload)
-    except Exception as exc:
-        await mark_failed(
-            session,
-            event_id,
-            error=f"{type(exc).__name__}: {exc}",
-            current_retry_count=retry_count,
-        )
-        raise
+    await handler(session, payload)
     await mark_done(session, event_id)
+
+
+async def _record_failure(
+    session_factory: Callable[[], AsyncSession],
+    *,
+    event_id: UUID,
+    error: str,
+    current_retry_count: int,
+) -> None:
+    """Persist a row's failure state in a brand-new transaction.
+
+    Called only after the work-session transaction has rolled back, so
+    the failure UPDATE survives the handler exception. We swallow any
+    secondary exception to avoid masking the original handler error in
+    the calling logger — the row will simply remain in ``processing``
+    until the reaper rescues it on the next batch start.
+    """
+    try:
+        async with session_factory() as failure_session, failure_session.begin():
+            await mark_failed(
+                failure_session,
+                event_id,
+                error=error,
+                current_retry_count=current_retry_count,
+            )
+    except Exception as exc:  # noqa: BLE001 — logged + reaper provides safety net
+        logger.error(
+            "outbox failure-state write for row %s itself failed: %s; "
+            "row will be reaped on next batch.",
+            event_id,
+            exc,
+        )
 
 
 async def _drain_batch(
@@ -167,13 +200,20 @@ async def _drain_batch(
     *,
     batch_size: int,
     worker_id: str,
+    stale_age: timedelta = STALE_PROCESSING_RESET_AGE,
 ) -> int:
     """Claim a batch and process each row in its own transaction.
 
     Returns the number of rows successfully processed (i.e. ``mark_done``
     committed). A row whose handler raises does NOT count toward the
-    return value — the failure is logged and the row is rescheduled.
+    return value — the failure is logged and the row is rescheduled via
+    a fresh transaction so the failure-state UPDATE is durable.
     """
+    # Step 0: reap rows stuck in ``processing`` from a prior crashed
+    # worker so they become eligible for the claim below.
+    async with session_factory() as reap_session, reap_session.begin():
+        await requeue_stuck_processing(reap_session, stale_age)
+
     # Step 1: claim a batch in its own short transaction so other workers
     # can immediately see the rows as ``processing`` and skip them.
     async with session_factory() as claim_session, claim_session.begin():
@@ -189,18 +229,28 @@ async def _drain_batch(
     # not poison the rest of the batch.
     successful = 0
     for row in claimed:
-        async with session_factory() as work_session:
-            try:
-                async with work_session.begin():
-                    await _process_one(work_session, row)
-                successful += 1
-            except Exception as exc:  # noqa: BLE001 -- logged + counted, loop continues
-                logger.warning(
-                    "outbox row %s (event_type=%s) failed: %s",
-                    row.get("id"),
-                    row.get("event_type"),
-                    exc,
-                )
+        event_id: UUID = row["id"]
+        retry_count = int(row.get("retry_count", 0))
+        try:
+            async with session_factory() as work_session, work_session.begin():
+                await _process_one(work_session, row)
+            successful += 1
+        except Exception as exc:  # noqa: BLE001 -- logged + counted, loop continues
+            logger.warning(
+                "outbox row %s (event_type=%s) failed: %s",
+                event_id,
+                row.get("event_type"),
+                exc,
+            )
+            # Fresh session — the work_session above has already
+            # rolled back, so any mark_failed() inside it would have
+            # been wiped (issue #1).
+            await _record_failure(
+                session_factory,
+                event_id=event_id,
+                error=f"{type(exc).__name__}: {exc}",
+                current_retry_count=retry_count,
+            )
     return successful
 
 
@@ -271,6 +321,7 @@ def process_outbox_batch(self: Any, batch_size: int = DEFAULT_CLAIM_BATCH_SIZE) 
 
 __all__ = [
     "OUTBOX_HANDLERS",
+    "STALE_PROCESSING_RESET_AGE",
     "OutboxHandler",
     "process_outbox_batch",
     "register_outbox_handler",
