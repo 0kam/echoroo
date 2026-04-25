@@ -178,6 +178,7 @@ exclude_lines = [
 
 [dependency-groups]
 dev = [
+    "fakeredis>=2.23",
     "httpx>=0.28.1",
     # Required by tests/unit/core/test_kms.py for mock AWS KMS.
     "moto>=5.0",

@@ -1,10 +1,10 @@
 """Application settings and configuration management."""
 
 from functools import lru_cache
-from typing import Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import Field, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import Field, field_validator, model_validator
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -49,6 +49,26 @@ class Settings(BaseSettings):
     ALLOWED_ORIGINS: list[str] = Field(
         default=["http://localhost:5173", "http://localhost:3000"],
         description="CORS allowed origins",
+    )
+    webauthn_rp_id: str = Field(
+        default="localhost",
+        validation_alias="ECHOROO_WEBAUTHN_RP_ID",
+        description="WebAuthn relying party ID",
+    )
+    webauthn_rp_name: str = Field(
+        default="Echoroo",
+        validation_alias="ECHOROO_WEBAUTHN_RP_NAME",
+        description="WebAuthn relying party display name",
+    )
+    webauthn_origins: Annotated[list[str], NoDecode] = Field(
+        default=["http://localhost:3000"],
+        validation_alias="ECHOROO_WEBAUTHN_ORIGINS",
+        description="Allowed WebAuthn browser origins",
+    )
+    webauthn_challenge_ttl_seconds: int = Field(
+        default=300,
+        validation_alias="ECHOROO_WEBAUTHN_CHALLENGE_TTL_SECONDS",
+        description="WebAuthn Redis challenge TTL in seconds",
     )
 
     # Password Hashing (Argon2id OWASP configuration)
@@ -127,6 +147,14 @@ class Settings(BaseSettings):
     # Celery
     CELERY_BROKER_URL: str = "redis://localhost:6379/0"
     CELERY_RESULT_BACKEND: str = "redis://localhost:6379/1"
+
+    @field_validator("webauthn_origins", mode="before")
+    @classmethod
+    def parse_webauthn_origins(cls, value: Any) -> Any:
+        """Accept ECHOROO_WEBAUTHN_ORIGINS as a comma-separated list."""
+        if isinstance(value, str):
+            return [origin.strip() for origin in value.split(",") if origin.strip()]
+        return value
 
     @model_validator(mode="after")
     def validate_production_secrets(self) -> "Settings":
