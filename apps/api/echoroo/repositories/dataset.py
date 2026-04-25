@@ -36,6 +36,36 @@ class DatasetRepository(BaseRepository[Dataset]):
         )
         return result.scalar_one_or_none()
 
+    async def get_by_id_in_project(
+        self, dataset_id: UUID, project_id: UUID
+    ) -> Dataset | None:
+        """Get dataset by ID, restricted to the given project.
+
+        Verifies the dataset belongs to ``project_id`` so callers can use
+        this as a single-statement BOLA / IDOR guard for endpoints that
+        accept a dataset UUID alongside a project UUID (FR-008 / FR-008a).
+
+        Args:
+            dataset_id: Dataset's UUID.
+            project_id: Project UUID the dataset must belong to.
+
+        Returns:
+            Dataset instance with relationships loaded, or ``None`` when the
+            dataset does not exist or does not belong to ``project_id``.
+        """
+        result = await self.db.execute(
+            select(Dataset)
+            .where(Dataset.id == dataset_id)
+            .where(Dataset.project_id == project_id)
+            .options(
+                selectinload(Dataset.site),
+                selectinload(Dataset.recorder),
+                selectinload(Dataset.license),
+                selectinload(Dataset.created_by),
+            )
+        )
+        return result.scalar_one_or_none()
+
     async def get_by_project_and_name(self, project_id: UUID, name: str) -> Dataset | None:
         """Get dataset by project ID and name.
 

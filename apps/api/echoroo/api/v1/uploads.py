@@ -1,20 +1,39 @@
-"""Upload session API endpoints."""
+"""Upload session API endpoints.
+
+Phase 3 (T122, FR-006 / FR-028a / FR-110): mutating upload endpoints
+(``POST`` session create / ``POST`` session complete) now route through the
+central :func:`is_allowed` gate using the Action catalog in
+:mod:`echoroo.core.actions`. Read endpoints (``GET`` status) keep the existing
+service-layer access check.
+
+Out-of-scope for this task (tracked in T128/T129):
+
+* EXIF strip on uploaded media (FR-028a).
+* The mandatory recording-permission acknowledge checkbox in the create-session
+  request body (FR-110).
+
+Both are flagged with TODO comments below.
+"""
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from sqlalchemy import select as sa_select
 
 from echoroo.core import s3
+from echoroo.core.actions import UPLOAD_CREATE_ACTION
 from echoroo.core.database import DbSession
+from echoroo.core.permissions import Action, is_allowed
 from echoroo.middleware.auth import CurrentUser
 from echoroo.middleware.rate_limit import (
     upload_session_complete_rate_limiter,
     upload_session_create_rate_limiter,
 )
 from echoroo.models.enums import UploadSessionStatus
+from echoroo.models.project import Project
 from echoroo.repositories.dataset import DatasetRepository
 from echoroo.repositories.project import ProjectRepository
 from echoroo.repositories.upload import UploadFileRepository, UploadSessionRepository
@@ -51,6 +70,50 @@ def get_upload_service(db: DbSession) -> UploadService:
 
 
 UploadServiceDep = Annotated[UploadService, Depends(get_upload_service)]
+
+
+# ---------------------------------------------------------------------------
+# Internal helpers (Phase 3 permission gate)
+# ---------------------------------------------------------------------------
+
+
+async def _load_project(db: DbSession, project_id: UUID) -> Project:
+    """Load the Project ORM row needed by :func:`is_allowed`.
+
+    The gate reads ``visibility`` / ``restricted_config`` / ``status`` /
+    ``owner_id`` from the row, so a regular ORM load is sufficient.
+    """
+    project_result = await db.execute(sa_select(Project).where(Project.id == project_id))
+    project = project_result.scalar_one_or_none()
+    if project is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="project not found")
+    return project
+
+
+async def _gate(
+    *,
+    action: Action,
+    project_id: UUID,
+    current_user: Any,
+    request: Request,
+    db: DbSession,
+) -> Project:
+    """Run the Stage-1 :func:`is_allowed` gate for ``action`` on ``project_id``.
+
+    Returns the loaded :class:`Project` row so callers can pass it through to
+    the service layer (e.g. for response filtering / restricted_config reads)
+    without issuing a second SELECT.
+    """
+    project = await _load_project(db, project_id)
+    allowed, _ = is_allowed(
+        action=action,
+        user=current_user,
+        project=project,
+        request=request,
+    )
+    if not allowed:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="action denied")
+    return project
 
 
 def _compute_progress_percent(
@@ -92,13 +155,14 @@ def _compute_progress_percent(
     summary="Create upload session",
     description=(
         "Create a new upload session and receive presigned S3 PUT URLs for each file. "
-        "Requires project admin role. Only one active session is allowed per dataset at a time."
+        "Requires the UPLOAD permission. Only one active session is allowed per dataset at a time."
     ),
 )
 async def create_upload_session(
     project_id: UUID,
     dataset_id: UUID,
-    request: CreateUploadSessionRequest,
+    request_body: CreateUploadSessionRequest,
+    request: Request,
     current_user: CurrentUser,
     service: UploadServiceDep,
     db: DbSession,
@@ -106,10 +170,13 @@ async def create_upload_session(
 ) -> CreateUploadSessionResponse:
     """Create an upload session with presigned URLs.
 
+    Guarded by :data:`UPLOAD_CREATE_ACTION` (:data:`Permission.UPLOAD`).
+
     Args:
         project_id: Project's UUID
         dataset_id: Dataset's UUID
-        request: List of files to upload
+        request_body: List of files to upload
+        request: FastAPI request (used by ``is_allowed`` to stash stage-1 state)
         current_user: Current authenticated user
         service: Upload service instance
         db: Database session
@@ -119,11 +186,23 @@ async def create_upload_session(
 
     Raises:
         401: Not authenticated
-        403: Not a project admin
+        403: Permission denied
         404: Dataset not found
         409: Active upload session already exists for this dataset
         422: Validation failure (extension, size, quota, or file count)
     """
+    await _gate(
+        action=UPLOAD_CREATE_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
+
+    # TODO(T128, FR-110): require an explicit `recording_permissions_acknowledged`
+    # boolean on `CreateUploadSessionRequest` and reject the session if it is not
+    # set. The schema and service layer changes are tracked in T128.
+
     # Ensure S3 bucket exists before generating presigned URLs
     try:
         s3.ensure_bucket_exists()
@@ -137,7 +216,7 @@ async def create_upload_session(
         user_id=current_user.id,
         project_id=project_id,
         dataset_id=dataset_id,
-        files=request.files,
+        files=request_body.files,
     )
     await db.commit()
 
@@ -159,13 +238,14 @@ async def create_upload_session(
     description=(
         "Verify that all files have been uploaded to S3 and transition the session "
         "to UPLOADED state. Dispatches a Celery validation task when all files are confirmed. "
-        "Requires project admin role."
+        "Requires the UPLOAD permission."
     ),
 )
 async def complete_upload_session(
     project_id: UUID,
     dataset_id: UUID,
     session_id: UUID,
+    request: Request,
     current_user: CurrentUser,
     service: UploadServiceDep,
     db: DbSession,
@@ -173,10 +253,13 @@ async def complete_upload_session(
 ) -> CompleteUploadResponse:
     """Complete an upload session after files have been uploaded to S3.
 
+    Guarded by :data:`UPLOAD_CREATE_ACTION` (:data:`Permission.UPLOAD`).
+
     Args:
         project_id: Project's UUID
         dataset_id: Dataset's UUID
         session_id: Upload session UUID
+        request: FastAPI request
         current_user: Current authenticated user
         service: Upload service instance
         db: Database session
@@ -186,10 +269,23 @@ async def complete_upload_session(
 
     Raises:
         401: Not authenticated
-        403: Not a project admin or not the session owner
+        403: Permission denied
         404: Session not found or does not belong to this dataset/project
         409: Session is not in ISSUED state
     """
+    await _gate(
+        action=UPLOAD_CREATE_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
+
+    # TODO(T129, FR-028a): invoke EXIF / metadata strip on each uploaded
+    # object before validation kicks off. The implementation will live in the
+    # upload validation worker; this endpoint will simply assume the strip ran
+    # successfully once T129 lands.
+
     result = await service.complete_upload(
         user_id=current_user.id,
         project_id=project_id,
@@ -238,6 +334,10 @@ async def get_upload_session_status(
     service: UploadServiceDep,
 ) -> UploadSessionStatusResponse:
     """Get upload session status with per-file details.
+
+    Read endpoint — keeps the existing service-layer access check rather than
+    routing through the central gate. A future task may introduce a dedicated
+    ``UPLOAD_GET_ACTION`` once the spec defines the read-permission semantics.
 
     Args:
         project_id: Project's UUID

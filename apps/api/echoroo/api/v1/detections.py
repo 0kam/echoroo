@@ -1,17 +1,35 @@
-"""Detection annotation management API endpoints."""
+"""Detection annotation management API endpoints.
+
+Phase 3 (T120, FR-006 / FR-008 / FR-008a): every read / export path operation
+now routes through the central :func:`is_allowed` gate using the Action catalog
+in :mod:`echoroo.core.actions`. Mutating endpoints (create / confirm / reject /
+change-species / votes / delete) are guarded in subsequent tasks; until then
+they keep the legacy :func:`check_project_access` membership check so the
+existing test suite continues to pass.
+"""
 
 from __future__ import annotations
 
 import io
-from typing import Annotated
+from typing import Annotated, Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select as sa_select
 
+from echoroo.core.actions import (
+    DETECTION_EXPORT_CSV_ACTION,
+    DETECTION_EXPORT_ML_DATASET_ACTION,
+    DETECTION_GET_ACTION,
+    DETECTION_LIST_ACTION,
+)
 from echoroo.core.database import DbSession
-from echoroo.core.permissions import check_project_access
+from echoroo.core.permissions import (
+    Action,
+    check_project_access,
+    is_allowed,
+)
 from echoroo.middleware.auth import CurrentUser
 from echoroo.models.enums import DetectionStatus
 from echoroo.models.project import Project
@@ -71,6 +89,50 @@ DetectionServiceDep = Annotated[DetectionService, Depends(get_detection_service)
 VoteServiceDep = Annotated[AnnotationVoteService, Depends(get_vote_service)]
 
 
+# ---------------------------------------------------------------------------
+# Internal helpers (Phase 3 permission gate)
+# ---------------------------------------------------------------------------
+
+
+async def _load_project(db: DbSession, project_id: UUID) -> Project:
+    """Load the Project ORM row needed by :func:`is_allowed`.
+
+    The gate reads ``visibility`` / ``restricted_config`` / ``status`` /
+    ``owner_id`` from the row, so a regular ORM load is sufficient.
+    """
+    project_result = await db.execute(sa_select(Project).where(Project.id == project_id))
+    project = project_result.scalar_one_or_none()
+    if project is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="project not found")
+    return project
+
+
+async def _gate(
+    *,
+    action: Action,
+    project_id: UUID,
+    current_user: Any,
+    request: Request,
+    db: DbSession,
+) -> Project:
+    """Run the Stage-1 :func:`is_allowed` gate for ``action`` on ``project_id``.
+
+    Returns the loaded :class:`Project` row so callers can pass it through to
+    the service layer (e.g. for response filtering / restricted_config reads)
+    without issuing a second SELECT.
+    """
+    project = await _load_project(db, project_id)
+    allowed, _ = is_allowed(
+        action=action,
+        user=current_user,
+        project=project,
+        request=request,
+    )
+    if not allowed:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="action denied")
+    return project
+
+
 @router.get(
     "",
     response_model=DetectionListResponse,
@@ -79,6 +141,7 @@ VoteServiceDep = Annotated[AnnotationVoteService, Depends(get_vote_service)]
 )
 async def list_detections(
     project_id: UUID,
+    request: Request,
     current_user: CurrentUser,
     service: DetectionServiceDep,
     db: DbSession,
@@ -99,8 +162,13 @@ async def list_detections(
 ) -> DetectionListResponse:
     """List detection annotations for a project.
 
+    Guarded by :data:`DETECTION_LIST_ACTION`
+    (:data:`Permission.VIEW_DETECTION`). Public / Restricted projects allow
+    Guest reads via the canonical matrix; the gate enforces it.
+
     Args:
         project_id: Project's UUID
+        request: FastAPI request (used by ``is_allowed`` to stash stage-1 state)
         current_user: Current authenticated user
         service: Detection service instance
         db: Database session
@@ -120,13 +188,23 @@ async def list_detections(
 
     Raises:
         401: Not authenticated
+        403: Permission denied
     """
-    # Load project settings for consensus thresholds
-    project_result = await db.execute(sa_select(Project).where(Project.id == project_id))
-    project = project_result.scalar_one_or_none()
-    min_votes = project.review_min_votes if project else 2
-    threshold = project.review_consensus_threshold if project else 0.667
+    project = await _gate(
+        action=DETECTION_LIST_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
+    min_votes = project.review_min_votes
+    threshold = project.review_consensus_threshold
 
+    # TODO(T130-T134, FR-006/011/016): apply Stage-2 response filter
+    # (mask_species_in_detection / H3 generalisation) using the
+    # ``effective_permissions`` + ``normalized_role`` stashed on
+    # ``request.state`` by ``is_allowed``. Pending the bulk taxon
+    # sensitivity preload utility.
     return await service.list_detections(
         project_id=project_id,
         tag_id=tag_id,
@@ -153,8 +231,10 @@ async def list_detections(
 )
 async def get_species_summary(
     project_id: UUID,
+    request: Request,
     current_user: CurrentUser,
     service: DetectionServiceDep,
+    db: DbSession,
     dataset_id: UUID | None = None,
     detection_run_id: UUID | None = None,
     locale: str = Query(
@@ -167,10 +247,15 @@ async def get_species_summary(
 
     NOTE: This route must appear before /{detection_id} to avoid routing conflicts.
 
+    Guarded by :data:`DETECTION_LIST_ACTION` (this is a list-shaped read of
+    detections aggregated per species, so it shares the LIST permission).
+
     Args:
         project_id: Project's UUID
+        request: FastAPI request
         current_user: Current authenticated user
         service: Detection service instance
+        db: Database session
         dataset_id: Optional dataset filter
         detection_run_id: Optional detection run filter
         locale: Locale code for common name resolution (default: "en")
@@ -180,7 +265,15 @@ async def get_species_summary(
 
     Raises:
         401: Not authenticated
+        403: Permission denied
     """
+    await _gate(
+        action=DETECTION_LIST_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
     return await service.get_species_summary(
         project_id=project_id,
         dataset_id=dataset_id,
@@ -196,6 +289,7 @@ async def get_species_summary(
 )
 async def export_csv(
     project_id: UUID,
+    request: Request,
     current_user: CurrentUser,
     db: DbSession,
     status: DetectionStatus | None = None,
@@ -207,8 +301,13 @@ async def export_csv(
 
     NOTE: This route must appear before /{detection_id} to avoid routing conflicts.
 
+    Guarded by :data:`DETECTION_EXPORT_CSV_ACTION`
+    (:data:`Permission.EXPORT`). Restricted projects gate this on
+    ``allow_export``.
+
     Args:
         project_id: Project's UUID
+        request: FastAPI request
         current_user: Current authenticated user
         db: Database session
         status: Optional detection status filter
@@ -221,7 +320,15 @@ async def export_csv(
 
     Raises:
         401: Not authenticated
+        403: Permission denied
     """
+    await _gate(
+        action=DETECTION_EXPORT_CSV_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
     service = DetectionExportService(db)
     csv_content = await service.export_csv(
         project_id=project_id,
@@ -244,6 +351,7 @@ async def export_csv(
 )
 async def export_ml_dataset(
     project_id: UUID,
+    request: Request,
     current_user: CurrentUser,
     db: DbSession,
     dataset_id: UUID | None = None,
@@ -257,8 +365,12 @@ async def export_ml_dataset(
 
     NOTE: This route must appear before /{detection_id} to avoid routing conflicts.
 
+    Guarded by :data:`DETECTION_EXPORT_ML_DATASET_ACTION`
+    (:data:`Permission.EXPORT`).
+
     Args:
         project_id: Project's UUID
+        request: FastAPI request
         current_user: Current authenticated user
         db: Database session
         dataset_id: Optional dataset UUID filter
@@ -269,7 +381,15 @@ async def export_ml_dataset(
 
     Raises:
         401: Not authenticated
+        403: Permission denied
     """
+    await _gate(
+        action=DETECTION_EXPORT_ML_DATASET_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
     service = DetectionExportService(db)
     zip_content = await service.export_ml_dataset(
         project_id=project_id,
@@ -291,8 +411,10 @@ async def export_ml_dataset(
 )
 async def get_temporal_data(
     project_id: UUID,
+    request: Request,
     current_user: CurrentUser,
     service: DetectionServiceDep,
+    db: DbSession,
     dataset_id: UUID | None = None,
     detection_run_id: UUID | None = None,
     locale: str = Query(
@@ -308,10 +430,14 @@ async def get_temporal_data(
 
     NOTE: This route must appear before /{detection_id} to avoid routing conflicts.
 
+    Guarded by :data:`DETECTION_LIST_ACTION` (aggregate read of detections).
+
     Args:
         project_id: Project's UUID
+        request: FastAPI request
         current_user: Current authenticated user
         service: Detection service instance
+        db: Database session
         dataset_id: Optional dataset filter
         detection_run_id: Optional detection run filter
         locale: Locale code for common name resolution (default: "en")
@@ -321,7 +447,15 @@ async def get_temporal_data(
 
     Raises:
         401: Not authenticated
+        403: Permission denied
     """
+    await _gate(
+        action=DETECTION_LIST_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
     return await service.get_temporal_data(
         project_id=project_id,
         dataset_id=dataset_id,
@@ -339,6 +473,7 @@ async def get_temporal_data(
 async def get_detection(
     project_id: UUID,
     detection_id: UUID,
+    request: Request,
     current_user: CurrentUser,
     service: DetectionServiceDep,
     db: DbSession,
@@ -350,9 +485,13 @@ async def get_detection(
 ) -> DetectionResponse:
     """Get detection by ID.
 
+    Guarded by :data:`DETECTION_GET_ACTION`
+    (:data:`Permission.VIEW_DETECTION`).
+
     Args:
         project_id: Project's UUID
         detection_id: Detection's UUID
+        request: FastAPI request
         current_user: Current authenticated user
         service: Detection service instance
         db: Database session
@@ -363,14 +502,32 @@ async def get_detection(
 
     Raises:
         401: Not authenticated
+        403: Permission denied
         404: Detection not found
     """
-    # Load project settings for consensus thresholds
-    project_result = await db.execute(sa_select(Project).where(Project.id == project_id))
-    project = project_result.scalar_one_or_none()
-    min_votes = project.review_min_votes if project else 2
-    threshold = project.review_consensus_threshold if project else 0.667
+    project = await _gate(
+        action=DETECTION_GET_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
+    min_votes = project.review_min_votes
+    threshold = project.review_consensus_threshold
 
+    # BOLA / IDOR guard (FR-008 / FR-008a): the detection (annotation) must
+    # belong to the gated project — verify via
+    # Annotation -> Recording -> Dataset -> Project before serving the row.
+    if not await service.annotation_repo.exists_in_project(detection_id, project_id):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Detection not found",
+        )
+
+    # TODO(T130-T134, FR-006/011/016): apply Stage-2 response filter using
+    # the stashed ``request.state.effective_permissions`` /
+    # ``request.state.normalized_role`` once the bulk taxon-sensitivity
+    # preloader is wired up.
     return await service.get(
         detection_id=detection_id,
         current_user_id=current_user.id,
@@ -396,6 +553,10 @@ async def create_detection(
 ) -> DetectionResponse:
     """Create a new detection annotation.
 
+    Mutating endpoint — Phase 3 will introduce a dedicated DETECTION_CREATE
+    Action; until then we keep the legacy membership check so contract tests
+    still pass.
+
     Args:
         project_id: Project's UUID
         request: Detection creation data
@@ -408,8 +569,10 @@ async def create_detection(
 
     Raises:
         401: Not authenticated
+        403: Access denied to project
         422: Validation error
     """
+    await check_project_access(project_id, current_user.id, db)
     detection = await service.create(project_id=project_id, request=request)
     await db.commit()
     return detection
@@ -447,8 +610,10 @@ async def confirm_detection(
 
     Raises:
         401: Not authenticated
+        403: Access denied to project
         404: Detection not found
     """
+    await check_project_access(project_id, current_user.id, db)
     detection = await service.confirm(
         detection_id=detection_id,
         user_id=current_user.id,
@@ -487,8 +652,10 @@ async def reject_detection(
 
     Raises:
         401: Not authenticated
+        403: Access denied to project
         404: Detection not found
     """
+    await check_project_access(project_id, current_user.id, db)
     detection = await service.reject(
         detection_id=detection_id,
         user_id=current_user.id,
@@ -526,8 +693,10 @@ async def change_species(
 
     Raises:
         401: Not authenticated
+        403: Access denied to project
         404: Detection not found
     """
+    await check_project_access(project_id, current_user.id, db)
     detection = await service.change_species(
         detection_id=detection_id,
         request=request,
@@ -554,8 +723,6 @@ async def get_votes(
 
     Returns aggregate agree/disagree/unsure counts, the current user's vote,
     the computed consensus status, and the full list of individual votes.
-
-    NOTE: This route must appear before /{detection_id} to avoid routing conflicts.
 
     Args:
         project_id: Project's UUID
@@ -710,7 +877,9 @@ async def delete_detection(
 
     Raises:
         401: Not authenticated
+        403: Access denied to project
         404: Detection not found
     """
+    await check_project_access(project_id, current_user.id, db)
     await service.delete(detection_id=detection_id)
     await db.commit()

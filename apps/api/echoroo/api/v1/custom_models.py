@@ -1,17 +1,28 @@
-"""Custom model management API endpoints."""
+"""Custom model management API endpoints.
+
+Phase 3 (T123, FR-006): mutating training-trigger endpoints route through the
+central :func:`is_allowed` gate using
+:data:`echoroo.core.actions.CUSTOM_MODEL_TRAIN_ACTION` (Permission.TRAIN_MODEL,
+Admin or higher). Read endpoints and the DELETE endpoint keep the legacy
+:func:`check_project_access` membership check; dedicated Actions for them will
+be introduced by subsequent tasks.
+"""
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, model_validator
+from sqlalchemy import select as sa_select
 
+from echoroo.core.actions import CUSTOM_MODEL_TRAIN_ACTION
 from echoroo.core.database import DbSession
-from echoroo.core.permissions import check_project_access
+from echoroo.core.permissions import Action, check_project_access, is_allowed
 from echoroo.middleware.auth import CurrentUser
 from echoroo.models.custom_model import CustomModel, CustomModelStatus
+from echoroo.models.project import Project
 from echoroo.schemas.custom_model import (
     CustomModelApplyResponse,
     CustomModelCreate,
@@ -70,6 +81,50 @@ def get_custom_model_service(db: DbSession) -> CustomModelService:
 CustomModelServiceDep = Annotated[CustomModelService, Depends(get_custom_model_service)]
 
 
+# ---------------------------------------------------------------------------
+# Internal helpers (Phase 3 permission gate)
+# ---------------------------------------------------------------------------
+
+
+async def _load_project(db: DbSession, project_id: UUID) -> Project:
+    """Load the Project ORM row needed by :func:`is_allowed`.
+
+    The gate reads ``visibility`` / ``restricted_config`` / ``status`` /
+    ``owner_id`` from the row, so a regular ORM load is sufficient.
+    """
+    project_result = await db.execute(sa_select(Project).where(Project.id == project_id))
+    project = project_result.scalar_one_or_none()
+    if project is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="project not found")
+    return project
+
+
+async def _gate(
+    *,
+    action: Action,
+    project_id: UUID,
+    current_user: Any,
+    request: Request,
+    db: DbSession,
+) -> Project:
+    """Run the Stage-1 :func:`is_allowed` gate for ``action`` on ``project_id``.
+
+    Returns the loaded :class:`Project` row so callers can pass it through to
+    the service layer (e.g. for response filtering / restricted_config reads)
+    without issuing a second SELECT.
+    """
+    project = await _load_project(db, project_id)
+    allowed, _ = is_allowed(
+        action=action,
+        user=current_user,
+        project=project,
+        request=request,
+    )
+    if not allowed:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="action denied")
+    return project
+
+
 async def get_model_or_404(
     model_id: UUID,
     project_id: UUID,
@@ -115,6 +170,9 @@ async def list_custom_models(
 ) -> CustomModelListResponse:
     """List custom models for a project.
 
+    Read endpoint — keeps legacy :func:`check_project_access` until a
+    dedicated ``CUSTOM_MODEL_LIST_ACTION`` is registered.
+
     Args:
         project_id: Project's UUID
         current_user: Current authenticated user
@@ -148,20 +206,26 @@ async def list_custom_models(
     response_model=CustomModelResponse,
     status_code=status.HTTP_201_CREATED,
     summary="Create custom model",
-    description="Create a new custom model in DRAFT status",
+    description="Create a new custom model in DRAFT status. Requires TRAIN_MODEL permission.",
 )
 async def create_custom_model(
     project_id: UUID,
-    request: CustomModelCreate,
+    request_body: CustomModelCreate,
+    request: Request,
     current_user: CurrentUser,
     db: DbSession,
     service: CustomModelServiceDep,
 ) -> CustomModelResponse:
     """Create a new custom model.
 
+    Guarded by :data:`CUSTOM_MODEL_TRAIN_ACTION`
+    (:data:`Permission.TRAIN_MODEL`). Creating a custom model is the entry
+    point of the training workflow, so it shares the TRAIN_MODEL permission.
+
     Args:
         project_id: Project's UUID
-        request: Custom model creation data
+        request_body: Custom model creation data
+        request: FastAPI request (used by ``is_allowed`` to stash stage-1 state)
         current_user: Current authenticated user
         db: Database session
         service: CustomModelService instance
@@ -171,14 +235,20 @@ async def create_custom_model(
 
     Raises:
         401: Not authenticated
-        403: Access denied
+        403: Permission denied
         422: Validation error
     """
-    await check_project_access(project_id, current_user.id, db)
+    await _gate(
+        action=CUSTOM_MODEL_TRAIN_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
     model = await service.create_model(
         project_id=project_id,
         user_id=current_user.id,
-        request=request,
+        request=request_body,
     )
     return CustomModelResponse.model_validate(model)
 
@@ -197,6 +267,9 @@ async def get_custom_model(
     service: CustomModelServiceDep,
 ) -> CustomModelResponse:
     """Get custom model by ID.
+
+    Read endpoint — keeps legacy :func:`check_project_access` until a
+    dedicated ``CUSTOM_MODEL_GET_ACTION`` is registered.
 
     Args:
         project_id: Project's UUID
@@ -222,24 +295,28 @@ async def get_custom_model(
     "/{model_id}",
     response_model=CustomModelResponse,
     summary="Update custom model",
-    description="Update a custom model's name and description (only allowed in DRAFT status)",
+    description="Update a custom model's name and description (only allowed in DRAFT status). Requires TRAIN_MODEL permission.",
 )
 async def update_custom_model(
     project_id: UUID,
     model_id: UUID,
-    request: CustomModelUpdate,
+    request_body: CustomModelUpdate,
+    request: Request,
     current_user: CurrentUser,
     db: DbSession,
     service: CustomModelServiceDep,
 ) -> CustomModelResponse:
     """Update custom model metadata.
 
-    Only allowed when the model is in DRAFT status.
+    Guarded by :data:`CUSTOM_MODEL_TRAIN_ACTION`
+    (:data:`Permission.TRAIN_MODEL`). Editing a draft model is part of the
+    training workflow.
 
     Args:
         project_id: Project's UUID
         model_id: CustomModel's UUID
-        request: Fields to update (name, description)
+        request_body: Fields to update (name, description)
+        request: FastAPI request
         current_user: Current authenticated user
         db: Database session
         service: CustomModelService instance
@@ -249,11 +326,17 @@ async def update_custom_model(
 
     Raises:
         401: Not authenticated
-        403: Access denied
+        403: Permission denied
         404: Model not found
         409: Model is not in DRAFT status
     """
-    await check_project_access(project_id, current_user.id, db)
+    await _gate(
+        action=CUSTOM_MODEL_TRAIN_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
     model = await get_model_or_404(model_id, project_id, service)
 
     if model.status != CustomModelStatus.DRAFT:
@@ -264,8 +347,8 @@ async def update_custom_model(
 
     updated = await service.update_model(
         model=model,
-        name=request.name,
-        description=request.description,
+        name=request_body.name,
+        description=request_body.description,
     )
     return CustomModelResponse.model_validate(updated)
 
@@ -285,7 +368,10 @@ async def delete_custom_model(
 ) -> None:
     """Delete a custom model.
 
-    Also deletes the associated S3 model artifact if one exists.
+    Mutating endpoint — keeps legacy :func:`check_project_access` until a
+    dedicated ``CUSTOM_MODEL_DELETE_ACTION`` is registered. Tracked for a
+    follow-up Phase 3 task; spec FR-006 only mandates the TRAIN_MODEL gate
+    on training-trigger endpoints in this iteration.
 
     Args:
         project_id: Project's UUID
@@ -308,39 +394,49 @@ async def delete_custom_model(
     "/{model_id}/train",
     response_model=CustomModelResponse,
     summary="Start model training",
-    description="Dispatch a Celery training task. Allowed only when status is DRAFT or FAILED.",
+    description="Dispatch a Celery training task. Allowed only when status is DRAFT or FAILED. Requires TRAIN_MODEL permission.",
 )
 async def train_custom_model(
     project_id: UUID,
     model_id: UUID,
+    request: Request,
     current_user: CurrentUser,
     db: DbSession,
     service: CustomModelServiceDep,
-    request: CustomModelTrainRequest | None = None,
+    request_body: CustomModelTrainRequest | None = None,
 ) -> CustomModelResponse:
     """Start training for a custom model.
 
-    Transitions the model to TRAINING status and dispatches the Celery task.
-    Only allowed when the model is in DRAFT or FAILED status.
+    Guarded by :data:`CUSTOM_MODEL_TRAIN_ACTION`
+    (:data:`Permission.TRAIN_MODEL`). Transitions the model to TRAINING status
+    and dispatches the Celery task. Only allowed when the model is in DRAFT,
+    FAILED, or TRAINED status.
 
     Args:
         project_id: Project's UUID
         model_id: CustomModel's UUID
+        request: FastAPI request
         current_user: Current authenticated user
         db: Database session
         service: CustomModelService instance
-        request: Optional training parameters
+        request_body: Optional training parameters
 
     Returns:
         Updated custom model with TRAINING status
 
     Raises:
         401: Not authenticated
-        403: Access denied
+        403: Permission denied
         404: Model not found
-        409: Model is not in DRAFT or FAILED status
+        409: Model is not in DRAFT, FAILED, or TRAINED status
     """
-    await check_project_access(project_id, current_user.id, db)
+    await _gate(
+        action=CUSTOM_MODEL_TRAIN_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
     model = await get_model_or_404(model_id, project_id, service)
 
     if model.status not in (CustomModelStatus.DRAFT, CustomModelStatus.FAILED, CustomModelStatus.TRAINED):
@@ -352,7 +448,7 @@ async def train_custom_model(
             ),
         )
 
-    updated = await service.start_training(model, train_request=request)
+    updated = await service.start_training(model, train_request=request_body)
     return CustomModelResponse.model_validate(updated)
 
 
@@ -371,8 +467,8 @@ async def get_custom_model_status(
 ) -> CustomModelResponse:
     """Get current training status of a custom model.
 
-    Intended for polling during training. Returns the full model response
-    so callers can inspect status, metrics, and error_message in one request.
+    Read endpoint — keeps legacy :func:`check_project_access` until a
+    dedicated read Action is registered.
 
     Args:
         project_id: Project's UUID
@@ -401,12 +497,14 @@ async def get_custom_model_status(
     summary="Apply custom model to dataset",
     description=(
         "Apply a trained custom SVM model to all Perch embeddings in a dataset, "
-        "creating detection annotations for clips above the confidence threshold."
+        "creating detection annotations for clips above the confidence threshold. "
+        "Requires TRAIN_MODEL permission."
     ),
 )
 async def apply_custom_model(
     project_id: UUID,
     model_id: UUID,
+    request: Request,
     current_user: CurrentUser,
     db: DbSession,
     service: CustomModelServiceDep,
@@ -414,6 +512,10 @@ async def apply_custom_model(
     threshold: float = Query(0.5, ge=0.0, le=1.0, description="Confidence threshold (0.0-1.0)"),
 ) -> CustomModelApplyResponse:
     """Apply a trained custom model to all embeddings in a dataset.
+
+    Guarded by :data:`CUSTOM_MODEL_TRAIN_ACTION`
+    (:data:`Permission.TRAIN_MODEL`). Applying a model to a dataset is part
+    of the training/inference workflow controlled by the same permission.
 
     Creates a DetectionRun record and dispatches a Celery task to run SVM
     inference on all Perch embeddings in the specified dataset. Annotations
@@ -424,6 +526,7 @@ async def apply_custom_model(
     Args:
         project_id: Project's UUID
         model_id: CustomModel's UUID
+        request: FastAPI request
         current_user: Current authenticated user
         db: Database session
         service: CustomModelService instance
@@ -435,11 +538,17 @@ async def apply_custom_model(
 
     Raises:
         401: Not authenticated
-        403: Access denied
+        403: Permission denied
         404: Model not found
         409: Model is not in TRAINED or DEPLOYED status, or lacks a model artifact
     """
-    await check_project_access(project_id, current_user.id, db)
+    await _gate(
+        action=CUSTOM_MODEL_TRAIN_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
     model = await get_model_or_404(model_id, project_id, service)
 
     if model.status not in (CustomModelStatus.TRAINED, CustomModelStatus.DEPLOYED):
@@ -503,6 +612,9 @@ async def list_custom_model_detection_runs(
 ) -> CustomModelDetectionRunListResponse:
     """List recent DetectionRuns for a custom model.
 
+    Read endpoint — keeps legacy :func:`check_project_access` until a
+    dedicated read Action is registered.
+
     Args:
         project_id: Project's UUID
         model_id: CustomModel's UUID
@@ -549,18 +661,24 @@ async def list_custom_model_detection_runs(
     description=(
         "Generate three-category seed samples (easy_positive, boundary, others) "
         "for a model using the provided reference embeddings as query vectors. "
-        "Only allowed when the model is in DRAFT or FAILED status."
+        "Only allowed when the model is in DRAFT or FAILED status. "
+        "Requires TRAIN_MODEL permission."
     ),
 )
 async def create_seed_samples(
     project_id: UUID,
     model_id: UUID,
     body: SeedSamplingBody,
+    request: Request,
     current_user: CurrentUser,
     db: DbSession,
     service: CustomModelServiceDep,
 ) -> SamplingRoundResponse:
     """Start seed sample generation for a custom model.
+
+    Guarded by :data:`CUSTOM_MODEL_TRAIN_ACTION`
+    (:data:`Permission.TRAIN_MODEL`). Seed sampling is a step in the
+    training workflow.
 
     Creates a SamplingRound record in 'pending' status and dispatches a
     Celery task that will select representative training examples via
@@ -571,6 +689,7 @@ async def create_seed_samples(
         project_id: Project's UUID
         model_id: CustomModel's UUID
         body: Reference embedding IDs and optional sampling config overrides
+        request: FastAPI request
         current_user: Current authenticated user
         db: Database session
         service: CustomModelService instance
@@ -580,12 +699,18 @@ async def create_seed_samples(
 
     Raises:
         401: Not authenticated
-        403: Access denied
+        403: Permission denied
         404: Model not found
         409: Model is not in DRAFT or FAILED status
         422: No reference_embedding_ids provided
     """
-    await check_project_access(project_id, current_user.id, db)
+    await _gate(
+        action=CUSTOM_MODEL_TRAIN_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
     model = await get_model_or_404(model_id, project_id, service)
 
     if model.status not in (CustomModelStatus.DRAFT, CustomModelStatus.FAILED, CustomModelStatus.TRAINED):
@@ -653,17 +778,22 @@ async def create_seed_samples(
         "scores all unlabeled project embeddings to find the most uncertain samples, "
         "and creates a new SamplingRound for human review. "
         "Requires at least one completed sampling round with sufficient labels "
-        "(≥5 positive + ≥5 negative)."
+        "(>=5 positive + >=5 negative). Requires TRAIN_MODEL permission."
     ),
 )
 async def suggest_next_samples(
     project_id: UUID,
     model_id: UUID,
+    request: Request,
     current_user: CurrentUser,
     db: DbSession,
     service: CustomModelServiceDep,
 ) -> SamplingRoundResponse:
     """Start an active learning iteration for a custom model.
+
+    Guarded by :data:`CUSTOM_MODEL_TRAIN_ACTION`
+    (:data:`Permission.TRAIN_MODEL`). Active learning suggestion is part of
+    the training workflow.
 
     Validates that sufficient labeled data exists from previous rounds,
     creates a new SamplingRound in 'pending' status, and dispatches the
@@ -673,6 +803,7 @@ async def suggest_next_samples(
     Args:
         project_id: Project's UUID
         model_id: CustomModel's UUID
+        request: FastAPI request
         current_user: Current authenticated user
         db: Database session
         service: CustomModelService instance
@@ -682,11 +813,17 @@ async def suggest_next_samples(
 
     Raises:
         401: Not authenticated
-        403: Access denied
+        403: Permission denied
         404: Model not found
         409: No completed rounds or insufficient labeled data
     """
-    await check_project_access(project_id, current_user.id, db)
+    await _gate(
+        action=CUSTOM_MODEL_TRAIN_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
     model = await get_model_or_404(model_id, project_id, service)
 
     try:
@@ -728,6 +865,9 @@ async def list_sampling_rounds(
     service: CustomModelServiceDep,
 ) -> SamplingRoundListResponse:
     """List all sampling rounds for a custom model.
+
+    Read endpoint — keeps legacy :func:`check_project_access` until a
+    dedicated read Action is registered.
 
     Args:
         project_id: Project's UUID
@@ -785,6 +925,9 @@ async def get_sampling_round(
     service: CustomModelServiceDep,
 ) -> SamplingRoundResponse:
     """Get a single sampling round with items eagerly loaded.
+
+    Read endpoint — keeps legacy :func:`check_project_access` until a
+    dedicated read Action is registered.
 
     Returns the round with all SamplingRoundItems, including annotation review
     status and embedding metadata (recording_id, start_time, end_time) for

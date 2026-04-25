@@ -67,6 +67,72 @@ class AnnotationRepository(BaseRepository[Annotation]):
         )
         return result.scalar_one_or_none()
 
+    async def get_by_id_in_project(
+        self, annotation_id: UUID, project_id: UUID
+    ) -> Annotation | None:
+        """Get annotation by ID, restricted to the given project.
+
+        Verifies the integrity chain
+        ``Annotation.recording_id -> Recording.dataset_id -> Dataset.project_id``
+        so that an annotation UUID belonging to a different project returns
+        ``None`` instead of leaking the row (BOLA / IDOR guard, FR-008 /
+        FR-008a / FR-037).
+
+        Args:
+            annotation_id: Annotation's UUID.
+            project_id: Project UUID the annotation must belong to.
+
+        Returns:
+            Annotation instance with relationships loaded, or ``None`` when the
+            annotation does not exist or does not belong to ``project_id``.
+        """
+        from echoroo.models.dataset import Dataset
+        from echoroo.models.recording import Recording
+
+        result = await self.db.execute(
+            select(Annotation)
+            .join(Recording, Annotation.recording_id == Recording.id)
+            .join(Dataset, Recording.dataset_id == Dataset.id)
+            .where(Annotation.id == annotation_id)
+            .where(Dataset.project_id == project_id)
+            .options(
+                selectinload(Annotation.recording),
+                selectinload(Annotation.tag),
+                selectinload(Annotation.detection_run),
+                selectinload(Annotation.reviewed_by),
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def exists_in_project(
+        self, annotation_id: UUID, project_id: UUID
+    ) -> bool:
+        """Return ``True`` when an annotation belongs to ``project_id``.
+
+        Lighter-weight existence probe used by API handlers that only need
+        to enforce the BOLA / IDOR guard before delegating to a service
+        method that issues its own SELECT.
+
+        Args:
+            annotation_id: Annotation's UUID.
+            project_id: Project UUID the annotation must belong to.
+
+        Returns:
+            ``True`` when the annotation exists in the given project,
+            ``False`` otherwise.
+        """
+        from echoroo.models.dataset import Dataset
+        from echoroo.models.recording import Recording
+
+        result = await self.db.execute(
+            select(Annotation.id)
+            .join(Recording, Annotation.recording_id == Recording.id)
+            .join(Dataset, Recording.dataset_id == Dataset.id)
+            .where(Annotation.id == annotation_id)
+            .where(Dataset.project_id == project_id)
+        )
+        return result.first() is not None
+
     async def list_annotations(
         self,
         project_id: UUID,

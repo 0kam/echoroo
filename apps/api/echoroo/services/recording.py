@@ -39,6 +39,24 @@ class RecordingService:
         """
         return await self.repo.get_by_id(recording_id)
 
+    async def get_by_id_in_project(
+        self, recording_id: UUID, project_id: UUID
+    ) -> Recording | None:
+        """Get recording by ID, restricted to a project.
+
+        Thin pass-through to :meth:`RecordingRepository.get_by_id_in_project`
+        used by API handlers as a BOLA / IDOR guard.
+
+        Args:
+            recording_id: Recording's UUID.
+            project_id: Project UUID the recording must belong to.
+
+        Returns:
+            Recording instance with relationships loaded, or ``None`` when the
+            recording does not exist or does not belong to ``project_id``.
+        """
+        return await self.repo.get_by_id_in_project(recording_id, project_id)
+
     async def list_by_dataset(
         self,
         dataset_id: UUID,

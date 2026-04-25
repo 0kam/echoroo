@@ -1,13 +1,27 @@
-"""Tag management API endpoints."""
+"""Tag management API endpoints.
 
-from typing import Annotated
+Phase 3 (T121, FR-006 / FR-008 / FR-008a): the tag CREATE path operation now
+routes through the central :func:`is_allowed` gate using
+:data:`TAG_CREATE_ACTION` (:data:`Permission.CREATE_TAG`). Read endpoints keep
+their existing behaviour — they are not yet wrapped because tag visibility is
+implicit through the parent project read permission, but the gate hook is in
+place via ``_gate`` and can be enabled when the matrix entry is finalised.
+"""
+
+from __future__ import annotations
+
+from typing import Annotated, Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from sqlalchemy import select as sa_select
 
+from echoroo.core.actions import TAG_CREATE_ACTION
 from echoroo.core.database import DbSession
+from echoroo.core.permissions import Action, is_allowed
 from echoroo.middleware.auth import CurrentUser
 from echoroo.models.enums import TagCategory
+from echoroo.models.project import Project
 from echoroo.repositories.tag import TagRepository
 from echoroo.schemas.tag import (
     GBIFSuggestion,
@@ -38,6 +52,41 @@ def get_tag_service(db: DbSession) -> TagService:
 TagServiceDep = Annotated[TagService, Depends(get_tag_service)]
 
 
+# ---------------------------------------------------------------------------
+# Internal helpers (Phase 3 permission gate)
+# ---------------------------------------------------------------------------
+
+
+async def _load_project(db: DbSession, project_id: UUID) -> Project:
+    """Load the Project ORM row needed by :func:`is_allowed`."""
+    project_result = await db.execute(sa_select(Project).where(Project.id == project_id))
+    project = project_result.scalar_one_or_none()
+    if project is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="project not found")
+    return project
+
+
+async def _gate(
+    *,
+    action: Action,
+    project_id: UUID,
+    current_user: Any,
+    request: Request,
+    db: DbSession,
+) -> Project:
+    """Run the Stage-1 :func:`is_allowed` gate for ``action`` on ``project_id``."""
+    project = await _load_project(db, project_id)
+    allowed, _ = is_allowed(
+        action=action,
+        user=current_user,
+        project=project,
+        request=request,
+    )
+    if not allowed:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="action denied")
+    return project
+
+
 @router.get(
     "",
     response_model=TagListResponse,
@@ -59,6 +108,10 @@ async def list_tags(
     ),
 ) -> TagListResponse:
     """List tags for a project.
+
+    Read endpoint — kept on the legacy auth-only check pending the Phase 3
+    matrix entry for ``tag.list``. The CREATE endpoint below already gates
+    through :data:`TAG_CREATE_ACTION`.
 
     Args:
         project_id: Project's UUID
@@ -96,6 +149,7 @@ async def list_tags(
 async def create_tag(
     project_id: UUID,
     request: TagCreate,
+    http_request: Request,
     current_user: CurrentUser,
     service: TagServiceDep,
     db: DbSession,
@@ -107,9 +161,14 @@ async def create_tag(
 ) -> TagResponse:
     """Create a new tag.
 
+    Guarded by :data:`TAG_CREATE_ACTION` (:data:`Permission.CREATE_TAG`).
+
     Args:
         project_id: Project's UUID
-        request: Tag creation data
+        request: Tag creation payload (Pydantic body)
+        http_request: FastAPI :class:`Request` used by the gate to stash
+            stage-1 state on ``request.state``. Named ``http_request`` to
+            avoid colliding with the body parameter ``request``.
         current_user: Current authenticated user
         service: Tag service instance
         db: Database session
@@ -120,8 +179,16 @@ async def create_tag(
 
     Raises:
         401: Not authenticated
+        403: Permission denied
         422: Validation error
     """
+    await _gate(
+        action=TAG_CREATE_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=http_request,
+        db=db,
+    )
     tag = await service.create(project_id=project_id, request=request, locale=locale)
     await db.commit()
     return tag

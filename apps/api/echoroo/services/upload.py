@@ -65,23 +65,22 @@ class UploadService:
             Tuple of (UploadSession instance, list of per-file presigned URL responses)
 
         Raises:
-            HTTPException 403: User is not a project admin
             HTTPException 404: Dataset not found or does not belong to the project
             HTTPException 409: An active upload session already exists for this dataset
             HTTPException 422: Validation failure (bad extension, file too large, quota exceeded,
                                too many files)
+
+        Note:
+            Permission enforcement is performed by the API layer via the
+            Stage-1 ``is_allowed`` gate (``UPLOAD_CREATE_ACTION`` /
+            ``Permission.UPLOAD``). The legacy admin-only check has been
+            removed here so that any caller satisfying the matrix-defined
+            ``UPLOAD`` permission (Member or higher) can create a session
+            without a redundant admin gate that contradicted the spec.
         """
         settings = get_settings()
 
-        # 1. Verify user is a project admin
-        is_admin = await self.project_repo.is_project_admin(project_id, user_id)
-        if not is_admin:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Only project admins can create upload sessions",
-            )
-
-        # 2. Verify dataset exists and belongs to this project
+        # 1. Verify dataset exists and belongs to this project
         dataset = await self.dataset_repo.get_by_id(dataset_id)
         if dataset is None or dataset.project_id != project_id:
             raise HTTPException(
@@ -89,7 +88,7 @@ class UploadService:
                 detail="Dataset not found",
             )
 
-        # 3. Check for existing active session
+        # 2. Check for existing active session
         active_session = await self.session_repo.get_active_by_dataset(dataset_id)
         if active_session is not None:
             # Auto-cancel stale ISSUED/UPLOADED sessions (user retried after a failure)
@@ -109,14 +108,14 @@ class UploadService:
                     detail="An active upload session is currently being processed for this dataset",
                 )
 
-        # 4. Validate file count
+        # 3. Validate file count
         if len(files) > settings.UPLOAD_MAX_SESSION_FILES:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=f"Too many files: maximum {settings.UPLOAD_MAX_SESSION_FILES} per session",
             )
 
-        # 5. Validate each file's extension and size
+        # 4. Validate each file's extension and size
         allowed_extensions = set(settings.UPLOAD_ALLOWED_EXTENSIONS)
         for file_req in files:
             ext = os.path.splitext(file_req.filename)[1].lower()
@@ -137,7 +136,7 @@ class UploadService:
                     ),
                 )
 
-        # 6. Validate total size against project quota (cumulative check)
+        # 5. Validate total size against project quota (cumulative check)
         total_bytes = sum(f.size for f in files)
         current_usage = await self.session_repo.get_total_storage_by_project(project_id)
         if current_usage + total_bytes > settings.DEFAULT_STORAGE_QUOTA:
@@ -228,19 +227,18 @@ class UploadService:
             Dict with keys: session_id, status, verified_files, missing_files, mismatched_files
 
         Raises:
-            HTTPException 403: User is not a project admin
+            HTTPException 403: Caller does not own this upload session
             HTTPException 404: Session not found or does not belong to this dataset/project
             HTTPException 409: Session is not in ISSUED state
-        """
-        # 1. Verify user is a project admin
-        is_admin = await self.project_repo.is_project_admin(project_id, user_id)
-        if not is_admin:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Only project admins can complete upload sessions",
-            )
 
-        # 2. Load and validate the session
+        Note:
+            Permission enforcement is performed by the API layer via the
+            Stage-1 ``is_allowed`` gate (``UPLOAD_CREATE_ACTION`` /
+            ``Permission.UPLOAD``). The legacy admin-only check has been
+            removed; ownership of the session is still asserted below so
+            callers cannot complete a session they did not create.
+        """
+        # 1. Load and validate the session
         session = await self.session_repo.get_by_id(session_id)
         if session is None:
             raise HTTPException(
@@ -268,14 +266,14 @@ class UploadService:
                 detail="You do not own this upload session",
             )
 
-        # 3. Require ISSUED state
+        # 2. Require ISSUED state
         if session.status != UploadSessionStatus.ISSUED:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail=f"Upload session is in '{session.status.value}' state; expected 'issued'",
             )
 
-        # 4. Verify each file in S3
+        # 3. Verify each file in S3
         s3_client = s3.get_s3_client()
         files = await self.file_repo.get_by_session(session_id)
 
@@ -302,7 +300,7 @@ class UploadService:
                 verified_files += 1
                 await self.file_repo.update_status(upload_file.id, UploadFileStatus.UPLOADED)
 
-        # 5. If all files are verified, transition session to UPLOADED (CAS guard)
+        # 4. If all files are verified, transition session to UPLOADED (CAS guard)
         if missing_files == 0:
             await self.session_repo.update_status(
                 session_id,
