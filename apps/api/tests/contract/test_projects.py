@@ -59,7 +59,6 @@ class TestProjectEndpoints:
         project_data = {
             "name": "Test Project",
             "description": "A test research project",
-            "target_taxa": "Passeriformes, Strigiformes",
             "visibility": "private",
         }
 
@@ -76,7 +75,6 @@ class TestProjectEndpoints:
         assert "id" in data
         assert data["name"] == project_data["name"]
         assert data["description"] == project_data["description"]
-        assert data["target_taxa"] == project_data["target_taxa"]
         assert data["visibility"] == project_data["visibility"]
         assert "owner" in data
         assert "created_at" in data
@@ -103,7 +101,6 @@ class TestProjectEndpoints:
 
         assert data["name"] == project_data["name"]
         assert data["description"] is None
-        assert data["target_taxa"] is None
         assert data["visibility"] == "private"  # default
 
     async def test_create_project_validation_error(
@@ -151,7 +148,6 @@ class TestProjectEndpoints:
         assert data["id"] == test_project_id
         assert "name" in data
         assert "description" in data
-        assert "target_taxa" in data
         assert "visibility" in data
         assert "owner" in data
         assert "created_at" in data

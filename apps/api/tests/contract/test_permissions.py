@@ -8,7 +8,7 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from echoroo.models.enums import ProjectRole
+from echoroo.models.enums import ProjectMemberRole
 from echoroo.models.project import Project, ProjectMember
 from echoroo.models.user import User
 
@@ -71,7 +71,7 @@ async def test_viewer_member(
     member = ProjectMember(
         user_id=viewer_user.id,
         project_id=test_project.id,
-        role=ProjectRole.VIEWER,
+        role=ProjectMemberRole.VIEWER,
         invited_by_id=test_project.owner_id,
     )
     db_session.add(member)

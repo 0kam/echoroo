@@ -361,7 +361,7 @@ def upgrade() -> None:  # noqa: PLR0915 — baseline migration, long by nature
             sa.ForeignKey("projects.id", ondelete="CASCADE"),
             nullable=False,
         ),
-        sa.Column("user_id", UUID(as_uuid=True), sa.ForeignKey("users.id"), nullable=False),
+        sa.Column("user_id", UUID(as_uuid=True), sa.ForeignKey("users.id", ondelete="RESTRICT"), nullable=False),
         sa.Column("role", _enum("projectmemberrole"), nullable=False),
         sa.Column("joined_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("invited_by_id", UUID(as_uuid=True), sa.ForeignKey("users.id"), nullable=True),
@@ -369,6 +369,10 @@ def upgrade() -> None:  # noqa: PLR0915 — baseline migration, long by nature
         sa.Column("removed_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("now()")),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("now()")),
+        sa.CheckConstraint(
+            "role = 'viewer'::projectmemberrole OR expires_at IS NULL",
+            name="ck_project_members_viewer_expires",
+        ),
     )
     op.create_index(
         "ux_project_members_active",

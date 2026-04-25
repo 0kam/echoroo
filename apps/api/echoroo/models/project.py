@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from sqlalchemy import (
+    CheckConstraint,
     DateTime,
     Enum,
     Float,
@@ -15,36 +16,26 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
-    UniqueConstraint,
+    text,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from echoroo.models.base import Base, TimestampMixin, UUIDMixin
-from echoroo.models.enums import ProjectRole, ProjectVisibility
+from echoroo.models.enums import (
+    ProjectLicense,
+    ProjectMemberRole,
+    ProjectStatus,
+    ProjectVisibility,
+)
 
 if TYPE_CHECKING:
     from echoroo.models.user import User
 
 
 class Project(UUIDMixin, TimestampMixin, Base):
-    """Project entity for research project management.
-
-    This model represents a research project with members, settings, and data.
-    Projects can be private (default) or public, and have an owner who created them.
-
-    Attributes:
-        id: Unique identifier (UUID, from UUIDMixin)
-        name: Project name (required, max 200 chars)
-        description: Optional project description
-        target_taxa: Optional comma-separated target taxonomic groups (max 500 chars)
-        visibility: Project visibility ('private' or 'public')
-        owner_id: Foreign key to user who owns the project
-        created_at: Project creation timestamp (from TimestampMixin)
-        updated_at: Last update timestamp (from TimestampMixin)
-        owner: Relationship to User model (project owner)
-        members: Relationship to ProjectMember model (project members)
-    """
+    """Research project with permission redesign visibility and license state."""
 
     __tablename__ = "projects"
 
@@ -58,11 +49,6 @@ class Project(UUIDMixin, TimestampMixin, Base):
         nullable=True,
         doc="Project description",
     )
-    target_taxa: Mapped[str | None] = mapped_column(
-        String(500),
-        nullable=True,
-        doc="Target taxonomic groups (comma-separated)",
-    )
     visibility: Mapped[ProjectVisibility] = mapped_column(
         Enum(
             ProjectVisibility,
@@ -70,14 +56,58 @@ class Project(UUIDMixin, TimestampMixin, Base):
             create_type=False,
             values_callable=lambda x: [e.value for e in x],
         ),
-        default=ProjectVisibility.PRIVATE,
+        default=ProjectVisibility.RESTRICTED,
         nullable=False,
         index=True,
         doc="Project visibility level",
     )
+    license: Mapped[ProjectLicense] = mapped_column(
+        Enum(
+            ProjectLicense,
+            name="projectlicense",
+            create_type=False,
+            values_callable=lambda x: [e.value for e in x],
+        ),
+        nullable=False,
+        doc="Project data license",
+    )
+    restricted_config: Mapped[dict[str, Any]] = mapped_column(
+        JSONB,
+        default=dict,
+        nullable=False,
+        doc="Restricted visibility capability toggles",
+    )
+    restricted_config_version: Mapped[int] = mapped_column(
+        Integer,
+        default=1,
+        nullable=False,
+        doc="Version for restricted_config shape",
+    )
+    status: Mapped[ProjectStatus] = mapped_column(
+        Enum(
+            ProjectStatus,
+            name="projectstatus",
+            create_type=False,
+            values_callable=lambda x: [e.value for e in x],
+        ),
+        default=ProjectStatus.ACTIVE,
+        nullable=False,
+        index=True,
+        doc="Project lifecycle status",
+    )
+    dormant_since: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        doc="Timestamp when the project became dormant",
+    )
+    archived_since: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        doc="Timestamp when the project was archived",
+    )
     owner_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="CASCADE"),
+        ForeignKey("users.id"),
         nullable=False,
         index=True,
         doc="Project owner user ID",
@@ -107,54 +137,61 @@ class Project(UUIDMixin, TimestampMixin, Base):
         back_populates="project",
         cascade="all, delete-orphan",
     )
+    license_history: Mapped[list[ProjectLicenseHistory]] = relationship(
+        "ProjectLicenseHistory",
+        back_populates="project",
+        cascade="all, delete-orphan",
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "restricted_config IS NOT NULL "
+            "AND jsonb_typeof(restricted_config) = 'object' "
+            "AND (visibility <> 'restricted' OR ("
+            "restricted_config ? 'allow_media_playback' "
+            "AND restricted_config ? 'allow_detection_view' "
+            "AND restricted_config ? 'mask_species_in_detection' "
+            "AND restricted_config ? 'allow_download' "
+            "AND restricted_config ? 'allow_export' "
+            "AND restricted_config ? 'allow_voting_and_comments' "
+            "AND restricted_config ? 'public_location_precision_h3_res' "
+            "AND restricted_config ? 'allow_precise_location_to_viewer'"
+            "))",
+            name="ck_projects_restricted_config_shape",
+        ),
+        Index("ix_projects_status_dormant_since", "status", text("dormant_since DESC")),
+    )
 
     def __repr__(self) -> str:
         """String representation of Project."""
         return f"<Project(id={self.id}, name={self.name})>"
 
 
-class ProjectMember(UUIDMixin, Base):
-    """Project membership junction table with roles.
-
-    This model represents a user's membership in a project with a specific role.
-    Each user can have only one membership per project (enforced by unique constraint).
-
-    Attributes:
-        id: Unique identifier (UUID, from UUIDMixin)
-        user_id: Foreign key to user
-        project_id: Foreign key to project
-        role: Member's role in the project ('admin', 'member', or 'viewer')
-        joined_at: Timestamp when user joined the project
-        invited_by_id: Optional foreign key to user who sent the invitation
-        user: Relationship to User model
-        project: Relationship to Project model
-        invited_by: Relationship to User model (inviter)
-    """
+class ProjectMember(UUIDMixin, TimestampMixin, Base):
+    """Project membership with active-history semantics."""
 
     __tablename__ = "project_members"
 
     user_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="CASCADE"),
+        ForeignKey("users.id", ondelete="RESTRICT"),
         nullable=False,
-        index=True,
         doc="Member user ID",
     )
     project_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
         ForeignKey("projects.id", ondelete="CASCADE"),
         nullable=False,
-        index=True,
         doc="Project ID",
     )
-    role: Mapped[ProjectRole] = mapped_column(
+    role: Mapped[ProjectMemberRole] = mapped_column(
         Enum(
-            ProjectRole,
-            name="projectrole",
+            ProjectMemberRole,
+            name="projectmemberrole",
             create_type=False,
             values_callable=lambda x: [e.value for e in x],
         ),
-        default=ProjectRole.MEMBER,
+        default=ProjectMemberRole.MEMBER,
         nullable=False,
         doc="Member role in project",
     )
@@ -166,9 +203,19 @@ class ProjectMember(UUIDMixin, Base):
     )
     invited_by_id: Mapped[UUID | None] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="SET NULL"),
+        ForeignKey("users.id"),
         nullable=True,
         doc="User who sent the invitation",
+    )
+    expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        doc="Viewer access expiration timestamp",
+    )
+    removed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        doc="Timestamp when this membership was removed",
     )
 
     # Relationships
@@ -187,16 +234,91 @@ class ProjectMember(UUIDMixin, Base):
         foreign_keys=[invited_by_id],
     )
 
-    # Unique constraint: one membership per user per project
-    # Composite index for efficient JOIN queries
     __table_args__ = (
-        UniqueConstraint("user_id", "project_id", name="uq_user_project"),
-        Index("ix_project_members_project_id_user_id", "project_id", "user_id"),
+        CheckConstraint(
+            "role = 'viewer'::projectmemberrole OR expires_at IS NULL",
+            name="ck_project_members_viewer_expires",
+        ),
+        Index(
+            "ux_project_members_active",
+            "project_id",
+            "user_id",
+            unique=True,
+            postgresql_where=text("removed_at IS NULL"),
+        ),
+        Index("ix_project_members_project_role", "project_id", "role"),
+        Index(
+            "ix_project_members_user_project",
+            "user_id",
+            "project_id",
+            postgresql_where=text("removed_at IS NULL"),
+        ),
     )
 
     def __repr__(self) -> str:
         """String representation of ProjectMember."""
         return f"<ProjectMember(user_id={self.user_id}, project_id={self.project_id}, role={self.role})>"
+
+
+class ProjectLicenseHistory(UUIDMixin, TimestampMixin, Base):
+    """Project license change history."""
+
+    __tablename__ = "project_license_history"
+
+    project_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        nullable=False,
+        doc="Project ID",
+    )
+    old_license: Mapped[ProjectLicense | None] = mapped_column(
+        Enum(
+            ProjectLicense,
+            name="projectlicense",
+            create_type=False,
+            values_callable=lambda x: [e.value for e in x],
+        ),
+        nullable=True,
+        doc="Previous project license",
+    )
+    new_license: Mapped[ProjectLicense] = mapped_column(
+        Enum(
+            ProjectLicense,
+            name="projectlicense",
+            create_type=False,
+            values_callable=lambda x: [e.value for e in x],
+        ),
+        nullable=False,
+        doc="New project license",
+    )
+    changed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        doc="Timestamp when the license changed",
+    )
+    changed_by_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id"),
+        nullable=False,
+        doc="User who changed the license",
+    )
+
+    project: Mapped[Project] = relationship(
+        "Project",
+        back_populates="license_history",
+    )
+    changed_by: Mapped[User] = relationship(
+        "User",
+        foreign_keys=[changed_by_id],
+    )
+
+    __table_args__ = (
+        Index(
+            "ix_project_license_history_project_changed_at",
+            "project_id",
+            text("changed_at DESC"),
+        ),
+    )
 
 
 class ProjectInvitation(UUIDMixin, Base):
@@ -234,14 +356,14 @@ class ProjectInvitation(UUIDMixin, Base):
         index=True,
         doc="Invitee email address",
     )
-    role: Mapped[ProjectRole] = mapped_column(
+    role: Mapped[ProjectMemberRole] = mapped_column(
         Enum(
-            ProjectRole,
-            name="projectrole",
+            ProjectMemberRole,
+            name="projectmemberrole",
             create_type=False,
             values_callable=lambda x: [e.value for e in x],
         ),
-        default=ProjectRole.MEMBER,
+        default=ProjectMemberRole.MEMBER,
         nullable=False,
         doc="Role to assign on acceptance",
     )

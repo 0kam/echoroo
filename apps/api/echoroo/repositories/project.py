@@ -7,7 +7,7 @@ from sqlalchemy import Row, delete, func, or_, select
 from sqlalchemy.orm import selectinload
 
 from echoroo.models.dataset import Dataset
-from echoroo.models.enums import ProjectRole
+from echoroo.models.enums import ProjectMemberRole
 from echoroo.models.project import Project, ProjectMember
 from echoroo.models.recording import Recording
 from echoroo.models.site import Site
@@ -299,7 +299,7 @@ class ProjectRepository(BaseRepository[Project]):
 
         # Check if user has admin role
         member = await self.get_member(project_id, user_id)
-        return member is not None and member.role == ProjectRole.ADMIN
+        return member is not None and member.role == ProjectMemberRole.ADMIN
 
     async def is_project_owner(self, project_id: UUID, user_id: UUID) -> bool:
         """Check if a user is the project owner.

@@ -1,11 +1,17 @@
 """Project request and response schemas."""
 
 from datetime import datetime
+from typing import Any
 from uuid import UUID
 
 from pydantic import BaseModel, EmailStr, Field
 
-from echoroo.models.enums import ProjectRole, ProjectVisibility
+from echoroo.models.enums import (
+    ProjectLicense,
+    ProjectMemberRole,
+    ProjectStatus,
+    ProjectVisibility,
+)
 from echoroo.schemas.auth import UserResponse
 
 
@@ -45,11 +51,13 @@ class ProjectCreateRequest(BaseModel):
 
     name: str = Field(..., min_length=1, max_length=200, description="Project name")
     description: str | None = Field(None, description="Project description")
-    target_taxa: str | None = Field(
-        None, max_length=500, description="Target taxonomic groups (comma-separated)"
-    )
     visibility: ProjectVisibility = Field(
-        default=ProjectVisibility.PRIVATE, description="Project visibility level"
+        default=ProjectVisibility.RESTRICTED, description="Project visibility level"
+    )
+    license: ProjectLicense = Field(..., description="Project data license")
+    restricted_config: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Restricted visibility capability toggles",
     )
 
 
@@ -58,10 +66,13 @@ class ProjectUpdateRequest(BaseModel):
 
     name: str | None = Field(None, min_length=1, max_length=200, description="Project name")
     description: str | None = Field(None, description="Project description")
-    target_taxa: str | None = Field(
-        None, max_length=500, description="Target taxonomic groups (comma-separated)"
-    )
     visibility: ProjectVisibility | None = Field(None, description="Project visibility level")
+    license: ProjectLicense | None = Field(None, description="Project data license")
+    restricted_config: dict[str, Any] | None = Field(
+        None,
+        description="Restricted visibility capability toggles",
+    )
+    status: ProjectStatus | None = Field(None, description="Project lifecycle status")
 
 
 class ProjectResponse(BaseModel):
@@ -70,8 +81,13 @@ class ProjectResponse(BaseModel):
     id: UUID
     name: str
     description: str | None
-    target_taxa: str | None
     visibility: ProjectVisibility
+    license: ProjectLicense
+    restricted_config: dict[str, Any]
+    restricted_config_version: int
+    status: ProjectStatus
+    dormant_since: datetime | None
+    archived_since: datetime | None
     owner: UserResponse
     created_at: datetime
     updated_at: datetime
@@ -92,13 +108,13 @@ class ProjectMemberAddRequest(BaseModel):
     """Request to add a member to a project."""
 
     email: EmailStr = Field(..., description="User's email address")
-    role: ProjectRole = Field(default=ProjectRole.MEMBER, description="Member role")
+    role: ProjectMemberRole = Field(default=ProjectMemberRole.MEMBER, description="Member role")
 
 
 class ProjectMemberUpdateRequest(BaseModel):
     """Request to update a member's role."""
 
-    role: ProjectRole = Field(..., description="New member role")
+    role: ProjectMemberRole = Field(..., description="New member role")
 
 
 class ProjectMemberResponse(BaseModel):
@@ -106,7 +122,9 @@ class ProjectMemberResponse(BaseModel):
 
     id: UUID
     user: UserResponse
-    role: ProjectRole
+    role: ProjectMemberRole
     joined_at: datetime
+    expires_at: datetime | None
+    removed_at: datetime | None
 
     model_config = {"from_attributes": True}

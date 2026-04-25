@@ -366,8 +366,7 @@ async def other_project_session(
     other_proj = ProjectModel(
         name="Other Project (write tests)",
         description="Cross-tenant write isolation",
-        target_taxa="Strigiformes",
-        visibility=ProjectVisibility.PRIVATE,
+        visibility=ProjectVisibility.RESTRICTED,
         owner_id=other_user.id,
     )
     db_session.add(other_proj)

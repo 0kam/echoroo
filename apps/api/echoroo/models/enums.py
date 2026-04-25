@@ -6,16 +6,33 @@ from enum import StrEnum
 class ProjectVisibility(StrEnum):
     """Project visibility levels."""
 
-    PRIVATE = "private"
     PUBLIC = "public"
+    RESTRICTED = "restricted"
 
 
-class ProjectRole(StrEnum):
+class ProjectMemberRole(StrEnum):
     """Project member roles with different permission levels."""
 
-    ADMIN = "admin"  # Full control: manage members, edit settings, edit data
-    MEMBER = "member"  # Can view and edit data
-    VIEWER = "viewer"  # Read-only access
+    VIEWER = "viewer"
+    MEMBER = "member"
+    ADMIN = "admin"
+
+
+class ProjectStatus(StrEnum):
+    """Project lifecycle status."""
+
+    ACTIVE = "active"
+    DORMANT = "dormant"
+    ARCHIVED = "archived"
+
+
+class ProjectLicense(StrEnum):
+    """Project data license."""
+
+    CC0 = "CC0"
+    CC_BY = "CC-BY"
+    CC_BY_NC = "CC-BY-NC"
+    CC_BY_SA = "CC-BY-SA"
 
 
 class SettingType(StrEnum):

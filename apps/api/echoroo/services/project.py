@@ -93,8 +93,9 @@ class ProjectService:
         project = Project(
             name=request.name,
             description=request.description,
-            target_taxa=request.target_taxa,
             visibility=request.visibility,
+            license=request.license,
+            restricted_config=request.restricted_config,
             owner_id=user_id,
         )
 
@@ -169,10 +170,14 @@ class ProjectService:
             project.name = request.name
         if request.description is not None:
             project.description = request.description
-        if request.target_taxa is not None:
-            project.target_taxa = request.target_taxa
         if request.visibility is not None:
             project.visibility = request.visibility
+        if request.license is not None:
+            project.license = request.license
+        if request.restricted_config is not None:
+            project.restricted_config = request.restricted_config
+        if request.status is not None:
+            project.status = request.status
 
         updated_project = await self.project_repo.update(project)
         return ProjectResponse.model_validate(updated_project)

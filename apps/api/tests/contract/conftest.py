@@ -4,7 +4,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from echoroo.core.jwt import create_access_token
-from echoroo.models.enums import ProjectRole, ProjectVisibility
+from echoroo.models.enums import ProjectLicense, ProjectMemberRole, ProjectVisibility
 from echoroo.models.project import Project, ProjectMember
 from echoroo.models.user import User
 
@@ -175,8 +175,8 @@ async def test_project(db_session: AsyncSession, test_user: User) -> Project:
     project = Project(
         name="Test Project",
         description="A test project",
-        target_taxa="Passeriformes",
-        visibility=ProjectVisibility.PRIVATE,
+        visibility=ProjectVisibility.RESTRICTED,
+        license=ProjectLicense.CC_BY,
         owner_id=test_user.id,
     )
     db_session.add(project)
@@ -243,7 +243,7 @@ async def test_member(
     member = ProjectMember(
         user_id=member_user.id,
         project_id=test_project.id,
-        role=ProjectRole.MEMBER,
+        role=ProjectMemberRole.MEMBER,
         invited_by_id=test_project.owner_id,
     )
     db_session.add(member)
@@ -284,7 +284,7 @@ async def test_admin_member(
     member = ProjectMember(
         user_id=admin_user.id,
         project_id=test_project.id,
-        role=ProjectRole.ADMIN,
+        role=ProjectMemberRole.ADMIN,
         invited_by_id=test_project.owner_id,
     )
     db_session.add(member)
