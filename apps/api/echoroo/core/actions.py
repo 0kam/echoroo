@@ -276,6 +276,30 @@ CUSTOM_MODEL_TRAIN_ACTION: Action = register_action(
     )
 )
 
+CUSTOM_MODEL_LIST_ACTION: Action = register_action(
+    Action(
+        name="custom_model.list",
+        required_permission=Permission.VIEW_DETECTION,
+        is_mutating=False,
+    )
+)
+
+CUSTOM_MODEL_GET_ACTION: Action = register_action(
+    Action(
+        name="custom_model.get",
+        required_permission=Permission.VIEW_DETECTION,
+        is_mutating=False,
+    )
+)
+
+CUSTOM_MODEL_DELETE_ACTION: Action = register_action(
+    Action(
+        name="custom_model.delete",
+        required_permission=Permission.EDIT_PROJECT,
+        is_mutating=True,
+    )
+)
+
 RECORDING_LIST_ACTION: Action = register_action(
     Action(
         name="recording.list",
@@ -327,6 +351,9 @@ __all__ = [
     "ANNOTATION_COMMENT_LIST_ACTION",
     "ANNOTATION_VOTE_CREATE_ACTION",
     "ANNOTATION_VOTE_LIST_ACTION",
+    "CUSTOM_MODEL_DELETE_ACTION",
+    "CUSTOM_MODEL_GET_ACTION",
+    "CUSTOM_MODEL_LIST_ACTION",
     "CUSTOM_MODEL_TRAIN_ACTION",
     "DETECTION_CHANGE_SPECIES_ACTION",
     "DETECTION_CONFIRM_ACTION",

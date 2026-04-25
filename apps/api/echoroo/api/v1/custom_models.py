@@ -1,11 +1,7 @@
 """Custom model management API endpoints.
 
-Phase 3 (T123, FR-006): mutating training-trigger endpoints route through the
-central :func:`is_allowed` gate using
-:data:`echoroo.core.actions.CUSTOM_MODEL_TRAIN_ACTION` (Permission.TRAIN_MODEL,
-Admin or higher). Read endpoints and the DELETE endpoint keep the legacy
-:func:`check_project_access` membership check; dedicated Actions for them will
-be introduced by subsequent tasks.
+Phase 3 (T123, FR-006/FR-008a): custom model path operations route through the
+central :func:`is_allowed` gate using dedicated custom model Actions.
 """
 
 from __future__ import annotations
@@ -16,11 +12,17 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, model_validator
 
-from echoroo.core.actions import CUSTOM_MODEL_TRAIN_ACTION
+from echoroo.core.actions import (
+    CUSTOM_MODEL_DELETE_ACTION,
+    CUSTOM_MODEL_GET_ACTION,
+    CUSTOM_MODEL_LIST_ACTION,
+    CUSTOM_MODEL_TRAIN_ACTION,
+)
 from echoroo.core.database import DbSession
-from echoroo.core.permissions import check_project_access, gate_action
+from echoroo.core.permissions import gate_action
 from echoroo.middleware.auth import CurrentUser
 from echoroo.models.custom_model import CustomModel, CustomModelStatus
+from echoroo.repositories.custom_model import CustomModelRepository
 from echoroo.schemas.custom_model import (
     CustomModelApplyResponse,
     CustomModelCreate,
@@ -106,6 +108,20 @@ async def get_model_or_404(
     return model
 
 
+async def ensure_model_in_project_or_404(
+    model_id: UUID,
+    project_id: UUID,
+    db: DbSession,
+) -> None:
+    """Raise 404 when the custom model does not belong to the project."""
+    repo = CustomModelRepository(db)
+    if not await repo.exists_in_project(model_id, project_id):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Custom model not found",
+        )
+
+
 @router.get(
     "",
     response_model=CustomModelListResponse,
@@ -114,6 +130,7 @@ async def get_model_or_404(
 )
 async def list_custom_models(
     project_id: UUID,
+    request: Request,
     current_user: CurrentUser,
     db: DbSession,
     service: CustomModelServiceDep,
@@ -124,8 +141,8 @@ async def list_custom_models(
 ) -> CustomModelListResponse:
     """List custom models for a project.
 
-    Read endpoint — keeps legacy :func:`check_project_access` until a
-    dedicated ``CUSTOM_MODEL_LIST_ACTION`` is registered.
+    Guarded by :data:`CUSTOM_MODEL_LIST_ACTION`
+    (:data:`Permission.VIEW_DETECTION`).
 
     Args:
         project_id: Project's UUID
@@ -144,7 +161,13 @@ async def list_custom_models(
         401: Not authenticated
         403: Access denied
     """
-    await check_project_access(project_id, current_user.id, db)
+    await gate_action(
+        action=CUSTOM_MODEL_LIST_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
     models, total = await service.list_models(
         project_id=project_id,
         limit=limit,
@@ -216,14 +239,15 @@ async def create_custom_model(
 async def get_custom_model(
     project_id: UUID,
     model_id: UUID,
+    request: Request,
     current_user: CurrentUser,
     db: DbSession,
     service: CustomModelServiceDep,
 ) -> CustomModelResponse:
     """Get custom model by ID.
 
-    Read endpoint — keeps legacy :func:`check_project_access` until a
-    dedicated ``CUSTOM_MODEL_GET_ACTION`` is registered.
+    Guarded by :data:`CUSTOM_MODEL_GET_ACTION`
+    (:data:`Permission.VIEW_DETECTION`).
 
     Args:
         project_id: Project's UUID
@@ -240,7 +264,14 @@ async def get_custom_model(
         403: Access denied
         404: Model not found
     """
-    await check_project_access(project_id, current_user.id, db)
+    await gate_action(
+        action=CUSTOM_MODEL_GET_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
+    await ensure_model_in_project_or_404(model_id, project_id, db)
     model = await get_model_or_404(model_id, project_id, service)
     return CustomModelResponse.model_validate(model)
 
@@ -316,16 +347,15 @@ async def update_custom_model(
 async def delete_custom_model(
     project_id: UUID,
     model_id: UUID,
+    request: Request,
     current_user: CurrentUser,
     db: DbSession,
     service: CustomModelServiceDep,
 ) -> None:
     """Delete a custom model.
 
-    Mutating endpoint — keeps legacy :func:`check_project_access` until a
-    dedicated ``CUSTOM_MODEL_DELETE_ACTION`` is registered. Tracked for a
-    follow-up Phase 3 task; spec FR-006 only mandates the TRAIN_MODEL gate
-    on training-trigger endpoints in this iteration.
+    Guarded by :data:`CUSTOM_MODEL_DELETE_ACTION`
+    (:data:`Permission.EDIT_PROJECT`).
 
     Args:
         project_id: Project's UUID
@@ -339,7 +369,14 @@ async def delete_custom_model(
         403: Access denied
         404: Model not found
     """
-    await check_project_access(project_id, current_user.id, db)
+    await gate_action(
+        action=CUSTOM_MODEL_DELETE_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
+    await ensure_model_in_project_or_404(model_id, project_id, db)
     model = await get_model_or_404(model_id, project_id, service)
     await service.delete_model(model)
 
@@ -415,14 +452,15 @@ async def train_custom_model(
 async def get_custom_model_status(
     project_id: UUID,
     model_id: UUID,
+    request: Request,
     current_user: CurrentUser,
     db: DbSession,
     service: CustomModelServiceDep,
 ) -> CustomModelResponse:
     """Get current training status of a custom model.
 
-    Read endpoint — keeps legacy :func:`check_project_access` until a
-    dedicated read Action is registered.
+    Guarded by :data:`CUSTOM_MODEL_GET_ACTION`
+    (:data:`Permission.VIEW_DETECTION`).
 
     Args:
         project_id: Project's UUID
@@ -439,7 +477,14 @@ async def get_custom_model_status(
         403: Access denied
         404: Model not found
     """
-    await check_project_access(project_id, current_user.id, db)
+    await gate_action(
+        action=CUSTOM_MODEL_GET_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
+    await ensure_model_in_project_or_404(model_id, project_id, db)
     model = await get_model_or_404(model_id, project_id, service)
     return CustomModelResponse.model_validate(model)
 
@@ -559,6 +604,7 @@ async def apply_custom_model(
 async def list_custom_model_detection_runs(
     project_id: UUID,
     model_id: UUID,
+    request: Request,
     current_user: CurrentUser,
     db: DbSession,
     service: CustomModelServiceDep,
@@ -566,8 +612,8 @@ async def list_custom_model_detection_runs(
 ) -> CustomModelDetectionRunListResponse:
     """List recent DetectionRuns for a custom model.
 
-    Read endpoint — keeps legacy :func:`check_project_access` until a
-    dedicated read Action is registered.
+    Guarded by :data:`CUSTOM_MODEL_GET_ACTION`
+    (:data:`Permission.VIEW_DETECTION`).
 
     Args:
         project_id: Project's UUID
@@ -585,7 +631,14 @@ async def list_custom_model_detection_runs(
         403: Access denied
         404: Model not found
     """
-    await check_project_access(project_id, current_user.id, db)
+    await gate_action(
+        action=CUSTOM_MODEL_GET_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
+    await ensure_model_in_project_or_404(model_id, project_id, db)
     model = await get_model_or_404(model_id, project_id, service)
     runs = await service.list_detection_runs(model, limit=limit)
 
@@ -814,14 +867,15 @@ async def suggest_next_samples(
 async def list_sampling_rounds(
     project_id: UUID,
     model_id: UUID,
+    request: Request,
     current_user: CurrentUser,
     db: DbSession,
     service: CustomModelServiceDep,
 ) -> SamplingRoundListResponse:
     """List all sampling rounds for a custom model.
 
-    Read endpoint — keeps legacy :func:`check_project_access` until a
-    dedicated read Action is registered.
+    Guarded by :data:`CUSTOM_MODEL_GET_ACTION`
+    (:data:`Permission.VIEW_DETECTION`).
 
     Args:
         project_id: Project's UUID
@@ -838,7 +892,14 @@ async def list_sampling_rounds(
         403: Access denied
         404: Model not found
     """
-    await check_project_access(project_id, current_user.id, db)
+    await gate_action(
+        action=CUSTOM_MODEL_GET_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
+    await ensure_model_in_project_or_404(model_id, project_id, db)
     model = await get_model_or_404(model_id, project_id, service)
     rounds = await service.list_sampling_rounds(model)
 
@@ -874,14 +935,15 @@ async def get_sampling_round(
     project_id: UUID,
     model_id: UUID,
     round_id: UUID,
+    request: Request,
     current_user: CurrentUser,
     db: DbSession,
     service: CustomModelServiceDep,
 ) -> SamplingRoundResponse:
     """Get a single sampling round with items eagerly loaded.
 
-    Read endpoint — keeps legacy :func:`check_project_access` until a
-    dedicated read Action is registered.
+    Guarded by :data:`CUSTOM_MODEL_GET_ACTION`
+    (:data:`Permission.VIEW_DETECTION`).
 
     Returns the round with all SamplingRoundItems, including annotation review
     status and embedding metadata (recording_id, start_time, end_time) for
@@ -903,7 +965,14 @@ async def get_sampling_round(
         403: Access denied
         404: Model or round not found
     """
-    await check_project_access(project_id, current_user.id, db)
+    await gate_action(
+        action=CUSTOM_MODEL_GET_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
+    await ensure_model_in_project_or_404(model_id, project_id, db)
     model = await get_model_or_404(model_id, project_id, service)
 
     round_ = await service.get_sampling_round(round_id, model)

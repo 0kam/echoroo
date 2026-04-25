@@ -37,6 +37,16 @@ class CustomModelRepository(BaseRepository[CustomModel]):
         )
         return result.scalar_one_or_none()
 
+    async def exists_in_project(self, model_id: UUID, project_id: UUID) -> bool:
+        """Return True when the custom model belongs to the project."""
+        result = await self.db.execute(
+            select(CustomModel.id)
+            .where(CustomModel.id == model_id)
+            .where(CustomModel.project_id == project_id)
+            .limit(1)
+        )
+        return result.scalar_one_or_none() is not None
+
     async def list_for_project(
         self,
         project_id: UUID,
