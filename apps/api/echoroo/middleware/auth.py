@@ -92,7 +92,7 @@ async def get_current_active_superuser(
             return {"message": "Admin access granted"}
         ```
     """
-    if not current_user.is_superuser:
+    if not bool(getattr(current_user, "is_superuser", False)):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not enough permissions",

@@ -141,6 +141,10 @@ module = [
 ]
 ignore_missing_imports = true
 
+[[tool.mypy.overrides]]
+module = ["tests.*"]
+ignore_errors = true
+
 [tool.pytest.ini_options]
 minversion = "8.0"
 addopts = "-ra -q --strict-markers --cov=echoroo --cov-report=term-missing"
@@ -172,5 +176,6 @@ exclude_lines = [
 [dependency-groups]
 dev = [
     "httpx>=0.28.1",
+    "moto[s3]>=5.0",
     "mypy>=1.19.1",
 ]

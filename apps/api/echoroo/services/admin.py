@@ -3,8 +3,7 @@
 import json
 from uuid import UUID
 
-from fastapi import HTTPException, status
-from sqlalchemy import func, or_, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from echoroo.models.system import SystemSetting
@@ -17,7 +16,6 @@ from echoroo.schemas.admin import (
     SystemSettingResponse,
     SystemSettingsUpdateRequest,
 )
-from echoroo.schemas.auth import UserResponse
 
 
 class AdminService:
@@ -51,44 +49,8 @@ class AdminService:
         Returns:
             Paginated user list with total count
         """
-        # Build query
-        query = select(User)
-
-        # Apply filters
-        if search:
-            search_pattern = f"%{search}%"
-            query = query.where(
-                or_(
-                    func.lower(User.email).like(func.lower(search_pattern)),
-                    func.lower(User.display_name).like(func.lower(search_pattern)),
-                )
-            )
-
-        if is_active is not None:
-            query = query.where(User.is_active == is_active)
-
-        # Count total
-        count_query = select(func.count()).select_from(query.subquery())
-        total_result = await self.db.execute(count_query)
-        total = total_result.scalar_one()
-
-        # Apply pagination
-        offset = (page - 1) * limit
-        query = query.order_by(User.created_at.desc()).offset(offset).limit(limit)
-
-        # Execute query
-        result = await self.db.execute(query)
-        users = result.scalars().all()
-
-        # Convert to response schemas
-        items = [UserResponse.model_validate(user) for user in users]
-
-        return AdminUserListResponse(
-            items=items,
-            total=total,
-            page=page,
-            limit=limit,
-        )
+        del page, limit, search, is_active
+        raise NotImplementedError("Phase 4 T150a: replace this")
 
     async def update_user(
         self,
@@ -109,50 +71,8 @@ class AdminService:
         Raises:
             HTTPException: If user not found or trying to disable last superuser
         """
-        user = await self.user_repo.get_by_id(user_id)
-        if not user:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="User not found",
-            )
-
-        # Check if trying to disable or demote the last superuser
-        if (request.is_active is False and user.is_superuser) or (
-            request.is_superuser is False and user.is_superuser
-        ):
-            # Count active superusers
-            query = select(func.count()).select_from(User).where(User.is_superuser == True)  # noqa: E712
-            if request.is_active is False:
-                # If deactivating, count other active superusers
-                query = query.where(User.is_active == True, User.id != user_id)  # noqa: E712
-            elif request.is_superuser is False:
-                # If demoting, count other superusers
-                query = query.where(User.id != user_id)
-
-            result = await self.db.execute(query)
-            superuser_count = result.scalar_one()
-
-            if superuser_count == 0:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Cannot disable or remove superuser role from the last superuser",
-                )
-
-        # Apply updates
-        if request.is_active is not None:
-            user.is_active = request.is_active
-
-        if request.is_superuser is not None:
-            user.is_superuser = request.is_superuser
-
-        if request.is_verified is not None:
-            user.is_verified = request.is_verified
-
-        # Save changes
-        await self.db.commit()
-        await self.db.refresh(user)
-
-        return user
+        del user_id, request, admin_id
+        raise NotImplementedError("Phase 4 T150a: replace this")
 
     async def get_system_settings(self) -> dict[str, SystemSettingResponse]:
         """Get all system settings.

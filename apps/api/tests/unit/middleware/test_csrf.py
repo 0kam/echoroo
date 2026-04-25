@@ -203,7 +203,7 @@ def test_csrf_exempt_paths_match_auth_router_allowlist() -> None:
     from echoroo.middleware.csrf import EXEMPT_PATHS
 
     auth_allowlist = tuple(AuthRouterConfig().public_path_allowlist)
-    assert EXEMPT_PATHS == auth_allowlist, (
+    assert auth_allowlist == EXEMPT_PATHS, (
         "CSRF EXEMPT_PATHS and AuthRouter public_path_allowlist must be "
         "exact-match (sourced from core.auth_paths.PUBLIC_AUTH_PATHS). "
         f"csrf={EXEMPT_PATHS!r} auth={auth_allowlist!r}"

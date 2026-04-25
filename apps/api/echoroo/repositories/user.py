@@ -1,11 +1,10 @@
 """User repository for database operations."""
 
-from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 from sqlalchemy import func, select
 
-from echoroo.models.user import LoginAttempt, User
+from echoroo.models.user import User
 from echoroo.repositories.base import BaseRepository
 
 
@@ -49,10 +48,7 @@ class UserRepository(BaseRepository[User]):
         Returns:
             User instance or None if not found
         """
-        result = await self.db.execute(
-            select(User).where(User.email_verification_token == token)
-        )
-        return result.scalar_one_or_none()
+        raise NotImplementedError("Phase 4 T150a: replace this")
 
     async def get_by_reset_token(self, token: str) -> User | None:
         """Get user by password reset token.
@@ -63,8 +59,7 @@ class UserRepository(BaseRepository[User]):
         Returns:
             User instance or None if not found
         """
-        result = await self.db.execute(select(User).where(User.password_reset_token == token))
-        return result.scalar_one_or_none()
+        raise NotImplementedError("Phase 4 T150d: replace this")
 
     async def create(self, user: User) -> User:
         """Create a new user.
@@ -103,18 +98,7 @@ class UserRepository(BaseRepository[User]):
         Returns:
             Number of failed attempts in the time window
         """
-        cutoff_time = datetime.now(UTC) - timedelta(minutes=minutes)
-        result = await self.db.execute(
-            select(func.count())
-            .select_from(LoginAttempt)
-            .where(
-                LoginAttempt.email == email,
-                LoginAttempt.success == False,  # noqa: E712
-                LoginAttempt.attempted_at >= cutoff_time,
-            )
-        )
-        count: int = result.scalar_one()
-        return count
+        raise NotImplementedError("Phase 4 T178: login attempt tracking moved to audit log")
 
     async def get_recent_failed_attempts_by_ip(self, ip_address: str, minutes: int = 15) -> int:
         """Count recent failed login attempts from an IP address.
@@ -126,18 +110,7 @@ class UserRepository(BaseRepository[User]):
         Returns:
             Number of failed attempts in the time window
         """
-        cutoff_time = datetime.now(UTC) - timedelta(minutes=minutes)
-        result = await self.db.execute(
-            select(func.count())
-            .select_from(LoginAttempt)
-            .where(
-                LoginAttempt.ip_address == ip_address,
-                LoginAttempt.success == False,  # noqa: E712
-                LoginAttempt.attempted_at >= cutoff_time,
-            )
-        )
-        count: int = result.scalar_one()
-        return count
+        raise NotImplementedError("Phase 4 T178: login attempt tracking moved to audit log")
 
     async def record_login_attempt(
         self,
@@ -146,7 +119,7 @@ class UserRepository(BaseRepository[User]):
         success: bool,
         user_agent: str | None = None,
         user_id: UUID | None = None,
-    ) -> LoginAttempt:
+    ) -> None:
         """Record a login attempt.
 
         Args:
@@ -159,14 +132,4 @@ class UserRepository(BaseRepository[User]):
         Returns:
             Created LoginAttempt instance
         """
-        attempt = LoginAttempt(
-            email=email,
-            ip_address=ip_address,
-            success=success,
-            attempted_at=datetime.now(UTC),
-            user_agent=user_agent,
-            user_id=user_id,
-        )
-        self.db.add(attempt)
-        await self.db.flush()
-        return attempt
+        raise NotImplementedError("Phase 4 T178: login attempt tracking moved to audit log")

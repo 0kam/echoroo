@@ -73,7 +73,7 @@ from echoroo.models.tag import Tag
 from echoroo.models.taxon import Taxon
 from echoroo.models.taxon_vernacular_name import TaxonVernacularName
 from echoroo.models.upload import UploadFile, UploadSession
-from echoroo.models.user import APIToken, LoginAttempt, User
+from echoroo.models.user import User
 
 __all__ = [
     # Base
@@ -92,8 +92,6 @@ __all__ = [
     "Recording",
     "Site",
     "SystemSetting",
-    "APIToken",
-    "LoginAttempt",
     "User",
     # Annotation models (existing)
     "AnnotationProject",

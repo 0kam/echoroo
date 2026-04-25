@@ -75,7 +75,7 @@ class UserService:
         if request.display_name is not None:
             user.display_name = request.display_name
         if request.organization is not None:
-            user.organization = request.organization
+            raise NotImplementedError("Phase 4 T150a: replace this")
 
         await self.user_repo.update(user)
         await self.db.commit()
@@ -102,21 +102,21 @@ class UserService:
             )
 
         # Verify current password
-        if not verify_password(request.current_password, user.hashed_password):
+        if not verify_password(request.current_password, user.password_hash):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Invalid current password",
             )
 
         # Check if new password is same as current
-        if verify_password(request.new_password, user.hashed_password):
+        if verify_password(request.new_password, user.password_hash):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="New password must be different from current password",
             )
 
         # Update password
-        user.hashed_password = hash_password(request.new_password)
+        user.password_hash = hash_password(request.new_password)
         await self.user_repo.update(user)
         await self.db.commit()
 

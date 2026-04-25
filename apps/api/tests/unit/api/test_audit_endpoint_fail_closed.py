@@ -28,12 +28,11 @@ from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from echoroo.api.web_v1 import audit as audit_api
 from echoroo.api.web_v1.audit import MetaAuditWriteError
-
 
 # ---------------------------------------------------------------------------
 # Helpers — fake AsyncSessionLocal that raises on commit
@@ -53,13 +52,13 @@ class _RaisingSession:
     def __init__(self, exc: Exception) -> None:
         self._exc = exc
 
-    async def __aenter__(self) -> "_RaisingSession":
+    async def __aenter__(self) -> _RaisingSession:
         return self
 
     async def __aexit__(self, *_args: Any) -> bool:
         return False
 
-    def begin(self) -> "_RaisingSession":
+    def begin(self) -> _RaisingSession:
         return self
 
     async def execute(self, *_args: Any, **_kwargs: Any) -> Any:
@@ -159,9 +158,11 @@ def _build_audit_app(meta_write: AsyncMock) -> TestClient:
     ORM session and the current user, we override those with fakes via
     the ``app.dependency_overrides`` map.
     """
-    from echoroo.middleware.auth import CurrentUser  # noqa: F401 - imported for override key
-    from echoroo.middleware.auth import get_current_user
     from echoroo.core.database import get_db
+    from echoroo.middleware.auth import (
+        CurrentUser,  # noqa: F401 - imported for override key
+        get_current_user,
+    )
 
     # --- Stub: page fetchers always return one fake row ---
     fake_rows: list[dict[str, Any]] = []  # empty; we don't care about content
