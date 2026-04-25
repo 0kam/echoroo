@@ -14,6 +14,24 @@ hostile read is traceable. The meta-write uses
 :class:`~echoroo.services.audit_service.AuditLogService` against the same
 session so it participates in the request transaction.
 
+Fail-closed policy (Phase 2.11 P0-c)
+------------------------------------
+FR-096 mandates that "reading the audit log is itself audited". A
+fail-OPEN handler — i.e. swallow the meta-write exception and still
+return the rows — would let a hostile reader pull the audit log without
+leaving a trace, which is the exact attack FR-096 defends against.
+:func:`_write_meta_audit_in_fresh_session` therefore re-raises any
+underlying error wrapped in :class:`MetaAuditWriteError`. Endpoints
+catch that exception and return **HTTP 503** with error code
+``META_AUDIT_WRITE_FAILED``. The page rows that were read on session-A
+NEVER escape to the client — they are silently discarded by the
+exception path.
+
+This is the safe default for an audit boundary: rather than returning
+data without a tracking record, we surface a transient error so the
+operator can investigate. Reads are idempotent so the client retries
+trivially; the meta-audit row is written once on success.
+
 **Routing**: the router is defined here but NOT registered with the
 FastAPI app. Phase 3 (T070+) owns ``main.py`` wiring, at which point the
 ``/web-api/v1`` prefix + CSRF middleware is added.
@@ -42,6 +60,37 @@ from echoroo.middleware.auth import CurrentUser
 from echoroo.services.audit_service import AuditLogService
 
 router = APIRouter(tags=["audit-log"])
+
+
+# ---------------------------------------------------------------------------
+# Phase 2.11 P0-c — fail-closed exception type
+# ---------------------------------------------------------------------------
+
+
+class MetaAuditWriteError(RuntimeError):
+    """Raised when the FR-096 meta-audit write fails.
+
+    Endpoints in this module convert this exception to **HTTP 503** with
+    error code ``META_AUDIT_WRITE_FAILED``. The audit page rows that the
+    endpoint had already SELECTed are intentionally NOT returned in this
+    case — a fail-OPEN response (returning the rows with a warning) would
+    let an attacker exfil audit data without leaving a trace, which is
+    exactly the threat FR-096 defends against.
+
+    Attributes:
+        action: The audit action that was being recorded (e.g.
+            ``project.audit_log.read``). Useful for log correlation.
+        request_id: The request id of the originating read.
+    """
+
+    def __init__(self, *, action: str, request_id: str, reason: str) -> None:
+        super().__init__(
+            f"meta-audit write failed for action={action!r} "
+            f"request_id={request_id!r}: {reason}"
+        )
+        self.action = action
+        self.request_id = request_id
+        self.reason = reason
 
 
 # ---------------------------------------------------------------------------
@@ -299,25 +348,42 @@ async def list_project_audit_log(
         page=page,
     )
 
-    await _write_meta_audit_in_fresh_session(
-        table="project_audit_log",
-        actor_user_id=current_user.id,
-        project_id=project_id,
-        action="project.audit_log.read",
-        request_id=_request_id(request),
-        ip=_client_ip(request),
-        user_agent=_user_agent(request),
-        detail={
-            "filters": {
-                "action": action,
-                "actor_user_id_hash": actor_user_id_hash,
-                "before": before.isoformat() if before else None,
-                "after": after.isoformat() if after else None,
-                "page": page,
+    # FR-096 fail-closed (Phase 2.11 P0-c): the meta-audit write MUST
+    # succeed before we return rows. If the writer raises, the rows are
+    # discarded and the caller gets a 503 — never the data without the
+    # trail.
+    try:
+        await _write_meta_audit_in_fresh_session(
+            table="project_audit_log",
+            actor_user_id=current_user.id,
+            project_id=project_id,
+            action="project.audit_log.read",
+            request_id=_request_id(request),
+            ip=_client_ip(request),
+            user_agent=_user_agent(request),
+            detail={
+                "filters": {
+                    "action": action,
+                    "actor_user_id_hash": actor_user_id_hash,
+                    "before": before.isoformat() if before else None,
+                    "after": after.isoformat() if after else None,
+                    "page": page,
+                },
+                "result_count": len(rows),
             },
-            "result_count": len(rows),
-        },
-    )
+        )
+    except MetaAuditWriteError as exc:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "error_code": "META_AUDIT_WRITE_FAILED",
+                "message": (
+                    "Audit log read could not be recorded; rows withheld "
+                    "to preserve FR-096 traceability."
+                ),
+                "request_id": exc.request_id,
+            },
+        ) from exc
 
     return AuditLogListResponse(
         items=[_to_entry(r) for r in rows],
@@ -358,23 +424,37 @@ async def list_platform_audit_log(
         page=page,
     )
 
-    await _write_meta_audit_in_fresh_session(
-        table="platform_audit_log",
-        actor_user_id=current_user.id,
-        action="platform.audit_log.read",
-        request_id=_request_id(request),
-        ip=_client_ip(request),
-        user_agent=_user_agent(request),
-        detail={
-            "filters": {
-                "action": action,
-                "actor_user_id_hash": actor_user_id_hash,
-                "request_id": request_id_filter,
-                "page": page,
+    # Phase 2.11 P0-c — fail-closed on meta-audit write (FR-096).
+    try:
+        await _write_meta_audit_in_fresh_session(
+            table="platform_audit_log",
+            actor_user_id=current_user.id,
+            action="platform.audit_log.read",
+            request_id=_request_id(request),
+            ip=_client_ip(request),
+            user_agent=_user_agent(request),
+            detail={
+                "filters": {
+                    "action": action,
+                    "actor_user_id_hash": actor_user_id_hash,
+                    "request_id": request_id_filter,
+                    "page": page,
+                },
+                "result_count": len(rows),
             },
-            "result_count": len(rows),
-        },
-    )
+        )
+    except MetaAuditWriteError as exc:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "error_code": "META_AUDIT_WRITE_FAILED",
+                "message": (
+                    "Audit log read could not be recorded; rows withheld "
+                    "to preserve FR-096 traceability."
+                ),
+                "request_id": exc.request_id,
+            },
+        ) from exc
 
     return AuditLogListResponse(
         items=[_to_entry(r) for r in rows],
@@ -430,15 +510,30 @@ async def verify_audit_chain(
             )
             break
 
-    await _write_meta_audit_in_fresh_session(
-        table="platform_audit_log",
-        actor_user_id=current_user.id,
-        action="platform.audit_log.chain_verify",
-        request_id=_request_id(request),
-        ip=_client_ip(request),
-        user_agent=_user_agent(request),
-        detail={"target": target, "row_count": len(rows), "is_valid": first_mismatch is None},
-    )
+    # Phase 2.11 P0-c — fail-closed on meta-audit write (FR-096): the
+    # chain-verify result MUST NOT be returned without an audit row.
+    try:
+        await _write_meta_audit_in_fresh_session(
+            table="platform_audit_log",
+            actor_user_id=current_user.id,
+            action="platform.audit_log.chain_verify",
+            request_id=_request_id(request),
+            ip=_client_ip(request),
+            user_agent=_user_agent(request),
+            detail={"target": target, "row_count": len(rows), "is_valid": first_mismatch is None},
+        )
+    except MetaAuditWriteError as exc:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "error_code": "META_AUDIT_WRITE_FAILED",
+                "message": (
+                    "Audit chain verify could not be recorded; result "
+                    "withheld to preserve FR-096 traceability."
+                ),
+                "request_id": exc.request_id,
+            },
+        ) from exc
 
     return ChainVerifyResponse(
         is_valid=first_mismatch is None,
@@ -528,11 +623,22 @@ async def _write_meta_audit_in_fresh_session(
     used. Reusing the request-scoped ``DbSession`` (which has already
     executed the page SELECTs) would fail at runtime in production.
 
-    The fresh session is committed independently. Failures are logged
-    but not raised — the user still receives the page they requested,
-    and the FR-096 guarantee is "every successful read SHOULD produce a
-    meta-entry" rather than "ATOMIC with the read".
+    Phase 2.11 P0-c — fail-closed semantics. FR-096 says "reading the
+    audit log is itself audited". A fail-OPEN behaviour (swallow
+    exceptions, return rows anyway) would let a hostile reader exfil
+    the audit log without leaving a trace, which is exactly the threat
+    FR-096 defends against. We therefore re-raise the underlying
+    exception wrapped in :class:`MetaAuditWriteError` so the calling
+    endpoint can convert it to HTTP 503 and discard the page rows.
+
+    Raises:
+        MetaAuditWriteError: When the meta-audit row could not be
+            committed. The original cause is preserved via the
+            ``__cause__`` chain for log correlation.
     """
+    import logging
+
+    logger = logging.getLogger(__name__)
     try:
         async with AsyncSessionLocal() as audit_session, audit_session.begin():
             service = AuditLogService(audit_session)
@@ -557,20 +663,25 @@ async def _write_meta_audit_in_fresh_session(
                     user_agent=user_agent,
                     detail=detail,
                 )
-    except Exception:
-        # Defer to module logging — failure to record the meta-audit
-        # must not break the read response (FR-096 best-effort
-        # semantics).
-        import logging
-
-        logging.getLogger(__name__).exception(
+    except Exception as exc:
+        # Log THEN re-raise: the operator needs the structured error
+        # for triage AND the endpoint must fail-closed (Phase 2.11
+        # P0-c). The endpoint catches MetaAuditWriteError and returns
+        # 503 without leaking the audit rows that were read.
+        logger.exception(
             "meta-audit write failed (action=%s request_id=%s)", action, request_id
         )
+        raise MetaAuditWriteError(
+            action=action,
+            request_id=request_id,
+            reason=str(exc) or exc.__class__.__name__,
+        ) from exc
 
 
 __all__ = [
     "VERIFY_AUDIT_CHAIN_ACTION",
     "VIEW_PLATFORM_AUDIT_LOG_ACTION",
     "VIEW_PROJECT_AUDIT_LOG_ACTION",
+    "MetaAuditWriteError",
     "router",
 ]
