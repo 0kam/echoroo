@@ -359,9 +359,14 @@ def test_non_pii_keys_are_preserved_verbatim() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_hash_version_is_v2_indicating_keyed_hash_migration() -> None:
-    """HASH_VERSION bumped from v1 (unkeyed sha256, deprecated) to v2."""
-    assert HASH_VERSION == "v2"
+def test_hash_version_is_v3_for_keyed_keys_and_values() -> None:
+    """Phase 2.11 P0-a: HASH_VERSION bumped to v3.
+
+    v2 used keyed HMAC for VALUES but plain truncated SHA-256 for dict
+    KEY markers — dictionary-attackable on low-entropy PII. v3 routes
+    both keys and values through the same keyed hash.
+    """
+    assert HASH_VERSION == "v3"
 
 
 def test_redaction_hash_uses_injected_hash_fn_rather_than_default() -> None:
@@ -397,4 +402,95 @@ def test_pydantic_model_also_uses_keyed_hash() -> None:
     """AuditLogSanitizer runs via sanitize_value so keyed-hash propagates."""
     model = AuditLogSanitizer(detail={"email": _EMAIL})
     assert model.detail["email"]["hash"] == _fake_keyed_hash(_EMAIL)
-    assert model.detail["email"]["hash_version"] == "v2"
+    # Phase 2.11 P0-a: HASH_VERSION bumped from v2 -> v3 because dict
+    # KEY markers now also use the keyed hash, not plain truncated SHA-256.
+    assert model.detail["email"]["hash_version"] == "v3"
+
+
+# ---------------------------------------------------------------------------
+# Phase 2.11 P0-a — dict KEY markers must use the same keyed hash as values
+# ---------------------------------------------------------------------------
+
+
+def test_key_marker_suffix_matches_value_hash_for_same_pii() -> None:
+    """Same email used as KEY and as VALUE produces the same keyed-hash digest.
+
+    The KEY marker takes the first :data:`_KEY_MARKER_HEX_LEN` chars of
+    the keyed-hash output. The VALUE marker keeps the full digest. The
+    KEY marker's hex chars therefore appear verbatim as the prefix of
+    the VALUE marker's ``hash`` field. This test pins that invariant so
+    a future refactor cannot silently regress to two different hash
+    paths for keys vs values.
+    """
+    from echoroo.core.audit import _KEY_MARKER_HEX_LEN
+
+    # Construct a payload where the same email is BOTH the dict key and
+    # the value associated with a different key.
+    payload = {_EMAIL: "non-pii-value", "user_email": _EMAIL}
+    out = sanitize_value(payload)
+
+    # Find the key marker. It is the only key starting with __redacted_key_.
+    marker_key = next(k for k in out if k.startswith("__redacted_key_"))
+    # Strip the prefix/suffix to get the embedded digest fragment.
+    embedded = marker_key[len("__redacted_key_") : -len("__")]
+    assert len(embedded) == _KEY_MARKER_HEX_LEN
+
+    # The value redaction marker for the same PII string carries the
+    # full keyed-hash digest. The first _KEY_MARKER_HEX_LEN chars MUST
+    # equal the marker suffix.
+    value_marker = out["user_email"]
+    _assert_is_redaction(value_marker)
+    assert value_marker["hash"][:_KEY_MARKER_HEX_LEN] == embedded
+
+
+def test_key_marker_changes_when_hash_fn_changes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Swapping the default hash_fn rotates the KEY marker too.
+
+    Proves the KEY redaction is no longer using a plain sha256 path —
+    if it were, replacing the default keyed hash_fn would not affect
+    the marker.
+    """
+    from echoroo.core import audit as _audit_module
+
+    payload = {_EMAIL: "v"}
+    out_with_test_key = sanitize_value(payload)
+    marker_a = next(k for k in out_with_test_key if k.startswith("__redacted_key_"))
+
+    # Replace the default hash_fn with one using a different secret.
+    def alt_hash(value: str) -> str:
+        return hashlib.sha256(b"different-key" + value.encode("utf-8")).hexdigest()
+
+    monkeypatch.setattr(_audit_module, "_default_hash_fn", alt_hash)
+
+    out_with_alt_key = sanitize_value(payload)
+    marker_b = next(k for k in out_with_alt_key if k.startswith("__redacted_key_"))
+
+    assert marker_a != marker_b, (
+        "KEY marker did not change when default hash_fn was swapped — "
+        "the key path is still using a non-keyed hash"
+    )
+
+
+def test_key_marker_preserves_at_least_16_hex_chars() -> None:
+    """Phase 2.11 P0-a: the marker keeps >= 16 hex chars to defeat
+    birthday collisions in cardinality dashboards."""
+
+    out = sanitize_value({_EMAIL: 1})
+    marker = next(k for k in out if k.startswith("__redacted_key_"))
+    embedded = marker[len("__redacted_key_") : -len("__")]
+    assert len(embedded) >= 16, (
+        f"KEY marker must preserve >= 16 hex chars, got {len(embedded)}"
+    )
+
+
+def test_key_marker_uses_explicit_hash_fn_override() -> None:
+    """Explicit ``hash_fn=...`` on sanitize_value also rotates the KEY marker."""
+
+    def alt_hash(value: str) -> str:
+        return hashlib.sha256(b"override-secret" + value.encode("utf-8")).hexdigest()
+
+    out_default = sanitize_value({_EMAIL: 1})
+    out_override = sanitize_value({_EMAIL: 1}, hash_fn=alt_hash)
+    marker_default = next(k for k in out_default if k.startswith("__redacted_key_"))
+    marker_override = next(k for k in out_override if k.startswith("__redacted_key_"))
+    assert marker_default != marker_override

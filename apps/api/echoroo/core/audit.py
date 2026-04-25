@@ -47,7 +47,6 @@ from __future__ import annotations
 import base64
 import binascii
 import contextlib
-import hashlib
 import re
 import unicodedata
 import urllib.parse
@@ -60,15 +59,28 @@ from pydantic import BaseModel, ConfigDict, field_validator
 # Constants
 # ---------------------------------------------------------------------------
 
-HASH_VERSION: Final[str] = "v2"
+HASH_VERSION: Final[str] = "v3"
 """Version tag stored in the redacted marker so future algorithm changes can
 be distinguished without a breaking schema migration.
 
-v1 was unkeyed sha256, deprecated by Phase 2.10 #4 (no production rows
-exist per project_status.md "Pre-launch", so no migration is required).
-v2 uses :func:`echoroo.core.kms.compute_pii_hash` (HMAC-SHA256 keyed via
-``alias/echoroo-pii-hash-hmac``).
+* v1 — unkeyed SHA-256, deprecated by Phase 2.10 #4 (no production rows
+  existed per project_status.md "Pre-launch", so no migration required).
+* v2 — keyed HMAC-SHA256 via :func:`echoroo.core.kms.compute_pii_hash`,
+  applied to VALUES only. Dict KEY markers still used a plain SHA-256
+  truncated to 8 hex chars, which Phase 2.11 P0-a flagged as
+  dictionary-attackable for low-entropy PII (emails, phone numbers).
+* v3 — Phase 2.11 P0-a: dict KEY markers route through the same keyed
+  hash function used for value redaction (default
+  :func:`echoroo.core.kms.compute_pii_hash`) and preserve a 32-hex-char
+  suffix to defeat birthday collisions in cardinality dashboards. Both
+  keys and values now use the keyed HMAC; the bumped HASH_VERSION lets
+  log readers tell the two regimes apart.
 """
+
+# Number of hex chars preserved in a dict-key redaction marker. Phase 2.11
+# P0-a: 8 chars was vulnerable to birthday collisions; 32 chars (128 bits)
+# is the same entropy as a random UUID and is safe for cardinality use.
+_KEY_MARKER_HEX_LEN: Final[int] = 32
 
 #: Type alias for the hash function injection point. Tests pass a
 #: deterministic fake to avoid the KMS round-trip; production callers
@@ -289,16 +301,39 @@ def _scan_string(value: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def _redacted_key_marker(original_key: str) -> str:
+def _redacted_key_marker(
+    original_key: str,
+    *,
+    hash_fn: HashFn | None = None,
+) -> str:
     """Return a stable opaque marker for a redacted dict key.
 
-    The marker preserves enough information to count distinct redacted
-    keys (different inputs yield different markers, modulo SHA-256
-    collision probability) without leaking the original PII. The first
-    8 hex chars of the SHA-256 hash are sufficient for that — collisions
-    only matter for cardinality dashboards, not for security.
+    Phase 2.11 P0-a: previously the marker was the first 8 hex chars of a
+    plain (unkeyed) SHA-256 over the key. Two problems with that design:
+
+    * Plain SHA-256 of a low-entropy PII string (e.g. an email address or
+      a phone number) is dictionary-attackable — an attacker who exfils
+      the audit log can rainbow-table the key markers back to the
+      original PII.
+    * 8 hex chars (32 bits) is birthday-vulnerable for cardinality
+      dashboards: ~64k keys collide with non-trivial probability.
+
+    The marker now routes through the same keyed-hash callable used by
+    value redaction (default :func:`_default_hash_fn` →
+    :func:`echoroo.core.kms.compute_pii_hash`) and preserves
+    :data:`_KEY_MARKER_HEX_LEN` (=32) hex chars (128 bits, same as a
+    random UUID).
+
+    Args:
+        original_key: The PII string used as a dict key.
+        hash_fn: Optional override of the keyed-hash callable. Defaults
+            to the same KMS-backed HMAC used for value redaction so that
+            (a) tests can inject a deterministic stub and (b) the same
+            PII appearing as both KEY and VALUE produces consistent hash
+            digests (just embedded into different shapes).
     """
-    short = hashlib.sha256(original_key.encode("utf-8")).hexdigest()[:8]
+    fn = hash_fn or _default_hash_fn
+    short = fn(original_key)[:_KEY_MARKER_HEX_LEN]
     return f"__redacted_key_{short}__"
 
 
@@ -332,7 +367,10 @@ def sanitize_value(value: Any, *, hash_fn: HashFn | None = None) -> Any:
         for key, inner in value.items():
             sanitised_value = sanitize_value(inner, hash_fn=hash_fn)
             if isinstance(key, str) and _scan_string(key):
-                out[_redacted_key_marker(key)] = sanitised_value
+                # Phase 2.11 P0-a: route the key marker through the same
+                # keyed hash used for value redaction so PII keys are not
+                # dictionary-attackable.
+                out[_redacted_key_marker(key, hash_fn=hash_fn)] = sanitised_value
             else:
                 out[key] = sanitised_value
         return out
