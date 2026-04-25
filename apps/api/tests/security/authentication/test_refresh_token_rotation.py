@@ -12,6 +12,7 @@ FR-071:
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID, uuid4
@@ -24,6 +25,7 @@ from echoroo.core.auth import (
     InvalidTokenError,
     ReusedTokenError,
     RevokedFamilyError,
+    SqlTokenStore,
     issue_refresh_token,
     revoke_family,
     rotate_refresh_token,
@@ -260,3 +262,108 @@ async def test_revoke_family_is_idempotent(
     await revoke_family(record.family_id, store=store)  # should not raise
 
     assert await store.is_family_revoked(record.family_id) is True
+
+
+# ---------------------------------------------------------------------------
+# Case (e): concurrent rotation race — exactly one coroutine succeeds
+# (Phase 2.10 #2 atomic_consume_and_issue)
+# ---------------------------------------------------------------------------
+
+
+async def test_concurrent_rotations_on_same_jti_yield_exactly_one_winner(
+    user_id: UUID,
+    store: InMemoryTokenStore,
+    audit: _RecordingAuditStub,
+) -> None:
+    """Two parallel rotations of the same refresh token: only one wins.
+
+    Without ``atomic_consume_and_issue`` both coroutines would observe
+    ``is_consumed == False``, both would mint successor tokens, and the
+    server would have issued two valid live tokens for the same logical
+    session. The atomic primitive forces exactly one to succeed; the
+    loser must trip reuse-detection and revoke the family.
+    """
+    token, record = issue_refresh_token(user_id=user_id)
+    await store.record_issued(record)
+
+    # Fire both coroutines in parallel against the SAME store instance.
+    results = await asyncio.gather(
+        rotate_refresh_token(
+            token, store=store, audit=audit, request_id="concurrent-A"
+        ),
+        rotate_refresh_token(
+            token, store=store, audit=audit, request_id="concurrent-B"
+        ),
+        return_exceptions=True,
+    )
+
+    successes = [r for r in results if not isinstance(r, BaseException)]
+    failures = [r for r in results if isinstance(r, BaseException)]
+
+    # Exactly one coroutine must have minted a successor token.
+    assert len(successes) == 1, (
+        f"expected exactly 1 winner, got {len(successes)} (results={results!r})"
+    )
+    # The other must have raised ReusedTokenError (the family is now revoked).
+    assert len(failures) == 1
+    assert isinstance(failures[0], ReusedTokenError)
+
+    # Whole family is revoked → even the winner's "live" token is now
+    # rejected on next attempted rotation.
+    assert await store.is_family_revoked(record.family_id) is True
+
+    # Audit must have recorded the reuse-detection event for the loser.
+    audit_actions = [e["action"] for e in audit.events]
+    assert "auth.refresh_reuse_detected" in audit_actions
+
+
+async def test_atomic_consume_and_issue_returns_false_on_already_consumed(
+    user_id: UUID, store: InMemoryTokenStore
+) -> None:
+    """The store-level primitive contract: second call on same jti → False."""
+    _, record = issue_refresh_token(user_id=user_id)
+    await store.record_issued(record)
+
+    successor_a = issue_refresh_token(user_id=user_id, family_id=record.family_id)[1]
+    successor_b = issue_refresh_token(user_id=user_id, family_id=record.family_id)[1]
+
+    first = await store.atomic_consume_and_issue(
+        family_id=record.family_id, old_jti=record.jti, new_record=successor_a
+    )
+    second = await store.atomic_consume_and_issue(
+        family_id=record.family_id, old_jti=record.jti, new_record=successor_b
+    )
+
+    assert first is True
+    assert second is False
+
+
+# ---------------------------------------------------------------------------
+# SqlTokenStore skeleton — atomic_consume_and_issue is the only documented
+# Phase 2.10 surface; everything else raises NotImplementedError pending
+# Phase 3 wiring.
+# ---------------------------------------------------------------------------
+
+
+async def test_sql_token_store_skeleton_raises_not_implemented(user_id: UUID) -> None:
+    store = SqlTokenStore(session_factory=lambda: None)
+    _, record = issue_refresh_token(user_id=user_id)
+
+    with pytest.raises(NotImplementedError):
+        await store.get_family_state(record.family_id)
+    with pytest.raises(NotImplementedError):
+        await store.record_issued(record)
+    with pytest.raises(NotImplementedError):
+        await store.mark_consumed(record.family_id, record.jti)
+    with pytest.raises(NotImplementedError):
+        await store.is_consumed(record.family_id, record.jti)
+    with pytest.raises(NotImplementedError):
+        await store.revoke_family(record.family_id)
+    with pytest.raises(NotImplementedError):
+        await store.is_family_revoked(record.family_id)
+    with pytest.raises(NotImplementedError):
+        await store.atomic_consume_and_issue(
+            family_id=record.family_id,
+            old_jti=record.jti,
+            new_record=record,
+        )

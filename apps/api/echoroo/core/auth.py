@@ -37,6 +37,7 @@ Design choices:
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import secrets
 import uuid
@@ -186,6 +187,25 @@ class TokenStore(Protocol):
         """Return True if ``family_id`` is revoked."""
         ...
 
+    async def atomic_consume_and_issue(
+        self, *, family_id: str, old_jti: str, new_record: RefreshTokenRecord
+    ) -> bool:
+        """Atomically: check old jti is unconsumed, mark it, persist new record.
+
+        Returns ``True`` if the swap committed (the caller may safely
+        return the ``new_record``'s minted token to the client). Returns
+        ``False`` if ``old_jti`` was already consumed — concurrent
+        rotation lost the race; the caller MUST treat this as reuse and
+        revoke the family.
+
+        Implementations MUST execute the consumption + issue in a single
+        critical section (lock, transaction, or ``UPDATE ... WHERE
+        consumed_at IS NULL RETURNING id``) so that two concurrent
+        callers cannot both observe ``is_consumed == False`` and both
+        proceed to issue successor tokens.
+        """
+        ...
+
 
 class InMemoryTokenStore:
     """Reference TokenStore implementation for tests and dev.
@@ -197,6 +217,12 @@ class InMemoryTokenStore:
 
     def __init__(self) -> None:
         self._families: dict[str, dict[str, Any]] = {}
+        # Single asyncio.Lock guards the whole store so that the
+        # atomic_consume_and_issue critical section is serialised across
+        # concurrent coroutines on the same loop. The chosen granularity
+        # (process-wide rather than per-family) is acceptable for tests
+        # and dev — production uses Redis with per-family locking.
+        self._lock = asyncio.Lock()
 
     def _ensure(self, family_id: str) -> dict[str, Any]:
         state = self._families.get(family_id)
@@ -238,6 +264,89 @@ class InMemoryTokenStore:
         if state is None:
             return False
         return bool(state["revoked"])
+
+    async def atomic_consume_and_issue(
+        self, *, family_id: str, old_jti: str, new_record: RefreshTokenRecord
+    ) -> bool:
+        """Single-lock implementation of the atomic swap.
+
+        Holds :attr:`_lock` for the duration of the check + mutation so
+        two concurrent rotation calls on the same store cannot both pass
+        the "is consumed?" check.
+        """
+        async with self._lock:
+            state = self._ensure(family_id)
+            if old_jti in state["consumed_jtis"]:
+                return False
+            state["consumed_jtis"].add(old_jti)
+            state["records"].append(new_record)
+            return True
+
+
+class SqlTokenStore:
+    """Skeleton SQL-backed TokenStore.
+
+    Phase 2.10 lands the shape so the production wiring (Phase 3) has a
+    concrete starting point. The atomic primitive is the only method
+    fleshed out; everything else raises ``NotImplementedError`` with a
+    clear pointer to the Phase 3 task.
+
+    The atomic primitive uses ``UPDATE refresh_tokens SET consumed_at =
+    :now WHERE jti = :old AND consumed_at IS NULL RETURNING jti`` to
+    guarantee the check + mutation happen in a single statement
+    (PostgreSQL's row-level lock makes this serialisable). On a hit the
+    new record is INSERTed in the same transaction; on a miss the
+    transaction commits without the INSERT and the method returns
+    ``False``.
+    """
+
+    def __init__(self, session_factory: Any) -> None:
+        # Type: ``Callable[[], AsyncSession]``. Kept as ``Any`` to avoid
+        # forcing a SQLAlchemy import on modules that just want the type.
+        self._session_factory = session_factory
+
+    async def get_family_state(self, family_id: str) -> dict[str, Any] | None:
+        raise NotImplementedError("Phase 3: implement against refresh_token_families")
+
+    async def record_issued(self, record: RefreshTokenRecord) -> None:
+        raise NotImplementedError("Phase 3: implement against refresh_tokens insert")
+
+    async def mark_consumed(self, family_id: str, jti: str) -> None:
+        raise NotImplementedError(
+            "Phase 3: prefer atomic_consume_and_issue over standalone mark_consumed"
+        )
+
+    async def is_consumed(self, family_id: str, jti: str) -> bool:
+        raise NotImplementedError(
+            "Phase 3: prefer atomic_consume_and_issue over standalone is_consumed"
+        )
+
+    async def revoke_family(self, family_id: str) -> None:
+        raise NotImplementedError("Phase 3: implement family revoke UPDATE")
+
+    async def is_family_revoked(self, family_id: str) -> bool:
+        raise NotImplementedError("Phase 3: implement family revoke check")
+
+    async def atomic_consume_and_issue(
+        self, *, family_id: str, old_jti: str, new_record: RefreshTokenRecord
+    ) -> bool:
+        """SQL-backed atomic swap (Phase 3 wiring task).
+
+        Reference SQL — implementation deferred to Phase 3:
+
+            BEGIN;
+              UPDATE refresh_tokens
+                 SET consumed_at = NOW()
+               WHERE jti = :old_jti AND consumed_at IS NULL
+              RETURNING jti;
+              -- if RETURNING was empty, ROLLBACK and return False
+              INSERT INTO refresh_tokens (jti, family_id, ...)
+                VALUES (:new_jti, :family_id, ...);
+            COMMIT;
+        """
+        raise NotImplementedError(
+            "Phase 3: wire to refresh_tokens UPDATE ... WHERE consumed_at IS NULL RETURNING"
+        )
 
 
 # =============================================================================
@@ -543,8 +652,26 @@ async def rotate_refresh_token(
     if await store.is_family_revoked(claims.family_id):
         raise RevokedFamilyError("refresh token family already revoked")
 
-    if await store.is_consumed(claims.family_id, claims.jti):
-        # Replay: somebody is re-using an already-rotated token.
+    # Mint the candidate successor BEFORE attempting the atomic swap so
+    # the swap itself is the single critical section. If the swap fails
+    # (concurrent rotation already consumed ``claims.jti``) we discard
+    # the candidate and treat the call as a reuse attempt.
+    new_token, record = issue_refresh_token(
+        user_id=claims.user_id,
+        family_id=claims.family_id,
+        now=now,
+    )
+
+    swapped = await store.atomic_consume_and_issue(
+        family_id=claims.family_id,
+        old_jti=claims.jti,
+        new_record=record,
+    )
+
+    if not swapped:
+        # Atomic check + mark + issue lost the race → ``claims.jti`` was
+        # already consumed by a concurrent rotation (or by an attacker
+        # replaying an old token). Either way, revoke the family.
         await store.revoke_family(claims.family_id)
         if audit is not None:
             await audit.write_platform_event(
@@ -560,17 +687,6 @@ async def rotate_refresh_token(
             )
         raise ReusedTokenError("refresh token reuse detected; family revoked")
 
-    # Mark the presented jti consumed BEFORE minting the new token so a
-    # concurrent second call on the same jti races the consumed check
-    # on the next round-trip and fails.
-    await store.mark_consumed(claims.family_id, claims.jti)
-
-    new_token, record = issue_refresh_token(
-        user_id=claims.user_id,
-        family_id=claims.family_id,
-        now=now,
-    )
-    await store.record_issued(record)
     return new_token, record
 
 
@@ -616,6 +732,7 @@ __all__ = [
     "RefreshTokenRecord",
     "RevokedFamilyError",
     "ReusedTokenError",
+    "SqlTokenStore",
     "StaleTokenError",
     "TokenStore",
     "invalidate_stamp",
