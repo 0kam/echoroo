@@ -1,11 +1,8 @@
 """Detection annotation management API endpoints.
 
-Phase 3 (T120, FR-006 / FR-008 / FR-008a): every read / export path operation
-now routes through the central :func:`is_allowed` gate using the Action catalog
-in :mod:`echoroo.core.actions`. Mutating endpoints (create / confirm / reject /
-change-species / votes / delete) are guarded in subsequent tasks; until then
-they keep the legacy :func:`check_project_access` membership check so the
-existing test suite continues to pass.
+Phase 3 (T120, FR-006 / FR-008 / FR-008a): every read, export, and mutating
+path operation now routes through the central :func:`is_allowed` gate using the
+Action catalog in :mod:`echoroo.core.actions`.
 """
 
 from __future__ import annotations
@@ -16,25 +13,30 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import StreamingResponse
-from sqlalchemy import select as sa_select
 
 from echoroo.core.actions import (
+    ANNOTATION_VOTE_CREATE_ACTION,
+    ANNOTATION_VOTE_LIST_ACTION,
+    DETECTION_CHANGE_SPECIES_ACTION,
+    DETECTION_CONFIRM_ACTION,
+    DETECTION_CREATE_ACTION,
+    DETECTION_DELETE_ACTION,
     DETECTION_EXPORT_CSV_ACTION,
     DETECTION_EXPORT_ML_DATASET_ACTION,
     DETECTION_GET_ACTION,
     DETECTION_LIST_ACTION,
+    DETECTION_REJECT_ACTION,
 )
 from echoroo.core.database import DbSession
-from echoroo.core.permissions import (
-    check_project_access,
-    gate_action,
-)
+from echoroo.core.permissions import gate_action
 from echoroo.middleware.auth import CurrentUser
 from echoroo.models.enums import DetectionStatus
-from echoroo.models.project import Project
 from echoroo.repositories.annotation import AnnotationRepository
 from echoroo.repositories.annotation_vote import AnnotationVoteRepository
 from echoroo.repositories.confirmed_region import ConfirmedRegionRepository
+from echoroo.repositories.detection_run import DetectionRunRepository
+from echoroo.repositories.recording import RecordingRepository
+from echoroo.repositories.tag import TagRepository
 from echoroo.schemas.annotation_vote import VoteCastRequest, VoteSummaryResponse
 from echoroo.schemas.detection import (
     ChangeSpeciesRequest,
@@ -66,6 +68,9 @@ def get_detection_service(db: DbSession) -> DetectionService:
         annotation_repo=AnnotationRepository(db),
         confirmed_region_repo=ConfirmedRegionRepository(db),
         vote_repo=AnnotationVoteRepository(db),
+        recording_repo=RecordingRepository(db),
+        tag_repo=TagRepository(db),
+        detection_run_repo=DetectionRunRepository(db),
     )
 
 
@@ -502,19 +507,19 @@ async def get_detection(
 async def create_detection(
     project_id: UUID,
     request: DetectionCreate,
+    http_request: Request,
     current_user: CurrentUser,
     service: DetectionServiceDep,
     db: DbSession,
 ) -> DetectionResponse:
     """Create a new detection annotation.
 
-    Mutating endpoint — Phase 3 will introduce a dedicated DETECTION_CREATE
-    Action; until then we keep the legacy membership check so contract tests
-    still pass.
+    Guarded by :data:`DETECTION_CREATE_ACTION` (:data:`Permission.ANNOTATE`).
 
     Args:
         project_id: Project's UUID
         request: Detection creation data
+        http_request: FastAPI request (used by ``is_allowed`` to stash stage-1 state)
         current_user: Current authenticated user
         service: Detection service instance
         db: Database session
@@ -524,10 +529,16 @@ async def create_detection(
 
     Raises:
         401: Not authenticated
-        403: Access denied to project
+        403: Permission denied
         422: Validation error
     """
-    await check_project_access(project_id, current_user.id, db)
+    await gate_action(
+        action=DETECTION_CREATE_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=http_request,
+        db=db,
+    )
     detection = await service.create(project_id=project_id, request=request)
     await db.commit()
     return detection
@@ -542,6 +553,7 @@ async def create_detection(
 async def confirm_detection(
     project_id: UUID,
     detection_id: UUID,
+    http_request: Request,
     current_user: CurrentUser,
     service: DetectionServiceDep,
     db: DbSession,
@@ -555,6 +567,7 @@ async def confirm_detection(
     Args:
         project_id: Project's UUID
         detection_id: Detection's UUID
+        http_request: FastAPI request (used by ``is_allowed`` to stash stage-1 state)
         request: Confirm request with time range
         current_user: Current authenticated user
         service: Detection service instance
@@ -565,10 +578,22 @@ async def confirm_detection(
 
     Raises:
         401: Not authenticated
-        403: Access denied to project
+        403: Permission denied
         404: Detection not found
     """
-    await check_project_access(project_id, current_user.id, db)
+    await gate_action(
+        action=DETECTION_CONFIRM_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=http_request,
+        db=db,
+    )
+    if not await service.annotation_repo.exists_in_project(detection_id, project_id):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="detection not found",
+        )
+
     detection = await service.confirm(
         detection_id=detection_id,
         user_id=current_user.id,
@@ -587,6 +612,7 @@ async def confirm_detection(
 async def reject_detection(
     project_id: UUID,
     detection_id: UUID,
+    http_request: Request,
     current_user: CurrentUser,
     service: DetectionServiceDep,
     db: DbSession,
@@ -597,6 +623,7 @@ async def reject_detection(
     Args:
         project_id: Project's UUID
         detection_id: Detection's UUID
+        http_request: FastAPI request (used by ``is_allowed`` to stash stage-1 state)
         request: Reject request (no additional fields required)
         current_user: Current authenticated user
         service: Detection service instance
@@ -607,10 +634,22 @@ async def reject_detection(
 
     Raises:
         401: Not authenticated
-        403: Access denied to project
+        403: Permission denied
         404: Detection not found
     """
-    await check_project_access(project_id, current_user.id, db)
+    await gate_action(
+        action=DETECTION_REJECT_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=http_request,
+        db=db,
+    )
+    if not await service.annotation_repo.exists_in_project(detection_id, project_id):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="detection not found",
+        )
+
     detection = await service.reject(
         detection_id=detection_id,
         user_id=current_user.id,
@@ -629,6 +668,7 @@ async def change_species(
     project_id: UUID,
     detection_id: UUID,
     request: ChangeSpeciesRequest,
+    http_request: Request,
     current_user: CurrentUser,
     service: DetectionServiceDep,
     db: DbSession,
@@ -639,6 +679,7 @@ async def change_species(
         project_id: Project's UUID
         detection_id: Detection's UUID
         request: Change species request with new tag and optional time range
+        http_request: FastAPI request (used by ``is_allowed`` to stash stage-1 state)
         current_user: Current authenticated user
         service: Detection service instance
         db: Database session
@@ -648,14 +689,27 @@ async def change_species(
 
     Raises:
         401: Not authenticated
-        403: Access denied to project
+        403: Permission denied
         404: Detection not found
     """
-    await check_project_access(project_id, current_user.id, db)
+    await gate_action(
+        action=DETECTION_CHANGE_SPECIES_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=http_request,
+        db=db,
+    )
+    if not await service.annotation_repo.exists_in_project(detection_id, project_id):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="detection not found",
+        )
+
     detection = await service.change_species(
         detection_id=detection_id,
         request=request,
         user_id=current_user.id,
+        project_id=project_id,
     )
     await db.commit()
     return detection
@@ -670,6 +724,7 @@ async def change_species(
 async def get_votes(
     project_id: UUID,
     detection_id: UUID,
+    request: Request,
     current_user: CurrentUser,
     vote_service: VoteServiceDep,
     db: DbSession,
@@ -682,6 +737,7 @@ async def get_votes(
     Args:
         project_id: Project's UUID
         detection_id: Detection's UUID
+        request: FastAPI request (used by ``is_allowed`` to stash stage-1 state)
         current_user: Current authenticated user
         vote_service: Vote service instance
         db: Database session
@@ -691,10 +747,22 @@ async def get_votes(
 
     Raises:
         401: Not authenticated
-        403: Access denied to project
+        403: Permission denied
         404: Detection not found
     """
-    await check_project_access(project_id, current_user.id, db)
+    await gate_action(
+        action=ANNOTATION_VOTE_LIST_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
+    if not await vote_service.annotation_repo.exists_in_project(detection_id, project_id):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="detection not found",
+        )
+
     return await vote_service.get_vote_summary(
         annotation_id=detection_id,
         current_user_id=current_user.id,
@@ -712,6 +780,7 @@ async def cast_vote(
     project_id: UUID,
     detection_id: UUID,
     request: VoteCastRequest,
+    http_request: Request,
     current_user: CurrentUser,
     vote_service: VoteServiceDep,
     db: DbSession,
@@ -726,6 +795,7 @@ async def cast_vote(
         project_id: Project's UUID
         detection_id: Detection's UUID
         request: Vote cast request (vote type, optional tag suggestion, note)
+        http_request: FastAPI request (used by ``is_allowed`` to stash stage-1 state)
         current_user: Current authenticated user
         vote_service: Vote service instance
         db: Database session
@@ -735,17 +805,25 @@ async def cast_vote(
 
     Raises:
         401: Not authenticated
-        403: Access denied to project
+        403: Permission denied
         404: Detection not found
         422: Validation error
     """
-    await check_project_access(project_id, current_user.id, db)
+    project = await gate_action(
+        action=ANNOTATION_VOTE_CREATE_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=http_request,
+        db=db,
+    )
+    if not await vote_service.annotation_repo.exists_in_project(detection_id, project_id):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="detection not found",
+        )
 
-    # Retrieve project settings for consensus thresholds
-    project_result = await db.execute(sa_select(Project).where(Project.id == project_id))
-    project = project_result.scalar_one_or_none()
-    min_votes = project.review_min_votes if project else 2
-    threshold = project.review_consensus_threshold if project else 0.667
+    min_votes = project.review_min_votes
+    threshold = project.review_consensus_threshold
 
     summary = await vote_service.cast_vote(
         annotation_id=detection_id,
@@ -768,6 +846,7 @@ async def cast_vote(
 async def delete_vote(
     project_id: UUID,
     detection_id: UUID,
+    request: Request,
     current_user: CurrentUser,
     vote_service: VoteServiceDep,
     db: DbSession,
@@ -779,6 +858,7 @@ async def delete_vote(
     Args:
         project_id: Project's UUID
         detection_id: Detection's UUID
+        request: FastAPI request (used by ``is_allowed`` to stash stage-1 state)
         current_user: Current authenticated user
         vote_service: Vote service instance
         db: Database session
@@ -788,15 +868,24 @@ async def delete_vote(
 
     Raises:
         401: Not authenticated
-        403: Access denied to project
+        403: Permission denied
         404: Detection not found or no vote to delete
     """
-    await check_project_access(project_id, current_user.id, db)
+    project = await gate_action(
+        action=ANNOTATION_VOTE_CREATE_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
+    if not await vote_service.annotation_repo.exists_in_project(detection_id, project_id):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="detection not found",
+        )
 
-    project_result = await db.execute(sa_select(Project).where(Project.id == project_id))
-    project = project_result.scalar_one_or_none()
-    min_votes = project.review_min_votes if project else 2
-    threshold = project.review_consensus_threshold if project else 0.667
+    min_votes = project.review_min_votes
+    threshold = project.review_consensus_threshold
 
     summary = await vote_service.delete_vote(
         annotation_id=detection_id,
@@ -817,6 +906,7 @@ async def delete_vote(
 async def delete_detection(
     project_id: UUID,
     detection_id: UUID,
+    request: Request,
     current_user: CurrentUser,
     service: DetectionServiceDep,
     db: DbSession,
@@ -826,15 +916,28 @@ async def delete_detection(
     Args:
         project_id: Project's UUID
         detection_id: Detection's UUID
+        request: FastAPI request (used by ``is_allowed`` to stash stage-1 state)
         current_user: Current authenticated user
         service: Detection service instance
         db: Database session
 
     Raises:
         401: Not authenticated
-        403: Access denied to project
+        403: Permission denied
         404: Detection not found
     """
-    await check_project_access(project_id, current_user.id, db)
+    await gate_action(
+        action=DETECTION_DELETE_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
+    if not await service.annotation_repo.exists_in_project(detection_id, project_id):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="detection not found",
+        )
+
     await service.delete(detection_id=detection_id)
     await db.commit()

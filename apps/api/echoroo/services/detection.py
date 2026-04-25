@@ -16,6 +16,9 @@ from echoroo.models.enums import DetectionStatus, SignalQuality, VoteType
 from echoroo.repositories.annotation import AnnotationRepository, TemporalSummaryRow
 from echoroo.repositories.annotation_vote import AnnotationVoteRepository
 from echoroo.repositories.confirmed_region import ConfirmedRegionRepository
+from echoroo.repositories.detection_run import DetectionRunRepository
+from echoroo.repositories.recording import RecordingRepository
+from echoroo.repositories.tag import TagRepository
 from echoroo.schemas.annotation_vote import DetectionVoteCounts
 from echoroo.schemas.detection import (
     ChangeSpeciesRequest,
@@ -41,6 +44,9 @@ class DetectionService:
         annotation_repo: AnnotationRepository,
         confirmed_region_repo: ConfirmedRegionRepository,
         vote_repo: AnnotationVoteRepository | None = None,
+        recording_repo: RecordingRepository | None = None,
+        tag_repo: TagRepository | None = None,
+        detection_run_repo: DetectionRunRepository | None = None,
     ) -> None:
         """Initialize service with repositories.
 
@@ -48,10 +54,18 @@ class DetectionService:
             annotation_repo: Annotation repository instance
             confirmed_region_repo: ConfirmedRegion repository instance
             vote_repo: Optional AnnotationVoteRepository for loading vote counts
+            recording_repo: Optional RecordingRepository for project ownership checks
+            tag_repo: Optional TagRepository for project ownership checks
+            detection_run_repo: Optional DetectionRunRepository for project ownership checks
         """
         self.annotation_repo = annotation_repo
         self.confirmed_region_repo = confirmed_region_repo
         self.vote_repo = vote_repo
+        self.recording_repo = recording_repo or RecordingRepository(annotation_repo.db)
+        self.tag_repo = tag_repo or TagRepository(annotation_repo.db)
+        self.detection_run_repo = detection_run_repo or DetectionRunRepository(
+            annotation_repo.db
+        )
 
     async def list_detections(
         self,
@@ -369,7 +383,7 @@ class DetectionService:
 
     async def create(
         self,
-        project_id: UUID,  # noqa: ARG002 - used for future authorization
+        project_id: UUID,
         request: DetectionCreate,
     ) -> DetectionResponse:
         """Create a new detection annotation.
@@ -381,6 +395,33 @@ class DetectionService:
         Returns:
             Created detection response
         """
+        if not await self.recording_repo.exists_in_project(request.recording_id, project_id):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="recording not found",
+            )
+
+        if request.tag_id is not None and not await self.tag_repo.get_by_id_in_project(
+            request.tag_id,
+            project_id,
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="tag not found",
+            )
+
+        if (
+            request.detection_run_id is not None
+            and not await self.detection_run_repo.exists_in_project(
+                request.detection_run_id,
+                project_id,
+            )
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="detection run not found",
+            )
+
         annotation = Annotation(
             recording_id=request.recording_id,
             tag_id=request.tag_id,
@@ -496,6 +537,7 @@ class DetectionService:
         detection_id: UUID,
         request: ChangeSpeciesRequest,
         user_id: UUID,
+        project_id: UUID,
     ) -> DetectionResponse:
         """Change the species tag of a detection annotation.
 
@@ -505,6 +547,7 @@ class DetectionService:
             detection_id: Annotation's UUID
             request: Change species request with new tag and optional time range
             user_id: ID of the user making the change
+            project_id: Project's UUID for tag ownership validation
 
         Returns:
             Updated detection response
@@ -517,6 +560,12 @@ class DetectionService:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Detection not found",
+            )
+
+        if not await self.tag_repo.get_by_id_in_project(request.new_tag_id, project_id):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="tag not found",
             )
 
         annotation.tag_id = request.new_tag_id

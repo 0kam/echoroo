@@ -164,6 +164,46 @@ DETECTION_EXPORT_ML_DATASET_ACTION: Action = register_action(
     )
 )
 
+DETECTION_CREATE_ACTION: Action = register_action(
+    Action(
+        name="detection.create",
+        required_permission=Permission.ANNOTATE,
+        is_mutating=True,
+    )
+)
+
+DETECTION_CONFIRM_ACTION: Action = register_action(
+    Action(
+        name="detection.confirm",
+        required_permission=Permission.ANNOTATE,
+        is_mutating=True,
+    )
+)
+
+DETECTION_REJECT_ACTION: Action = register_action(
+    Action(
+        name="detection.reject",
+        required_permission=Permission.ANNOTATE,
+        is_mutating=True,
+    )
+)
+
+DETECTION_CHANGE_SPECIES_ACTION: Action = register_action(
+    Action(
+        name="detection.change_species",
+        required_permission=Permission.ANNOTATE,
+        is_mutating=True,
+    )
+)
+
+DETECTION_DELETE_ACTION: Action = register_action(
+    Action(
+        name="detection.delete",
+        required_permission=Permission.EDIT_PROJECT,
+        is_mutating=True,
+    )
+)
+
 ANNOTATION_VOTE_LIST_ACTION: Action = register_action(
     Action(
         name="annotation_vote.list",
@@ -288,10 +328,15 @@ __all__ = [
     "ANNOTATION_VOTE_CREATE_ACTION",
     "ANNOTATION_VOTE_LIST_ACTION",
     "CUSTOM_MODEL_TRAIN_ACTION",
+    "DETECTION_CHANGE_SPECIES_ACTION",
+    "DETECTION_CONFIRM_ACTION",
+    "DETECTION_CREATE_ACTION",
+    "DETECTION_DELETE_ACTION",
     "DETECTION_EXPORT_CSV_ACTION",
     "DETECTION_EXPORT_ML_DATASET_ACTION",
     "DETECTION_GET_ACTION",
     "DETECTION_LIST_ACTION",
+    "DETECTION_REJECT_ACTION",
     "RECORDING_DELETE_ACTION",
     "RECORDING_LIST_ACTION",
     "RECORDING_MEDIA_ACTION",

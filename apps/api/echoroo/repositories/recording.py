@@ -60,6 +60,19 @@ class RecordingRepository(BaseRepository[Recording]):
         )
         return result.scalar_one_or_none()
 
+    async def exists_in_project(self, recording_id: UUID, project_id: UUID) -> bool:
+        """Return True when the recording belongs to a dataset in the project."""
+        from echoroo.models.dataset import Dataset
+
+        result = await self.db.execute(
+            select(Recording.id)
+            .join(Dataset, Recording.dataset_id == Dataset.id)
+            .where(Recording.id == recording_id)
+            .where(Dataset.project_id == project_id)
+            .limit(1)
+        )
+        return result.scalar_one_or_none() is not None
+
     async def get_by_dataset_and_path(self, dataset_id: UUID, path: str) -> Recording | None:
         """Get recording by dataset ID and path.
 

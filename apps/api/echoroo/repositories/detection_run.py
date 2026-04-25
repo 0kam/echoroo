@@ -35,6 +35,16 @@ class DetectionRunRepository(BaseRepository[DetectionRun]):
         )
         return result.scalar_one_or_none()
 
+    async def exists_in_project(self, run_id: UUID, project_id: UUID) -> bool:
+        """Return True when the detection run belongs to the project."""
+        result = await self.db.execute(
+            select(DetectionRun.id)
+            .where(DetectionRun.id == run_id)
+            .where(DetectionRun.project_id == project_id)
+            .limit(1)
+        )
+        return result.scalar_one_or_none() is not None
+
     async def list_by_project(
         self,
         project_id: UUID,
@@ -104,4 +114,3 @@ class DetectionRunRepository(BaseRepository[DetectionRun]):
         await self.db.flush()
         await self.db.refresh(run, ["project", "dataset"])
         return run
-
