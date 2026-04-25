@@ -129,6 +129,12 @@ class WebAuthnService:
 
         ``existing_credentials`` is optional for backwards-compatible call sites, but
         callers should pass it so duplicate IDs can be rejected after verification.
+
+        Note: this method emits a ``webauthn.registration_completed`` audit event
+        before returning. If the caller subsequently fails to persist the returned
+        ``StoredCredential``, the caller MUST emit a compensating audit event such
+        as ``webauthn.registration_persistence_failed`` so the audit log accurately
+        reflects the final state.
         """
         challenge = await self._load_challenge(self._registration_key(user_id), user_id=user_id)
         try:
@@ -192,7 +198,14 @@ class WebAuthnService:
         authentication_response: dict[str, Any],
         existing_credentials: Sequence[StoredCredential],
     ) -> StoredCredential:
-        """Verify authentication and return the updated credential record."""
+        """Verify authentication and return the updated credential record.
+
+        Note: this method emits a ``webauthn.authentication_completed`` audit event
+        before returning. If the caller subsequently fails to persist the returned
+        ``StoredCredential``, the caller MUST emit a compensating audit event such
+        as ``webauthn.authentication_persistence_failed`` so the audit log
+        accurately reflects the final state.
+        """
         challenge = await self._load_challenge(self._authentication_key(user_id), user_id=user_id)
         try:
             credential = parse_authentication_credential_json(authentication_response)
