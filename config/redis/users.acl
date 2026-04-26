@@ -1,8 +1,2 @@
-# Echoroo dev Redis ACL file (006-permissions-redesign, NFR-007).
-#
-# The default user is disabled (no commands allowed, no password) to force
-# all clients to authenticate as the `echoroo` user via AUTH.
-#
-# Format reference: https://redis.io/docs/management/security/acl/
 user default off nopass resetchannels -@all
 user echoroo on >echoroo-dev-redis-password ~* &* +@all
