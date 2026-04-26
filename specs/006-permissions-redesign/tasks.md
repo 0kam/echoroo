@@ -442,7 +442,7 @@ description: "Task list for 006-permissions-redesign (revised after /speckit.ana
 
 ### 16.8 Post-launch cleanup
 
-- [ ] **T999b** [POLISH] `apps/web/src/hooks.server.ts:155` の legacy `refresh_token` cookie fallback を撤去する。`echoroo_logged_in` marker のみで認証判定するよう移行完了後（post-launch + 30 日以上、全アクティブユーザーが新しいセッションを発行されたことを確認後）に実施。同タイミングで `apps/web/src/lib/stores/auth.svelte.ts` の `apiClient.post('/api/v1/auth/logout')` transition fallback も削除可能か再検討する。
+- [x] **T999b** [POLISH] ~~`apps/web/src/hooks.server.ts:155` の legacy `refresh_token` cookie fallback を撤去する。~~ **完了 (early, Phase 4 中)**: pre-launch でユーザーがいないため transitional fallback は不要だった。`hooks.server.ts` / `+layout.server.ts` / `+page.server.ts` から `refresh_token` cookie 参照を削除し、`echoroo_logged_in` marker のみで認証判定するよう変更済み。`apps/web/src/lib/stores/auth.svelte.ts` の logout transition fallback の再検討は別タスクで継続。
 
 ---
 

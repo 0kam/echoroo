@@ -3,9 +3,9 @@ import { redirect } from '@sveltejs/kit';
 import { localizeHref } from '$lib/paraglide/runtime';
 
 export const load: PageServerLoad = async ({ cookies }) => {
-  const refreshToken = cookies.get('refresh_token');
+  const loggedInMarker = cookies.get('echoroo_logged_in');
 
-  if (refreshToken) {
+  if (loggedInMarker === '1') {
     throw redirect(303, localizeHref('/dashboard'));
   }
 

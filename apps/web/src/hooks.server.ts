@@ -78,20 +78,6 @@ async function checkSetupStatus(): Promise<{
 }
 
 /**
- * Check if a refresh token cookie value appears structurally valid (non-empty).
- * We intentionally do NOT call the backend refresh endpoint here to avoid a
- * race condition: the client-side auth store also calls /auth/refresh on
- * initialization, and hitting the endpoint twice with the same token causes
- * the backend to detect a replay attack and revoke the session.
- *
- * True token validity is verified lazily by the client when it calls
- * /api/v1/users/me (which triggers a refresh internally if needed).
- */
-function isRefreshTokenPresent(refreshToken: string): boolean {
-  return refreshToken.trim().length > 0;
-}
-
-/**
  * Combined Paraglide i18n + auth handle.
  *
  * The paraglideMiddleware must wrap the entire auth logic so that
@@ -151,25 +137,8 @@ async function handleAuth(
   // NOT visible to SvelteKit page routes. The marker cookie carries no
   // sensitive content (literal `"1"`) and exists only so this guard can
   // tell whether a session was established.
-  //
-  // The legacy `refresh_token` cookie check is kept as a fallback during
-  // the Phase 4 transition; once T140+ is fully rolled out it can be
-  // removed and only the marker cookie checked.
   const loggedInMarker = cookies.get('echoroo_logged_in');
-  const refreshToken = cookies.get('refresh_token');
-  let isAuthenticated = false;
-
-  if (loggedInMarker === '1') {
-    isAuthenticated = true;
-  } else if (refreshToken) {
-    // Legacy fallback: only check that the refresh token cookie is present
-    // and non-empty. We deliberately avoid calling the backend
-    // /auth/refresh endpoint here because the client-side auth store also
-    // calls it on initialization. Calling it twice with the same token
-    // triggers a replay-attack detection on the backend and causes the
-    // session to be revoked.
-    isAuthenticated = isRefreshTokenPresent(refreshToken);
-  }
+  const isAuthenticated = loggedInMarker === '1';
 
   // Store auth state in locals for use in load functions
   event.locals.isAuthenticated = isAuthenticated;
