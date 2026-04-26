@@ -235,6 +235,21 @@ class AuthRouterConfig:
     public_path_prefix_allowlist: tuple[tuple[str, frozenset[str]], ...] = field(
         default_factory=tuple
     )
+    # Phase 5 polish round 4 (致命 1): explicit nested-suffix allowlist for
+    # Guest-readable paths beneath an authenticated prefix. Each tuple is
+    # ``(prefix, suffix, methods)`` where ``prefix`` is the collection root
+    # (no trailing slash), ``suffix`` is the literal nested segment after
+    # ``{id}`` (with leading slash, e.g. ``/recordings``), and ``methods`` is
+    # the set of HTTP methods that may pass through anonymously. Matching is
+    # strict: ``{prefix}/{[^/]+}{suffix}`` and ``{prefix}/{[^/]+}{suffix}/``.
+    # Anything deeper (``/recordings/{id}/audio``) MUST go through the
+    # session authenticator path. The companion FlexibleCurrentUser dependency
+    # on ``/api/v1/projects/.../audio`` already accepts bearer-less calls for
+    # Public + Active projects, so deep audio streams keep working without
+    # widening this allowlist.
+    public_path_nested_allowlist: tuple[
+        tuple[str, str, frozenset[str]], ...
+    ] = field(default_factory=tuple)
 
 
 # ---------------------------------------------------------------------------
@@ -297,6 +312,32 @@ class AuthRouterMiddleware(BaseHTTPMiddleware):
                 # When the caller DID send a session cookie, fall through
                 # the normal ``_authenticate_session`` path so they get a
                 # proper Principal. Otherwise treat as Guest.
+                if path.startswith(self.config.session_prefix) and request.cookies.get(
+                    self.config.session_cookie_name
+                ):
+                    break
+                request.state.principal = None
+                return await call_next(request)
+
+        # Phase 5 polish round 4 (致命 1): explicit nested-suffix allowlist.
+        # The structural prefix matcher above intentionally rejects anything
+        # deeper than ``{prefix}/{id}``. A tightly-scoped opt-in lives here so
+        # the project recording list (``/web-api/v1/projects/{id}/recordings``)
+        # can pass through to the OptionalCurrentUser dependency without
+        # widening the matcher to allow arbitrary nested paths like
+        # ``/members`` or ``/license-history``.
+        for (
+            nested_prefix,
+            nested_suffix,
+            nested_methods,
+        ) in self.config.public_path_nested_allowlist:
+            nested_pattern = (
+                rf"{re.escape(nested_prefix)}/[^/]+{re.escape(nested_suffix)}/?"
+            )
+            if (
+                request.method in nested_methods
+                and re.fullmatch(nested_pattern, path) is not None
+            ):
                 if path.startswith(self.config.session_prefix) and request.cookies.get(
                     self.config.session_cookie_name
                 ):

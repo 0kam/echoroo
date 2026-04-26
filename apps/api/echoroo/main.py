@@ -141,6 +141,20 @@ def create_app() -> FastAPI:
     auth_router_public_prefixes: tuple[tuple[str, frozenset[str]], ...] = (
         ("/web-api/v1/projects", frozenset({"GET"})),
     )
+    # Phase 5 polish round 4 (致命 1): allow Guest GET on the project recording
+    # list ``GET /web-api/v1/projects/{id}/recordings`` so signed-out visitors
+    # can wire ``<audio>`` elements on the public detail page. The existing
+    # Stage-1 gate inside ``list_public_recordings`` enforces visibility/status
+    # — Restricted projects respond 404 (FR-018) and matrix-denied authenticated
+    # callers respond 403. Other nested paths (``/members``,
+    # ``/license-history``, future endpoints) are intentionally NOT added here
+    # so they keep falling through to the cookie-required session
+    # authenticator.
+    auth_router_public_nested: tuple[
+        tuple[str, str, frozenset[str]], ...
+    ] = (
+        ("/web-api/v1/projects", "/recordings", frozenset({"GET"})),
+    )
     app.add_middleware(
         AuthRouterMiddleware,
         config=AuthRouterConfig(
@@ -150,6 +164,7 @@ def create_app() -> FastAPI:
             session_cookie_name=settings.web_session_cookie_name,
             public_path_allowlist=auth_router_allowlist,
             public_path_prefix_allowlist=auth_router_public_prefixes,
+            public_path_nested_allowlist=auth_router_public_nested,
         ),
     )
 

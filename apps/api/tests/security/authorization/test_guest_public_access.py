@@ -968,3 +968,313 @@ class TestNestedProjectPathsRequireAuth:
             f"Arbitrary nested subpath must reach auth (401) or be "
             f"unrouted (404), got {response.status_code}"
         )
+
+
+# ---------------------------------------------------------------------------
+# T220-15 (polish round 4 — 致命 1): Guest recording list endpoint
+# (``GET /web-api/v1/projects/{id}/recordings``).
+#
+# Backstory: Phase 5 round 3 left the Guest detail page (``+page.svelte``)
+# rendering an empty array because there was no Guest-aware recording list
+# endpoint. The audio stream worked but Guests had no way to discover the
+# recording UUIDs. Round 4 adds a minimal Web UI surface that:
+#
+# * Returns 200 with a paginated list on Public + Active projects.
+# * Returns 404 on Restricted / Archived / Dormant projects (FR-018).
+# * Shapes the response so it never echoes the S3 object key, content
+#   hash, owner email, or raw lat/lng (FR-030).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+class TestGuestPublicRecordingList:
+    """Guest can enumerate recordings on Public + Active projects."""
+
+    async def test_guest_lists_public_active_recordings_200(
+        self,
+        client: AsyncClient,
+        public_active_project: Project,
+        public_recording: Recording,
+    ) -> None:
+        """GET /web-api/v1/projects/{public_id}/recordings as Guest → 200."""
+        response = await client.get(
+            f"/web-api/v1/projects/{public_active_project.id}/recordings",
+        )
+        assert response.status_code == 200, (
+            f"Expected 200 for Guest recording list on Public+Active project, "
+            f"got {response.status_code}: {response.text}"
+        )
+        body = response.json()
+        assert body["page"] == 1
+        assert body["limit"] == 20
+        assert body["total"] >= 1
+
+        ids = {item["id"] for item in body["items"]}
+        assert str(public_recording.id) in ids, (
+            "public_recording must appear in Guest recording list"
+        )
+
+    async def test_guest_recording_list_response_shape_is_minimal(
+        self,
+        client: AsyncClient,
+        public_active_project: Project,
+        public_recording: Recording,
+    ) -> None:
+        """Response shape must NOT include path / hash / note / owner email."""
+        response = await client.get(
+            f"/web-api/v1/projects/{public_active_project.id}/recordings",
+        )
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["items"], "fixture should produce at least one recording row"
+
+        item = next(
+            it for it in body["items"] if it["id"] == str(public_recording.id)
+        )
+        # Allowed keys — exact contract for the public recording shape.
+        assert set(item.keys()) <= {
+            "id",
+            "project_id",
+            "name",
+            "duration_seconds",
+            "site_h3_index",
+        }, (
+            f"PublicRecordingItem leaked unexpected fields: "
+            f"{set(item.keys()) - {'id', 'project_id', 'name', 'duration_seconds', 'site_h3_index'}}"
+        )
+
+        # Forbidden keys (S3 object key, content hash, free-form notes).
+        for forbidden in ("path", "hash", "note", "filename_full", "s3_key"):
+            assert forbidden not in item, (
+                f"PublicRecordingItem must not expose '{forbidden}' to Guests"
+            )
+
+    async def test_guest_recording_list_no_raw_coordinates(
+        self,
+        client: AsyncClient,
+        public_active_project: Project,
+        public_recording: Recording,
+    ) -> None:
+        """Recording list must not contain raw lat/lng anywhere (FR-030)."""
+        response = await client.get(
+            f"/web-api/v1/projects/{public_active_project.id}/recordings",
+        )
+        assert response.status_code == 200, response.text
+        body = response.text
+        for forbidden in ('"latitude"', '"longitude"', '"lat"', '"lng"'):
+            assert forbidden not in body, (
+                f"Recording list body leaked raw coordinate key {forbidden}"
+            )
+
+    async def test_guest_recording_list_does_not_echo_owner_email(
+        self,
+        client: AsyncClient,
+        public_active_project: Project,
+        public_recording: Recording,
+        project_owner: User,
+    ) -> None:
+        """Owner email must not surface in recording list body (FR-030)."""
+        response = await client.get(
+            f"/web-api/v1/projects/{public_active_project.id}/recordings",
+        )
+        assert response.status_code == 200, response.text
+        assert project_owner.email not in response.text, (
+            "Owner email must not appear in PublicRecordingListResponse body"
+        )
+
+    async def test_guest_recording_list_on_restricted_project_404(
+        self,
+        client: AsyncClient,
+        restricted_project: Project,
+    ) -> None:
+        """Guest GET /recordings on Restricted project → 404 (FR-018)."""
+        response = await client.get(
+            f"/web-api/v1/projects/{restricted_project.id}/recordings",
+        )
+        assert response.status_code == 404, (
+            f"Expected 404 (anti-enumeration) for Restricted recording list, "
+            f"got {response.status_code}: {response.text}"
+        )
+
+    async def test_guest_recording_list_on_archived_public_project_404(
+        self,
+        client: AsyncClient,
+        archived_public_project: Project,
+    ) -> None:
+        """Guest GET /recordings on Archived Public project → 404 (FR-018)."""
+        response = await client.get(
+            f"/web-api/v1/projects/{archived_public_project.id}/recordings",
+        )
+        assert response.status_code == 404, (
+            f"Expected 404 for Archived Public recording list, "
+            f"got {response.status_code}: {response.text}"
+        )
+
+    async def test_guest_recording_list_on_absent_project_404(
+        self,
+        client: AsyncClient,
+    ) -> None:
+        """Guest GET /recordings on absent project UUID → 404."""
+        nonexistent = uuid.uuid4()
+        response = await client.get(
+            f"/web-api/v1/projects/{nonexistent}/recordings",
+        )
+        assert response.status_code == 404, (
+            f"Expected 404 for nonexistent project recording list, "
+            f"got {response.status_code}: {response.text}"
+        )
+
+    async def test_guest_recording_list_pagination_clamped(
+        self,
+        client: AsyncClient,
+        public_active_project: Project,
+        public_recording: Recording,
+    ) -> None:
+        """Pagination params honored; out-of-range page returns empty list."""
+        response = await client.get(
+            f"/web-api/v1/projects/{public_active_project.id}/recordings"
+            f"?page=99&limit=5",
+        )
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["page"] == 99
+        assert body["limit"] == 5
+        assert body["items"] == [], (
+            "Out-of-range page should return empty items list"
+        )
+
+
+# ---------------------------------------------------------------------------
+# T220-16 (polish round 5 — 重要 1): Site H3 generalisation on the Guest
+# recording list (FR-029, FR-030).
+#
+# Backstory: round 4 wired ``site_h3_index`` directly from the raw
+# ``Site.h3_index`` column. If a deployment stores sites at a precise
+# resolution (e.g. res 15, ~1 m² cells) the Guest-facing list would echo
+# the full precision back. ``apply_response_filter`` only generalises the
+# field literally named ``h3_index``, so the round-4 code's defence-in-depth
+# call had no effect on ``site_h3_index``.
+#
+# Round 5 routes the cell through an adapter shape that exposes
+# ``h3_index_member`` to the filter, runs stage 2, then writes the
+# coarsened cell back onto the response field. Public + non-member callers
+# now see at most H3_RES_9 (project ceiling, FR-016 semantics).
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+async def public_site_high_precision(
+    db_session: AsyncSession, public_active_project: Project
+) -> Site:
+    """A site stored at H3 resolution 15 — the worst case for leakage.
+
+    Cell ``8f2a10728906185`` was generated via ``h3.latlng_to_cell`` so it is
+    guaranteed valid; using a hard-coded literal keeps the test independent
+    of the h3 library's runtime behaviour.
+    """
+    site = Site(
+        project_id=public_active_project.id,
+        name="T220 High Precision Site",
+        h3_index="8f2a10728906185",  # res 15
+    )
+    db_session.add(site)
+    await db_session.commit()
+    await db_session.refresh(site)
+    return site
+
+
+@pytest.fixture
+async def public_dataset_high_precision(
+    db_session: AsyncSession,
+    public_active_project: Project,
+    public_site_high_precision: Site,
+    project_owner: User,
+) -> Dataset:
+    """Dataset linked to the res-15 site."""
+    dataset = Dataset(
+        project_id=public_active_project.id,
+        site_id=public_site_high_precision.id,
+        created_by_id=project_owner.id,
+        name="T220 High Precision Dataset",
+        visibility=DatasetVisibility.PUBLIC,
+        status=DatasetStatus.COMPLETED,
+    )
+    db_session.add(dataset)
+    await db_session.commit()
+    await db_session.refresh(dataset)
+    return dataset
+
+
+@pytest.fixture
+async def public_recording_high_precision(
+    db_session: AsyncSession,
+    public_dataset_high_precision: Dataset,
+) -> Recording:
+    """Recording attached to the res-15 dataset."""
+    rec_id = uuid.uuid4()
+    recording = Recording(
+        id=rec_id,
+        dataset_id=public_dataset_high_precision.id,
+        filename="test_t220_hp.wav",
+        path=(
+            f"recordings/{public_dataset_high_precision.project_id}"
+            f"/{public_dataset_high_precision.id}/{rec_id}.wav"
+        ),
+        duration=5.0,
+        samplerate=44100,
+        channels=1,
+    )
+    db_session.add(recording)
+    await db_session.commit()
+    await db_session.refresh(recording)
+    return recording
+
+
+@pytest.mark.asyncio
+class TestGuestRecordingListH3Generalisation:
+    """Site H3 indexes are coarsened to the Public ceiling for Guest callers."""
+
+    async def test_guest_sees_h3_coarsened_to_public_ceiling(
+        self,
+        client: AsyncClient,
+        public_active_project: Project,
+        public_recording_high_precision: Recording,
+    ) -> None:
+        """Raw res-15 cell must be returned at most at H3_RES_9 to Guests.
+
+        FR-029 / FR-030: the Public visibility ceiling is res 9 unless the
+        project / taxon configuration loosens it (no looser override here).
+        Asserting on the runtime resolution rather than a hard-coded cell
+        keeps the test resilient to any future change in the H3 hierarchy.
+        """
+        import h3 as _h3
+
+        response = await client.get(
+            f"/web-api/v1/projects/{public_active_project.id}/recordings",
+        )
+        assert response.status_code == 200, response.text
+        body = response.json()
+
+        item = next(
+            it
+            for it in body["items"]
+            if it["id"] == str(public_recording_high_precision.id)
+        )
+        leaked = item["site_h3_index"]
+        assert leaked is not None, (
+            "site_h3_index should be present (was set on the linked Site)"
+        )
+        # Stored cell is res 15 — Guest must NEVER see this raw value.
+        assert leaked != "8f2a10728906185", (
+            "Raw res-15 site h3_index leaked to Guest — "
+            "apply_response_filter did not generalise it"
+        )
+        # Public ceiling is H3_RES_9: anything coarser-or-equal is fine.
+        assert _h3.get_resolution(leaked) <= 9, (
+            f"Guest received site_h3_index at resolution "
+            f"{_h3.get_resolution(leaked)}, expected <= 9 (Public ceiling)"
+        )
+        # Sanity check: the coarsened cell must be an ancestor of the raw cell.
+        assert _h3.cell_to_parent("8f2a10728906185", _h3.get_resolution(leaked)) == leaked, (
+            "Coarsened cell must be the H3 ancestor of the raw site cell"
+        )
