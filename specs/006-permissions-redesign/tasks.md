@@ -243,13 +243,14 @@ description: "Task list for 006-permissions-redesign (revised after /speckit.ana
 
 ## Phase 5: US1 - Guest が Public で録音再生（P1）
 
-- [ ] **T200** [US1] `api/web_v1/projects/_core.py` で Public 読み取り経路実装（T118 で分割済み）(FR-009、FR-010、FR-016)
-- [ ] **T201** [P] [US1] Guest 用 `/web-api/v1/projects` list（Public のみフィルタ、Response filter 経由、生 lat/lng 除外）(FR-016、FR-018、FR-030)
-- [ ] **T202** [P] [US1] Recording stream endpoint（presigned S3 URL に species 名含めない）(security H-8、FR-016)
-- [ ] **T210** [US1] `apps/web/src/routes/(public)/projects/[id]/+page.svelte` 新規（Leaflet / MapLibre で `h3_index` 描画、DL 非活性）(FR-016、FR-018)
-- [ ] **T211** [P] [US1] `apps/web/src/routes/(public)/+layout.server.ts`（未認証 OK、Public のみ）(FR-016)
-- [ ] **T220** [P] [US1] `apps/api/tests/security/authorization/test_guest_public_access.py` TDD: Guest 200、DL 401、希少種位置 H3_RES_5 以下 (FR-016、FR-018、FR-029、SC-016)
-- [ ] **T221** [US1] Playwright E2E: Guest でトップページ → Public 閲覧 → 録音再生 (PR-003、P1 必須、SC-002)
+- [X] **T200** [US1] `api/web_v1/projects/_core.py` で Public 読み取り経路実装（T118 で分割済み）(FR-009、FR-010、FR-016)
+- [X] **T201** [P] [US1] Guest 用 `/web-api/v1/projects` list（Public のみフィルタ、Response filter 経由、生 lat/lng 除外）(FR-016、FR-018、FR-030)
+- [X] **T202** [P] [US1] Recording stream endpoint（presigned S3 URL に species 名含めない）(security H-8、FR-016)
+- [X] **T210** [US1] `apps/web/src/routes/(public)/explore/projects/[id]/+page.svelte` 新規（h3_index 表示、DL 非活性、403/404 統一）(FR-016、FR-018) — URL は `(app)/projects/[id]` との衝突回避で `/explore/projects/[id]` 採用
+- [X] **T211** [P] [US1] `apps/web/src/routes/(public)/+layout.server.ts`（未認証 OK、Public のみ）+ `+layout.svelte`（auth-aware CTA）(FR-016)
+- [X] **T220** [P] [US1] `apps/api/tests/security/authorization/test_guest_public_access.py` TDD: Guest 200、DL 401、希少種位置 H3_RES_5 以下、recording list shape minimal、H3 generalisation res15→≤9 (FR-016、FR-018、FR-029、FR-030、SC-016) — 34 tests pass
+- [X] **T221** [US1] Playwright E2E: Guest でトップページ → Public 閲覧 → 録音再生 (PR-003、P1 必須、SC-002) — 9 シナリオ env-gated (`PHASE5_E2E_ENABLED`)
+- [X] **T200b** [US1] Bonus: `GET /web-api/v1/projects/{id}/recordings` (Guest-aware list endpoint、`PublicRecordingItem` schema、auth_router nested allowlist) — Codex review で必須と判定 (T210 の audio 再生 UI が機能するため)
 
 ---
 
