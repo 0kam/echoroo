@@ -217,6 +217,11 @@ async def test_verification_email_missing_api_key_does_not_log_raw_email(
     # log line's worst sin (a token in logs = account takeover).
     for record in caplog.records:
         assert "verification-token-XYZ" not in record.getMessage()
+    # The surrogate hash MUST appear so the warn record is still useful.
+    expected_hash = _HASH_BY_RECIPIENT[_OTHER_RECIPIENT]
+    assert any(expected_hash in r.getMessage() for r in caplog.records), (
+        "expected recipient_hash surrogate to appear in the log"
+    )
     _assert_no_raw_recipient(caplog, _OTHER_RECIPIENT)
 
 
@@ -239,6 +244,11 @@ async def test_verification_email_delivery_error_does_not_log_raw_email(
     await send_verification_email(_OTHER_RECIPIENT, "verification-token-XYZ")
 
     assert any("delivery failed" in r.getMessage() for r in caplog.records)
+    # The surrogate hash MUST appear alongside the delivery-failed message.
+    expected_hash = _HASH_BY_RECIPIENT[_OTHER_RECIPIENT]
+    assert any(expected_hash in r.getMessage() for r in caplog.records), (
+        "expected recipient_hash surrogate to appear in the log"
+    )
     _assert_no_raw_recipient(caplog, _OTHER_RECIPIENT)
 
 
@@ -253,6 +263,11 @@ async def test_password_reset_email_missing_api_key_does_not_log_raw_email(
 
     for record in caplog.records:
         assert "reset-token-ABC" not in record.getMessage()
+    # The surrogate hash MUST appear so the warn record is still useful.
+    expected_hash = _HASH_BY_RECIPIENT[_RECIPIENT]
+    assert any(expected_hash in r.getMessage() for r in caplog.records), (
+        "expected recipient_hash surrogate to appear in the log"
+    )
     _assert_no_raw_recipient(caplog, _RECIPIENT)
 
 
@@ -273,4 +288,9 @@ async def test_password_reset_email_delivery_error_does_not_log_raw_email(
     await send_password_reset_email(_RECIPIENT, "reset-token-ABC")
 
     assert any("delivery failed" in r.getMessage() for r in caplog.records)
+    # The surrogate hash MUST appear alongside the delivery-failed message.
+    expected_hash = _HASH_BY_RECIPIENT[_RECIPIENT]
+    assert any(expected_hash in r.getMessage() for r in caplog.records), (
+        "expected recipient_hash surrogate to appear in the log"
+    )
     _assert_no_raw_recipient(caplog, _RECIPIENT)
