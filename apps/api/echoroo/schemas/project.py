@@ -15,6 +15,27 @@ from echoroo.models.enums import (
 from echoroo.schemas.auth import UserResponse
 
 
+class PublicOwnerResponse(BaseModel):
+    """Public-safe owner sub-object embedded in :class:`ProjectResponse`.
+
+    FR-030 (Phase 5 polish round 2): ``ProjectResponse`` is reachable by Guest
+    callers on Public + Active projects, so the embedded owner *must not* leak
+    PII (``email``, ``last_login_at``, ``created_at`` etc.). The full
+    :class:`UserResponse` is only safe inside authenticated, owner-scope
+    surfaces (``/auth/me``, ``/web-api/v1/admin/users``).
+
+    The shape deliberately mirrors what the Web UI needs for a "by <author>"
+    byline — display name plus an opaque ID for navigation. Anything else
+    (avatar URLs, profile bios, etc.) MUST be added here explicitly with
+    a privacy review, not via field inheritance.
+    """
+
+    id: UUID
+    display_name: str | None
+
+    model_config = {"from_attributes": True}
+
+
 class ProjectOverviewSite(BaseModel):
     """Site summary within project overview."""
 
@@ -88,7 +109,7 @@ class ProjectResponse(BaseModel):
     status: ProjectStatus
     dormant_since: datetime | None
     archived_since: datetime | None
-    owner: UserResponse
+    owner: PublicOwnerResponse
     created_at: datetime
     updated_at: datetime
 

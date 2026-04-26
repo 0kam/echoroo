@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Final, Protocol
@@ -223,6 +224,17 @@ class AuthRouterConfig:
     public_path_allowlist: tuple[str, ...] = field(
         default_factory=lambda: PUBLIC_AUTH_PATHS
     )
+    # Phase 5 (FR-016 / US1): Guest-readable prefix + method tuples. When the
+    # request path starts with any prefix and the method matches, the
+    # middleware sets ``principal=None`` and passes through. Used for the
+    # Public-readable Web UI surface (``GET /web-api/v1/projects`` and
+    # ``GET /web-api/v1/projects/{id}``) so Guests can resolve Public
+    # metadata without a session cookie. The Stage-1 permission gate
+    # (:func:`echoroo.core.permissions.is_allowed`) then enforces that the
+    # underlying project is actually Public + Active.
+    public_path_prefix_allowlist: tuple[tuple[str, frozenset[str]], ...] = field(
+        default_factory=tuple
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -255,6 +267,42 @@ class AuthRouterMiddleware(BaseHTTPMiddleware):
         if path in self.config.public_path_allowlist:
             request.state.principal = None
             return await call_next(request)
+
+        # Phase 5 / FR-016: prefix + method match for Guest-readable paths.
+        # A best-effort soft auth attempt happens INSIDE the gate via the
+        # ``OptionalCurrentUser`` Depends — here we only short-circuit the
+        # hard cookie-required check when the call is anonymous.
+        #
+        # IMPORTANT (polish round 3, 重要 2): the Guest allowlist intentionally
+        # admits ONLY the collection root (e.g. ``/web-api/v1/projects``) and
+        # single-segment detail paths (``/web-api/v1/projects/<id>``). Deeper
+        # paths such as ``/web-api/v1/projects/<id>/members`` MUST NOT be
+        # auto-allowed, even on GET — every nested resource has its own
+        # authorisation surface (members, license-history, etc.) and Guest
+        # access for those is decided per-endpoint, not by the router. A
+        # naive ``startswith`` check would let those slip through the
+        # cookie-required guard the moment such an endpoint is added.
+        #
+        # Polish round 2 already tightened ``startswith`` against typo paths
+        # like ``/web-api/v1/projectsXYZ``; this round narrows the structural
+        # match to keep nested routes off the Guest fast-path.
+        for allowed_prefix, allowed_methods in self.config.public_path_prefix_allowlist:
+            prefix_match = (
+                path == allowed_prefix
+                or path == f"{allowed_prefix}/"
+                or re.fullmatch(rf"{re.escape(allowed_prefix)}/[^/]+/?", path)
+                is not None
+            )
+            if prefix_match and request.method in allowed_methods:
+                # When the caller DID send a session cookie, fall through
+                # the normal ``_authenticate_session`` path so they get a
+                # proper Principal. Otherwise treat as Guest.
+                if path.startswith(self.config.session_prefix) and request.cookies.get(
+                    self.config.session_cookie_name
+                ):
+                    break
+                request.state.principal = None
+                return await call_next(request)
 
         if path.startswith(self.config.programmatic_prefix):
             result = await self._authenticate_api_key(request)

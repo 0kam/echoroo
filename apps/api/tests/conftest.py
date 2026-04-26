@@ -1,7 +1,9 @@
 """Pytest configuration and fixtures."""
 
 import os
+import tempfile
 from collections.abc import AsyncGenerator
+from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
@@ -16,9 +18,12 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.pool import NullPool
 
+from echoroo.api.v1.recordings import get_audio_service
 from echoroo.core.database import get_db
+from echoroo.core.settings import get_settings
 from echoroo.main import create_app
 from echoroo.models.base import Base
+from echoroo.services.audio import AudioService
 
 # Test database URL — override via TEST_DATABASE_URL env var to allow running
 # from inside Docker containers where the DB is accessible via a service hostname
@@ -94,8 +99,11 @@ async def setup_test_database(engine: AsyncEngine) -> None:
     # so that newly added tables/enums are picked up on existing test databases.
     async with engine.begin() as conn:
         enum_defs: list[tuple[str, list[str]]] = [
-            ("projectvisibility", ["private", "public"]),
+            ("projectvisibility", ["private", "public", "restricted"]),
             ("projectrole", ["admin", "member", "viewer"]),
+            ("projectmemberrole", ["admin", "member", "viewer"]),
+            ("projectstatus", ["active", "dormant", "archived"]),
+            ("projectlicense", ["CC0", "CC-BY", "CC-BY-NC", "CC-BY-SA"]),
             ("setting_type", ["string", "number", "boolean", "json"]),
             ("datasetvisibility", ["private", "public"]),
             ("datasetstatus", ["pending", "scanning", "processing", "completed", "failed"]),
@@ -106,7 +114,13 @@ async def setup_test_database(engine: AsyncEngine) -> None:
             ("reviewstatus", ["unreviewed", "approved", "rejected"]),
             ("annotationsource", ["human", "model"]),
             ("geometrytype", ["BoundingBox", "TimeInterval"]),
-            ("detectionsource", ["birdnet", "perch_search", "human"]),
+            (
+                "detectionsource",
+                [
+                    "birdnet", "perch", "perch_search", "similarity_search",
+                    "custom_svm", "human", "sampling_round",
+                ],
+            ),
             ("detectionstatus", ["unreviewed", "confirmed", "rejected"]),
             ("detectionrunstatus", ["pending", "running", "completed", "failed"]),
             (
@@ -115,6 +129,15 @@ async def setup_test_database(engine: AsyncEngine) -> None:
             ),
             ("uploadfilestatus", ["pending", "uploaded", "valid", "invalid", "imported"]),
             ("searchsessionstatus", ["pending", "running", "completed", "failed"]),
+            ("votetype", ["agree", "disagree", "unsure"]),
+            (
+                "annotationvotesource",
+                ["member", "guest_authenticated", "trusted_user"],
+            ),
+            ("signalquality", ["solo", "dominant", "mixed"]),
+            ("consensusstatus", ["needs_votes", "agreed", "rejected", "disputed"]),
+            ("annotationsetstatus", ["sampling", "ready", "in_progress", "completed"]),
+            ("annotationsegmentstatus", ["unannotated", "annotated", "skipped"]),
         ]
         for type_name, values in enum_defs:
             await conn.execute(sa.text(_make_create_enum_sql(type_name, values)))
@@ -145,52 +168,74 @@ async def setup_test_database(engine: AsyncEngine) -> None:
 
 async def cleanup_test_data(session: AsyncSession) -> None:
     """Clean up test data from all tables."""
+
+    def _safe_delete(table: str) -> str:
+        """Return DO-block that DELETEs from *table* only if it exists."""
+        return (
+            f"DO $$ BEGIN IF EXISTS "
+            f"(SELECT 1 FROM pg_class WHERE relname='{table}') "
+            f"THEN DELETE FROM {table}; END IF; END $$"
+        )
+
     # Delete in correct order (foreign key dependencies)
     # Annotation-related tables must be cleaned before clips/recordings/datasets
-    await session.execute(sa.text("DELETE FROM sound_event_annotation_tags"))
-    await session.execute(sa.text("DELETE FROM clip_annotation_tags"))
-    await session.execute(sa.text("DELETE FROM annotation_project_tags"))
-    await session.execute(sa.text("DELETE FROM annotation_project_datasets"))
-    await session.execute(sa.text("DELETE FROM notes"))
-    await session.execute(sa.text("DELETE FROM sound_event_annotations"))
-    await session.execute(sa.text("DELETE FROM clip_annotations"))
-    await session.execute(sa.text("DELETE FROM annotation_tasks"))
-    await session.execute(sa.text("DELETE FROM annotation_projects"))
+    await session.execute(sa.text(_safe_delete("sound_event_annotation_tags")))
+    await session.execute(sa.text(_safe_delete("clip_annotation_tags")))
+    await session.execute(sa.text(_safe_delete("annotation_project_tags")))
+    await session.execute(sa.text(_safe_delete("annotation_project_datasets")))
+    await session.execute(sa.text(_safe_delete("notes")))
+    await session.execute(sa.text(_safe_delete("sound_event_annotations")))
+    await session.execute(sa.text(_safe_delete("clip_annotations")))
+    await session.execute(sa.text(_safe_delete("annotation_tasks")))
+    await session.execute(sa.text(_safe_delete("annotation_projects")))
+    # Annotation voting and comments (006-permissions-redesign)
+    await session.execute(sa.text(_safe_delete("annotation_votes")))
+    await session.execute(sa.text(_safe_delete("annotation_comments")))
+    # Annotation sets / segments / time-range annotations (sampling rounds)
+    await session.execute(sa.text(_safe_delete("time_range_annotations")))
+    await session.execute(sa.text(_safe_delete("annotation_segments")))
+    await session.execute(sa.text(_safe_delete("annotation_sets")))
+    await session.execute(sa.text(_safe_delete("sampling_round_items")))
+    await session.execute(sa.text(_safe_delete("sampling_rounds")))
     # Upload feature tables (004-upload-tables)
-    await session.execute(sa.text("DELETE FROM upload_files"))
-    await session.execute(sa.text("DELETE FROM upload_sessions"))
+    await session.execute(sa.text(_safe_delete("upload_files")))
+    await session.execute(sa.text(_safe_delete("upload_sessions")))
     # Detection review tables (003-detection-review)
-    await session.execute(sa.text("DELETE FROM confirmed_regions"))
-    await session.execute(sa.text("DELETE FROM annotations"))
-    await session.execute(sa.text("DELETE FROM detection_runs"))
+    await session.execute(sa.text(_safe_delete("confirmed_regions")))
+    await session.execute(sa.text(_safe_delete("annotations")))
+    await session.execute(sa.text(_safe_delete("detection_runs")))
+    # Evaluation tables
+    await session.execute(sa.text(_safe_delete("evaluation_results")))
+    await session.execute(sa.text(_safe_delete("evaluation_runs")))
+    # Custom models
+    await session.execute(sa.text(_safe_delete("custom_models")))
     # Search sessions (0011-search-sessions)
-    # Use DO blocks so cleanup is safe even before the targeted migration runs.
-    await session.execute(
-        sa.text(
-            "DO $$ BEGIN IF EXISTS (SELECT 1 FROM pg_class WHERE relname='search_sessions') "
-            "THEN DELETE FROM search_sessions; END IF; END $$"
-        )
-    )
+    await session.execute(sa.text(_safe_delete("search_query_embeddings")))
+    await session.execute(sa.text(_safe_delete("search_sessions")))
     # Embeddings (ML feature vectors)
-    await session.execute(
-        sa.text(
-            "DO $$ BEGIN IF EXISTS (SELECT 1 FROM pg_class WHERE relname='embeddings') "
-            "THEN DELETE FROM embeddings; END IF; END $$"
-        )
-    )
-    await session.execute(sa.text("DELETE FROM tags"))
-    await session.execute(sa.text("DELETE FROM clips"))
-    await session.execute(sa.text("DELETE FROM recordings"))
-    await session.execute(sa.text("DELETE FROM datasets"))
-    await session.execute(sa.text("DELETE FROM sites"))
-    await session.execute(sa.text("DELETE FROM project_invitations"))
-    await session.execute(sa.text("DELETE FROM project_members"))
-    await session.execute(sa.text("DELETE FROM projects"))
-    await session.execute(sa.text("DELETE FROM api_tokens"))
-    await session.execute(sa.text("DELETE FROM login_attempts"))
+    await session.execute(sa.text(_safe_delete("embeddings")))
+    # Tags, clips, recordings, datasets, sites
+    await session.execute(sa.text(_safe_delete("tags")))
+    await session.execute(sa.text(_safe_delete("clips")))
+    await session.execute(sa.text(_safe_delete("recordings")))
+    await session.execute(sa.text(_safe_delete("datasets")))
+    await session.execute(sa.text(_safe_delete("sites")))
+    # Project membership / invitations / license history
+    await session.execute(sa.text(_safe_delete("project_invitations")))
+    await session.execute(sa.text(_safe_delete("project_license_history")))
+    await session.execute(sa.text(_safe_delete("project_members")))
+    await session.execute(sa.text(_safe_delete("projects")))
+    # Taxon tables
+    await session.execute(sa.text(_safe_delete("taxon_vernacular_names")))
+    await session.execute(sa.text(_safe_delete("taxa")))
+    # Tokens / login history / notifications
+    await session.execute(sa.text(_safe_delete("api_tokens")))
+    await session.execute(sa.text(_safe_delete("password_reset_tokens")))
+    await session.execute(sa.text(_safe_delete("user_login_notifications_seen")))
+    await session.execute(sa.text(_safe_delete("login_attempts")))
     # Clear licenses and recorders
-    await session.execute(sa.text("DELETE FROM licenses"))
-    await session.execute(sa.text("DELETE FROM recorders"))
+    await session.execute(sa.text(_safe_delete("licenses")))
+    await session.execute(sa.text(_safe_delete("recorders")))
     # Clear system_settings references to users before deleting users
     await session.execute(sa.text("UPDATE system_settings SET updated_by_id = NULL"))
     await session.execute(sa.text("DELETE FROM users"))
@@ -270,6 +315,25 @@ async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
                 await session.close()
 
     app.dependency_overrides[get_db] = override_get_db
+
+    # Phase 5 polish round 3 (重要1): override AudioService so its S3 cache
+    # directory points at a writable tmp dir rather than the hard-coded
+    # ``/data/s3_audio_cache``. Tests (especially the Guest audio surface
+    # in test_guest_public_access.py) trip over the ``/data/`` mkdir when
+    # the runner has no write permission there. We pin the override to a
+    # process-wide tmp dir so successive tests share the same cache.
+    settings = get_settings()
+    audio_cache_tmp_root = Path(tempfile.gettempdir()) / "echoroo-test-s3-audio-cache"
+    audio_cache_tmp_root.mkdir(parents=True, exist_ok=True)
+
+    def override_get_audio_service() -> AudioService:
+        return AudioService(
+            settings.AUDIO_ROOT,
+            settings.AUDIO_CACHE_DIR,
+            s3_audio_cache_dir=str(audio_cache_tmp_root),
+        )
+
+    app.dependency_overrides[get_audio_service] = override_get_audio_service
 
     # Patch RateLimiter.__call__ with a no-op that uses correct FastAPI types
     # so they are injected rather than treated as query params

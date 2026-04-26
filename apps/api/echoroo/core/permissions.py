@@ -740,6 +740,17 @@ def is_allowed(
         _stash_state(request, effective=frozenset(), normalized_role="Authenticated")
         return False, frozenset()
 
+    # --- Step 1a: Guest read block on non-Active projects ---------------------
+    # Phase 5 polish round 2 (FR-016 / FR-018): Guests may only read Public +
+    # Active projects. A Public project that has transitioned to
+    # ``dormant`` or ``archived`` MUST NOT serve any read action (including
+    # ``recording.audio`` / ``recording.list``) to a signed-out caller.
+    # This is the central enforcement point — endpoint handlers no longer
+    # need ad-hoc status checks.
+    if user is None and getattr(project, "status", None) != "active":
+        _stash_state(request, effective=frozenset(), normalized_role="Guest")
+        return False, frozenset()
+
     # --- Step 2: normalise role ----------------------------------------------
     raw_role = resolve_role(user, project) if user is not None else "Guest"
     normalized = normalize_role(raw_role, project)

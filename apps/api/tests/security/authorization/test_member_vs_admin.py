@@ -36,10 +36,9 @@ async def owner_user(db_session: AsyncSession) -> User:
     """Create the project owner."""
     user = User(
         email="t132owner@example.com",
-        hashed_password="$argon2id$v=19$m=65536,t=3,p=4$test",
+        password_hash="$argon2id$v=19$m=65536,t=3,p=4$test",
         display_name="T132 Owner",
-        is_active=True,
-        is_verified=True,
+        security_stamp="d" * 64,
     )
     db_session.add(user)
     await db_session.commit()
@@ -52,10 +51,9 @@ async def member_user(db_session: AsyncSession) -> User:
     """Create a MEMBER-role user."""
     user = User(
         email="t132member@example.com",
-        hashed_password="$argon2id$v=19$m=65536,t=3,p=4$test",
+        password_hash="$argon2id$v=19$m=65536,t=3,p=4$test",
         display_name="T132 Member",
-        is_active=True,
-        is_verified=True,
+        security_stamp="e" * 64,
     )
     db_session.add(user)
     await db_session.commit()
@@ -68,10 +66,9 @@ async def admin_user(db_session: AsyncSession) -> User:
     """Create an ADMIN-role user."""
     user = User(
         email="t132admin@example.com",
-        hashed_password="$argon2id$v=19$m=65536,t=3,p=4$test",
+        password_hash="$argon2id$v=19$m=65536,t=3,p=4$test",
         display_name="T132 Admin",
-        is_active=True,
-        is_verified=True,
+        security_stamp="f" * 64,
     )
     db_session.add(user)
     await db_session.commit()
@@ -84,10 +81,9 @@ async def invite_target_user(db_session: AsyncSession) -> User:
     """Create a user to be invited (for member invite tests)."""
     user = User(
         email="t132invite@example.com",
-        hashed_password="$argon2id$v=19$m=65536,t=3,p=4$test",
+        password_hash="$argon2id$v=19$m=65536,t=3,p=4$test",
         display_name="T132 Invite Target",
-        is_active=True,
-        is_verified=True,
+        security_stamp="g" * 64,
     )
     db_session.add(user)
     await db_session.commit()
@@ -104,6 +100,16 @@ async def test_project(db_session: AsyncSession, owner_user: User) -> Project:
         visibility=ProjectVisibility.RESTRICTED,
         license=ProjectLicense.CC_BY,
         owner_id=owner_user.id,
+        restricted_config={
+            "allow_media_playback": True,
+            "allow_detection_view": True,
+            "mask_species_in_detection": False,
+            "allow_download": False,
+            "allow_export": False,
+            "allow_voting_and_comments": True,
+            "public_location_precision_h3_res": 5,
+            "allow_precise_location_to_viewer": False,
+        },
     )
     db_session.add(project)
     await db_session.commit()

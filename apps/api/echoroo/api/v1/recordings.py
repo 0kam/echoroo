@@ -61,21 +61,25 @@ async def get_current_user_flexible(
     db: DbSession,
     token: Annotated[str | None, Query(description="JWT access token (for audio/img src URLs)")] = None,
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer_scheme)] = None,
-) -> User:
-    """Authenticate via Authorization header or ?token query parameter.
+) -> User | None:
+    """Resolve the caller from header / ?token — Guest-aware.
 
-    This dependency is used exclusively for audio streaming and spectrogram
-    endpoints so that the browser can set ``<audio src=url>`` and
-    ``<img src=url>`` directly without custom fetch logic. Standard endpoints
-    must continue to use the header-only ``CurrentUser`` dependency.
+    Phase 5 (T202, FR-016): media endpoints fall through to the central
+    permission gate which decides Public-Guest visibility via the Canonical
+    Matrix. We therefore allow the dependency to return ``None`` (Guest)
+    rather than 401-ing the response. Authentication failures on otherwise
+    valid Public projects are not user-visible — the gate will allow the
+    Guest principal when the project is Public + Active (FR-016).
 
     Priority:
-        1. Query parameter ``?token=<jwt>``  (allows native browser media elements)
-        2. ``Authorization: Bearer <jwt>`` header  (standard behaviour)
+        1. Query parameter ``?token=<jwt>``  (browser ``<audio src>`` / ``<img src>``)
+        2. ``Authorization: Bearer <jwt>`` header
+        3. None — Guest fall-through, the gate decides.
 
     Security note:
         The token will appear in server access logs when passed as a query
-        parameter. This is acceptable for scoped media streaming URLs.
+        parameter. This is acceptable for scoped media streaming URLs and is
+        unchanged from the pre-Phase-5 behaviour.
 
     Args:
         request: Incoming HTTP request (unused directly, kept for tracing).
@@ -84,12 +88,8 @@ async def get_current_user_flexible(
         credentials: Optional HTTP Bearer credentials from the Authorization header.
 
     Returns:
-        Authenticated User instance.
-
-    Raises:
-        HTTPException 401: No valid credentials supplied.
-        HTTPException 401: Token is invalid or expired.
-        HTTPException 403: User account is disabled.
+        Authenticated User OR ``None`` for Guest. Bad tokens fall back to
+        Guest (the gate is fail-closed for non-Public projects).
     """
     # Resolve the raw token string from either source
     raw_token: str | None = None
@@ -98,31 +98,26 @@ async def get_current_user_flexible(
     elif credentials is not None:
         raw_token = credentials.credentials
 
-    if raw_token is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Not authenticated",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+    if not raw_token:
+        return None
 
     # Dispatch to the appropriate authentication back-end
-    if raw_token.startswith(API_TOKEN_PREFIX):
-        token_service = TokenService(db)
-        user = await token_service.authenticate_by_token(raw_token)
-        if not user:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid or expired API token",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-        return user
+    try:
+        if raw_token.startswith(API_TOKEN_PREFIX):
+            token_service = TokenService(db)
+            return await token_service.authenticate_by_token(raw_token)
 
-    auth_service = AuthService(db)
-    return await auth_service.get_current_user(raw_token)
+        auth_service = AuthService(db)
+        return await auth_service.get_current_user(raw_token)
+    except HTTPException:
+        # Bad token on a Public route -> Guest fall-through. The permission
+        # gate will still 403 / 404 the response when the project is not
+        # Public-readable.
+        return None
 
 
 # Annotated type alias for the flexible auth dependency (media endpoints only)
-FlexibleCurrentUser = Annotated[User, Depends(get_current_user_flexible)]
+FlexibleCurrentUser = Annotated[User | None, Depends(get_current_user_flexible)]
 
 
 def get_audio_service() -> AudioService:
@@ -130,11 +125,17 @@ def get_audio_service() -> AudioService:
 
     Returns:
         AudioService instance configured with S3 audio cache support.
+
+    Phase 5 polish round 3 (重要1): the S3 audio cache directory is now
+    sourced from :class:`Settings` instead of a hard-coded ``/data/`` path.
+    Tests and CI runners that cannot write to ``/data/`` may override
+    ``S3_AUDIO_CACHE_DIR`` via the environment or via FastAPI's
+    ``app.dependency_overrides`` against this function.
     """
     return AudioService(
         settings.AUDIO_ROOT,
         settings.AUDIO_CACHE_DIR,
-        s3_audio_cache_dir="/data/s3_audio_cache",
+        s3_audio_cache_dir=settings.S3_AUDIO_CACHE_DIR,
     )
 
 
@@ -559,6 +560,14 @@ async def stream_audio(
     Guarded by :data:`RECORDING_MEDIA_ACTION` (:data:`Permission.VIEW_MEDIA`).
     Restricted projects gate raw audio access independently from detection
     metadata via ``restricted_config.allow_media`` (FR-016).
+
+    **Phase 5 (T202, FR-016, security H-8) — species-name leak guarantee:**
+    This endpoint streams the raw bytes through FastAPI; it does NOT generate
+    a presigned S3 URL on the response. Even if a future maintainer wires the
+    response to a presigned URL, ``recording.path`` is built upstream as
+    ``recordings/{project_id}/{dataset_id}/{recording_id}{ext}`` (see
+    :func:`echoroo.workers.upload_tasks.recording_object_key`) — a UUID-only
+    object key with no species identifier. H-8 therefore holds by construction.
 
     Supports efficient streaming of long PAM recordings by honouring the
     ``Range`` request header sent by the browser. On the first request

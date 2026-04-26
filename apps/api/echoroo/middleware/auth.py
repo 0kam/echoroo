@@ -1,9 +1,11 @@
 """Authentication middleware and dependencies."""
 
 from typing import Annotated
+from uuid import UUID
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from sqlalchemy import select
 
 from echoroo.core.database import DbSession
 from echoroo.models.user import User
@@ -71,6 +73,77 @@ async def get_current_user(
     return await auth_service.get_current_user(token)
 
 
+async def get_current_user_optional(
+    request: Request,
+    db: DbSession,
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(security)],
+) -> User | None:
+    """Resolve the current user OR return ``None`` for unauthenticated callers.
+
+    Mirrors :func:`get_current_user` but never raises 401 when credentials
+    are missing or invalid — instead returns ``None``. This is the dependency
+    used by Public-visible endpoints (FR-016 Phase 5 US1) where Guest reads
+    are explicitly part of the contract: the Stage-1 permission gate
+    (:func:`echoroo.core.permissions.is_allowed`) will decide whether the
+    Guest principal is allowed via the Canonical Matrix.
+
+    Resolution priority (Phase 5 polish round 2):
+
+        1. ``request.state.principal`` — set by
+           :class:`echoroo.middleware.auth_router.AuthRouterMiddleware` when
+           the caller arrives with a session cookie. Loading the User by id
+           here ensures cookie-authenticated owners see *their own*
+           Restricted projects on the Guest-aware list/detail surface.
+        2. ``Authorization: Bearer <token>`` — programmatic / scripted
+           callers and tests that pass a JWT directly.
+        3. ``None`` — Guest. The downstream permission gate decides whether
+           the project is reachable (Public + Active only for Guests).
+
+    Args:
+        request: Incoming HTTP request — used to read ``state.principal``
+            populated by :class:`AuthRouterMiddleware`.
+        db: Database session.
+        credentials: HTTP Bearer credentials (may be absent).
+
+    Returns:
+        Authenticated :class:`User` or ``None`` for Guest.
+    """
+    # 1. Cookie-session fast path — AuthRouterMiddleware has already verified
+    # the cookie + JWT and stashed the resolved Principal on request.state.
+    principal = getattr(request.state, "principal", None)
+    if principal is not None:
+        user_id = getattr(principal, "user_id", None)
+        if isinstance(user_id, UUID):
+            result = await db.execute(select(User).where(User.id == user_id))
+            user = result.scalar_one_or_none()
+            if user is not None:
+                return user
+            # Fall through: a Principal without a backing User row is
+            # treated as Guest rather than 401 to preserve the Public-read
+            # contract.
+
+    # 2. Bearer header fallback (programmatic surface / direct API callers).
+    if credentials is None:
+        return None
+
+    token = credentials.credentials
+    if not token:
+        return None
+
+    try:
+        if token.startswith(API_TOKEN_PREFIX):
+            token_service = TokenService(db)
+            return await token_service.authenticate_by_token(token)
+
+        auth_service = AuthService(db)
+        return await auth_service.get_current_user(token)
+    except HTTPException:
+        # FR-016 Phase 5: a *bad* token on a Public endpoint must still allow
+        # Guest fall-through rather than 401-ing the response. Production
+        # security is enforced by the central permission gate downstream.
+        return None
+
+
 async def get_current_active_superuser(
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> User:
@@ -103,3 +176,4 @@ async def get_current_active_superuser(
 # Type aliases for dependency injection
 CurrentUser = Annotated[User, Depends(get_current_user)]
 CurrentSuperuser = Annotated[User, Depends(get_current_active_superuser)]
+OptionalCurrentUser = Annotated[User | None, Depends(get_current_user_optional)]

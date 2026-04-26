@@ -138,6 +138,15 @@ class Settings(BaseSettings):
         default=None,
         description="Directory for caching spectrograms (optional)",
     )
+    # Phase 5 polish round 3 (重要1): make the S3 audio cache directory
+    # configurable so tests (and CI runners that cannot write to /data) can
+    # point this at a tmp_path. Production keeps the historical /data
+    # default — overriding it through the environment is a no-op for the
+    # running deployment.
+    S3_AUDIO_CACHE_DIR: str = Field(
+        default="/data/s3_audio_cache",
+        description="Directory used by AudioService to cache files downloaded from S3",
+    )
 
     # S3 / Object Storage
     S3_ENDPOINT_URL: str = "http://localhost:9000"

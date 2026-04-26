@@ -60,10 +60,9 @@ async def owner_a(db_session: AsyncSession) -> User:
     """Owner of project A."""
     user = User(
         email="t134owner_a@example.com",
-        hashed_password="$argon2id$v=19$m=65536,t=3,p=4$test",
+        password_hash="$argon2id$v=19$m=65536,t=3,p=4$test",
         display_name="T134 Owner A",
-        is_active=True,
-        is_verified=True,
+        security_stamp="a" * 64,
     )
     db_session.add(user)
     await db_session.commit()
@@ -76,10 +75,9 @@ async def owner_b(db_session: AsyncSession) -> User:
     """Owner of project B."""
     user = User(
         email="t134owner_b@example.com",
-        hashed_password="$argon2id$v=19$m=65536,t=3,p=4$test",
+        password_hash="$argon2id$v=19$m=65536,t=3,p=4$test",
         display_name="T134 Owner B",
-        is_active=True,
-        is_verified=True,
+        security_stamp="b" * 64,
     )
     db_session.add(user)
     await db_session.commit()
@@ -92,10 +90,9 @@ async def member_a_user(db_session: AsyncSession) -> User:
     """A MEMBER of project A only (not a member of project B)."""
     user = User(
         email="t134member_a@example.com",
-        hashed_password="$argon2id$v=19$m=65536,t=3,p=4$test",
+        password_hash="$argon2id$v=19$m=65536,t=3,p=4$test",
         display_name="T134 Member A",
-        is_active=True,
-        is_verified=True,
+        security_stamp="c" * 64,
     )
     db_session.add(user)
     await db_session.commit()
@@ -112,6 +109,16 @@ async def project_a(db_session: AsyncSession, owner_a: User) -> Project:
         visibility=ProjectVisibility.RESTRICTED,
         license=ProjectLicense.CC_BY,
         owner_id=owner_a.id,
+        restricted_config={
+            "allow_media_playback": True,
+            "allow_detection_view": True,
+            "mask_species_in_detection": False,
+            "allow_download": False,
+            "allow_export": False,
+            "allow_voting_and_comments": True,
+            "public_location_precision_h3_res": 5,
+            "allow_precise_location_to_viewer": False,
+        },
     )
     db_session.add(project)
     await db_session.commit()
@@ -128,6 +135,16 @@ async def project_b(db_session: AsyncSession, owner_b: User) -> Project:
         visibility=ProjectVisibility.RESTRICTED,
         license=ProjectLicense.CC_BY,
         owner_id=owner_b.id,
+        restricted_config={
+            "allow_media_playback": True,
+            "allow_detection_view": True,
+            "mask_species_in_detection": False,
+            "allow_download": False,
+            "allow_export": False,
+            "allow_voting_and_comments": True,
+            "public_location_precision_h3_res": 5,
+            "allow_precise_location_to_viewer": False,
+        },
     )
     db_session.add(project)
     await db_session.commit()

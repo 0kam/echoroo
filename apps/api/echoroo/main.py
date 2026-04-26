@@ -134,6 +134,13 @@ def create_app() -> FastAPI:
         *PUBLIC_AUTH_PATHS,
         "/web-api/v1/auth/logout",
     )
+    # Phase 5 (US1, FR-016): allow Guest GET on the project read surface so a
+    # signed-out visitor can browse Public + Active projects. The Stage-1
+    # permission gate then enforces visibility/status — Restricted projects
+    # respond 404 to Guests (FR-018, anti-enumeration).
+    auth_router_public_prefixes: tuple[tuple[str, frozenset[str]], ...] = (
+        ("/web-api/v1/projects", frozenset({"GET"})),
+    )
     app.add_middleware(
         AuthRouterMiddleware,
         config=AuthRouterConfig(
@@ -142,6 +149,7 @@ def create_app() -> FastAPI:
             programmatic_prefix="/__auth_router_disabled_until_phase15__",
             session_cookie_name=settings.web_session_cookie_name,
             public_path_allowlist=auth_router_allowlist,
+            public_path_prefix_allowlist=auth_router_public_prefixes,
         ),
     )
 
