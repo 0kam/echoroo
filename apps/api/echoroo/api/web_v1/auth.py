@@ -733,11 +733,15 @@ def _set_session_cookies(
         httponly=True,
         samesite="strict",
     )
+    # CSRF cookie uses Path=/ so JS on any SvelteKit page (e.g. /en/dashboard)
+    # can read the token via document.cookie for the double-submit pattern.
+    # The token is the public half (httponly=False, intentionally readable);
+    # the sensitive session/refresh cookies remain scoped to /web-api/v1/*.
     response.set_cookie(
         key=settings.web_csrf_cookie_name,
         value=csrf_token,
         max_age=settings.web_access_token_ttl_seconds,
-        path="/web-api/v1/",
+        path="/",
         secure=secure_cookie,
         httponly=False,
         samesite="strict",
@@ -794,7 +798,7 @@ def _clear_session_cookies(response: Response) -> None:
     )
     response.delete_cookie(
         key=settings.web_csrf_cookie_name,
-        path="/web-api/v1/",
+        path="/",
         secure=True,
         httponly=False,
         samesite="strict",

@@ -288,10 +288,14 @@ async def test_session_establish_sets_logged_in_marker_cookie_on_root_path(
 ) -> None:
     """T160-T163 P0: marker cookie must be Path=/ so SvelteKit page guards see it.
 
-    The session/refresh/csrf cookies are scoped to /web-api/v1/* and cannot
-    be read by SvelteKit page-level routes (e.g. /dashboard). The
-    ``echoroo_logged_in`` marker carries no sensitive content (literal "1")
-    and is set on Path=/ so ``hooks.server.ts`` can detect logged-in state.
+    The session/refresh cookies are scoped to /web-api/v1/* and cannot be
+    read by SvelteKit page-level routes (e.g. /dashboard). The CSRF cookie
+    also lives on Path=/ because it is the public half of the double-submit
+    pattern: client JS on any page must read it via document.cookie to send
+    it back as the ``X-CSRF-Token`` header on state-changing requests.
+    The ``echoroo_logged_in`` marker carries no sensitive content (literal
+    "1") and is set on Path=/ so ``hooks.server.ts`` can detect logged-in
+    state.
     """
     from echoroo.core.settings import get_settings
 
@@ -323,6 +327,15 @@ async def test_session_establish_sets_logged_in_marker_cookie_on_root_path(
     ]
     assert session_headers, "session cookie must still be set"
     assert "Path=/web-api/v1/" in session_headers[0]
+    # CSRF cookie must be Path=/ so JS on any page can read it for the
+    # double-submit pattern (it is httponly=False, the public half).
+    csrf_headers = [
+        h for h in set_cookie_headers
+        if h.startswith(f"{settings.web_csrf_cookie_name}=")
+    ]
+    assert csrf_headers, "csrf cookie must be set"
+    assert "Path=/" in csrf_headers[0]
+    assert "Path=/web-api" not in csrf_headers[0]
 
 
 @pytest.mark.asyncio
