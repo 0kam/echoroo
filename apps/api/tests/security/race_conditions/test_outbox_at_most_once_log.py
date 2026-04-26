@@ -281,7 +281,14 @@ async def test_mark_failed_reschedules_with_backoff_when_budget_remains() -> Non
 
 @pytest.mark.asyncio
 async def test_mark_done_clears_last_error_and_sets_processed_at() -> None:
-    """mark_done must wipe last_error so dashboards do not show stale failures."""
+    """mark_done must wipe last_error and SCRUB the payload (FR-105).
+
+    The payload column may carry transient PII (e.g. raw IP / UA on a
+    ``login_notification`` row). Once the handler has succeeded the
+    payload is no longer needed; ``mark_done`` therefore replaces it
+    with a small ``{"scrubbed_at": ...}`` marker in the same UPDATE so
+    the row never retains long-term PII.
+    """
     session = MagicMock()
     session.execute = AsyncMock(return_value=_FakeResult())
 
@@ -292,8 +299,42 @@ async def test_mark_done_clears_last_error_and_sets_processed_at() -> None:
         "status = :done" in sql
         and "processed_at = :now" in sql
         and "last_error = null" in sql
+        and "payload = cast(:payload as jsonb)" in sql
         for sql in rendered
+    ), rendered
+
+    # The bound payload parameter must be the scrub marker, NOT the
+    # original payload contents.
+    rendered_calls = list(session.execute.await_args_list)
+    payload_param = rendered_calls[0].args[1]["payload"]
+    assert "scrubbed_at" in payload_param
+    assert "ip" not in payload_param  # raw fields gone
+    assert "user_agent" not in payload_param
+
+
+@pytest.mark.asyncio
+async def test_mark_failed_dead_letter_branch_scrubs_payload() -> None:
+    """Dead-letter rows must also have their payload scrubbed (FR-105)."""
+    session = MagicMock()
+    session.execute = AsyncMock(return_value=_FakeResult())
+
+    final_status = await mark_failed(
+        session,
+        uuid4(),
+        error="repeated handler failure",
+        current_retry_count=MAX_RETRY - 1,
     )
+    assert final_status == STATUS_DEAD_LETTER
+
+    rendered_calls = list(session.execute.await_args_list)
+    sql = str(rendered_calls[0].args[0]).lower()
+    assert "status = :dead_letter" in sql
+    assert "payload = cast(:payload as jsonb)" in sql
+
+    payload_param = rendered_calls[0].args[1]["payload"]
+    assert "scrubbed_at" in payload_param
+    assert "dead_letter" in payload_param  # scrub_reason marker
+    assert "ip" not in payload_param  # raw fields gone
 
 
 def test_max_retry_constant_matches_spec() -> None:

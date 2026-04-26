@@ -67,25 +67,26 @@ def upgrade() -> None:
             name="uq_user_login_notifications_seen_tuple",
         ),
     )
+    # Composite index on (user_id, last_seen_at) — the canonical query
+    # pattern is ``WHERE user_id = ? AND last_seen_at > retention_cutoff``
+    # (see :class:`LoginNotificationService._fetch_recent_seen`). A
+    # composite left-anchored index serves both the ``user_id`` equality
+    # filter (left prefix) AND the ``last_seen_at`` range filter as a
+    # single index scan, removing the need for a separate single-column
+    # index on ``user_id`` (which would be redundant for any query
+    # touching the prefix). The single ``last_seen_at`` index is also
+    # dropped because the service never queries on ``last_seen_at``
+    # without also constraining ``user_id``.
     op.create_index(
-        "ix_user_login_notifications_seen_user_id",
+        "ix_user_login_notifications_seen_user_id_last_seen_at",
         "user_login_notifications_seen",
-        ["user_id"],
-    )
-    op.create_index(
-        "ix_user_login_notifications_seen_last_seen_at",
-        "user_login_notifications_seen",
-        ["last_seen_at"],
+        ["user_id", "last_seen_at"],
     )
 
 
 def downgrade() -> None:
     op.drop_index(
-        "ix_user_login_notifications_seen_last_seen_at",
-        table_name="user_login_notifications_seen",
-    )
-    op.drop_index(
-        "ix_user_login_notifications_seen_user_id",
+        "ix_user_login_notifications_seen_user_id_last_seen_at",
         table_name="user_login_notifications_seen",
     )
     op.drop_table("user_login_notifications_seen")

@@ -1,4 +1,4 @@
-"""Celery worker that emails users about new-device logins (FR-104).
+"""Celery worker that emails users about new-device logins (FR-104, FR-105).
 
 Wiring overview
 ---------------
@@ -12,21 +12,34 @@ handler that consumes those rows on the ``worker-cpu`` Celery queue.
 
 Per row, the handler:
 
-1. Sanitises the payload — Unicode-NFKC normalises strings, rejects
-   ASCII control characters, and truncates the IP / UA fields to
-   reasonable lengths (FR-101 email header injection protection).
-2. Sends a templated transactional email via
-   :func:`echoroo.services.email.send_login_notification_email` (a
-   thin wrapper added by this module to keep the existing
-   ``email.py`` API surface stable).
+1. Sanitises the payload — Unicode-NFKC normalises strings and
+   rejects ASCII control characters (FR-101 email header injection
+   protection).
+2. Delegates to :func:`echoroo.services.email.send_login_notification`,
+   the single outbound-email integration point. The email body
+   contains only the **hashed** IP / UA values (FR-105) — the user
+   already knows which device they were using; the raw values would
+   only add durable PII exposure (the email itself sits on the
+   recipient's mail server forever).
 3. Returns control; the outbox processor will call ``mark_done`` in
-   the surrounding transaction. On exception, the row's retry
-   counter advances and the outbox state machine eventually moves
-   it to ``dead_letter`` after :data:`outbox_service.MAX_RETRY`.
+   the surrounding transaction. On exception, the row's retry counter
+   advances and the outbox state machine eventually moves it to
+   ``dead_letter`` after :data:`outbox_service.MAX_RETRY`.
 
 The outbox processor itself enforces the 3-attempt Celery retry +
-5-attempt per-row retry policy (research.md §6); this module does
-not need its own retry loop.
+5-attempt per-row retry policy (research.md §6); this module does not
+need its own retry loop.
+
+PII discipline
+--------------
+The transient outbox payload still carries the raw IP and User-Agent
+strings (the dispatcher needs *something* to compute the hash from
+for the seen-table lookup, and the service path captures both the
+raw and the hashed forms in a single transaction). Once
+:func:`echoroo.services.outbox_service.mark_done` runs the payload is
+scrubbed (FR-105). This handler must NEVER log the raw IP / UA or
+forward them to anywhere durable — only the hashes are safe to
+persist outside the request scope.
 """
 
 from __future__ import annotations
@@ -35,21 +48,21 @@ import logging
 import unicodedata
 from typing import Any, Final
 
-import resend
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from echoroo.core.settings import get_settings
+from echoroo.core.kms import compute_pii_hash
 from echoroo.core.text import has_control_chars
+from echoroo.services.email import send_login_notification
 from echoroo.services.login_notification_service import LOGIN_NOTIFICATION_EVENT_TYPE
 from echoroo.workers.outbox_processor import register_outbox_handler
 
 logger = logging.getLogger(__name__)
-settings = get_settings()
 
 #: Hard cap for fields that flow into the email body. Real-world
 #: User-Agent strings rarely exceed a few hundred characters; longer
 #: values are almost certainly noise (or an attacker probing for
-#: header-injection bugs) and we truncate aggressively.
+#: header-injection bugs) and we truncate aggressively. Mirrors the
+#: cap in :mod:`echoroo.services.email`.
 _MAX_FIELD_LEN: Final[int] = 500
 
 
@@ -61,10 +74,15 @@ def _sanitise_field(value: object, *, field_name: str) -> str:
     """NFKC-normalise, reject control chars, and truncate to a hard cap.
 
     Header-injection defence (FR-101): any ASCII control character in a
-    string we are about to put into a To/Subject/header context aborts
+    string we are about to feed into a To/Subject/header context aborts
     the dispatch. The Resend client itself escapes the body, but the
     subject line and headers are constructed by us — we cannot allow a
     raw newline.
+
+    The same sanitisation runs again inside
+    :func:`echoroo.services.email.send_login_notification`; doing it
+    here too lets us fail fast with a payload-shaped error before
+    crossing into the email service boundary.
     """
     if value is None:
         return ""
@@ -79,87 +97,28 @@ def _sanitise_field(value: object, *, field_name: str) -> str:
     return normalised
 
 
-def _build_email_html(
+def _resolve_hash(
+    payload: dict[str, Any],
     *,
-    ip: str,
-    user_agent: str,
-    timestamp: str,
+    hash_key: str,
+    raw_key: str,
+    field_name: str,
 ) -> str:
-    """Build the user-facing HTML body.
+    """Return the hashed form for a payload field.
 
-    All three fields are pre-sanitised by :func:`_sanitise_field`; we
-    HTML-escape them once more here as a defence-in-depth measure
-    against XSS in any downstream HTML viewer that does not auto-escape.
+    Prefers the pre-computed hash already stamped onto the payload by
+    :class:`LoginNotificationService` (so the worker does not need to
+    talk to KMS on the hot path). Falls back to recomputing from the
+    raw value if the hash is missing — this keeps the handler robust
+    against historical rows enqueued before the hash fields were added.
     """
-    import html
-
-    return (
-        "<h2>New sign-in to your Echoroo account</h2>"
-        f"<p>We detected a sign-in from a new device or location at "
-        f"<strong>{html.escape(timestamp)}</strong>.</p>"
-        "<ul>"
-        f"<li>IP address: <code>{html.escape(ip)}</code></li>"
-        f"<li>Browser/User-Agent: <code>{html.escape(user_agent)}</code></li>"
-        "</ul>"
-        "<p>If this was you, no action is needed. If you do not "
-        "recognise this sign-in, please reset your password "
-        "immediately and contact support.</p>"
-    )
-
-
-async def send_login_notification_email(
-    *,
-    to: str,
-    ip: str,
-    user_agent: str,
-    timestamp: str,
-) -> None:
-    """Send a templated new-device email via Resend.
-
-    Header-injection defence: this is the LAST point at which we still
-    have the bare IP / UA strings in process memory; the call to
-    :meth:`resend.Emails.send` builds the SMTP envelope from them. The
-    sanitisation step happens BEFORE we get here so this function can
-    treat its inputs as already-safe.
-
-    Failures are propagated so the outbox dispatcher can retry the row.
-    A best-effort log is emitted on the failure path because the
-    business email is the user-visible side-effect of FR-104 and
-    silent drops are unacceptable.
-    """
-    if not settings.RESEND_API_KEY:
-        logger.warning(
-            "login_notification: Resend API key not configured; "
-            "would have sent email to %s for IP %s",
-            to,
-            ip,
-        )
-        return
-
-    resend.api_key = settings.RESEND_API_KEY
-
-    subject = "New sign-in to your Echoroo account"
-    if has_control_chars(subject):  # pragma: no cover - constant string
-        raise LoginNotificationPayloadError(
-            "subject contains control characters (compile-time invariant violated)"
-        )
-
-    try:
-        resend.Emails.send(
-            {
-                "from": settings.EMAIL_FROM,
-                "to": to,
-                "subject": subject,
-                "html": _build_email_html(
-                    ip=ip,
-                    user_agent=user_agent,
-                    timestamp=timestamp,
-                ),
-            }
-        )
-    except Exception:
-        logger.exception("login_notification: Resend send failed for to=%s", to)
-        raise
+    candidate = payload.get(hash_key)
+    if isinstance(candidate, str) and candidate:
+        return _sanitise_field(candidate, field_name=hash_key)
+    raw_value = _sanitise_field(payload.get(raw_key), field_name=field_name)
+    if not raw_value:
+        return ""
+    return compute_pii_hash(raw_value)
 
 
 @register_outbox_handler(LOGIN_NOTIFICATION_EVENT_TYPE)
@@ -175,17 +134,25 @@ async def dispatch_login_notification(
     :class:`LoginNotificationPayloadError`, which the outbox processor
     treats as a per-row failure and either retries (3 attempts) or
     moves to ``dead_letter`` (5 attempts).
+
+    Privacy note (FR-105): only the *hashed* IP / UA crosses into the
+    email. The raw values stay inside the transient outbox payload
+    until :func:`echoroo.services.outbox_service.mark_done` scrubs the
+    row, and never reach durable logs.
     """
     try:
         recipient = _sanitise_field(payload.get("user_email"), field_name="user_email")
-        ip = _sanitise_field(payload.get("ip"), field_name="ip")
-        user_agent = _sanitise_field(payload.get("user_agent"), field_name="user_agent")
         timestamp = _sanitise_field(payload.get("timestamp"), field_name="timestamp")
+        ip_hash = _resolve_hash(payload, hash_key="ip_hash", raw_key="ip", field_name="ip")
+        ua_hash = _resolve_hash(
+            payload, hash_key="ua_hash", raw_key="user_agent", field_name="user_agent"
+        )
     except LoginNotificationPayloadError as exc:
         # Re-raise so the outbox processor records the failure; the
         # row will be retried up to MAX_RETRY before moving to
         # ``dead_letter``. We deliberately don't squelch the exception
         # because a malformed payload represents a real defect upstream.
+        # Log only payload key names — never the raw values.
         logger.error(
             "login_notification: payload sanitisation failed: %s; payload_keys=%s",
             exc,
@@ -200,10 +167,20 @@ async def dispatch_login_notification(
             "login_notification payload missing recipient email"
         )
 
-    await send_login_notification_email(
+    user_id = payload.get("user_id")
+    event_id = payload.get("event_id") or payload.get("idempotency_key")
+    logger.info(
+        "login_notification: dispatching email user_id=%s ip_hash=%s ua_hash=%s event_id=%s",
+        user_id,
+        ip_hash,
+        ua_hash,
+        event_id,
+    )
+
+    await send_login_notification(
         to=recipient,
-        ip=ip,
-        user_agent=user_agent,
+        ip_hash=ip_hash,
+        ua_hash=ua_hash,
         timestamp=timestamp,
     )
 
@@ -211,5 +188,4 @@ async def dispatch_login_notification(
 __all__ = [
     "LoginNotificationPayloadError",
     "dispatch_login_notification",
-    "send_login_notification_email",
 ]

@@ -262,26 +262,51 @@ async def claim_batch(
 
 
 async def mark_done(session: AsyncSession, event_id: UUID) -> None:
-    """Mark an outbox row as successfully processed.
+    """Mark an outbox row as successfully processed and scrub its payload.
 
     The handler is responsible for being idempotent — if the worker
     crashes between handler completion and this UPDATE, the row stays in
     ``processing`` and a watchdog (T093, future phase) will eventually
     reset it to ``pending`` so a retry can run. Re-running the handler
     against the same ``idempotency_key`` MUST be a no-op (FR-076a).
+
+    PII scrub (FR-105)
+    ------------------
+    The ``payload`` JSONB column may carry transient PII (e.g. the raw
+    IP and User-Agent attached to a ``login_notification`` event so the
+    dispatcher can render them into the notification email). Once the
+    handler has succeeded the side-effect has shipped and the payload
+    is no longer needed — keeping it around indefinitely would
+    re-introduce the same long-term PII storage that
+    :func:`echoroo.core.kms.compute_pii_hash` was designed to prevent.
+    This UPDATE therefore atomically replaces ``payload`` with a small
+    ``{"scrubbed_at": "..."}`` marker so dashboards can still see when
+    the row succeeded without retaining the raw values. The
+    ``idempotency_key`` is preserved on the row itself, so the
+    at-most-once log invariant (FR-076a) is unaffected.
     """
+    now = datetime.now(UTC)
+    scrubbed_payload = {"scrubbed_at": now.isoformat()}
     stmt = sa.text(
         """
         UPDATE outbox_events
            SET status = :done,
                processed_at = :now,
-               last_error = NULL
+               last_error = NULL,
+               payload = CAST(:payload AS JSONB)
          WHERE id = :id
         """
     )
+    import json as _json
+
     await session.execute(
         stmt,
-        {"done": STATUS_DONE, "now": datetime.now(UTC), "id": event_id},
+        {
+            "done": STATUS_DONE,
+            "now": now,
+            "payload": _json.dumps(scrubbed_payload, sort_keys=True, separators=(",", ":")),
+            "id": event_id,
+        },
     )
 
 
@@ -300,13 +325,26 @@ async def mark_failed(
     """
     next_attempt = current_retry_count + 1
     if next_attempt >= MAX_RETRY:
+        # Dead-letter branch: scrub the JSONB payload alongside the
+        # status flip so a row that exhausted its retries does NOT
+        # retain the original (potentially PII-bearing) payload in
+        # long-term storage (FR-105). Operators can still inspect the
+        # row's ``last_error`` + ``idempotency_key`` to triage.
+        import json as _json
+
+        dead_letter_now = datetime.now(UTC)
+        scrubbed_payload = {
+            "scrubbed_at": dead_letter_now.isoformat(),
+            "scrub_reason": "dead_letter",
+        }
         stmt = sa.text(
             """
             UPDATE outbox_events
                SET status = :dead_letter,
                    retry_count = :retry_count,
                    last_error = :error,
-                   next_retry_at = NULL
+                   next_retry_at = NULL,
+                   payload = CAST(:payload AS JSONB)
              WHERE id = :id
             """
         )
@@ -316,6 +354,9 @@ async def mark_failed(
                 "dead_letter": STATUS_DEAD_LETTER,
                 "retry_count": next_attempt,
                 "error": error[:8000],  # Bounded to keep TEXT row reasonable.
+                "payload": _json.dumps(
+                    scrubbed_payload, sort_keys=True, separators=(",", ":")
+                ),
                 "id": event_id,
             },
         )

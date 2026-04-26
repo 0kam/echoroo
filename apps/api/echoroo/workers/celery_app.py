@@ -60,6 +60,13 @@ app.conf.include = [
     "echoroo.workers.annotation_sampling_tasks",
     "echoroo.workers.evaluation_tasks",
     "echoroo.workers.model_preloader",
+    # Outbox processor + handler registry. The dispatcher modules
+    # below register themselves into ``OUTBOX_HANDLERS`` at import
+    # time; without listing them here Celery would never import
+    # them and the registered handlers would silently be missing
+    # at row-claim time (research.md §6, FR-104).
+    "echoroo.workers.outbox_processor",
+    "echoroo.workers.login_notification_dispatcher",
 ]
 
 # Periodic tasks (beat schedule)
@@ -76,5 +83,16 @@ app.conf.beat_schedule = {
         "task": "echoroo.workers.taxon_tasks.fetch_japanese_vernacular_names",
         "schedule": crontab(hour=2, minute=0, day_of_week=0),  # Every Sunday at 02:00 UTC
         "kwargs": {"batch_size": 100},
+    },
+    # Drain the transactional outbox at 1Hz-ish (every 30s — the
+    # spec's SLO is p95 ≤ 10s end-to-end which is set by the worker
+    # poll cadence, not the beat trigger). Each beat tick fans the
+    # work out across ``-c 4`` worker-cpu processes; the actual
+    # ``SELECT ... FOR UPDATE SKIP LOCKED`` claim happens inside the
+    # task body. Beat-driven invocation is the canonical wiring per
+    # research.md §6.
+    "drain-outbox-events": {
+        "task": "echoroo.workers.outbox_processor.process_outbox_batch",
+        "schedule": 30.0,  # seconds — see docstring above.
     },
 }

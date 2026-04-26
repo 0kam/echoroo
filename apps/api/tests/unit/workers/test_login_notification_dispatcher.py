@@ -1,4 +1,4 @@
-"""Unit coverage for the login-notification outbox handler (T179, FR-104, FR-101).
+"""Unit coverage for the login-notification outbox handler (T179, FR-104, FR-105, FR-101).
 
 The handler must:
 
@@ -7,17 +7,25 @@ The handler must:
   email-header-injection signal — a stray ``\\n`` in a User-Agent
   string lets an attacker craft Bcc headers).
 * Truncate over-long fields to the documented cap.
+* Delegate the actual email send to the unified
+  :func:`echoroo.services.email.send_login_notification` helper so the
+  Resend SDK is invoked from a single place (no duplicated logic).
+* Pass only the **hashed** (``ip_hash``, ``ua_hash``) values to the
+  email helper — the raw IP / User-Agent strings must never cross
+  into durable storage (logs, email body, etc.) per FR-105.
 * Surface email-send failures to the outbox processor so the row is
   retried (or eventually dead-lettered).
 
-The Resend SDK is mocked at the ``resend.Emails.send`` boundary so the
-test does not require a network connection or a configured API key.
+The email-service helper is mocked at the
+:func:`echoroo.workers.login_notification_dispatcher.send_login_notification`
+boundary so the test exercises the dispatcher contract without
+touching the Resend SDK or a network connection.
 """
 
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -45,43 +53,47 @@ def _payload(**overrides: Any) -> dict[str, Any]:
 
 
 @pytest.fixture
-def patch_resend(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
-    """Stub ``resend.Emails.send`` and ensure a non-empty API key."""
+def patch_email(monkeypatch: pytest.MonkeyPatch) -> AsyncMock:
+    """Stub :func:`send_login_notification` at the dispatcher boundary.
+
+    The dispatcher imports the helper as a module-level name; replacing
+    that binding lets us assert on the keyword arguments passed without
+    touching :mod:`echoroo.services.email` itself.
+    """
+    sender = AsyncMock()
     monkeypatch.setattr(
-        login_notification_dispatcher.settings,
-        "RESEND_API_KEY",
-        "test-key",
-    )
-    sender = MagicMock()
-    monkeypatch.setattr(
-        login_notification_dispatcher.resend.Emails,
-        "send",
+        login_notification_dispatcher,
+        "send_login_notification",
         sender,
     )
     return sender
 
 
 # ---------------------------------------------------------------------------
-# Happy path: clean payload → exactly one email sent
+# Happy path: clean payload → exactly one email send via the unified helper
 # ---------------------------------------------------------------------------
 
 
-async def test_dispatcher_sends_one_email_for_clean_payload(
-    patch_resend: MagicMock,
+async def test_dispatcher_delegates_to_email_service_with_hashes_only(
+    patch_email: AsyncMock,
 ) -> None:
+    """The dispatcher must forward only hashed values, never the raw IP / UA."""
     await dispatch_login_notification(
         None,  # type: ignore[arg-type] - handler does not use the session
         _payload(),
     )
 
-    assert patch_resend.call_count == 1
-    sent = patch_resend.call_args.args[0]
-    assert sent["to"] == "alice@example.com"
-    assert sent["subject"] == "New sign-in to your Echoroo account"
-    # The IP and UA must be present in the body — that's the whole
-    # point of the email.
-    assert "192.0.2.10" in sent["html"]
-    assert "Linux" in sent["html"]
+    assert patch_email.await_count == 1
+    kwargs = patch_email.await_args.kwargs
+    assert kwargs["to"] == "alice@example.com"
+    assert kwargs["ip_hash"] == "h:ip"
+    assert kwargs["ua_hash"] == "h:ua"
+    assert kwargs["timestamp"] == "2026-04-25T10:00:00+00:00"
+    # The raw IP / UA must NOT be passed to the email helper — the
+    # FR-105 contract is that durable surfaces (email body + logs)
+    # only ever see the hashed forms.
+    assert "ip" not in kwargs
+    assert "user_agent" not in kwargs
 
 
 # ---------------------------------------------------------------------------
@@ -99,20 +111,32 @@ async def test_dispatcher_sends_one_email_for_clean_payload(
     ],
 )
 async def test_dispatcher_rejects_payload_with_control_chars(
-    patch_resend: MagicMock,
+    patch_email: AsyncMock,
     field: str,
     malicious_value: str,
 ) -> None:
-    """ASCII control characters in any payload field abort the dispatch."""
+    """ASCII control characters in any payload field abort the dispatch.
+
+    For payloads where the malicious value sits in a field whose
+    pre-computed hash is also present (``ip``, ``user_agent``), the
+    sanitiser short-circuits via the hash path. We strip the hash
+    key here so the test definitely exercises the raw-value branch.
+    """
+    payload = _payload(**{field: malicious_value})
+    if field == "ip":
+        payload.pop("ip_hash", None)
+    if field == "user_agent":
+        payload.pop("ua_hash", None)
+
     with pytest.raises(LoginNotificationPayloadError):
         await dispatch_login_notification(
             None,  # type: ignore[arg-type]
-            _payload(**{field: malicious_value}),
+            payload,
         )
 
-    # The send was never called — header-injection candidates never
-    # leak past sanitisation.
-    assert patch_resend.call_count == 0
+    # The email helper was never called — header-injection candidates
+    # never leak past sanitisation.
+    assert patch_email.await_count == 0
 
 
 # ---------------------------------------------------------------------------
@@ -122,37 +146,31 @@ async def test_dispatcher_rejects_payload_with_control_chars(
 
 
 async def test_dispatcher_raises_on_empty_recipient(
-    patch_resend: MagicMock,
+    patch_email: AsyncMock,
 ) -> None:
     with pytest.raises(LoginNotificationPayloadError):
         await dispatch_login_notification(
             None,  # type: ignore[arg-type]
             _payload(user_email=""),
         )
-    assert patch_resend.call_count == 0
+    assert patch_email.await_count == 0
 
 
 # ---------------------------------------------------------------------------
-# Resend SDK failure surfaces as an exception so the outbox processor
+# Email-helper failure surfaces as an exception so the outbox processor
 # records the row failure and schedules the next retry.
 # ---------------------------------------------------------------------------
 
 
-async def test_dispatcher_propagates_resend_failure(
+async def test_dispatcher_propagates_email_helper_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(
-        login_notification_dispatcher.settings,
-        "RESEND_API_KEY",
-        "test-key",
-    )
-
-    def _boom(*_args: Any, **_kwargs: Any) -> None:
+    async def _boom(**_kwargs: Any) -> None:
         raise RuntimeError("smtp-down")
 
     monkeypatch.setattr(
-        login_notification_dispatcher.resend.Emails,
-        "send",
+        login_notification_dispatcher,
+        "send_login_notification",
         _boom,
     )
 
@@ -164,35 +182,33 @@ async def test_dispatcher_propagates_resend_failure(
 
 
 # ---------------------------------------------------------------------------
-# Missing API key short-circuits to a logged warning rather than raising.
-# This matches the existing ``send_password_reset_email`` semantics so
-# dev environments without Resend configured do not move every login row
-# to ``dead_letter``.
+# Hash fallback: payloads missing pre-computed hashes still resolve via
+# :func:`compute_pii_hash`. This exercises the historical-row path so
+# the worker stays robust against rows enqueued before the hash fields
+# were added.
 # ---------------------------------------------------------------------------
 
 
-async def test_dispatcher_no_op_when_resend_api_key_missing(
+async def test_dispatcher_recomputes_hash_when_payload_lacks_it(
+    patch_email: AsyncMock,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        login_notification_dispatcher.settings,
-        "RESEND_API_KEY",
-        "",
+        login_notification_dispatcher,
+        "compute_pii_hash",
+        lambda value: f"h:{value}",
     )
 
-    sender = MagicMock()
-    monkeypatch.setattr(
-        login_notification_dispatcher.resend.Emails,
-        "send",
-        sender,
-    )
+    payload = _payload()
+    payload.pop("ip_hash")
+    payload.pop("ua_hash")
 
-    # Should NOT raise — the handler returns cleanly so the outbox row
-    # advances to ``done`` and we don't dead-letter unconfigured dev
-    # environments.
     await dispatch_login_notification(
         None,  # type: ignore[arg-type]
-        _payload(),
+        payload,
     )
 
-    assert sender.call_count == 0
+    assert patch_email.await_count == 1
+    kwargs = patch_email.await_args.kwargs
+    assert kwargs["ip_hash"] == "h:192.0.2.10"
+    assert kwargs["ua_hash"] == "h:Mozilla/5.0 (X11; Linux x86_64)"
