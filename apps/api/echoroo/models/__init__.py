@@ -75,6 +75,7 @@ from echoroo.models.taxon import Taxon
 from echoroo.models.taxon_vernacular_name import TaxonVernacularName
 from echoroo.models.upload import UploadFile, UploadSession
 from echoroo.models.user import User
+from echoroo.models.user_login_notification_seen import UserLoginNotificationSeen
 
 __all__ = [
     # Base
@@ -95,6 +96,7 @@ __all__ = [
     "Site",
     "SystemSetting",
     "User",
+    "UserLoginNotificationSeen",
     # Annotation models (existing)
     "AnnotationProject",
     "AnnotationTask",

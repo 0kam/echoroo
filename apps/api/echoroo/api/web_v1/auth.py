@@ -10,6 +10,7 @@ import asyncio
 import base64
 import binascii
 import hashlib
+import logging
 import secrets
 import time
 import unicodedata
@@ -73,6 +74,7 @@ from echoroo.services.auth_service import (
     authenticate,
     enforce_password_policy,
 )
+from echoroo.services.login_notification_service import LoginNotificationService
 from echoroo.services.two_factor_service import (
     BACKUP_FAIL_WINDOW_SECONDS,
     ISSUER_NAME,
@@ -94,6 +96,7 @@ from echoroo.services.webauthn_service import (
     WebAuthnVerificationError,
 )
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/auth", tags=["web-auth"])
 settings = get_settings()
 if settings.ENVIRONMENT == "production":
@@ -260,6 +263,33 @@ async def _revoke_refresh_families_for_user(db: DbSession, user_id: UUID) -> Non
         ),
         {"user_id": user_id},
     )
+
+
+async def _record_login_notification(
+    *,
+    user: User,
+    request: Request,
+) -> None:
+    """Record this login and enqueue a new-device email if applicable.
+
+    Runs in its own short-lived transaction (matches the post-commit
+    ordering of the audit hook) so a notification-enqueue failure
+    cannot roll back the freshly-issued session. Failures are logged
+    and swallowed — the user has already authenticated successfully and
+    the notification side-effect must not block the response.
+    """
+    async with AsyncSessionLocal() as session:
+        try:
+            service = LoginNotificationService(session)
+            await service.record_and_maybe_notify(
+                user,
+                ip=_client_ip(request),
+                user_agent=_user_agent(request),
+            )
+            await session.commit()
+        except Exception:  # noqa: BLE001 - logged; never blocks login
+            await session.rollback()
+            logger.exception("login_notification: record_and_maybe_notify failed")
 
 
 async def _write_platform_audit(
@@ -1172,6 +1202,7 @@ async def setup_totp_confirm(
         request=request,
         detail={"user_id": str(user.id)},
     )
+    await _record_login_notification(user=user, request=request)
     return TotpSetupConfirmResponse(
         backup_codes=backup_codes,
         access_token=access_token,
@@ -1241,6 +1272,7 @@ async def two_factor_challenge(
         request=request,
         detail={"method": payload.method},
     )
+    await _record_login_notification(user=user, request=request)
     return TwoFactorChallengeResponse(
         access_token=access_token,
         expires_in=settings.web_access_token_ttl_seconds,
@@ -1416,6 +1448,7 @@ async def webauthn_challenge(
         request=request,
         detail={"credential_id": updated["credential_id"]},
     )
+    await _record_login_notification(user=user, request=request)
     return WebAuthnChallengeCompleteResponse(
         access_token=access_token,
         expires_in=settings.web_access_token_ttl_seconds,
