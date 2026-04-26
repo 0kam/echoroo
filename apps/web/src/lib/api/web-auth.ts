@@ -26,21 +26,24 @@ const BASE = '/web-api/v1/auth';
 const CSRF_COOKIE_NAME = 'echoroo_csrf';
 
 /**
- * Set of paths (relative to `BASE`) that are CSRF-exempt on the backend
- * (`PUBLIC_AUTH_PATHS` in `apps/api/echoroo/core/auth_paths.py`). For
- * these we do NOT fail when the CSRF cookie is missing, since the
- * pre-session flow may legitimately have no token yet.
+ * Pre-session paths (relative to `BASE`) where no prior CSRF cookie can
+ * exist yet, so this client SKIPS attaching `X-CSRF-Token` even if a
+ * stale cookie happened to leak in from another flow. The backend
+ * exempts a slightly larger set in `PUBLIC_AUTH_PATHS`
+ * (`apps/api/echoroo/core/auth_paths.py`); for the *interim_token*
+ * confirm/challenge endpoints we still attach the header opportunistically
+ * (when the cookie is present) — the backend tolerates it and this keeps
+ * our defence-in-depth posture honest.
+ *
+ * Strictly: `/login` / `/register` / `/refresh` happen before any session
+ * exists; `/password-reset/request` is anonymous; `/2fa/setup/totp` is the
+ * pre-confirm "begin" call where the user has only an interim_token.
  */
 const CSRF_EXEMPT_PATHS: ReadonlySet<string> = new Set([
   '/login',
   '/register',
   '/refresh',
-  '/2fa/challenge',
   '/2fa/setup/totp',
-  '/2fa/setup/totp/confirm',
-  '/2fa/webauthn/register',
-  '/2fa/webauthn/challenge',
-  '/2fa/verify',
   '/password-reset/request',
 ]);
 

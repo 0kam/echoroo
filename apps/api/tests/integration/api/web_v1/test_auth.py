@@ -416,6 +416,104 @@ async def test_refresh_with_stale_security_stamp_returns_401(
     assert await SqlTokenStore(session_factory).is_family_revoked(claims.family_id)
 
 
+def _assert_session_cookies_cleared(set_cookie_headers: list[str]) -> None:
+    """Helper: assert the response Set-Cookie list deletes session cookies.
+
+    ``Response.delete_cookie`` produces ``Set-Cookie: <name>="";`` with
+    ``Max-Age=0`` and an ``Expires`` in the past. We accept either form.
+    """
+    from echoroo.core.settings import get_settings
+
+    settings = get_settings()
+    expected_names = (
+        settings.web_logged_in_cookie_name,
+        settings.web_session_cookie_name,
+        settings.web_csrf_cookie_name,
+        settings.web_refresh_cookie_name,
+    )
+    for name in expected_names:
+        matching = [h for h in set_cookie_headers if h.startswith(f"{name}=")]
+        assert matching, (
+            f"expected {name} to be cleared, "
+            f"got Set-Cookie headers: {set_cookie_headers!r}"
+        )
+        cleared = matching[0].lower()
+        assert (
+            "max-age=0" in cleared
+            or "expires=thu, 01 jan 1970" in cleared
+            or 'expires=thu, 01-jan-1970' in cleared
+        ), f"expected {name} clear-cookie pattern, got: {matching[0]!r}"
+
+
+@pytest.mark.asyncio
+async def test_refresh_reuse_clears_marker_and_session_cookies(
+    client: AsyncClient,
+    session_factory: object,
+) -> None:
+    """T160-T163 round-2 P1: token-reuse 401 must clear all session cookies."""
+    from echoroo.core.settings import get_settings
+
+    user = await _create_user(session_factory)
+    refresh_token = await _seed_refresh_token(session_factory, user)
+    first = await client.post(
+        "/web-api/v1/auth/refresh",
+        cookies={get_settings().web_refresh_cookie_name: refresh_token},
+    )
+    assert first.status_code == 200
+    replay = await client.post(
+        "/web-api/v1/auth/refresh",
+        cookies={get_settings().web_refresh_cookie_name: refresh_token},
+    )
+    assert replay.status_code == 401
+    _assert_session_cookies_cleared(replay.headers.get_list("set-cookie"))
+
+
+@pytest.mark.asyncio
+async def test_refresh_stale_security_stamp_clears_marker_and_session_cookies(
+    client: AsyncClient,
+    session_factory: object,
+) -> None:
+    """T160-T163 round-2 P1: stale security_stamp 401 must clear all cookies."""
+    from echoroo.core.settings import get_settings
+    from echoroo.models.user import User
+
+    user = await _create_user(session_factory, security_stamp="a" * 64)
+    refresh_token = await _seed_refresh_token(session_factory, user)
+    async with session_factory() as session, session.begin():  # type: ignore[operator]
+        db_user = await session.get(User, user.id)
+        assert db_user is not None
+        db_user.security_stamp = "b" * 64
+    response = await client.post(
+        "/web-api/v1/auth/refresh",
+        cookies={get_settings().web_refresh_cookie_name: refresh_token},
+    )
+    assert response.status_code == 401
+    _assert_session_cookies_cleared(response.headers.get_list("set-cookie"))
+
+
+@pytest.mark.asyncio
+async def test_refresh_against_already_revoked_family_clears_cookies(
+    client: AsyncClient,
+    session_factory: object,
+) -> None:
+    """T160-T163 round-2 P1: refresh on revoked family 401 must clear cookies."""
+    from echoroo.api.web_v1.auth import _decode_web_refresh_token
+    from echoroo.core.auth import SqlTokenStore
+    from echoroo.core.settings import get_settings
+
+    user = await _create_user(session_factory)
+    refresh_token = await _seed_refresh_token(session_factory, user)
+    claims = _decode_web_refresh_token(refresh_token)
+    # Pre-revoke the family directly (simulates a prior security event).
+    await SqlTokenStore(session_factory).revoke_family(claims.family_id)
+    response = await client.post(
+        "/web-api/v1/auth/refresh",
+        cookies={get_settings().web_refresh_cookie_name: refresh_token},
+    )
+    assert response.status_code == 401
+    _assert_session_cookies_cleared(response.headers.get_list("set-cookie"))
+
+
 @pytest.mark.asyncio
 async def test_logout_revokes_family_and_clears_cookies(
     client: AsyncClient,

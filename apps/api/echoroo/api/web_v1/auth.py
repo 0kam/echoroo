@@ -23,6 +23,7 @@ import httpx
 import jwt
 from email_validator import EmailNotValidError, validate_email
 from fastapi import APIRouter, HTTPException, Request, Response, status
+from fastapi.responses import JSONResponse
 from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 from webauthn.helpers import options_to_json_dict
@@ -727,6 +728,25 @@ def _set_session_cookies(
     response.headers[CSRF_HEADER_NAME] = csrf_token
 
 
+def _failed_refresh_response(detail: str) -> JSONResponse:
+    """Build a 401 response that ALSO clears all session cookies.
+
+    Used by family-revocation paths in ``/refresh`` (token reuse,
+    stale security_stamp, missing user, family already revoked) so the
+    SvelteKit hooks no longer see a stale ``echoroo_logged_in`` marker
+    after a security event. Returning a fresh ``JSONResponse`` (instead
+    of mutating the injected ``response`` and raising ``HTTPException``)
+    is required because FastAPI discards the injected response when an
+    exception bubbles up.
+    """
+    response = JSONResponse(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        content={"detail": detail},
+    )
+    _clear_session_cookies(response)
+    return response
+
+
 def _clear_session_cookies(response: Response) -> None:
     response.delete_cookie(
         key=settings.web_refresh_cookie_name,
@@ -1407,9 +1427,10 @@ async def refresh(
     request: Request,
     response: Response,
     db: DbSession,
-) -> RefreshResponse:
+) -> RefreshResponse | JSONResponse:
     raw_token = request.cookies.get(settings.web_refresh_cookie_name)
     if not raw_token:
+        # No cookie at all — nothing to clear, behave as before.
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Refresh token not found",
@@ -1419,24 +1440,17 @@ async def refresh(
     store = SqlTokenStore(AsyncSessionLocal)
 
     if await store.is_family_revoked(claims.family_id):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid refresh token",
-        )
+        # Family was previously revoked — clear marker + session cookies
+        # so the frontend hooks stop trusting `echoroo_logged_in`.
+        return _failed_refresh_response("Invalid refresh token")
 
     user = await UserRepository(db).get_by_id(claims.user_id)
     if user is None:
         await store.revoke_family(claims.family_id)
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid refresh token",
-        )
+        return _failed_refresh_response("Invalid refresh token")
     if not secrets.compare_digest(claims.security_stamp, user.security_stamp):
         await store.revoke_family(claims.family_id)
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid refresh token",
-        )
+        return _failed_refresh_response("Invalid refresh token")
 
     new_refresh_token, new_record = _issue_web_refresh_token(
         user_id=user.id,
@@ -1456,10 +1470,7 @@ async def refresh(
             request=request,
             detail={"family_id": claims.family_id, "reused_jti": claims.jti},
         )
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid refresh token",
-        )
+        return _failed_refresh_response("Invalid refresh token")
 
     access_token = issue_access_token(
         user_id=user.id,

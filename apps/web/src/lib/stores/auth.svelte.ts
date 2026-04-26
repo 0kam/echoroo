@@ -4,6 +4,7 @@
 
 import type { User } from '$lib/types';
 import { apiClient } from '$lib/api/client';
+import { logoutUser as webLogoutUser } from '$lib/api/web-auth';
 import { goto } from '$app/navigation';
 import { localizeHref } from '$lib/paraglide/runtime';
 
@@ -145,23 +146,42 @@ function createAuthStore() {
     },
 
     /**
-     * Logout and clear session
+     * Logout and clear session.
+     *
+     * Routes through the new first-party `/web-api/v1/auth/logout` endpoint
+     * (via `web-auth.ts`) so the request:
+     *   - sends `X-CSRF-Token` (Phase 4 CSRF middleware requires it),
+     *   - clears the `echoroo_logged_in` marker cookie (otherwise
+     *     `hooks.server.ts` continues to think the user is signed in),
+     *   - clears the session/refresh/csrf cookies on the right paths.
+     *
+     * The legacy `/api/v1/auth/logout` is also called as a transition
+     * fallback so any not-yet-migrated legacy `refresh_token` cookie is
+     * still cleared. Both calls swallow their own errors so client-side
+     * state is always reset.
      */
     async logout(): Promise<void> {
       state.isLoading = true;
       try {
-        // Call logout endpoint to clear refresh token cookie
+        // Primary: new web-auth endpoint (clears the new cookies).
+        await webLogoutUser();
+      } catch (error) {
+        // Continue with logout even if API call fails.
+        console.error('Web logout API call failed:', error);
+      }
+      try {
+        // Transition fallback: clear any remaining legacy cookies. Safe to
+        // call after the new endpoint and harmless if no legacy session exists.
         await apiClient.post('/api/v1/auth/logout');
       } catch (error) {
-        // Continue with logout even if API call fails
-        console.error('Logout API call failed:', error);
-      } finally {
-        // Clear client-side state
-        apiClient.setAccessToken(null);
-        state.user = null;
-        state.isAuthenticated = false;
-        state.isLoading = false;
+        // Legacy endpoint failure is non-fatal once the new endpoint succeeded.
+        console.warn('Legacy logout API call failed:', error);
       }
+      // Clear client-side state regardless of API outcomes.
+      apiClient.setAccessToken(null);
+      state.user = null;
+      state.isAuthenticated = false;
+      state.isLoading = false;
     },
 
     /**
