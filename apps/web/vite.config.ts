@@ -45,6 +45,10 @@ export default defineConfig({
         target: process.env.ECHOROO_API_URL || 'http://localhost:8002',
         changeOrigin: true
       },
+      '/web-api': {
+        target: process.env.ECHOROO_API_URL || 'http://localhost:8002',
+        changeOrigin: true
+      },
       // DEV ONLY: Proxies S3 (LocalStack) requests through the Vite dev server
       // to avoid CORS issues when SSH port-forwarding only the frontend port.
       '/s3-proxy/echoroo': {
