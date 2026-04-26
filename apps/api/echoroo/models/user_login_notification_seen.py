@@ -37,6 +37,15 @@ class UserLoginNotificationSeen(Base):
     """One row per (user, IP-hash, UA-hash) tuple seen in the last 30 days."""
 
     __tablename__ = "user_login_notifications_seen"
+    # Index layout MUST mirror Alembic migration 0004 exactly. The single
+    # composite index on ``(user_id, last_seen_at)`` serves the canonical
+    # ``WHERE user_id = ? AND last_seen_at > cutoff`` query in
+    # :class:`LoginNotificationService` as a single index scan; redundant
+    # single-column indexes on ``user_id`` / ``last_seen_at`` are
+    # deliberately absent. Keeping the ORM and the migration in lock-step
+    # prevents (a) tests that build the schema via ``metadata.create_all()``
+    # from drifting and (b) Alembic ``--autogenerate`` from proposing
+    # spurious add/drop diffs.
     __table_args__ = (
         UniqueConstraint(
             "user_id",
@@ -45,11 +54,8 @@ class UserLoginNotificationSeen(Base):
             name="uq_user_login_notifications_seen_tuple",
         ),
         Index(
-            "ix_user_login_notifications_seen_user_id",
+            "ix_user_login_notifications_seen_user_id_last_seen_at",
             "user_id",
-        ),
-        Index(
-            "ix_user_login_notifications_seen_last_seen_at",
             "last_seen_at",
         ),
     )

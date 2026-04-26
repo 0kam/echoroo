@@ -23,11 +23,34 @@ from typing import Final
 
 import resend
 
+from echoroo.core.kms import compute_pii_hash
 from echoroo.core.settings import get_settings
 from echoroo.core.text import has_control_chars
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
+
+
+def _safe_recipient_hash(value: str | None) -> str:
+    """Return a non-PII surrogate for ``value`` suitable for log output.
+
+    All log statements in this module funnel through this helper so we
+    never spill the raw recipient address into durable log storage
+    (Datadog, syslog, etc.) — FR-105 treats email addresses as PII just
+    like raw IP / UA strings. We deliberately keep the call infallible:
+    if KMS is briefly unreachable we fall back to a static placeholder
+    rather than re-raise (which would mask the *real* error the caller
+    is already trying to report).
+    """
+    if not value:
+        return "<missing>"
+    try:
+        return compute_pii_hash(value)
+    except Exception:  # pragma: no cover — defensive fallback
+        # Never let a logging-side failure mask the real exception or
+        # leak the raw value. The static surrogate keeps log lines
+        # parseable while still being PII-free.
+        return "<hash-unavailable>"
 
 # Configure Resend API key
 resend.api_key = settings.RESEND_API_KEY
@@ -78,10 +101,17 @@ async def send_verification_email(to: str, token: str) -> None:
         await send_verification_email(user.email, verification_token)
         ```
     """
-    # If Resend is not configured, skip sending (development mode)
+    recipient_hash = _safe_recipient_hash(to)
+
+    # If Resend is not configured, skip sending (development mode).
+    # NOTE: the verification token is intentionally not logged — even in
+    # dev, leaking a verification token to log storage would let anyone
+    # with log access claim the account (FR-105 + FR-101).
     if not settings.RESEND_API_KEY:
         logger.warning(
-            f"Email service not configured. Verification token for {to}: {token}"
+            "verification email skipped — RESEND_API_KEY not configured "
+            "(recipient_hash=%s)",
+            recipient_hash,
         )
         return
 
@@ -102,9 +132,12 @@ async def send_verification_email(to: str, token: str) -> None:
                 """,
             }
         )
-        logger.info(f"Verification email sent to {to}")
-    except Exception as e:
-        logger.error(f"Failed to send verification email to {to}: {e}")
+        logger.info("verification email sent (recipient_hash=%s)", recipient_hash)
+    except Exception:
+        logger.exception(
+            "verification email delivery failed (recipient_hash=%s)",
+            recipient_hash,
+        )
         # Don't raise exception - email failure shouldn't block registration
 
 
@@ -120,10 +153,17 @@ async def send_password_reset_email(to: str, token: str) -> None:
         await send_password_reset_email(user.email, reset_token)
         ```
     """
-    # If Resend is not configured, skip sending (development mode)
+    recipient_hash = _safe_recipient_hash(to)
+
+    # If Resend is not configured, skip sending (development mode).
+    # NOTE: the reset token is intentionally not logged — leaking it to
+    # log storage would let anyone with log access take over the
+    # account (FR-105 + FR-101).
     if not settings.RESEND_API_KEY:
         logger.warning(
-            f"Email service not configured. Password reset token for {to}: {token}"
+            "password reset email skipped — RESEND_API_KEY not configured "
+            "(recipient_hash=%s)",
+            recipient_hash,
         )
         return
 
@@ -144,9 +184,12 @@ async def send_password_reset_email(to: str, token: str) -> None:
                 """,
             }
         )
-        logger.info(f"Password reset email sent to {to}")
-    except Exception as e:
-        logger.error(f"Failed to send password reset email to {to}: {e}")
+        logger.info("password reset email sent (recipient_hash=%s)", recipient_hash)
+    except Exception:
+        logger.exception(
+            "password reset email delivery failed (recipient_hash=%s)",
+            recipient_hash,
+        )
         # Don't raise exception - always return success for security
 
 
@@ -191,14 +234,22 @@ async def send_login_notification(
         # eventually moves to ``dead_letter`` after the retry budget.
         raise EmailHeaderInjectionError("send_login_notification requires a recipient")
 
+    # FR-105: never let the raw recipient address cross into log
+    # storage. Every log statement below uses ``recipient_hash`` (a
+    # KMS-keyed HMAC of the address) instead. The hashed IP / UA values
+    # are already non-PII surrogates and can be logged as-is.
+    recipient_hash = _safe_recipient_hash(recipient)
+
     if not settings.RESEND_API_KEY:
-        # Dev / test mode: log only the hashed values + recipient
-        # domain. We deliberately do NOT log the raw IP or UA — logs
-        # are durable PII storage and FR-105 forbids that path.
+        # Dev / test mode: log only the hashed values. We deliberately
+        # do NOT log the raw IP / UA / email — logs are durable PII
+        # storage and FR-105 forbids that path. The recipient_hash is a
+        # stable surrogate that lets operators correlate this skip with
+        # the seen-table row without ever exposing the address.
         logger.warning(
             "login_notification email skipped — RESEND_API_KEY not configured "
-            "(to=%s, ip_hash=%s, ua_hash=%s)",
-            recipient,
+            "(recipient_hash=%s, ip_hash=%s, ua_hash=%s)",
+            recipient_hash,
             safe_ip_hash,
             safe_ua_hash,
         )
@@ -239,12 +290,13 @@ async def send_login_notification(
         )
     except Exception:
         # Re-raise so the outbox dispatcher can retry / dead-letter
-        # the row. A best-effort log identifies the recipient (already
-        # known to the user) but never the raw IP / UA — only the
-        # hashes were ever in scope here.
+        # the row. The diagnostic log line carries only non-PII
+        # surrogates (recipient_hash + ip_hash) — never the raw email,
+        # IP, or UA. FR-105 forbids the raw forms in any durable log.
         logger.exception(
-            "login_notification email delivery failed (to=%s, ip_hash=%s)",
-            recipient,
+            "login_notification email delivery failed "
+            "(recipient_hash=%s, ip_hash=%s)",
+            recipient_hash,
             safe_ip_hash,
         )
         raise
