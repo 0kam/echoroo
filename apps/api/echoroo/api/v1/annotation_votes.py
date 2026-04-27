@@ -5,7 +5,7 @@ not just those from a specific detection run. This is used by the
 similarity search results where annotations are created on-the-fly
 and are not associated with a detection run.
 
-Phase 3 (T124, FR-008 / FR-008a / FR-037): every path operation now routes
+Phase 3 (T124, FR-008 / FR-008a / FR-037): every path operation routes
 through the central :func:`is_allowed` gate using the Action catalog in
 :mod:`echoroo.core.actions`:
 
@@ -16,15 +16,13 @@ through the central :func:`is_allowed` gate using the Action catalog in
 * ``DELETE /votes`` (remove) → :data:`ANNOTATION_VOTE_CREATE_ACTION` (mutating
   vote management shares the VOTE permission contract, FR-037).
 
-FR-037 source determination is computed at vote creation time from the
-voter's *active* relationship with the project (member / authenticated guest /
-trusted user) — see :func:`_determine_vote_source`. The legacy ``annotation_votes``
-ORM table does not yet expose a ``source`` column (the baseline migration
-0001 in the permissions-redesign branch adds it but the runtime model has not
-been refactored). Until the model is migrated, the computed source is recorded
-in ``request.state`` for downstream observability but cannot be persisted; the
-TODO below tracks the follow-up that will wire :func:`_determine_vote_source`
-into the repository's upsert path.
+Phase 6 (T301 / FR-037 / FR-039): voter source classification is delegated to
+:func:`echoroo.services.annotation_vote.classify_voter_source` and the
+``(source, project_role_at_vote)`` snapshot is persisted on first vote via
+``AnnotationVoteRepository.upsert``. Re-votes preserve the original snapshot
+per FR-037 immutability. Response masking for non-Owner / non-Admin viewers
+(FR-039) is applied by the service layer using
+:func:`echoroo.services.annotation_vote.resolve_viewer_role`.
 """
 
 from __future__ import annotations
@@ -41,12 +39,14 @@ from echoroo.core.actions import (
 from echoroo.core.database import DbSession
 from echoroo.core.permissions import gate_action
 from echoroo.middleware.auth import CurrentUser
-from echoroo.models.project import Project
 from echoroo.repositories.annotation import AnnotationRepository
 from echoroo.repositories.annotation_vote import AnnotationVoteRepository
-from echoroo.repositories.project import ProjectRepository
 from echoroo.schemas.annotation_vote import VoteCastRequest, VoteSummaryResponse
-from echoroo.services.annotation_vote import AnnotationVoteService
+from echoroo.services.annotation_vote import (
+    AnnotationVoteService,
+    classify_voter_source,
+    resolve_viewer_role,
+)
 
 router = APIRouter(
     prefix="/projects/{project_id}/annotations",
@@ -70,45 +70,6 @@ def get_vote_service(db: DbSession) -> AnnotationVoteService:
 
 
 VoteServiceDep = Annotated[AnnotationVoteService, Depends(get_vote_service)]
-
-
-async def _determine_vote_source(
-    *,
-    project_id: UUID,
-    project: Project,
-    user_id: UUID,
-    db: DbSession,
-) -> str:
-    """Determine the FR-037 ``source`` value for a freshly-cast vote.
-
-    Returns one of ``"member" | "guest_authenticated" | "trusted_user"``.
-
-    Resolution order (per spec.md US2 #2 / US5 #9 / FR-037):
-
-    1. If the user is the project owner OR a row exists in
-       ``project_members`` for ``(project_id, user_id)`` → ``"member"``.
-    2. Else if a *currently active* trusted-user overlay exists → ``"trusted_user"``.
-       (Phase 5 / US5 will wire :class:`ProjectTrustedUser` here. The repository
-       does not yet exist — :data:`_TRUSTED_USER_TODO` flags the follow-up.)
-    3. Otherwise the voter is an authenticated non-member → ``"guest_authenticated"``.
-    """
-    project_repo = ProjectRepository(db)
-    if await project_repo.is_project_owner(project_id, user_id):
-        return "member"
-    if (await project_repo.get_member(project_id, user_id)) is not None:
-        return "member"
-
-    # TODO(T501 / US5 — FR-041〜046): once ``ProjectTrustedUser`` model + repo
-    # land, add an ``is_active_trusted_user(project_id, user_id, now)`` lookup
-    # here and return ``"trusted_user"`` when the overlay row is unexpired.
-    _ = project  # reserved for restricted_config trusted policy (US5)
-    return "guest_authenticated"
-
-
-_TRUSTED_USER_TODO = (
-    "ProjectTrustedUser repository missing — trusted-user source classification "
-    "deferred to Phase 5 (T501)."
-)
 
 
 @router.get(
@@ -150,7 +111,7 @@ async def get_annotation_votes(
         403: Permission denied
         404: Annotation not found
     """
-    await gate_action(
+    project = await gate_action(
         action=ANNOTATION_VOTE_LIST_ACTION,
         project_id=project_id,
         current_user=current_user,
@@ -168,9 +129,19 @@ async def get_annotation_votes(
             detail="Annotation not found",
         )
 
+    # FR-039: viewer role drives voter-id masking. Owner / Admin see UUIDs,
+    # everyone else sees ``user_id=null`` for non-member / Trusted votes.
+    viewer_user_id = getattr(current_user, "id", None) if current_user is not None else None
+    viewer_role = await resolve_viewer_role(
+        project_id=project_id,
+        project=project,
+        user_id=viewer_user_id,
+        db=db,
+    )
     return await vote_service.get_vote_summary(
         annotation_id=annotation_id,
-        current_user_id=current_user.id,
+        current_user_id=viewer_user_id,
+        viewer_role=viewer_role,
     )
 
 
@@ -239,23 +210,25 @@ async def cast_annotation_vote(
             detail="Annotation not found",
         )
 
-    # FR-037: classify the voter's source. The legacy ORM model does not yet
-    # expose a ``source`` column (baseline migration 0001 adds it but the
-    # SQLAlchemy mapping has not been refactored). Stash on request.state so
-    # the response filter / observability layer can read it; persistence is
-    # tracked in the follow-up TODO below.
-    source = await _determine_vote_source(
+    # FR-037: classify the voter's source + role snapshot. Persisted only on
+    # first creation by ``AnnotationVoteRepository.upsert`` — re-votes preserve
+    # the original source / role per FR-037 immutability.
+    source, role_at_vote = await classify_voter_source(
         project_id=project_id,
         project=project,
         user_id=current_user.id,
         db=db,
     )
-    http_request.state.annotation_vote_source = source
-    # TODO(T020c / T501): once ``annotation_votes`` model gains the
-    # ``source`` + ``project_role_at_vote`` columns (FR-037 immutable),
-    # forward ``source`` and the snapshot role into
-    # ``AnnotationVoteRepository.upsert`` so the column is populated
-    # transactionally with the vote row.
+    http_request.state.annotation_vote_source = source.value
+
+    # FR-039: viewer role for masking the response — same identity here, but
+    # the helper centralises Owner/Admin/Member/Viewer/Authenticated mapping.
+    viewer_role = await resolve_viewer_role(
+        project_id=project_id,
+        project=project,
+        user_id=current_user.id,
+        db=db,
+    )
 
     min_votes = project.review_min_votes
     threshold = project.review_consensus_threshold
@@ -264,6 +237,9 @@ async def cast_annotation_vote(
         annotation_id=annotation_id,
         user_id=current_user.id,
         request=request,
+        source=source,
+        project_role_at_vote=role_at_vote,
+        viewer_role=viewer_role,
         min_votes=min_votes,
         threshold=threshold,
     )
@@ -331,9 +307,17 @@ async def delete_annotation_vote(
     min_votes = project.review_min_votes
     threshold = project.review_consensus_threshold
 
+    viewer_role = await resolve_viewer_role(
+        project_id=project_id,
+        project=project,
+        user_id=current_user.id,
+        db=db,
+    )
+
     summary = await vote_service.delete_vote(
         annotation_id=annotation_id,
         user_id=current_user.id,
+        viewer_role=viewer_role,
         min_votes=min_votes,
         threshold=threshold,
     )

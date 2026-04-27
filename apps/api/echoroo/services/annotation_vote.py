@@ -7,19 +7,35 @@ Implements an iNaturalist-inspired consensus algorithm:
   - agreed:      score > threshold AND agree >= min_votes
   - rejected:    score <= (1 - threshold) AND disagree >= min_votes
   - disputed:    has enough votes but no clear consensus
+
+Phase 6 (US2 / FR-037 / FR-038 / FR-039) additions:
+  - ``cast_vote`` now requires ``source`` (AnnotationVoteSource) and
+    ``project_role_at_vote`` (ProjectMemberRole | None) — these are
+    persisted on first creation and **immutable** on re-vote.
+  - ``get_vote_summary`` now accepts ``viewer_role`` and applies FR-039
+    voter-id masking: non-Owner / non-Admin viewers see ``user_id=None``
+    (and ``user=None``) for guest_authenticated / trusted_user votes.
+    Member votes are visible to all viewer roles.
+  - VoteSummaryResponse exposes per-source aggregate counts
+    (``member_agree`` / ``member_disagree`` / ``guest_authenticated_*`` /
+    ``trusted_user_*``) per FR-038.
 """
 
 from __future__ import annotations
 
+from typing import Any
 from uuid import UUID
 
 from fastapi import HTTPException, status
 
 from echoroo.models.annotation import Annotation
+from echoroo.models.annotation_vote import AnnotationVote
 from echoroo.models.enums import (
+    AnnotationVoteSource,
     ConsensusStatus,
     DetectionSource,
     DetectionStatus,
+    ProjectMemberRole,
     SignalQuality,
     VoteType,
 )
@@ -31,6 +47,104 @@ from echoroo.schemas.annotation_vote import (
     VoteSummaryResponse,
     VoteUserInfo,
 )
+
+# FR-039: roles allowed to see the raw ``user_id`` of non-member / Trusted
+# votes. Owner / Admin only — Member, Viewer, and guest_authenticated viewers
+# all see the masked (``null``) form. The vote itself, ``source``, and
+# ``project_role_at_vote`` remain visible regardless.
+_VOTER_ID_VISIBLE_VIEWER_ROLES: frozenset[str] = frozenset({"Owner", "Admin"})
+
+# FR-039: vote sources whose ``user_id`` is masked from non-Owner / non-Admin
+# viewers. Member votes are always visible.
+_VOTER_ID_MASKED_SOURCES: frozenset[AnnotationVoteSource] = frozenset(
+    {AnnotationVoteSource.GUEST_AUTHENTICATED, AnnotationVoteSource.TRUSTED_USER}
+)
+
+
+async def classify_voter_source(
+    *,
+    project_id: UUID,
+    project: Any,
+    user_id: UUID,
+    db: Any,
+) -> tuple[AnnotationVoteSource, ProjectMemberRole | None]:
+    """Compute FR-037 ``(source, project_role_at_vote)`` for a freshly-cast vote.
+
+    Resolution order (per spec.md US2 #2 / US5 #9 / FR-037):
+
+    1. If the user is the project owner → ``(member, OWNER-equivalent)``.
+       Owners are not in the ``project_members`` table; the snapshot uses
+       :data:`ProjectMemberRole.ADMIN` as the closest persisted enum value
+       so the CHECK constraint is satisfied. Tests / response filters can
+       still distinguish Owner from Admin via the project's ``owner_id``.
+    2. If a row exists in ``project_members`` for ``(project_id, user_id)``
+       → ``(member, member.role)``.
+    3. Otherwise (Phase 5/6 scope) → ``(guest_authenticated, None)``.
+
+    TODO(T501 / US5 — FR-041〜046): once :class:`ProjectTrustedUser` model +
+    repository land, an active overlay row for ``(project_id, user_id, now)``
+    must take precedence over guest_authenticated and produce
+    ``(trusted_user, None)``. The hook is intentionally a no-op here so
+    Phase 6 ships without the Phase 10 dependency.
+    """
+    # Local import to avoid the heavy permissions import cycle at module load.
+    from echoroo.repositories.project import ProjectRepository
+
+    project_repo = ProjectRepository(db)
+
+    owner_id = getattr(project, "owner_id", None)
+    if owner_id is not None and owner_id == user_id:
+        # Owners aren't in project_members. The CHECK constraint requires
+        # a non-NULL role for member votes — capture ADMIN as the closest
+        # persisted enum (Owner is derived elsewhere from project.owner_id).
+        return AnnotationVoteSource.MEMBER, ProjectMemberRole.ADMIN
+
+    member = await project_repo.get_member(project_id, user_id)
+    if member is not None:
+        return AnnotationVoteSource.MEMBER, member.role
+
+    # TODO(T501): if a ProjectTrustedUser overlay is active for this user,
+    # return (TRUSTED_USER, None). Until Phase 10 ships the model, fall
+    # through to guest_authenticated.
+    return AnnotationVoteSource.GUEST_AUTHENTICATED, None
+
+
+async def resolve_viewer_role(
+    *,
+    project_id: UUID,
+    project: Any,
+    user_id: UUID | None,
+    db: Any,
+) -> str:
+    """Compute the viewer's normalised role for FR-039 masking decisions.
+
+    Returns one of ``"Guest"`` / ``"Authenticated"`` / ``"Viewer"`` /
+    ``"Member"`` / ``"Admin"`` / ``"Owner"``. Owner is derived from
+    ``project.owner_id`` — the ``project_members`` table never carries the
+    owner row.
+    """
+    if user_id is None:
+        return "Guest"
+
+    owner_id = getattr(project, "owner_id", None)
+    if owner_id is not None and owner_id == user_id:
+        return "Owner"
+
+    from echoroo.repositories.project import ProjectRepository
+
+    project_repo = ProjectRepository(db)
+    member = await project_repo.get_member(project_id, user_id)
+    if member is None:
+        return "Authenticated"
+
+    role = member.role
+    if role == ProjectMemberRole.ADMIN:
+        return "Admin"
+    if role == ProjectMemberRole.MEMBER:
+        return "Member"
+    if role == ProjectMemberRole.VIEWER:
+        return "Viewer"
+    return "Authenticated"
 
 
 class AnnotationVoteService:
@@ -55,6 +169,9 @@ class AnnotationVoteService:
         annotation_id: UUID,
         user_id: UUID,
         request: VoteCastRequest,
+        source: AnnotationVoteSource,
+        project_role_at_vote: ProjectMemberRole | None,
+        viewer_role: str = "Authenticated",
         min_votes: int = 2,
         threshold: float = 0.667,
     ) -> VoteSummaryResponse:
@@ -67,6 +184,14 @@ class AnnotationVoteService:
             annotation_id: Annotation's UUID
             user_id: ID of the voting user
             request: Vote cast request data
+            source: Voter source classification (FR-037). Persisted only on
+                first creation; ignored on re-vote.
+            project_role_at_vote: Member role snapshot when ``source ==
+                'member'``. Must be ``None`` for other sources. Persisted only
+                on first creation; ignored on re-vote.
+            viewer_role: Normalised role of the viewer reading the response
+                (Owner / Admin / Member / Viewer / Authenticated / Guest).
+                Used by ``get_vote_summary`` to apply FR-039 masking.
             min_votes: Minimum agree+disagree votes for consensus evaluation
             threshold: Fraction required to reach 'agreed' consensus
 
@@ -87,18 +212,25 @@ class AnnotationVoteService:
             annotation_id=annotation_id,
             user_id=user_id,
             vote=request.vote,
+            source=source,
+            project_role_at_vote=project_role_at_vote,
             signal_quality=request.signal_quality,
             suggested_tag_id=request.suggested_tag_id,
             note=request.note,
         )
 
         await self._update_annotation_status(annotation, min_votes, threshold)
-        return await self.get_vote_summary(annotation_id, user_id)
+        return await self.get_vote_summary(
+            annotation_id,
+            user_id,
+            viewer_role=viewer_role,
+        )
 
     async def delete_vote(
         self,
         annotation_id: UUID,
         user_id: UUID,
+        viewer_role: str = "Authenticated",
         min_votes: int = 2,
         threshold: float = 0.667,
     ) -> VoteSummaryResponse:
@@ -137,21 +269,32 @@ class AnnotationVoteService:
             )
 
         await self._update_annotation_status(annotation, min_votes, threshold)
-        return await self.get_vote_summary(annotation_id, user_id)
+        return await self.get_vote_summary(
+            annotation_id,
+            user_id,
+            viewer_role=viewer_role,
+        )
 
     async def get_vote_summary(
         self,
         annotation_id: UUID,
         current_user_id: UUID | None = None,
+        viewer_role: str = "Authenticated",
     ) -> VoteSummaryResponse:
         """Get the vote summary for an annotation.
 
         Args:
             annotation_id: Annotation's UUID
             current_user_id: Optional current user ID to include their vote
+            viewer_role: Normalised role of the viewer ("Owner" / "Admin" /
+                "Member" / "Viewer" / "Authenticated" / "Guest"). Used to
+                apply FR-039 voter-id masking — Owner / Admin see raw UUIDs,
+                everyone else sees ``user_id=null`` for non-member / Trusted
+                votes.
 
         Returns:
-            VoteSummaryResponse with counts, consensus status, and individual votes
+            VoteSummaryResponse with counts, consensus status, and individual
+            votes (with FR-039 masking applied per viewer role).
 
         Raises:
             HTTPException: If annotation not found
@@ -169,6 +312,42 @@ class AnnotationVoteService:
         disagree_count = sum(1 for v in votes if v.vote == VoteType.DISAGREE)
         unsure_count = sum(1 for v in votes if v.vote == VoteType.UNSURE)
 
+        # Per-source counts computed in Python because we already load all
+        # votes for the voters[] response (FR-038/039 require both). Switching
+        # to SQL GROUP BY would not avoid the load and would require a second
+        # round-trip — the linear pass below is cheaper end-to-end.
+        # FR-038: per-source aggregate counts
+        member_agree = sum(
+            1 for v in votes
+            if v.vote == VoteType.AGREE
+            and v.source == AnnotationVoteSource.MEMBER
+        )
+        member_disagree = sum(
+            1 for v in votes
+            if v.vote == VoteType.DISAGREE
+            and v.source == AnnotationVoteSource.MEMBER
+        )
+        guest_authenticated_agree = sum(
+            1 for v in votes
+            if v.vote == VoteType.AGREE
+            and v.source == AnnotationVoteSource.GUEST_AUTHENTICATED
+        )
+        guest_authenticated_disagree = sum(
+            1 for v in votes
+            if v.vote == VoteType.DISAGREE
+            and v.source == AnnotationVoteSource.GUEST_AUTHENTICATED
+        )
+        trusted_user_agree = sum(
+            1 for v in votes
+            if v.vote == VoteType.AGREE
+            and v.source == AnnotationVoteSource.TRUSTED_USER
+        )
+        trusted_user_disagree = sum(
+            1 for v in votes
+            if v.vote == VoteType.DISAGREE
+            and v.source == AnnotationVoteSource.TRUSTED_USER
+        )
+
         # Count signal quality values among agree votes
         signal_quality_counts: dict[str, int] = {q.value: 0 for q in SignalQuality}
         for v in votes:
@@ -184,24 +363,7 @@ class AnnotationVoteService:
                     user_signal_quality = v.signal_quality if v.vote == VoteType.AGREE else None
                     break
 
-        vote_items = [
-            VoteResponse(
-                id=v.id,
-                annotation_id=v.annotation_id,
-                user_id=v.user_id,
-                vote=v.vote,
-                signal_quality=v.signal_quality,
-                suggested_tag_id=v.suggested_tag_id,
-                note=v.note,
-                created_at=v.created_at,
-                user=VoteUserInfo(
-                    id=v.user.id,
-                    email=v.user.email,
-                    display_name=v.user.display_name,
-                ),
-            )
-            for v in votes
-        ]
+        vote_items = [self._serialize_vote(v, viewer_role=viewer_role) for v in votes]
 
         return VoteSummaryResponse(
             annotation_id=annotation_id,
@@ -212,7 +374,67 @@ class AnnotationVoteService:
             user_signal_quality=user_signal_quality,
             signal_quality_counts=signal_quality_counts,
             consensus_status=annotation.status,
-            votes=vote_items,
+            voters=vote_items,
+            member_agree=member_agree,
+            member_disagree=member_disagree,
+            guest_authenticated_agree=guest_authenticated_agree,
+            guest_authenticated_disagree=guest_authenticated_disagree,
+            trusted_user_agree=trusted_user_agree,
+            trusted_user_disagree=trusted_user_disagree,
+        )
+
+    @staticmethod
+    def _serialize_vote(vote: AnnotationVote, *, viewer_role: str) -> VoteResponse:
+        """Serialise a single AnnotationVote row applying FR-039 masking.
+
+        FR-039: when the viewer is not Owner / Admin and the vote was cast by
+        a non-member or Trusted user, the ``user_id`` (and embedded ``user``
+        info) are masked to ``None``. The vote itself, ``vote`` value,
+        ``source``, and ``project_role_at_vote`` remain visible — vote
+        visibility is preserved by design.
+
+        Member votes are visible to all viewer roles regardless.
+        """
+        v_user_id: UUID = vote.user_id
+        v_source: AnnotationVoteSource = vote.source
+
+        # Pull the embedded user only when not masked — the relationship is
+        # ``lazy="raise"`` so we must avoid touching ``vote.user`` if we plan
+        # to drop it in the masking branch (otherwise we trigger a refresh
+        # the caller didn't ask for).
+        v_user = vote.user if hasattr(vote, "user") else None
+
+        should_mask = (
+            v_source in _VOTER_ID_MASKED_SOURCES
+            and viewer_role not in _VOTER_ID_VISIBLE_VIEWER_ROLES
+        )
+
+        if should_mask:
+            visible_user_id: UUID | None = None
+            visible_user: VoteUserInfo | None = None
+        else:
+            visible_user_id = v_user_id
+            if v_user is not None:
+                visible_user = VoteUserInfo(
+                    id=v_user.id,
+                    email=v_user.email,
+                    display_name=v_user.display_name,
+                )
+            else:
+                visible_user = None
+
+        return VoteResponse(
+            id=vote.id,
+            annotation_id=vote.annotation_id,
+            user_id=visible_user_id,
+            vote=vote.vote,
+            signal_quality=vote.signal_quality,
+            suggested_tag_id=vote.suggested_tag_id,
+            note=vote.note,
+            created_at=vote.created_at,
+            user=visible_user,
+            source=v_source,
+            project_role_at_vote=vote.project_role_at_vote,
         )
 
     @staticmethod

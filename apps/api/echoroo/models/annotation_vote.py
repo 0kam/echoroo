@@ -11,12 +11,17 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from sqlalchemy import DateTime, Enum, ForeignKey, Index, Text, UniqueConstraint
+from sqlalchemy import CheckConstraint, DateTime, Enum, ForeignKey, Index, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from echoroo.models.base import Base, UUIDMixin
-from echoroo.models.enums import SignalQuality, VoteType
+from echoroo.models.enums import (
+    AnnotationVoteSource,
+    ProjectMemberRole,
+    SignalQuality,
+    VoteType,
+)
 
 if TYPE_CHECKING:
     from echoroo.models.annotation import Annotation
@@ -39,6 +44,13 @@ class AnnotationVote(UUIDMixin, Base):
         suggested_tag_id: Optional FK to a tag suggested when disagreeing with wrong species
         note: Optional free-text reason for the vote (especially useful for disagreements)
         created_at: Timestamp when this vote was first cast
+        source: Voter's relationship to the project at vote-creation time
+            (FR-037, immutable). One of ``member`` / ``guest_authenticated`` /
+            ``trusted_user``. Set on first cast and **never recomputed** on
+            re-vote (FR-037 immutability).
+        project_role_at_vote: Snapshot of the voter's role within the project
+            at vote-creation time when ``source == 'member'``. ``None`` for
+            non-member sources. Enforced via CHECK constraint.
     """
 
     __tablename__ = "annotation_votes"
@@ -92,6 +104,35 @@ class AnnotationVote(UUIDMixin, Base):
         nullable=False,
         doc="Timestamp when this vote was cast",
     )
+    # FR-037: voter source classification — set on first cast, immutable
+    # afterwards (re-votes preserve the original ``source`` and
+    # ``project_role_at_vote`` snapshot).
+    source: Mapped[AnnotationVoteSource] = mapped_column(
+        Enum(
+            AnnotationVoteSource,
+            name="annotationvotesource",
+            create_type=False,
+            values_callable=lambda x: [e.value for e in x],
+        ),
+        nullable=False,
+        doc=(
+            "Voter source at vote-creation time (member / guest_authenticated /"
+            " trusted_user). FR-037: immutable after first cast."
+        ),
+    )
+    project_role_at_vote: Mapped[ProjectMemberRole | None] = mapped_column(
+        Enum(
+            ProjectMemberRole,
+            name="projectmemberrole",
+            create_type=False,
+            values_callable=lambda x: [e.value for e in x],
+        ),
+        nullable=True,
+        doc=(
+            "Snapshot of the voter's project role when source='member'."
+            " NULL for guest_authenticated / trusted_user sources."
+        ),
+    )
 
     # Relationships
     annotation: Mapped[Annotation] = relationship(
@@ -112,6 +153,14 @@ class AnnotationVote(UUIDMixin, Base):
         UniqueConstraint("annotation_id", "user_id", name="uq_annotation_vote_user"),
         Index("ix_annotation_votes_annotation_id", "annotation_id"),
         Index("ix_annotation_votes_user_id", "user_id"),
+        # FR-037: ``source`` and ``project_role_at_vote`` must be consistent —
+        # ``member`` votes capture the role, non-member sources never do.
+        CheckConstraint(
+            "(source = 'member' AND project_role_at_vote IS NOT NULL) "
+            "OR (source IN ('guest_authenticated', 'trusted_user') "
+            "AND project_role_at_vote IS NULL)",
+            name="ck_annotation_votes_source_role_consistency",
+        ),
     )
 
     def __repr__(self) -> str:

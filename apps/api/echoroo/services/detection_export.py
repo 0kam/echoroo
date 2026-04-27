@@ -1,4 +1,26 @@
-"""Detection export service for CSV and ML dataset generation."""
+"""Detection export service for CSV and ML dataset generation.
+
+Phase 6 (US2 / FR-086 / SC-016) extensions:
+
+* CSV exports include four new trailing columns — ``license``,
+  ``license_history_url``, ``location_generalization``, and
+  ``withheld_reason`` — appended **after** the CamtrapDP standard columns to
+  preserve CamtrapDP compatibility while satisfying FR-086 disclosure
+  requirements. Consumers reading only the canonical CamtrapDP columns are
+  unaffected.
+* The export path **never** emits raw latitude / longitude / lat / lng / GPS
+  fields (FR-028 / FR-030 / FR-031 / SC-016). The schema simply does not
+  include those columns; defence in depth is provided by the
+  ``lint_no_raw_coordinates`` CI step.
+* ``location_generalization`` is the effective H3 resolution applied to the
+  row's site. For Restricted projects it falls back to the project's
+  ``public_location_precision_h3_res`` toggle, otherwise it is derived from
+  the Site's H3 index resolution (or ``H3_RES_9`` when no Site is attached).
+* ``withheld_reason`` is one of ``None`` / ``project_toggle`` /
+  ``taxon_sensitivity:<category>``. The Phase 11 taxon-sensitivity preload
+  pipeline will refine this; Phase 6 emits ``project_toggle`` when the
+  Restricted toggle clamped the resolution and ``None`` otherwise.
+"""
 
 from __future__ import annotations
 
@@ -17,8 +39,10 @@ from sqlalchemy.orm import selectinload
 from echoroo.models.annotation import Annotation
 from echoroo.models.confirmed_region import ConfirmedRegion
 from echoroo.models.dataset import Dataset
-from echoroo.models.enums import DetectionSource, DetectionStatus
+from echoroo.models.enums import DetectionSource, DetectionStatus, ProjectVisibility
+from echoroo.models.project import Project
 from echoroo.models.recording import Recording
+from echoroo.models.site import Site
 
 
 class _AnnotationEntry(TypedDict):
@@ -33,7 +57,11 @@ class _AnnotationEntry(TypedDict):
     label: str
 
 
-# CamtrapDP observations.csv columns in standard order
+# CamtrapDP observations.csv columns in standard order. Extended with four
+# Phase 6 / FR-086 trailing columns appended **after** the CamtrapDP block —
+# CamtrapDP-compliant readers ignore unknown trailing columns, so the
+# extension is non-breaking. NOTE: raw lat/lng / latitude / longitude
+# columns are intentionally absent (FR-028 / SC-016).
 _CAMTRAPDP_COLUMNS = [
     "observationID",
     "deploymentID",
@@ -66,7 +94,17 @@ _CAMTRAPDP_COLUMNS = [
     "classificationConfirmation",
     "observationTags",
     "observationComments",
+    # FR-086 trailing extensions (non-CamtrapDP):
+    "license",
+    "license_history_url",
+    "location_generalization",
+    "withheld_reason",
 ]
+
+# Default H3 resolution exposed to a Member-equivalent exporter when no
+# Site / Recording-level resolution is recorded. Matches the response-filter
+# fallback (echoroo.core.permissions.H3_RES_9) for consistency.
+_DEFAULT_MEMBER_H3_RESOLUTION = 9
 
 
 def _format_event_datetime(
@@ -98,6 +136,95 @@ class DetectionExportService:
             db: Async database session
         """
         self.db = db
+
+    async def _load_project(self, project_id: UUID) -> Project | None:
+        """Fetch the project row used to populate FR-086 license/toggle fields."""
+        result = await self.db.execute(
+            select(Project).where(Project.id == project_id)
+        )
+        return result.scalar_one_or_none()
+
+    async def _build_recording_h3_resolution_map(
+        self,
+        annotations: list[Annotation],
+    ) -> dict[UUID, int]:
+        """Pre-load the Site H3 resolution for every recording in the export.
+
+        Returns a mapping ``{recording_id -> h3_resolution}``. Recordings
+        without an attached Site (or with an unparseable H3 index) fall back
+        to :data:`_DEFAULT_MEMBER_H3_RESOLUTION`.
+
+        We intentionally **do not** read raw lat / lng — FR-028 keeps those
+        out of the schema entirely. The Site stores only the H3 index, which
+        is privacy-safe because H3 cells are fixed grid identifiers.
+        """
+        recording_ids = {ann.recording_id for ann in annotations if ann.recording_id is not None}
+        if not recording_ids:
+            return {}
+
+        result = await self.db.execute(
+            select(Recording.id, Site.h3_index)
+            .join(Dataset, Recording.dataset_id == Dataset.id)
+            .join(Site, Dataset.site_id == Site.id, isouter=True)
+            .where(Recording.id.in_(recording_ids))
+        )
+
+        try:
+            import h3 as _h3
+        except ImportError:  # pragma: no cover - defensive when h3 missing
+            _h3 = None
+
+        out: dict[UUID, int] = {}
+        for rec_id, h3_index in result.all():
+            res = _DEFAULT_MEMBER_H3_RESOLUTION
+            if h3_index and _h3 is not None:
+                try:
+                    res = int(_h3.get_resolution(h3_index))
+                except Exception:  # noqa: BLE001 - treat malformed as default
+                    res = _DEFAULT_MEMBER_H3_RESOLUTION
+            out[rec_id] = res
+        return out
+
+    @staticmethod
+    def _compute_export_location_generalization(
+        *,
+        project: Project | None,
+        site_resolution: int,
+    ) -> tuple[int, str | None]:
+        """Compute ``(location_generalization, withheld_reason)`` for one row.
+
+        FR-086 disclosure: the export consumer sees the H3 resolution that
+        was applied to this row's location, plus a reason when the value
+        was clamped below the Site's natural resolution.
+
+        Phase 6 scope:
+
+        * **Restricted** projects honour ``public_location_precision_h3_res``;
+          if that value is below ``site_resolution`` the row is clamped and
+          ``withheld_reason='project_toggle'``.
+        * **Public** projects expose the Site's natural H3 resolution and
+          report ``withheld_reason=None``.
+        * Per-recording / per-taxon sensitivity (FR-035 / FR-036) lands in
+          Phase 11; once the bulk preload is wired the override path will
+          plug in here without changing the column shape.
+        """
+        if project is None:
+            return site_resolution, None
+
+        visibility = getattr(project, "visibility", None)
+        if visibility == ProjectVisibility.RESTRICTED:
+            cfg = getattr(project, "restricted_config", None) or {}
+            toggle_res = cfg.get("public_location_precision_h3_res")
+            if isinstance(toggle_res, int) and toggle_res < site_resolution:
+                return toggle_res, "project_toggle"
+            if isinstance(toggle_res, int):
+                return toggle_res, None
+        return site_resolution, None
+
+    @staticmethod
+    def _build_license_history_url(project_id: UUID) -> str:
+        """Build the FR-087 ``license_history`` reference URL for the export."""
+        return f"/api/v1/projects/{project_id}/license-history"
 
     async def export_csv(
         self,
@@ -145,6 +272,17 @@ class DetectionExportService:
             search_session_id=search_session_id,
         )
 
+        # FR-086 metadata loaded once per export — emitted on every row so the
+        # consumer can detect license / generalisation drift without joining
+        # a second resource. Non-existent project still yields headers via
+        # ``writer.writeheader()`` below.
+        project = await self._load_project(project_id)
+        license_value = (
+            project.license.value if project is not None and project.license is not None else ""
+        )
+        license_history_url = self._build_license_history_url(project_id)
+        recording_h3_map = await self._build_recording_h3_resolution_map(annotations)
+
         output = io.StringIO()
         writer = csv.DictWriter(output, fieldnames=_CAMTRAPDP_COLUMNS)
         writer.writeheader()
@@ -188,6 +326,16 @@ class DetectionExportService:
             else:
                 classification_timestamp = ""
 
+            site_res = recording_h3_map.get(
+                ann.recording_id, _DEFAULT_MEMBER_H3_RESOLUTION,
+            ) if ann.recording_id is not None else _DEFAULT_MEMBER_H3_RESOLUTION
+            location_generalization, withheld_reason = (
+                self._compute_export_location_generalization(
+                    project=project,
+                    site_resolution=site_res,
+                )
+            )
+
             writer.writerow({
                 "observationID": str(ann.id),
                 "deploymentID": dataset_name,
@@ -222,6 +370,11 @@ class DetectionExportService:
                 "classificationConfirmation": "",
                 "observationTags": "",
                 "observationComments": "",
+                # FR-086 trailing extensions
+                "license": license_value,
+                "license_history_url": license_history_url,
+                "location_generalization": str(location_generalization),
+                "withheld_reason": withheld_reason if withheld_reason is not None else "",
             })
 
         return output.getvalue()

@@ -53,7 +53,11 @@ from echoroo.schemas.detection import (
     RejectRequest,
     SpeciesSummaryResponse,
 )
-from echoroo.services.annotation_vote import AnnotationVoteService
+from echoroo.services.annotation_vote import (
+    AnnotationVoteService,
+    classify_voter_source,
+    resolve_viewer_role,
+)
 from echoroo.services.detection import DetectionService
 from echoroo.services.detection_export import DetectionExportService
 
@@ -854,7 +858,7 @@ async def get_votes(
         403: Permission denied
         404: Detection not found
     """
-    await gate_action(
+    project = await gate_action(
         action=ANNOTATION_VOTE_LIST_ACTION,
         project_id=project_id,
         current_user=current_user,
@@ -867,9 +871,18 @@ async def get_votes(
             detail="detection not found",
         )
 
+    # FR-039: voter-id masking is driven by the viewer's normalised role.
+    viewer_user_id = getattr(current_user, "id", None) if current_user is not None else None
+    viewer_role = await resolve_viewer_role(
+        project_id=project_id,
+        project=project,
+        user_id=viewer_user_id,
+        db=db,
+    )
     return await vote_service.get_vote_summary(
         annotation_id=detection_id,
-        current_user_id=current_user.id,
+        current_user_id=viewer_user_id,
+        viewer_role=viewer_role,
     )
 
 
@@ -929,10 +942,29 @@ async def cast_vote(
     min_votes = project.review_min_votes
     threshold = project.review_consensus_threshold
 
+    # FR-037: classify the voter's source + role snapshot. Persisted only on
+    # first creation by ``AnnotationVoteRepository.upsert`` — re-votes preserve
+    # the original source / role per FR-037 immutability.
+    source, role_at_vote = await classify_voter_source(
+        project_id=project_id,
+        project=project,
+        user_id=current_user.id,
+        db=db,
+    )
+    viewer_role = await resolve_viewer_role(
+        project_id=project_id,
+        project=project,
+        user_id=current_user.id,
+        db=db,
+    )
+
     summary = await vote_service.cast_vote(
         annotation_id=detection_id,
         user_id=current_user.id,
         request=request,
+        source=source,
+        project_role_at_vote=role_at_vote,
+        viewer_role=viewer_role,
         min_votes=min_votes,
         threshold=threshold,
     )
@@ -991,9 +1023,17 @@ async def delete_vote(
     min_votes = project.review_min_votes
     threshold = project.review_consensus_threshold
 
+    viewer_role = await resolve_viewer_role(
+        project_id=project_id,
+        project=project,
+        user_id=current_user.id,
+        db=db,
+    )
+
     summary = await vote_service.delete_vote(
         annotation_id=detection_id,
         user_id=current_user.id,
+        viewer_role=viewer_role,
         min_votes=min_votes,
         threshold=threshold,
     )

@@ -8,7 +8,12 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.orm import selectinload
 
 from echoroo.models.annotation_vote import AnnotationVote
-from echoroo.models.enums import SignalQuality, VoteType
+from echoroo.models.enums import (
+    AnnotationVoteSource,
+    ProjectMemberRole,
+    SignalQuality,
+    VoteType,
+)
 from echoroo.repositories.base import BaseRepository
 
 
@@ -69,19 +74,30 @@ class AnnotationVoteRepository(BaseRepository[AnnotationVote]):
         annotation_id: UUID,
         user_id: UUID,
         vote: VoteType,
+        source: AnnotationVoteSource,
+        project_role_at_vote: ProjectMemberRole | None,
         signal_quality: SignalQuality | None = None,
         suggested_tag_id: UUID | None = None,
         note: str | None = None,
     ) -> AnnotationVote:
         """Create or update (upsert) a vote for a user on an annotation.
 
-        If the user has already voted on this annotation, the existing record
-        is updated in-place. Otherwise a new vote is created.
+        If the user has already voted on this annotation, the existing record's
+        ``vote`` / ``signal_quality`` / ``suggested_tag_id`` / ``note`` are
+        updated in-place. ``source`` and ``project_role_at_vote`` are
+        **immutable** per FR-037 — they are populated only on first creation
+        and never recomputed on re-vote, even if the voter's relationship to
+        the project has changed since the original cast.
 
         Args:
             annotation_id: Annotation's UUID
             user_id: User's UUID
             vote: Vote value (agree / disagree / unsure)
+            source: Voter relationship classification (FR-037).
+                Persisted only on first creation. Ignored on re-vote.
+            project_role_at_vote: Member role snapshot when ``source ==
+                'member'``. Must be ``None`` for other sources. Persisted only
+                on first creation. Ignored on re-vote.
             signal_quality: Optional signal quality (only applicable when vote is 'agree')
             suggested_tag_id: Optional alternative species tag suggestion
             note: Optional reason or comment
@@ -99,6 +115,8 @@ class AnnotationVoteRepository(BaseRepository[AnnotationVote]):
             existing.signal_quality = effective_signal_quality
             existing.suggested_tag_id = suggested_tag_id
             existing.note = note
+            # FR-037 immutability: do NOT touch existing.source /
+            # existing.project_role_at_vote on re-vote. The first cast wins.
             await self.db.flush()
             await self.db.refresh(existing, ["user", "suggested_tag"])
             return existing
@@ -110,6 +128,8 @@ class AnnotationVoteRepository(BaseRepository[AnnotationVote]):
             signal_quality=effective_signal_quality,
             suggested_tag_id=suggested_tag_id,
             note=note,
+            source=source,
+            project_role_at_vote=project_role_at_vote,
         )
         self.db.add(new_vote)
         await self.db.flush()
