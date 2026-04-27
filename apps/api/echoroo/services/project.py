@@ -1,28 +1,121 @@
 """Project service for business logic."""
 
 from datetime import UTC, datetime
+from typing import Any
 from uuid import UUID
 
 from fastapi import HTTPException, status
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from echoroo.core.pagination import paginate
+from echoroo.models.dataset import Dataset
 from echoroo.models.project import Project, ProjectMember
 from echoroo.repositories.project import ProjectRepository
 from echoroo.repositories.user import UserRepository
 from echoroo.schemas.project import (
     ProjectCreateRequest,
-    ProjectListResponse,
     ProjectMemberAddRequest,
     ProjectMemberResponse,
     ProjectMemberUpdateRequest,
     ProjectOverviewResponse,
     ProjectOverviewSite,
     ProjectResponse,
+    ProjectSummary,
+    ProjectSummaryListResponse,
     ProjectUpdateRequest,
     RecordingCalendarEntry,
 )
 from echoroo.services.h3_utils import h3_to_center
 from echoroo.services.license_service import record_initial_license
+
+# ---------------------------------------------------------------------------
+# Phase 9 polish round 3 致命 1 (2026-04-27): shared :class:`ProjectSummary`
+# assembler used by both the programmatic ``GET /api/v1/projects`` surface
+# (this module's :class:`ProjectService.list_projects`) and the Web UI
+# ``GET /web-api/v1/projects/`` surface (``api/web_v1/projects/_core.py``).
+#
+# Contract: ``specs/006-permissions-redesign/contracts/projects.yaml:7``
+# declares the contract for **both** ``/api/v1`` and ``/web-api/v1`` so the
+# list endpoint must return :class:`ProjectSummary` rows on either prefix.
+# Centralising the assembly here keeps the two routers byte-identical and
+# prevents future drift (e.g. an extra leak field landing on one surface
+# but not the other).
+# ---------------------------------------------------------------------------
+
+
+async def build_project_summaries(
+    db: AsyncSession, projects: list[Project]
+) -> list[ProjectSummary]:
+    """Assemble contract-correct :class:`ProjectSummary` rows for ``projects``.
+
+    The caller is responsible for:
+
+    * Selecting the concrete ``Project`` rows visible to the principal
+      (visibility / membership / status predicates).
+    * Eager-loading ``Project.owner`` so the helper can derive the
+      privacy-safe ``owner_display_name`` without an N+1.
+
+    The helper itself only batches the ``dataset_count`` aggregation
+    (single grouped query keyed by ``project_id``) and assembles the
+    summary shape declared by ``contracts/projects.yaml:ProjectSummary``.
+
+    The ``species_preview`` slot is currently returned as ``[]`` for every
+    row — Phase 11 will wire the top-N species aggregator (a join against
+    ``detections`` + ``tags``); the slot is preserved here so consumers
+    can switch over without a schema migration.
+
+    Args:
+        db: Async database session used for the dataset-count batch query.
+        projects: Project rows already filtered by the caller's visibility
+            predicate. ``Project.owner`` MUST be eager-loaded.
+
+    Returns:
+        One :class:`ProjectSummary` per input project, in the same order.
+    """
+    project_ids = [p.id for p in projects]
+    dataset_counts: dict[Any, int] = {}
+    if project_ids:
+        result = await db.execute(
+            select(
+                Dataset.project_id,
+                func.count(Dataset.id).label("dataset_count"),
+            )
+            .where(Dataset.project_id.in_(project_ids))
+            .group_by(Dataset.project_id)
+        )
+        dataset_counts = {row.project_id: int(row.dataset_count) for row in result}
+
+    summaries: list[ProjectSummary] = []
+    for project in projects:
+        owner = project.owner
+        # Privacy-safe display string: prefer the explicit display_name,
+        # fall back to the email local-part so we never echo the full
+        # address on a Public listing surface (FR-030). Empty / whitespace
+        # only display_name falls through to the email branch.
+        display_name_raw = (owner.display_name or "").strip() if owner is not None else ""
+        if display_name_raw:
+            owner_display_name = display_name_raw
+        elif owner is not None and owner.email:
+            owner_display_name = owner.email.split("@", 1)[0]
+        else:
+            owner_display_name = ""
+
+        summaries.append(
+            ProjectSummary(
+                id=project.id,
+                name=project.name,
+                description=project.description,
+                visibility=project.visibility,
+                status=project.status,
+                license=project.license,
+                owner_display_name=owner_display_name,
+                dataset_count=dataset_counts.get(project.id, 0),
+                # Phase 11 backlog: top-N species across detections + tags.
+                species_preview=[],
+            )
+        )
+    return summaries
 
 
 class ProjectService:
@@ -40,8 +133,27 @@ class ProjectService:
 
     async def list_projects(
         self, user_id: UUID, page: int = 1, limit: int = 20
-    ) -> ProjectListResponse:
+    ) -> ProjectSummaryListResponse:
         """List all projects accessible by the current user.
+
+        Phase 9 polish round 3 致命 1 (2026-04-27): the response shape is
+        the contract-correct :class:`ProjectSummaryListResponse`
+        (``contracts/projects.yaml:7`` covers both ``/api/v1`` and
+        ``/web-api/v1``, and ``contracts/projects.yaml:375-383``
+        ``ProjectListResponse`` declares ``items: ProjectSummary[]``).
+        Returning the full :class:`ProjectResponse` (which includes
+        ``restricted_config`` + owner sub-object + timestamps) on the
+        programmatic surface was contract drift — :class:`ProjectSummary`
+        structurally omits every internal-state field so a Restricted
+        enumeration call cannot pivot from a row's metadata into anything
+        else (FR-018 / FR-019 / FR-030).
+
+        Phase 9 / T410 / FR-019: the visibility predicate already surfaces
+        Public + Restricted Active projects to the caller regardless of
+        membership; the repository handles the SQL union. With the response
+        now being :class:`ProjectSummary`, the previous "scrub
+        ``restricted_config`` to ``{}`` for outsiders" branch is unnecessary
+        — the field is absent by construction.
 
         Args:
             user_id: Current user's UUID
@@ -49,7 +161,7 @@ class ProjectService:
             limit: Items per page (max 100)
 
         Returns:
-            ProjectListResponse with paginated projects
+            :class:`ProjectSummaryListResponse` with paginated summaries.
         """
         # Validate pagination parameters
         pagination = paginate(page, limit, default_page_size=20, max_page_size=100)
@@ -58,11 +170,18 @@ class ProjectService:
             user_id, pagination.page, pagination.page_size
         )
 
-        return ProjectListResponse(
-            items=[ProjectResponse.model_validate(p) for p in projects],
+        # ``user_id`` is intentionally unused for the summary shape (the
+        # contract row has no role-conditional fields), but we keep the
+        # parameter so the service signature stays stable for callers that
+        # already wire it through (e.g. the v1 router) and so a future
+        # role-aware variant can land without changing the signature.
+
+        items = await build_project_summaries(self.project_repo.db, projects)
+
+        return ProjectSummaryListResponse(
+            items=items,
             total=total,
             page=pagination.page,
-            limit=pagination.page_size,
         )
 
     async def create_project(

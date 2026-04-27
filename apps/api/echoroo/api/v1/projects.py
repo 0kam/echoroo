@@ -48,12 +48,12 @@ from echoroo.schemas.project import (
     ProjectLicenseHistoryEntry,
     ProjectLicenseHistoryResponse,
     ProjectLicenseUpdateRequest,
-    ProjectListResponse,
     ProjectMemberAddRequest,
     ProjectMemberResponse,
     ProjectMemberUpdateRequest,
     ProjectOverviewResponse,
     ProjectResponse,
+    ProjectSummaryListResponse,
     ProjectUpdateRequest,
     RestrictedConfigUpdateRequest,
 )
@@ -86,17 +86,34 @@ ProjectServiceDep = Annotated[ProjectService, Depends(get_project_service)]
 
 @router.get(
     "",
-    response_model=ProjectListResponse,
+    response_model=ProjectSummaryListResponse,
     summary="List projects",
-    description="Get all projects accessible by current user (owned or member of)",
+    description=(
+        "Return projects accessible to the caller as :class:`ProjectSummary` "
+        "rows (contracts/projects.yaml:7 covers both ``/api/v1`` and "
+        "``/web-api/v1``; the contract list shape is "
+        "``ProjectListResponse → ProjectSummary``). The summary deliberately "
+        "omits ``restricted_config`` / owner sub-object / timestamps so a "
+        "Restricted enumeration call cannot pivot from a row's metadata "
+        "into anything else (FR-018 / FR-019 / FR-030). Owner / Admin can "
+        "still inspect the full Restricted toggle state via the dedicated "
+        "``GET /projects/{id}/restricted-config`` endpoint."
+    ),
 )
 async def list_projects(
     current_user: CurrentUser,
     service: ProjectServiceDep,
     page: int = 1,
     limit: int = 20,
-) -> ProjectListResponse:
+) -> ProjectSummaryListResponse:
     """List all projects accessible by the current user.
+
+    Phase 9 polish round 3 致命 1 (2026-04-27): the response shape is the
+    contract-correct :class:`ProjectSummaryListResponse`. The Web UI
+    surface (``/web-api/v1/projects/``) and the programmatic surface
+    (``/api/v1/projects``) both share the same shared helper
+    (:func:`echoroo.services.project.build_project_summaries`) so the
+    two routers stay byte-identical.
 
     Args:
         current_user: Current authenticated user
@@ -105,7 +122,7 @@ async def list_projects(
         limit: Items per page (default: 20, max: 100)
 
     Returns:
-        Paginated list of projects
+        Paginated :class:`ProjectSummaryListResponse`.
 
     Raises:
         401: Not authenticated

@@ -32,6 +32,25 @@ logger = logging.getLogger(__name__)
 MAX_AUDIO_UPLOAD_SIZE = 50 * 1024 * 1024  # 50 MB
 ALLOWED_AUDIO_EXTENSIONS = {".wav", ".mp3", ".flac", ".ogg", ".opus"}
 
+# Phase 9 / T412 (FR-025c) — Cache-Control truth source.
+#
+# **Phase 9 polish round 2 Major 2**: ``Cache-Control`` is now sourced
+# entirely from :class:`echoroo.middleware.security.SecurityHeadersMiddleware`
+# which sets ``no-store, no-cache, must-revalidate, private`` on every
+# API response (``middleware/security.py:179-180``). That string is
+# strictly stronger than the route-level ``private, no-store`` we used
+# to set here (it adds ``no-cache`` and ``must-revalidate``), so the
+# FR-025c "no shared / private cache replay after a toggle flip"
+# guarantee is met with the global header alone — any route that wants
+# stricter caching cannot regress this floor without the middleware
+# being touched, which is the inversion we want.
+#
+# Removing the per-handler override eliminates the previous DRY split
+# between two different ``Cache-Control`` strings on the same response
+# (the route override won by virtue of being applied last). Sister
+# routes ``sessions.py`` / ``batch.py`` rely on the same middleware;
+# nothing else in this module sets ``Cache-Control`` directly.
+
 router = APIRouter()
 
 

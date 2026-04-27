@@ -581,6 +581,13 @@ async def _run_batch_search_with_progress(
         best_by_candidate: dict[str, dict[str, Any]] = {}
 
         for qv in query_vectors:
+            # Phase 9 polish round 2 Major 1: this Celery batch worker is
+            # invoked from an in-project context (the request was already
+            # authorised against ``project_id`` upstream). Members must
+            # keep seeing detections regardless of the Restricted
+            # ``allow_detection_view`` toggle (FR-019 / FR-020), so we
+            # opt out of the SQL gate that ``search_by_vector`` now
+            # applies by default after Phase 9 (Major 1).
             vec_results = await service.search_by_vector(
                 project_id=project_id,
                 query_vector=qv,
@@ -588,6 +595,7 @@ async def _run_batch_search_with_progress(
                 limit=request.limit_per_species * 3,
                 min_similarity=request.min_similarity,
                 dataset_id=dataset_id,
+                respect_restricted_toggle=False,
             )
             for sim_result in vec_results:
                 candidate_key = str(sim_result.embedding_id)

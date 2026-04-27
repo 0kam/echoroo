@@ -136,12 +136,108 @@ class ProjectResponse(BaseModel):
 
 
 class ProjectListResponse(BaseModel):
-    """Project list response schema with pagination."""
+    """Internal full-:class:`ProjectResponse` paginated list shape.
+
+    .. deprecated:: Phase 9 polish round 3
+        Both public list surfaces — ``/api/v1/projects`` (programmatic) and
+        ``/web-api/v1/projects`` (Web UI) — now emit
+        :class:`ProjectSummaryListResponse` / :class:`ProjectSummary` so the
+        Restricted enumeration contract (FR-018 / FR-019 / FR-030) cannot
+        leak ``restricted_config`` or any field beyond the documented
+        summary slot. This schema is retained as an **internal-only** detail
+        type (kept for any in-process helper that genuinely needs the full
+        body alongside pagination metadata) and is no longer wired to any
+        FastAPI route. Slated for removal once the last in-tree caller is
+        migrated; do not add new references.
+    """
 
     items: list[ProjectResponse]
     total: int
     page: int
     limit: int
+
+
+class ProjectSummary(BaseModel):
+    """Web UI project summary (contracts/projects.yaml ``ProjectSummary``).
+
+    Phase 9 polish round 2 致命 1: ``GET /web-api/v1/projects`` MUST return
+    this shape — **not** :class:`ProjectResponse` — so the Restricted
+    enumeration surface (FR-019) carries owner display name, dataset count
+    and species preview but never leaks ``restricted_config`` or any field
+    beyond the documented summary contract. The detail endpoint
+    (``GET /web-api/v1/projects/{id}``) keeps using
+    :class:`ProjectResponse` (which Owner / Admin Trusted callers see in
+    full + Restricted ``restricted_config``).
+
+    Per ``contracts/projects.yaml:384-395`` the summary deliberately omits
+    every internal-state field exposed on :class:`ProjectResponse`
+    (``dormant_since``, ``archived_since``, ``created_at``,
+    ``updated_at``, ``restricted_config``, ``restricted_config_version``,
+    ``owner`` sub-object) so a Guest enumeration call cannot pivot from a
+    Restricted row's metadata into anything else (FR-018 / FR-019 /
+    FR-030).
+    """
+
+    id: UUID
+    name: str
+    description: str | None
+    visibility: ProjectVisibility
+    status: ProjectStatus
+    license: ProjectLicense
+    owner_display_name: str = Field(
+        ...,
+        description=(
+            "Public-safe display string for the project owner. Falls back "
+            "to the local-part of the email when the User row has no "
+            "``display_name`` set; never the full email address (FR-030)."
+        ),
+    )
+    dataset_count: int = Field(
+        ...,
+        ge=0,
+        description="Number of Datasets attached to this project.",
+    )
+    species_preview: list[str] = Field(
+        default_factory=list,
+        max_length=5,
+        description=(
+            "Up to 5 most-frequent species labels for the project. Phase 9 "
+            "ships the field as an empty list when the helper aggregator "
+            "is not yet wired (Phase 11 backlog); the contract slot is "
+            "kept so consumers can switch over without a schema migration."
+        ),
+    )
+
+    model_config = {"from_attributes": True}
+
+
+class ProjectSummaryListResponse(BaseModel):
+    """Paginated :class:`ProjectSummary` list — the canonical list contract.
+
+    Mirrors ``contracts/projects.yaml:374-382`` ``ProjectListResponse``
+    (the contract reuses the schema name; we disambiguate via the
+    ``Summary`` suffix here so the deprecated full-body
+    :class:`ProjectListResponse` can keep its identifier while it is being
+    phased out). Phase 9 polish round 3 (2026-04-27) migrated **both**
+    public list surfaces — ``/api/v1/projects`` (programmatic) and
+    ``/web-api/v1/projects`` (Web UI) — onto this schema so neither route
+    can leak ``restricted_config`` or owner sub-objects in an enumeration
+    response (FR-018 / FR-019 / FR-030).
+
+    Phase 9 polish round 3 Major 1 (2026-04-27): the OpenAPI shape
+    (``ProjectListResponse`` at ``contracts/projects.yaml:375-383``) only
+    declares ``items / total / page`` — there is **no** ``limit`` field
+    on the contract. A previous iteration of this schema also exposed
+    ``limit`` for symmetry with :class:`ProjectListResponse`, but that
+    was contract drift; clients on the contract-correct surface know the
+    page size from the request query and never see it echoed back.
+    Removing the field keeps the response strict-equal to the contract
+    so consumers cannot accidentally rely on a non-spec field.
+    """
+
+    items: list[ProjectSummary]
+    total: int
+    page: int
 
 
 class RestrictedConfigUpdateRequest(BaseModel):

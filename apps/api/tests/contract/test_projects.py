@@ -25,7 +25,19 @@ class TestProjectEndpoints:
         client: AsyncClient,
         auth_headers: dict[str, str],
     ) -> None:
-        """Test GET /api/v1/projects - List projects with pagination."""
+        """Test GET /api/v1/projects - List projects with pagination.
+
+        Phase 9 polish round 3 致命 1 + Major 1 (2026-04-27): the response
+        shape is now :class:`ProjectSummaryListResponse` (contracts/
+        projects.yaml:7 covers both ``/api/v1`` and ``/web-api/v1``;
+        ``ProjectListResponse`` declares ``items: ProjectSummary[]``) and
+        the contract envelope is ``items / total / page`` only — no
+        ``limit`` field. Each row is the ``ProjectSummary`` shape (id /
+        name / description / visibility / status / license /
+        owner_display_name / dataset_count / species_preview), so the
+        legacy assertions for ``restricted_config`` / ``owner`` sub-object
+        / timestamps are gone too (those keys are structurally absent).
+        """
         response = await client.get(
             "/api/v1/projects",
             headers=auth_headers,
@@ -35,14 +47,52 @@ class TestProjectEndpoints:
         assert response.status_code == 200
         data = response.json()
 
-        # Verify response structure matches ProjectListResponse
+        # Contract envelope (contracts/projects.yaml:375-383):
+        # items / total / page only.
         assert "items" in data
         assert "total" in data
         assert "page" in data
-        assert "limit" in data
+        assert "limit" not in data, (
+            "ProjectListResponse contract has no 'limit' field "
+            "(contracts/projects.yaml:375-383)"
+        )
         assert isinstance(data["items"], list)
         assert data["page"] == 1
-        assert data["limit"] == 20
+
+        # Spot-check ProjectSummary row shape if any rows are present.
+        if data["items"]:
+            row = data["items"][0]
+            for required_key in (
+                "id",
+                "name",
+                "description",
+                "visibility",
+                "status",
+                "license",
+                "owner_display_name",
+                "dataset_count",
+                "species_preview",
+            ):
+                assert required_key in row, (
+                    f"ProjectSummary contract requires '{required_key}'"
+                )
+            # Fields that belong to the legacy ProjectResponse shape but
+            # are deliberately omitted from ProjectSummary to prevent
+            # Restricted enumeration leaks (FR-018 / FR-019 / FR-030).
+            for forbidden_key in (
+                "restricted_config",
+                "restricted_config_version",
+                "owner",
+                "created_at",
+                "updated_at",
+                "dormant_since",
+                "archived_since",
+            ):
+                assert forbidden_key not in row, (
+                    f"ProjectSummary list rows must not carry "
+                    f"'{forbidden_key}' (contracts/projects.yaml:"
+                    f"ProjectSummary)"
+                )
 
     async def test_list_projects_unauthorized(self, client: AsyncClient) -> None:
         """Test GET /api/v1/projects requires authentication."""

@@ -22,12 +22,27 @@ exactly one place. The post-filter consults
 "does the principal hold :attr:`Permission.VIEW_DETECTION` for this
 project?" on a per-project basis. Per-request memoisation avoids N+1.
 
-Phase 2 status: this module ships the contract and the in-memory
-post-filter only. The actual SQL queries are intentionally written in a
-way that lets Phase 3 swap out the candidate fetch (which will live in
-``repositories/detection.py``) without changing the gate. Until Phase 3
-the candidate fetch routines on the SQL adapters raise
-``NotImplementedError`` if invoked, mirroring the OpenSearch stub.
+Phase rollout (Phase 9 polish round 2 Minor 2 — refresh the deferral
+ladder so the comment stays in sync with the code):
+
+* **Phase 3** introduces the SearchGate Protocol + in-memory post-filter
+  contract. The SQL adapters are stubs raising ``NotImplementedError``
+  when invoked without a candidate provider, mirroring the OpenSearch
+  adapter. Tests inject :class:`CandidateProvider` fakes.
+* **Phase 9** wires :class:`SimilaritySearchService` into the
+  :class:`PgvectorSearchAdapter` via
+  :class:`SimilarityServiceCandidateProvider` so a Restricted project
+  with ``allow_detection_view=OFF`` is dropped from the candidate set
+  at the SQL layer (FR-025a step 1, sub-1-second leak prevention). The
+  per-project SQL gate is the canonical truth source for cross-project
+  search; the per-call post-filter
+  (:func:`apply_visibility_filter`) layered on top is defence-in-depth
+  for principal-specific deny rules.
+* **Phase 11** lands the dedicated cross-project search HTTP route(s)
+  (``SEARCH_CROSS_PROJECT`` action). The router will be wired through
+  the existing :class:`PgvectorSearchAdapter` so the SQL gate + post-
+  filter come along for free; no further changes to this module are
+  required at that point.
 """
 from __future__ import annotations
 
@@ -440,6 +455,114 @@ def project_allows_detection_view(project: Any) -> bool:
     return False
 
 
+# ---------------------------------------------------------------------------
+# SimilaritySearchService bridge — Phase 9 / T412 wiring (FR-025 / FR-025a)
+# ---------------------------------------------------------------------------
+
+
+class SimilarityServiceCandidateProvider:
+    """Bridge :class:`SimilaritySearchService` into the SearchGate Protocol.
+
+    Phase 8's deferral note (``services/restricted_config_service.py`` line
+    55-66) flagged that the actual wiring of
+    :class:`echoroo.services.search.SimilaritySearchService` into the
+    SearchGate adapters was reserved for Phase 11. T412 brings that
+    forward: Restricted ``allow_detection_view=OFF`` projects must
+    physically drop out of the candidate set within 1 second of the
+    toggle flip (FR-025a step 1, SC-018), and the only honest way to
+    test that without a Redis/Celery round-trip is to wire the SQL
+    filter (``respect_restricted_toggle=True``) into the production
+    similarity service.
+
+    The provider exposes a single ``project_id`` parameter (mirroring the
+    underlying SQL contract) and delegates the candidate fetch to
+    :meth:`SimilaritySearchService.search_by_vector`. Cross-project
+    aggregation (FR-026) is layered on top of this provider by the
+    Phase 11 cross-project router; for now we cover the per-project
+    Restricted-toggle gate which is what FR-025a step 1 mandates.
+
+    Phase rollout summary (Phase 9 polish round 2 Minor 2):
+
+    * **Phase 3** — SearchGate Protocol + in-memory post-filter only.
+    * **Phase 9** — this provider wires the SQL gate
+      (``respect_restricted_toggle=True`` is now also the default on
+      ``search_by_vector`` after Major 1; we keep the explicit ``True``
+      here as a belt-and-braces signal at the call site).
+    * **Phase 11** — cross-project HTTP route reuses this provider
+      unchanged.
+    """
+
+    def __init__(
+        self,
+        service: Any,
+        *,
+        project_id: UUID,
+        model_name: str,
+        min_similarity: float = 0.0,
+    ) -> None:
+        """Pin the bridge to a concrete project + model + min-similarity.
+
+        ``service`` is intentionally typed as ``Any`` so this module does
+        not import :class:`SimilaritySearchService` at module load
+        (avoids a heavy dependency cycle with ``services/search.py``).
+        """
+        self._service = service
+        self._project_id = project_id
+        self._model_name = model_name
+        self._min_similarity = min_similarity
+
+    async def fetch_fts(
+        self,
+        db: AsyncSession,  # noqa: ARG002 - bridged service owns the session
+        query: SearchQuery,  # noqa: ARG002 - reserved for Phase 11 FTS wiring
+    ) -> list[SearchHit]:
+        """FTS path is reserved for Phase 11 — return empty for now.
+
+        The SearchGate test suite covers the FTS adapter via a
+        :class:`FakeCandidateProvider`; the production FTS surface is
+        not yet wired.
+        """
+        return []
+
+    async def fetch_pgvector(
+        self,
+        db: AsyncSession,  # noqa: ARG002 - service uses its own session
+        query: SearchQuery,
+    ) -> list[SearchHit]:
+        """Run the pgvector similarity query under the Restricted toggle.
+
+        ``respect_restricted_toggle=True`` adds the SQL filter that
+        excludes Restricted projects with ``allow_detection_view=OFF``
+        — the canonical FR-025a step 1 immediate exclusion.
+        """
+        if query.embedding is None:
+            return []
+        results = await self._service.search_by_vector(
+            project_id=self._project_id,
+            query_vector=list(query.embedding),
+            model_name=self._model_name,
+            limit=query.limit,
+            min_similarity=self._min_similarity,
+            respect_restricted_toggle=True,
+        )
+        return [
+            SearchHit(
+                detection_id=row.embedding_id,
+                recording_id=row.recording_id,
+                project_id=self._project_id,
+                score=row.similarity,
+                payload=sanitize_payload(
+                    {
+                        "filename": row.recording_filename,
+                        "start_time": row.start_time,
+                        "end_time": row.end_time,
+                    }
+                ),
+            )
+            for row in results
+        ]
+
+
 __all__ = [
     "CandidateProvider",
     "FtsSearchAdapter",
@@ -449,6 +572,7 @@ __all__ = [
     "SearchGate",
     "SearchHit",
     "SearchQuery",
+    "SimilarityServiceCandidateProvider",
     "apply_visibility_filter",
     "project_allows_detection_view",
     "sanitize_payload",

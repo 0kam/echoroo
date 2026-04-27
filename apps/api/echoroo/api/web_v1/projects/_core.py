@@ -1,12 +1,20 @@
-"""Project CRUD endpoints — Phase 5 US1 Guest read surface (T200, T201).
+"""Project CRUD endpoints — Phase 5 US1 Guest read surface + Phase 9 US4
+Restricted discovery (T200, T201, T410).
 
 Contract: ``specs/006-permissions-redesign/contracts/projects.yaml``.
 
 Path operations owned by this module:
 
-* ``GET /``               — list projects visible to the caller (Guest sees
-  Public + Active only; Authenticated additionally sees own Restricted).
-  (T201, FR-009 / FR-010 / FR-016 / FR-018 / FR-030)
+* ``GET /``               — list projects visible to the caller. Per Phase 9
+  / T410 / FR-019 the list includes Public **and** Restricted Active
+  projects for *every* caller (Guest + Authenticated): Restricted projects
+  expose only ``VIEW_PROJECT_METADATA, VIEW_DATASET_LIST`` so the Web UI
+  surface for outsider discovery + ``mailto:`` join requests is wired
+  without leaking detections / raw config. Authenticated callers
+  additionally see Restricted projects they are members of via the
+  membership clause (idempotent — Restricted already appears once via
+  the visibility clause).
+  (T201 + T410, FR-009 / FR-010 / FR-013 / FR-016 / FR-018 / FR-019 / FR-030)
 * ``GET /{project_id}``   — fetch a single project (Guest only sees Public +
   Active, anything else 404 for enumeration safety).
   (T200, FR-009 / FR-010 / FR-016 / FR-018)
@@ -50,13 +58,14 @@ from echoroo.models.project import Project, ProjectMember
 from echoroo.models.recording import Recording
 from echoroo.models.site import Site
 from echoroo.schemas.project import (
-    ProjectListResponse,
     ProjectResponse,
+    ProjectSummaryListResponse,
 )
 from echoroo.schemas.recording import (
     PublicRecordingItem,
     PublicRecordingListResponse,
 )
+from echoroo.services.project import build_project_summaries
 
 # ---------------------------------------------------------------------------
 # Helpers — Phase 5 polish round 5 (重要 1): H3 generalisation for the
@@ -116,14 +125,23 @@ router = APIRouter()
 
 @router.get(
     "/",
-    response_model=ProjectListResponse,
+    response_model=ProjectSummaryListResponse,
     summary="List projects (Guest-aware)",
     description=(
-        "Return projects visible to the caller. Guests (no session) see only "
-        "Public + Active projects. Authenticated callers additionally see "
-        "Restricted projects they are members of. Response filter "
-        "(``apply_response_filter``) is invoked per row to scrub raw "
-        "coordinates and apply H3 generalisation (FR-016, FR-018, FR-030)."
+        "Return projects visible to the caller. Per Phase 9 / T410 / FR-019, "
+        "**Public + Restricted Active** projects are visible to every caller "
+        "(Guest + Authenticated); each row is shaped as the contract "
+        "``ProjectSummary`` (id / name / description / visibility / status / "
+        "license / owner_display_name / dataset_count / species_preview) so "
+        "the raw ``restricted_config`` blob can never leak through "
+        "enumeration. Owner / Admin can still inspect the toggle state via "
+        "the dedicated ``GET /projects/{id}/restricted-config`` Phase 8 "
+        "endpoint. Authenticated callers additionally see Restricted "
+        "projects they are members of (already covered by the visibility "
+        "clause; the membership clause is kept for Dormant / Archived "
+        "membership rows). The response filter still scrubs forbidden "
+        "raw-coordinate fields as defence-in-depth (FR-016, FR-018, "
+        "FR-019, FR-030)."
     ),
 )
 async def list_projects(
@@ -132,12 +150,15 @@ async def list_projects(
     db: DbSession,
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     limit: int = Query(20, ge=1, le=100, description="Items per page (max 100)"),
-) -> ProjectListResponse:
+) -> ProjectSummaryListResponse:
     """List projects accessible to the caller.
 
     FR-016: Public + Active is always visible.
-    FR-018: Restricted projects are *not* enumerated to Guests — they only
-        surface to Authenticated callers who hold an active membership.
+    FR-019 (Phase 9 T410): Restricted + Active is visible to every caller as
+        meta only — the response shape is :class:`ProjectSummary` so raw
+        ``restricted_config`` is structurally absent, not merely scrubbed
+        post-hoc (Phase 9 polish round 2 致命 1, contracts/projects.yaml
+        ``ProjectSummary``).
 
     Args:
         request: Used by the response-filter cache and audit chain.
@@ -147,20 +168,30 @@ async def list_projects(
         limit: Items per page (1..100).
 
     Returns:
-        Paginated :class:`ProjectListResponse`. Each row already passes through
-        :func:`apply_response_filter` so raw lat/lng never reach the wire.
+        Paginated :class:`ProjectSummaryListResponse`. Each row already
+        passes through :func:`apply_response_filter` to scrub forbidden raw
+        coordinate keys (defence-in-depth — :class:`ProjectSummary` does
+        not expose them by design).
     """
     offset = (page - 1) * limit
 
-    # Build the visibility predicate.
-    public_active = (Project.visibility == ProjectVisibility.PUBLIC) & (
-        Project.status == ProjectStatus.ACTIVE
-    )
+    # Build the visibility predicate. FR-016 (Public meta) + FR-019
+    # (Restricted meta) — both flavours surface to Guest + Authenticated;
+    # Dormant / Archived stay hidden to outsiders (only the membership
+    # clause for Authenticated callers can lift them).
+    public_or_restricted_active = (
+        Project.visibility.in_(
+            [ProjectVisibility.PUBLIC, ProjectVisibility.RESTRICTED]
+        )
+    ) & (Project.status == ProjectStatus.ACTIVE)
 
     visibility_clause: ColumnElement[bool]
     if current_user is None:
-        # FR-018: Guest enumeration is restricted to Public + Active.
-        visibility_clause = public_active
+        # Phase 9 T410 / FR-019: Guest sees Public + Restricted Active. The
+        # detail / detection / config rows are still gated by the
+        # permission engine (Restricted ``allow_detection_view`` etc.); the
+        # list surface only carries meta.
+        visibility_clause = public_or_restricted_active
         base_query = (
             select(Project)
             .where(visibility_clause)
@@ -169,9 +200,14 @@ async def list_projects(
         )
         count_query = select(func.count(Project.id)).where(visibility_clause)
     else:
-        # Authenticated: union of Public + Active and Restricted projects the
-        # caller actually belongs to (active membership). Owners are always
-        # included via ``Project.owner_id == current_user.id``.
+        # Authenticated: union of (Public OR Restricted) + Active and any
+        # project the caller actually belongs to (covers Dormant / Archived
+        # member-only access). Owners are always included via
+        # ``Project.owner_id == current_user.id``. Phase 9 polish round 2
+        # Major 3: filter ``ProjectMember.removed_at IS NULL`` so previously
+        # removed members no longer surface their old projects under the
+        # membership clause (mirrors ``models/project.py:215``
+        # ``ux_project_members_active`` partial-unique semantics).
         member_subquery = (
             select(ProjectMember.project_id)
             .where(
@@ -180,7 +216,7 @@ async def list_projects(
             )
         )
         visibility_clause = or_(
-            public_active,
+            public_or_restricted_active,
             Project.owner_id == current_user.id,
             Project.id.in_(member_subquery),
         )
@@ -201,23 +237,39 @@ async def list_projects(
     rows_result = await db.execute(base_query.offset(offset).limit(limit))
     projects = list(rows_result.scalars().unique().all())
 
-    # Phase 5 NOTE (T201, FR-030): ProjectResponse does not currently expose raw
-    # lat/lng, but apply_response_filter still scrubs the forbidden field set
-    # as a defence-in-depth precaution per ``response_filter`` contract.
-    items: list[ProjectResponse] = []
-    for project in projects:
-        # Guest principal cannot be matrix-blocked here because the filter
-        # above already restricts to Public + Active.
+    # Phase 9 polish round 3 致命 1 (2026-04-27): contract ``ProjectSummary``
+    # assembly is delegated to the shared helper
+    # :func:`echoroo.services.project.build_project_summaries` so the
+    # programmatic ``/api/v1/projects`` surface and this Web UI surface
+    # stay byte-identical (a future leak field added to one router would
+    # otherwise drift from the other). The helper batches the
+    # ``dataset_count`` aggregation into a single grouped query and
+    # resolves ``owner_display_name`` from the eager-loaded
+    # ``Project.owner`` row with the email-local-part fallback (FR-030).
+    items = await build_project_summaries(db, projects)
+
+    # Defence-in-depth: ``ProjectSummary`` declares no raw coordinate
+    # field, but route the assembled rows through the response filter so
+    # a future schema extension (e.g. accidentally adding a ``latitude``
+    # field) would still get scrubbed. The filter also exercises the
+    # Stage-1 cache lookup so the gate state matches the rest of this
+    # router.
+    normalized_role = getattr(
+        request.state,
+        "normalized_role",
+        "Guest" if current_user is None else "Authenticated",
+    )
+    for project, item in zip(projects, items, strict=True):
+        # Guest principal cannot be matrix-blocked here because the
+        # visibility predicate above already restricts to Public /
+        # Restricted Active. Authenticated callers use ``is_allowed`` to
+        # populate the effective permission set the filter consults.
         _, effective = is_allowed(
             action=PROJECT_GET_ACTION,
             user=current_user,
             project=project,
             request=request,
         )
-        normalized_role = getattr(
-            request.state, "normalized_role", "Guest" if current_user is None else "Authenticated"
-        )
-        item = ProjectResponse.model_validate(project)
         apply_response_filter(
             obj=item,
             effective_permissions=effective,
@@ -227,13 +279,17 @@ async def list_projects(
             taxon_sensitivity_map={},
             override_map={},
         )
-        items.append(item)
 
-    return ProjectListResponse(
+    # Phase 9 polish round 3 Major 1 (2026-04-27): contract
+    # ``ProjectListResponse`` (contracts/projects.yaml:375-383) declares
+    # only ``items / total / page`` — no ``limit``. The previous shape
+    # echoed ``limit`` back for symmetry with the legacy v1 surface, but
+    # that was contract drift. Clients know the page size from their
+    # request query.
+    return ProjectSummaryListResponse(
         items=items,
         total=total,
         page=page,
-        limit=limit,
     )
 
 

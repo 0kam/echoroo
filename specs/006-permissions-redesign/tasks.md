@@ -291,7 +291,7 @@ description: "Task list for 006-permissions-redesign (revised after /speckit.ana
 
 - [ ] **T410** [US4] GET `/projects` で Restricted もメタ公開 (FR-019)
 - [ ] **T411** [P] [US4] Restricted 詳細ページに Owner `mailto:` リンク (US4 AC2)
-- [ ] **T412** [P] [US4] `SEARCH_CROSS_PROJECT` で `allow_detection_view=OFF` は種別ヒットなし (FR-017、FR-026)
+- [ ] **T412** [P] [US4] `SEARCH_CROSS_PROJECT` で `allow_detection_view=OFF` は種別ヒットなし (FR-017、FR-026) — Phase 9 polish round 2 致命 2 deferral note: 専用の cross-project search HTTP route 新設は Phase 11 (SearchGate 統合) で扱う。本 Phase では (a) `SimilaritySearchService.search_by_vector` の `respect_restricted_toggle` default を **True** に倒し、(b) 全 production caller (`services/search.py:119`/`:369`/`:1058`、`workers/search_tasks.py:584`) は in-project member route として明示的に `False` を渡す形にし、(c) `SimilarityServiceCandidateProvider` 経由で `PgvectorSearchAdapter` にも SQL gate を配線、で leak prevention を達成する。新規 cross-project caller を追加した場合 default-safe で SQL gate を継承する。
 - [ ] **T413** [P] [US4] `apps/api/tests/security/search_leak/test_restricted_search_exclusion.py` TDD: 3 経路で toggle ON→OFF 切替直後 1 秒以内の leak なし (FR-017、FR-025a、SC-018)
 - [ ] **T414** [US4] Playwright E2E: Guest が Restricted メタを一覧で確認 → mailto: リンク動作 (PR-003、P1、architect B-4 対応)
 

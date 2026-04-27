@@ -342,9 +342,19 @@ class TestGuestAbsentProject404:
 
 @pytest.mark.asyncio
 class TestGuestProjectListEnumeration:
-    """Guest project list returns only Public + Active; others excluded."""
+    """Guest project list returns Public + Restricted Active (meta only),
+    excluding Dormant / Archived rows.
 
-    async def test_guest_list_includes_public_active_only(
+    Phase 9 T410 / FR-019 (2026-04-27): the Guest list now surfaces
+    Restricted projects as meta so outsiders can discover and request
+    access via ``mailto:`` (US4). Phase 9 polish round 2 致命 1
+    (2026-04-27): the list contract is now :class:`ProjectSummary`
+    (``contracts/projects.yaml:ProjectSummary``) which structurally
+    omits ``restricted_config``, so the previous "scrubbed to {}"
+    assertion is replaced by a stronger "field absent" assertion.
+    """
+
+    async def test_guest_list_includes_public_and_restricted_active(
         self,
         client: AsyncClient,
         public_active_project: Project,
@@ -352,7 +362,8 @@ class TestGuestProjectListEnumeration:
         archived_public_project: Project,
         dormant_public_project: Project,
     ) -> None:
-        """GET /web-api/v1/projects/ as Guest → only Public+Active in result (FR-018)."""
+        """GET /web-api/v1/projects/ as Guest → Public + Restricted Active
+        only; Dormant / Archived hidden (FR-016 + FR-019)."""
         response = await client.get("/web-api/v1/projects/")
         assert response.status_code == 200, (
             f"Expected 200 for Guest project list, "
@@ -360,15 +371,33 @@ class TestGuestProjectListEnumeration:
         )
         data = response.json()
         ids = {item["id"] for item in data["items"]}
+        rows_by_id = {item["id"]: item for item in data["items"]}
 
-        # Public + Active MUST be present
+        # Public + Active MUST be present (FR-016).
         assert str(public_active_project.id) in ids, (
             "Public+Active project must appear in Guest project list"
         )
-        # Restricted MUST NOT be present (FR-018 anti-enumeration)
-        assert str(restricted_project.id) not in ids, (
-            "Restricted project must NOT appear in Guest project list"
+        # Restricted + Active MUST be present (FR-019 meta enumeration).
+        assert str(restricted_project.id) in ids, (
+            "Restricted+Active project must appear in Guest project list "
+            "(FR-019 meta enumeration)"
         )
+        # Phase 9 polish round 2 致命 1: the list shape is now
+        # ``ProjectSummary`` which has no ``restricted_config`` field at
+        # all (contract-correct), so we assert structural absence rather
+        # than ``== {}``. The Owner / Admin toggle surface is the
+        # dedicated ``GET /projects/{id}/restricted-config`` endpoint
+        # (Phase 8) — never the list.
+        restricted_row = rows_by_id[str(restricted_project.id)]
+        assert "restricted_config" not in restricted_row, (
+            "ProjectSummary list rows must not carry ``restricted_config`` "
+            "(contracts/projects.yaml:ProjectSummary, FR-019); got row "
+            f"{restricted_row!r}"
+        )
+        # Sanity: contract-mandated fields are present.
+        assert "owner_display_name" in restricted_row
+        assert "dataset_count" in restricted_row
+        assert "species_preview" in restricted_row
         # Archived MUST NOT be present
         assert str(archived_public_project.id) not in ids, (
             "Archived Public project must NOT appear in Guest project list"
@@ -662,19 +691,35 @@ class TestPublicProjectOwnerNoEmail:
         public_active_project: Project,
         project_owner: User,
     ) -> None:
-        """ProjectListResponse items[].owner must not contain ``email``."""
+        """ProjectSummary list must not leak owner email to Guests.
+
+        Phase 9 polish round 2 致命 1: the ``GET /web-api/v1/projects``
+        list now returns the contract :class:`ProjectSummary` shape
+        with ``owner_display_name`` (a string) rather than a nested
+        ``owner`` sub-object. We assert (a) the owner's email never
+        appears anywhere in the body and (b) no list item carries an
+        ``owner`` key (which would imply a regression back to the
+        embedded :class:`PublicOwnerResponse`).
+        """
         response = await client.get("/web-api/v1/projects/")
         assert response.status_code == 200
         data = response.json()
 
-        # Every list item's owner must obey the public schema
+        # The owner's email must never appear anywhere in the body.
         assert project_owner.email not in response.text, (
-            "Owner email must not appear in ProjectListResponse body"
+            "Owner email must not appear in ProjectSummary list body"
         )
         for item in data.get("items", []):
-            owner = item.get("owner", {})
-            assert "email" not in owner, (
-                "Each list item's owner must not expose 'email' to Guests"
+            assert "owner" not in item, (
+                "ProjectSummary list rows must not carry a nested 'owner' "
+                "object — owner_display_name is the only public-safe field "
+                "(contracts/projects.yaml:ProjectSummary)."
+            )
+            assert "owner_display_name" in item, (
+                "ProjectSummary contract requires 'owner_display_name'"
+            )
+            assert "email" not in item.get("owner_display_name", ""), (
+                "owner_display_name must not echo the owner email"
             )
 
     async def test_project_recording_response_no_email(
