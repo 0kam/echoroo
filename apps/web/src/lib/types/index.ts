@@ -324,9 +324,52 @@ export interface APITokenCreateResponse extends APIToken {
 // ============================================
 
 /**
- * Project visibility enum
+ * Project visibility enum.
+ *
+ * NOTE: `'restricted'` was introduced by the Permissions Redesign
+ * (Phase 8 / FR-014). The legacy `'private'` literal is kept here for
+ * backwards compatibility with older frontend call-sites that have not
+ * yet been migrated; the backend contract
+ * (`specs/006-permissions-redesign/contracts/projects.yaml`) only
+ * accepts `public` and `restricted`.
  */
-export type ProjectVisibility = 'private' | 'public';
+export type ProjectVisibility = 'private' | 'public' | 'restricted';
+
+/**
+ * Discrete H3 resolution buckets allowed for the
+ * `public_location_precision_h3_res` Restricted-mode toggle (FR-021 /
+ * FR-027). Lower numbers are coarser; `2` means HIDDEN (no public
+ * location surfaced).
+ */
+export type RestrictedH3Resolution = 2 | 5 | 7 | 9 | 15;
+
+/**
+ * Restricted-mode capability toggles persisted on
+ * `Project.restricted_config` (FR-014 / FR-020-022).
+ *
+ * Mirrors the `RestrictedConfig` schema in
+ * `specs/006-permissions-redesign/contracts/projects.yaml` (lines
+ * 430-454). All eight keys are required at the API layer — defaults
+ * live on the backend model column for newly created projects only.
+ */
+export interface RestrictedConfig {
+  allow_media_playback: boolean;
+  allow_detection_view: boolean;
+  mask_species_in_detection: boolean;
+  allow_download: boolean;
+  allow_export: boolean;
+  allow_voting_and_comments: boolean;
+  public_location_precision_h3_res: RestrictedH3Resolution;
+  allow_precise_location_to_viewer: boolean;
+}
+
+/**
+ * Request body for `PATCH /web-api/v1/projects/{id}/restricted-config`
+ * (Phase 8 / T400). Same shape as `RestrictedConfig` — the backend
+ * Pydantic schema (`RestrictedConfigUpdateRequest`) enforces
+ * `Extra.forbid` and `StrictBool` so the entire object must be sent.
+ */
+export type RestrictedConfigUpdateRequest = RestrictedConfig;
 
 /**
  * Project license enum (Phase 7 / FR-085).
@@ -341,6 +384,14 @@ export type ProjectLicense = 'CC0' | 'CC-BY' | 'CC-BY-NC' | 'CC-BY-SA';
 
 /**
  * Project entity
+ *
+ * `restricted_config` and `restricted_config_version` were added by
+ * the Permissions Redesign (Phase 8 / FR-014, FR-024). They are
+ * optional on this type for backwards compatibility — the backend
+ * always returns them on the redesigned `/projects` endpoints, but
+ * older response shapes may omit them. UI code that surfaces the
+ * toggles MUST check for presence and fall back to a Public-style
+ * UI when missing.
  */
 export interface Project {
   id: string;
@@ -352,6 +403,10 @@ export interface Project {
   owner: User;
   created_at: string;
   updated_at: string;
+  /** Restricted-mode capability toggles (FR-014). */
+  restricted_config?: RestrictedConfig;
+  /** Monotonic version bumped on every restricted-config PATCH (FR-024). */
+  restricted_config_version?: number;
 }
 
 /**

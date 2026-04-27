@@ -197,11 +197,18 @@
           <!-- Project Header -->
           <div class="mb-4 flex items-start justify-between">
             <h3 class="text-lg font-semibold text-stone-900">{project.name}</h3>
+            <!--
+              Three-way visibility badge. `restricted` was added by
+              the Permissions Redesign (FR-014); `private` survives
+              only as a legacy literal for unmigrated projects.
+            -->
             <span
               class="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium {project.visibility ===
               'public'
                 ? 'bg-success-light text-success'
-                : 'bg-stone-100 text-stone-800 dark:bg-stone-700 dark:text-stone-300'}"
+                : project.visibility === 'restricted'
+                  ? 'bg-warning-light text-warning'
+                  : 'bg-stone-100 text-stone-800 dark:bg-stone-700 dark:text-stone-300'}"
             >
               {#if project.visibility === 'public'}
                 <svg class="mr-1 h-3 w-3" fill="currentColor" viewBox="0 0 20 20">
@@ -212,6 +219,17 @@
                   />
                 </svg>
                 {m.project_visibility_public()}
+              {:else if project.visibility === 'restricted'}
+                <!-- Key icon, distinct from the closed-padlock used for
+                     legacy private projects. -->
+                <svg class="mr-1 h-3 w-3" fill="currentColor" viewBox="0 0 20 20">
+                  <path
+                    fill-rule="evenodd"
+                    d="M18 8a6 6 0 01-7.743 5.743L10 14l-1 1-1 1H6v2H2v-4l4.257-4.257A6 6 0 1118 8zm-6-4a1 1 0 100 2 2 2 0 012 2 1 1 0 102 0 4 4 0 00-4-4z"
+                    clip-rule="evenodd"
+                  />
+                </svg>
+                {m.project_visibility_restricted()}
               {:else}
                 <svg class="mr-1 h-3 w-3" fill="currentColor" viewBox="0 0 20 20">
                   <path

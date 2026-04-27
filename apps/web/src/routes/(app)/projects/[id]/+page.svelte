@@ -13,6 +13,7 @@
   import type { Project, ProjectMember } from '$lib/types';
   import ProjectSitesMap from '$lib/components/project/ProjectSitesMap.svelte';
   import RecordingCalendar from '$lib/components/project/RecordingCalendar.svelte';
+  import RestrictedToggles from '$lib/components/project/RestrictedToggles.svelte';
 
   // Props
   let { data } = $props();
@@ -21,6 +22,13 @@
   // State
   let project = $state<Project | null>(null);
   let members = $state<ProjectMember[]>([]);
+  // `membersAvailable` reflects whether the GET /projects/{id}/members
+  // call returned successfully. The endpoint is admin-only, so a 403
+  // is the expected response for Members / Viewers and must NOT block
+  // the project detail render. When false, the membership-gated UI
+  // (members sidebar list, "Manage members" link) is hidden but the
+  // page itself stays interactive.
+  let membersAvailable = $state(false);
   let isLoading = $state(true);
   let error = $state<string | null>(null);
   let showDeleteDialog = $state(false);
@@ -29,37 +37,57 @@
   // Current user
   const currentUser = $derived(authStore.user);
 
-  // Check if current user is owner
+  // Check if current user is owner. Derives directly from the loaded
+  // project so we never rely on the admin-only members list — Members
+  // / Viewers must still see the project header.
   const isOwner = $derived(
-    currentUser && project && project.owner.id === currentUser.id
+    !!(currentUser && project && project.owner.id === currentUser.id),
   );
 
-  // Check if current user is admin
+  // Check if current user is admin. We can only confirm admin role from
+  // the members list, which Members / Viewers cannot read. When the
+  // members fetch was rejected (`membersAvailable === false`) we fall
+  // back to Owner-only admin detection — that matches the backend
+  // contract: Owner is always Admin, and the only callers who can edit
+  // RestrictedToggles via PATCH are Owner / Admin (FR-014).
   const isAdmin = $derived(
     (() => {
       if (!currentUser || !project) return false;
       if (isOwner) return true;
+      if (!membersAvailable) return false;
 
       const member = members.find((m) => m.user.id === currentUser.id);
       return member?.role === 'admin';
-    })()
+    })(),
   );
 
+  // canEdit is the surface used by RestrictedToggles. Only Owners and
+  // Admins satisfy the EDIT_PROJECT permission for the
+  // restricted-config PATCH endpoint, so we route the same predicate
+  // through Boolean() to avoid a `null | boolean` reaching the
+  // component prop.
+  const canEdit = $derived(Boolean(isAdmin));
+
   /**
-   * Load project and members
+   * Load project and members.
+   *
+   * The two requests are deliberately decoupled because
+   * `GET /projects/{id}/members` is admin-only — a Member or Viewer
+   * who can fetch the project itself will get a 403 from
+   * `/members`. We therefore await the project first and then attempt
+   * the members fetch with a try/catch so the page renders for the
+   * non-admin case. Other (non-403) members-fetch failures are
+   * swallowed silently — the sidebar simply hides itself, but the
+   * project detail still loads.
    */
   async function loadProject() {
     isLoading = true;
     error = null;
 
     try {
-      const [projectData, membersData] = await Promise.all([
-        projectsApi.get(projectId),
-        projectsApi.listMembers(projectId),
-      ]);
-
-      project = projectData;
-      members = membersData;
+      // 1) Project itself — required. If this fails we surface the
+      //    error and abort.
+      project = await projectsApi.get(projectId);
     } catch (err) {
       if (err instanceof ApiError) {
         error = err.detail || err.message;
@@ -70,6 +98,24 @@
         }
       } else {
         error = m.project_detail_error_load();
+      }
+      isLoading = false;
+      return;
+    }
+
+    // 2) Members — best-effort. 403 is expected for Members / Viewers
+    //    so we tolerate it and leave the sidebar empty.
+    try {
+      members = await projectsApi.listMembers(projectId);
+      membersAvailable = true;
+    } catch (err) {
+      members = [];
+      membersAvailable = false;
+      // Only surface non-403 unexpected errors via console — never
+      // break the page. 401 / 403 are silent because they are the
+      // documented responses for non-admin callers.
+      if (err instanceof ApiError && err.status !== 401 && err.status !== 403) {
+        console.warn('Failed to load project members', err);
       }
     } finally {
       isLoading = false;
@@ -206,11 +252,19 @@
         <div>
           <div class="flex items-center space-x-3">
             <h1 class="text-3xl font-bold text-stone-900">{project.name}</h1>
+            <!--
+              Three-way visibility badge. The Permissions Redesign
+              introduced `restricted` (FR-014). Legacy `private` projects
+              still exist in the type union for backwards compatibility,
+              but new projects only ship `public` / `restricted`.
+            -->
             <span
               class="inline-flex items-center rounded-full px-3 py-1 text-sm font-medium {project.visibility ===
               'public'
                 ? 'bg-success-light text-success'
-                : 'bg-stone-100 text-stone-800 dark:bg-stone-700 dark:text-stone-300'}"
+                : project.visibility === 'restricted'
+                  ? 'bg-warning-light text-warning'
+                  : 'bg-stone-100 text-stone-800 dark:bg-stone-700 dark:text-stone-300'}"
             >
               {#if project.visibility === 'public'}
                 <svg class="mr-1.5 h-4 w-4" fill="currentColor" viewBox="0 0 20 20">
@@ -221,6 +275,21 @@
                   />
                 </svg>
                 {m.project_detail_visibility_public()}
+              {:else if project.visibility === 'restricted'}
+                <!--
+                  Restricted = key icon, signalling per-capability
+                  gating. Distinct from the closed-padlock used for
+                  legacy private projects so users can tell the two
+                  apart at a glance.
+                -->
+                <svg class="mr-1.5 h-4 w-4" fill="currentColor" viewBox="0 0 20 20">
+                  <path
+                    fill-rule="evenodd"
+                    d="M18 8a6 6 0 01-7.743 5.743L10 14l-1 1-1 1H6v2H2v-4l4.257-4.257A6 6 0 1118 8zm-6-4a1 1 0 100 2 2 2 0 012 2 1 1 0 102 0 4 4 0 00-4-4z"
+                    clip-rule="evenodd"
+                  />
+                </svg>
+                {m.project_detail_visibility_restricted()}
               {:else}
                 <svg class="mr-1.5 h-4 w-4" fill="currentColor" viewBox="0 0 20 20">
                   <path
@@ -415,11 +484,30 @@
             <p class="mt-1 text-sm text-stone-500">{m.project_overview_no_data_desc()}</p>
           </div>
         {/if}
+
+        <!--
+          Phase 8 / T402 — Restricted-mode capability toggles (FR-014).
+          The component itself short-circuits to a "public-only" notice
+          for visibility=public projects, so it is safe to mount
+          unconditionally. We keep it in the main column (below the
+          overview) so Owners / Admins find it on the same page that
+          already surfaces project metadata, instead of buried in a
+          separate Settings sub-page.
+        -->
+        <div class="mt-6">
+          <RestrictedToggles {project} {canEdit} />
+        </div>
       </div>
 
       <!-- Sidebar -->
       <div class="space-y-6">
-        <!-- Project Members -->
+        <!--
+          Project Members sidebar — only rendered when the
+          admin-only members fetch succeeded. Members / Viewers (whose
+          /members request returns 403) simply don't see this card,
+          which matches the backend's information-hiding posture.
+        -->
+        {#if membersAvailable}
         <div class="rounded-lg bg-surface-card p-6 shadow">
           <div class="mb-4 flex items-center justify-between">
             <h2 class="text-lg font-semibold text-stone-900">{m.project_detail_members_heading()}</h2>
@@ -462,6 +550,7 @@
             {/if}
           </div>
         </div>
+        {/if}
       </div>
     </div>
   {/if}
