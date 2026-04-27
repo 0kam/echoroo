@@ -1,7 +1,7 @@
 """Project service for business logic."""
 
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from fastapi import HTTPException, status
@@ -10,7 +10,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from echoroo.core.pagination import paginate
 from echoroo.models.dataset import Dataset
+from echoroo.models.enums import ProjectMemberRole, ProjectVisibility
 from echoroo.models.project import Project, ProjectMember
+from echoroo.models.user import User
 from echoroo.repositories.project import ProjectRepository
 from echoroo.repositories.user import UserRepository
 from echoroo.schemas.project import (
@@ -28,6 +30,95 @@ from echoroo.schemas.project import (
 )
 from echoroo.services.h3_utils import h3_to_center
 from echoroo.services.license_service import record_initial_license
+
+ProjectRoleLiteral = Literal["owner", "admin", "member", "viewer"]
+
+
+def scrub_owner_email_for_visibility(
+    response: ProjectResponse,
+    *,
+    project: Project,
+    current_user: User | None,
+) -> None:
+    """Enforce the Phase 9 owner-email exposure contract on ``response``.
+
+    Phase 9 polish round 2 致命 1 (2026-04-27): :class:`PublicOwnerResponse`
+    carries an optional ``email`` slot so the US4 AC2 mailto: hook can
+    populate it for the Restricted-detail surface, but the privacy
+    contract requires the field to be ``None`` everywhere else (FR-030).
+    The schema default is already ``None``, but ``model_validate`` runs
+    with ``from_attributes=True`` and would otherwise pull the
+    SQLAlchemy ``User.email`` value through automatically. We scrub here
+    so every code path that builds a :class:`ProjectResponse` must opt
+    in to the exposure rather than the other way round.
+
+    Exposure rule:
+
+        * Authenticated caller (``current_user is not None``) AND
+        * Project visibility is ``RESTRICTED``
+        → keep ``response.owner.email`` populated (the value lands here
+          via ``Project.owner.email``).
+
+    Every other combination (Guest, Public detail, Restricted but Guest)
+    collapses ``response.owner.email`` back to ``None``. The Authenticated
+    + Public branch is intentionally scrubbed too — a Public project owner
+    has no AC2 reason to surface their email; FR-030 keeps it private.
+    """
+    visibility = getattr(project, "visibility", None)
+    if current_user is None or visibility != ProjectVisibility.RESTRICTED:
+        response.owner.email = None
+
+
+_ROLE_ENUM_TO_LITERAL: dict[ProjectMemberRole, ProjectRoleLiteral] = {
+    ProjectMemberRole.ADMIN: "admin",
+    ProjectMemberRole.MEMBER: "member",
+    ProjectMemberRole.VIEWER: "viewer",
+}
+
+
+async def resolve_current_user_role(
+    db: AsyncSession,
+    *,
+    project: Project,
+    current_user: User | None,
+) -> ProjectRoleLiteral | None:
+    """Resolve the caller's effective project role for ``project``.
+
+    Phase 9 polish round 2 Major 2 (2026-04-27): The Web UI Restricted
+    "Request access" callout (``apps/web/.../projects/[id]/+page.svelte``)
+    must distinguish "Authenticated non-member" from "Authenticated
+    member" without probing the admin-only
+    ``GET /projects/{id}/members`` endpoint (which 403s for Members /
+    Viewers and would silently put every Member in the non-member
+    bucket). Returning the role directly on the detail response lets the
+    UI gate on a single field.
+
+    Decision tree:
+
+        * ``current_user is None``                       -> ``None``
+        * ``project.owner_id == current_user.id``        -> ``"owner"``
+        * Active membership row (``removed_at IS NULL``) -> mapped
+          :class:`ProjectMemberRole` literal.
+        * Otherwise                                       -> ``None``
+          (Authenticated non-member; the UI shows the mailto: callout).
+    """
+    if current_user is None:
+        return None
+    if project.owner_id == current_user.id:
+        return "owner"
+    result = await db.execute(
+        select(ProjectMember.role)
+        .where(
+            ProjectMember.project_id == project.id,
+            ProjectMember.user_id == current_user.id,
+            ProjectMember.removed_at.is_(None),
+        )
+        .limit(1)
+    )
+    role = result.scalar_one_or_none()
+    if role is None:
+        return None
+    return _ROLE_ENUM_TO_LITERAL.get(role)
 
 # ---------------------------------------------------------------------------
 # Phase 9 polish round 3 致命 1 (2026-04-27): shared :class:`ProjectSummary`
@@ -237,10 +328,56 @@ class ProjectService:
             actor_user_id=user_id,
         )
 
-        return ProjectResponse.model_validate(created_project)
+        response = ProjectResponse.model_validate(created_project)
+        # Phase 9 polish round 2 致命 1 + Major 2 (2026-04-27): mutation
+        # endpoints also need the email scrub + role resolution so a
+        # Public project's create response cannot leak the owner email
+        # via ``from_attributes`` traversal of ``Project.owner.email``.
+        # The caller is the project creator -> always "owner" role.
+        scrub_owner_email_for_visibility(
+            response, project=created_project, current_user=user
+        )
+        response.current_user_role = "owner"
+        return response
 
     async def get_project(self, user_id: UUID, project_id: UUID) -> ProjectResponse:
         """Get project details.
+
+        Phase 9 polish round 3 Major 1 (2026-04-27):
+            The legacy ``has_project_access`` membership check was removed
+            from this method. Access enforcement is the responsibility of
+            the path operation's central :func:`gate_action` call (see
+            ``api/v1/projects.py::get_project`` and the canonical Action
+            catalog entry :data:`PROJECT_GET_ACTION`, which maps to
+            :data:`Permission.VIEW_PROJECT_METADATA` and grants Restricted
+            metadata reads to every Authenticated caller per FR-019). Re-
+            running ``has_project_access`` here was a legacy owner/member
+            gate that pre-dated the permission redesign, and it caused the
+            Bearer surface to 403 Authenticated non-members on Restricted
+            detail despite the matrix granting access. The Web UI surface
+            (``api/web_v1/projects/_core.py``) already routes through the
+            same gate without invoking this service helper, so removing
+            the check here brings the two surfaces back into parity.
+
+            ``service.get_project`` is now only called from the v1
+            programmatic surface (verified via grep), so collapsing the
+            access check into the path operation does not affect any
+            other caller (background tasks / Celery / etc. all build their
+            own queries). If a future caller needs an unguarded read,
+            they should query the repository directly; if they need a
+            guarded read, they should call ``gate_action`` first.
+
+        Phase 9 polish round 2 (2026-04-27):
+            * **致命 1** — owner email exposure on Restricted detail. The
+              schema default leaves ``owner.email`` as ``None`` and the
+              service explicitly populates it for Authenticated callers
+              on Restricted projects so the Web UI mailto: hook (US4 AC2)
+              works without leaking the address on Public surfaces.
+            * **Major 2** — ``current_user_role`` is resolved here from
+              the (project, user) pair so the Web UI can gate the
+              Restricted "Request access" callout on a single field
+              instead of probing the admin-only ``GET /members`` endpoint
+              (which 403s for Members / Viewers).
 
         Args:
             user_id: Current user's UUID
@@ -250,7 +387,8 @@ class ProjectService:
             Project details
 
         Raises:
-            HTTPException: If project not found or access denied
+            HTTPException: If project not found. Access enforcement lives
+                in the path operation's :func:`gate_action` call.
         """
         project = await self.project_repo.get_by_id(project_id)
         if not project:
@@ -259,15 +397,21 @@ class ProjectService:
                 detail="Project not found",
             )
 
-        # Check access (owner or member)
-        has_access = await self.project_repo.has_project_access(project_id, user_id)
-        if not has_access:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Access denied",
-            )
+        response = ProjectResponse.model_validate(project)
 
-        return ProjectResponse.model_validate(project)
+        # Resolve caller identity once so the email-scrub + role helpers
+        # can branch on the User row without re-querying. The handler's
+        # ``gate_action`` already short-circuited Anonymous callers and
+        # matrix-denied Authenticated callers, so a non-None lookup here
+        # always resolves an authorised principal.
+        current_user = await self.user_repo.get_by_id(user_id)
+        scrub_owner_email_for_visibility(
+            response, project=project, current_user=current_user
+        )
+        response.current_user_role = await resolve_current_user_role(
+            self.project_repo.db, project=project, current_user=current_user
+        )
+        return response
 
     async def update_project(
         self, user_id: UUID, project_id: UUID, request: ProjectUpdateRequest
@@ -317,7 +461,20 @@ class ProjectService:
             project.status = request.status
 
         updated_project = await self.project_repo.update(project)
-        return ProjectResponse.model_validate(updated_project)
+        response = ProjectResponse.model_validate(updated_project)
+        # Phase 9 polish round 2 致命 1 + Major 2: scrub owner.email +
+        # resolve caller role so the contract holds for mutation
+        # responses too. The caller already cleared the admin gate above
+        # (Owner or Admin); ``resolve_current_user_role`` returns one of
+        # those literals.
+        actor = await self.user_repo.get_by_id(user_id)
+        scrub_owner_email_for_visibility(
+            response, project=updated_project, current_user=actor
+        )
+        response.current_user_role = await resolve_current_user_role(
+            self.project_repo.db, project=updated_project, current_user=actor
+        )
+        return response
 
     async def delete_project(self, user_id: UUID, project_id: UUID) -> None:
         """Delete a project.

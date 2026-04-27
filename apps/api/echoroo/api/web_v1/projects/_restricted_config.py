@@ -45,6 +45,10 @@ from echoroo.schemas.project import (
     ProjectResponse,
     RestrictedConfigUpdateRequest,
 )
+from echoroo.services.project import (
+    resolve_current_user_role,
+    scrub_owner_email_for_visibility,
+)
 from echoroo.services.restricted_config_service import (
     trigger_post_commit_side_effects,
     update_restricted_config,
@@ -193,6 +197,16 @@ async def update_project_restricted_config(
     #   3. ONLY THEN fire audit + Celery enqueue, so a rolled-back main TX
     #      cannot leave a phantom audit row or a phantom worker job.
     response = ProjectResponse.model_validate(outcome.project)
+    # Phase 9 polish round 2 致命 1 + Major 2 (2026-04-27): scrub owner
+    # email + resolve caller role so the restricted-config PATCH
+    # response carries the same privacy contract as the rest of the
+    # project surfaces.
+    scrub_owner_email_for_visibility(
+        response, project=outcome.project, current_user=current_user
+    )
+    response.current_user_role = await resolve_current_user_role(
+        db, project=outcome.project, current_user=current_user
+    )
     await db.commit()
     await trigger_post_commit_side_effects(outcome)
     return response

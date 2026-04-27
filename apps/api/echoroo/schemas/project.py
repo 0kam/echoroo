@@ -28,10 +28,41 @@ class PublicOwnerResponse(BaseModel):
     byline — display name plus an opaque ID for navigation. Anything else
     (avatar URLs, profile bios, etc.) MUST be added here explicitly with
     a privacy review, not via field inheritance.
+
+    Phase 9 polish round 2 致命 1 (2026-04-27): a single ``email`` slot is
+    exposed as **optional** so the Restricted detail surface (US4 AC2) can
+    populate it for Authenticated callers, while every Public-detail and
+    Guest-reachable response keeps it ``None``. The endpoint layer is the
+    only place that decides whether to write the value — see
+    ``apps/api/echoroo/api/v1/projects.py::_assemble_project_response`` /
+    ``apps/api/echoroo/api/web_v1/projects/_core.py``. The field defaults
+    to ``None`` so ``ProjectResponse.model_validate(project)`` cannot
+    accidentally serialise the SQLAlchemy ``User.email`` attribute via
+    ``from_attributes`` — that path is now blocked because the ORM column
+    is named ``email`` and the Pydantic field has the same name, but the
+    default ``None`` keeps the privacy contract: callers must opt in.
+
+    Email is **only** ever exposed for the project owner on a Restricted
+    project to an Authenticated caller. Guests, Public-detail callers, and
+    every other user's email never reach the wire through this schema.
+
+    Implementation note: ``from_attributes`` stays ``True`` so the parent
+    :class:`ProjectResponse.model_validate` call can hydrate this nested
+    object from ``Project.owner`` (the ORM relationship). To keep the
+    privacy contract intact, the endpoint layer **scrubs** the email back
+    to ``None`` immediately after model_validate for every path that is
+    not "Authenticated caller + Restricted project" — see
+    :func:`echoroo.services.project.scrub_owner_email_for_visibility`.
     """
 
     id: UUID
     display_name: str | None
+    # Phase 9 polish round 2 致命 1: optional contact email for the project
+    # owner. Populated only when the caller is Authenticated AND the project
+    # is Restricted (US4 AC2 mailto: hook). For every other path the field
+    # is scrubbed to ``None`` by the endpoint layer so Public detail / Guest
+    # responses never leak the address (FR-030).
+    email: str | None = None
 
     model_config = {"from_attributes": True}
 
@@ -116,7 +147,28 @@ class ProjectUpdateRequest(BaseModel):
 
 
 class ProjectResponse(BaseModel):
-    """Project response schema."""
+    """Project response schema.
+
+    Phase 9 polish round 2 Major 2 (2026-04-27): ``current_user_role``
+    surfaces the caller's effective project role on the detail response so
+    the Web UI can decide whether to show the Restricted "Request access"
+    callout without round-tripping the admin-only ``GET /members``
+    endpoint (which 403s for Members / Viewers and would silently break
+    the gate). The field is one of:
+
+        * ``"owner"``   — caller is the project owner.
+        * ``"admin"``   — caller is an active member with role ``ADMIN``.
+        * ``"member"``  — caller is an active member with role ``MEMBER``.
+        * ``"viewer"``  — caller is an active member with role ``VIEWER``.
+        * ``None``      — caller is Authenticated but not a member, or
+                          Guest. The Web UI uses this to render the
+                          mailto: callout for outsiders on Restricted
+                          projects.
+
+    The endpoint layer is the only place that resolves the role (the
+    schema default is ``None`` so a model_validate path that forgets to
+    set it can never leak a stale value from a previous request).
+    """
 
     id: UUID
     name: str
@@ -131,6 +183,12 @@ class ProjectResponse(BaseModel):
     owner: PublicOwnerResponse
     created_at: datetime
     updated_at: datetime
+    # Phase 9 polish round 2 Major 2: caller's effective project role.
+    # ``None`` for Guest and for Authenticated non-members. The Web UI
+    # gate for the Restricted "Request access" callout uses
+    # ``current_user_role is None`` instead of probing the admin-only
+    # ``GET /members`` endpoint.
+    current_user_role: Literal["owner", "admin", "member", "viewer"] | None = None
 
     model_config = {"from_attributes": True}
 

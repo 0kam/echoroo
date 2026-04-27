@@ -5,7 +5,7 @@
 import type {
   Project,
   ProjectMember,
-  ProjectListResponse,
+  ProjectSummaryListResponse,
   ProjectCreateRequest,
   ProjectUpdateRequest,
   ProjectMemberAddRequest,
@@ -122,9 +122,23 @@ async function patchWebApi<T>(path: string, body: unknown): Promise<T> {
 
 export const projectsApi = {
   /**
-   * List all projects accessible to the current user
+   * List all projects accessible to the current user.
+   *
+   * Phase 9 / FR-018, FR-019: the backend returns
+   * `ProjectSummaryListResponse` (`{ items: ProjectSummary[]; total;
+   * page }`) — **not** the legacy full-`Project` paginated shape.
+   * Restricted projects' metadata is included for Guest / Authenticated
+   * non-members but `restricted_config` and the full `owner` sub-object
+   * never reach the wire.
+   *
+   * The `limit` query parameter is still accepted by the backend for
+   * page-size selection, but the response itself does not echo it back
+   * (contract only declares `items / total / page`).
    */
-  list: async (params?: { page?: number; limit?: number }): Promise<ProjectListResponse> => {
+  list: async (params?: {
+    page?: number;
+    limit?: number;
+  }): Promise<ProjectSummaryListResponse> => {
     const queryParams = new URLSearchParams();
     if (params?.page) queryParams.set('page', params.page.toString());
     if (params?.limit) queryParams.set('limit', params.limit.toString());
@@ -132,7 +146,7 @@ export const projectsApi = {
     const query = queryParams.toString();
     const endpoint = `/api/v1/projects${query ? `?${query}` : ''}`;
 
-    return apiClient.get<ProjectListResponse>(endpoint);
+    return apiClient.get<ProjectSummaryListResponse>(endpoint);
   },
 
   /**

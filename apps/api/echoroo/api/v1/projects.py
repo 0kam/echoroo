@@ -58,7 +58,11 @@ from echoroo.schemas.project import (
     RestrictedConfigUpdateRequest,
 )
 from echoroo.services.license_service import change_license, list_license_history
-from echoroo.services.project import ProjectService
+from echoroo.services.project import (
+    ProjectService,
+    resolve_current_user_role,
+    scrub_owner_email_for_visibility,
+)
 from echoroo.services.restricted_config_service import (
     trigger_post_commit_side_effects,
     update_restricted_config,
@@ -380,7 +384,17 @@ async def update_project_license(
     # Refresh so the response reflects the committed value (the prior
     # ``project`` row was pinned inside the ``with_for_update`` SELECT).
     await db.refresh(project)
-    return ProjectResponse.model_validate(project)
+    response = ProjectResponse.model_validate(project)
+    # Phase 9 polish round 2 致命 1 + Major 2 (2026-04-27): scrub
+    # owner.email + resolve caller role so the license-PATCH response
+    # carries the same privacy contract as the detail surface.
+    scrub_owner_email_for_visibility(
+        response, project=project, current_user=current_user
+    )
+    response.current_user_role = await resolve_current_user_role(
+        db, project=project, current_user=current_user
+    )
+    return response
 
 
 @router.get(
@@ -525,6 +539,15 @@ async def update_project_restricted_config(
     # Commit-before-side-effects guarantees a rolled-back main TX cannot
     # leave phantom rows / phantom worker jobs behind.
     response = ProjectResponse.model_validate(outcome.project)
+    # Phase 9 polish round 2 致命 1 + Major 2: scrub owner.email + resolve
+    # caller role so the restricted-config PATCH response carries the
+    # same privacy contract as the detail surface.
+    scrub_owner_email_for_visibility(
+        response, project=outcome.project, current_user=current_user
+    )
+    response.current_user_role = await resolve_current_user_role(
+        db, project=outcome.project, current_user=current_user
+    )
     await db.commit()
     await trigger_post_commit_side_effects(outcome)
     return response

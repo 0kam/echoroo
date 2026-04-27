@@ -6,12 +6,20 @@
   import { goto } from '$app/navigation';
   import { projectsApi } from '$lib/api/projects';
   import { ApiError } from '$lib/api/client';
-  import { localizeHref, getLocale } from '$lib/paraglide/runtime';
+  import { localizeHref } from '$lib/paraglide/runtime';
   import * as m from '$lib/paraglide/messages';
-  import type { Project } from '$lib/types';
+  import type { ProjectSummary } from '$lib/types';
 
-  // State
-  let projects = $state<Project[]>([]);
+  // State.
+  //
+  // Phase 9 / FR-018, FR-019: the list endpoint returns `ProjectSummary`
+  // rows — a deliberately narrow projection over `Project` that strips
+  // `restricted_config`, the full `owner` sub-object, and timestamps so
+  // Guest enumeration of Restricted projects cannot leak any field
+  // beyond the documented summary slot. The list view is therefore
+  // limited to `name / description / visibility / status / license /
+  // owner_display_name / dataset_count / species_preview`.
+  let projects = $state<ProjectSummary[]>([]);
   let total = $state(0);
   let page = $state(1);
   let limit = $state(20);
@@ -250,21 +258,16 @@
             <p class="mb-4 text-sm italic text-stone-400">{m.project_no_description()}</p>
           {/if}
 
-          <!-- Project Metadata -->
+          <!--
+            Project Metadata.
+
+            Phase 9 / FR-019: the summary slot only carries
+            `owner_display_name`, `dataset_count`, and a small
+            `species_preview` list. Older fields (`target_taxa`,
+            `created_at`, full `owner.email`) live on `ProjectResponse`
+            and are visible only on the detail page.
+          -->
           <div class="space-y-2 text-xs text-stone-500">
-            {#if project.target_taxa}
-              <div class="flex items-center">
-                <svg class="mr-2 h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    stroke-width="2"
-                    d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z"
-                  />
-                </svg>
-                <span class="truncate">{project.target_taxa}</span>
-              </div>
-            {/if}
             <div class="flex items-center">
               <svg class="mr-2 h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path
@@ -274,7 +277,7 @@
                   d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"
                 />
               </svg>
-              <span>{project.owner.display_name || project.owner.email}</span>
+              <span class="truncate">{project.owner_display_name}</span>
             </div>
             <div class="flex items-center">
               <svg class="mr-2 h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -282,11 +285,26 @@
                   stroke-linecap="round"
                   stroke-linejoin="round"
                   stroke-width="2"
-                  d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"
+                  d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4"
                 />
               </svg>
-              <span>{m.project_created({ date: new Date(project.created_at).toLocaleDateString(getLocale()) })}</span>
+              <span>{project.dataset_count === 1
+                ? m.project_summary_dataset_count_one()
+                : m.project_summary_dataset_count_other({ count: project.dataset_count })}</span>
             </div>
+            {#if project.species_preview.length > 0}
+              <div class="flex items-start">
+                <svg class="mr-2 mt-0.5 h-4 w-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width="2"
+                    d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z"
+                  />
+                </svg>
+                <span class="line-clamp-1">{project.species_preview.join(', ')}</span>
+              </div>
+            {/if}
           </div>
         </div>
       {/each}

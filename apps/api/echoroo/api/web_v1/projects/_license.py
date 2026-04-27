@@ -46,6 +46,10 @@ from echoroo.schemas.project import (
 )
 from echoroo.services.audit_service import AuditLogService
 from echoroo.services.license_service import change_license, list_license_history
+from echoroo.services.project import (
+    resolve_current_user_role,
+    scrub_owner_email_for_visibility,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -196,7 +200,18 @@ async def update_project_license(
             exc,
         )
 
-    return ProjectResponse.model_validate(project)
+    response = ProjectResponse.model_validate(project)
+    # Phase 9 polish round 2 致命 1 + Major 2 (2026-04-27): scrub
+    # owner.email + resolve caller role so the contract holds for the
+    # license-PATCH response too. The caller already cleared the
+    # MANAGE_LICENSE gate (Owner / Admin).
+    scrub_owner_email_for_visibility(
+        response, project=project, current_user=current_user
+    )
+    response.current_user_role = await resolve_current_user_role(
+        db, project=project, current_user=current_user
+    )
+    return response
 
 
 @router.get(

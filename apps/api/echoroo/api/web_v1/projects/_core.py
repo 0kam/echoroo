@@ -65,7 +65,11 @@ from echoroo.schemas.recording import (
     PublicRecordingItem,
     PublicRecordingListResponse,
 )
-from echoroo.services.project import build_project_summaries
+from echoroo.services.project import (
+    build_project_summaries,
+    resolve_current_user_role,
+    scrub_owner_email_for_visibility,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers — Phase 5 polish round 5 (重要 1): H3 generalisation for the
@@ -373,6 +377,20 @@ async def get_project(
     # the filter so the contract holds for downstream Detection/Recording
     # responses that share the same plumbing (FR-030).
     response = ProjectResponse.model_validate(project)
+    # Phase 9 polish round 2 致命 1 (2026-04-27): scrub owner.email back
+    # to ``None`` on every path that is not "Authenticated caller +
+    # Restricted project". The Authenticated + Restricted branch keeps
+    # the value populated so the US4 AC2 mailto: hook works.
+    scrub_owner_email_for_visibility(
+        response, project=project, current_user=current_user
+    )
+    # Phase 9 polish round 2 Major 2 (2026-04-27): resolve the caller's
+    # effective project role so the Web UI can gate the Restricted
+    # "Request access" callout without probing the admin-only
+    # ``GET /members`` endpoint.
+    response.current_user_role = await resolve_current_user_role(
+        db, project=project, current_user=current_user
+    )
     normalized_role = getattr(
         request.state,
         "normalized_role",

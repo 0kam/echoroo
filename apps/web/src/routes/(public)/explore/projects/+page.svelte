@@ -6,39 +6,21 @@
    * `/web-api/v1/projects/` (T201). Each card links to the public detail
    * page at `/explore/projects/{id}`. Pagination is intentionally minimal
    * (page / next / prev) — full faceted search is a later-phase concern.
+   *
+   * Phase 9 polish round 2 Major 1 (2026-04-27): the list endpoint emits
+   * `ProjectSummaryListResponse` (Phase 9 / FR-018, FR-019, FR-030), not
+   * the legacy full-`Project` shape. The page now reads
+   * `owner_display_name` / `dataset_count` / `species_preview` directly
+   * from the summary row instead of the missing `owner.display_name` /
+   * `created_at` / `limit` fields, which were removed from the contract
+   * to prevent Restricted enumeration leaks.
    */
 
   import { createQuery } from '@tanstack/svelte-query';
   import { ApiError, apiClient } from '$lib/api/client';
   import { localizeHref, getLocale } from '$lib/paraglide/runtime';
   import * as m from '$lib/paraglide/messages';
-
-  type ProjectVisibility = 'public' | 'restricted';
-  type ProjectStatus = 'active' | 'dormant' | 'archived';
-  type ProjectLicense = 'CC0' | 'CC-BY' | 'CC-BY-NC' | 'CC-BY-SA';
-
-  interface PublicOwner {
-    id: string;
-    display_name: string | null;
-  }
-
-  interface PublicProject {
-    id: string;
-    name: string;
-    description: string | null;
-    visibility: ProjectVisibility;
-    license: ProjectLicense;
-    status: ProjectStatus;
-    owner: PublicOwner;
-    created_at: string;
-  }
-
-  interface PublicProjectListResponse {
-    items: PublicProject[];
-    total: number;
-    page: number;
-    limit: number;
-  }
+  import type { ProjectSummary, ProjectSummaryListResponse } from '$lib/types';
 
   let page = $state(1);
   const pageSize = 20;
@@ -46,17 +28,17 @@
   const locale = $derived(getLocale());
 
   const listQuery = $derived(
-    createQuery<PublicProjectListResponse, ApiError>({
+    createQuery<ProjectSummaryListResponse, ApiError>({
       queryKey: ['public-projects-list', page, locale],
       queryFn: () =>
-        apiClient.get<PublicProjectListResponse>(
+        apiClient.get<ProjectSummaryListResponse>(
           `/web-api/v1/projects/?page=${page}&limit=${pageSize}`
         ),
       retry: false,
     })
   );
 
-  const items = $derived($listQuery.data?.items ?? []);
+  const items = $derived<ProjectSummary[]>($listQuery.data?.items ?? []);
   const total = $derived($listQuery.data?.total ?? 0);
   const totalPages = $derived(Math.max(1, Math.ceil(total / pageSize)));
   const isLoading = $derived($listQuery.isLoading);
@@ -67,14 +49,6 @@
   }
   function nextPage() {
     if (page < totalPages) page += 1;
-  }
-
-  function formatDate(iso: string): string {
-    try {
-      return new Date(iso).toLocaleDateString(locale);
-    } catch {
-      return iso;
-    }
   }
 </script>
 
@@ -130,11 +104,19 @@
             class="flex h-full flex-col rounded-lg bg-surface-card p-5 shadow transition hover:shadow-md"
           >
             <div class="mb-2 flex flex-wrap gap-1.5">
-              <span
-                class="inline-flex items-center rounded-full bg-success-light px-2 py-0.5 text-xs font-medium text-success"
-              >
-                {m.public_project_detail_visibility_public()}
-              </span>
+              {#if p.visibility === 'restricted'}
+                <span
+                  class="inline-flex items-center rounded-full bg-warning-light px-2 py-0.5 text-xs font-medium text-warning"
+                >
+                  {m.public_project_detail_visibility_restricted()}
+                </span>
+              {:else}
+                <span
+                  class="inline-flex items-center rounded-full bg-success-light px-2 py-0.5 text-xs font-medium text-success"
+                >
+                  {m.public_project_detail_visibility_public()}
+                </span>
+              {/if}
               <span
                 class="inline-flex items-center rounded-full bg-stone-100 px-2 py-0.5 text-xs font-medium text-stone-700 dark:bg-stone-700 dark:text-stone-200"
               >
@@ -149,11 +131,20 @@
                 {m.public_project_detail_no_description()}
               </p>
             {/if}
-            <div class="mt-auto pt-3 text-xs text-stone-500">
-              {m.public_project_detail_byline({
-                owner: p.owner.display_name ?? m.public_project_detail_owner_anonymous(),
-                date: formatDate(p.created_at),
-              })}
+            <div class="mt-auto space-y-1 pt-3 text-xs text-stone-500">
+              <div>
+                {m.explore_projects_byline_owner({
+                  owner: p.owner_display_name || m.public_project_detail_owner_anonymous(),
+                })}
+              </div>
+              <div>
+                {p.dataset_count === 1
+                  ? m.project_summary_dataset_count_one()
+                  : m.project_summary_dataset_count_other({ count: p.dataset_count })}
+              </div>
+              {#if p.species_preview.length > 0}
+                <div class="line-clamp-1">{p.species_preview.join(', ')}</div>
+              {/if}
             </div>
           </a>
         </li>

@@ -37,28 +37,16 @@
   // Current user
   const currentUser = $derived(authStore.user);
 
-  // Check if current user is owner. Derives directly from the loaded
-  // project so we never rely on the admin-only members list — Members
-  // / Viewers must still see the project header.
-  const isOwner = $derived(
-    !!(currentUser && project && project.owner.id === currentUser.id),
-  );
-
-  // Check if current user is admin. We can only confirm admin role from
-  // the members list, which Members / Viewers cannot read. When the
-  // members fetch was rejected (`membersAvailable === false`) we fall
-  // back to Owner-only admin detection — that matches the backend
-  // contract: Owner is always Admin, and the only callers who can edit
-  // RestrictedToggles via PATCH are Owner / Admin (FR-014).
+  // Phase 9 polish round 2 Major 2 (2026-04-27): role detection now
+  // uses `project.current_user_role`, which the backend resolves from
+  // the (project, current_user) pair on the detail response. The
+  // previous implementation probed the admin-only `GET /members`
+  // endpoint, which 403s for Members / Viewers and silently put every
+  // active Member in the "non-member" bucket — breaking the
+  // Restricted "Request access" callout gate.
+  const isOwner = $derived(project?.current_user_role === 'owner');
   const isAdmin = $derived(
-    (() => {
-      if (!currentUser || !project) return false;
-      if (isOwner) return true;
-      if (!membersAvailable) return false;
-
-      const member = members.find((m) => m.user.id === currentUser.id);
-      return member?.role === 'admin';
-    })(),
+    project?.current_user_role === 'owner' || project?.current_user_role === 'admin',
   );
 
   // canEdit is the surface used by RestrictedToggles. Only Owners and
@@ -67,6 +55,73 @@
   // through Boolean() to avoid a `null | boolean` reaching the
   // component prop.
   const canEdit = $derived(Boolean(isAdmin));
+
+  /**
+   * Owner display string used in the byline.
+   *
+   * Phase 9 / FR-030: the public `owner` sub-object has no `email`
+   * field — only `display_name` and an opaque `id`. We therefore
+   * fall back to a localised "Anonymous" label when `display_name` is
+   * absent, never to the email (which the backend never sends on this
+   * surface).
+   */
+  const ownerDisplayName = $derived(
+    project?.owner.display_name?.trim() ||
+      m.project_detail_owner_anonymous(),
+  );
+
+  /**
+   * T411 (Phase 9 / US4 AC2) — Restricted "Request access" mailto: hook.
+   *
+   * The contact link is only rendered when:
+   *
+   *   1. The current user is Authenticated (`currentUser != null`).
+   *   2. The project visibility is `restricted` (Public projects don't
+   *      need a request-access affordance).
+   *   3. The Authenticated viewer is **not** already a project member —
+   *      `project.current_user_role === null` is the canonical
+   *      backend-resolved signal for this (Phase 9 polish round 2
+   *      Major 2). Owners / Admins / Members / Viewers all carry a
+   *      non-null role and never see the callout.
+   *
+   * Owner email — Phase 9 polish round 2 致命 1 wires the backend so
+   * `owner.email` is populated for Authenticated callers on a
+   * Restricted project (and only on that combination; FR-030 keeps
+   * Public + Guest paths PII-free). The "no public contact" fallback
+   * only fires for the rare case where the owner row genuinely lacks
+   * an email — a defensive layout safety net rather than the default.
+   */
+  const isAuthenticatedNonMember = $derived(
+    !!currentUser &&
+      !!project &&
+      project.current_user_role == null,
+  );
+
+  const showRequestAccess = $derived(
+    !!project &&
+      project.visibility === 'restricted' &&
+      isAuthenticatedNonMember,
+  );
+
+  const ownerEmail = $derived(project?.owner.email ?? null);
+
+  /**
+   * Build the `mailto:` URL with a localised subject and body. Returns
+   * `null` when no email is available so the template can fall back to
+   * the "no public contact" notice.
+   */
+  const requestAccessMailto = $derived.by(() => {
+    if (!ownerEmail || !project) return null;
+    const subject = m.project_detail_restricted_mailto_subject({
+      project_name: project.name,
+    });
+    const body = m.project_detail_restricted_mailto_body({
+      owner_display_name: ownerDisplayName,
+      project_name: project.name,
+    });
+    const params = new URLSearchParams({ subject, body });
+    return `mailto:${ownerEmail}?${params.toString()}`;
+  });
 
   /**
    * Load project and members.
@@ -303,7 +358,10 @@
             </span>
           </div>
           <p class="mt-2 text-sm text-stone-600">
-            {m.project_detail_created_by({ date: new Date(project.created_at).toLocaleDateString(getLocale()), owner: project.owner.display_name || project.owner.email })}
+            {m.project_detail_created_by({
+              date: new Date(project.created_at).toLocaleDateString(getLocale()),
+              owner: ownerDisplayName,
+            })}
           </p>
         </div>
 
@@ -352,11 +410,85 @@
       </div>
     </div>
 
+    <!--
+      T411 (Phase 9 / US4 AC2) — Restricted "Request access" affordance.
+
+      Authenticated non-members of a Restricted project see a callout
+      with the owner's display name and a `mailto:` link pre-populated
+      with a request-access subject + body (i18n keys
+      `project_detail_restricted_mailto_*`). When the public detail
+      surface omits the owner's email (the FR-030 default), we fall back
+      to a friendly "no public contact" notice so the layout stays
+      stable without surfacing a broken link.
+
+      Guests (`currentUser` null) and project members never see this
+      section.
+    -->
+    {#if showRequestAccess}
+      <div
+        data-testid="restricted-request-access"
+        class="mb-6 rounded-lg border border-warning/40 bg-warning-light/40 p-4"
+      >
+        <div class="flex items-start gap-3">
+          <svg
+            class="mt-0.5 h-5 w-5 flex-shrink-0 text-warning"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+          >
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="2"
+              d="M18 8a6 6 0 01-7.743 5.743L10 14l-1 1-1 1H6v2H2v-4l4.257-4.257A6 6 0 1118 8zm-6-4a1 1 0 100 2 2 2 0 012 2 1 1 0 102 0 4 4 0 00-4-4z"
+            />
+          </svg>
+          <div class="min-w-0 flex-1">
+            <h2 class="text-sm font-semibold text-stone-900">
+              {m.project_detail_restricted_request_access_heading()}
+            </h2>
+            <p class="mt-1 text-sm text-stone-700">
+              {m.project_detail_restricted_request_access_description({
+                owner_display_name: ownerDisplayName,
+              })}
+            </p>
+            <div class="mt-3">
+              {#if requestAccessMailto}
+                <a
+                  data-testid="restricted-request-access-mailto"
+                  href={requestAccessMailto}
+                  class="inline-flex items-center rounded-md bg-warning px-4 py-2 text-sm font-medium text-white shadow-sm hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-warning/50 focus:ring-offset-2"
+                >
+                  <svg class="mr-2 h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      stroke-width="2"
+                      d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"
+                    />
+                  </svg>
+                  {m.project_detail_restricted_request_access_button()}
+                </a>
+              {:else}
+                <p
+                  data-testid="restricted-request-access-no-contact"
+                  class="text-sm italic text-stone-500"
+                >
+                  {m.project_detail_restricted_request_access_no_contact()}
+                </p>
+              {/if}
+            </div>
+          </div>
+        </div>
+      </div>
+    {/if}
+
     <!-- Project Content -->
     <div class="grid gap-6 lg:grid-cols-3">
       <!-- Main Content -->
       <div class="lg:col-span-2">
         <!-- Description -->
+
         <div class="mb-6 rounded-lg bg-surface-card p-6 shadow">
           <h2 class="mb-4 text-lg font-semibold text-stone-900">{m.project_detail_description_heading()}</h2>
           {#if project.description}
