@@ -256,13 +256,13 @@ description: "Task list for 006-permissions-redesign (revised after /speckit.ana
 
 ## Phase 6: US2 - Authenticated の Public での Export・投票（P1）
 
-- [ ] **T300** [US2] CSV export: license + location_generalization + withheld_reason 必須 (FR-086)
-- [ ] **T301** [P] [US2] 非メンバー投票: `source=guest_authenticated`、`project_role_at_vote=null` (FR-037)
-- [ ] **T310** [P] [US2] `apps/api/tests/contract/test_guest_authenticated_vote.py` TDD (FR-037、FR-038)
-- [ ] **T311** [US2] Playwright E2E: 非メンバー投票 → 「非メンバー」バッジ (PR-003、P1 必須)
-- [ ] **T312** [P] [US2] `apps/api/tests/security/search_leak/test_export_csv_no_lat_lng.py` TDD: CSV に生 lat/lng 不在 (FR-086、SC-016)
-- [ ] **T313** [P] [US2] `apps/api/tests/contract/test_vote_voter_id_masking.py` TDD: Owner / Admin は `voters[].user_id` に UUID、他ロール（Member / Viewer / guest_authenticated）は `voters[].user_id=null`、`voters` 配列自体は常に返す（投票可視性は維持）(FR-039)
-- [ ] **T313b** [P] [US2] `specs/006-permissions-redesign/contracts/detections.yaml` の `VoteAggregateResponse.voters` を spec.md FR-039 と整合化: description を「非 Owner/Admin は `user_id` を null にマスク（投票自体は可視）」に修正、`items.user_id` を `nullable: true` に変更（T980 OpenAPI diff 対策）(FR-039)
+- [X] **T300** [US2] CSV export: license + location_generalization + withheld_reason 必須 (FR-086)
+- [X] **T301** [P] [US2] 非メンバー投票: `source=guest_authenticated`、`project_role_at_vote=null` (FR-037)
+- [X] **T310** [P] [US2] `apps/api/tests/contract/test_guest_authenticated_vote.py` TDD (FR-037、FR-038)
+- [X] **T311** [US2] Playwright E2E: 非メンバー投票 → 「非メンバー」バッジ (PR-003、P1 必須)
+- [X] **T312** [P] [US2] `apps/api/tests/security/search_leak/test_export_csv_no_lat_lng.py` TDD: CSV に生 lat/lng 不在 (FR-086、SC-016)
+- [X] **T313** [P] [US2] `apps/api/tests/contract/test_vote_voter_id_masking.py` TDD: Owner / Admin は `voters[].user_id` に UUID、他ロール（Member / Viewer / guest_authenticated）は `voters[].user_id=null`、`voters` 配列自体は常に返す（投票可視性は維持）(FR-039)
+- [X] **T313b** [P] [US2] `specs/006-permissions-redesign/contracts/detections.yaml` の `VoteAggregateResponse.voters` は spec.md FR-039 と既に整合済み（`items.user_id` は `nullable: true`、description は spec 文言と一致）— Round 1 で確認、無修正 (FR-039)
 
 ---
 
