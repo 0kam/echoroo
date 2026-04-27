@@ -12,8 +12,12 @@
   import { getLocale } from '$lib/paraglide/runtime';
   import { getConsensusStatusBadgeClass, getConsensusStatusLabel } from '$lib/utils/statusFormatters';
   import { displayCommonName } from '$lib/utils/speciesFormatters';
+  import { createQuery, useQueryClient } from '@tanstack/svelte-query';
   import ReviewCard from '$lib/components/common/ReviewCard.svelte';
   import SpeciesCorrector from './SpeciesCorrector.svelte';
+  import VoteSourceBreakdown from './VoteSourceBreakdown.svelte';
+  import VoterList from './VoterList.svelte';
+  import { getDetectionVoteSummary } from '$lib/api/votes';
 
   interface Props {
     detection: Detection;
@@ -113,6 +117,54 @@
   function handleChangeSpecies(newTagId: string) {
     onChangeSpecies(detection.id, newTagId);
   }
+
+  // ---------------------------------------------------------------------
+  // Lazy-loaded full vote summary (FR-038 / FR-039)
+  // ---------------------------------------------------------------------
+  // The detection list endpoint only includes compact `DetectionVoteCounts`
+  // and does NOT carry per-source counts or `voters[]`.  We lazy-load the
+  // full summary only when the user expands the voter section so the grid
+  // does not fan out N detection-vote requests on mount.
+  //
+  // Decision: option C (fetch-on-expand) was chosen over option A
+  // (mount-time fetch) because most reviewers scroll past most cards
+  // without inspecting voters.  Per-source counts shown in the compact
+  // breakdown remain `0` until the section is opened — the prop
+  // `voteSummary` from the parent grid already drives the row when the
+  // parent has the data, and a freshly-loaded summary supersedes it once
+  // the query resolves.
+  let votersExpanded = $state(false);
+  const queryClient = useQueryClient();
+
+  const fullSummaryQuery = $derived(
+    createQuery<VoteSummary>({
+      queryKey: ['detection-vote-summary', projectId, detection.id],
+      queryFn: () => getDetectionVoteSummary(projectId, detection.id),
+      enabled: votersExpanded,
+      // Keep the cached summary fresh for a minute — re-opening the section
+      // within that window reuses the cache instead of re-fetching.
+      staleTime: 60_000,
+    })
+  );
+
+  // Resolved summary: the lazy query takes precedence once it has data,
+  // otherwise we fall back to whatever the parent grid passed in.
+  const resolvedSummary = $derived<VoteSummary | null>(
+    $fullSummaryQuery.data ?? voteSummary ?? null
+  );
+
+  // Refetch the full summary after a vote mutation finishes (isLoading
+  // transitions from `true` to `false`) so the voter list and per-source
+  // counts reflect the new vote without a full grid invalidation cycle.
+  let prevIsLoadingForSummary = $state(false);
+  $effect(() => {
+    if (prevIsLoadingForSummary && !isLoading && votersExpanded) {
+      queryClient.invalidateQueries({
+        queryKey: ['detection-vote-summary', projectId, detection.id],
+      });
+    }
+    prevIsLoadingForSummary = isLoading;
+  });
 </script>
 
 <!-- Wrapper applies the scale animation on top of ReviewCard -->
@@ -133,7 +185,7 @@
     scoreValue={null}
     {isLoading}
     {isSelected}
-    {voteSummary}
+    voteSummary={resolvedSummary}
     {externalIsPlaying}
     {externalIsLoadingAudio}
     {onPlayToggle}
@@ -160,13 +212,13 @@
 
     {#snippet extraBody()}
       <!-- Vote summary indicator -->
-      {#if voteSummary && (voteSummary.agree_count + voteSummary.disagree_count + voteSummary.unsure_count) > 0}
+      {#if resolvedSummary && (resolvedSummary.agree_count + resolvedSummary.disagree_count + resolvedSummary.unsure_count) > 0}
         <div class="flex flex-wrap items-center gap-1.5">
           <!-- Consensus badge -->
           <span
-            class="rounded border px-1.5 py-0.5 text-xs font-medium {getConsensusStatusBadgeClass(voteSummary.consensus_status)}"
+            class="rounded border px-1.5 py-0.5 text-xs font-medium {getConsensusStatusBadgeClass(resolvedSummary.consensus_status)}"
           >
-            {getConsensusStatusLabel(voteSummary.consensus_status, {
+            {getConsensusStatusLabel(resolvedSummary.consensus_status, {
               needs_votes: m.consensus_needs_votes,
               agreed: m.consensus_agreed,
               disputed: m.consensus_disputed,
@@ -175,11 +227,22 @@
           </span>
           <!-- Vote ratio -->
           <span class="text-xs text-stone-400">
-            {m.vote_summary_ratio({ agree: voteSummary.agree_count, total: voteSummary.agree_count + voteSummary.disagree_count + voteSummary.unsure_count })}
+            {m.vote_summary_ratio({ agree: resolvedSummary.agree_count, total: resolvedSummary.agree_count + resolvedSummary.disagree_count + resolvedSummary.unsure_count })}
           </span>
           <!-- Signal quality breakdown (only when there are agree votes with quality data) -->
-          {#if voteSummary.agree_count > 0 && voteSummary.signal_quality_counts}
-            {@const sq = voteSummary.signal_quality_counts}
+          <!-- Per-source vote breakdown (FR-038): Member / Non-member / Trusted.
+               Counts will be 0 until the voter section is expanded — see the
+               lazy-load comment at the top of the script block. -->
+          <VoteSourceBreakdown
+            memberAgree={resolvedSummary.member_agree}
+            memberDisagree={resolvedSummary.member_disagree}
+            guestAuthenticatedAgree={resolvedSummary.guest_authenticated_agree}
+            guestAuthenticatedDisagree={resolvedSummary.guest_authenticated_disagree}
+            trustedUserAgree={resolvedSummary.trusted_user_agree}
+            trustedUserDisagree={resolvedSummary.trusted_user_disagree}
+          />
+          {#if resolvedSummary.agree_count > 0 && resolvedSummary.signal_quality_counts}
+            {@const sq = resolvedSummary.signal_quality_counts}
             {#if sq.solo > 0 || sq.dominant > 0 || sq.mixed > 0}
               <div class="flex items-center gap-0.5">
                 {#if sq.solo > 0}
@@ -210,6 +273,43 @@
             {/if}
           {/if}
         </div>
+
+        <!--
+          Expandable voter list (FR-039 / FR-040).
+          Lazy-loaded — opening the <details> triggers the full
+          getDetectionVoteSummary() fetch (see fullSummaryQuery above).
+          The list is rendered for both the grid view and any consumer
+          that mounts <DetectionCard> directly.
+        -->
+        <details
+          class="text-xs"
+          ontoggle={(event) => {
+            votersExpanded = (event.currentTarget as HTMLDetailsElement).open;
+          }}
+        >
+          <summary
+            class="cursor-pointer list-none rounded px-1 py-0.5 text-xs text-stone-500 hover:text-stone-700"
+            data-testid="voter-list-toggle"
+          >
+            {m.voter_list_toggle_label({
+              count:
+                resolvedSummary.agree_count +
+                resolvedSummary.disagree_count +
+                resolvedSummary.unsure_count,
+            })}
+          </summary>
+          <div class="mt-1.5">
+            {#if $fullSummaryQuery.isLoading}
+              <p class="text-xs text-stone-400">{m.voter_list_toggle_loading()}</p>
+            {:else if resolvedSummary.voters && resolvedSummary.voters.length > 0}
+              <VoterList voters={resolvedSummary.voters} />
+            {:else}
+              <p class="text-xs text-stone-400" data-testid="voter-list-empty">
+                {m.voter_list_empty()}
+              </p>
+            {/if}
+          </div>
+        </details>
       {/if}
 
       <!-- Source badge and reviewed_at -->

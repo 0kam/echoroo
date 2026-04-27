@@ -110,7 +110,15 @@
           user_signal_quality: detection.votes.user_signal_quality,
           signal_quality_counts: detection.votes.signal_quality_counts ?? { solo: 0, dominant: 0, mixed: 0 },
           consensus_status: detection.votes.consensus_status,
-          votes: [],
+          // Compact list-response counts do not include voters[] or per-source
+          // breakdown; lazy-load via getAnnotationVoteSummary() when needed.
+          voters: [],
+          member_agree: 0,
+          member_disagree: 0,
+          guest_authenticated_agree: 0,
+          guest_authenticated_disagree: 0,
+          trusted_user_agree: 0,
+          trusted_user_disagree: 0,
         };
         changed = true;
       }
