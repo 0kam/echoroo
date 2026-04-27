@@ -268,11 +268,11 @@ description: "Task list for 006-permissions-redesign (revised after /speckit.ana
 
 ## Phase 7: US10 - ライセンス必須（P1）
 
-- [ ] **T320** [US10] `api/web_v1/projects/_core.py` POST `/projects` で license 必須 (FR-085) — NOTE: `restricted_config={}` の CHECK 違反（必須キー欠落）は Phase 2/Phase 8 既存 issue であり、本タスクのスコープ外。Phase 8 T400 (`PATCH /restricted-config` の `Extra.forbid` + 必須キー検証) で扱う。
-- [ ] **T321** [P] [US10] `apps/web/src/routes/(app)/projects/new/+page.svelte` 改修: license 未選択で非活性 (FR-085)
-- [ ] **T322** [P] [US10] `services/license_service.py` 新規: `ProjectLicenseHistory` 記録、過去 export 不変 (FR-087)
-- [ ] **T323** [P] [US10] `apps/api/tests/contract/test_license_required.py` TDD: API 直叩きで 422 (FR-085、SC-010)
-- [ ] **T324** [US10] Playwright E2E: ライセンス未選択で非活性、CC-BY で作成成功 (PR-003、P1 必須、SC-010)
+- [x] **T320** [US10] `api/web_v1/projects/_core.py` POST `/projects` で license 必須 (FR-085) — NOTE: `restricted_config={}` の CHECK 違反（必須キー欠落）は Phase 2/Phase 8 既存 issue であり、本タスクのスコープ外。Phase 8 T400 (`PATCH /restricted-config` の `Extra.forbid` + 必須キー検証) で扱う。
+- [x] **T321** [P] [US10] `apps/web/src/routes/(app)/projects/new/+page.svelte` 改修: license 未選択で非活性 (FR-085)
+- [x] **T322** [P] [US10] `services/license_service.py` 新規: `ProjectLicenseHistory` 記録、過去 export 不変 (FR-087)
+- [x] **T323** [P] [US10] `apps/api/tests/contract/test_license_required.py` TDD: API 直叩きで 422 (FR-085、SC-010)
+- [x] **T324** [US10] Playwright E2E: ライセンス未選択で非活性、CC-BY で作成成功 (PR-003、P1 必須、SC-010)
 
 ---
 

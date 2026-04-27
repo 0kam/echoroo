@@ -3,17 +3,53 @@
  */
 
 /**
- * Custom error class for API errors
+ * Custom error class for API errors.
+ *
+ * The optional `code` field carries the structured error envelope code that
+ * the backend returns alongside `detail` / `message` (e.g.
+ * `ERR_LICENSE_REQUIRED` for FR-085). UI callers should branch on `code`
+ * for stable error identification rather than regex-matching `detail`.
  */
 export class ApiError extends Error {
+  /**
+   * Structured error code from the backend envelope (e.g. `ERR_LICENSE_REQUIRED`).
+   * `null` when the backend response does not include a `code`/`error` field
+   * (legacy `{ "detail": "..." }`-only responses).
+   */
+  public code: string | null;
+
   constructor(
     message: string,
     public status: number,
-    public detail?: string
+    public detail?: string,
+    code?: string | null
   ) {
     super(message);
     this.name = 'ApiError';
+    this.code = code ?? null;
   }
+}
+
+/**
+ * Extract the structured error envelope code from a JSON error body.
+ *
+ * Backend (Phase 7+) returns `{ "error": "ERR_LICENSE_REQUIRED", "message": "...", "detail": "..." }`
+ * envelopes for structured failures. Older endpoints return just
+ * `{ "detail": "..." }`. We accept either `error` or `code` as the source
+ * field name to stay forward-compatible.
+ */
+function extractErrorCode(errorData: unknown): string | null {
+  if (typeof errorData !== 'object' || errorData === null) {
+    return null;
+  }
+  const obj = errorData as Record<string, unknown>;
+  if (typeof obj.error === 'string' && obj.error.length > 0) {
+    return obj.error;
+  }
+  if (typeof obj.code === 'string' && obj.code.length > 0) {
+    return obj.code;
+  }
+  return null;
 }
 
 /**
@@ -173,9 +209,10 @@ export class ApiClient {
           detail: 'Unauthorized',
         }));
         throw new ApiError(
-          errorData.detail || 'Unauthorized',
+          errorData.detail || errorData.message || 'Unauthorized',
           401,
-          errorData.detail
+          errorData.detail || errorData.message,
+          extractErrorCode(errorData)
         );
       }
     }
@@ -185,9 +222,10 @@ export class ApiClient {
         detail: 'An error occurred',
       }));
       throw new ApiError(
-        errorData.detail || 'Request failed',
+        errorData.detail || errorData.message || 'Request failed',
         response.status,
-        errorData.detail
+        errorData.detail || errorData.message,
+        extractErrorCode(errorData)
       );
     }
 

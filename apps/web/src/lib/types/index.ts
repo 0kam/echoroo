@@ -329,6 +329,17 @@ export interface APITokenCreateResponse extends APIToken {
 export type ProjectVisibility = 'private' | 'public';
 
 /**
+ * Project license enum (Phase 7 / FR-085).
+ *
+ * The Permissions Redesign (006) requires every new project to declare a
+ * Creative Commons license at create time. This enum mirrors the
+ * `ProjectCreateRequest.license` enum in
+ * `specs/006-permissions-redesign/contracts/projects.yaml` (CC0, CC-BY,
+ * CC-BY-NC, CC-BY-SA).
+ */
+export type ProjectLicense = 'CC0' | 'CC-BY' | 'CC-BY-NC' | 'CC-BY-SA';
+
+/**
  * Project entity
  */
 export interface Project {
@@ -337,6 +348,7 @@ export interface Project {
   description?: string;
   target_taxa?: string;
   visibility: ProjectVisibility;
+  license?: ProjectLicense | string;
   owner: User;
   created_at: string;
   updated_at: string;
@@ -348,13 +360,18 @@ export interface Project {
 export type ProjectResponse = Project;
 
 /**
- * Project create request
+ * Project create request.
+ *
+ * `visibility` and `license` are both required by the contract
+ * (`specs/006-permissions-redesign/contracts/projects.yaml`,
+ * `ProjectCreateRequest.required = [name, visibility, license]`).
  */
 export interface ProjectCreateRequest {
   name: string;
   description?: string;
   target_taxa?: string;
-  visibility?: ProjectVisibility;
+  visibility: ProjectVisibility;
+  license: ProjectLicense;
 }
 
 /**
@@ -365,6 +382,7 @@ export interface ProjectUpdateRequest {
   description?: string;
   target_taxa?: string;
   visibility?: ProjectVisibility;
+  license?: ProjectLicense;
 }
 
 /**
