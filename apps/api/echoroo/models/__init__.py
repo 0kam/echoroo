@@ -40,9 +40,12 @@ from echoroo.models.enums import (
     DetectionSource,
     DetectionStatus,
     GeometryType,
+    ProjectInvitationKind,
+    ProjectInvitationStatus,
     ProjectLicense,
     ProjectMemberRole,
     ProjectStatus,
+    ProjectTrustedStatus,
     ProjectVisibility,
     ReviewStatus,
     SearchSessionStatus,
@@ -62,6 +65,7 @@ from echoroo.models.license import License
 from echoroo.models.note import Note
 from echoroo.models.password_reset_token import PasswordResetToken
 from echoroo.models.project import Project, ProjectInvitation, ProjectLicenseHistory, ProjectMember
+from echoroo.models.project_trusted_user import ProjectTrustedUser
 from echoroo.models.recorder import Recorder
 from echoroo.models.recording import Recording
 from echoroo.models.sampling_round import SamplingRound, SamplingRoundItem
@@ -90,6 +94,7 @@ __all__ = [
     "ProjectInvitation",
     "ProjectLicenseHistory",
     "ProjectMember",
+    "ProjectTrustedUser",
     "PasswordResetToken",
     "Recorder",
     "Recording",
@@ -141,9 +146,12 @@ __all__ = [
     "DatasetStatus",
     "DatasetVisibility",
     "DatetimeParseStatus",
+    "ProjectInvitationKind",
+    "ProjectInvitationStatus",
     "ProjectLicense",
     "ProjectMemberRole",
     "ProjectStatus",
+    "ProjectTrustedStatus",
     "ProjectVisibility",
     "SettingType",
     # Enums (annotation)

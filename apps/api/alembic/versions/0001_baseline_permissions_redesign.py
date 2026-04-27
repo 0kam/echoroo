@@ -516,6 +516,18 @@ def upgrade() -> None:  # noqa: PLR0915 — baseline migration, long by nature
         "project_trusted_users",
         ["status", "expires_at"],
     )
+    # FR-041 / FR-044 — at most one ACTIVE overlay per (project, user) pair.
+    # Without this partial unique, parallel accept_invitation calls can race
+    # past the application-level pre-check and create two ACTIVE rows that
+    # the permission engine would union, escalating capability beyond the
+    # issuing Owner's intent.
+    op.create_index(
+        "ux_project_trusted_users_active",
+        "project_trusted_users",
+        ["project_id", "user_id"],
+        unique=True,
+        postgresql_where=sa.text("status = 'active'"),
+    )
 
     op.create_table(
         "project_taxon_sensitivity_overrides",

@@ -18,6 +18,47 @@ class ProjectMemberRole(StrEnum):
     ADMIN = "admin"
 
 
+class ProjectInvitationKind(StrEnum):
+    """Kind of a :class:`ProjectInvitation`.
+
+    FR-047: a single ``project_invitations`` table covers both Member and
+    Trusted invitations. The ``kind`` discriminator selects which subset
+    of columns is mandatory (see ``ck_project_invitations_kind_fields``).
+    """
+
+    MEMBER = "member"
+    TRUSTED = "trusted"
+
+
+class ProjectInvitationStatus(StrEnum):
+    """Lifecycle of a :class:`ProjectInvitation`.
+
+    FR-053: ``pending`` is the only state from which ``accept`` may
+    transition. Status × timestamp consistency is guarded by
+    ``ck_project_invitations_status_timestamps`` in the baseline migration.
+    """
+
+    PENDING = "pending"
+    ACCEPTED = "accepted"
+    DECLINED = "declined"
+    EXPIRED = "expired"
+    REVOKED = "revoked"
+
+
+class ProjectTrustedStatus(StrEnum):
+    """Lifecycle of a :class:`ProjectTrustedUser` overlay.
+
+    FR-041 / FR-044: ``active`` is the only state for which the gate may
+    grant overlay permissions. ``expired`` is set by the auto-expire
+    worker (T516); ``revoked`` is set explicitly by Owner/Admin via
+    :func:`echoroo.services.trusted_service.revoke_trusted_user`.
+    """
+
+    ACTIVE = "active"
+    EXPIRED = "expired"
+    REVOKED = "revoked"
+
+
 class ProjectStatus(StrEnum):
     """Project lifecycle status."""
 
