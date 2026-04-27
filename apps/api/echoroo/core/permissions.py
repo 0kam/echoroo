@@ -844,6 +844,99 @@ async def load_project_or_404(db: AsyncSession, project_id: UUID) -> Project:
     return project
 
 
+async def _resolve_project_member_role(
+    db: AsyncSession,
+    *,
+    project_id: UUID,
+    user_id: UUID,
+) -> ProjectMemberRole | None:
+    """Look up the caller's :class:`ProjectMember` role row for ``project_id``.
+
+    Phase 7 polish round 3 (Major 1): :func:`is_allowed` consults
+    ``user.project_role`` via :func:`resolve_role` to decide whether a
+    caller is Member / Admin / Viewer. The attribute was previously never
+    populated by ``gate_action`` so non-owner Admins fell through to the
+    "Authenticated" cell of the matrix and lost their elevated permissions
+    (notably ``MANAGE_LICENSE`` per FR-010). This helper performs the
+    membership lookup once per request so the gate sees the right role.
+
+    Returns the ``ProjectMemberRole`` enum value or ``None`` when the user
+    is not a member (callers fall back to ``Authenticated`` / ``Guest``).
+    """
+    # Local import — keep ``ProjectMember`` out of the module import surface
+    # so the permission engine keeps its "no SQLAlchemy session" purity at
+    # the public-API level.
+    from echoroo.models.project import ProjectMember
+
+    result = await db.execute(
+        sa_select(ProjectMember.role).where(
+            ProjectMember.project_id == project_id,
+            ProjectMember.user_id == user_id,
+        )
+    )
+    row = result.scalar_one_or_none()
+    if row is None:
+        return None
+    if isinstance(row, ProjectMemberRole):
+        return row
+    # Some drivers surface the underlying Postgres enum string; coerce.
+    try:
+        return ProjectMemberRole(str(row).lower())
+    except ValueError:
+        return None
+
+
+class _ScopedPrincipal:
+    """Per-call principal view exposing a project-scoped ``project_role``.
+
+    Phase 7 polish round 4 (Major 3): :func:`gate_action` previously stamped
+    the resolved membership role directly onto ``current_user.project_role``.
+    That mutation persists for the rest of the request — so a single
+    request that gates two different projects (e.g. a controller that
+    cascades into a sub-resource on another project) would carry the FIRST
+    project's role into the SECOND ``is_allowed`` call. The leak escalated
+    permissions (e.g. Admin on project A → Admin on project B for the same
+    request) and was the highest-severity regression to surface from the
+    Round 3 audit.
+
+    The fix is structural: ``gate_action`` no longer touches the principal
+    object. Instead, it wraps ``current_user`` in this thin view that
+    proxies every attribute except ``project_role``, which it returns from
+    a per-call value. ``resolve_role`` reads the freshly-resolved role
+    without seeing any state from a sibling project.
+
+    This keeps :func:`is_allowed` and :func:`resolve_role` unchanged
+    (preserving the pure-function unit-test contract in
+    ``tests/contract/test_permissions.py`` which constructs
+    ``SimpleNamespace`` users with ``project_role`` set directly).
+    """
+
+    __slots__ = ("_inner", "_project_role")
+
+    def __init__(self, inner: Any, project_role: Any) -> None:
+        # ``object.__setattr__`` bypasses any ``__setattr__`` defined on
+        # the wrapped principal (e.g. SQLAlchemy ORM listeners) — we are
+        # only ever stashing the wrapper's own attributes here.
+        object.__setattr__(self, "_inner", inner)
+        object.__setattr__(self, "_project_role", project_role)
+
+    def __getattr__(self, item: str) -> Any:
+        if item == "project_role":
+            return self._project_role
+        return getattr(self._inner, item)
+
+    def __setattr__(self, item: str, value: Any) -> None:
+        # The wrapper is read-only by contract. The only writable
+        # attributes are the two declared in ``__slots__``, which are
+        # populated via ``object.__setattr__`` in ``__init__``. Any other
+        # write would silently leak back onto the wrapped principal —
+        # exactly the regression we are guarding against.
+        raise AttributeError(
+            "_ScopedPrincipal is immutable — wrap a fresh instance instead "
+            "of mutating a per-call view"
+        )
+
+
 async def gate_action(
     *,
     action: Action,
@@ -856,11 +949,44 @@ async def gate_action(
 
     Returns the loaded :class:`Project` row so callers can pass it through to
     the service layer without issuing a second SELECT.
+
+    Phase 7 polish round 4 (Major 3): the caller's project membership row
+    is looked up here and exposed via a per-call :class:`_ScopedPrincipal`
+    wrapper so :func:`resolve_role` returns the correct cell of the
+    canonical matrix (Admin / Member / Viewer) rather than collapsing to
+    Authenticated. Owners short-circuit before this lookup via the
+    ``project.owner_id`` branch in :func:`resolve_role`, so the extra
+    SELECT only fires for non-owners and scales linearly with concurrency.
+
+    The wrapper is the load-bearing change relative to Round 3: prior
+    versions mutated ``current_user.project_role`` in-place which leaked
+    the role onto sibling-project ``gate_action`` / ``is_allowed`` calls
+    later in the same request. The wrapper is per-call, so cross-project
+    leakage is structurally impossible.
     """
     project = await load_project_or_404(db, project_id)
+
+    principal: Any = current_user
+
+    # Resolve membership role for non-owners and wrap it onto a per-call
+    # principal view so the role only flows into THIS gate's
+    # ``is_allowed`` call. Owners short-circuit (``project.owner_id ==
+    # user.id`` is read inside ``resolve_role``), and unauthenticated
+    # callers fall through with ``current_user = None``.
+    if (
+        current_user is not None
+        and getattr(current_user, "id", None) is not None
+        and getattr(project, "owner_id", None) != current_user.id
+    ):
+        membership_role = await _resolve_project_member_role(
+            db, project_id=project_id, user_id=current_user.id
+        )
+        if membership_role is not None:
+            principal = _ScopedPrincipal(current_user, membership_role)
+
     allowed, _ = is_allowed(
         action=action,
-        user=current_user,
+        user=principal,
         project=project,
         request=request,
     )

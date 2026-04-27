@@ -22,6 +22,7 @@ from echoroo.schemas.project import (
     RecordingCalendarEntry,
 )
 from echoroo.services.h3_utils import h3_to_center
+from echoroo.services.license_service import record_initial_license
 
 
 class ProjectService:
@@ -69,7 +70,12 @@ class ProjectService:
     ) -> ProjectResponse:
         """Create a new project.
 
-        The user who creates the project becomes the owner.
+        The user who creates the project becomes the owner. T320 / FR-085:
+        the request schema marks ``license`` as required so a missing or
+        empty value 422s before reaching this service. T320 / FR-087: the
+        initial license selection is mirrored into
+        :class:`ProjectLicenseHistory` so the consumer-facing audit trail
+        starts at row 1 rather than row 2.
 
         Args:
             user_id: User creating the project
@@ -100,6 +106,18 @@ class ProjectService:
         )
 
         created_project = await self.project_repo.create(project)
+
+        # T320 (FR-085 + FR-087): record the initial license selection in
+        # the same transaction as the project insert so a rollback keeps
+        # the project + history in sync. The endpoint owns the final
+        # ``await db.commit()``; here we only stage the row.
+        await record_initial_license(
+            session=self.project_repo.db,
+            project_id=created_project.id,
+            license=created_project.license,
+            actor_user_id=user_id,
+        )
+
         return ProjectResponse.model_validate(created_project)
 
     async def get_project(self, user_id: UUID, project_id: UUID) -> ProjectResponse:

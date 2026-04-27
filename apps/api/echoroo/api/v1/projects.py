@@ -28,6 +28,8 @@ from fastapi import APIRouter, Depends, Request, status
 from echoroo.core.actions import (
     PROJECT_DELETE_ACTION,
     PROJECT_GET_ACTION,
+    PROJECT_LICENSE_HISTORY_ACTION,
+    PROJECT_LICENSE_UPDATE_ACTION,
     PROJECT_MEMBER_INVITE_ACTION,
     PROJECT_MEMBER_LIST_ACTION,
     PROJECT_MEMBER_REMOVE_ACTION,
@@ -41,6 +43,9 @@ from echoroo.repositories.project import ProjectRepository
 from echoroo.repositories.user import UserRepository
 from echoroo.schemas.project import (
     ProjectCreateRequest,
+    ProjectLicenseHistoryEntry,
+    ProjectLicenseHistoryResponse,
+    ProjectLicenseUpdateRequest,
     ProjectListResponse,
     ProjectMemberAddRequest,
     ProjectMemberResponse,
@@ -49,6 +54,7 @@ from echoroo.schemas.project import (
     ProjectResponse,
     ProjectUpdateRequest,
 )
+from echoroo.services.license_service import change_license, list_license_history
 from echoroo.services.project import ProjectService
 
 router = APIRouter(prefix="/projects", tags=["projects"])
@@ -274,6 +280,118 @@ async def delete_project(
     )
     await service.delete_project(current_user.id, project_id)
     await db.commit()
+
+
+# =============================================================================
+# Phase 7 polish round 2 (致命 1) — license PATCH + history GET
+# =============================================================================
+#
+# Contract: ``contracts/projects.yaml:325-357``. Both surfaces (Bearer
+# under ``/api/v1`` and Cookie+CSRF under ``/web-api/v1``) are exposed
+# because the OpenAPI ``security`` block lists both ``apiKeyAuth`` and
+# ``sessionCookie+csrfToken``. The Web UI router
+# (``api/web_v1/projects/_license.py``) re-uses the same service helpers
+# so the business logic stays single-sourced.
+
+
+@router.patch(
+    "/{project_id}/license",
+    response_model=ProjectResponse,
+    summary="Update project license",
+    description=(
+        "Change the project's data license (FR-085 / FR-087). Owner / "
+        "Admin (MANAGE_LICENSE) only — both roles hold ``MANAGE_LICENSE`` "
+        "per the canonical matrix (FR-010 / FR-085). Every PATCH appends "
+        "a row to ``project_license_history`` (FR-087); same-license "
+        "PATCHes are still recorded so audit consumers see one row per "
+        "request."
+    ),
+)
+async def update_project_license(
+    project_id: UUID,
+    request: ProjectLicenseUpdateRequest,
+    http_request: Request,
+    current_user: CurrentUser,
+    db: DbSession,
+) -> ProjectResponse:
+    """Replace the project license.
+
+    Guarded by :data:`PROJECT_LICENSE_UPDATE_ACTION`
+    (:data:`Permission.MANAGE_LICENSE`). The Stage-1 gate enforces the
+    Owner / Admin (MANAGE_LICENSE) contract — both roles hold the
+    permission per the canonical matrix (FR-010 / FR-085). The service
+    layer takes a row-level lock so concurrent PATCHes serialise.
+
+    Args:
+        project_id: Target project UUID.
+        request: Validated request body — ``license`` is the only field;
+            ``ProjectLicenseUpdateRequest`` rejects extras with 422.
+        http_request: FastAPI request (used by the Stage-1 gate).
+        current_user: Authenticated user.
+        db: Async database session.
+
+    Returns:
+        The updated :class:`ProjectResponse` so the client can mirror the
+        new license without a follow-up GET.
+
+    Raises:
+        401: Not authenticated.
+        403: Caller lacks ``MANAGE_LICENSE`` (Member / Viewer / non-member).
+        404: Project not found.
+    """
+    project = await gate_action(
+        action=PROJECT_LICENSE_UPDATE_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=http_request,
+        db=db,
+    )
+    await change_license(
+        session=db,
+        project_id=project.id,
+        new_license=request.license,
+        actor_user_id=current_user.id,
+    )
+    await db.commit()
+    # Refresh so the response reflects the committed value (the prior
+    # ``project`` row was pinned inside the ``with_for_update`` SELECT).
+    await db.refresh(project)
+    return ProjectResponse.model_validate(project)
+
+
+@router.get(
+    "/{project_id}/license-history",
+    response_model=ProjectLicenseHistoryResponse,
+    summary="Get project license history",
+    description=(
+        "Return every ``ProjectLicenseHistory`` row for the project, "
+        "sorted oldest-first per OpenAPI contract (``履歴（昇順）``)."
+    ),
+)
+async def get_project_license_history(
+    project_id: UUID,
+    request: Request,
+    current_user: CurrentUser,
+    db: DbSession,
+) -> ProjectLicenseHistoryResponse:
+    """Return the full license-change history.
+
+    Guarded by :data:`PROJECT_LICENSE_HISTORY_ACTION`
+    (:data:`Permission.VIEW_PROJECT_METADATA`) so anyone who can see the
+    project metadata can also see its license trail (FR-087 immutability
+    is at the storage level, not the read level).
+    """
+    await gate_action(
+        action=PROJECT_LICENSE_HISTORY_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
+    rows = await list_license_history(db, project_id)
+    return ProjectLicenseHistoryResponse(
+        items=[ProjectLicenseHistoryEntry.model_validate(row) for row in rows]
+    )
 
 
 @router.get(

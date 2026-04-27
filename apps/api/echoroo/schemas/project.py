@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 from echoroo.models.enums import (
     ProjectLicense,
@@ -68,14 +68,33 @@ class ProjectOverviewResponse(BaseModel):
 
 
 class ProjectCreateRequest(BaseModel):
-    """Project creation request schema."""
+    """Project creation request schema.
+
+    Phase 7 / T320 (FR-085): ``license`` is **required** at creation time;
+    omitting it is a 422 (``ERR_LICENSE_REQUIRED`` semantics) and unknown
+    fields are rejected with 422 (``ERR_UNKNOWN_FIELD`` semantics) per
+    contracts/projects.yaml ``ProjectCreateRequest``
+    (``additionalProperties: false`` + ``required: [name, visibility, license]``).
+    """
+
+    model_config = ConfigDict(extra="forbid")
 
     name: str = Field(..., min_length=1, max_length=200, description="Project name")
     description: str | None = Field(None, description="Project description")
-    visibility: ProjectVisibility = Field(
-        default=ProjectVisibility.RESTRICTED, description="Project visibility level"
+    # Phase 7 polish round 2 (Major 2): contract ``ProjectCreateRequest``
+    # marks ``visibility`` as ``required`` (projects.yaml:408). A pydantic
+    # default would silently fill the field on omission and emit 201 instead
+    # of the contract-mandated 422, so the field is declared without a
+    # default to match ``additionalProperties: false`` + ``required`` in the
+    # OpenAPI shape.
+    visibility: ProjectVisibility = Field(..., description="Project visibility level")
+    license: ProjectLicense = Field(
+        ...,
+        description=(
+            "Project data license — required at creation (FR-085). "
+            "One of CC0 / CC-BY / CC-BY-NC / CC-BY-SA."
+        ),
     )
-    license: ProjectLicense = Field(..., description="Project data license")
     restricted_config: dict[str, Any] = Field(
         default_factory=dict,
         description="Restricted visibility capability toggles",
@@ -123,6 +142,45 @@ class ProjectListResponse(BaseModel):
     total: int
     page: int
     limit: int
+
+
+class ProjectLicenseUpdateRequest(BaseModel):
+    """Request body for ``PATCH /projects/{id}/license`` (FR-085 / FR-087).
+
+    Contract: ``contracts/projects.yaml:325-347``. The body is a
+    one-field object — ``license`` is required and must be one of the four
+    CC enum values; any extra field is rejected with 422 per
+    ``additionalProperties: false`` in the OpenAPI shape.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    license: ProjectLicense = Field(
+        ...,
+        description=(
+            "Target license — required (FR-085). One of "
+            "CC0 / CC-BY / CC-BY-NC / CC-BY-SA."
+        ),
+    )
+
+
+class ProjectLicenseHistoryEntry(BaseModel):
+    """Single ``ProjectLicenseHistory`` row in the GET response."""
+
+    id: UUID
+    project_id: UUID
+    old_license: ProjectLicense | None
+    new_license: ProjectLicense
+    changed_at: datetime
+    changed_by_id: UUID | None
+
+    model_config = {"from_attributes": True}
+
+
+class ProjectLicenseHistoryResponse(BaseModel):
+    """Sorted list of license-history rows (oldest → newest, contract:357)."""
+
+    items: list[ProjectLicenseHistoryEntry]
 
 
 class ProjectMemberAddRequest(BaseModel):

@@ -11,10 +11,11 @@ Path operations owned by this module:
   Active, anything else 404 for enumeration safety).
   (T200, FR-009 / FR-010 / FR-016 / FR-018)
 
-Mutation surfaces (``POST``, ``PUT``, ``DELETE``) live in
-:mod:`echoroo.api.v1.projects` for Phase 3; this module deliberately covers
-only the read paths needed for the Guest contract. Adding a mutation handler
-here later is intentional — Phase 9 will lift the rest.
+Mutation surfaces (``POST``, ``PATCH``, ``DELETE``) for the project root
+resource live in :mod:`echoroo.api.v1.projects`; this module deliberately
+covers only the Guest-aware read paths. License mutations (``PATCH
+/{project_id}/license``) live in :mod:`._license`. Adding a mutation
+handler here later is intentional — Phase 9 will lift the rest.
 
 Permission engine integration:
     Read endpoints invoke :func:`echoroo.core.permissions.is_allowed`
