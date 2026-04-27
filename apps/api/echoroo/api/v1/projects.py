@@ -23,7 +23,7 @@ from __future__ import annotations
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 from echoroo.core.actions import (
     PROJECT_DELETE_ACTION,
@@ -34,11 +34,13 @@ from echoroo.core.actions import (
     PROJECT_MEMBER_LIST_ACTION,
     PROJECT_MEMBER_REMOVE_ACTION,
     PROJECT_MEMBER_UPDATE_ROLE_ACTION,
+    PROJECT_RESTRICTED_CONFIG_UPDATE_ACTION,
     PROJECT_UPDATE_ACTION,
 )
 from echoroo.core.database import DbSession
 from echoroo.core.permissions import gate_action
 from echoroo.middleware.auth import CurrentUser
+from echoroo.models.enums import ProjectVisibility
 from echoroo.repositories.project import ProjectRepository
 from echoroo.repositories.user import UserRepository
 from echoroo.schemas.project import (
@@ -53,9 +55,14 @@ from echoroo.schemas.project import (
     ProjectOverviewResponse,
     ProjectResponse,
     ProjectUpdateRequest,
+    RestrictedConfigUpdateRequest,
 )
 from echoroo.services.license_service import change_license, list_license_history
 from echoroo.services.project import ProjectService
+from echoroo.services.restricted_config_service import (
+    trigger_post_commit_side_effects,
+    update_restricted_config,
+)
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
@@ -392,6 +399,118 @@ async def get_project_license_history(
     return ProjectLicenseHistoryResponse(
         items=[ProjectLicenseHistoryEntry.model_validate(row) for row in rows]
     )
+
+
+# =============================================================================
+# Phase 8 (T400) — Restricted-config toggle PATCH (programmatic surface)
+# =============================================================================
+#
+# Contract: ``contracts/projects.yaml:174-197`` + ``RestrictedConfig`` schema
+# at lines 430-454. Both surfaces (Bearer under ``/api/v1`` and Cookie+CSRF
+# under ``/web-api/v1``) are exposed because the OpenAPI ``security`` block
+# lists both ``apiKeyAuth`` and ``sessionCookie+csrfToken``. The Web UI
+# router (``api/web_v1/projects/_restricted_config.py``) re-uses the same
+# service helper so the business logic stays single-sourced.
+
+
+@router.patch(
+    "/{project_id}/restricted-config",
+    response_model=ProjectResponse,
+    summary="Update Restricted-mode capability toggles",
+    description=(
+        "Flip per-project Restricted-mode capability flags (FR-014, "
+        "FR-020-022, FR-023). Owner / Admin (``EDIT_PROJECT``) only — "
+        "matches the canonical matrix. All eight RestrictedConfig keys "
+        "are required; unknown keys are 422 (``Extra.forbid``). "
+        "``public_location_precision_h3_res`` is constrained to "
+        "``Literal[2, 5, 7, 9, 15]`` per FR-021. The toggles only apply "
+        "to ``visibility='restricted'`` projects — a PATCH against a "
+        "Public project returns 422. Each successful PATCH bumps "
+        "``restricted_config_version`` and appends a "
+        "``project.restricted_config.update`` row to ``project_audit_log`` "
+        "(FR-024 / FR-088). The ``allow_detection_view`` ON->OFF transition "
+        "additionally enqueues an asynchronous search-index rebuild "
+        "(FR-025a)."
+    ),
+)
+async def update_project_restricted_config(
+    project_id: UUID,
+    request: RestrictedConfigUpdateRequest,
+    http_request: Request,
+    current_user: CurrentUser,
+    db: DbSession,
+) -> ProjectResponse:
+    """Replace the project's Restricted-mode capability toggles.
+
+    Guarded by :data:`PROJECT_RESTRICTED_CONFIG_UPDATE_ACTION`
+    (:data:`Permission.EDIT_PROJECT`). The Stage-1 gate enforces the
+    Owner / Admin contract — both roles hold the permission per the
+    canonical matrix (FR-010). The service layer takes a row-level lock
+    so concurrent PATCHes serialise.
+
+    Args:
+        project_id: Target project UUID.
+        request: Validated request body (``Extra.forbid`` + Literal H3 res).
+        http_request: FastAPI request (used by the Stage-1 gate).
+        current_user: Authenticated user.
+        db: Async database session.
+
+    Returns:
+        :class:`ProjectResponse` reflecting the new ``restricted_config`` +
+        bumped ``restricted_config_version``.
+
+    Raises:
+        401: Not authenticated.
+        403: Caller lacks ``EDIT_PROJECT`` (Member / Viewer / non-member).
+        404: Project not found.
+        422: ``visibility != 'restricted'`` — toggles do not apply.
+    """
+    project = await gate_action(
+        action=PROJECT_RESTRICTED_CONFIG_UPDATE_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=http_request,
+        db=db,
+    )
+
+    if project.visibility != ProjectVisibility.RESTRICTED:
+        # Phase 8 polish round 2 Major 1 — emit the dedicated
+        # ``ERR_RESTRICTED_CONFIG_NOT_APPLICABLE`` envelope so contract
+        # consumers can distinguish "wrong visibility" from generic 422s
+        # (mirrors ``ERR_LICENSE_REQUIRED`` from Phase 7). The global
+        # :func:`http_exception_handler` passes dict ``detail`` payloads
+        # through unchanged.
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "error": "ERR_RESTRICTED_CONFIG_NOT_APPLICABLE",
+                "message": (
+                    "restricted_config only applies to "
+                    "visibility='restricted' projects (FR-001 / FR-014)."
+                ),
+            },
+        )
+
+    outcome = await update_restricted_config(
+        session=db,
+        project_id=project.id,
+        new_config=request,
+        actor_user_id=current_user.id,
+        request_id=http_request.headers.get("x-request-id") or "",
+        ip=(
+            http_request.headers.get("x-forwarded-for", "").split(",", 1)[0].strip()
+            or (http_request.client.host if http_request.client else "")
+        ),
+        user_agent=http_request.headers.get("user-agent") or "",
+    )
+    # Phase 8 polish round 2 致命 1 — atomicity contract:
+    # snapshot response shape -> commit main TX -> THEN fire audit + Celery.
+    # Commit-before-side-effects guarantees a rolled-back main TX cannot
+    # leave phantom rows / phantom worker jobs behind.
+    response = ProjectResponse.model_validate(outcome.project)
+    await db.commit()
+    await trigger_post_commit_side_effects(outcome)
+    return response
 
 
 @router.get(

@@ -202,6 +202,16 @@ async def http_exception_handler(
 ) -> JSONResponse:
     """Handle FastAPI HTTP exceptions.
 
+    Phase 8 polish round 2 Major 1 — when a handler raises
+    ``HTTPException(detail={"error": "ERR_...", "message": "..."})`` the
+    handler passes the dict body through as-is (top-level), so
+    contract-coded error envelopes (e.g.
+    ``ERR_RESTRICTED_CONFIG_NOT_APPLICABLE``,
+    ``ERR_LICENSE_REQUIRED``) reach the client without being wrapped
+    inside an extra ``{"detail": {...}}`` layer. Plain string ``detail``
+    values keep the legacy ``{"detail": "..."}`` envelope so existing
+    consumers are unaffected.
+
     Args:
         request: FastAPI request object (required by FastAPI signature)
         exc: HTTP exception
@@ -209,10 +219,20 @@ async def http_exception_handler(
     Returns:
         JSON response with error details
     """
+    detail = exc.detail
+    if isinstance(detail, dict) and "error" in detail:
+        # Caller supplied a contract envelope explicitly — emit it at the
+        # top level so ``body["error"] == "ERR_..."`` is reachable
+        # without traversing a nested ``detail`` key.
+        return JSONResponse(
+            status_code=exc.status_code,
+            headers=exc.headers,
+            content=detail,
+        )
     return JSONResponse(
         status_code=exc.status_code,
         headers=exc.headers,
         content={
-            "detail": exc.detail,
+            "detail": detail,
         },
     )

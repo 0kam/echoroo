@@ -1,10 +1,10 @@
 """Project request and response schemas."""
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, StrictBool
 
 from echoroo.models.enums import (
     ProjectLicense,
@@ -142,6 +142,86 @@ class ProjectListResponse(BaseModel):
     total: int
     page: int
     limit: int
+
+
+class RestrictedConfigUpdateRequest(BaseModel):
+    """Request body for ``PATCH /projects/{id}/restricted-config`` (FR-014/020-023).
+
+    Contract: ``contracts/projects.yaml:174-197`` + the ``RestrictedConfig``
+    schema at lines 430-454. All eight keys are required (no defaults at the
+    request layer — defaults live on the model column for new projects only)
+    and unknown keys are rejected with 422 per FR-023
+    (``additionalProperties: false`` in the OpenAPI shape, ``Extra.forbid``
+    here).
+
+    Phase 8 / T400 invariants:
+
+    * ``allow_media_playback`` / ``allow_detection_view`` /
+      ``mask_species_in_detection`` / ``allow_download`` / ``allow_export`` /
+      ``allow_voting_and_comments`` map directly onto the matching
+      :class:`echoroo.models.project.Project.restricted_config` JSONB keys.
+    * ``public_location_precision_h3_res`` is constrained to the discrete
+      H3 resolutions in spec FR-021 (``Literal[2, 5, 7, 9, 15]``); any other
+      integer is rejected at validation time so the service layer never
+      receives a free-form value.
+    * ``allow_precise_location_to_viewer`` is the FR-022 capability toggle
+      that lifts ``VIEW_PRECISE_LOCATION`` for project Viewers when ``True``.
+    """
+
+    # Phase 8 polish round 2 Major 2 — use ``StrictBool`` for every bool
+    # toggle so ``"true"`` / ``"false"`` / ``0`` / ``1`` strings are
+    # rejected with 422 instead of silently coerced. Pydantic's default
+    # ``bool`` is permissive (case-insensitive str -> bool, int -> bool)
+    # which would let a buggy Web UI ship the wrong toggle state past the
+    # contract; the spec FR-023 ``additionalProperties: false`` shape on
+    # the OpenAPI side mandates strict JSON-typed values.
+    model_config = ConfigDict(extra="forbid")
+
+    allow_media_playback: StrictBool = Field(
+        ...,
+        description="Whether non-members may stream raw audio (FR-020).",
+    )
+    allow_detection_view: StrictBool = Field(
+        ...,
+        description="Whether non-members may read detection rows (FR-020).",
+    )
+    mask_species_in_detection: StrictBool = Field(
+        ...,
+        description=(
+            "Mask species names in detection responses for non-members "
+            "(FR-020 / response_filter)."
+        ),
+    )
+    allow_download: StrictBool = Field(
+        ...,
+        description="Whether authenticated non-members may download (FR-020).",
+    )
+    allow_export: StrictBool = Field(
+        ...,
+        description="Whether authenticated non-members may CSV/ML-export (FR-020).",
+    )
+    allow_voting_and_comments: StrictBool = Field(
+        ...,
+        description=(
+            "Whether authenticated non-members may vote / comment on "
+            "annotations (FR-020)."
+        ),
+    )
+    public_location_precision_h3_res: Literal[2, 5, 7, 9, 15] = Field(
+        ...,
+        description=(
+            "Discrete H3 resolution exposed to non-members for site / "
+            "detection cells (FR-021). 2=HIDDEN, 5≈30km, 7≈5km, 9≈175m, "
+            "15=member-precise."
+        ),
+    )
+    allow_precise_location_to_viewer: StrictBool = Field(
+        ...,
+        description=(
+            "Lift VIEW_PRECISE_LOCATION for project Viewers (FR-022). "
+            "Members / Admins / Owners are unaffected by this toggle."
+        ),
+    )
 
 
 class ProjectLicenseUpdateRequest(BaseModel):

@@ -279,7 +279,7 @@ description: "Task list for 006-permissions-redesign (revised after /speckit.ana
 ## Phase 8: US3 - Restricted オーナートグル（P1）
 
 - [ ] **T400** [US3] `api/web_v1/projects/_restricted_config.py` PATCH 実装（Pydantic `Extra.forbid`）(FR-014、FR-020〜022、FR-023)
-- [ ] **T401** [P] [US3] `services/restricted_config_service.py` 新規: toggle 変更で監査 + 検索 index 再構築 Celery enqueue (FR-024)
+- [ ] **T401** [P] [US3] `services/restricted_config_service.py` 新規: toggle 変更で監査 + 検索 index 再構築 Celery enqueue (FR-024) — NOTE: FR-025a step 1 (SearchGate `filter_by_allow_detection_view` の `SimilaritySearchService` 配線) は Phase 11 の検索改修タスク (T090/T091) で扱う。Phase 8 では permission gate / `gate_action` が freshly-committed `restricted_config` を読む経路で synchronous 除外を担保し、FR-025a step 2 (async index rebuild) は `echoroo.workers.search_tasks.rebuild_search_index_for_project` stub task として登録される。
 - [ ] **T402** [P] [US3] `apps/web/src/lib/components/RestrictedToggles.svelte` 新規 (FR-014)
 - [ ] **T403** [P] [US3] `apps/api/tests/contract/test_restricted_toggles.py` TDD: bool 6 × ON/OFF + precision_h3_res + allow_precise_location_to_viewer 全組合せ (FR-020〜022、SC-003)
 - [ ] **T404** [US3] Playwright E2E: 各トグル ON/OFF の非メンバー挙動 (PR-003、SC-003)

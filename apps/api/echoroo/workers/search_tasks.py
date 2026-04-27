@@ -908,6 +908,60 @@ async def _run_orphan_search_reference_cleanup() -> dict[str, Any]:
     }
 
 
+# ---------------------------------------------------------------------------
+# FR-025a — async search-index rebuild on Restricted toggle ON->OFF
+# ---------------------------------------------------------------------------
+
+
+@app.task(name="echoroo.workers.search_tasks.rebuild_search_index_for_project")  # type: ignore[untyped-decorator]
+def rebuild_search_index_for_project(
+    project_id: str, version: int
+) -> dict[str, Any]:
+    """Rebuild search index for a project after restricted_config changes.
+
+    Phase 8 polish round 2 致命 3 — register the canonical task name so
+    :func:`echoroo.services.restricted_config_service._enqueue_search_index_rebuild`
+    has a real worker target. Without this registration the ``send_task``
+    call from the service layer would land in the broker but no consumer
+    would ever pick it up, silently dropping the FR-025a step-2 cleanup.
+
+    FR-025a step 2 (async index rebuild)
+    ------------------------------------
+
+    Step 1 (immediate exclusion) is handled at the **permission gate**
+    layer — every detection / search request reads the freshly-committed
+    ``restricted_config`` and the gate denies access when
+    ``allow_detection_view=False``. This Celery task only runs when the
+    toggle flips ``True → False`` and is responsible for purging cached
+    index entries (OpenSearch / pgvector / FTS) that may otherwise leak
+    detection rows for a few seconds after the toggle change.
+
+    Phase 11 will implement the actual rebuild; until then this task is
+    a logged no-op that ack's the message so the queue stays drained.
+
+    Args:
+        project_id: UUID string of the project whose toggles changed.
+        version: New ``restricted_config_version`` value (bumped by the
+            service). Logged so operators can correlate the rebuild with
+            the toggle change in ``project_audit_log``.
+
+    Returns:
+        Dict with ``status``, ``project_id``, ``version`` keys so Celery's
+        result backend can record the run for observability tooling.
+    """
+    logger.info(
+        "rebuild_search_index_for_project enqueued (Phase 11 stub): "
+        "project_id=%s version=%s",
+        project_id,
+        version,
+    )
+    return {
+        "status": "stub",
+        "project_id": project_id,
+        "version": version,
+    }
+
+
 @app.task(name="echoroo.workers.search_tasks.cleanup_orphan_search_reference")  # type: ignore[untyped-decorator]
 def cleanup_orphan_search_reference() -> dict[str, Any]:
     """Remove orphan S3 objects under the ``search_reference/`` prefix.
