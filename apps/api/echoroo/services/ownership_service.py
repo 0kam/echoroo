@@ -57,6 +57,7 @@ from uuid import UUID
 import sqlalchemy as sa
 from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import lazyload
 
 from echoroo.core.database import AsyncSessionLocal
 from echoroo.models.enums import ProjectMemberRole
@@ -213,8 +214,12 @@ async def transfer_ownership(
     )
 
     # 2. Lock the project row.
+    # Use lazyload on the ``owner`` relationship so the SELECT does NOT
+    # emit a LEFT OUTER JOIN; PostgreSQL rejects FOR UPDATE on the
+    # nullable side of an outer join.
     project_stmt = (
         sa.select(Project)
+        .options(lazyload(Project.owner))
         .where(Project.id == project_id)
         .with_for_update()
     )
@@ -263,8 +268,16 @@ async def transfer_ownership(
 
     # 5. Validate the target's ProjectMember row with ``FOR UPDATE`` so
     # a concurrent role change cannot demote them mid-transfer.
+    # Use lazyload on ``user`` and ``project`` to avoid FOR UPDATE
+    # incompatibility with LEFT OUTER JOIN (same fix as the Project query
+    # above).
     member_stmt = (
         sa.select(ProjectMember)
+        .options(
+            lazyload(ProjectMember.user),
+            lazyload(ProjectMember.project),
+            lazyload(ProjectMember.invited_by),
+        )
         .where(
             ProjectMember.project_id == project_id,
             ProjectMember.user_id == new_owner_user_id,
