@@ -135,11 +135,12 @@
           <code class="mt-1 inline-block rounded bg-stone-100 px-2 py-0.5 font-mono text-xs text-stone-500">
             {$siteQuery.data.h3_index}
           </code>
-          {#if $siteQuery.data.latitude !== null && $siteQuery.data.longitude !== null}
-            <p class="mt-1 text-sm text-stone-500">
-              {$siteQuery.data.latitude?.toFixed(6)}, {$siteQuery.data.longitude?.toFixed(6)}
-            </p>
-          {/if}
+          <!--
+            Permissions redesign Round 2: raw latitude/longitude are no
+            longer surfaced on `SiteDetailResponse` (FR-030).  The
+            `h3_index` shown above is the canonical location signal; any
+            map rendering derives the centre via `h3-js`.
+          -->
         </div>
         <div class="flex gap-2">
           <button

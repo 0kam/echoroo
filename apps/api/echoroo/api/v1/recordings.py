@@ -251,8 +251,9 @@ async def list_recordings(
 
     pages = (total + page_size - 1) // page_size
     items = [RecordingResponse.model_validate(r) for r in recordings]
-    # TODO(Phase 11): replace empty maps with taxon_sensitivity_map /
-    # override_map bulk preloaders.
+    # Recording list shape carries no taxon (sensitivity is taxon-keyed) so
+    # the bulk preloaders would have no input. The Stage-2 filter still
+    # scrubs raw-coordinate fields and applies the non-member ceiling.
     for item in items:
         apply_response_filter(
             obj=item,
@@ -353,8 +354,11 @@ async def get_recording(
         effective_duration=service.get_effective_duration(recording),
         is_ultrasonic=service.is_ultrasonic(recording),
     )
-    # TODO(Phase 11): replace empty maps with taxon_sensitivity_map /
-    # override_map bulk preloaders.
+    # Recording responses do not embed a taxon — sensitivity is taxon-keyed
+    # (FR-029 / FR-032), so the bulk preloaders would have no input here.
+    # The Stage-2 filter still scrubs forbidden raw-coordinate fields and
+    # applies the project-level non-member ceiling, which is the entirety
+    # of the recording-shape obscure logic.
     apply_response_filter(
         obj=response,
         effective_permissions=effective,
@@ -462,8 +466,11 @@ async def update_recording(
         effective_duration=service.get_effective_duration(recording),
         is_ultrasonic=service.is_ultrasonic(recording),
     )
-    # TODO(Phase 11): replace empty maps with taxon_sensitivity_map /
-    # override_map bulk preloaders.
+    # Recording responses do not embed a taxon — sensitivity is taxon-keyed
+    # (FR-029 / FR-032), so the bulk preloaders would have no input here.
+    # The Stage-2 filter still scrubs forbidden raw-coordinate fields and
+    # applies the project-level non-member ceiling, which is the entirety
+    # of the recording-shape obscure logic.
     apply_response_filter(
         obj=response,
         effective_permissions=effective,

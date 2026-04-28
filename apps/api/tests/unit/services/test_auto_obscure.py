@@ -82,11 +82,17 @@ def _override(
     direction: TaxonOverrideDirection,
     approval_status: TaxonOverrideApprovalStatus = TaxonOverrideApprovalStatus.APPLIED,
 ) -> Any:
-    """Return a ProjectTaxonSensitivityOverride stub."""
+    """Return a ProjectTaxonSensitivityOverride stub.
+
+    The ``resolution`` keyword is preserved for ergonomic test calls but is
+    written into the ``sensitivity_h3_res`` attribute so the stub matches the
+    real :class:`ProjectTaxonSensitivityOverride` ORM column name (Round 1
+    review C2 — ``compute_effective_resolution`` reads ``sensitivity_h3_res``).
+    """
     return SimpleNamespace(
         project_id=project_id,
         taxon_id=taxon_id,
-        resolution=resolution,
+        sensitivity_h3_res=resolution,
         direction=direction,
         approval_status=approval_status,
     )

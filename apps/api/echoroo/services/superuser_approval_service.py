@@ -56,6 +56,19 @@ from echoroo.services.audit_service import AuditLogService
 logger = logging.getLogger(__name__)
 
 
+class ApprovalRequestCloseError(RuntimeError):
+    """Raised when ``_close_approval_request`` fails to find a pending row.
+
+    Round 1 review M4 (2026-04-28): the approval workflow MUST leave an
+    audit ticket in a terminal state for every override decision (FR-111).
+    A 0-row UPDATE on ``superuser_approval_requests`` indicates either a
+    bug or a race — either way the override status mutation is unsafe and
+    the surrounding transaction must roll back. The dedicated subclass
+    lets the caller (and the test suite) distinguish this from generic
+    SQLAlchemy / ValueError failures.
+    """
+
+
 # Audit actions — keep these stable string literals; ops dashboards group by
 # action and changing them is effectively a breaking change for log queries.
 _AUDIT_ACTION_STRICTER_APPLIED: str = "project.taxon_override.create_stricter"
@@ -328,6 +341,16 @@ async def _create_approval_request(
 ) -> UUID:
     """Insert a ``superuser_approval_requests`` row and return its UUID.
 
+    Round 1 review M3 (2026-04-28): the row stores the requester's
+    ``users.id`` in ``requesting_user_id`` (FK → users.id, nullable) so
+    that owner / admin-initiated tickets do NOT violate the legacy
+    ``requested_by_id`` FK to ``superusers.id``. ``requested_by_id``
+    stays NULL on this path; it is reserved for tickets opened directly
+    by a superuser (e.g. operator-triage flows). The CHECK constraint
+    ``ck_superuser_approval_requests_actor_present`` enforces that at
+    least one of the two columns is populated, preserving an unbroken
+    audit trail.
+
     The ``detail`` JSONB carries the override identity + project so the
     admin dashboard can render a one-click approval card without an
     extra SELECT. ``approvals`` starts as the empty list ``[]`` per the
@@ -341,9 +364,9 @@ async def _create_approval_request(
     insert_stmt = sa.text(
         """
         INSERT INTO superuser_approval_requests
-            (action, detail, requested_by_id, status, created_at, updated_at)
+            (action, detail, requesting_user_id, status, created_at, updated_at)
         VALUES
-            (:action, CAST(:detail AS JSONB), :requested_by_id, 'pending', :now, :now)
+            (:action, CAST(:detail AS JSONB), :requesting_user_id, 'pending', :now, :now)
         RETURNING id
         """
     )
@@ -358,23 +381,12 @@ async def _create_approval_request(
         },
         sort_keys=True,
     )
-    # ``superuser_approval_requests.requested_by_id`` FK points at
-    # ``superusers.id``, but the API layer accepts the requester's user
-    # row. The caller is responsible for resolving "this user is a
-    # superuser" upstream — we pass the value through unchanged. For
-    # project-owner-initiated looser overrides the requester is NOT a
-    # superuser, so this insert may fail with a FK violation; that is a
-    # legitimate signal that the workflow is being misused (the spec
-    # restricts looser-override creation to owners, but the *approval*
-    # ticket is owned by a superuser triaging the queue). In practice
-    # the admin endpoint that wraps this service will create the ticket
-    # under a system superuser identity.
     result = await session.execute(
         insert_stmt,
         {
             "action": _APPROVAL_REQUEST_ACTION,
             "detail": detail_json,
-            "requested_by_id": requester_id,
+            "requesting_user_id": requester_id,
             "now": now,
         },
     )
@@ -394,11 +406,17 @@ async def _close_approval_request(
 ) -> None:
     """Transition the matching ``superuser_approval_requests`` row.
 
-    Looks up the row by the ``override_id`` embedded in the JSONB
-    ``detail`` payload. If no matching pending row is found the
-    function logs a warning and returns silently — the override-level
-    state machine has already moved forward, and a missing ticket is a
-    bookkeeping anomaly rather than a correctness failure.
+    Round 1 review M4 (2026-04-28): the previous implementation logged a
+    warning and returned silently when zero rows were updated. That left
+    the override-level state machine free to advance to ``applied`` /
+    ``rejected`` without a corresponding approval ticket — a violation
+    of FR-111 (every superuser-gated decision must leave an auditable
+    approval row). We now raise :class:`ApprovalRequestCloseError` on a
+    0-row UPDATE so the surrounding transaction rolls back; both the
+    override status mutation and any audit row written in the same TX
+    are reverted atomically. Callers MUST run this helper inside the
+    same transaction as the override mutation for the rollback to take
+    effect.
     """
     update_stmt = sa.text(
         """
@@ -439,11 +457,19 @@ async def _close_approval_request(
     # so a 0-row UPDATE is still detected.
     affected = getattr(result, "rowcount", -1)
     if affected == 0:
-        logger.warning(
+        # Force the surrounding TX to abort. The caller's audit row +
+        # override status mutation were both written in the same session
+        # so SQLAlchemy will roll them back when this exception bubbles.
+        logger.error(
             "superuser_approval_requests close failed: override_id=%s status=%s "
-            "(no pending row matched — proceeding anyway)",
+            "(no pending row matched — aborting TX so override stays in "
+            "pending state)",
             override_id,
             terminal_status,
+        )
+        raise ApprovalRequestCloseError(
+            f"no pending superuser_approval_requests row matched "
+            f"override_id={override_id} status={terminal_status}"
         )
 
 
@@ -463,6 +489,7 @@ async def _load_override(
 
 
 __all__ = [
+    "ApprovalRequestCloseError",
     "apply_taxon_override",
     "approve_taxon_override",
     "reject_taxon_override",

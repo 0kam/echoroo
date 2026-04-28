@@ -2454,5 +2454,9 @@
   "hspec_y_maps_tier_coarse": "粗い範囲（約1.2km）",
   "hspec_y_maps_tier_very_coarse": "非常に粗い範囲（約9km）",
   "hspec_y_maps_tier_hidden": "非開示の位置",
-  "hspec_y_maps_hidden_pin_label": "非開示"
+  "hspec_y_maps_hidden_pin_label": "非開示",
+  "hspec_y_maps_marker_aria_unlabeled": "{tier}の検出",
+  "hspec_y_maps_marker_aria_labeled": "{label}（{tier}）",
+  "hspec_y_maps_polygon_aria": "{label}の粗い範囲",
+  "hspec_y_maps_polygon_aria_unlabeled": "粗い検出範囲"
 }

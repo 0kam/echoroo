@@ -60,6 +60,11 @@ from echoroo.services.annotation_vote import (
 )
 from echoroo.services.detection import DetectionService
 from echoroo.services.detection_export import DetectionExportService
+from echoroo.services.taxon_sensitivity_service import (
+    bulk_load_override_map,
+    bulk_load_sensitivity_map,
+    is_iucn_fail_safe_active,
+)
 
 router = APIRouter(prefix="/projects/{project_id}/detections", tags=["detections"])
 
@@ -103,27 +108,134 @@ VoteServiceDep = Annotated[AnnotationVoteService, Depends(get_vote_service)]
 ResponseT = TypeVar("ResponseT")
 
 
-def _apply_detection_response_filter(
+def _detection_taxon_key(item: object) -> str | None:
+    """Return the GBIF species key embedded in a DetectionResponse, if any.
+
+    Round 1 review C1 / FR-029 / FR-032 / FR-033: Phase 11's auto-obscure
+    pipeline is keyed on the GBIF species key (a string) — that is the
+    discriminator stored in :class:`TaxonSensitivity.taxon_id` and
+    :class:`ProjectTaxonSensitivityOverride.taxon_id`. The DetectionResponse
+    surface exposes it as ``tag.gbif_taxon_key`` (an ``int``); we coerce to
+    ``str`` so the bulk preloaders see the same shape the maps are keyed by.
+    Detections without a tag (or with a tag that has not been resolved to
+    GBIF yet) return ``None`` and are excluded from the preload set.
+    """
+    tag = getattr(item, "tag", None)
+    if tag is None:
+        return None
+    gbif_key = getattr(tag, "gbif_taxon_key", None)
+    if gbif_key is None:
+        return None
+    return str(gbif_key)
+
+
+def _detection_filter_resource(item: object) -> object:
+    """Wrap a DetectionResponse so the response filter can read ``taxon_id``.
+
+    The Stage-2 filter (and ``compute_effective_resolution``) keys off
+    ``resource.taxon_id`` (str). DetectionResponse itself does not surface
+    that key directly, so we expose a SimpleNamespace that mirrors the
+    handful of attributes the filter touches: ``taxon_id`` from the tag's
+    GBIF key, ``h3_index_member`` (currently absent on DetectionResponse —
+    None falls through cleanly) and ``h3_index_member_resolution`` (defaults
+    to :data:`H3_RES_15` so the filter's ``_compute_withheld_reason`` does
+    not blow up on a None comparison).
+    """
+    from types import SimpleNamespace
+
+    from echoroo.core.permissions import H3_RES_15
+
+    return SimpleNamespace(
+        taxon_id=_detection_taxon_key(item),
+        h3_index_member=getattr(item, "h3_index_member", None),
+        h3_index_member_resolution=(
+            getattr(item, "h3_index_member_resolution", None) or H3_RES_15
+        ),
+    )
+
+
+async def _build_detection_filter_maps(
+    *,
+    db: object,
+    project_id: UUID,
+    items: list[object],
+) -> tuple[dict[str, int], dict[tuple[UUID, str], object]]:
+    """Bulk-preload sensitivity + override maps for a list of detections.
+
+    Round 1 review C1: the Stage-2 filter is only as accurate as the maps
+    fed to it — passing the canonical empty dicts shipped pre-Round-1
+    silently disabled FR-029 / FR-032 / FR-033 / FR-034 / FR-035 in the
+    live API. This helper collects every GBIF taxon key surfaced by the
+    response items, fires ONE sensitivity SELECT and ONE override SELECT
+    (NFR-001a), and returns the two maps the filter expects.
+
+    The sensitivity preload also consults the IUCN 14-day fail-safe flag
+    (FR-036) so unknown taxa default to :data:`H3_RES_7` instead of the
+    permissive :data:`H3_RES_9` while the upstream Red List sync is down.
+    """
+    taxon_ids = {key for key in (_detection_taxon_key(item) for item in items) if key}
+    if not taxon_ids:
+        return {}, {}
+    fail_safe_active = await is_iucn_fail_safe_active()
+    sensitivity_map = await bulk_load_sensitivity_map(
+        db,  # type: ignore[arg-type]
+        taxon_ids,
+        iucn_fail_safe_active=fail_safe_active,
+    )
+    override_map = await bulk_load_override_map(
+        db,  # type: ignore[arg-type]
+        project_id,
+        taxon_ids,
+    )
+    # ``override_map`` is typed as dict[tuple[UUID, str], ProjectTaxonSensitivityOverride]
+    # by the loader; the response filter accepts the broader
+    # ``Mapping[tuple[Any, str], Any]`` so the cast below is purely for typing.
+    return sensitivity_map, dict(override_map)
+
+
+async def _apply_detection_response_filter(
     obj: ResponseT,
     *,
     request: Request,
     project: object,
+    db: object | None = None,
+    project_id: UUID | None = None,
+    sensitivity_map: dict[str, int] | None = None,
+    override_map: dict[tuple[UUID, str], object] | None = None,
 ) -> ResponseT:
-    """Apply FR-011 response filtering with Phase 11 sensitivity placeholders."""
+    """Apply FR-011 response filtering with Phase 11 sensitivity wiring.
+
+    Round 1 review C1: callers MUST either (a) supply pre-loaded maps via
+    ``sensitivity_map`` / ``override_map`` (the list-endpoint hot path), or
+    (b) supply ``db`` + ``project_id`` so this helper can run the bulk
+    preloaders itself for the single-item path. Passing both maps and
+    db/project_id is harmless — the maps win. The request-scope cache
+    (NFR-001a) makes a redundant preload call O(1) inside the same request.
+    """
     state = request.state
     effective: frozenset[Permission] = getattr(state, "effective_permissions", frozenset())
     role: str = getattr(state, "normalized_role", "Guest")
 
-    # TODO(Phase 11): replace empty maps with taxon_sensitivity_map /
-    # override_map bulk preloaders.
+    if (
+        sensitivity_map is None
+        and override_map is None
+        and db is not None
+        and project_id is not None
+    ):
+        sensitivity_map, override_map = await _build_detection_filter_maps(
+            db=db,
+            project_id=project_id,
+            items=[obj],
+        )
+
     apply_response_filter(
         obj=obj,
         effective_permissions=effective,
         normalized_role=role,
         project=project,
-        resource=obj,
-        taxon_sensitivity_map={},
-        override_map={},
+        resource=_detection_filter_resource(obj),
+        taxon_sensitivity_map=sensitivity_map or {},
+        override_map=override_map or {},
     )
     return obj
 
@@ -229,17 +341,22 @@ async def list_detections(
         threshold=threshold,
         locale=locale,
     )
-    # TODO(Phase 11): replace empty maps with taxon_sensitivity_map /
-    # override_map bulk preloaders.
+    # Round 1 review C1: bulk-preload sensitivity + override maps once,
+    # then apply Stage-2 filter per-item using the populated maps.
+    sensitivity_map, override_map = await _build_detection_filter_maps(
+        db=db,
+        project_id=project_id,
+        items=list(result.items),
+    )
     for item in result.items:
         apply_response_filter(
             obj=item,
             effective_permissions=effective,
             normalized_role=role,
             project=project,
-            resource=item,
-            taxon_sensitivity_map={},
-            override_map={},
+            resource=_detection_filter_resource(item),
+            taxon_sensitivity_map=sensitivity_map,
+            override_map=override_map,
         )
     return result
 
@@ -301,8 +418,12 @@ async def get_species_summary(
         detection_run_id=detection_run_id,
         locale=locale,
     )
+    # Species summary aggregates have no per-row coordinate to generalise
+    # (they are counts grouped by tag), so the empty-maps form of the
+    # filter is sufficient. The companion ``_mask_species_summary_item_names``
+    # call applies the FR-020 mask_species_in_detection toggle.
     for item in result.items:
-        _apply_detection_response_filter(
+        await _apply_detection_response_filter(
             item,
             request=request,
             project=project,
@@ -496,7 +617,7 @@ async def get_temporal_data(
         locale=locale,
     )
     for item in result.species:
-        _apply_detection_response_filter(
+        await _apply_detection_response_filter(
             item,
             request=request,
             project=project,
@@ -575,16 +696,23 @@ async def get_detection(
         threshold=threshold,
         locale=locale,
     )
-    # TODO(Phase 11): replace empty maps with taxon_sensitivity_map /
-    # override_map bulk preloaders.
+    # Round 1 review C1: even single-detection paths must run through the
+    # bulk preloaders so the sensitivity / override maps are populated. The
+    # request-scope cache (NFR-001a) makes this a no-op cost when the same
+    # taxon was already loaded earlier in the request.
+    sensitivity_map, override_map = await _build_detection_filter_maps(
+        db=db,
+        project_id=project_id,
+        items=[result],
+    )
     apply_response_filter(
         obj=result,
         effective_permissions=effective,
         normalized_role=role,
         project=project,
-        resource=result,
-        taxon_sensitivity_map={},
-        override_map={},
+        resource=_detection_filter_resource(result),
+        taxon_sensitivity_map=sensitivity_map,
+        override_map=override_map,
     )
     return result
 
@@ -633,10 +761,12 @@ async def create_detection(
     )
     detection = await service.create(project_id=project_id, request=request)
     await db.commit()
-    return _apply_detection_response_filter(
+    return await _apply_detection_response_filter(
         detection,
         request=http_request,
         project=project,
+        db=db,
+        project_id=project_id,
     )
 
 
@@ -696,10 +826,12 @@ async def confirm_detection(
         request=request,
     )
     await db.commit()
-    return _apply_detection_response_filter(
+    return await _apply_detection_response_filter(
         detection,
         request=http_request,
         project=project,
+        db=db,
+        project_id=project_id,
     )
 
 
@@ -755,10 +887,12 @@ async def reject_detection(
         user_id=current_user.id,
     )
     await db.commit()
-    return _apply_detection_response_filter(
+    return await _apply_detection_response_filter(
         detection,
         request=http_request,
         project=project,
+        db=db,
+        project_id=project_id,
     )
 
 
@@ -816,10 +950,12 @@ async def change_species(
         project_id=project_id,
     )
     await db.commit()
-    return _apply_detection_response_filter(
+    return await _apply_detection_response_filter(
         detection,
         request=http_request,
         project=project,
+        db=db,
+        project_id=project_id,
     )
 
 

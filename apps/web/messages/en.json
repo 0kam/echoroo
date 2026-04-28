@@ -2454,5 +2454,9 @@
   "hspec_y_maps_tier_coarse": "Coarse area (~1.2 km)",
   "hspec_y_maps_tier_very_coarse": "Very coarse area (~9 km)",
   "hspec_y_maps_tier_hidden": "Restricted location",
-  "hspec_y_maps_hidden_pin_label": "Restricted location"
+  "hspec_y_maps_hidden_pin_label": "Restricted location",
+  "hspec_y_maps_marker_aria_unlabeled": "Detection at {tier}",
+  "hspec_y_maps_marker_aria_labeled": "{label} ({tier})",
+  "hspec_y_maps_polygon_aria": "Coarse area for {label}",
+  "hspec_y_maps_polygon_aria_unlabeled": "Coarse detection area"
 }

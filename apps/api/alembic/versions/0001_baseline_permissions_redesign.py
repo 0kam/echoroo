@@ -188,11 +188,32 @@ def upgrade() -> None:  # noqa: PLR0915 — baseline migration, long by nature
         sa.Column("id", UUID(as_uuid=True), primary_key=True, server_default=sa.text("gen_random_uuid()")),
         sa.Column("action", sa.String(100), nullable=False),
         sa.Column("detail", JSONB(), nullable=False),
+        # Round 1 review M3 (2026-04-28): ``requested_by_id`` historically
+        # FK'd ``superusers.id`` and was ``nullable=False``, but project
+        # owners (regular users) initiate looser-override approval tickets
+        # — they are NOT superusers so the FK violated on every owner-
+        # initiated request. The schema now records BOTH:
+        #
+        # * ``requested_by_id`` (FK → superusers.id, nullable) — set when
+        #   a superuser opens the ticket directly (e.g. operator triage).
+        # * ``requesting_user_id`` (FK → users.id, nullable) — set when a
+        #   regular user (typically project owner / admin) opens the
+        #   ticket via :func:`apply_taxon_override`.
+        #
+        # Exactly one of the two SHOULD be populated per row; a CHECK
+        # constraint enforces "at least one" so the audit trail always
+        # carries an actor identity.
         sa.Column(
             "requested_by_id",
             UUID(as_uuid=True),
             sa.ForeignKey("superusers.id"),
-            nullable=False,
+            nullable=True,
+        ),
+        sa.Column(
+            "requesting_user_id",
+            UUID(as_uuid=True),
+            sa.ForeignKey("users.id"),
+            nullable=True,
         ),
         sa.Column(
             "approvals",
@@ -204,6 +225,10 @@ def upgrade() -> None:  # noqa: PLR0915 — baseline migration, long by nature
         sa.Column("executed_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("now()")),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("now()")),
+        sa.CheckConstraint(
+            "requested_by_id IS NOT NULL OR requesting_user_id IS NOT NULL",
+            name="ck_superuser_approval_requests_actor_present",
+        ),
     )
 
     # outbox_events — created early because ORM event listeners may INSERT into

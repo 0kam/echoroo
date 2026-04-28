@@ -36,14 +36,21 @@ class SiteResponse(BaseModel):
 
 
 class SiteDetailResponse(SiteResponse):
-    """Site detail response with statistics."""
+    """Site detail response with statistics.
+
+    Round 1 review C3 / FR-030: ``latitude`` / ``longitude`` are intentionally
+    absent. The site location is conveyed solely via ``h3_index`` (inherited
+    from :class:`SiteResponse`). Callers needing a coarsened cell can pass the
+    response through the canonical Stage-2 response filter, which generalises
+    ``h3_index`` to the appropriate parent resolution. ``coordinate_uncertainty``
+    is also dropped because deriving it requires the H3 cell area at the
+    *member* resolution and was previously emitted regardless of the viewer's
+    role — exposing it to non-members would defeat the auto-obscure pipeline.
+    """
 
     dataset_count: int = 0
     recording_count: int = 0
     total_duration: float = 0.0
-    latitude: float | None = None
-    longitude: float | None = None
-    coordinate_uncertainty: float | None = None
     boundary: list[list[float]] | None = None
 
 

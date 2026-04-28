@@ -173,10 +173,11 @@
   ) {
     const coords: [number, number][] = [];
 
+    // Permissions redesign Round 2: derive every centre coordinate from
+    // `h3_index`.  Raw `latitude`/`longitude` are no longer carried on
+    // the response (FR-030), so this is the single source of truth.
     for (const site of siteList) {
-      if (site.latitude != null && site.longitude != null) {
-        coords.push([site.longitude, site.latitude]);
-      } else if (site.h3_index && isValidCell(site.h3_index)) {
+      if (site.h3_index && isValidCell(site.h3_index)) {
         const [lat, lng] = cellToLatLng(site.h3_index);
         coords.push([lng, lat]);
       }

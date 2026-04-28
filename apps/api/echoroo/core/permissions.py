@@ -614,7 +614,11 @@ def compute_effective_resolution(
     if override is not None:
         direction = getattr(override, "direction", None)
         status_val = getattr(override, "approval_status", None)
-        override_res = getattr(override, "resolution", None)
+        # C2 fix: ORM column is ``sensitivity_h3_res`` per
+        # ``ProjectTaxonSensitivityOverride.sensitivity_h3_res``. The earlier
+        # name ``resolution`` was a docstring drift — using getattr against
+        # the wrong name silently dropped every override row in the live API.
+        override_res = getattr(override, "sensitivity_h3_res", None)
 
         if direction == TaxonOverrideDirection.LOOSER:
             # FR-034: looser replaces global only once approved.

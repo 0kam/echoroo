@@ -16,9 +16,7 @@ from echoroo.schemas.site import (
     SiteUpdate,
 )
 from echoroo.services.h3_utils import (
-    h3_coordinate_uncertainty,
     h3_to_boundary,
-    h3_to_center,
     validate_h3_index,
 )
 
@@ -181,10 +179,15 @@ class SiteService:
                 detail="Site not found",
             )
 
-        # Get H3 properties
-        lat, lng = h3_to_center(site.h3_index)
+        # Get H3 properties.
+        #
+        # Round 1 review C3 / FR-030: ``latitude`` / ``longitude`` /
+        # ``coordinate_uncertainty`` are intentionally NOT computed or
+        # returned. The boundary polygon is derived from the H3 cell so it
+        # carries the same precision as ``h3_index`` itself; the response
+        # filter generalises both fields together when the viewer is below
+        # the member-precision tier.
         boundary = h3_to_boundary(site.h3_index)
-        uncertainty = h3_coordinate_uncertainty(site.h3_index)
 
         # Calculate recording stats from datasets (already eager loaded)
         dataset_count = len(site.datasets) if site.datasets else 0
@@ -210,9 +213,6 @@ class SiteService:
             dataset_count=dataset_count,
             recording_count=recording_count,
             total_duration=total_duration,
-            latitude=lat,
-            longitude=lng,
-            coordinate_uncertainty=uncertainty,
             boundary=boundary,
         )
 

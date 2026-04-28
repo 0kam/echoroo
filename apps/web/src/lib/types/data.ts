@@ -30,9 +30,15 @@ export interface SiteDetail extends Site {
   dataset_count: number;
   recording_count: number;
   total_duration: number;
-  latitude: number | null;
-  longitude: number | null;
-  coordinate_uncertainty: number | null;
+  /**
+   * Optional polygon boundary derived from `h3_index` on the backend.
+   *
+   * Permissions redesign Round 2: `latitude`, `longitude`, and
+   * `coordinate_uncertainty` were removed from `SiteDetailResponse`
+   * (FR-030).  All spatial signal now flows through `h3_index`; clients
+   * that need a centre point should derive it via `h3-js`'s
+   * `cellToLatLng` rather than retain raw coordinates.
+   */
   boundary: number[][] | null;
 }
 

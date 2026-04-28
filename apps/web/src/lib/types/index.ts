@@ -574,8 +574,14 @@ export interface ProjectOverviewSite {
   id: string;
   name: string;
   h3_index: string;
-  latitude: number | null;
-  longitude: number | null;
+  /**
+   * Permissions redesign Round 2: raw `latitude` / `longitude` are no
+   * longer surfaced on the frontend.  All spatial signal flows through
+   * `h3_index`; consumers that need a centre point should derive it via
+   * `h3-js`'s `cellToLatLng`.  This keeps FR-030 enforcement uniform and
+   * prevents bypassing the auto-obscure pipeline by holding onto stale
+   * member-precise coordinates client-side.
+   */
   recording_count: number;
   dataset_count: number;
 }

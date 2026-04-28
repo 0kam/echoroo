@@ -220,30 +220,15 @@ def openapi_document() -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# Known pre-existing FR-030 violations in the SiteResponse schema.
+# Known FR-030 violations.
 #
-# SiteResponse.latitude / SiteResponse.longitude were added before the
-# 006-permissions-redesign auto-obscure spec was finalised. Phase 11 Batch 4
-# (T651) records these as *known* violations — they are annotated as xfail
-# so the test suite documents the debt without blocking CI.
-#
-# Resolution: remove latitude/longitude from SiteResponse (FR-030 clean-up
-# task to be tracked separately). Once cleaned up, change the xfail strict=True
-# below and the tests will start passing automatically.
+# Round 1 review C3 (2026-04-28): the previously-known
+# ``SiteDetailResponse.latitude`` / ``longitude`` violations have been
+# removed at the schema layer — the test now asserts a clean ZERO-violation
+# state. Any future regression introduces a NEW violation and fails the
+# test outright.
 # ---------------------------------------------------------------------------
-_KNOWN_VIOLATIONS: dict[str, frozenset[str]] = {
-    # (forbidden_field) -> set of path expressions that currently violate FR-030
-    "latitude": frozenset(
-        {
-            "/api/v1/projects/{project_id}/sites/{site_id}",
-        }
-    ),
-    "longitude": frozenset(
-        {
-            "/api/v1/projects/{project_id}/sites/{site_id}",
-        }
-    ),
-}
+_KNOWN_VIOLATIONS: dict[str, frozenset[str]] = {}
 
 
 @pytest.mark.parametrize(

@@ -73,6 +73,7 @@
 - [ ] IUCN 週次同期、2 週連続失敗で未知種 `H3_RES_7` フェイルセーフ、既知種維持
 - [ ] IUCN sanity check（前回比 10% 以上の緩和で abort）
 - [ ] IUCN API は TLS 1.2+ + certificate pinning
+  - **pre-launch ratchet (Round 1 review M1, 2026-04-28)**: TLS 1.2+ + CA bundle 経由の chain 検証 + leaf 証明書全体 (DER) の SHA-256 ピン (`IUCN_API_CERT_SHA256_BASE64`) で運用。真の SPKI pin (SubjectPublicKeyInfo のみを hash) は post-launch ratchet で `cryptography` ライブラリ導入後に切り替える。関数名・env 変数名から `spki` を外して誤認を防止済み。
 - [ ] MOE RDB 手動追加の admin UI
 
 ## raw lat/lng 全経路排除（FR-028a〜f）

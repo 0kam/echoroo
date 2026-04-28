@@ -78,6 +78,13 @@
     initialCenter?: [number, number];
     /** Initial zoom. */
     initialZoom?: number;
+    /**
+     * When `true` (default), the map auto-fits its viewport to the
+     * supplied points on every prop update.  Set `false` for callers that
+     * prefer to keep the current camera once the user has interacted with
+     * the map (Round 1 review B3 — avoid jank from constant re-fit).
+     */
+    fitOnUpdate?: boolean;
   }
 
   const {
@@ -86,13 +93,25 @@
     onSelect = () => {},
     initialCenter = [139.6917, 35.6895],
     initialZoom = 4,
+    fitOnUpdate = false,
   }: Props = $props();
 
   let mapContainer: HTMLDivElement | undefined = $state();
   let map: import('maplibre-gl').Map | null = null;
   let mapLoaded = false;
-  let markers: import('maplibre-gl').Marker[] = [];
+  /**
+   * Round 1 review B3: maintain a stable id → marker map so live updates
+   * patch only what changed instead of recreating every DOM marker.  The
+   * tier is tracked alongside so we can detect when the same id transitions
+   * between tiers (e.g. a detection that becomes obscured).
+   */
+  let markerById: Map<string, { marker: import('maplibre-gl').Marker; tier: PrecisionTier }> =
+    new Map();
   let maplibre: typeof import('maplibre-gl') | null = null;
+  /** Round 1 review B2: guard against onMount → onDestroy race. */
+  let disposed = false;
+  /** True only for the very first refresh after mapLoaded. */
+  let firstRefresh = true;
 
   // ---------------------------------------------------------------------
   // Pure helpers
@@ -100,13 +119,17 @@
 
   /**
    * Map an H3 resolution to a coarse precision tier used by the renderer.
-   * Resolutions outside the spec'd `{2, 5, 7, 9, 15}` set are bucketed by
-   * proximity so unexpected backend values still render sensibly.
+   *
+   * Round 1 review B1: the boundary at res 8 must classify as `coarse`
+   * because the spec renders res 5–8 as polygons and res 9–11 as small
+   * circles.  Resolutions outside the spec'd `{2, 5, 7, 9, 15}` set are
+   * bucketed by proximity so unexpected backend values still render
+   * sensibly.
    */
   function tierForResolution(res: number): PrecisionTier {
     if (res <= 2) return 'hidden';
     if (res <= 5) return 'very_coarse';
-    if (res <= 7) return 'coarse';
+    if (res <= 8) return 'coarse';
     if (res <= 11) return 'open';
     return 'member';
   }
@@ -144,6 +167,21 @@
       case 'hidden':
         return m.hspec_y_maps_tier_hidden();
     }
+  }
+
+  /**
+   * Build the screen-reader label for a marker / pin (Round 1 review A1).
+   * Hidden pins always announce themselves as "Restricted location".
+   */
+  function ariaLabelFor(point: HSpecPoint, tier: PrecisionTier): string {
+    if (tier === 'hidden') {
+      return m.hspec_y_maps_hidden_pin_label();
+    }
+    const label = point.label ?? point.sublabel ?? null;
+    if (label) {
+      return m.hspec_y_maps_marker_aria_labeled({ label, tier: tierLabel(tier) });
+    }
+    return m.hspec_y_maps_marker_aria_unlabeled({ tier: tierLabel(tier) });
   }
 
   /**
@@ -214,13 +252,55 @@
   // DOM marker construction (no innerHTML — XSS-safe)
   // ---------------------------------------------------------------------
 
-  function createCircleMarker(point: HSpecPoint, tier: PrecisionTier): HTMLDivElement {
-    const wrapper = document.createElement('div');
+  /**
+   * Wire shared accessibility attributes and keyboard handling onto the
+   * marker root (Round 1 review A1).  We expose the marker as a button so
+   * keyboard users can focus it with Tab and activate via Enter/Space.
+   */
+  function makeAccessible(
+    host: HTMLButtonElement,
+    point: HSpecPoint,
+    tier: PrecisionTier,
+    showTooltip: () => void,
+    hideTooltip: () => void,
+  ): void {
+    host.type = 'button';
+    host.setAttribute('aria-label', ariaLabelFor(point, tier));
+    // Buttons are focusable by default but in Safari rendering inside a
+    // map canvas occasionally drops focusability — ensure tabindex is set.
+    host.tabIndex = 0;
+
+    host.addEventListener('click', (e) => {
+      e.stopPropagation();
+      onSelect(point);
+    });
+    host.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        e.stopPropagation();
+        onSelect(point);
+      }
+    });
+    host.addEventListener('mouseenter', showTooltip);
+    host.addEventListener('mouseleave', hideTooltip);
+    host.addEventListener('focus', showTooltip);
+    host.addEventListener('blur', hideTooltip);
+  }
+
+  function createCircleMarker(point: HSpecPoint, tier: PrecisionTier): HTMLButtonElement {
+    const wrapper = document.createElement('button');
     wrapper.style.position = 'relative';
     wrapper.style.cursor = 'pointer';
     wrapper.style.display = 'inline-block';
     wrapper.style.lineHeight = '0';
     wrapper.style.overflow = 'visible';
+    // Reset default <button> chrome so the marker still looks like a dot.
+    wrapper.style.background = 'transparent';
+    wrapper.style.border = 'none';
+    wrapper.style.padding = '0';
+    wrapper.style.margin = '0';
+    wrapper.style.appearance = 'none';
+    wrapper.className = 'hspec-y-maps__marker-button';
 
     const size = tier === 'member' ? 12 : 14;
     const fill = point.color ?? tierColor(tier);
@@ -239,16 +319,13 @@
     }
     wrapper.appendChild(dot);
 
-    attachTooltip(wrapper, point, tier);
-    wrapper.addEventListener('click', (e) => {
-      e.stopPropagation();
-      onSelect(point);
-    });
+    const tooltipApi = attachTooltip(wrapper, point, tier);
+    makeAccessible(wrapper, point, tier, tooltipApi.show, tooltipApi.hide);
     return wrapper;
   }
 
-  function createHiddenPin(point: HSpecPoint): HTMLDivElement {
-    const wrapper = document.createElement('div');
+  function createHiddenPin(point: HSpecPoint): HTMLButtonElement {
+    const wrapper = document.createElement('button');
     wrapper.style.position = 'relative';
     wrapper.style.cursor = 'pointer';
     wrapper.style.display = 'inline-flex';
@@ -263,6 +340,10 @@
     wrapper.style.whiteSpace = 'nowrap';
     wrapper.style.boxShadow = '0 1px 3px rgba(0,0,0,0.35)';
     wrapper.style.pointerEvents = 'auto';
+    wrapper.style.border = 'none';
+    wrapper.style.appearance = 'none';
+    wrapper.style.fontFamily = 'inherit';
+    wrapper.className = 'hspec-y-maps__marker-button hspec-y-maps__marker-button--pill';
 
     // Lock icon (pure DOM SVG)
     const svgNS = 'http://www.w3.org/2000/svg';
@@ -275,6 +356,7 @@
     svg.setAttribute('stroke-width', '2.5');
     svg.setAttribute('stroke-linecap', 'round');
     svg.setAttribute('stroke-linejoin', 'round');
+    svg.setAttribute('aria-hidden', 'true');
 
     const rect = document.createElementNS(svgNS, 'rect');
     rect.setAttribute('x', '3');
@@ -294,16 +376,18 @@
     text.textContent = m.hspec_y_maps_hidden_pin_label();
     wrapper.appendChild(text);
 
-    attachTooltip(wrapper, point, 'hidden');
-    wrapper.addEventListener('click', (e) => {
-      e.stopPropagation();
-      onSelect(point);
-    });
+    const tooltipApi = attachTooltip(wrapper, point, 'hidden');
+    makeAccessible(wrapper, point, 'hidden', tooltipApi.show, tooltipApi.hide);
     return wrapper;
   }
 
-  function attachTooltip(host: HTMLElement, point: HSpecPoint, tier: PrecisionTier): void {
+  function attachTooltip(
+    host: HTMLElement,
+    point: HSpecPoint,
+    tier: PrecisionTier,
+  ): { show: () => void; hide: () => void } {
     const tooltip = document.createElement('div');
+    tooltip.setAttribute('role', 'tooltip');
     tooltip.style.cssText = [
       'position: absolute',
       'background: #191724', // Rosé Pine "base" (dark)
@@ -344,12 +428,14 @@
     tooltip.appendChild(tierEl);
 
     host.appendChild(tooltip);
-    host.addEventListener('mouseenter', () => {
-      tooltip.style.display = 'block';
-    });
-    host.addEventListener('mouseleave', () => {
-      tooltip.style.display = 'none';
-    });
+    return {
+      show: () => {
+        tooltip.style.display = 'block';
+      },
+      hide: () => {
+        tooltip.style.display = 'none';
+      },
+    };
   }
 
   // ---------------------------------------------------------------------
@@ -357,8 +443,8 @@
   // ---------------------------------------------------------------------
 
   function clearMarkers(): void {
-    for (const marker of markers) marker.remove();
-    markers = [];
+    for (const entry of markerById.values()) entry.marker.remove();
+    markerById = new Map();
   }
 
   function addMarkerForPoint(
@@ -376,7 +462,48 @@
     const marker = new libgl.Marker({ element: el, anchor })
       .setLngLat([lng, lat])
       .addTo(mapInstance);
-    markers.push(marker);
+    markerById.set(point.id, { marker, tier });
+  }
+
+  /**
+   * Round 1 review B3: diff-update markers by id rather than wiping the
+   * map every refresh.  Markers whose id disappears are removed; markers
+   * whose tier or h3_index changed are recreated; everything else is left
+   * in place to preserve hover/focus state and DOM identity.
+   */
+  function diffUpdateMarkers(
+    mapInstance: import('maplibre-gl').Map,
+    libgl: typeof import('maplibre-gl'),
+    desired: { point: HSpecPoint; tier: PrecisionTier }[],
+  ): void {
+    const desiredById = new Map<string, { point: HSpecPoint; tier: PrecisionTier }>();
+    for (const item of desired) desiredById.set(item.point.id, item);
+
+    // Remove markers that are no longer present.
+    for (const [id, entry] of markerById) {
+      if (!desiredById.has(id)) {
+        entry.marker.remove();
+        markerById.delete(id);
+      }
+    }
+
+    // Add or recreate markers as needed.
+    for (const { point, tier } of desired) {
+      const existing = markerById.get(point.id);
+      if (existing && existing.tier === tier) {
+        // Update position in case the H3 cell moved (re-clamping etc.).
+        if (point.h3_index && isValidCell(point.h3_index)) {
+          const [lat, lng] = cellToLatLng(point.h3_index);
+          existing.marker.setLngLat([lng, lat]);
+        }
+        continue;
+      }
+      if (existing) {
+        existing.marker.remove();
+        markerById.delete(point.id);
+      }
+      addMarkerForPoint(mapInstance, libgl, point, tier);
+    }
   }
 
   function refreshLayers(currentPoints: HSpecPoint[]): void {
@@ -394,15 +521,16 @@
       | undefined;
     if (coarseSrc) coarseSrc.setData(buildPolygonFC(buckets.coarse, 'coarse'));
 
-    // Markers are recreated each refresh — points sets are small and this
-    // keeps tooltip / handler bindings simple.
-    clearMarkers();
-    for (const p of buckets.member) addMarkerForPoint(map, maplibre, p, 'member');
-    for (const p of buckets.open) addMarkerForPoint(map, maplibre, p, 'open');
-    // Polygon points still get a centroid marker so tooltips & onSelect work.
-    for (const p of buckets.coarse) addMarkerForPoint(map, maplibre, p, 'coarse');
-    for (const p of buckets.very_coarse) addMarkerForPoint(map, maplibre, p, 'very_coarse');
-    for (const p of buckets.hidden) addMarkerForPoint(map, maplibre, p, 'hidden');
+    // Round 1 review B4: polygon tiers (coarse / very_coarse) intentionally
+    // do NOT receive a centroid marker.  The polygon click layer (wired in
+    // onMount) is the click target for those tiers, and the visual hex
+    // already conveys the precision.
+    const desired: { point: HSpecPoint; tier: PrecisionTier }[] = [
+      ...buckets.member.map((p) => ({ point: p, tier: 'member' as PrecisionTier })),
+      ...buckets.open.map((p) => ({ point: p, tier: 'open' as PrecisionTier })),
+      ...buckets.hidden.map((p) => ({ point: p, tier: 'hidden' as PrecisionTier })),
+    ];
+    diffUpdateMarkers(map, maplibre, desired);
   }
 
   function fitToPoints(currentPoints: HSpecPoint[]): void {
@@ -431,31 +559,48 @@
     map.fitBounds(bounds, { padding: 60, maxZoom: 13, duration: 300 });
   }
 
+  /**
+   * Resolve the point that owns a clicked polygon feature so polygon
+   * tiers (coarse / very_coarse) can fire onSelect without needing a
+   * centroid marker (Round 1 review B4).
+   */
+  function findPointById(id: unknown): HSpecPoint | null {
+    if (typeof id !== 'string') return null;
+    return points.find((p) => p.id === id) ?? null;
+  }
+
   // ---------------------------------------------------------------------
   // Lifecycle
   // ---------------------------------------------------------------------
 
   onMount(async () => {
     if (!mapContainer) return;
-    maplibre = await import('maplibre-gl');
+    const lib = await import('maplibre-gl');
+    // Round 1 review B2: a fast unmount during the dynamic import must not
+    // result in instantiating a Map that has nowhere to live.
+    if (disposed || !mapContainer) return;
+    maplibre = lib;
 
-    map = new maplibre.Map({
+    const mapInstance = new lib.Map({
       container: mapContainer,
       style: 'https://tiles.openfreemap.org/styles/liberty',
       center: initialCenter,
       zoom: initialZoom,
       scrollZoom: true,
     });
-    map.addControl(new maplibre.NavigationControl(), 'top-right');
+    map = mapInstance;
+    mapInstance.addControl(new lib.NavigationControl(), 'top-right');
 
-    map.on('load', () => {
-      if (!map) return;
+    mapInstance.on('load', () => {
+      // Round 1 review B2: bail out if onDestroy ran while the map was
+      // booting.  The map instance has already been removed in that case.
+      if (disposed || map !== mapInstance) return;
       mapLoaded = true;
 
       // Polygon sources / layers — order matters for visual stacking.
       // Very-coarse (largest cells) drawn first so coarse cells overlay them.
-      map.addSource('hspec-very-coarse', { type: 'geojson', data: emptyFC() });
-      map.addLayer({
+      mapInstance.addSource('hspec-very-coarse', { type: 'geojson', data: emptyFC() });
+      mapInstance.addLayer({
         id: 'hspec-very-coarse-fill',
         type: 'fill',
         source: 'hspec-very-coarse',
@@ -464,7 +609,7 @@
           'fill-opacity': 0.18,
         },
       });
-      map.addLayer({
+      mapInstance.addLayer({
         id: 'hspec-very-coarse-outline',
         type: 'line',
         source: 'hspec-very-coarse',
@@ -475,8 +620,8 @@
         },
       });
 
-      map.addSource('hspec-coarse', { type: 'geojson', data: emptyFC() });
-      map.addLayer({
+      mapInstance.addSource('hspec-coarse', { type: 'geojson', data: emptyFC() });
+      mapInstance.addLayer({
         id: 'hspec-coarse-fill',
         type: 'fill',
         source: 'hspec-coarse',
@@ -485,7 +630,7 @@
           'fill-opacity': 0.25,
         },
       });
-      map.addLayer({
+      mapInstance.addLayer({
         id: 'hspec-coarse-outline',
         type: 'line',
         source: 'hspec-coarse',
@@ -496,12 +641,39 @@
         },
       });
 
+      // Round 1 review B4: wire polygon click handlers as the click target
+      // for polygon tiers, and surface a pointer cursor so users discover
+      // the affordance.  We deliberately keep keyboard activation to the
+      // marker tiers (member / open / hidden) which provide focusable
+      // <button> hosts; polygon tiers without markers continue to honour
+      // pointer interaction only, matching MapLibre's accessibility model.
+      const polygonLayers = ['hspec-coarse-fill', 'hspec-very-coarse-fill'];
+      for (const layerId of polygonLayers) {
+        mapInstance.on('click', layerId, (event) => {
+          const feature = event.features?.[0];
+          if (!feature) return;
+          const id = feature.properties?.id;
+          const point = findPointById(id);
+          if (point) onSelect(point);
+        });
+        mapInstance.on('mouseenter', layerId, () => {
+          mapInstance.getCanvas().style.cursor = 'pointer';
+        });
+        mapInstance.on('mouseleave', layerId, () => {
+          mapInstance.getCanvas().style.cursor = '';
+        });
+      }
+
       refreshLayers(points);
-      fitToPoints(points);
+      if (firstRefresh) {
+        fitToPoints(points);
+        firstRefresh = false;
+      }
     });
   });
 
   onDestroy(() => {
+    disposed = true;
     clearMarkers();
     if (map) {
       map.remove();
@@ -516,7 +688,12 @@
     const current = points;
     if (!map || !mapLoaded) return;
     refreshLayers(current);
-    fitToPoints(current);
+    // Round 1 review B3: only auto-fit when the caller explicitly opts in
+    // or on the very first reactive update (the onMount load handler also
+    // fits once).  This avoids jank on every `points` mutation.
+    if (fitOnUpdate) {
+      fitToPoints(current);
+    }
   });
 </script>
 
@@ -596,5 +773,18 @@
     background: transparent;
     border: 2px solid var(--ring-color, #f6c177);
     border-radius: 0.15rem;
+  }
+
+  /* Round 1 review A1: clear focus indicator for keyboard users.  The
+     marker hosts are <button>s so they receive focus naturally; this
+     ring matches the Rosé Pine focus treatment used elsewhere. */
+  :global(.hspec-y-maps__marker-button:focus-visible) {
+    outline: 2px solid #d7827e;
+    outline-offset: 3px;
+    border-radius: 9999px;
+  }
+  :global(.hspec-y-maps__marker-button--pill:focus-visible) {
+    outline-offset: 2px;
+    border-radius: 999px;
   }
 </style>

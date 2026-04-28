@@ -397,21 +397,71 @@ async def is_iucn_fail_safe_active() -> bool:
 
     Reads :data:`IUCN_FAIL_SAFE_REDIS_KEY` from Redis; any truthy value
     (the worker writes ``"1"``) means unknown species should default to
-    :data:`H3_RES_7` instead of :data:`H3_RES_9`. A Redis outage fails
-    *open* (returns False) so a complete cache failure does not silently
-    coarsen every unknown taxon — the masking pipeline is still
-    conservative because the global ``TaxonSensitivity`` rows for known
-    sensitive taxa remain intact.
+    :data:`H3_RES_7` instead of :data:`H3_RES_9`.
+
+    Round 1 review M2 (2026-04-28): when Redis is unavailable the previous
+    implementation returned ``False`` (fail-open). That defeated FR-036's
+    safety promise — a Redis outage during a 14-day IUCN sync drought
+    would silently coarsen unknown taxa back to ``H3_RES_9`` (open). The
+    new behaviour:
+
+    1. Try Redis. On hit, return its truthy value.
+    2. On Redis exception, query the DB directly for a successful
+       ``iucn_sync_attempts`` row within the last 14 days. If none exist,
+       the fail-safe SHOULD be active even though the worker has not
+       written the flag (the flag is a cache, the DB is the source of
+       truth).
+    3. On DB exception, return ``True`` — fail **closed**. With both
+       Redis and the DB unreachable we have no way to confirm the
+       Red List is fresh, and the spec demands we err on the side of
+       *more* masking when in doubt.
+
+    Returns True iff the masking pipeline should default unknown taxa to
+    :data:`H3_RES_7`.
     """
     try:
         client = await get_redis_connection()
         value = await client.get(IUCN_FAIL_SAFE_REDIS_KEY)
-    except Exception as exc:  # noqa: BLE001 — fail-open per docstring
+        return bool(value)
+    except Exception as exc:  # noqa: BLE001 — see DB fallback below
         logger.warning(
-            "iucn fail-safe lookup failed; defaulting to inactive: %r", exc
+            "iucn fail-safe Redis lookup failed; falling back to DB check: %r", exc
         )
-        return False
-    return bool(value)
+
+    # Redis unreachable — consult the DB directly. The
+    # ``iucn_sync_attempts`` table is the canonical record of success;
+    # the Redis flag is a cache derived from it (set by the worker on
+    # every run). If no successful row exists within the 14-day window
+    # we activate the fail-safe regardless of whether the worker has had
+    # a chance to write the cache.
+    try:
+        from datetime import UTC, datetime, timedelta
+
+        from sqlalchemy import func, select
+
+        from echoroo.core.database import AsyncSessionLocal
+        from echoroo.models.iucn_sync_attempt import IucnSyncAttempt
+
+        cutoff = datetime.now(UTC) - timedelta(days=14)
+        async with AsyncSessionLocal() as session:
+            stmt = (
+                select(func.count())
+                .select_from(IucnSyncAttempt)
+                .where(
+                    IucnSyncAttempt.status == "success",
+                    IucnSyncAttempt.started_at >= cutoff,
+                )
+            )
+            count = (await session.execute(stmt)).scalar_one()
+        # Fail-safe is active iff the DB shows no recent success.
+        return count == 0
+    except Exception as exc:  # noqa: BLE001 — fail-closed per docstring
+        logger.error(
+            "iucn fail-safe DB fallback also failed; failing CLOSED "
+            "(unknown taxa will default to H3_RES_7): %r",
+            exc,
+        )
+        return True
 
 
 async def set_iucn_fail_safe(active: bool) -> None:
