@@ -213,27 +213,29 @@ function createAuthStore() {
      *     `hooks.server.ts` continues to think the user is signed in),
      *   - clears the session/refresh/csrf cookies on the right paths.
      *
-     * The legacy `/api/v1/auth/logout` is also called as a transition
-     * fallback so any not-yet-migrated legacy `refresh_token` cookie is
-     * still cleared. Both calls swallow their own errors so client-side
-     * state is always reset.
+     * NOTE: We deliberately do NOT call the legacy `/api/v1/auth/logout`
+     * here. That endpoint writes a Redis-backed `revoked_user:{user_id}`
+     * marker (TTL = JWT_REFRESH_TOKEN_EXPIRE_DAYS) that the legacy
+     * `AuthService.get_current_user` checks on every Bearer call. If we
+     * called it on logout, the marker would persist across the user's
+     * NEXT login flow and 401 every subsequent `/api/v1/users/me` call
+     * for days — which is the regression observed after Round 2
+     * (re-login → 2FA challenge 200 → /users/me 401 → refresh 401 → loop).
+     * The new web-auth flow already revokes the refresh-token family in
+     * `SqlTokenStore` and clears all session cookies, so the legacy
+     * fallback is unnecessary as well as harmful.
      */
     async logout(): Promise<void> {
       state.isLoading = true;
       try {
-        // Primary: new web-auth endpoint (clears the new cookies).
+        // Primary (and only) logout call: new web-auth endpoint clears
+        // the modern cookies and revokes the refresh family. See the
+        // docstring above for why the legacy endpoint is intentionally
+        // NOT called.
         await webLogoutUser();
       } catch (error) {
         // Continue with logout even if API call fails.
         console.error('Web logout API call failed:', error);
-      }
-      try {
-        // Transition fallback: clear any remaining legacy cookies. Safe to
-        // call after the new endpoint and harmless if no legacy session exists.
-        await apiClient.post('/api/v1/auth/logout');
-      } catch (error) {
-        // Legacy endpoint failure is non-fatal once the new endpoint succeeded.
-        console.warn('Legacy logout API call failed:', error);
       }
       // Clear client-side state regardless of API outcomes.
       apiClient.setAccessToken(null);
@@ -243,12 +245,18 @@ function createAuthStore() {
     },
 
     /**
-     * Refresh access token
+     * Refresh access token via the first-party web-auth endpoint.
+     *
+     * Uses `/web-api/v1/auth/refresh` (not the legacy `/api/v1/auth/refresh`)
+     * because the modern flow's refresh cookie is `echoroo_refresh` scoped
+     * to `/web-api/v1/auth/refresh`. The legacy endpoint reads a different
+     * cookie (`refresh_token`) which the modern login flow never sets, so
+     * calling it would always 401 and trigger the `onRefreshFailed` cleanup.
      */
     async refresh(): Promise<void> {
       try {
         const response = await apiClient.post<LoginResponse>(
-          '/api/v1/auth/refresh'
+          '/web-api/v1/auth/refresh'
         );
 
         // Store new access token

@@ -603,6 +603,25 @@ async def _issue_real_session(
         refresh_token=refresh_token,
         family_id=refresh_record.family_id,
     )
+    # Defensive: clear any stale legacy ``revoked_user:{user_id}`` Redis
+    # marker the legacy ``/api/v1/auth/logout`` (``AuthService.logout``)
+    # may have written for this user before the modern web-auth flow was
+    # adopted. The legacy ``CurrentUser`` Bearer dependency consults this
+    # key on every ``/api/v1/*`` call (e.g. ``GET /api/v1/users/me``) and
+    # 401s when the marker is present — even after a fresh login that
+    # issued a brand-new access token. Without this clear, any user who
+    # ever called the legacy logout endpoint would be unable to use the
+    # legacy ``/api/v1/*`` surface for ``JWT_REFRESH_TOKEN_EXPIRE_DAYS``
+    # days after their next login. Redis is best-effort: failures are
+    # logged but never block a successful login.
+    try:
+        redis = await get_redis_connection()
+        await redis.delete(f"revoked_user:{user.id}")
+    except Exception:  # noqa: BLE001 - Redis outage must not block login
+        logger.exception(
+            "auth: failed to clear legacy revoked_user marker for %s",
+            user.id,
+        )
     return access_token
 
 

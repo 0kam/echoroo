@@ -185,12 +185,22 @@ export class ApiClient {
   /**
    * Refresh access token using refresh token from cookie.
    *
+   * Targets the first-party web-auth endpoint
+   * `/web-api/v1/auth/refresh`. The modern login flow sets the
+   * `echoroo_refresh` HttpOnly cookie on `Path=/web-api/v1/auth/refresh`
+   * (see `_set_session_cookies` in the backend), and only that endpoint
+   * recognises it. The legacy `/api/v1/auth/refresh` route reads a
+   * different cookie name (`refresh_token`) that the modern flow never
+   * sets, so calling it always returned 401 and produced the
+   * re-login → /users/me 401 → refresh 401 → onRefreshFailed → logout
+   * loop observed in Phase 11 browser smoke tests.
+   *
    * When the refresh cookie itself is expired (server returns 401), we
    * latch ``refreshDisabledUntilLogin`` so that subsequent 401s do NOT
    * trigger another refresh attempt. This breaks the loop seen on the
    * Guest-public pages where a stale auth cookie + private background
-   * fetches caused dozens of `/api/v1/auth/refresh` calls per page.
-   * The latch is cleared by ``setAccessToken`` on a successful login.
+   * fetches caused dozens of refresh calls per page. The latch is
+   * cleared by ``setAccessToken`` on a successful login.
    */
   private async refreshAccessToken(): Promise<void> {
     // If a previous refresh attempt failed with 401 we must NOT spin a
@@ -207,7 +217,7 @@ export class ApiClient {
 
     this.refreshPromise = (async () => {
       try {
-        const response = await fetch(`${this.baseUrl}/api/v1/auth/refresh`, {
+        const response = await fetch(`${this.baseUrl}/web-api/v1/auth/refresh`, {
           method: 'POST',
           credentials: 'include', // Send refresh token cookie
           headers: {
