@@ -73,11 +73,15 @@ function getApiUrl(): string {
  * `public_path_nested_allowlist` (Phase 5 / FR-016).
  *
  * The frontend uses these to:
- *   1. Skip attaching the in-memory access token (Authorization header) for
- *      Guest-readable endpoints. A stale / expired JWT on a public-readable
- *      path would otherwise be evaluated as "authenticated request" by the
- *      auth router and rejected with 401.
- *   2. Skip the auto-refresh-on-401 retry for these paths. A 401 from a
+ *   1. Decide the credential profile per request. A signed-in caller keeps
+ *      `credentials: 'include'` and the Bearer header so the backend can
+ *      validate the session and serve member-aware variants. A Guest (no
+ *      access token) goes anonymous: `credentials: 'omit'` and no Bearer.
+ *   2. Provide a one-shot Guest fallback: if an authenticated public GET
+ *      returns 401 (stale session, partial cookies, etc.), retry exactly
+ *      once with `credentials: 'omit'` and no Bearer so the page still
+ *      renders for the visitor.
+ *   3. Skip the auto-refresh-on-401 retry for these paths. A 401 from a
  *      public path indicates a real authorization decision (e.g. Restricted
  *      project visibility), not an expired token, so refreshing wastes a
  *      round-trip and can spiral into a refresh loop when the refresh
@@ -306,8 +310,11 @@ export class ApiClient {
         });
       }
       // Drop any Authorization header that may have been merged in via
-      // the provided headers — this retry must be fully anonymous.
+      // the provided headers — this retry must be fully anonymous. The
+      // `Headers` constructor lower-cases keys when iterating, so strip
+      // both casings to be safe.
       delete guestHeaders['Authorization'];
+      delete guestHeaders['authorization'];
       response = await fetch(url, {
         ...options,
         credentials: 'omit',
@@ -483,7 +490,9 @@ export class ApiClient {
           guestHeaders[key] = value;
         });
       }
+      // Strip both casings — the `Headers` iterator lower-cases keys.
       delete guestHeaders['Authorization'];
+      delete guestHeaders['authorization'];
       response = await fetch(url, {
         ...options,
         credentials: 'omit',
