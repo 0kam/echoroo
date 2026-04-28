@@ -520,6 +520,34 @@ Phase 16 (最終統合、mutation gate 昇格、E2E full suite)
 
 ---
 
+## Phase 13: schema 三方向乖離 解消 (Phase 1-12 累積整合化)
+
+**Goal**: Phase 1-12 で累積した ORM ↔ DB ↔ spec の三方向 schema 乖離を解消、Phase 6/11 ブラウザ Gate 3 を通せる完全整合状態にする。
+
+**Strategy**: spec-first reconciliation (新案 D)、6 ラウンド Codex review GO 確定 (`/tmp/plan-merged-v5-final.md`)
+
+**前提**: Phase 12 完了。Phase 13 は schema reconcile 専用 phase で、他 Phase と独立 (worktree isolation 推奨)。
+
+- [ ] **T800** [P13] P0 9 種 Inventory: ORM/DB 全種 diff 抽出 + h3_index 全 grep (table set / columns / constraints / indices / FKs / enum labels / check exprs / defaults / same-name drift)
+- [ ] **T801** [P] [P13] P0a Static migration generation: `Base.metadata` から `apps/api/alembic/versions/0006_schema_reconcile_static.py` を 1 回生成 (ORM only 32 tables + 17 新規 enums + detections ORM)、以後 ORM 変更で migration 不変
+- [ ] **T802** [P] [P13] P0b Enum widening: `apps/api/alembic/versions/0006a_enum_widening.py` で `detectionsource` 4 値追加 (`perch`, `similarity_search`, `custom_svm`, `sampling_round`)、`autocommit_block()` + `ADD VALUE IF NOT EXISTS`
+- [ ] **T803** [P13] P1 Supporting tables (32) + enums (17 新規) + detections ORM 適用: `0001` baseline edit + `0006` 適用、enum 実名は ORM canonical (snake_case 統一、`annotation_set_status` / `annotation_segment_status` / `setting_type` / `detectionrunstatus` / `evaluation_run_status`)
+- [ ] **T804** [P13] P1.5 Same-name drift reconcile: `apps/api/alembic/versions/0007_same_name_reconcile.py` で (a) `annotations` ORM 縮退 (recording_id/tag_id 等削除、detection-based のみ), (b) `tags` 5 段階 backfill (`legacy_taxon_id` rename → UUID 追加 → `taxa.gbif_taxon_key` cast lookup → FK 追加 → legacy drop), (c) `annotation_votes` ORM rename `user_id → voter_user_id` + `project_id` 追加 + `vote` smallint 化, (d) services / repositories / API 追従, (e) annotation/vote API smoke 200 を Gate 必須
+- [ ] **T805** [P] [P13] P2 Datasets extension: `apps/api/alembic/versions/0008_datasets_extension.py` で 14 列追加 (`site_id` NOT NULL FK / `created_by_id` NOT NULL / `recorder_id` `license_id` nullable FK / `audio_dir` nullable / `doi VARCHAR 255` / etc.)
+- [ ] **T806** [P13] P3 Recordings rename + extend: `apps/api/alembic/versions/0009_recordings_legacy_rename.py` で DB `duration_seconds`→`duration`, `sample_rate`→`samplerate`, `recorded_at`→`datetime` rename + backfill, `project_id` drop, `filename`/`hash`/`bit_depth`/`datetime_parse_*` (enum NOT NULL DEFAULT)/`time_expansion`/`note` 追加, NOT NULL 化, `path VARCHAR(500)`, `UNIQUE (dataset_id, path)`, `ix_recordings_hash` / `ix_recordings_dataset_id_datetime`, CHECK constraint
+- [ ] **T807** [P] [P13] P4 Sites cutover (full rename): 14 ファイル一括更新 — backend (`apps/api/echoroo/models/site.py`, `api/v1/recordings.py:362`, `api/web_v1/projects/_core.py:518`, `repositories/project.py:257`, `services/detection_export.py:166`, `workers/ml/detection.py:177`, `schemas/site.py:15`, `schemas/dataset.py:49`, `schemas/project.py:75`, `services/site.py:113`, `repositories/site.py:73`), scripts (`scripts/lint_no_raw_coordinates.py:35,140,154,172,203`, `scripts/assert_openapi_no_coords.py:6,90`), frontend (`apps/web/src/lib/components/project/ProjectSitesMap.svelte:32`, `data/SiteList.svelte:48`, `apps/web/src/lib/types/{data.ts,index.ts,search.ts}`)
+- [ ] **T808** [P13] P5 Alembic R3 normalized introspection 9 種: `information_schema.columns` / `pg_constraint` / `pg_index` (predicate 含む) / `pg_enum` / FK ondelete / `pg_attribute.attnotnull` / `pg_attrdef` / `pg_trigger` / seed rows (volatile 列 `id` / `created_at` / `updated_at` 除外、業務 key 比較)。fresh DB と既存 dev DB upgrade で完全一致を Gate
+- [ ] **T809** [P13] P6 Browser Gate (Phase 6/11 Gate 3 再開): Public project → site 作成 → dataset 作成 → recording upload → detection 走行 → vote → CSV export → auto-obscure map 完走
+- [ ] **T810** [P] [P13] P7 API contract cleanup (任意 / 後日): `duration_seconds` API alias は wire compat で **維持** (Phase 13 では削除しない)、frontend が DB 名へ移行可能になった時点で 1 リリース後 deprecation
+- [ ] **T811** [P] [P13] spec data-model.md §0/§3.10/§3.11/§3.12/§3.22-§3.26/§8a 更新 (本タスクで完了済を確認)
+- [ ] **T812** [P] [P13] regression test 拡張: P5 normalized introspection / supporting tables smoke / detections ORM smoke / same-name drift unit test (annotations/tags/annotation_votes) / annotation/vote API smoke
+
+**Migration revision chain (Phase 13 完了後)**: `0001 → 0002 → 0003 → 0004 → 0005 → 0006 → 0006a → 0007 → 0008 → 0009`
+
+**Baseline edit と delta 重複回避ルール**: `0006-0009` の delta は `IF NOT EXISTS` / `checkfirst=True` / inspector check で idempotent。fresh DB は `0001` で完成 (delta は no-op)、既存 dev DB は `0005` から `0006-0009` 順次適用で同一最終形に到達。
+
+---
+
 ## Estimated Effort（変更なし、粒度分割で並列性向上）
 
 - Phase 1-2: 1-2 週間

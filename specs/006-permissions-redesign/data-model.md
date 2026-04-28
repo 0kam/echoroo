@@ -21,12 +21,12 @@
 | 7 | `project_invitations` | 改修 | kind (member/trusted) 統一、pending/token_hash | FR-047〜056 |
 | 8 | `project_trusted_users` | 新規 | Authenticated への capability overlay | FR-041〜046 |
 | 9 | `project_taxon_sensitivity_overrides` | 新規 | 種 × プロジェクトの sensitivity override | FR-033〜034 |
-| 10 | `sites` | 改修 | h3_index_member 保持、raw lat/lng 非保持 | FR-028〜031 |
-| 11 | `recordings` | 改修 | site_id FK、lat/lng 非保持、gps_stripped flag | FR-028a |
+| 10 | `sites` | 改修 | h3_index_member 保持、raw lat/lng 非保持。v5-final §2.4 と整合済 (no-op)。Phase 13 P4 で sites cutover (14 ファイル一括 rename) | FR-028〜031 |
+| 11 | `recordings` | 改修 | dataset_id 経由、lat/lng 非保持、gps_stripped flag、auto-obscure 3 列。legacy 命名 (`duration` / `samplerate` / `datetime`) に統一、API は `duration_seconds` alias で wire compat 維持。Phase 13 P3 で `0009_recordings_legacy_rename.py` 適用 | FR-028a |
 | 12 | `taxon_sensitivities` | 新規 | IUCN + MOE RDB のグローバルリスト | FR-032 |
 | 13 | `iucn_sync_attempts` | 新規 | 週次同期の記録 + 2 週失敗 fail-safe | FR-036 |
-| 14 | `annotation_votes` | 改修 | source + project_role_at_vote（immutable） | FR-037 |
-| 15 | `annotation_comments` | 改修 | source（member/guest/trusted バッジ用） | FR-040 |
+| 14 | `annotation_votes` | 改修 | **DB 真** (`voter_user_id` + `project_id` 必須、`vote` smallint)。ORM 側は Phase 13 P1.5 で rename + project_id 追加 + vote smallint 化 (drift reconcile) | FR-037 |
+| 15 | `annotation_comments` | 改修 | source（member/guest/trusted バッジ用）。整合済 no-op (Phase 13 で確認のみ) | FR-040 |
 | 16 | `api_keys` | 新規 | scope + project_id + allowed_ips + prefix/hashed_secret | FR-074〜084 |
 | 17 | `project_audit_log` | 新規 | プロジェクト内完結イベント、hash chain、raw PII なし | FR-088, FR-090〜096 |
 | 18 | `platform_audit_log` | 新規 | ユーザーアカウント/認証/superuser 操作、hash chain、raw PII なし | FR-089, FR-090〜096 |
@@ -35,9 +35,54 @@
 | 21 | `dek_rewrap_failures` | 新規 | DEK 月次 rewrap の失敗追跡 | Runbook 鍵ローテ |
 | 22 | `wipe_guard` | 新規 | wipe 2 度目実行防止の 3 点一致ガード | FR-114 |
 
-追加の 既存テーブル（本リデザインで大きな変更なし、**参考**）:
-- `datasets` / `annotations` / `tags`: 既存のカラム体系を維持、本リデザインでは `project_id` の参照整合性と `check_project_access` 経由の権限チェック以外の変更なし
-- `detection_runs`, `recordings_segments`, etc.: 既存 schema 維持
+### Phase 13 supporting tables（baseline 統合 / drift reconcile 対象）
+
+Phase 1-12 累積編集による ORM ↔ DB ↔ spec の三方向乖離を Phase 13 で reconcile する。詳細 schema は v5-final §2.6 で「`Base.metadata` 機械抽出を真」と決定。下記テーブルは §3.22-§3.26 に展開、column 詳細は対応 ORM (`apps/api/echoroo/models/<table>.py`) を canonical とする。
+
+| # | テーブル | 戦略 | spec 根拠 / 経緯 |
+|---|---|---|---|
+| 23 | `datasets` | 改修 (legacy 002-data-management から復活) | Phase 13 P2 で `0008_datasets_extension.py`、14 列追加 |
+| 24 | `tags` | drift reconcile (ORM 真、taxa-based) | Phase 13 P1.5 で 5 段階 backfill (legacy_taxon_id rename → UUID 追加 → taxa.gbif_taxon_key cast lookup → FK 追加 → legacy drop) |
+| 25 | `annotations` | drift reconcile (DB 真、detection-based 簡素) | Phase 13 P1.5 で ORM 縮退 (recording_id/tag_id 等削除)。recording-based 高機能 annotation 機能は Phase 14+ で `recording_annotations` 別 table 化 |
+| 26 | `taxa` | 新規 (ORM 化) | Phase 13 P1 で baseline 統合 |
+| 27 | `recorders` | 新規 (ORM 化) | Phase 13 P1、recordings 補助テーブル |
+| 28 | `licenses` | 新規 (ORM 化) | Phase 13 P1、recordings 補助テーブル |
+| 29 | `clips` | 新規 (ORM 化) | Phase 13 P1 |
+| 30 | `clip_annotations` | 新規 (ORM 化) | Phase 13 P1 |
+| 31 | `annotation_projects` | 新規 (ORM 化) | Phase 13 P1 |
+| 32 | `annotation_project_datasets` | 新規 (ORM 化) | Phase 13 P1 |
+| 33 | `annotation_project_tags` | 新規 (ORM 化) | Phase 13 P1 |
+| 34 | `annotation_sets` | 新規 (ORM 化) | Phase 13 P1 |
+| 35 | `annotation_set_species_palette` | 新規 (ORM 化) | Phase 13 P1 |
+| 36 | `annotation_segments` | 新規 (ORM 化) | Phase 13 P1 |
+| 37 | `annotation_segment_notes` | 新規 (ORM 化) | Phase 13 P1 |
+| 38 | `annotation_tasks` | 新規 (ORM 化) | Phase 13 P1 |
+| 39 | `sound_event_annotations` | 新規 (ORM 化) | Phase 13 P1 |
+| 40 | `sound_event_annotation_tags` | 新規 (ORM 化) | Phase 13 P1 |
+| 41 | `clip_annotation_tags` | 新規 (ORM 化) | Phase 13 P1 |
+| 42 | `time_range_annotations` | 新規 (ORM 化) | Phase 13 P1 |
+| 43 | `time_range_annotation_notes` | 新規 (ORM 化) | Phase 13 P1 |
+| 44 | `notes` | 新規 (ORM 化) | Phase 13 P1 |
+| 45 | `custom_models` | 新規 (ORM 化) | Phase 13 P1 |
+| 46 | `sampling_rounds` | 新規 (ORM 化) | Phase 13 P1 |
+| 47 | `sampling_round_items` | 新規 (ORM 化) | Phase 13 P1 |
+| 48 | `search_sessions` | 新規 (ORM 化) | Phase 13 P1 |
+| 49 | `search_query_embeddings` | 新規 (ORM 化) | Phase 13 P1 |
+| 50 | `evaluation_runs` | 新規 (ORM 化) | Phase 13 P1 |
+| 51 | `evaluation_results` | 新規 (ORM 化) | Phase 13 P1 |
+| 52 | `embeddings` | 新規 (ORM 化) | Phase 13 P1 |
+| 53 | `upload_sessions` | 新規 (ORM 化) | Phase 13 P1 |
+| 54 | `upload_files` | 新規 (ORM 化) | Phase 13 P1 |
+| 55 | `detection_runs` | 改修 (ORM 化、enum 実名統一) | Phase 13 P1、`detectionrunstatus` enum |
+| 56 | `detections` | 改修 (DB only → ORM 化) | Phase 13 P1 で ORM 化、`detectionsource` enum widening (`perch`, `similarity_search`, `custom_svm`, `sampling_round` 4 値追加) |
+
+**新規 enum 17 件** (Phase 13 P0a / P1 で追加、ORM canonical 命名):
+`datetimeparsestatus`, `annotation_set_status`, `annotation_segment_status`, `annotationtaskstatus`, `annotationprojectvisibility`, `reviewstatus`, `geometrytype`, `signalquality`, `consensusstatus`, `detectionrunstatus`, `uploadsessionstatus`, `uploadfilestatus`, `searchsessionstatus`, `setting_type`, `votetype`, `custommodelstatus`, `evaluation_run_status`
+
+**enum widening** (Phase 13 P0b、`0006a_enum_widening.py` で `autocommit_block` + `ADD VALUE IF NOT EXISTS`):
+- `detectionsource`: `perch`, `similarity_search`, `custom_svm`, `sampling_round` (4 値追加)
+
+DB only から ORM 化対象は `detections` のみ Phase 13 scope。残 10 件 (`api_keys` 旧版 / `superusers` 旧版 / 各種 audit / refresh / token テーブル等) は Phase 14+ で raw SQL → ORM 化予定。
 
 ---
 
@@ -487,7 +532,7 @@ class Site(UUIDMixin, TimestampMixin, Base):
 
 ---
 
-### 3.11 `recordings`（既存を改修、lat/lng 非保持確認）
+### 3.11 `recordings`（既存を改修、lat/lng 非保持確認 + Phase 13 legacy rename）
 
 既存の Recording モデルを維持（Explore 調査で確認、`latitude` / `longitude` カラムは既に存在しない）。`site_id` FK 経由で位置情報を取得。`h3_index_member` / `h3_index_member_resolution` カラムは Recording 側にも追加（録音機材が移動する場合に Site と異なる hex を持つ余地を残す、nullable）:
 
@@ -499,15 +544,70 @@ class Recording(UUIDMixin, TimestampMixin, Base):
     gps_stripped: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)  # EXIF strip 監視用（FR-028a）
 ```
 
+**Phase 13 P3 legacy rename + extend** (`0009_recordings_legacy_rename.py`、v5-final §2.3、Codex review 反映で展開):
+
+最終 schema (ORM canonical):
+
+| Column | Type | Null | Default | 備考 |
+|--------|------|------|---------|------|
+| `id` | UUID | NOT NULL | `gen_random_uuid()` | PK |
+| `dataset_id` | UUID | NOT NULL | — | FK `datasets.id ON DELETE CASCADE` |
+| `site_id` | UUID | nullable | — | FK `sites.id ON DELETE SET NULL`、override (NULL 時は `dataset.site_id` を使用) |
+| `filename` | VARCHAR(255) | NOT NULL | — | |
+| `path` | VARCHAR(500) | NOT NULL | — | |
+| `hash` | VARCHAR(64) | nullable | — | SHA-256 etc. |
+| `duration` | FLOAT | NOT NULL | — | seconds (legacy 命名、API は `duration_seconds` alias) |
+| `samplerate` | INTEGER | NOT NULL | — | Hz (legacy 命名、API は `sample_rate` alias) |
+| `channels` | INTEGER | NOT NULL | — | mono=1, stereo=2 |
+| `bit_depth` | INTEGER | nullable | — | |
+| `datetime` | TIMESTAMPTZ | nullable | — | recording 開始時刻 (legacy 命名、API は `recorded_at` alias) |
+| `datetime_parse_status` | `datetimeparsestatus` enum | NOT NULL | `'pending'` | |
+| `datetime_parse_error` | TEXT | nullable | — | |
+| `time_expansion` | FLOAT | NOT NULL | `1.0` | |
+| `note` | TEXT | nullable | — | |
+| `h3_index_member` | VARCHAR(32) | nullable | — | NULL なら site.h3_index_member 使用 |
+| `h3_index_member_resolution` | INTEGER | nullable | — | NULL なら site の resolution 使用 |
+| `gps_stripped` | BOOLEAN | NOT NULL | `false` | EXIF strip 監視用 (FR-028a) |
+| `created_at` / `updated_at` | TIMESTAMPTZ | NOT NULL | `now()` | TimestampMixin |
+
+**CHECK 制約**:
+- `h3_index_member_resolution IS NULL OR h3_index_member_resolution IN (9, 15)`
+
+**UNIQUE**: `(dataset_id, path)`
+
+**Index**:
+- `ix_recordings_dataset_id` on `dataset_id`
+- `ix_recordings_hash` on `hash`
+- `ix_recordings_datetime` on `datetime`
+- `ix_recordings_dataset_id_datetime` on `(dataset_id, datetime)`
+- `ix_recordings_h3_index_member` on `h3_index_member`
+
+**不在列** (API alias のみ、DB 不在):
+- `project_id` (dataset 経由で取得)
+- `duration_seconds` / `sample_rate` / `recorded_at` (Pydantic alias で wire compat 維持、Phase 13 P7 で deprecation 検討、現時点では維持)
+- `latitude` / `longitude` (FR-031 生 lat/lng 不在)
+
+詳細 schema は `apps/api/echoroo/models/recording.py` を参照、`Base.metadata` 機械抽出を真とする。
+
 ---
 
-### 3.12 `annotation_votes`（FR-037〜040）
+### 3.12 `annotation_votes`（FR-037〜040、DB 真 drift reconcile）
 
-既存の AnnotationVote に以下を追加:
+**戦略**: DB 側を真として ORM を rename / extend (Phase 13 P1.5 で `0007_same_name_reconcile.py`)。
+
+**DB 真の列体系** (v5-final §0.1):
+- `voter_user_id` (NOT `user_id`、ORM 側を rename)
+- `project_id` UUID NOT NULL FK → `projects.id` (ORM 側に追加)
+- `vote` SMALLINT NOT NULL (NOT `VoteType` enum、smallint 値で UP/DOWN 等を表現)
+- `source` enum (既存 `AnnotationVoteSource`)
+- `project_role_at_vote` enum nullable (既存 `ProjectMemberRole`)
 
 ```python
 class AnnotationVote(UUIDMixin, TimestampMixin, Base):
-    # 既存カラム + 以下を追加
+    # Phase 13 P1.5 で ORM rename + 追加
+    voter_user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)  # was: user_id
+    project_id: Mapped[UUID] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)  # 新規追加
+    vote: Mapped[int] = mapped_column(SmallInteger, nullable=False)  # was: Enum(VoteType)
     source: Mapped[AnnotationVoteSource] = mapped_column(
         Enum(AnnotationVoteSource, native_enum=True), nullable=False
     )
@@ -525,11 +625,15 @@ CHECK (
 )
 ```
 
+**追従**: services / repositories / API が `voter_user_id` 命名 + `project_id` を参照、`vote` は smallint で扱う (Phase 13 P1.5 Gate で annotation/vote API smoke 200 必須)。
+
 ---
 
 ### 3.13 `annotation_comments`
 
 既存の AnnotationComment に `source` を追加（`AnnotationVote` と同じ enum）。
+
+**Phase 13 同名 drift 戦略**: 整合済 no-op (v5-final §0.1)。ORM ↔ DB 一致確認のみ、reconcile 不要。
 
 ---
 
@@ -766,6 +870,138 @@ class WipeGuard(Base):
 
 ---
 
+### 3.22 `datasets`（Phase 13 P2 で extension、legacy 002-data-management から復活）
+
+Phase 13 P2 で `0008_datasets_extension.py` 適用、14 列追加 (v5-final §2.2、Codex review 反映で全列展開):
+
+最終 schema (ORM canonical):
+
+| Column | Type | Null | Default | 備考 |
+|--------|------|------|---------|------|
+| `id` | UUID | NOT NULL | `gen_random_uuid()` | PK |
+| `project_id` | UUID | NOT NULL | — | FK `projects.id ON DELETE CASCADE` |
+| `site_id` | UUID | NOT NULL | — | FK `sites.id ON DELETE CASCADE` |
+| `recorder_id` | VARCHAR(50) | nullable | — | FK `recorders.id ON DELETE SET NULL` (legacy string PK) |
+| `license_id` | VARCHAR(50) | nullable | — | FK `licenses.id ON DELETE SET NULL` (legacy string PK) |
+| `created_by_id` | UUID | NOT NULL | — | FK `users.id ON DELETE RESTRICT` (NOT NULL のため SET NULL 不可、creator user 削除は dataset 削除を要求) |
+| `name` | VARCHAR(200) | NOT NULL | — | |
+| `description` | TEXT | nullable | — | |
+| `audio_dir` | VARCHAR(500) | nullable | — | ORM 真で nullable (spec 002 NOT NULL は overrided)、deprecated per docstring |
+| `visibility` | `datasetvisibility` enum | NOT NULL | `'private'` | |
+| `status` | `datasetstatus` enum | NOT NULL | `'pending'` | |
+| `doi` | VARCHAR(255) | nullable | — | Digital Object Identifier |
+| `gain` | FLOAT | nullable | — | Recording gain in dB |
+| `note` | TEXT | nullable | — | |
+| `datetime_pattern` | VARCHAR(500) | nullable | — | filename からの datetime parse パターン |
+| `datetime_format` | VARCHAR(100) | nullable | — | strptime format |
+| `datetime_timezone` | VARCHAR(50) | nullable | — | IANA timezone |
+| `total_files` | INTEGER | NOT NULL | `0` | |
+| `processed_files` | INTEGER | NOT NULL | `0` | |
+| `processing_error` | TEXT | nullable | — | |
+| `created_at` / `updated_at` | TIMESTAMPTZ | NOT NULL | `now()` | TimestampMixin |
+
+**UNIQUE**: `(project_id, name)`
+
+**Index**: `(project_id)`, `(site_id)`, `(status)`, `(visibility)`
+
+詳細は `apps/api/echoroo/models/dataset.py` を参照、`Base.metadata` 機械抽出を真とする。**Migration order**: `0008` は既存テーブルへの ALTER で実装、`IF NOT EXISTS` / `checkfirst=True` で idempotent。
+
+---
+
+### 3.23 `recordings` legacy supporting (`recorders` / `licenses`)（Phase 13 P1）
+
+`recordings` の補助テーブルとして Phase 13 P1 で baseline 統合。
+
+**重要**: `Recorder` / `License` は **legacy supporting tables** で、ORM canonical は `id` が **VARCHAR(50) string PK** (UUIDMixin ではない、`002-data-management` 由来)。
+
+```python
+class Recorder(TimestampMixin, Base):
+    __tablename__ = "recorders"
+    id: Mapped[str] = mapped_column(String(50), primary_key=True)  # legacy string PK (e.g. "audiomoth-v1.2.0")
+    manufacturer: Mapped[str] = mapped_column(String(100), nullable=False)
+    recorder_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    version: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    # 詳細列は ORM 参照
+
+
+class License(TimestampMixin, Base):
+    __tablename__ = "licenses"
+    id: Mapped[str] = mapped_column(String(50), primary_key=True)  # legacy string PK (e.g. "CC-BY-4.0")
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    short_name: Mapped[str] = mapped_column(String(50), nullable=False)
+    url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 詳細列は ORM 参照
+```
+
+`Dataset.recorder_id` / `Dataset.license_id` は `VARCHAR(50)` の FK でこれらを参照する (UUID FK ではない)。詳細列定義は `apps/api/echoroo/models/{recorder,license}.py`、`Base.metadata` 機械抽出を真とする。
+
+---
+
+### 3.24 `annotations`（DB 真 drift reconcile、Phase 13 P1.5）
+
+**戦略**: DB 側 (detection-based 簡素な構造) を真とし、ORM を縮退 (recording_id / tag_id 等の冗長列を削除)。`0007_same_name_reconcile.py` で適用。
+
+DB 真の最小列体系:
+- `id` UUID PK
+- `detection_id` UUID FK → `detections.id` ON DELETE CASCADE (NOT NULL)
+- `created_by_id` UUID FK → `users.id`
+- `created_at` / `updated_at`
+- 業務列 (label / confidence 等は detection 側に集約)
+
+```python
+class Annotation(UUIDMixin, TimestampMixin, Base):
+    __tablename__ = "annotations"
+    detection_id: Mapped[UUID] = mapped_column(ForeignKey("detections.id", ondelete="CASCADE"), nullable=False)
+    created_by_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    # ORM 縮退: recording_id / tag_id 等の旧列は削除 (DB に存在しない)
+```
+
+recording-based 高機能 annotation 機能 (segments / tasks / sound_event 等) は **Phase 14+ で `recording_annotations` 別 table 化** で対応。詳細 schema は `apps/api/echoroo/models/annotation.py`、`Base.metadata` 機械抽出を真とする。
+
+---
+
+### 3.25 `tags`（ORM 真 drift reconcile、taxa-based、Phase 13 P1.5 で 5 段階 backfill）
+
+**戦略**: ORM 側 (taxa-based、UUID FK) を真とし、DB 側を 5 段階で backfill (v5-final §0.4)。`0007_same_name_reconcile.py` で適用。
+
+```python
+class Tag(UUIDMixin, TimestampMixin, Base):
+    __tablename__ = "tags"
+    project_id: Mapped[UUID] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)
+    parent_id: Mapped[UUID | None] = mapped_column(ForeignKey("tags.id"), nullable=True)
+    taxon_id: Mapped[UUID | None] = mapped_column(ForeignKey("taxa.id"), nullable=True)  # 5 段階 backfill 後 FK
+    gbif_taxon_key: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    scientific_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    common_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+```
+
+**5 段階 backfill** (v5-final §0.4):
+1. legacy `taxon_id` (str64) を `legacy_taxon_id` に rename
+2. UUID `taxon_id` 列を nullable で追加
+3. `parent_id` / `gbif_taxon_key` / `scientific_name` / `common_name` 追加
+4. `taxa.gbif_taxon_key` (int) と `legacy_taxon_id` (str64 = 数値文字列) を `~ '^[0-9]+$'` 正規表現でフィルタしつつ INTEGER cast で逆引き backfill。形式不正な legacy 値は NULL のまま (frontend が tag re-tagging で対応、Phase 14+)
+5. FK 追加 + `ix_tags_taxon_id` 作成 + `legacy_taxon_id` drop
+
+dev DB は data 0 件想定、production data 不在 (pre-launch) のため backfill 安全。
+
+**`taxa` テーブル**: Phase 13 P1 で baseline 統合、`gbif_taxon_key` int unique、`scientific_name` / `vernacular_name` 等を保持。詳細は `apps/api/echoroo/models/taxon.py`。
+
+---
+
+### 3.26 Supporting tables overview（Phase 13 P1 で baseline 統合、ORM canonical）
+
+§0 表 #29-#54 (clips / clip_annotations / annotation_projects / annotation_sets / annotation_segments / annotation_tasks / sound_event_annotations / sampling_rounds / search_sessions / evaluation_runs / embeddings / upload_sessions / upload_files / custom_models / notes 等) は **`Base.metadata` 機械抽出を真**とする (v5-final §2.6)。本 spec では各 column 詳細を列挙せず、対応 ORM file (`apps/api/echoroo/models/<table>.py`) を canonical reference とする。
+
+理由:
+1. Phase 13 P0a で `Base.metadata` から **静的 1 回生成** した `0006_schema_reconcile_static.py` が単一の真であり、spec で重複定義すると三方向乖離が再発する
+2. Phase 13 P5 normalized introspection が ORM ↔ DB の一致を CI で保証する (volatile 列 id/created_at/updated_at 除外、業務 key 比較)
+3. spec での詳細列挙は読み手の混乱と保守負荷を招く
+
+**新規 enum 17 件** + **enum widening** (`detectionsource` 4 値追加) は §0 末尾の一覧を参照。enum 実名は ORM canonical (`Enum(name=...)` 引数と一致、snake_case 統一)、`_create_enums()` helper の登録名は `grep -E "Enum\(.+ name=" apps/api/echoroo/models/` で検証する。
+
+---
+
 ## 4. Trigger / DB レベルロジック
 
 ### 4.1 Superuser 1→0 block（FR-111a）
@@ -893,6 +1129,85 @@ baseline migration 完成後、以下を CI で verify:
 3. 全 CHECK 制約 / unique / index が期待通り作成されている（`pg_catalog` クエリで assertion）
 4. Superuser trigger が動作（unit test で INSERT + DELETE シナリオ）
 5. Audit log の REVOKE が application DB user に適用（UPDATE / DELETE で error）
+
+---
+
+## 8a. Phase 13 schema reconcile rationale（Phase 1-12 累積整合化）
+
+Phase 1-12 の累積編集により、ORM (`apps/api/echoroo/models/*.py`) ↔ DB (`information_schema` / `pg_catalog`) ↔ spec (本 data-model.md) の三方向 schema 乖離が発生。Phase 13 で spec-first reconciliation 戦略 (新案 D、6 ラウンド Codex review GO 確定、`/tmp/plan-merged-v5-final.md`) により完全整合状態に reconcile する。
+
+### 経緯
+
+- Phase 1-2 baseline で `0001_initial_permissions_redesign.py` が 22 エンティティを CREATE。Phase 3-12 で順次拡張 (`0002` 〜 `0005`) が積み上がる過程で ORM と DB の同名 drift が複数発生
+- Phase 6 / Phase 11 ブラウザ Gate 3 (US1 Public 録音再生 / US2 Authenticated vote) が schema 不整合により 500 エラーで block
+- Phase 13 で **`Base.metadata` 機械抽出 + delta migration** によって fresh DB と既存 dev DB が同一最終形に到達することを保証
+
+### DB only テーブルの ORM 化 scope
+
+DB に存在するが ORM が存在しない (DB only) テーブルは合計 11 件:
+- **Phase 13 scope** (1 件): `detections` (ORM 化、`detectionsource` enum widening 含む)
+- **Phase 14+ scope** (10 件): `api_keys` 旧版 / `superusers` 旧版 / 各種 audit テーブル / refresh / token テーブル等 — raw SQL → ORM 化を将来 phase で順次実施
+
+### 同名 drift 戦略まとめ (v5-final §0.1)
+
+| Table | 戦略 | 適用 migration |
+|-------|------|----------------|
+| `annotations` | **DB 真** (detection-based)、ORM 縮退、recording-based 機能は Phase 14+ で `recording_annotations` 別 table 化 | `0007_same_name_reconcile.py` |
+| `tags` | **ORM 真** (taxa-based)、DB を 5 段階で backfill | `0007_same_name_reconcile.py` |
+| `annotation_votes` | **DB 真** (`voter_user_id` + `project_id`、`vote` smallint)、ORM rename + project_id 追加 | `0007_same_name_reconcile.py` |
+| `annotation_comments` | 整合済 no-op (確認のみ) | — |
+
+### Migration revision chain
+
+Phase 13 完了後の revision chain:
+
+```
+0001 → 0002 → 0003 → 0004 → 0005 → 0006 → 0006a → 0007 → 0008 → 0009
+```
+
+- `0001` baseline: 最終形 (全 supporting tables + 全 enums + datasets/recordings/sites の最終列) を含む。fresh DB は `0001` で完成、delta `0006-0009` は no-op
+- `0002`〜`0005`: Phase 3-12 で積み上がった既存 delta
+- `0006_schema_reconcile_static.py`: Phase 13 P0a で `Base.metadata` から静的 1 回生成 (ORM only 32 tables + 17 新規 enums + detections ORM)。以後 ORM 変更で migration 不変
+- `0006a_enum_widening.py`: Phase 13 P0b、`autocommit_block()` + `ADD VALUE IF NOT EXISTS` で `detectionsource` 4 値追加 (`perch`, `similarity_search`, `custom_svm`, `sampling_round`)
+- `0007_same_name_reconcile.py`: Phase 13 P1.5、annotations/tags/annotation_votes drift reconcile + services / repositories / API 追従 + annotation/vote API smoke 200 Gate
+- `0008_datasets_extension.py`: Phase 13 P2、datasets 14 列追加
+- `0009_recordings_legacy_rename.py`: Phase 13 P3、recordings legacy 命名 rename + extend + 制約
+
+### Baseline edit と delta migration の重複回避ルール
+
+**fresh DB は `0001 → 0009` を順次適用するため、`0006-0009` の各 delta は冪等でなければならない**:
+
+- `0006` の `op.create_table()` は `IF NOT EXISTS` 相当 (`op.execute("CREATE TABLE IF NOT EXISTS ...")` または手動 inspector check)
+- `0007` の rename / add column も `IF NOT EXISTS` / `IF EXISTS` ガード
+- `0006a` の `ALTER TYPE ADD VALUE` は既に `IF NOT EXISTS`
+- baseline `0001` は最終形を含み、delta は fresh DB では no-op
+- 既存 dev DB は `0005` まで適用済の状態から `0006-0009` を順次適用して fresh DB と同じ最終形に到達
+
+これにより fresh と既存 DB が `0009` 適用後に **完全に同一最終形** になる。
+
+### Volatile column normalize ルール (Phase 13 P5)
+
+`Alembic R3 normalized introspection` (P5 Gate) で fresh DB と既存 dev DB upgrade 後の 9 種比較を行う際、以下の volatile 列を除外して業務 key で比較:
+
+- `id` (UUID 自動生成、行ごとに異なる)
+- `created_at` / `updated_at` (timestamp、apply 時刻に依存)
+
+比較対象の 9 種:
+1. `information_schema.columns` (column 定義)
+2. `pg_constraint` (CHECK / UNIQUE / FK 定義)
+3. `pg_index` (predicate 含む)
+4. `pg_enum` (enum label set)
+5. FK ondelete 動作
+6. `pg_attribute.attnotnull`
+7. `pg_attrdef` (default 値)
+8. `pg_trigger`
+9. seed rows (volatile 列除外、業務 key で比較)
+
+### Phase 13 完了後の状態
+
+- ORM ↔ DB ↔ spec の三方向乖離ゼロ
+- Phase 6 / Phase 11 ブラウザ Gate 3 通過可 (Public project → site → dataset → recording upload → detection → vote → CSV export → auto-obscure map 完走)
+- 残課題: API contract cleanup (Phase 13 P7、`duration_seconds` API alias は wire compat 維持、削除は後日 deprecation cycle で実施)
 
 ---
 
