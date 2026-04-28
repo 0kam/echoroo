@@ -52,6 +52,9 @@ from echoroo.models.enums import (
     SettingType,
     SignalQuality,
     TagCategory,
+    TaxonOverrideApprovalStatus,
+    TaxonOverrideDirection,
+    TaxonSensitivitySource,
     UploadFileStatus,
     UploadSessionStatus,
     VoteType,
@@ -61,10 +64,12 @@ from echoroo.models.evaluation import (
     EvaluationRun,
     EvaluationRunStatus,
 )
+from echoroo.models.iucn_sync_attempt import IucnSyncAttempt
 from echoroo.models.license import License
 from echoroo.models.note import Note
 from echoroo.models.password_reset_token import PasswordResetToken
 from echoroo.models.project import Project, ProjectInvitation, ProjectLicenseHistory, ProjectMember
+from echoroo.models.project_taxon_override import ProjectTaxonSensitivityOverride
 from echoroo.models.project_trusted_user import ProjectTrustedUser
 from echoroo.models.recorder import Recorder
 from echoroo.models.recording import Recording
@@ -76,6 +81,7 @@ from echoroo.models.sound_event_annotation import SoundEventAnnotation, sound_ev
 from echoroo.models.system import SystemSetting
 from echoroo.models.tag import Tag
 from echoroo.models.taxon import Taxon
+from echoroo.models.taxon_sensitivity import TaxonSensitivity
 from echoroo.models.taxon_vernacular_name import TaxonVernacularName
 from echoroo.models.upload import UploadFile, UploadSession
 from echoroo.models.user import User
@@ -94,6 +100,7 @@ __all__ = [
     "ProjectInvitation",
     "ProjectLicenseHistory",
     "ProjectMember",
+    "ProjectTaxonSensitivityOverride",
     "ProjectTrustedUser",
     "PasswordResetToken",
     "Recorder",
@@ -115,7 +122,10 @@ __all__ = [
     "TimeRangeAnnotation",
     # Taxon models
     "Taxon",
+    "TaxonSensitivity",
     "TaxonVernacularName",
+    # Taxon-driven auto-obscure (Phase 11)
+    "IucnSyncAttempt",
     # Detection review models (003-detection-review)
     "Annotation",
     "AnnotationComment",
@@ -154,6 +164,10 @@ __all__ = [
     "ProjectTrustedStatus",
     "ProjectVisibility",
     "SettingType",
+    # Enums (taxon sensitivity)
+    "TaxonOverrideApprovalStatus",
+    "TaxonOverrideDirection",
+    "TaxonSensitivitySource",
     # Enums (annotation)
     "AnnotationProjectVisibility",
     "AnnotationSegmentStatus",

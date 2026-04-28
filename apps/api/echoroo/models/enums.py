@@ -192,6 +192,48 @@ class AnnotationVoteSource(StrEnum):
     TRUSTED_USER = "trusted_user"
 
 
+class TaxonSensitivitySource(StrEnum):
+    """Source of a global :class:`TaxonSensitivity` row (FR-032).
+
+    The auto-obscure pipeline (FR-029..032) ranks rows so that ``manual`` wins
+    over ``moe_rdb`` which wins over ``iucn`` when computing the effective
+    masking resolution for a taxon (spec L313-365 ``compute_effective_resolution``).
+    """
+
+    IUCN = "iucn"
+    MOE_RDB = "moe_rdb"
+    MANUAL = "manual"
+
+
+class TaxonOverrideDirection(StrEnum):
+    """Direction of a per-project taxon sensitivity override (FR-033).
+
+    ``stricter`` means the project owner increases masking (lower H3 res);
+    these apply immediately. ``looser`` means the owner relaxes masking
+    (higher H3 res); these require superuser approval (FR-034) and may be
+    rejected, captured by the companion
+    :class:`TaxonOverrideApprovalStatus` enum.
+    """
+
+    STRICTER = "stricter"
+    LOOSER = "looser"
+
+
+class TaxonOverrideApprovalStatus(StrEnum):
+    """Approval lifecycle for a project taxon override (FR-034).
+
+    A ``stricter`` override is always created with ``applied`` (no approval
+    needed). A ``looser`` override is created with ``pending_superuser_approval``
+    and transitions to ``applied`` once a superuser approves, or ``rejected``
+    if denied. The CHECK constraint ``ck_taxon_overrides_direction_vs_approval``
+    in the baseline migration enforces these legal combinations.
+    """
+
+    APPLIED = "applied"
+    PENDING_SUPERUSER_APPROVAL = "pending_superuser_approval"
+    REJECTED = "rejected"
+
+
 class SignalQuality(StrEnum):
     """Signal quality assessment for agree votes.
 
