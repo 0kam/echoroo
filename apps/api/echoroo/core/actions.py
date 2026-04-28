@@ -452,28 +452,31 @@ PROJECT_TAXON_OVERRIDE_REJECT_ACTION: Action = register_action(
 
 # Phase 12 / T702 — superuser-only project lifecycle (FR-061 / FR-062). Both
 # actions are project-scope (a project_id is required to lock the row and
-# write a project_audit_log entry) but ``SUPERUSER_PROJECT_SCOPE_ALLOWLIST``
-# (FR-008b) short-circuits the matrix check for the superuser. Non-superuser
-# callers fail closed via the sentinel ``EDIT_PROJECT`` permission, which is
-# Owner-only for archived rows in the matrix and is redundantly blocked by
-# Step 1 (archived block) for the restore endpoint.
+# write a project_audit_log entry) but they MUST NEVER be reachable via the
+# normal Matrix path — an Owner who happens to satisfy the nominal
+# ``EDIT_PROJECT`` permission must NOT be able to archive their own project.
+# Phase 12 R1 致命 C1 fix: we mark both actions ``is_superuser_only=True``
+# so :func:`echoroo.core.permissions.is_allowed` Step 0c hard-fails any
+# non-superuser caller before the Matrix check is consulted.
+# ``SUPERUSER_PROJECT_SCOPE_ALLOWLIST`` (FR-008b) provides the positive
+# branch for superusers via Step 0b. The ``required_permission`` slot
+# below is a sentinel that would only be evaluated if both Step 0b and
+# Step 0c were bypassed — neither happens in practice.
 PROJECT_ARCHIVE_ACTION: Action = register_action(
     Action(
         name="project.archive",
         required_permission=Permission.EDIT_PROJECT,
         is_mutating=True,
+        is_superuser_only=True,
     )
 )
 
 PROJECT_RESTORE_ACTION: Action = register_action(
     Action(
         name="project.restore",
-        # ``project.restore`` lives in ``SUPERUSER_PROJECT_SCOPE_ALLOWLIST``
-        # so the superuser branch (FR-008b) bypasses the matrix; the
-        # sentinel value below is what a non-superuser caller would be
-        # checked against and must fail (Owner-only matrix cell).
         required_permission=Permission.EDIT_PROJECT,
         is_mutating=True,
+        is_superuser_only=True,
     )
 )
 

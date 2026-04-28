@@ -260,27 +260,34 @@ async def test_happy_path_transfer(db_session: AsyncSession) -> None:
 
 
 @pytest.mark.asyncio
-async def test_idempotency_replay_requires_audit_log_table(db_session: AsyncSession) -> None:
-    """Verify idempotency replay detection depends on project_audit_log table.
+async def test_idempotency_replay_via_outbox_dedupe(db_session: AsyncSession) -> None:
+    """Phase 12 R1 C3: idempotency replay uses outbox UNIQUE constraint in-TX.
 
-    The ``_find_idempotent_replay`` helper reads ``project_audit_log`` to
-    detect prior transfers with the same idempotency_key. When
-    ``trigger_post_commit_side_effects`` is called after a successful
-    transfer, a row is written to the audit table and subsequent calls
-    with the same key + same target return ``replayed=True``.
+    The previous implementation read ``project_audit_log`` from a sibling
+    AsyncSession after the main TX committed; that left a window where
+    two concurrent callers could both pass the dedupe check before
+    either audit row was written. The new implementation issues an
+    ``INSERT ... ON CONFLICT DO NOTHING`` against ``outbox_events`` from
+    inside the transfer's transaction, so the UNIQUE constraint is the
+    sole source of truth.
 
-    This test verifies the first (non-replay) transfer completes
-    successfully and returns ``replayed=False``.  Full idempotency
-    (replayed=True) requires the ``project_audit_log`` table and
-    ``trigger_post_commit_side_effects`` to be called, which is tested
-    at the integration level by the contract tests.
+    Test plan:
+      1. First call — succeeds with ``replayed=False`` and inserts the
+         outbox row.
+      2. Second call with the SAME key + SAME target — reads the outbox
+         row inside the new TX and returns ``replayed=True`` with the
+         original ``previous_owner_id``.
+      3. Third call with the SAME key + DIFFERENT target — raises
+         ``TransferConflictError`` (HTTP 409 envelope).
     """
-    import echoroo.services.ownership_service as ownership_mod
-
     owner = await _create_user(db_session, email="t703_owner_idem@example.com")
     admin = await _create_user(db_session, email="t703_admin_idem@example.com")
+    other_admin = await _create_user(
+        db_session, email="t703_other_admin_idem@example.com"
+    )
     project = await _create_project(db_session, owner=owner)
     await _add_admin(db_session, project=project, user=admin)
+    await _add_admin(db_session, project=project, user=other_admin)
     await db_session.commit()
 
     test_engine = create_async_engine(TEST_DATABASE_URL, echo=False, poolclass=NullPool)
@@ -288,14 +295,6 @@ async def test_idempotency_replay_requires_audit_log_table(db_session: AsyncSess
         test_engine, class_=AsyncSession, expire_on_commit=False
     )
     key = f"t703-idem-{uuid4()}"
-
-    @asynccontextmanager  # type: ignore[arg-type]
-    async def _test_session_local() -> Any:
-        async with test_factory() as s:
-            yield s
-
-    original_asl = ownership_mod.AsyncSessionLocal
-    ownership_mod.AsyncSessionLocal = _test_session_local  # type: ignore[assignment]
 
     try:
         # First call — must succeed with replayed=False.
@@ -323,8 +322,36 @@ async def test_idempotency_replay_requires_audit_log_table(db_session: AsyncSess
             assert updated_project.owner_id == admin.id, (
                 "project.owner_id must be updated after a successful transfer"
             )
+
+        # Second call: same key + same target → replay (no mutation).
+        async with test_factory() as session:
+            replay_outcome = await transfer_ownership(
+                session,
+                project_id=project.id,
+                # New requester is the new owner now (admin); same key.
+                new_owner_user_id=admin.id,
+                requester_id=admin.id,
+                idempotency_key=key,
+            )
+            await session.commit()
+
+        assert replay_outcome.replayed is True
+        assert replay_outcome.new_owner_id == admin.id
+        # previous_owner_id is echoed from the original transfer payload.
+        assert replay_outcome.previous_owner_id == owner.id
+
+        # Third call: same key + DIFFERENT target → 409 ERR_CONFLICT.
+        async with test_factory() as session:
+            with pytest.raises(TransferConflictError):
+                await transfer_ownership(
+                    session,
+                    project_id=project.id,
+                    new_owner_user_id=other_admin.id,
+                    requester_id=admin.id,
+                    idempotency_key=key,
+                )
+            await session.rollback()
     finally:
-        ownership_mod.AsyncSessionLocal = original_asl  # type: ignore[assignment]
         await test_engine.dispose()
 
 
@@ -541,4 +568,241 @@ async def test_concurrent_same_key_same_target_succeeds_once(db_session: AsyncSe
             )
     finally:
         ownership_mod.AsyncSessionLocal = original_asl  # type: ignore[assignment]
+        await test_engine.dispose()
+
+
+# ---------------------------------------------------------------------------
+# T703-E: Phase 12 R1 Major M4 — fast race-coverage cases (no slow mark)
+#
+# The 1 000-coroutine stress test is gated by ``pytest.mark.slow`` so the
+# bulk path only runs in long CI shards. The five compact cases below
+# exercise the same advisory-lock + idempotency + 409 fan-out invariants
+# at a cardinality that fits inside the standard test suite. They all
+# run against the real PostgreSQL test DB (the dedupe pivots on the
+# outbox UNIQUE constraint enforced by Postgres).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_concurrent_two_transfers_one_winner(db_session: AsyncSession) -> None:
+    """Two parallel transfers to the SAME target → exactly 1 OK + 1 conflict.
+
+    Phase 12 R1 M4 fast-case: two coroutines race on the advisory lock.
+    The loser MUST get TransferConflictError (idempotency replay if same
+    key, owner-changed conflict if different key) — never a silent
+    second mutation.
+    """
+    owner = await _create_user(db_session, email="t703_m4a_owner@example.com")
+    admin = await _create_user(db_session, email="t703_m4a_admin@example.com")
+    project = await _create_project(db_session, owner=owner)
+    await _add_admin(db_session, project=project, user=admin)
+    await db_session.commit()
+
+    test_engine = create_async_engine(
+        TEST_DATABASE_URL, echo=False, pool_size=4, max_overflow=4
+    )
+    test_factory = async_sessionmaker(
+        test_engine, class_=AsyncSession, expire_on_commit=False
+    )
+    results: list[str] = []
+
+    async def attempt(idem_suffix: str) -> None:
+        try:
+            async with test_factory() as session:
+                outcome = await transfer_ownership(
+                    session,
+                    project_id=project.id,
+                    new_owner_user_id=admin.id,
+                    requester_id=owner.id,
+                    idempotency_key=f"t703-m4a-{idem_suffix}",
+                )
+                await session.commit()
+            results.append("ok" if not outcome.replayed else "replayed")
+        except (TransferConflictError, InvalidTransferTargetError):
+            results.append("conflict")
+        except OperationalError:
+            results.append("error")
+
+    try:
+        await asyncio.gather(attempt("A"), attempt("B"))
+    finally:
+        await test_engine.dispose()
+
+    counts = Counter(results)
+    # Exactly one mutation must have committed; the other races on the
+    # post-FOR-UPDATE owner_id check (Phase 12 R1 C2) and surfaces
+    # ``conflict`` (TransferConflictError → 409 ERR_CONFLICT).
+    assert counts.get("ok", 0) == 1, (
+        f"M4: expected exactly 1 winner, got distribution {dict(counts)}"
+    )
+    assert counts.get("conflict", 0) + counts.get("error", 0) == 1, (
+        f"M4: expected 1 loser, got distribution {dict(counts)}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_non_owner_requester_rejected_after_for_update(
+    db_session: AsyncSession,
+) -> None:
+    """Phase 12 R1 致命 C2: non-owner requester is rejected post-lock.
+
+    The endpoint's ``gate_action()`` would normally fail any non-owner
+    upstream, but C2 specifically asks for the SERVICE-LAYER guard so a
+    racing transfer that flips owner_id between the gate check and the
+    SELECT FOR UPDATE cannot slip through. We simulate that by calling
+    the service directly with a stale ``requester_id``.
+    """
+    owner = await _create_user(db_session, email="t703_m4b_owner@example.com")
+    admin = await _create_user(db_session, email="t703_m4b_admin@example.com")
+    other_user = await _create_user(
+        db_session, email="t703_m4b_other@example.com"
+    )
+    project = await _create_project(db_session, owner=owner)
+    await _add_admin(db_session, project=project, user=admin)
+    await db_session.commit()
+
+    test_engine = create_async_engine(TEST_DATABASE_URL, echo=False, poolclass=NullPool)
+    test_factory = async_sessionmaker(
+        test_engine, class_=AsyncSession, expire_on_commit=False
+    )
+
+    try:
+        async with test_factory() as session:
+            with pytest.raises(TransferConflictError):
+                await transfer_ownership(
+                    session,
+                    project_id=project.id,
+                    new_owner_user_id=admin.id,
+                    # ``other_user`` is NOT the owner of the project.
+                    requester_id=other_user.id,
+                    idempotency_key=f"t703-m4b-{uuid4()}",
+                )
+            await session.rollback()
+    finally:
+        await test_engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_non_admin_target_returns_invalid_transfer(
+    db_session: AsyncSession,
+) -> None:
+    """FR-057 fast case: non-Admin target → InvalidTransferTargetError (400).
+
+    Same intent as ``test_invalid_transfer_target_returns_400`` above
+    but bundled into the M4 fast-cases set so the suite covers the full
+    400/403/409 envelope grid in one place.
+    """
+    owner = await _create_user(db_session, email="t703_m4c_owner@example.com")
+    member = await _create_user(db_session, email="t703_m4c_member@example.com")
+    project = await _create_project(db_session, owner=owner)
+    db_session.add(
+        ProjectMember(
+            project_id=project.id,
+            user_id=member.id,
+            role=ProjectMemberRole.MEMBER,
+            invited_by_id=owner.id,
+        )
+    )
+    await db_session.commit()
+
+    test_engine = create_async_engine(TEST_DATABASE_URL, echo=False, poolclass=NullPool)
+    test_factory = async_sessionmaker(
+        test_engine, class_=AsyncSession, expire_on_commit=False
+    )
+    try:
+        async with test_factory() as session:
+            with pytest.raises(InvalidTransferTargetError):
+                await transfer_ownership(
+                    session,
+                    project_id=project.id,
+                    new_owner_user_id=member.id,
+                    requester_id=owner.id,
+                    idempotency_key=f"t703-m4c-{uuid4()}",
+                )
+            await session.rollback()
+    finally:
+        await test_engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_replay_same_key_same_target_returns_replayed_true(
+    db_session: AsyncSession,
+) -> None:
+    """Same idempotency key + same target → replayed=True (no second mutation).
+
+    Phase 12 R1 致命 C3 fast-case: the in-TX outbox dedupe rejects the
+    second INSERT and the service returns the cached payload.
+    """
+    owner = await _create_user(db_session, email="t703_m4d_owner@example.com")
+    admin = await _create_user(db_session, email="t703_m4d_admin@example.com")
+    project = await _create_project(db_session, owner=owner)
+    await _add_admin(db_session, project=project, user=admin)
+    await db_session.commit()
+
+    test_engine = create_async_engine(TEST_DATABASE_URL, echo=False, poolclass=NullPool)
+    test_factory = async_sessionmaker(
+        test_engine, class_=AsyncSession, expire_on_commit=False
+    )
+    key = f"t703-m4d-{uuid4()}"
+
+    try:
+        async with test_factory() as session:
+            first = await transfer_ownership(
+                session,
+                project_id=project.id,
+                new_owner_user_id=admin.id,
+                requester_id=owner.id,
+                idempotency_key=key,
+            )
+            await session.commit()
+        assert first.replayed is False
+
+        async with test_factory() as session:
+            replay = await transfer_ownership(
+                session,
+                project_id=project.id,
+                new_owner_user_id=admin.id,
+                # The new owner (admin) is the requester for the replay.
+                requester_id=admin.id,
+                idempotency_key=key,
+            )
+            await session.commit()
+        assert replay.replayed is True
+        assert replay.new_owner_id == admin.id
+        assert replay.previous_owner_id == owner.id
+    finally:
+        await test_engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_no_op_self_transfer_returns_invalid(
+    db_session: AsyncSession,
+) -> None:
+    """new_owner_user_id == current owner → InvalidTransferTargetError.
+
+    The service layer rejects a self-targeted transfer before issuing
+    the SELECT FOR UPDATE on ``project_members`` (Phase 12 R1 M4 fast
+    case). A no-op transfer would otherwise consume the idempotency
+    slot for nothing.
+    """
+    owner = await _create_user(db_session, email="t703_m4e_owner@example.com")
+    project = await _create_project(db_session, owner=owner)
+    await db_session.commit()
+
+    test_engine = create_async_engine(TEST_DATABASE_URL, echo=False, poolclass=NullPool)
+    test_factory = async_sessionmaker(
+        test_engine, class_=AsyncSession, expire_on_commit=False
+    )
+    try:
+        async with test_factory() as session:
+            with pytest.raises(InvalidTransferTargetError):
+                await transfer_ownership(
+                    session,
+                    project_id=project.id,
+                    new_owner_user_id=owner.id,  # self
+                    requester_id=owner.id,
+                    idempotency_key=f"t703-m4e-{uuid4()}",
+                )
+            await session.rollback()
+    finally:
         await test_engine.dispose()

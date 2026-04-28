@@ -405,24 +405,24 @@ async def test_emit_followup_stage_grace_expired() -> None:
 # ---------------------------------------------------------------------------
 
 
-async def test_idempotency_key_format_same_day() -> None:
-    """Two _enqueue_stage calls on the same UTC day produce the same idempotency key.
+async def test_idempotency_key_format_per_stage_only() -> None:
+    """Two _enqueue_stage calls for the same (project, stage) reuse the same key.
 
-    FR-076a: the outbox idempotency key uses
-    ``dormancy:{project_id}:{stage}:{YYYY-MM-DD}`` so two beat ticks on
-    the same day collapse to a single row via ON CONFLICT DO UPDATE.
-
-    This test validates the KEY FORMAT by calling _enqueue_stage twice
-    with the same day and checking that both calls use the same
-    idempotency key (enforcing the deduplication contract at the
-    caller layer).
+    Phase 12 R1 M2: the outbox idempotency key uses
+    ``dormancy:{project_id}:{stage}`` (no date component). Every beat
+    tick after the first collapses on the unique constraint regardless
+    of which UTC day it lands on. This test validates the KEY FORMAT by
+    calling _enqueue_stage twice with the same stage but different
+    dates and asserting both calls use the same key (so the second call
+    is guaranteed to be a no-op via ON CONFLICT DO NOTHING semantics
+    when paired with outbox_service).
     """
-    now = datetime(2025, 6, 9, 12, 0, 0, tzinfo=UTC)
-    now2 = datetime(2025, 6, 9, 23, 59, 59, tzinfo=UTC)  # same UTC day
+    day_1 = datetime(2025, 6, 9, 12, 0, 0, tzinfo=UTC)
+    day_2 = datetime(2025, 6, 10, 9, 0, 0, tzinfo=UTC)  # next UTC day
 
     project = _make_project(
         status=ProjectStatus.DORMANT,
-        dormant_since=now - timedelta(hours=1),
+        dormant_since=day_1 - timedelta(hours=1),
     )
     owner = _make_user()
 
@@ -441,13 +441,23 @@ async def test_idempotency_key_format_same_day() -> None:
     session = _FakeSession()
 
     with patch("echoroo.workers.dormancy_check.enqueue", new=fake_enqueue):
-        await _enqueue_stage(session, project=project, owner=owner, stage="stage_initial", now=now)
-        await _enqueue_stage(session, project=project, owner=owner, stage="stage_initial", now=now2)
+        await _enqueue_stage(
+            session, project=project, owner=owner, stage="stage_initial", now=day_1
+        )
+        await _enqueue_stage(
+            session, project=project, owner=owner, stage="stage_initial", now=day_2
+        )
 
     assert len(collected_keys) == 2, "Expected two enqueue calls"
     assert collected_keys[0] == collected_keys[1], (
-        f"Both calls on the same UTC day must use the same idempotency key "
+        f"Both calls for the same (project, stage) must reuse the same "
+        f"idempotency key irrespective of date "
         f"(got {collected_keys[0]!r} vs {collected_keys[1]!r})"
+    )
+    # Key MUST NOT contain a date marker (no YYYY-MM-DD suffix).
+    assert "2025-" not in collected_keys[0], (
+        f"Idempotency key must not include a date component "
+        f"(got {collected_keys[0]!r})"
     )
 
 

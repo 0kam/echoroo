@@ -736,6 +736,17 @@ def is_allowed(
         # path below — they effectively map to Owner on the target project
         # (FR-112a), but still go through the Matrix + Response filter.
 
+    # --- Step 0c: superuser-only project-scope hard-fail (Phase 12 R1 C1) ----
+    # Project-scope actions flagged ``is_superuser_only=True`` MUST never
+    # reach the Matrix path: an Owner that holds the action's nominal
+    # ``required_permission`` (e.g. EDIT_PROJECT) would otherwise pass
+    # the Step-4 Matrix check and execute the action without proving
+    # superuser status. We fail closed here so a non-superuser caller
+    # cannot escalate via a project-role coincidence.
+    if action.is_superuser_only and not (user is not None and _is_superuser(user)):
+        _stash_state(request, effective=frozenset(), normalized_role="Authenticated")
+        return False, frozenset()
+
     # project is required for project-scope actions from here on.
     if project is None:
         return False, frozenset()

@@ -19,11 +19,13 @@ exhibited *first-party* activity within the FR-060 window (``366d``,
 Activity calculation (FR-060)
 -----------------------------
 ``dormant_threshold = max(users.last_login_at, users.last_first_party_activity_at)``.
-Programmatic API hits update only ``last_login_at`` (Bearer auth path)
-or nothing at all (the spec says programmatic-only activity does not
-prevent dormancy). We therefore evaluate against
-``last_first_party_activity_at`` ALONE so a user that hits the API with
-an API key for a year still trips dormancy on schedule.
+The Owner is dormant when the most recent of the two timestamps falls
+older than ``now - 366d`` (Phase 12 R1 Major M3). When both columns are
+NULL we fall back to ``users.created_at`` so a freshly registered user
+who never logs in does NOT escape dormancy on a technicality. This
+keeps parity with the spec wording and makes the SQL filter robust
+against API-only callers that update ``last_login_at`` but leave
+``last_first_party_activity_at`` NULL forever.
 
 Single-worker invariant
 -----------------------
@@ -43,6 +45,7 @@ from typing import Any, Final
 
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import lazyload
 
 from echoroo.core.database import AsyncSessionLocal
 from echoroo.core.text import has_control_chars
@@ -145,15 +148,22 @@ async def _scan_active_projects(
     ``ProjectStatus.ACTIVE`` rows — already-dormant projects are
     re-evaluated by :func:`_emit_followup_stages`.
     """
+    # FR-060 (Phase 12 R1 M3): the Owner is dormant when
+    #   GREATEST(last_login_at, last_first_party_activity_at) < cutoff
+    # We coalesce each column to ``users.created_at`` so a brand-new user
+    # that has never logged in or hit a first-party endpoint still trips
+    # the cutoff on schedule (the spec wording forbids "registered last
+    # week, never came back" from escaping dormancy detection).
+    cutoff_metric = sa.func.greatest(
+        sa.func.coalesce(User.last_login_at, User.created_at),
+        sa.func.coalesce(User.last_first_party_activity_at, User.created_at),
+    )
     stmt = (
         sa.select(Project, User)
         .join(User, User.id == Project.owner_id)
         .where(
             Project.status == ProjectStatus.ACTIVE,
-            sa.or_(
-                User.last_first_party_activity_at.is_(None),
-                User.last_first_party_activity_at < cutoff,
-            ),
+            cutoff_metric < cutoff,
         )
     )
     result = await session.execute(stmt)
@@ -173,8 +183,12 @@ async def _flip_to_dormant(
     the bool to drive metrics). The function is idempotent: a row that
     is already dormant returns False and does not re-enqueue.
     """
+    # ``lazyload`` on the ``owner`` relationship suppresses the LEFT
+    # OUTER JOIN that SQLAlchemy would otherwise emit; PostgreSQL
+    # rejects ``FOR UPDATE`` on the nullable side of an outer join.
     locked_stmt = (
         sa.select(Project)
+        .options(lazyload(Project.owner))
         .where(Project.id == project.id)
         .with_for_update()
     )
@@ -221,12 +235,15 @@ async def _enqueue_stage(
         "evaluated_at": _sanitise_field(now.isoformat(), field_name="evaluated_at"),
     }
 
-    # FR-076a idempotency: per (project, stage) within the day. Two beat
-    # ticks in the same UTC day collapse on ``ON CONFLICT (idempotency_key)
-    # DO UPDATE`` (see :func:`echoroo.services.outbox_service.enqueue`).
-    idempotency_key = (
-        f"dormancy:{project.id}:{stage}:{now.strftime('%Y-%m-%d')}"
-    )
+    # FR-076a idempotency (Phase 12 R1 M2): per (project, stage) — not
+    # per-day. Each stage MUST emit at most ONE notification per project
+    # for the lifetime of the row's dormancy episode. Including the day
+    # in the key would cause every subsequent beat tick to enqueue a
+    # fresh row (the outbox ON CONFLICT branch updates retry_count to a
+    # no-op so the dispatcher would still see new rows for already-sent
+    # stages). The unique-by-(project, stage) key collapses every retry
+    # past the first into a no-op, eliminating the daily spam.
+    idempotency_key = f"dormancy:{project.id}:{stage}"
     await enqueue(
         session,
         event_type=OUTBOX_EVENT_DORMANCY,

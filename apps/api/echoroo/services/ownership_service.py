@@ -34,20 +34,25 @@ Concurrency model (FR-058)
 2. ``SELECT ... FOR UPDATE`` against the project + ``project_members``
    row locks the rows for the duration of the transaction so a concurrent
    role change cannot demote the prospective new Owner mid-flight.
-3. ``X-Idempotency-Key`` is recorded inside ``superuser_approval_requests``
-   via the existing ``ON CONFLICT (idempotency_key) DO UPDATE`` pattern
-   exposed by the outbox (here we go through the simpler dedicated row
-   in the dedicated dedupe table). For Phase 12 Batch 1 we keep the
-   dedupe inside the ``project_audit_log.detail`` payload — the audit
-   row's ``idempotency_key`` field is consulted on replay so the second
-   call returns the first call's outcome without performing a second
-   mutation. The audit row's append-only nature means the dedupe key is
-   immutable by construction (FR-092).
+3. ``X-Idempotency-Key`` is dedupe'd via a dedicated ``outbox_events``
+   row written **inside the same transaction** as the ``projects.owner_id``
+   mutation (Phase 12 R1 致命 C3 fix). The outbox table carries a
+   ``UNIQUE`` constraint on ``idempotency_key``; we INSERT ``ON CONFLICT
+   DO NOTHING`` and inspect ``RETURNING id`` — when no id is returned
+   we know a prior transfer already consumed the key and we route to
+   the replay branch. The same TX also writes the canonical ownership
+   transfer notification, so the persistence guarantee piggybacks on
+   FR-076a (the outbox dispatcher will deliver the notification iff
+   the owner_id mutation committed). Audit log + outbound side-effects
+   are still written post-commit through fresh sessions because the
+   audit chain helper requires ``SET TRANSACTION ISOLATION LEVEL
+   SERIALIZABLE`` to be the first statement on its connection.
 """
 
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -63,6 +68,15 @@ from echoroo.core.database import AsyncSessionLocal
 from echoroo.models.enums import ProjectMemberRole
 from echoroo.models.project import Project, ProjectMember
 from echoroo.services.audit_service import AuditLogService
+
+# Outbox event_type used as the in-TX idempotency marker. The outbox
+# dispatcher (Phase 13+) consumes the same row to email participants.
+_OWNERSHIP_TRANSFER_EVENT_TYPE: str = "project.ownership_transfer"
+
+# Idempotency-key prefix scoped to ownership transfer so the (UNIQUE)
+# outbox key namespace cannot collide with caller-chosen keys for other
+# event types.
+_IDEMPOTENCY_KEY_PREFIX: str = "ownership_transfer:"
 
 logger = logging.getLogger(__name__)
 
@@ -96,10 +110,16 @@ class InvalidTransferTargetError(OwnershipTransferError):
 class TransferConflictError(OwnershipTransferError):
     """Concurrent transfer race detected.
 
-    Mapped to HTTP ``409 ERR_CONFLICT``. Raised when the idempotency key
-    has already been consumed by a prior transfer with a *different*
-    target (replays of the same target succeed silently and return the
-    original outcome).
+    Mapped to HTTP ``409 ERR_CONFLICT``. Raised when:
+
+    * the idempotency key has already been consumed by a prior transfer
+      with a *different* target (replays of the same target succeed
+      silently and return the original outcome), OR
+    * the requester is no longer the Owner of the project at the moment
+      the SELECT FOR UPDATE returned (Phase 12 R1 C2 fix). The second
+      case implies a faster concurrent transfer already moved
+      ``projects.owner_id`` to someone else; we surface 409 (rather than
+      403) so the caller knows the conflict is racing-not-permission.
     """
 
 
@@ -207,6 +227,23 @@ async def transfer_ownership(
 
     now_eff = now or datetime.now(UTC)
 
+    # Phase 12 R1 Minor m1 note on isolation level
+    # ----------------------------------------------
+    # PostgreSQL only accepts ``SET TRANSACTION ISOLATION LEVEL
+    # SERIALIZABLE`` as the FIRST statement on a connection. Production
+    # endpoints invoke this service from a fresh ``DbSession`` so the
+    # caller MAY upgrade the isolation level upstream (e.g. via a
+    # FastAPI dependency that wraps the session). We deliberately do
+    # NOT issue the SET here because:
+    #   * the advisory lock acquired immediately below serialises every
+    #     conflicting transfer on the per-project scope (FR-058), and
+    #   * the in-TX outbox UNIQUE constraint provides the cross-key
+    #     dedupe semantic regardless of the isolation level.
+    # The combination is equivalent to a SERIALIZABLE TX from the
+    # caller's perspective for the specific invariants the spec
+    # requires (no double-write, idempotent replay). Test fixtures
+    # therefore do not need a fresh connection to exercise the path.
+
     # 1. Advisory lock — auto-released on COMMIT / ROLLBACK.
     await session.execute(
         sa.text("SELECT pg_advisory_xact_lock(:k)"),
@@ -230,24 +267,92 @@ async def transfer_ownership(
 
     previous_owner_id: UUID = project.owner_id
 
-    # 3. Idempotency replay detection — look for a prior audit row that
-    # carries the same idempotency_key. The audit table is append-only
-    # so the row's existence is a durable marker.
-    replay_outcome = await _find_idempotent_replay(
-        idempotency_key=idempotency_key,
-        project_id=project_id,
+    # 3. Phase 12 R1 致命 C2: re-verify the requester is STILL the Owner
+    # *after* the FOR UPDATE returned. If a faster concurrent transfer
+    # already moved ``projects.owner_id`` to someone else, the
+    # gate_action() check the endpoint performed earlier (before the
+    # advisory lock was acquired) is stale; surface 409 so the loser of
+    # the race cannot accidentally write a transfer for which they no
+    # longer hold the Owner role.
+    if previous_owner_id != requester_id:
+        raise TransferConflictError(
+            f"requester {requester_id} is not the current owner of project "
+            f"{project_id} (current owner: {previous_owner_id}); a concurrent "
+            "transfer already changed ownership",
+        )
+
+    # 4. Phase 12 R1 致命 C3: in-TX idempotency dedupe via outbox row.
+    # We insert a row into ``outbox_events`` with a deterministic
+    # ``idempotency_key`` and ``ON CONFLICT DO NOTHING``. When the
+    # RETURNING clause yields no row, a prior transfer already consumed
+    # the key and we resolve the replay outcome from the existing row's
+    # payload. The outbox UNIQUE constraint is enforced inside the
+    # current transaction so two parallel callers cannot both insert.
+    #
+    # The ``outbox_events.idempotency_key`` column is VARCHAR(128); we
+    # therefore SHA-256 the user-supplied key together with the
+    # project_id and store the hex digest as the unique slot. The hash
+    # collapses arbitrary-length caller keys into a fixed 64-char tail
+    # while preserving the spec's per-(project, key) namespace.
+    key_digest = hashlib.sha256(
+        f"{project_id}:{idempotency_key}".encode()
+    ).hexdigest()
+    scoped_idem_key = f"{_IDEMPOTENCY_KEY_PREFIX}{key_digest}"
+    transfer_payload: dict[str, Any] = {
+        "project_id": str(project_id),
+        "previous_owner_id": str(previous_owner_id),
+        "new_owner_id": str(new_owner_user_id),
+        "actor_user_id": str(requester_id),
+        "idempotency_key": idempotency_key,
+        "request_id": request_id,
+        "evaluated_at": now_eff.isoformat(),
+    }
+    insert_result = await session.execute(
+        sa.text(
+            """
+            INSERT INTO outbox_events
+                (event_type, payload, status, retry_count, next_retry_at,
+                 idempotency_key, created_at)
+            VALUES
+                (:event_type, CAST(:payload AS JSONB), 'pending', 0,
+                 :next_retry_at, :idempotency_key, :created_at)
+            ON CONFLICT (idempotency_key) DO NOTHING
+            RETURNING id
+            """
+        ),
+        {
+            "event_type": _OWNERSHIP_TRANSFER_EVENT_TYPE,
+            "payload": json.dumps(
+                transfer_payload,
+                sort_keys=True,
+                separators=(",", ":"),
+                default=str,
+            ),
+            "next_retry_at": now_eff,
+            "idempotency_key": scoped_idem_key,
+            "created_at": now_eff,
+        },
     )
-    if replay_outcome is not None:
-        cached_target, cached_previous = replay_outcome
-        if cached_target != new_owner_user_id:
+    inserted_row = insert_result.first()
+    if inserted_row is None:
+        # Replay path: existing outbox row already carries the original
+        # transfer's payload. Same target → return cached outcome with
+        # ``replayed=True``; different target → 409.
+        replay = await _load_replay_payload(
+            session, scoped_idem_key=scoped_idem_key
+        )
+        if replay is None:  # pragma: no cover — defensive
+            raise TransferConflictError(
+                f"idempotency key {idempotency_key!r} consumed by a prior "
+                "transfer whose payload could not be decoded"
+            )
+        cached_new_owner = replay["new_owner_id"]
+        cached_previous = replay["previous_owner_id"]
+        if cached_new_owner != new_owner_user_id:
             raise TransferConflictError(
                 f"idempotency key {idempotency_key!r} previously consumed "
-                f"for a different target ({cached_target}); refusing replay",
+                f"for a different target ({cached_new_owner}); refusing replay",
             )
-        # Same key + same target → return the cached outcome without
-        # mutating again. ``previous_owner_id`` echoes the original
-        # transfer so the caller can rebuild a 200 response identical to
-        # the first attempt.
         return OwnershipTransferOutcome(
             project_id=project_id,
             previous_owner_id=cached_previous,
@@ -260,13 +365,13 @@ async def transfer_ownership(
             user_agent=user_agent,
         )
 
-    # 4. No-op transfer rejection — the target must differ from current.
+    # 5. No-op transfer rejection — the target must differ from current.
     if previous_owner_id == new_owner_user_id:
         raise InvalidTransferTargetError(
             "new_owner_user_id matches the current owner; nothing to transfer",
         )
 
-    # 5. Validate the target's ProjectMember row with ``FOR UPDATE`` so
+    # 6. Validate the target's ProjectMember row with ``FOR UPDATE`` so
     # a concurrent role change cannot demote them mid-transfer.
     # Use lazyload on ``user`` and ``project`` to avoid FOR UPDATE
     # incompatibility with LEFT OUTER JOIN (same fix as the Project query
@@ -298,7 +403,7 @@ async def transfer_ownership(
             "may receive ownership (FR-057)",
         )
 
-    # 6. Commit the owner change. ``Project.owner_id`` is the
+    # 7. Commit the owner change. ``Project.owner_id`` is the
     # source-of-truth; the previous Owner is intentionally NOT inserted
     # as an Admin row here because the matrix already grants Owner-equivalent
     # rights to the Owner of record. The previous Owner becomes a Guest
@@ -383,58 +488,66 @@ async def trigger_post_commit_side_effects(
 # ---------------------------------------------------------------------------
 
 
-async def _find_idempotent_replay(
+async def _load_replay_payload(
+    session: AsyncSession,
     *,
-    idempotency_key: str,
-    project_id: UUID,
-) -> tuple[UUID, UUID] | None:
-    """Return ``(new_owner_id, previous_owner_id)`` of a prior transfer or None.
+    scoped_idem_key: str,
+) -> dict[str, UUID] | None:
+    """Return the original ``new_owner_id`` / ``previous_owner_id`` from outbox.
 
-    Reads ``project_audit_log`` directly because the table is append-only
-    by design (FR-092 chain integrity) so the row, once written,
-    constitutes a durable replay marker. We use a fresh session to avoid
-    interleaving with the caller's SERIALIZABLE transaction.
+    Phase 12 R1 致命 C3: this is invoked **inside** the active TX after
+    an ``ON CONFLICT DO NOTHING`` reported the idempotency key is
+    already taken. We read the existing outbox row's payload to figure
+    out whether the replay matches the original target (idempotent) or
+    targets a different user (409 conflict).
+
+    Returns:
+        ``{"new_owner_id": UUID, "previous_owner_id": UUID}`` for a
+        well-formed payload, or ``None`` if the row is missing /
+        corrupted (defensive — should never happen because the unique
+        constraint just rejected our INSERT).
     """
     stmt = sa.text(
         """
-        SELECT detail->>'new_owner_id' AS new_owner_id,
-               detail->>'previous_owner_id' AS previous_owner_id
-          FROM project_audit_log
-         WHERE project_id = :project_id
-           AND action = :action
-           AND detail->>'idempotency_key' = :idempotency_key
-         ORDER BY created_at ASC
+        SELECT payload
+          FROM outbox_events
+         WHERE idempotency_key = :idempotency_key
          LIMIT 1
         """
     )
     try:
-        async with AsyncSessionLocal() as ro_session:
-            result = await ro_session.execute(
-                stmt,
-                {
-                    "project_id": str(project_id),
-                    "action": _AUDIT_ACTION_OWNERSHIP_TRANSFER,
-                    "idempotency_key": idempotency_key,
-                },
-            )
-            row = result.first()
+        result = await session.execute(stmt, {"idempotency_key": scoped_idem_key})
+        row = result.first()
     except (IntegrityError, DBAPIError) as exc:  # pragma: no cover — defensive
         logger.warning(
-            "ownership_service: idempotency lookup failed (key=%s project=%s): %r",
-            idempotency_key,
-            project_id,
+            "ownership_service: replay payload lookup failed (key=%s): %r",
+            scoped_idem_key,
             exc,
         )
         return None
     if row is None:
         return None
-    new_owner_raw: Any = row[0]
-    previous_owner_raw: Any = row[1]
-    if new_owner_raw is None or previous_owner_raw is None:
+    raw_payload: Any = row[0]
+    payload: dict[str, Any]
+    if isinstance(raw_payload, dict):
+        payload = raw_payload
+    elif isinstance(raw_payload, (str, bytes, bytearray)):
+        try:
+            payload = json.loads(raw_payload)
+        except (TypeError, ValueError):  # pragma: no cover — corrupted payload
+            return None
+    else:  # pragma: no cover — unexpected JSONB shape
+        return None
+    new_owner_raw = payload.get("new_owner_id")
+    prev_owner_raw = payload.get("previous_owner_id")
+    if new_owner_raw is None or prev_owner_raw is None:
         return None
     try:
-        return UUID(str(new_owner_raw)), UUID(str(previous_owner_raw))
-    except ValueError:  # pragma: no cover — corrupted detail payload
+        return {
+            "new_owner_id": UUID(str(new_owner_raw)),
+            "previous_owner_id": UUID(str(prev_owner_raw)),
+        }
+    except ValueError:  # pragma: no cover — corrupted payload
         return None
 
 

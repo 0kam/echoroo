@@ -91,7 +91,22 @@ async def setup_test_database(engine: AsyncEngine) -> None:
         )
         taxon_sensitivity_exists = bool(taxon_sensitivity_exists_result.scalar())
 
-    if core_exists and search_exists and taxon_sensitivity_exists:
+        # Phase 12 R1: outbox_events lives only in Alembic 0001 (no ORM
+        # model yet) so it must be created explicitly when missing.
+        outbox_exists_result = await conn.execute(
+            sa.text(
+                "SELECT EXISTS (SELECT 1 FROM information_schema.tables"
+                " WHERE table_name = 'outbox_events')"
+            )
+        )
+        outbox_exists = bool(outbox_exists_result.scalar())
+
+    if (
+        core_exists
+        and search_exists
+        and taxon_sensitivity_exists
+        and outbox_exists
+    ):
         # Schema is fully up to date — nothing to do.
         return
 
@@ -163,6 +178,47 @@ async def setup_test_database(engine: AsyncEngine) -> None:
         # existing indexes are not re-emitted (which would cause DuplicateTableError
         # for tables that SQLAlchemy also generates auto-indexes for).
         await conn.run_sync(lambda c: Base.metadata.create_all(c, checkfirst=True))
+
+        # Phase 12 R1 fix: ``outbox_events`` is created by Alembic
+        # migration 0001 (no SQLAlchemy ORM model exists yet) so
+        # ``Base.metadata.create_all`` does NOT pick it up. Tests that
+        # exercise the ownership_service / dormancy_check workers need
+        # the table to be present, so we create it idempotently here.
+        await conn.execute(
+            sa.text(
+                """
+                CREATE TABLE IF NOT EXISTS outbox_events (
+                    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                    event_type VARCHAR(100) NOT NULL,
+                    payload JSONB NOT NULL,
+                    status VARCHAR(20) NOT NULL DEFAULT 'pending',
+                    retry_count INTEGER NOT NULL DEFAULT 0,
+                    next_retry_at TIMESTAMPTZ NULL,
+                    processed_at TIMESTAMPTZ NULL,
+                    last_error TEXT NULL,
+                    idempotency_key VARCHAR(128) NULL UNIQUE
+                )
+                """
+            )
+        )
+        await conn.execute(
+            sa.text(
+                """
+                CREATE INDEX IF NOT EXISTS ix_outbox_events_status_next_retry
+                ON outbox_events (status, next_retry_at)
+                WHERE status IN ('pending', 'processing')
+                """
+            )
+        )
+        await conn.execute(
+            sa.text(
+                """
+                CREATE INDEX IF NOT EXISTS ix_outbox_events_event_type_created
+                ON outbox_events (event_type, created_at DESC)
+                """
+            )
+        )
 
         await conn.execute(
             sa.text(
@@ -252,6 +308,8 @@ async def cleanup_test_data(session: AsyncSession) -> None:
     # Taxon tables
     await session.execute(sa.text(_safe_delete("taxon_vernacular_names")))
     await session.execute(sa.text(_safe_delete("taxa")))
+    # Phase 12 R1: outbox events (idempotency dedupe + worker queue).
+    await session.execute(sa.text(_safe_delete("outbox_events")))
     # Tokens / login history / notifications
     await session.execute(sa.text(_safe_delete("api_tokens")))
     await session.execute(sa.text(_safe_delete("password_reset_tokens")))

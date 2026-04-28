@@ -106,18 +106,73 @@ def _request_id(request: Request) -> str:
     return request.headers.get("x-request-id") or ""
 
 
-def _require_authenticated_superuser(current_user: OptionalCurrentUser) -> None:
-    """Reject Guest callers up-front with a 401 envelope.
+async def _require_authenticated_superuser(
+    current_user: OptionalCurrentUser,
+    db: DbSession,
+) -> None:
+    """Verify the caller is an authenticated **superuser** (Phase 12 R1 C1 fix).
 
-    The downstream :func:`is_allowed` / :func:`gate_action` calls already
-    fail closed for non-superusers (FR-008b), but returning a 401 for an
-    unauthenticated request is the spec-aligned envelope and saves a DB
-    round-trip for the project lookup.
+    The previous implementation (Phase 11 / Phase 12 Batch 1) only
+    checked authentication and relied on the downstream
+    :func:`is_allowed` / :func:`gate_action` allowlist branch to gate
+    superuser-only actions. The ``project.archive`` /
+    ``project.restore`` actions, however, declared
+    ``required_permission=Permission.EDIT_PROJECT`` (Owner-only matrix
+    cell), so an Owner who happened to land on this endpoint passed
+    through gate_action() without ever proving superuser status — a
+    privilege escalation against FR-061.
+
+    The fix: verify ``is_superuser=True`` on the User record (set by the
+    auth dependency from the cookie session / WebAuthn middleware) and,
+    as a defence-in-depth guarantee against forged session attributes,
+    additionally consult the persisted ``superusers`` table. Either
+    check failing surfaces a 403 envelope before any project lookup.
+
+    Production transport (CSRF + AuthRouter + IP allowlist + WebAuthn)
+    is already enforced upstream by the middleware chain; this helper
+    is the application-layer second line of defence.
     """
     if current_user is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Not authenticated",
+        )
+
+    # Step 1: cookie-session/Bearer-token claim. The auth dependency
+    # populates ``User.is_superuser`` from the request principal /
+    # token claims. ``getattr`` keeps the helper robust against User
+    # rows that were minted by a path that did not stamp the flag.
+    if not bool(getattr(current_user, "is_superuser", False)):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "error": "ERR_NOT_SUPERUSER",
+                "message": "superuser privileges are required for this endpoint",
+            },
+        )
+
+    # Step 2: defence-in-depth — verify the user truly has an active
+    # ``superusers`` row. A revoked / soft-removed superuser whose
+    # session predates the revocation is rejected here. Mirrors the
+    # raw-SQL probe used by ``api/web_v1/auth.py::_is_superuser`` so
+    # the two surfaces stay in sync.
+    probe = await db.execute(
+        sa.text(
+            "SELECT 1 FROM superusers "
+            "WHERE user_id = :uid AND revoked_at IS NULL LIMIT 1"
+        ),
+        {"uid": current_user.id},
+    )
+    if probe.scalar_one_or_none() is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "error": "ERR_NOT_SUPERUSER",
+                "message": (
+                    "user is not registered as an active superuser; the "
+                    "session claim is stale or revoked"
+                ),
+            },
         )
 
 
@@ -147,7 +202,7 @@ async def approve_looser_override(
     db: DbSession,
 ) -> TaxonOverrideResponse:
     """Approve a pending looser override on behalf of a superuser."""
-    _require_authenticated_superuser(current_user)
+    await _require_authenticated_superuser(current_user, db)
     assert current_user is not None  # narrowed by the helper above
 
     # Project-scope gate. Non-superusers fail the ``EDIT_PROJECT`` check;
@@ -276,7 +331,7 @@ async def reject_looser_override(
     db: DbSession,
 ) -> TaxonOverrideResponse:
     """Reject a pending looser override and persist the operator's reason."""
-    _require_authenticated_superuser(current_user)
+    await _require_authenticated_superuser(current_user, db)
     assert current_user is not None
 
     await gate_action(
@@ -371,7 +426,7 @@ async def force_iucn_resync(
     db: DbSession,
 ) -> IucnForceResyncResponse:
     """Enqueue the IUCN sync task and return the Celery task id."""
-    _require_authenticated_superuser(current_user)
+    await _require_authenticated_superuser(current_user, db)
     assert current_user is not None
 
     # Platform-scope gate (Step 0a in :func:`is_allowed`): only superusers
@@ -453,7 +508,7 @@ async def archive_project(
     db: DbSession,
 ) -> ArchiveResponse:
     """Move a project to ``ProjectStatus.ARCHIVED`` (FR-061)."""
-    _require_authenticated_superuser(current_user)
+    await _require_authenticated_superuser(current_user, db)
     assert current_user is not None
 
     # Project-scope gate. ``project.archive`` is on the FR-008b
@@ -487,20 +542,23 @@ async def archive_project(
                 "message": "project is already archived",
             },
         )
-    if project.status != ProjectStatus.ACTIVE:
-        # FR-061 explicitly targets ACTIVE projects; DORMANT must first
-        # transition through the dormancy-check pipeline (or be reset by
-        # operator-driven activity logging).
-        raise HTTPException(
+    # Phase 12 R1 Major M1: ACTIVE *and* DORMANT projects are valid
+    # archive targets. The dormancy worker (FR-060) flips inactive
+    # projects to ``DORMANT`` after 366d and the superuser then archives
+    # the row in the next administrative review window. Refusing
+    # ``DORMANT`` would leave that operational path closed.
+    if project.status not in (ProjectStatus.ACTIVE, ProjectStatus.DORMANT):
+        raise HTTPException(  # pragma: no cover — defensive (no other state exists)
             status_code=status.HTTP_409_CONFLICT,
             detail={
-                "error": "ERR_PROJECT_NOT_ACTIVE",
+                "error": "ERR_PROJECT_NOT_ARCHIVABLE",
                 "message": (
                     f"project status is {project.status.value!r}; only "
-                    "ACTIVE projects may be archived via this endpoint"
+                    "ACTIVE or DORMANT projects may be archived via this endpoint"
                 ),
             },
         )
+    previous_status_value = project.status.value
 
     # Re-issue the SELECT with FOR UPDATE so the row stays locked.
     refresh_stmt = (
@@ -523,10 +581,10 @@ async def archive_project(
     # capture the snapshot for the post-commit writer.
     project_audit_detail: dict[str, str] = {
         "reason": payload.reason,
-        "previous_status": ProjectStatus.ACTIVE.value,
+        "previous_status": previous_status_value,
         "archived_since": now.isoformat(),
     }
-    project_audit_before = {"status": ProjectStatus.ACTIVE.value}
+    project_audit_before = {"status": previous_status_value}
     project_audit_after = {
         "status": ProjectStatus.ARCHIVED.value,
         "archived_since": now.isoformat(),
@@ -633,7 +691,7 @@ async def restore_project(
     db: DbSession,
 ) -> RestoreResponse:
     """Move an archived project back to ACTIVE (FR-062)."""
-    _require_authenticated_superuser(current_user)
+    await _require_authenticated_superuser(current_user, db)
     assert current_user is not None
 
     # ``project.restore`` is on the FR-008b superuser allowlist; the
@@ -693,6 +751,12 @@ async def restore_project(
     previous_status = refreshed.status.value
     refreshed.status = ProjectStatus.ACTIVE
     refreshed.archived_since = None
+    # Phase 12 R1 Minor m2: clear ``dormant_since`` on restore. With M1
+    # in place, the project at archive time may have been DORMANT; the
+    # stale timestamp would otherwise survive a round-trip
+    # (DORMANT → ARCHIVED → ACTIVE) and confuse downstream reports
+    # showing "dormant since 2024-…" against an actively-used project.
+    refreshed.dormant_since = None
     refreshed.owner_id = payload.new_owner_user_id
     refreshed.updated_at = now
 
