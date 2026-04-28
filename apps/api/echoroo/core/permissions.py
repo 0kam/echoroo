@@ -967,16 +967,23 @@ async def gate_action(
     project = await load_project_or_404(db, project_id)
 
     principal: Any = current_user
+    trusted_capabilities: frozenset[Permission] = frozenset()
+    membership_role: ProjectMemberRole | None = None
 
     # Resolve membership role for non-owners and wrap it onto a per-call
     # principal view so the role only flows into THIS gate's
     # ``is_allowed`` call. Owners short-circuit (``project.owner_id ==
     # user.id`` is read inside ``resolve_role``), and unauthenticated
     # callers fall through with ``current_user = None``.
+    is_owner = (
+        current_user is not None
+        and getattr(current_user, "id", None) is not None
+        and getattr(project, "owner_id", None) == current_user.id
+    )
     if (
         current_user is not None
         and getattr(current_user, "id", None) is not None
-        and getattr(project, "owner_id", None) != current_user.id
+        and not is_owner
     ):
         membership_role = await _resolve_project_member_role(
             db, project_id=project_id, user_id=current_user.id
@@ -984,11 +991,49 @@ async def gate_action(
         if membership_role is not None:
             principal = _ScopedPrincipal(current_user, membership_role)
 
+    # Phase 10 Batch 2 Round 2 fix (致命 2): the production HTTP gate
+    # MUST consult :func:`get_active_trusted_capabilities` so that the
+    # Trusted overlay accepted by US5 actually unlocks API access on
+    # the next request. Owners / Admins do not need an overlay, and
+    # Guests cannot have one (FR-041 — overlay attaches only to
+    # Authenticated principals). For everyone else, we union the
+    # request-scope DB read into the ``trusted_capabilities`` argument
+    # of :func:`is_allowed`. The service helper already intersects the
+    # rows with :data:`TRUSTED_ALLOWED_PERMISSIONS` (FR-014 safety net)
+    # so the gate cannot be tricked by a tampered ``granted_permissions``
+    # array.
+    #
+    # Phase 10 Batch 2 Round 3 fix (Minor 1): skip the overlay lookup
+    # for ANY active project member (Owner / Admin / Member / Viewer)
+    # — FR-041 attaches Trusted overlays only to Authenticated callers
+    # WITHOUT a membership row, so an extra ``SELECT`` against
+    # ``project_trusted_users`` for member requests is wasted work and
+    # an N+1 regression on hot list/detail paths. The gate still runs
+    # the lookup for Authenticated non-members and falls through with
+    # the empty frozenset for Guests (``current_user is None``).
+    if (
+        current_user is not None
+        and getattr(current_user, "id", None) is not None
+        and not is_owner
+        and membership_role is None
+        and not _is_superuser(current_user)
+    ):
+        # Local import to avoid a circular import at module load time
+        # (trusted_service imports from echoroo.core.permissions).
+        from echoroo.services.trusted_service import (
+            get_active_trusted_capabilities,
+        )
+
+        trusted_capabilities = await get_active_trusted_capabilities(
+            db, user_id=current_user.id, project_id=project_id
+        )
+
     allowed, _ = is_allowed(
         action=action,
         user=principal,
         project=project,
         request=request,
+        trusted_capabilities=trusted_capabilities,
     )
     if not allowed:
         raise HTTPException(status.HTTP_403_FORBIDDEN, detail="action denied")

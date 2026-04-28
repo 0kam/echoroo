@@ -781,6 +781,7 @@ async def accept_invitation(
     hmac_secret: str,
     redis: Redis,
     idempotency_key: str | None = None,
+    project_id_scope: UUID | None = None,
     now: datetime | None = None,
     request_id: str = "",
     ip: str = "",
@@ -861,6 +862,17 @@ async def accept_invitation(
     )
     invitation = result.scalar_one_or_none()
     if invitation is None:
+        raise InvitationTokenInvalidError("invitation not found")
+
+    # Phase 10 Batch 2 Round 2 fix (致命 3): the URL path's ``project_id``
+    # MUST match the row's ``project_id``. Without this guard a caller
+    # could POST a valid token under a *different* project's URL and
+    # accept the invite, which would let an attacker exercise the FR-055
+    # enumeration mitigation in reverse — reading the success response
+    # would confirm the token's true project. We collapse the mismatch
+    # into the same "invitation not found" branch the handler already
+    # maps to 404 so the response shape stays uniform.
+    if project_id_scope is not None and invitation.project_id != project_id_scope:
         raise InvitationTokenInvalidError("invitation not found")
 
     # The signed expiry is the source of truth for the URL; the row's
@@ -1060,6 +1072,7 @@ async def decline_invitation_by_recipient(
     current_user_id: UUID,
     current_user_email: str,
     hmac_secret: str,
+    project_id_scope: UUID | None = None,
     now: datetime | None = None,
     request_id: str = "",
     ip: str = "",
@@ -1091,6 +1104,11 @@ async def decline_invitation_by_recipient(
     )
     invitation = result.scalar_one_or_none()
     if invitation is None:
+        raise InvitationTokenInvalidError("invitation not found")
+
+    # Phase 10 Batch 2 Round 2 fix (致命 3): URL path ``project_id`` must
+    # match the row. See :func:`accept_invitation` for the rationale.
+    if project_id_scope is not None and invitation.project_id != project_id_scope:
         raise InvitationTokenInvalidError("invitation not found")
 
     expected_hash = hash_email(current_user_email, hmac_secret=hmac_secret)

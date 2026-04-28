@@ -129,6 +129,51 @@ PROJECT_MEMBER_UPDATE_ROLE_ACTION: Action = register_action(
 
 
 # =============================================================================
+# Trusted overlay management (Phase 10 / T510, FR-014 / FR-046 / FR-050)
+# =============================================================================
+
+PROJECT_TRUSTED_LIST_ACTION: Action = register_action(
+    Action(
+        name="project.trusted.list",
+        # Phase 10 Batch 2 Round 2 fix (致命 1):
+        # Per ``contracts/trusted.yaml`` GET list is Owner / Admin. The
+        # Canonical Matrix (spec L425) restricts ``MANAGE_TRUSTED`` to
+        # Owner only because INVITE / PATCH / DELETE are Owner-exclusive
+        # (FR-050). To let Admin enumerate while keeping mutation
+        # endpoints Owner-only we gate the read with ``MANAGE_MEMBERS``
+        # (Owner + Admin per the matrix); the mutating actions below
+        # keep ``MANAGE_TRUSTED`` so an Admin cannot escalate.
+        required_permission=Permission.MANAGE_MEMBERS,
+        is_mutating=False,
+    )
+)
+
+PROJECT_TRUSTED_INVITE_ACTION: Action = register_action(
+    Action(
+        name="project.trusted.invite",
+        required_permission=Permission.MANAGE_TRUSTED,
+        is_mutating=True,
+    )
+)
+
+PROJECT_TRUSTED_UPDATE_ACTION: Action = register_action(
+    Action(
+        name="project.trusted.update",
+        required_permission=Permission.MANAGE_TRUSTED,
+        is_mutating=True,
+    )
+)
+
+PROJECT_TRUSTED_REVOKE_ACTION: Action = register_action(
+    Action(
+        name="project.trusted.revoke",
+        required_permission=Permission.MANAGE_TRUSTED,
+        is_mutating=True,
+    )
+)
+
+
+# =============================================================================
 # Detection / Annotation / Tag / Upload / Custom Model / Recording
 # =============================================================================
 
@@ -385,6 +430,10 @@ __all__ = [
     "PROJECT_MEMBER_UPDATE_ROLE_ACTION",
     "PROJECT_RESTRICTED_CONFIG_UPDATE_ACTION",
     "PROJECT_TRANSFER_OWNERSHIP_ACTION",
+    "PROJECT_TRUSTED_INVITE_ACTION",
+    "PROJECT_TRUSTED_LIST_ACTION",
+    "PROJECT_TRUSTED_REVOKE_ACTION",
+    "PROJECT_TRUSTED_UPDATE_ACTION",
     "PROJECT_UPDATE_ACTION",
     # Detection / Annotation / Tag / Upload / Custom Model / Recording
     "ANNOTATION_COMMENT_CREATE_ACTION",

@@ -220,7 +220,12 @@ async def cleanup_test_data(session: AsyncSession) -> None:
     await session.execute(sa.text(_safe_delete("recordings")))
     await session.execute(sa.text(_safe_delete("datasets")))
     await session.execute(sa.text(_safe_delete("sites")))
-    # Project membership / invitations / license history
+    # Project membership / invitations / license history / Trusted overlays.
+    # Phase 10 Batch 2: ``project_trusted_users.invitation_id`` references
+    # ``project_invitations.id`` so the overlay rows MUST be purged before
+    # the parent invitations or the foreign-key constraint blocks the
+    # ``DELETE FROM project_invitations``.
+    await session.execute(sa.text(_safe_delete("project_trusted_users")))
     await session.execute(sa.text(_safe_delete("project_invitations")))
     await session.execute(sa.text(_safe_delete("project_license_history")))
     await session.execute(sa.text(_safe_delete("project_members")))
