@@ -67,6 +67,18 @@ app.conf.include = [
     # at row-claim time (research.md §6, FR-104).
     "echoroo.workers.outbox_processor",
     "echoroo.workers.login_notification_dispatcher",
+    # Trusted overlay lifecycle workers (Phase 10 / FR-044, FR-045).
+    # ``trusted_long_lived_invalidation`` is intentionally NOT listed here
+    # — it is a coroutine started by the FastAPI lifespan, not a Celery
+    # task module (see its docstring for the threading rationale).
+    "echoroo.workers.trusted_auto_expire",
+    "echoroo.workers.trusted_expiry_notifier",
+    # Outbox dispatcher for ``trusted_user.expiry_notification``. MUST be
+    # imported by every worker process so the handler is registered into
+    # ``OUTBOX_HANDLERS`` before ``process_outbox_batch`` claims a row;
+    # otherwise the default handler raises ``NotImplementedError`` and
+    # the FR-045 warning email is never delivered.
+    "echoroo.workers.trusted_expiry_dispatcher",
 ]
 
 # Periodic tasks (beat schedule)
@@ -94,5 +106,27 @@ app.conf.beat_schedule = {
     "drain-outbox-events": {
         "task": "echoroo.workers.outbox_processor.process_outbox_batch",
         "schedule": 30.0,  # seconds — see docstring above.
+    },
+    # FR-044 — flip Trusted overlay rows to ``status='expired'`` once
+    # ``expires_at`` is in the past. Hourly cadence at minute=5 keeps the
+    # job out of the on-the-hour upload janitor's window so a slow
+    # PostgreSQL UPDATE on one job never starves the other. The gate
+    # already enforces expiry at request time; this worker is the
+    # defence-in-depth bookkeeping pass that lets the management UI
+    # filter on ``status='active'`` directly.
+    "trusted-auto-expire-hourly": {
+        "task": "echoroo.workers.trusted_auto_expire.auto_expire_trusted_users",
+        "schedule": crontab(minute=5),
+    },
+    # FR-045 — pre-emptively notify Trusted users + Owners 7 days before
+    # an overlay's ``expires_at`` so they have a window to renew. Daily
+    # at 03:00 UTC mirrors the GBIF vernacular sync's off-peak slot;
+    # idempotency is guaranteed by the per-day key in
+    # :func:`echoroo.workers.trusted_expiry_notifier._idempotency_key`.
+    "trusted-expiry-notifier-daily": {
+        "task": (
+            "echoroo.workers.trusted_expiry_notifier.notify_expiring_trusted_users"
+        ),
+        "schedule": crontab(hour=3, minute=0),
     },
 }
