@@ -1560,10 +1560,16 @@ async def logout(
       to call any other endpoint to clear it. Returning 204 even
       when no ``family_id`` cookie is present guarantees the client
       can always drive itself back to a clean logged-out state.
-    * **Origin/Referer protection** continues to apply via the CORS
-      middleware's strict allowlist for credentialed requests, which
-      blocks cross-origin form posts to ``/web-api/v1/*`` from
-      attacker-controlled pages.
+    * **Residual CSRF risk is acceptable.** The session/CSRF cookies
+      are issued with ``SameSite=Lax`` (or ``Strict`` depending on
+      deployment), which already prevents the most common cross-site
+      logout-CSRF vectors (top-level navigations from third-party
+      sites only carry the cookie when ``SameSite=Lax`` is in effect,
+      and even then a cross-origin ``fetch`` is blocked). Combined
+      with logout's idempotency and the fact that it has no
+      destructive side-effect beyond ending the victim's own session,
+      the residual CSRF surface is low enough to justify exempting
+      this single endpoint from the CSRF token requirement.
     """
     family_id = request.cookies.get(settings.web_session_cookie_name)
     revoked = False

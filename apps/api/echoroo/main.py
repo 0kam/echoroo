@@ -124,12 +124,16 @@ def create_app() -> FastAPI:
     # T950+ / T155b swaps in the real KMS-backed API key verifier and
     # flips this prefix back to ``/api/v1``).
     #
-    # ``/web-api/v1/auth/logout`` is added to the auth-router allowlist
-    # because it is the one session-management endpoint that operates
-    # purely off the session cookie + CSRF token — it intentionally
-    # does NOT carry an access JWT (the user is logging out, after
-    # all). It is *not* in ``PUBLIC_AUTH_PATHS`` so CSRF enforcement
-    # still applies.
+    # ``/web-api/v1/auth/logout`` is a CSRF-exempt session-management
+    # endpoint: it lives in :data:`PUBLIC_AUTH_PATHS` (so the CSRF
+    # middleware skips it — see the OWASP-aligned rationale documented
+    # in ``echoroo/core/auth_paths.py``) AND in this auth-router
+    # allowlist (so the cookie-required guard does not block calls made
+    # without a live session, which is required for idempotent client
+    # recovery from partial cookie eviction). The two allowlists are
+    # intentionally kept in sync so logout is uniformly exempt across
+    # both middlewares; any future tightening must update both sides at
+    # once.
     auth_router_allowlist = (
         *PUBLIC_AUTH_PATHS,
         "/web-api/v1/auth/logout",

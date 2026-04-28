@@ -250,13 +250,19 @@ export class ApiClient {
       'Content-Type': 'application/json',
     };
 
-    // Path-aware Authorization: skip the Bearer header on Guest-readable
-    // public paths so a stale (expired) JWT held in memory cannot trip the
-    // backend auth router into 401-ing what should be an anonymous request.
-    // Authenticated visitors still get full access via the session cookie
-    // (the auth router falls through to `_authenticate_session` when the
-    // cookie is present on a public-allowlisted path).
-    if (this.accessToken && !isPublic) {
+    // Path-aware Authorization (Phase 4-5-6 carry-over Round 2 致命):
+    //   - Private paths: attach `Bearer <accessToken>` when present.
+    //   - Public-readable paths AND signed-in user (accessToken present):
+    //     attach Bearer too. The backend auth router's session fast-path
+    //     specifically requires `session_cookie + access_token` together;
+    //     sending the session cookie WITHOUT a Bearer would 401 because
+    //     the public-allowlist branch falls through to `_authenticate_session`
+    //     and that branch demands both pieces. With the Bearer attached,
+    //     authenticated users keep full access on public pages.
+    //   - Public-readable paths AND Guest (no accessToken): no Bearer.
+    //     Combined with `credentials: 'omit'` below the request becomes
+    //     fully anonymous and the auth router's Guest fast-path admits it.
+    if (this.accessToken) {
       headers['Authorization'] = `Bearer ${this.accessToken}`;
     }
 
@@ -268,13 +274,46 @@ export class ApiClient {
       });
     }
 
+    // For Guest requests on public-readable paths we deliberately strip
+    // cookies (`credentials: 'omit'`) so a stale `echoroo_session` cookie
+    // — left over after a prior session was revoked / expired — cannot
+    // force the backend into the session-required branch and 401 the
+    // call. Authenticated visitors keep `credentials: 'include'` so their
+    // session cookie travels alongside the Bearer header.
+    const useGuestCredentials = isPublic && !this.accessToken;
     const config: RequestInit = {
       ...options,
-      credentials: 'include', // Include cookies for refresh token
+      credentials: useGuestCredentials ? 'omit' : 'include',
       headers,
     };
 
     let response = await fetch(url, config);
+
+    // Phase 4-5-6 carry-over Round 2 致命 fallback: when an authenticated
+    // user (or one carrying a stale session cookie) hits a public-readable
+    // path and the backend rejects the session-required branch with 401,
+    // retry ONCE as a true Guest (no Bearer, no cookies). This guarantees
+    // public pages keep rendering for any caller, even if their session
+    // state is broken/expired in subtle ways.
+    if (response.status === 401 && retry && isPublic && !useGuestCredentials) {
+      const guestHeaders: Record<string, string> = {
+        'Content-Type': 'application/json',
+      };
+      if (options.headers) {
+        const providedHeaders = new Headers(options.headers);
+        providedHeaders.forEach((value, key) => {
+          guestHeaders[key] = value;
+        });
+      }
+      // Drop any Authorization header that may have been merged in via
+      // the provided headers — this retry must be fully anonymous.
+      delete guestHeaders['Authorization'];
+      response = await fetch(url, {
+        ...options,
+        credentials: 'omit',
+        headers: guestHeaders,
+      });
+    }
 
     // Handle 401 Unauthorized - try to refresh token.
     //
@@ -409,7 +448,11 @@ export class ApiClient {
 
     const headers: Record<string, string> = {};
 
-    if (this.accessToken && !isPublic) {
+    // Match `request()` semantics (Round 2 致命): authenticated callers
+    // attach Bearer on public paths too so the session-required branch
+    // succeeds; Guest callers omit cookies+Bearer to take the Guest
+    // fast-path.
+    if (this.accessToken) {
       headers['Authorization'] = `Bearer ${this.accessToken}`;
     }
 
@@ -421,13 +464,32 @@ export class ApiClient {
       });
     }
 
+    const useGuestCredentials = isPublic && !this.accessToken;
     const config: RequestInit = {
       ...options,
-      credentials: 'include',
+      credentials: useGuestCredentials ? 'omit' : 'include',
       headers,
     };
 
     let response = await fetch(url, config);
+
+    // Public-path Guest fallback retry: if an authenticated request to a
+    // public path 401s, retry once as anonymous Guest.
+    if (response.status === 401 && retry && isPublic && !useGuestCredentials) {
+      const guestHeaders: Record<string, string> = {};
+      if (options.headers) {
+        const providedHeaders = new Headers(options.headers);
+        providedHeaders.forEach((value, key) => {
+          guestHeaders[key] = value;
+        });
+      }
+      delete guestHeaders['Authorization'];
+      response = await fetch(url, {
+        ...options,
+        credentials: 'omit',
+        headers: guestHeaders,
+      });
+    }
 
     if (response.status === 401 && retry && !isPublic) {
       try {
@@ -466,15 +528,25 @@ export class ApiClient {
     const isPublic = isPublicReadablePath(endpoint, 'GET');
 
     const headers: Record<string, string> = {};
-    if (this.accessToken && !isPublic) {
+    if (this.accessToken) {
       headers['Authorization'] = `Bearer ${this.accessToken}`;
     }
 
+    const useGuestCredentials = isPublic && !this.accessToken;
     let response = await fetch(url, {
       method: 'GET',
-      credentials: 'include',
+      credentials: useGuestCredentials ? 'omit' : 'include',
       headers,
     });
+
+    // Public-path Guest fallback retry: see `request()` for full rationale.
+    if (response.status === 401 && retry && isPublic && !useGuestCredentials) {
+      response = await fetch(url, {
+        method: 'GET',
+        credentials: 'omit',
+        headers: {},
+      });
+    }
 
     if (response.status === 401 && retry && !isPublic) {
       try {

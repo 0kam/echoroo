@@ -14,6 +14,31 @@ interface AuthState {
   isLoading: boolean;
 }
 
+/**
+ * Round 2 Major fix helper — fire-and-forget POST to the CSRF-exempt
+ * `/web-api/v1/auth/logout` endpoint to clear the HttpOnly
+ * `echoroo_logged_in` marker cookie (and any remaining session/CSRF
+ * cookies). Used from silent fail-safe paths (`initialize({silent})` 401)
+ * and from the global `onRefreshFailed` callback so a stale marker cookie
+ * never persists past a known auth failure.
+ *
+ * Errors are swallowed: the goal is best-effort cookie eviction; the
+ * endpoint is idempotent (always returns 204) so a transient network
+ * failure simply means the next page load will retry naturally.
+ */
+async function clearMarkerCookieBestEffort(): Promise<void> {
+  if (typeof window === 'undefined') return;
+  try {
+    await apiClient.requestRaw(
+      '/web-api/v1/auth/logout',
+      { method: 'POST' },
+      false, // do not retry on 401 — logout is idempotent and CSRF-exempt
+    );
+  } catch {
+    // Best-effort only — see docstring.
+  }
+}
+
 interface LoginCredentials {
   email: string;
   password: string;
@@ -101,6 +126,15 @@ function createAuthStore() {
             state.isAuthenticated = false;
             apiClient.setAccessToken(null);
             state.isLoading = false;
+            // Round 2 Major fix: silent refresh failure must also clear
+            // the HttpOnly `echoroo_logged_in` marker cookie. Without
+            // this, `hooks.server.ts` continues to treat the visitor as
+            // authenticated and bounces `/login` back to `/dashboard`,
+            // wedging the user out of the recovery flow. We fire-and-
+            // forget the logout endpoint (CSRF-exempt, idempotent — see
+            // `auth.py::auth_logout`) so cookie eviction always happens
+            // regardless of API success.
+            await clearMarkerCookieBestEffort();
             if (!silent) {
               await goto(localizeHref('/login'), { replaceState: true });
             }
@@ -125,6 +159,14 @@ function createAuthStore() {
           error instanceof Error &&
           'status' in error &&
           (error as { status: number }).status === 401;
+
+        if (isUnauthorized) {
+          // Round 2 Major fix: a 401 from `/users/me` after a successful
+          // refresh means the session is unrecoverable. Always evict the
+          // marker cookie so subsequent navigations stop being treated
+          // as authenticated.
+          await clearMarkerCookieBestEffort();
+        }
 
         if (isUnauthorized && !silent) {
           // Use replace to avoid adding login to the back-navigation stack
@@ -269,6 +311,12 @@ function isOnNoRedirectPath(): boolean {
 // page render normally.
 apiClient.onRefreshFailed = () => {
   authStore.clearUser();
+  // Round 2 Major fix: drive the marker cookie clear through the
+  // CSRF-exempt logout endpoint. Without this the `echoroo_logged_in`
+  // HttpOnly cookie persists, `hooks.server.ts` keeps thinking the user
+  // is authenticated, and `/login` redirects to `/dashboard` in a loop.
+  // Fire-and-forget — see `clearMarkerCookieBestEffort` for rationale.
+  void clearMarkerCookieBestEffort();
   if (isOnNoRedirectPath()) {
     return;
   }

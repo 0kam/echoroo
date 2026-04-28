@@ -101,8 +101,34 @@ describe('ApiClient public-path behaviour', () => {
     global.fetch = vi.fn();
   });
 
-  it('does not attach Authorization header for public-readable paths', async () => {
-    apiClient.setAccessToken('expired-jwt');
+  it('attaches Authorization header for public-readable paths when signed in (Round 2)', async () => {
+    // Round 2 致命: the original behaviour stripped Bearer on public paths
+    // even when the user was signed in, which combined with
+    // `credentials: 'include'` (session cookie) caused the backend session
+    // branch to 401 because `access_token` was missing. The fix keeps
+    // Bearer attached whenever an accessToken is present.
+    apiClient.setAccessToken('valid-jwt');
+    (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      headers: { get: (_key: string) => 'application/json' },
+      json: async () => ({ items: [], total: 0, page: 1 }),
+    });
+
+    await apiClient.get('/web-api/v1/projects?page=1');
+
+    const calledWith = (global.fetch as ReturnType<typeof vi.fn>).mock
+      .calls[0]![1] as RequestInit & { headers: Record<string, string> };
+    expect(calledWith.headers.Authorization).toBe('Bearer valid-jwt');
+    // Authenticated visitors keep cookies so their session can authenticate.
+    expect(calledWith.credentials).toBe('include');
+  });
+
+  it('strips Authorization and cookies on public paths for guests (Round 2 case B)', async () => {
+    // Guest = no access token in memory. The request must go fully
+    // anonymous: no Authorization header AND `credentials: 'omit'` so a
+    // stale `echoroo_session` cookie left over from a previous session
+    // cannot force the backend into the session-required branch.
     (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
       ok: true,
       status: 200,
@@ -115,9 +141,45 @@ describe('ApiClient public-path behaviour', () => {
     const calledWith = (global.fetch as ReturnType<typeof vi.fn>).mock
       .calls[0]![1] as RequestInit & { headers: Record<string, string> };
     expect(calledWith.headers.Authorization).toBeUndefined();
-    // Cookies still travel via `credentials: 'include'` so authenticated
-    // visitors retain their session on a public page.
-    expect(calledWith.credentials).toBe('include');
+    expect(calledWith.credentials).toBe('omit');
+  });
+
+  it('falls back to anonymous Guest retry on 401 from a public path (Round 2 case C)', async () => {
+    // Authenticated caller: first attempt sends Bearer + cookies and
+    // gets 401 (e.g. session expired but Bearer + cookie were both
+    // sent). The client must transparently retry once with
+    // `credentials: 'omit'` and no Authorization so the Guest fast-path
+    // admits the request.
+    apiClient.setAccessToken('valid-jwt');
+    const fetchMock = global.fetch as ReturnType<typeof vi.fn>;
+
+    fetchMock.mockResolvedValueOnce({
+      ok: false,
+      status: 401,
+      headers: { get: (_key: string) => 'application/json' },
+      json: async () => ({ detail: 'Unauthorized' }),
+    });
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      headers: { get: (_key: string) => 'application/json' },
+      json: async () => ({ items: [], total: 0, page: 1 }),
+    });
+
+    await apiClient.get('/web-api/v1/projects?page=1');
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const firstCall = fetchMock.mock.calls[0]![1] as RequestInit & {
+      headers: Record<string, string>;
+    };
+    expect(firstCall.headers.Authorization).toBe('Bearer valid-jwt');
+    expect(firstCall.credentials).toBe('include');
+
+    const retryCall = fetchMock.mock.calls[1]![1] as RequestInit & {
+      headers: Record<string, string>;
+    };
+    expect(retryCall.headers.Authorization).toBeUndefined();
+    expect(retryCall.credentials).toBe('omit');
   });
 
   it('still attaches Authorization on private paths', async () => {
