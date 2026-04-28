@@ -6,6 +6,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from echoroo.models.enums import ProjectMemberRole
 from echoroo.schemas.auth import UserResponse
 
 
@@ -123,6 +124,112 @@ class TaxonOverrideResponse(BaseModel):
     rejected_reason: str | None = Field(
         default=None,
         description="Free-form reason recorded when the override was rejected",
+    )
+
+
+# =============================================================================
+# Phase 12 / T702 — superuser archive / restore endpoints (FR-061 / FR-062)
+# =============================================================================
+
+
+class ArchiveRequest(BaseModel):
+    """Body for ``POST /admin/projects/{project_id}/archive`` (FR-061).
+
+    The free-form ``reason`` is recorded on both ``project_audit_log`` and
+    ``platform_audit_log`` so the archiving superuser leaves a durable
+    explanation. The endpoint flips the project to ``ProjectStatus.ARCHIVED``
+    and stamps ``archived_since``; subsequent state-changing actions are
+    blocked by Step 1 of :func:`echoroo.core.permissions.is_allowed`.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    reason: str = Field(
+        ...,
+        min_length=1,
+        max_length=2_000,
+        description=(
+            "Why the project is being archived (operator-supplied). Stored "
+            "verbatim in audit detail (project + platform tables, FR-088 / "
+            "FR-089)."
+        ),
+    )
+
+
+class ArchiveResponse(BaseModel):
+    """Snapshot of the archived project returned to the superuser UI."""
+
+    model_config = ConfigDict(from_attributes=True, frozen=True)
+
+    id: UUID = Field(..., description="Project identifier")
+    status: str = Field(
+        ..., description="Project lifecycle status — always ``'archived'`` here"
+    )
+    archived_since: datetime = Field(
+        ..., description="UTC timestamp at which the project was archived"
+    )
+
+
+class RestoreMember(BaseModel):
+    """Single entry in ``RestoreRequest.restored_members`` (FR-062).
+
+    Each entry names a previously-removed user and the role to restore them
+    with. ``ProjectMemberRole`` covers ``viewer`` / ``member`` / ``admin``;
+    Owner is conveyed by the top-level ``new_owner_user_id`` field. The
+    role enum is re-exported here so the FastAPI schema validates each
+    entry without an extra Literal narrow.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    user_id: UUID = Field(..., description="User to restore as a project member")
+    role: ProjectMemberRole = Field(
+        ...,
+        description="Role to grant on restore (viewer / member / admin)",
+    )
+
+
+class RestoreRequest(BaseModel):
+    """Body for ``POST /admin/projects/{project_id}/restore`` (FR-062).
+
+    Superuser restores an archived project by nominating a new Owner and
+    optionally resurrecting old members under operator-chosen roles. Members
+    not present in ``restored_members`` are left with ``removed_at`` set;
+    the endpoint does not flip those rows back automatically.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    new_owner_user_id: UUID = Field(
+        ...,
+        description=(
+            "User who becomes the new Owner of the restored project. Must "
+            "exist in ``users`` (active, not soft-deleted)."
+        ),
+    )
+    restored_members: list[RestoreMember] = Field(
+        default_factory=list,
+        description=(
+            "Previously-removed members to restore; each entry is upserted "
+            "into ``project_members`` with ``removed_at = NULL`` and the "
+            "supplied role."
+        ),
+    )
+
+
+class RestoreResponse(BaseModel):
+    """Snapshot of the restored project returned to the superuser UI."""
+
+    model_config = ConfigDict(from_attributes=True, frozen=True)
+
+    id: UUID = Field(..., description="Project identifier")
+    status: str = Field(
+        ..., description="Project lifecycle status — always ``'active'`` here"
+    )
+    owner_id: UUID = Field(..., description="New Owner user identifier")
+    restored_member_count: int = Field(
+        ...,
+        description="Number of project_members rows resurrected by this call",
     )
 
 

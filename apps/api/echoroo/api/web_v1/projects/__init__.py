@@ -34,7 +34,7 @@ from fastapi import APIRouter
 
 from echoroo.api.web_v1 import trusted as trusted_module
 
-from . import _core, _license, _members, _restricted_config
+from . import _core, _license, _members, _ownership, _restricted_config
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
@@ -50,6 +50,9 @@ router.include_router(_license.router)
 # Members + invitations — ``/{project_id}/members`` and
 # ``/{project_id}/invitations/{token}/...`` paths.
 router.include_router(_members.router)
+
+# Ownership transfer (Phase 12 / T700) — ``/{project_id}/transfer-ownership``.
+router.include_router(_ownership.router)
 
 # Trusted overlay management (Phase 10 / T510) — Owner/Admin enumeration
 # under the same ``/projects`` prefix as the rest of the project surface.

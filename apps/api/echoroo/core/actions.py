@@ -450,6 +450,34 @@ PROJECT_TAXON_OVERRIDE_REJECT_ACTION: Action = register_action(
     )
 )
 
+# Phase 12 / T702 — superuser-only project lifecycle (FR-061 / FR-062). Both
+# actions are project-scope (a project_id is required to lock the row and
+# write a project_audit_log entry) but ``SUPERUSER_PROJECT_SCOPE_ALLOWLIST``
+# (FR-008b) short-circuits the matrix check for the superuser. Non-superuser
+# callers fail closed via the sentinel ``EDIT_PROJECT`` permission, which is
+# Owner-only for archived rows in the matrix and is redundantly blocked by
+# Step 1 (archived block) for the restore endpoint.
+PROJECT_ARCHIVE_ACTION: Action = register_action(
+    Action(
+        name="project.archive",
+        required_permission=Permission.EDIT_PROJECT,
+        is_mutating=True,
+    )
+)
+
+PROJECT_RESTORE_ACTION: Action = register_action(
+    Action(
+        name="project.restore",
+        # ``project.restore`` lives in ``SUPERUSER_PROJECT_SCOPE_ALLOWLIST``
+        # so the superuser branch (FR-008b) bypasses the matrix; the
+        # sentinel value below is what a non-superuser caller would be
+        # checked against and must fail (Owner-only matrix cell).
+        required_permission=Permission.EDIT_PROJECT,
+        is_mutating=True,
+    )
+)
+
+
 # IUCN force-resync is platform-scope: there is no project_id parameter and
 # the Celery task rewrites the global ``taxon_sensitivity`` table. We mark
 # the action ``is_platform_scope=True`` so :func:`is_allowed` routes it
@@ -517,4 +545,7 @@ __all__ = [
     "PLATFORM_IUCN_FORCE_RESYNC_ACTION",
     "PROJECT_TAXON_OVERRIDE_APPROVE_ACTION",
     "PROJECT_TAXON_OVERRIDE_REJECT_ACTION",
+    # Project lifecycle (Phase 12 / T702)
+    "PROJECT_ARCHIVE_ACTION",
+    "PROJECT_RESTORE_ACTION",
 ]

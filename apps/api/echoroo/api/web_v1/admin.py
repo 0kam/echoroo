@@ -42,27 +42,39 @@ follow-ups) extend the same router in later batches.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from datetime import UTC, datetime
 from uuid import UUID
 
+import sqlalchemy as sa
 from fastapi import APIRouter, HTTPException, Request, status
 from sqlalchemy.exc import IntegrityError
 
 from echoroo.core.actions import (
     PLATFORM_IUCN_FORCE_RESYNC_ACTION,
+    PROJECT_ARCHIVE_ACTION,
+    PROJECT_RESTORE_ACTION,
     PROJECT_TAXON_OVERRIDE_APPROVE_ACTION,
     PROJECT_TAXON_OVERRIDE_REJECT_ACTION,
 )
-from echoroo.core.database import DbSession
-from echoroo.core.permissions import gate_action, is_allowed
+from echoroo.core.database import AsyncSessionLocal, DbSession
+from echoroo.core.permissions import gate_action, is_allowed, load_project_or_404
 from echoroo.middleware.auth import OptionalCurrentUser
+from echoroo.models.enums import ProjectStatus
+from echoroo.models.project import ProjectMember
+from echoroo.models.user import User
 from echoroo.schemas.admin import (
+    ArchiveRequest,
+    ArchiveResponse,
     IucnForceResyncResponse,
+    RestoreRequest,
+    RestoreResponse,
     TaxonOverrideRejectRequest,
     TaxonOverrideResponse,
 )
 from echoroo.services.audit_service import AuditLogService
+from echoroo.services.outbox_service import enqueue as outbox_enqueue
 from echoroo.services.superuser_approval_service import (
     approve_taxon_override,
     reject_taxon_override,
@@ -402,6 +414,413 @@ async def force_iucn_resync(
         task_id=async_result.id,
         enqueued_at=enqueued_at,
     )
+
+
+# ---------------------------------------------------------------------------
+# Phase 12 / T702 — POST /admin/projects/{project_id}/archive (FR-061)
+# ---------------------------------------------------------------------------
+
+
+def _project_advisory_lock_key(project_id: UUID) -> int:
+    """Fold a project UUID into a 63-bit advisory-lock key.
+
+    Mirrors the convention used by :mod:`echoroo.services.audit_service`
+    and :mod:`echoroo.services.ownership_service` so two unrelated
+    workflows cannot accidentally share a lock key.
+    """
+    digest = hashlib.sha256(b"project_admin_lifecycle:" + project_id.bytes).digest()
+    return int.from_bytes(digest[:8], "big") & 0x7FFFFFFFFFFFFFFF
+
+
+@router.post(
+    "/projects/{project_id}/archive",
+    response_model=ArchiveResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Archive a project (Superuser, FR-061)",
+    description=(
+        "Manually flip ``Project.status`` to ``ARCHIVED`` and stamp "
+        "``archived_since``. Operator-supplied ``reason`` is recorded in "
+        "both the project and platform audit logs (FR-088 / FR-089). "
+        "Subsequent state-changing actions are blocked by Step 1 of "
+        ":func:`echoroo.core.permissions.is_allowed`."
+    ),
+)
+async def archive_project(
+    project_id: UUID,
+    payload: ArchiveRequest,
+    request: Request,
+    current_user: OptionalCurrentUser,
+    db: DbSession,
+) -> ArchiveResponse:
+    """Move a project to ``ProjectStatus.ARCHIVED`` (FR-061)."""
+    _require_authenticated_superuser(current_user)
+    assert current_user is not None
+
+    # Project-scope gate. ``project.archive`` is on the FR-008b
+    # superuser allowlist so non-superusers fail closed at this step;
+    # superusers short-circuit through the allowlist branch.
+    await gate_action(
+        action=PROJECT_ARCHIVE_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
+
+    now = datetime.now(UTC)
+
+    # Serialise concurrent admin lifecycle calls on the same project.
+    await db.execute(
+        sa.text("SELECT pg_advisory_xact_lock(:k)"),
+        {"k": _project_advisory_lock_key(project_id)},
+    )
+
+    # Resolve the project row up-front so the status precondition can
+    # surface a 4xx envelope before we issue ``SELECT ... FOR UPDATE``.
+    project = await load_project_or_404(db, project_id)
+
+    if project.status == ProjectStatus.ARCHIVED:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "error": "ERR_PROJECT_ALREADY_ARCHIVED",
+                "message": "project is already archived",
+            },
+        )
+    if project.status != ProjectStatus.ACTIVE:
+        # FR-061 explicitly targets ACTIVE projects; DORMANT must first
+        # transition through the dormancy-check pipeline (or be reset by
+        # operator-driven activity logging).
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "error": "ERR_PROJECT_NOT_ACTIVE",
+                "message": (
+                    f"project status is {project.status.value!r}; only "
+                    "ACTIVE projects may be archived via this endpoint"
+                ),
+            },
+        )
+
+    # Re-issue the SELECT with FOR UPDATE so the row stays locked.
+    refresh_stmt = (
+        sa.select(type(project))
+        .where(type(project).id == project_id)
+        .with_for_update()
+    )
+    refreshed = (await db.execute(refresh_stmt)).scalar_one()
+    refreshed.status = ProjectStatus.ARCHIVED
+    refreshed.archived_since = now
+    refreshed.updated_at = now
+
+    await db.flush()
+
+    # NOTE: the AuditLogService issues SET TRANSACTION ISOLATION
+    # SERIALIZABLE which fails when prior statements ran on the
+    # connection. The contract says audit writes must be in a fresh
+    # session; we mirror the trusted/license services and defer the
+    # audit row to a sibling helper after commit. Here we therefore
+    # capture the snapshot for the post-commit writer.
+    project_audit_detail: dict[str, str] = {
+        "reason": payload.reason,
+        "previous_status": ProjectStatus.ACTIVE.value,
+        "archived_since": now.isoformat(),
+    }
+    project_audit_before = {"status": ProjectStatus.ACTIVE.value}
+    project_audit_after = {
+        "status": ProjectStatus.ARCHIVED.value,
+        "archived_since": now.isoformat(),
+    }
+
+    # Outbox notification to the (former) Owner. The dispatcher side
+    # ships in Phase 13+; here we only enqueue the row so the FR-076a
+    # transactional guarantees apply.
+    await outbox_enqueue(
+        db,
+        event_type="project.archive_notification",
+        payload={
+            "project_id": str(project_id),
+            "owner_user_id": str(project.owner_id),
+            "reason": payload.reason,
+            "archived_since": now.isoformat(),
+        },
+        idempotency_key=f"archive_notify:{project_id}:{now.strftime('%Y-%m-%d')}",
+    )
+
+    response = ArchiveResponse(
+        id=project_id,
+        status=ProjectStatus.ARCHIVED.value,
+        archived_since=now,
+    )
+    await db.commit()
+
+    # Post-commit audit writes — fresh sessions per the audit_service
+    # contract. Failures are WARNING-logged so the persistence guard
+    # holds even when the audit chain hiccups.
+    try:
+        async with AsyncSessionLocal() as project_audit_session:
+            try:
+                await AuditLogService(project_audit_session).write_project_event(
+                    actor_user_id=current_user.id,
+                    project_id=project_id,
+                    action="project.archive",
+                    request_id=_request_id(request),
+                    ip=_client_ip(request),
+                    user_agent=_user_agent(request),
+                    detail=project_audit_detail,
+                    before=project_audit_before,
+                    after=project_audit_after,
+                )
+                await project_audit_session.commit()
+            except Exception:
+                await project_audit_session.rollback()
+                raise
+
+        async with AsyncSessionLocal() as platform_audit_session:
+            try:
+                await AuditLogService(
+                    platform_audit_session
+                ).write_platform_event(
+                    actor_user_id=current_user.id,
+                    action="platform.project.archive",
+                    request_id=_request_id(request),
+                    ip=_client_ip(request),
+                    user_agent=_user_agent(request),
+                    detail={
+                        "project_id": str(project_id),
+                        "reason": payload.reason,
+                    },
+                )
+                await platform_audit_session.commit()
+            except Exception:
+                await platform_audit_session.rollback()
+                raise
+    except Exception as exc:  # noqa: BLE001 — audit must never block persisted change
+        logger.warning(
+            "project.archive audit write failed (FR-088/89 soft alert): "
+            "project_id=%s actor=%s error=%r",
+            project_id,
+            current_user.id,
+            exc,
+        )
+
+    return response
+
+
+# ---------------------------------------------------------------------------
+# Phase 12 / T702 — POST /admin/projects/{project_id}/restore (FR-062)
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/projects/{project_id}/restore",
+    response_model=RestoreResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Restore an archived project (Superuser, FR-062)",
+    description=(
+        "Flip ``ProjectStatus`` from ``ARCHIVED`` to ``ACTIVE`` and "
+        "nominate a new Owner. Optionally upserts old members back into "
+        "``project_members``. Both project and platform audit logs are "
+        "recorded; restored members + Owner receive an outbox "
+        "notification (dispatcher in Phase 13+)."
+    ),
+)
+async def restore_project(
+    project_id: UUID,
+    payload: RestoreRequest,
+    request: Request,
+    current_user: OptionalCurrentUser,
+    db: DbSession,
+) -> RestoreResponse:
+    """Move an archived project back to ACTIVE (FR-062)."""
+    _require_authenticated_superuser(current_user)
+    assert current_user is not None
+
+    # ``project.restore`` is on the FR-008b superuser allowlist; the
+    # gate short-circuits non-superusers via the EDIT_PROJECT sentinel.
+    await gate_action(
+        action=PROJECT_RESTORE_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
+
+    now = datetime.now(UTC)
+
+    await db.execute(
+        sa.text("SELECT pg_advisory_xact_lock(:k)"),
+        {"k": _project_advisory_lock_key(project_id)},
+    )
+
+    project = await load_project_or_404(db, project_id)
+    if project.status != ProjectStatus.ARCHIVED:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "error": "ERR_PROJECT_NOT_ARCHIVED",
+                "message": (
+                    f"project status is {project.status.value!r}; only "
+                    "ARCHIVED projects may be restored"
+                ),
+            },
+        )
+
+    # Validate the new Owner exists and is not soft-deleted.
+    new_owner_stmt = sa.select(User).where(
+        User.id == payload.new_owner_user_id,
+        User.deleted_at.is_(None),
+    )
+    new_owner = (await db.execute(new_owner_stmt)).scalar_one_or_none()
+    if new_owner is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "error": "ERR_NEW_OWNER_NOT_FOUND",
+                "message": (
+                    f"user {payload.new_owner_user_id} not found or "
+                    "soft-deleted; refusing to restore"
+                ),
+            },
+        )
+
+    refresh_stmt = (
+        sa.select(type(project))
+        .where(type(project).id == project_id)
+        .with_for_update()
+    )
+    refreshed = (await db.execute(refresh_stmt)).scalar_one()
+    previous_status = refreshed.status.value
+    refreshed.status = ProjectStatus.ACTIVE
+    refreshed.archived_since = None
+    refreshed.owner_id = payload.new_owner_user_id
+    refreshed.updated_at = now
+
+    await db.flush()
+
+    # Restore members. We use a per-row UPSERT pattern: existing rows
+    # (matched on (project_id, user_id) regardless of removed_at) get
+    # their role updated and ``removed_at`` cleared; missing rows get a
+    # fresh INSERT. Phase 12 keeps the cardinality small (operator
+    # selects from the UI) so we avoid a bulk INSERT statement.
+    restored_count = 0
+    for member_entry in payload.restored_members:
+        existing_stmt = (
+            sa.select(ProjectMember)
+            .where(
+                ProjectMember.project_id == project_id,
+                ProjectMember.user_id == member_entry.user_id,
+            )
+            .with_for_update()
+        )
+        existing = (await db.execute(existing_stmt)).scalar_one_or_none()
+        if existing is not None:
+            existing.role = member_entry.role
+            existing.removed_at = None
+            existing.updated_at = now
+        else:
+            db.add(
+                ProjectMember(
+                    project_id=project_id,
+                    user_id=member_entry.user_id,
+                    role=member_entry.role,
+                    joined_at=now,
+                    invited_by_id=current_user.id,
+                )
+            )
+        restored_count += 1
+
+    await db.flush()
+
+    # Outbox notifications — Owner + each restored member. Each row uses
+    # a deterministic idempotency key so a retry collapses cleanly.
+    notify_recipients: list[tuple[UUID, str]] = [
+        (payload.new_owner_user_id, "owner"),
+    ]
+    notify_recipients.extend(
+        (m.user_id, "restored_member") for m in payload.restored_members
+    )
+    for recipient_id, role_label in notify_recipients:
+        await outbox_enqueue(
+            db,
+            event_type="project.restore_notification",
+            payload={
+                "project_id": str(project_id),
+                "recipient_user_id": str(recipient_id),
+                "role": role_label,
+                "restored_at": now.isoformat(),
+            },
+            idempotency_key=(
+                f"restore_notify:{project_id}:{recipient_id}:"
+                f"{now.strftime('%Y-%m-%d')}"
+            ),
+        )
+
+    response = RestoreResponse(
+        id=project_id,
+        status=ProjectStatus.ACTIVE.value,
+        owner_id=payload.new_owner_user_id,
+        restored_member_count=restored_count,
+    )
+    await db.commit()
+
+    # Post-commit audit (fresh sessions, FR-088 + FR-089).
+    try:
+        async with AsyncSessionLocal() as project_audit_session:
+            try:
+                await AuditLogService(project_audit_session).write_project_event(
+                    actor_user_id=current_user.id,
+                    project_id=project_id,
+                    action="project.restore",
+                    request_id=_request_id(request),
+                    ip=_client_ip(request),
+                    user_agent=_user_agent(request),
+                    detail={
+                        "previous_status": previous_status,
+                        "new_owner_id": str(payload.new_owner_user_id),
+                        "restored_member_count": restored_count,
+                    },
+                    before={"status": previous_status},
+                    after={
+                        "status": ProjectStatus.ACTIVE.value,
+                        "owner_id": str(payload.new_owner_user_id),
+                    },
+                )
+                await project_audit_session.commit()
+            except Exception:
+                await project_audit_session.rollback()
+                raise
+
+        async with AsyncSessionLocal() as platform_audit_session:
+            try:
+                await AuditLogService(
+                    platform_audit_session
+                ).write_platform_event(
+                    actor_user_id=current_user.id,
+                    action="platform.project.restore",
+                    request_id=_request_id(request),
+                    ip=_client_ip(request),
+                    user_agent=_user_agent(request),
+                    detail={
+                        "project_id": str(project_id),
+                        "new_owner_id": str(payload.new_owner_user_id),
+                        "restored_member_count": restored_count,
+                    },
+                )
+                await platform_audit_session.commit()
+            except Exception:
+                await platform_audit_session.rollback()
+                raise
+    except Exception as exc:  # noqa: BLE001 — audit never blocks restore
+        logger.warning(
+            "project.restore audit write failed (FR-088/89 soft alert): "
+            "project_id=%s actor=%s error=%r",
+            project_id,
+            current_user.id,
+            exc,
+        )
+
+    return response
 
 
 __all__ = ["router"]

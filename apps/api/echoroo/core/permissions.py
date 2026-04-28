@@ -178,6 +178,7 @@ Out-of-allowlist entries in a ProjectTrustedUser row are filtered at runtime
 
 SUPERUSER_PROJECT_SCOPE_ALLOWLIST: frozenset[str] = frozenset(
     {
+        "project.archive",
         "project.restore",
         "project.taxon_override.approve_looser",
         "project.taxon_override.reject_looser",

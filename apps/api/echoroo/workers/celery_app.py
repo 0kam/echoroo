@@ -79,6 +79,11 @@ app.conf.include = [
     # otherwise the default handler raises ``NotImplementedError`` and
     # the FR-045 warning email is never delivered.
     "echoroo.workers.trusted_expiry_dispatcher",
+    # Dormancy detection (Phase 12 / T701 / FR-060). Runs daily; the
+    # bound task does the SELECT + UPDATE + outbox enqueue in a single
+    # AsyncSession so a half-flipped state cannot leak into the audit
+    # chain.
+    "echoroo.workers.dormancy_check",
 ]
 
 # Periodic tasks (beat schedule)
@@ -128,5 +133,13 @@ app.conf.beat_schedule = {
             "echoroo.workers.trusted_expiry_notifier.notify_expiring_trusted_users"
         ),
         "schedule": crontab(hour=3, minute=0),
+    },
+    # FR-060 — dormancy detection daily at 00:00 UTC. The single-worker
+    # invariant is enforced inside the task via
+    # ``pg_try_advisory_xact_lock`` (see ``dormancy_check._try_acquire_lock``)
+    # so a beat collision with a manual dispatch is safe.
+    "dormancy-check-daily": {
+        "task": "echoroo.workers.dormancy_check.run_daily_dormancy_check",
+        "schedule": crontab(hour=0, minute=0),
     },
 }
