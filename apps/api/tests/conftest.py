@@ -82,7 +82,16 @@ async def setup_test_database(engine: AsyncEngine) -> None:
         )
         search_exists = bool(search_exists_result.scalar())
 
-    if core_exists and search_exists:
+        # Phase 11: taxon auto-obscure tables (006-permissions-redesign).
+        taxon_sensitivity_exists_result = await conn.execute(
+            sa.text(
+                "SELECT EXISTS (SELECT 1 FROM information_schema.tables"
+                " WHERE table_name = 'taxon_sensitivities')"
+            )
+        )
+        taxon_sensitivity_exists = bool(taxon_sensitivity_exists_result.scalar())
+
+    if core_exists and search_exists and taxon_sensitivity_exists:
         # Schema is fully up to date — nothing to do.
         return
 
@@ -138,6 +147,13 @@ async def setup_test_database(engine: AsyncEngine) -> None:
             ("consensusstatus", ["needs_votes", "agreed", "rejected", "disputed"]),
             ("annotationsetstatus", ["sampling", "ready", "in_progress", "completed"]),
             ("annotationsegmentstatus", ["unannotated", "annotated", "skipped"]),
+            # Phase 11 taxon auto-obscure enums (006-permissions-redesign)
+            ("taxonsensitivitysource", ["iucn", "moe_rdb", "manual"]),
+            ("taxonoverridedirection", ["stricter", "looser"]),
+            (
+                "taxonoverrideapprovalstatus",
+                ["applied", "pending_superuser_approval", "rejected"],
+            ),
         ]
         for type_name, values in enum_defs:
             await conn.execute(sa.text(_make_create_enum_sql(type_name, values)))
@@ -230,6 +246,9 @@ async def cleanup_test_data(session: AsyncSession) -> None:
     await session.execute(sa.text(_safe_delete("project_license_history")))
     await session.execute(sa.text(_safe_delete("project_members")))
     await session.execute(sa.text(_safe_delete("projects")))
+    # Phase 11 taxon auto-obscure tables (006-permissions-redesign)
+    await session.execute(sa.text(_safe_delete("project_taxon_sensitivity_overrides")))
+    await session.execute(sa.text(_safe_delete("taxon_sensitivities")))
     # Taxon tables
     await session.execute(sa.text(_safe_delete("taxon_vernacular_names")))
     await session.execute(sa.text(_safe_delete("taxa")))
