@@ -100,13 +100,35 @@
   let map: import('maplibre-gl').Map | null = null;
   let mapLoaded = false;
   /**
+   * Tracks per-marker DOM nodes that need metadata refresh whenever the
+   * caller mutates the underlying point (Round 3 review B3).  The marker
+   * element itself owns aria/title/data-* attributes; the optional `text`
+   * node is the visible pill label for hidden pins; `tooltip` rebuilds the
+   * tooltip body without touching pointer/focus state; `latest` is the
+   * mutable closure target that event listeners read from so handlers do
+   * not have to be removed/re-added when the point changes.
+   */
+  interface MarkerEntry {
+    marker: import('maplibre-gl').Marker;
+    tier: PrecisionTier;
+    /** Mutable reference event handlers close over. */
+    latest: { point: HSpecPoint; tier: PrecisionTier };
+    /** Refresh aria/title/data + visible text + tooltip for a new point. */
+    refresh: (point: HSpecPoint) => void;
+  }
+  /**
    * Round 1 review B3: maintain a stable id → marker map so live updates
    * patch only what changed instead of recreating every DOM marker.  The
    * tier is tracked alongside so we can detect when the same id transitions
    * between tiers (e.g. a detection that becomes obscured).
    */
-  let markerById: Map<string, { marker: import('maplibre-gl').Marker; tier: PrecisionTier }> =
-    new Map();
+  let markerById: Map<string, MarkerEntry> = new Map();
+  /**
+   * Round 3 review B4: focus-dot overlay markers attached to polygon tiers
+   * so keyboard users can activate the polygon's onSelect.  Keyed by point
+   * id and recreated when the underlying tier/h3_index changes.
+   */
+  let focusDotById: Map<string, MarkerEntry> = new Map();
   let maplibre: typeof import('maplibre-gl') | null = null;
   /** Round 1 review B2: guard against onMount → onDestroy race. */
   let disposed = false;
@@ -256,29 +278,34 @@
    * Wire shared accessibility attributes and keyboard handling onto the
    * marker root (Round 1 review A1).  We expose the marker as a button so
    * keyboard users can focus it with Tab and activate via Enter/Space.
+   *
+   * Round 3 review B3: handlers close over a mutable `latest` ref so the
+   * marker can be metadata-refreshed in place without removing/re-adding
+   * listeners (which would lose hover/focus state).
    */
   function makeAccessible(
     host: HTMLButtonElement,
-    point: HSpecPoint,
-    tier: PrecisionTier,
+    latest: { point: HSpecPoint; tier: PrecisionTier },
     showTooltip: () => void,
     hideTooltip: () => void,
   ): void {
     host.type = 'button';
-    host.setAttribute('aria-label', ariaLabelFor(point, tier));
+    host.setAttribute('aria-label', ariaLabelFor(latest.point, latest.tier));
+    host.dataset.pointId = latest.point.id;
+    if (latest.point.label) host.title = latest.point.label;
     // Buttons are focusable by default but in Safari rendering inside a
     // map canvas occasionally drops focusability — ensure tabindex is set.
     host.tabIndex = 0;
 
     host.addEventListener('click', (e) => {
       e.stopPropagation();
-      onSelect(point);
+      onSelect(latest.point);
     });
     host.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' || e.key === ' ') {
         e.preventDefault();
         e.stopPropagation();
-        onSelect(point);
+        onSelect(latest.point);
       }
     });
     host.addEventListener('mouseenter', showTooltip);
@@ -287,7 +314,107 @@
     host.addEventListener('blur', hideTooltip);
   }
 
-  function createCircleMarker(point: HSpecPoint, tier: PrecisionTier): HTMLButtonElement {
+  /**
+   * Build a tooltip node whose body content (label / sublabel / tier line)
+   * can be rebuilt on demand without re-creating the tooltip itself.  The
+   * returned `rebuild` rewrites the children in-place so the tooltip's
+   * display state and DOM identity are preserved across metadata refreshes
+   * (Round 3 review B3).
+   */
+  function attachTooltip(
+    host: HTMLElement,
+    initial: { point: HSpecPoint; tier: PrecisionTier },
+  ): {
+    show: () => void;
+    hide: () => void;
+    rebuild: (point: HSpecPoint, tier: PrecisionTier) => void;
+  } {
+    const tooltip = document.createElement('div');
+    tooltip.setAttribute('role', 'tooltip');
+    tooltip.style.cssText = [
+      'position: absolute',
+      'background: #191724', // Rosé Pine "base" (dark)
+      'color: #e0def4', // Rosé Pine "text"
+      'font-size: 12px',
+      'line-height: 1.35',
+      'padding: 6px 10px',
+      'border-radius: 6px',
+      'white-space: nowrap',
+      'pointer-events: none',
+      'bottom: calc(100% + 6px)',
+      'left: 50%',
+      'transform: translateX(-50%)',
+      'display: none',
+      'z-index: 1000',
+      'width: max-content',
+      'max-width: 240px',
+      'box-shadow: 0 4px 12px rgba(0,0,0,0.35)',
+    ].join(';');
+
+    function rebuild(point: HSpecPoint, tier: PrecisionTier): void {
+      // Replace children atomically — textContent='' clears the node.
+      tooltip.textContent = '';
+      if (point.label) {
+        const labelEl = document.createElement('div');
+        labelEl.textContent = point.label;
+        labelEl.style.fontWeight = '600';
+        tooltip.appendChild(labelEl);
+      }
+      if (point.sublabel) {
+        const subEl = document.createElement('div');
+        subEl.textContent = point.sublabel;
+        subEl.style.opacity = '0.85';
+        tooltip.appendChild(subEl);
+      }
+      const tierEl = document.createElement('div');
+      tierEl.textContent = tierLabel(tier);
+      tierEl.style.opacity = '0.7';
+      tierEl.style.fontSize = '11px';
+      tierEl.style.marginTop = point.label || point.sublabel ? '2px' : '0';
+      tooltip.appendChild(tierEl);
+    }
+
+    rebuild(initial.point, initial.tier);
+    host.appendChild(tooltip);
+    return {
+      show: () => {
+        tooltip.style.display = 'block';
+      },
+      hide: () => {
+        tooltip.style.display = 'none';
+      },
+      rebuild,
+    };
+  }
+
+  /**
+   * Refresh the visual / aria / data state of an existing circle marker so
+   * a metadata-only update (label, sublabel, color, etc.) takes effect
+   * without recreating the DOM (Round 3 review B3).
+   */
+  function refreshCircleVisuals(
+    host: HTMLButtonElement,
+    dot: HTMLDivElement,
+    point: HSpecPoint,
+    tier: PrecisionTier,
+  ): void {
+    const fill = point.color ?? tierColor(tier);
+    dot.style.background = fill;
+    if (tier === 'open') {
+      dot.style.outline = `4px solid ${fill}33`;
+    } else {
+      dot.style.outline = '';
+    }
+    host.setAttribute('aria-label', ariaLabelFor(point, tier));
+    host.dataset.pointId = point.id;
+    if (point.label) host.title = point.label;
+    else host.removeAttribute('title');
+  }
+
+  function createCircleMarker(
+    point: HSpecPoint,
+    tier: PrecisionTier,
+  ): { element: HTMLButtonElement; refresh: (next: HSpecPoint) => void; latest: { point: HSpecPoint; tier: PrecisionTier } } {
     const wrapper = document.createElement('button');
     wrapper.style.position = 'relative';
     wrapper.style.cursor = 'pointer';
@@ -319,12 +446,23 @@
     }
     wrapper.appendChild(dot);
 
-    const tooltipApi = attachTooltip(wrapper, point, tier);
-    makeAccessible(wrapper, point, tier, tooltipApi.show, tooltipApi.hide);
-    return wrapper;
+    const latest = { point, tier };
+    const tooltipApi = attachTooltip(wrapper, latest);
+    makeAccessible(wrapper, latest, tooltipApi.show, tooltipApi.hide);
+    return {
+      element: wrapper,
+      latest,
+      refresh: (next) => {
+        latest.point = next;
+        refreshCircleVisuals(wrapper, dot, next, tier);
+        tooltipApi.rebuild(next, tier);
+      },
+    };
   }
 
-  function createHiddenPin(point: HSpecPoint): HTMLButtonElement {
+  function createHiddenPin(
+    point: HSpecPoint,
+  ): { element: HTMLButtonElement; refresh: (next: HSpecPoint) => void; latest: { point: HSpecPoint; tier: PrecisionTier } } {
     const wrapper = document.createElement('button');
     wrapper.style.position = 'relative';
     wrapper.style.cursor = 'pointer';
@@ -376,64 +514,92 @@
     text.textContent = m.hspec_y_maps_hidden_pin_label();
     wrapper.appendChild(text);
 
-    const tooltipApi = attachTooltip(wrapper, point, 'hidden');
-    makeAccessible(wrapper, point, 'hidden', tooltipApi.show, tooltipApi.hide);
-    return wrapper;
+    const latest = { point, tier: 'hidden' as PrecisionTier };
+    const tooltipApi = attachTooltip(wrapper, latest);
+    makeAccessible(wrapper, latest, tooltipApi.show, tooltipApi.hide);
+    return {
+      element: wrapper,
+      latest,
+      refresh: (next) => {
+        latest.point = next;
+        // Hidden pin keeps its visible label fixed ("Restricted location"),
+        // but aria/title/tooltip body still reflect the latest point.
+        wrapper.setAttribute('aria-label', ariaLabelFor(next, 'hidden'));
+        wrapper.dataset.pointId = next.id;
+        if (next.label) wrapper.title = next.label;
+        else wrapper.removeAttribute('title');
+        text.textContent = m.hspec_y_maps_hidden_pin_label();
+        tooltipApi.rebuild(next, 'hidden');
+      },
+    };
   }
 
-  function attachTooltip(
-    host: HTMLElement,
+  /**
+   * Round 3 review B4: keyboard-activatable focus dot for polygon tiers.
+   * Polygon click handlers cover pointer activation, but mouse-only event
+   * wiring leaves keyboard / screen-reader users stranded.  The focus dot
+   * is a small <button> rendered at the polygon centroid that fires the
+   * same onSelect on Enter/Space, with a visually de-emphasised look so
+   * it does not compete with member/open/hidden tier markers.
+   */
+  function createFocusDot(
     point: HSpecPoint,
     tier: PrecisionTier,
-  ): { show: () => void; hide: () => void } {
-    const tooltip = document.createElement('div');
-    tooltip.setAttribute('role', 'tooltip');
-    tooltip.style.cssText = [
-      'position: absolute',
-      'background: #191724', // Rosé Pine "base" (dark)
-      'color: #e0def4', // Rosé Pine "text"
-      'font-size: 12px',
-      'line-height: 1.35',
-      'padding: 6px 10px',
-      'border-radius: 6px',
-      'white-space: nowrap',
-      'pointer-events: none',
-      'bottom: calc(100% + 6px)',
-      'left: 50%',
-      'transform: translateX(-50%)',
-      'display: none',
-      'z-index: 1000',
-      'width: max-content',
-      'max-width: 240px',
-      'box-shadow: 0 4px 12px rgba(0,0,0,0.35)',
-    ].join(';');
+  ): { element: HTMLButtonElement; refresh: (next: HSpecPoint) => void; latest: { point: HSpecPoint; tier: PrecisionTier } } {
+    const wrapper = document.createElement('button');
+    wrapper.type = 'button';
+    wrapper.className = 'hspec-y-maps__focus-dot';
+    wrapper.style.width = '8px';
+    wrapper.style.height = '8px';
+    wrapper.style.borderRadius = '50%';
+    wrapper.style.background = '#908caa'; // Rosé Pine "subtle"
+    wrapper.style.border = '1px solid rgba(255,255,255,0.85)';
+    wrapper.style.boxShadow = '0 1px 2px rgba(0,0,0,0.25)';
+    wrapper.style.padding = '0';
+    wrapper.style.margin = '0';
+    wrapper.style.cursor = 'pointer';
+    wrapper.style.opacity = '0.55';
+    wrapper.style.appearance = 'none';
+    wrapper.tabIndex = 0;
 
-    if (point.label) {
-      const labelEl = document.createElement('div');
-      labelEl.textContent = point.label;
-      labelEl.style.fontWeight = '600';
-      tooltip.appendChild(labelEl);
-    }
-    if (point.sublabel) {
-      const subEl = document.createElement('div');
-      subEl.textContent = point.sublabel;
-      subEl.style.opacity = '0.85';
-      tooltip.appendChild(subEl);
-    }
-    const tierEl = document.createElement('div');
-    tierEl.textContent = tierLabel(tier);
-    tierEl.style.opacity = '0.7';
-    tierEl.style.fontSize = '11px';
-    tierEl.style.marginTop = point.label || point.sublabel ? '2px' : '0';
-    tooltip.appendChild(tierEl);
+    const ariaLabel = point.label
+      ? m.hspec_y_maps_focus_dot_aria_labeled({ label: point.label, tier: tierLabel(tier) })
+      : m.hspec_y_maps_focus_dot_aria_unlabeled({ tier: tierLabel(tier) });
+    wrapper.setAttribute('aria-label', ariaLabel);
+    wrapper.title = m.hspec_y_maps_focus_dot_tooltip();
+    wrapper.dataset.pointId = point.id;
 
-    host.appendChild(tooltip);
+    const latest = { point, tier };
+
+    wrapper.addEventListener('click', (e) => {
+      e.stopPropagation();
+      onSelect(latest.point);
+    });
+    wrapper.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        e.stopPropagation();
+        onSelect(latest.point);
+      }
+    });
+
+    const tooltipApi = attachTooltip(wrapper, latest);
+    wrapper.addEventListener('mouseenter', tooltipApi.show);
+    wrapper.addEventListener('mouseleave', tooltipApi.hide);
+    wrapper.addEventListener('focus', tooltipApi.show);
+    wrapper.addEventListener('blur', tooltipApi.hide);
+
     return {
-      show: () => {
-        tooltip.style.display = 'block';
-      },
-      hide: () => {
-        tooltip.style.display = 'none';
+      element: wrapper,
+      latest,
+      refresh: (next) => {
+        latest.point = next;
+        const nextAria = next.label
+          ? m.hspec_y_maps_focus_dot_aria_labeled({ label: next.label, tier: tierLabel(tier) })
+          : m.hspec_y_maps_focus_dot_aria_unlabeled({ tier: tierLabel(tier) });
+        wrapper.setAttribute('aria-label', nextAria);
+        wrapper.dataset.pointId = next.id;
+        tooltipApi.rebuild(next, tier);
       },
     };
   }
@@ -445,6 +611,8 @@
   function clearMarkers(): void {
     for (const entry of markerById.values()) entry.marker.remove();
     markerById = new Map();
+    for (const entry of focusDotById.values()) entry.marker.remove();
+    focusDotById = new Map();
   }
 
   function addMarkerForPoint(
@@ -455,54 +623,111 @@
   ): void {
     if (!point.h3_index || !isValidCell(point.h3_index)) return;
     const [lat, lng] = cellToLatLng(point.h3_index);
-    const el =
+    const built =
       tier === 'hidden' ? createHiddenPin(point) : createCircleMarker(point, tier);
     const anchor: import('maplibre-gl').PositionAnchor =
       tier === 'hidden' ? 'bottom' : 'center';
-    const marker = new libgl.Marker({ element: el, anchor })
+    const marker = new libgl.Marker({ element: built.element, anchor })
       .setLngLat([lng, lat])
       .addTo(mapInstance);
-    markerById.set(point.id, { marker, tier });
+    markerById.set(point.id, {
+      marker,
+      tier,
+      latest: built.latest,
+      refresh: built.refresh,
+    });
+  }
+
+  function addFocusDotForPoint(
+    mapInstance: import('maplibre-gl').Map,
+    libgl: typeof import('maplibre-gl'),
+    point: HSpecPoint,
+    tier: PrecisionTier,
+  ): void {
+    if (!point.h3_index || !isValidCell(point.h3_index)) return;
+    // Use the H3 cell centroid so the dot sits inside the polygon area.
+    const [lat, lng] = cellToLatLng(point.h3_index);
+    const built = createFocusDot(point, tier);
+    const marker = new libgl.Marker({ element: built.element, anchor: 'center' })
+      .setLngLat([lng, lat])
+      .addTo(mapInstance);
+    focusDotById.set(point.id, {
+      marker,
+      tier,
+      latest: built.latest,
+      refresh: built.refresh,
+    });
+  }
+
+  /**
+   * Determine whether the metadata fields a marker actually renders have
+   * changed.  Used to skip refresh churn when the parent re-renders with
+   * the same point reference (or an equivalent value) (Round 3 review B3).
+   */
+  function pointMetadataDiffers(a: HSpecPoint, b: HSpecPoint): boolean {
+    return (
+      a.label !== b.label ||
+      a.sublabel !== b.sublabel ||
+      a.color !== b.color ||
+      a.h3_index !== b.h3_index
+    );
   }
 
   /**
    * Round 1 review B3: diff-update markers by id rather than wiping the
    * map every refresh.  Markers whose id disappears are removed; markers
-   * whose tier or h3_index changed are recreated; everything else is left
-   * in place to preserve hover/focus state and DOM identity.
+   * whose tier changed are recreated; same-id+same-tier entries have their
+   * position updated and (Round 3) their metadata refreshed in place so
+   * label / sublabel / color / aria-label changes propagate without losing
+   * hover / focus state or DOM identity.
    */
   function diffUpdateMarkers(
     mapInstance: import('maplibre-gl').Map,
     libgl: typeof import('maplibre-gl'),
     desired: { point: HSpecPoint; tier: PrecisionTier }[],
+    registry: Map<string, MarkerEntry>,
+    add: (
+      mapInstance: import('maplibre-gl').Map,
+      libgl: typeof import('maplibre-gl'),
+      point: HSpecPoint,
+      tier: PrecisionTier,
+    ) => void,
   ): void {
     const desiredById = new Map<string, { point: HSpecPoint; tier: PrecisionTier }>();
     for (const item of desired) desiredById.set(item.point.id, item);
 
     // Remove markers that are no longer present.
-    for (const [id, entry] of markerById) {
+    for (const [id, entry] of registry) {
       if (!desiredById.has(id)) {
         entry.marker.remove();
-        markerById.delete(id);
+        registry.delete(id);
       }
     }
 
     // Add or recreate markers as needed.
     for (const { point, tier } of desired) {
-      const existing = markerById.get(point.id);
+      const existing = registry.get(point.id);
       if (existing && existing.tier === tier) {
+        const previous = existing.latest.point;
         // Update position in case the H3 cell moved (re-clamping etc.).
         if (point.h3_index && isValidCell(point.h3_index)) {
           const [lat, lng] = cellToLatLng(point.h3_index);
           existing.marker.setLngLat([lng, lat]);
         }
+        // Round 3 review B3: refresh metadata (label / sublabel / color /
+        // aria-label / data-* / title / event handler closures) whenever
+        // the rendered fields change.  The mutable `latest` ref means
+        // existing event listeners pick up the new point automatically.
+        if (pointMetadataDiffers(previous, point)) {
+          existing.refresh(point);
+        }
         continue;
       }
       if (existing) {
         existing.marker.remove();
-        markerById.delete(point.id);
+        registry.delete(point.id);
       }
-      addMarkerForPoint(mapInstance, libgl, point, tier);
+      add(mapInstance, libgl, point, tier);
     }
   }
 
@@ -521,16 +746,25 @@
       | undefined;
     if (coarseSrc) coarseSrc.setData(buildPolygonFC(buckets.coarse, 'coarse'));
 
-    // Round 1 review B4: polygon tiers (coarse / very_coarse) intentionally
-    // do NOT receive a centroid marker.  The polygon click layer (wired in
-    // onMount) is the click target for those tiers, and the visual hex
-    // already conveys the precision.
+    // Visible markers — polygon tiers do NOT receive a primary marker
+    // (the polygon hex itself communicates the precision and absorbs
+    // pointer clicks via the layer-level click handler wired in onMount).
     const desired: { point: HSpecPoint; tier: PrecisionTier }[] = [
       ...buckets.member.map((p) => ({ point: p, tier: 'member' as PrecisionTier })),
       ...buckets.open.map((p) => ({ point: p, tier: 'open' as PrecisionTier })),
       ...buckets.hidden.map((p) => ({ point: p, tier: 'hidden' as PrecisionTier })),
     ];
-    diffUpdateMarkers(map, maplibre, desired);
+    diffUpdateMarkers(map, maplibre, desired, markerById, addMarkerForPoint);
+
+    // Round 3 review B4: keyboard-focusable overlay dots for polygon tiers
+    // so non-mouse users can activate the same onSelect.  Kept visually
+    // de-emphasised and announced with explicit "Activate area" copy so
+    // they are not confused with the precision-tier markers above.
+    const focusDesired: { point: HSpecPoint; tier: PrecisionTier }[] = [
+      ...buckets.coarse.map((p) => ({ point: p, tier: 'coarse' as PrecisionTier })),
+      ...buckets.very_coarse.map((p) => ({ point: p, tier: 'very_coarse' as PrecisionTier })),
+    ];
+    diffUpdateMarkers(map, maplibre, focusDesired, focusDotById, addFocusDotForPoint);
   }
 
   function fitToPoints(currentPoints: HSpecPoint[]): void {
@@ -641,12 +875,11 @@
         },
       });
 
-      // Round 1 review B4: wire polygon click handlers as the click target
-      // for polygon tiers, and surface a pointer cursor so users discover
-      // the affordance.  We deliberately keep keyboard activation to the
-      // marker tiers (member / open / hidden) which provide focusable
-      // <button> hosts; polygon tiers without markers continue to honour
-      // pointer interaction only, matching MapLibre's accessibility model.
+      // Round 1 review B4: wire polygon click handlers as the pointer
+      // click target for polygon tiers, and surface a pointer cursor so
+      // users discover the affordance.  Keyboard activation for polygon
+      // tiers is provided by the focus-dot overlays added in
+      // refreshLayers (Round 3 review B4).
       const polygonLayers = ['hspec-coarse-fill', 'hspec-very-coarse-fill'];
       for (const layerId of polygonLayers) {
         mapInstance.on('click', layerId, (event) => {
@@ -786,5 +1019,23 @@
   :global(.hspec-y-maps__marker-button--pill:focus-visible) {
     outline-offset: 2px;
     border-radius: 999px;
+  }
+
+  /* Round 3 review B4: focus-dot accessibility overlay for polygon tiers.
+     Kept visually subtle (Rosé Pine "subtle") so it does not compete with
+     primary tier markers, but receives a clear focus ring for keyboard
+     users and slightly intensifies on hover/focus so pointer users can
+     also discover it as an affordance. */
+  :global(.hspec-y-maps__focus-dot) {
+    transition: opacity 120ms ease, transform 120ms ease;
+  }
+  :global(.hspec-y-maps__focus-dot:hover),
+  :global(.hspec-y-maps__focus-dot:focus-visible) {
+    opacity: 1;
+    transform: scale(1.25);
+  }
+  :global(.hspec-y-maps__focus-dot:focus-visible) {
+    outline: 2px solid #d7827e;
+    outline-offset: 3px;
   }
 </style>

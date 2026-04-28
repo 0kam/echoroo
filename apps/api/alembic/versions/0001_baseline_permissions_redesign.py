@@ -200,9 +200,12 @@ def upgrade() -> None:  # noqa: PLR0915 — baseline migration, long by nature
         #   regular user (typically project owner / admin) opens the
         #   ticket via :func:`apply_taxon_override`.
         #
-        # Exactly one of the two SHOULD be populated per row; a CHECK
-        # constraint enforces "at least one" so the audit trail always
-        # carries an actor identity.
+        # Exactly one of the two MUST be populated per row; a CHECK
+        # constraint enforces XOR ("exactly one") so the audit trail
+        # carries a single, unambiguous actor identity. Round 2 review
+        # M3 (2026-04-28): tightened from "at least one" to XOR after
+        # the original wording allowed both columns to be filled.
+        # Existing dev DBs at HEAD=0004 are repaired by migration 0005.
         sa.Column(
             "requested_by_id",
             UUID(as_uuid=True),
@@ -226,7 +229,7 @@ def upgrade() -> None:  # noqa: PLR0915 — baseline migration, long by nature
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("now()")),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("now()")),
         sa.CheckConstraint(
-            "requested_by_id IS NOT NULL OR requesting_user_id IS NOT NULL",
+            "(requested_by_id IS NOT NULL) <> (requesting_user_id IS NOT NULL)",
             name="ck_superuser_approval_requests_actor_present",
         ),
     )

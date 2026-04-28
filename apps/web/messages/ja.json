@@ -2458,5 +2458,8 @@
   "hspec_y_maps_marker_aria_unlabeled": "{tier}の検出",
   "hspec_y_maps_marker_aria_labeled": "{label}（{tier}）",
   "hspec_y_maps_polygon_aria": "{label}の粗い範囲",
-  "hspec_y_maps_polygon_aria_unlabeled": "粗い検出範囲"
+  "hspec_y_maps_polygon_aria_unlabeled": "粗い検出範囲",
+  "hspec_y_maps_focus_dot_aria_labeled": "{label}の範囲を選択（{tier}）",
+  "hspec_y_maps_focus_dot_aria_unlabeled": "{tier}を選択",
+  "hspec_y_maps_focus_dot_tooltip": "範囲を選択"
 }

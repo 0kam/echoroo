@@ -2458,5 +2458,8 @@
   "hspec_y_maps_marker_aria_unlabeled": "Detection at {tier}",
   "hspec_y_maps_marker_aria_labeled": "{label} ({tier})",
   "hspec_y_maps_polygon_aria": "Coarse area for {label}",
-  "hspec_y_maps_polygon_aria_unlabeled": "Coarse detection area"
+  "hspec_y_maps_polygon_aria_unlabeled": "Coarse detection area",
+  "hspec_y_maps_focus_dot_aria_labeled": "Activate area for {label} ({tier})",
+  "hspec_y_maps_focus_dot_aria_unlabeled": "Activate {tier}",
+  "hspec_y_maps_focus_dot_tooltip": "Activate area"
 }

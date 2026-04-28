@@ -14,16 +14,17 @@ Pipeline
 --------
 
 1. Open an :class:`IucnSyncAttempt` row with ``status='running'``.
-2. Pull the current Red List snapshot over HTTPS with **CA trust + leaf
-   cert hash pinning** (FR-036, security checklist §M-2) — see
-   :func:`_build_pinned_client`. Pre-launch ratchet: the worker validates
-   the chain via the operator-supplied CA bundle (``IUCN_API_CA_BUNDLE``)
-   and, when ``IUCN_API_CERT_SHA256_BASE64`` is configured, compares the
-   SHA-256 of the leaf certificate (full DER) against the pin. True SPKI
-   pinning (hashing the SubjectPublicKeyInfo only) is deferred to the
-   post-launch ratchet listed in security checklist §M-2 — until then we
-   intentionally avoid the ``spki`` name in code so operators are not
-   misled about what is actually compared.
+2. Pull the current Red List snapshot over HTTPS with **CA-bundle trust
+   chain validation** (FR-036, security checklist §M-2) — see
+   :func:`_build_pinned_client`. Pre-launch ratchet (Round 2 review M1,
+   2026-04-28): the worker validates the chain via the operator-supplied
+   CA bundle (``IUCN_API_CA_BUNDLE``); leaf-certificate hash pinning and
+   true SPKI pinning are both deferred to the post-launch ratchet listed
+   in security checklist §M-2. The previous helper that compared the
+   leaf DER hash against ``IUCN_API_CERT_SHA256_BASE64`` was never wired
+   up to the request flow (httpx does not expose the peer cert in async
+   mode without a custom transport) so we removed it instead of leaving
+   dead code that misleads operators about what is actually checked.
 3. For each (taxon_id, category) returned, derive the recommended H3
    resolution via :func:`_h3_res_from_iucn_category` and UPSERT through
    :func:`echoroo.services.taxon_sensitivity_service.upsert_taxon_sensitivity`.
@@ -113,17 +114,15 @@ _HTTP_TIMEOUT_SECONDS: float = 30.0
 #: (security checklist §M-2). Production deployments should set this.
 _IUCN_API_CA_BUNDLE_ENV: str = "IUCN_API_CA_BUNDLE"
 
-#: Optional SHA-256 hash (base64-encoded) of the *full leaf certificate
-#: DER* served by the IUCN endpoint. When set, the worker compares the
-#: connected peer's leaf cert hash and aborts with ``status='failure'``
-#: if it does not match. Round 1 review M1 (2026-04-28): renamed from
-#: ``IUCN_API_SPKI_SHA256_BASE64`` because we hash the entire leaf cert
-#: rather than the SubjectPublicKeyInfo only — true SPKI pinning is a
-#: post-launch ratchet (security checklist §M-2). The legacy env name is
-#: still accepted as a fallback to avoid breaking deployments that have
-#: already provisioned the value.
-_IUCN_API_CERT_HASH_ENV: str = "IUCN_API_CERT_SHA256_BASE64"
-_IUCN_API_CERT_HASH_LEGACY_ENV: str = "IUCN_API_SPKI_SHA256_BASE64"
+#: Post-launch ratchet placeholder. Round 2 review M1 (2026-04-28):
+#: leaf-cert / SPKI hash pinning is deferred to the post-launch ratchet
+#: documented in security checklist §M-2. The env-var names are reserved
+#: here so operators see them in deployment manifests, but the worker
+#: does NOT consume them today — they are intentionally a no-op until
+#: the ratchet wires up a custom httpx transport that exposes the peer
+#: cert. Setting either variable today has no effect.
+_IUCN_API_CERT_HASH_ENV: str = "IUCN_API_CERT_SHA256_BASE64"  # noqa: E501 — post-launch ratchet placeholder
+_IUCN_API_CERT_HASH_LEGACY_ENV: str = "IUCN_API_SPKI_SHA256_BASE64"  # noqa: E501 — post-launch ratchet placeholder
 
 
 # ---------------------------------------------------------------------------
@@ -190,58 +189,19 @@ def _build_ssl_context() -> ssl.SSLContext:
 def _build_pinned_client() -> httpx.AsyncClient:
     """Return an HTTPX async client wired up for the IUCN endpoint.
 
-    The returned client is the caller's responsibility to close. Leaf cert
-    hash verification happens out-of-band via :func:`_verify_cert_hash`
-    against the captured peer certificate once the response has been
-    received. Round 1 review M1: the helper is named ``cert_hash`` rather
-    than ``spki`` because we hash the FULL leaf certificate DER, not the
-    SubjectPublicKeyInfo. True SPKI pinning is a post-launch ratchet.
+    The returned client is the caller's responsibility to close. Round 2
+    review M1 (2026-04-28): leaf-cert / SPKI hash pinning has been
+    removed from the call path because httpx does not expose the peer
+    cert in async mode without a custom transport, so the previous
+    ``_verify_cert_hash`` helper was never invoked and gave a false
+    sense of security. Pre-launch we rely on CA-bundle chain validation
+    only; full pinning is deferred to the post-launch ratchet documented
+    in ``specs/006-permissions-redesign/checklists/security.md`` §M-2.
     """
     return httpx.AsyncClient(
         timeout=_HTTP_TIMEOUT_SECONDS,
         verify=_build_ssl_context(),
     )
-
-
-def _verify_cert_hash(peer_certificate_der: bytes | None) -> None:
-    """Verify the connected peer's leaf cert hash matches the configured pin.
-
-    ``peer_certificate_der`` is the leaf certificate in DER form, as
-    returned by :meth:`ssl.SSLObject.getpeercert(binary_form=True)`.
-    Raises :class:`RuntimeError` when the pin is configured but the
-    hashes differ.
-
-    Round 1 review M1: this function hashes the **whole leaf certificate
-    DER**, not the SubjectPublicKeyInfo. True SPKI pinning is deferred to
-    the post-launch ratchet documented in
-    ``specs/006-permissions-redesign/checklists/security.md`` §M-2. The
-    function name and env var (``IUCN_API_CERT_SHA256_BASE64``) reflect
-    what is actually compared so operators are not misled. The legacy
-    name ``IUCN_API_SPKI_SHA256_BASE64`` is still honoured to avoid
-    breaking deployments that already provisioned the value.
-    """
-    pin_b64 = os.environ.get(_IUCN_API_CERT_HASH_ENV, "").strip()
-    if not pin_b64:
-        # Backwards-compat alias — accept the old name silently.
-        pin_b64 = os.environ.get(_IUCN_API_CERT_HASH_LEGACY_ENV, "").strip()
-    if not pin_b64:
-        return  # pinning not configured — system trust store has gated it
-    if peer_certificate_der is None:
-        raise RuntimeError(
-            "IUCN cert pinning requested but no peer certificate was "
-            f"captured. Either disable {_IUCN_API_CERT_HASH_ENV} or "
-            "ensure httpx exposes the leaf cert."
-        )
-    actual = hashlib.sha256(peer_certificate_der).digest()
-    import base64
-
-    expected = base64.b64decode(pin_b64)
-    if actual != expected:
-        raise RuntimeError(
-            "IUCN cert pin mismatch — refusing to consume the response. "
-            "If the IUCN endpoint rotated its certificate, update "
-            f"{_IUCN_API_CERT_HASH_ENV}."
-        )
 
 
 # ---------------------------------------------------------------------------
