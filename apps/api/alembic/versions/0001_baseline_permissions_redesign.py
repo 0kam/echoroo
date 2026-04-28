@@ -196,9 +196,9 @@ def upgrade() -> None:  # noqa: PLR0915 — baseline migration, long by nature
         #
         # * ``requested_by_id`` (FK → superusers.id, nullable) — set when
         #   a superuser opens the ticket directly (e.g. operator triage).
-        # * ``requesting_user_id`` (FK → users.id, nullable) — set when a
-        #   regular user (typically project owner / admin) opens the
-        #   ticket via :func:`apply_taxon_override`.
+        # * ``requesting_user_id`` (FK → users.id, nullable, ON DELETE
+        #   SET NULL) — set when a regular user (typically project owner /
+        #   admin) opens the ticket via :func:`apply_taxon_override`.
         #
         # Exactly one of the two MUST be populated per row; a CHECK
         # constraint enforces XOR ("exactly one") so the audit trail
@@ -206,6 +206,13 @@ def upgrade() -> None:  # noqa: PLR0915 — baseline migration, long by nature
         # M3 (2026-04-28): tightened from "at least one" to XOR after
         # the original wording allowed both columns to be filled.
         # Existing dev DBs at HEAD=0004 are repaired by migration 0005.
+        #
+        # Round 3 review (2026-04-28): the ``requesting_user_id`` FK is
+        # given an explicit constraint name and ``ON DELETE SET NULL`` so
+        # a fresh DB built from 0001 ends up byte-for-byte identical to
+        # an existing dev DB after 0005 has run. Without the ``name=`` /
+        # ``ondelete=`` here the two paths produced different final FK
+        # shapes for the same logical column.
         sa.Column(
             "requested_by_id",
             UUID(as_uuid=True),
@@ -215,7 +222,11 @@ def upgrade() -> None:  # noqa: PLR0915 — baseline migration, long by nature
         sa.Column(
             "requesting_user_id",
             UUID(as_uuid=True),
-            sa.ForeignKey("users.id"),
+            sa.ForeignKey(
+                "users.id",
+                name="fk_superuser_approval_requests_requesting_user_id",
+                ondelete="SET NULL",
+            ),
             nullable=True,
         ),
         sa.Column(

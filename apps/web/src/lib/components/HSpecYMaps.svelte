@@ -709,15 +709,18 @@
       const existing = registry.get(point.id);
       if (existing && existing.tier === tier) {
         const previous = existing.latest.point;
+        // Always swap in the new point object so closures (onSelect etc.)
+        // see the caller's latest reference even when no rendered field
+        // changed (Round 3 review B3 follow-up).
+        existing.latest.point = point;
         // Update position in case the H3 cell moved (re-clamping etc.).
         if (point.h3_index && isValidCell(point.h3_index)) {
           const [lat, lng] = cellToLatLng(point.h3_index);
           existing.marker.setLngLat([lng, lat]);
         }
-        // Round 3 review B3: refresh metadata (label / sublabel / color /
-        // aria-label / data-* / title / event handler closures) whenever
-        // the rendered fields change.  The mutable `latest` ref means
-        // existing event listeners pick up the new point automatically.
+        // Refresh DOM-visible metadata (label / sublabel / color /
+        // aria-label / data-* / title) only when a rendered field changed,
+        // to preserve hover/focus state.
         if (pointMetadataDiffers(previous, point)) {
           existing.refresh(point);
         }

@@ -43,12 +43,25 @@ final shape) does not double-apply. We use:
 
 Downgrade
 ---------
-Reverts to the legacy 0004 shape: drop the FK, drop the column, restore
-the original "at least one" CHECK predicate, and put ``requested_by_id``
-back to NOT NULL. The downgrade is best-effort — if any rows have been
-inserted with ``requesting_user_id`` populated and ``requested_by_id``
-NULL, the NOT NULL restore will fail; operators must reconcile manually
-before downgrading.
+Reverts to the **true** legacy 0004 shape produced by the original
+baseline migration (commit ``43ba56fe``):
+
+* ``requested_by_id`` UUID NOT NULL, FK → ``superusers.id`` (no
+  ``ondelete``, no named constraint).
+* No ``requesting_user_id`` column.
+* No actor CHECK constraint at all (the original baseline did not
+  declare one — the XOR CHECK is purely a Round 1/2 addition).
+
+Round 3 review (2026-04-28) corrected an earlier downgrade that tried
+to "restore a looser CHECK"; that CHECK never existed in 0004 and any
+predicate referencing ``requesting_user_id`` would be implicitly
+dropped (CASCADE) when the column itself is dropped, so adding then
+dropping it was both incorrect and order-sensitive.
+
+The downgrade is best-effort — if any rows have been inserted with
+``requesting_user_id`` populated and ``requested_by_id`` NULL, the
+NOT NULL restore will fail; operators must reconcile manually before
+downgrading.
 """
 
 from __future__ import annotations
@@ -122,38 +135,44 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    # Reverse order: re-impose the NOT NULL on requested_by_id, restore
-    # the looser CHECK, drop the FK + column.
+    # Restore the *original* 0004/baseline shape: a single
+    # ``requested_by_id`` NOT NULL FK column with no actor CHECK. Order
+    # matters because the XOR CHECK references ``requesting_user_id``
+    # and Postgres would CASCADE-drop the CHECK when the column goes,
+    # so we drop the CHECK explicitly first to make the intent obvious
+    # and keep the migration idempotent on partially-rolled-back DBs.
+    #
+    # 1. Drop the actor CHECK (no replacement — the original baseline
+    #    had no CHECK on this table).
     op.execute(
         """
         ALTER TABLE superuser_approval_requests
         DROP CONSTRAINT IF EXISTS ck_superuser_approval_requests_actor_present
         """
     )
-    # Best-effort restore: if any rows have requested_by_id NULL the
-    # ALTER will fail. Operators must reconcile before downgrading.
-    op.execute(
-        """
-        ALTER TABLE superuser_approval_requests
-        ALTER COLUMN requested_by_id SET NOT NULL
-        """
-    )
-    op.execute(
-        """
-        ALTER TABLE superuser_approval_requests
-        ADD CONSTRAINT ck_superuser_approval_requests_actor_present
-        CHECK (requested_by_id IS NOT NULL OR requesting_user_id IS NOT NULL)
-        """
-    )
+    # 2. Drop the FK on ``requesting_user_id`` (named constraint added
+    #    in upgrade()) so the column drop in step 3 cannot fail on a
+    #    lingering dependency.
     op.execute(
         """
         ALTER TABLE superuser_approval_requests
         DROP CONSTRAINT IF EXISTS fk_superuser_approval_requests_requesting_user_id
         """
     )
+    # 3. Drop the ``requesting_user_id`` column itself.
     op.execute(
         """
         ALTER TABLE superuser_approval_requests
         DROP COLUMN IF EXISTS requesting_user_id
+        """
+    )
+    # 4. Re-impose NOT NULL on ``requested_by_id``. Best-effort — if any
+    #    rows have NULL here (i.e. were created with
+    #    ``requesting_user_id`` populated instead) the ALTER will fail
+    #    and operators must reconcile before downgrading.
+    op.execute(
+        """
+        ALTER TABLE superuser_approval_requests
+        ALTER COLUMN requested_by_id SET NOT NULL
         """
     )
