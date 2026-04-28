@@ -321,20 +321,20 @@ description: "Task list for 006-permissions-redesign (revised after /speckit.ana
 
 ## Phase 11: US6 - Taxon-driven Auto-obscure（P2）
 
-- [ ] **T600** [US6] `models/taxon_sensitivity.py` 新規 (FR-032)
-- [ ] **T601** [P] [US6] `models/project_taxon_override.py` 新規 (FR-033)
-- [ ] **T602** [P] [US6] `models/iucn_sync_attempt.py` 新規 (FR-036)
-- [ ] **T610** [US6] `services/taxon_sensitivity_service.py` 新規: IUCN + MOE RDB sync + bulk preload + request-scope cache (FR-032、FR-036、NFR-001a)
-- [ ] **T611** [P] [US6] looser override 承認 workflow: `SuperuserApprovalRequest` 経由 (FR-034)
-- [ ] **T620** [P] [US6] `workers/iucn_sync.py` 新規: 週次 + TLS cert pinning + sanity check + `IucnSyncAttempt` 記録 + 2 週失敗 fail-safe (FR-036)
-- [ ] **T621** [P] [US6] `apps/api/echoroo/scripts/initial_iucn_sync.py` CLI（手動初回同期、quickstart §3 対応）(FR-036、security 重要 2)
-- [ ] **T622** [P] [US6] `apps/api/echoroo/scripts/seed_moe_rdb.py` CLI（環境省 RDB 手動 CSV import）(FR-032、security 重要 2)
-- [ ] **T630** [P] [US6] `api/web_v1/admin.py` に looser override 承認 endpoint (FR-034、FR-111)
-- [ ] **T640** [P] [US6] `apps/web/src/lib/components/HSpecYMaps.svelte` 改修: `h3_index` → resolution で marker / polygon (FR-029、research §10)
-- [ ] **T650** [P] [US6] `apps/api/tests/unit/services/test_auto_obscure.py` TDD: IUCN EN → H3_RES_5、MOE CR → HIDDEN、looser 承認後 global 置換、HIDDEN は Trusted でも解除不能 (FR-034、FR-035)
-- [ ] **T651** [P] [US6] `apps/api/tests/security/search_leak/test_no_raw_coordinates.py` TDD: 50+ endpoint JSON schema fuzzer (FR-030、FR-031、SC-016)
-- [ ] **T652** [US6] Playwright E2E: 希少種検出 export CSV で粗化 hex + `withheld_reason=taxon_sensitivity:EN` (PR-003、SC-005 セキュリティ重要)
-- [ ] **T653** [P] [US6] `apps/api/tests/integration/test_auto_obscure_integration.py`: API レスポンス レベルで lat/lng 不在確認 (FR-030、SC-005 integration 層)
+- [x] **T600** [US6] `models/taxon_sensitivity.py` 新規 (FR-032)
+- [x] **T601** [P] [US6] `models/project_taxon_override.py` 新規 (FR-033)
+- [x] **T602** [P] [US6] `models/iucn_sync_attempt.py` 新規 (FR-036)
+- [x] **T610** [US6] `services/taxon_sensitivity_service.py` 新規: IUCN + MOE RDB sync + bulk preload + request-scope cache (FR-032、FR-036、NFR-001a)
+- [x] **T611** [P] [US6] looser override 承認 workflow: `SuperuserApprovalRequest` 経由 (FR-034)
+- [x] **T620** [P] [US6] `workers/iucn_sync.py` 新規: 週次 + TLS cert pinning + sanity check + `IucnSyncAttempt` 記録 + 2 週失敗 fail-safe (FR-036)
+- [x] **T621** [P] [US6] `apps/api/echoroo/scripts/initial_iucn_sync.py` CLI（手動初回同期、quickstart §3 対応）(FR-036、security 重要 2)
+- [x] **T622** [P] [US6] `apps/api/echoroo/scripts/seed_moe_rdb.py` CLI（環境省 RDB 手動 CSV import）(FR-032、security 重要 2)
+- [x] **T630** [P] [US6] `api/web_v1/admin.py` に looser override 承認 endpoint (FR-034、FR-111)
+- [x] **T640** [P] [US6] `apps/web/src/lib/components/HSpecYMaps.svelte` 改修: `h3_index` → resolution で marker / polygon (FR-029、research §10)
+- [x] **T650** [P] [US6] `apps/api/tests/unit/services/test_auto_obscure.py` TDD: IUCN EN → H3_RES_5、MOE CR → HIDDEN、looser 承認後 global 置換、HIDDEN は Trusted でも解除不能 (FR-034、FR-035)
+- [x] **T651** [P] [US6] `apps/api/tests/security/search_leak/test_no_raw_coordinates.py` TDD: 50+ endpoint JSON schema fuzzer (FR-030、FR-031、SC-016)
+- [x] **T652** [US6] Playwright E2E: 希少種検出 export CSV で粗化 hex + `withheld_reason=taxon_sensitivity:EN` (PR-003、SC-005 セキュリティ重要)
+- [x] **T653** [P] [US6] `apps/api/tests/integration/test_auto_obscure_integration.py`: API レスポンス レベルで lat/lng 不在確認 (FR-030、SC-005 integration 層)
 
 ---
 
