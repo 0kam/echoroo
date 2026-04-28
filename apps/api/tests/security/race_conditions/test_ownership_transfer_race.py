@@ -584,29 +584,42 @@ async def test_concurrent_same_key_same_target_succeeds_once(db_session: AsyncSe
 
 
 @pytest.mark.asyncio
-async def test_concurrent_two_transfers_one_winner(db_session: AsyncSession) -> None:
-    """Two parallel transfers to the SAME target → exactly 1 OK + 1 conflict.
+async def test_concurrent_ten_transfers_strict_fan_out(
+    db_session: AsyncSession,
+) -> None:
+    """N=10 parallel transfers → exactly 1 OK + 9 ``TransferConflictError``.
 
-    Phase 12 R1 M4 fast-case: two coroutines race on the advisory lock.
-    The loser MUST get TransferConflictError (idempotency replay if same
-    key, owner-changed conflict if different key) — never a silent
-    second mutation.
+    Phase 12 R2 Major fix: the previous N=2 case admitted
+    ``OperationalError`` as a "loss" outcome, which silently masked
+    advisory-lock starvation or pool exhaustion. The contract is that
+    every concurrent caller MUST receive a deterministic outcome —
+    either the single winning ``OK`` or a ``TransferConflictError``
+    (mapped to HTTP 409 ``ERR_CONFLICT`` at the endpoint). Pool size
+    is sized to ``N`` so connection contention cannot legitimately
+    surface ``OperationalError`` for this case; any
+    ``OperationalError`` therefore signals a regression and the test
+    fails loudly.
     """
-    owner = await _create_user(db_session, email="t703_m4a_owner@example.com")
-    admin = await _create_user(db_session, email="t703_m4a_admin@example.com")
+    n_concurrent = 10
+
+    owner = await _create_user(db_session, email="t703_strict_owner@example.com")
+    admin = await _create_user(db_session, email="t703_strict_admin@example.com")
     project = await _create_project(db_session, owner=owner)
     await _add_admin(db_session, project=project, user=admin)
     await db_session.commit()
 
     test_engine = create_async_engine(
-        TEST_DATABASE_URL, echo=False, pool_size=4, max_overflow=4
+        TEST_DATABASE_URL,
+        echo=False,
+        pool_size=n_concurrent + 2,
+        max_overflow=n_concurrent + 2,
     )
     test_factory = async_sessionmaker(
         test_engine, class_=AsyncSession, expire_on_commit=False
     )
     results: list[str] = []
 
-    async def attempt(idem_suffix: str) -> None:
+    async def attempt(idx: int) -> None:
         try:
             async with test_factory() as session:
                 outcome = await transfer_ownership(
@@ -614,29 +627,38 @@ async def test_concurrent_two_transfers_one_winner(db_session: AsyncSession) -> 
                     project_id=project.id,
                     new_owner_user_id=admin.id,
                     requester_id=owner.id,
-                    idempotency_key=f"t703-m4a-{idem_suffix}",
+                    idempotency_key=f"t703-strict-{idx}-{uuid4()}",
                 )
                 await session.commit()
             results.append("ok" if not outcome.replayed else "replayed")
         except (TransferConflictError, InvalidTransferTargetError):
+            # 409 ``ERR_CONFLICT`` envelope at the HTTP layer.
             results.append("conflict")
-        except OperationalError:
-            results.append("error")
+        # Any other exception (incl. OperationalError) bubbles up so the
+        # gather() call below re-raises and the test fails — masking
+        # such a failure as "loss" was the R2 Major regression.
 
     try:
-        await asyncio.gather(attempt("A"), attempt("B"))
+        await asyncio.gather(*(attempt(i) for i in range(n_concurrent)))
     finally:
         await test_engine.dispose()
 
     counts = Counter(results)
-    # Exactly one mutation must have committed; the other races on the
-    # post-FOR-UPDATE owner_id check (Phase 12 R1 C2) and surfaces
-    # ``conflict`` (TransferConflictError → 409 ERR_CONFLICT).
     assert counts.get("ok", 0) == 1, (
-        f"M4: expected exactly 1 winner, got distribution {dict(counts)}"
+        f"R2 Major: expected exactly 1 winner among {n_concurrent} "
+        f"concurrent transfers, got distribution {dict(counts)}"
     )
-    assert counts.get("conflict", 0) + counts.get("error", 0) == 1, (
-        f"M4: expected 1 loser, got distribution {dict(counts)}"
+    assert counts.get("conflict", 0) == n_concurrent - 1, (
+        f"R2 Major: expected exactly {n_concurrent - 1} losers to surface "
+        f"TransferConflictError (→ HTTP 409 ERR_CONFLICT), got "
+        f"distribution {dict(counts)}"
+    )
+    # ``replayed`` MUST NOT appear here: every attempt uses a unique
+    # idempotency key so the loser path goes through the C2 owner re-check
+    # (TransferConflictError) — not the C3 idempotency replay branch.
+    assert counts.get("replayed", 0) == 0, (
+        f"R2 Major: unique idempotency keys must NEVER replay, got "
+        f"distribution {dict(counts)}"
     )
 
 

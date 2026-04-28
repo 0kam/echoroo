@@ -169,6 +169,77 @@ def _project_advisory_lock_key(project_id: UUID) -> int:
     return int.from_bytes(digest[:8], "big") & 0x7FFFFFFFFFFFFFFF
 
 
+def derive_scoped_idempotency_key(
+    project_id: UUID, idempotency_key: str
+) -> str:
+    """Compute the canonical ``outbox_events.idempotency_key`` slot.
+
+    Phase 12 R2 致命 C3: the endpoint short-circuits HTTP retries that
+    arrive after the original Owner has already been replaced. To probe
+    the outbox dedupe row before ``gate_action()`` it needs the same
+    deterministic slot the service uses internally; exposing the
+    derivation as a public function keeps the two surfaces in lockstep.
+    """
+    key_digest = hashlib.sha256(
+        f"{project_id}:{idempotency_key}".encode()
+    ).hexdigest()
+    return f"{_IDEMPOTENCY_KEY_PREFIX}{key_digest}"
+
+
+async def peek_replay_outcome(
+    session: AsyncSession,
+    *,
+    project_id: UUID,
+    idempotency_key: str,
+    new_owner_user_id: UUID,
+    requester_id: UUID,
+    request_id: str = "",
+    ip: str = "",
+    user_agent: str = "",
+) -> OwnershipTransferOutcome | None:
+    """Return the cached transfer outcome for an HTTP retry, or ``None``.
+
+    Phase 12 R2 致命 C3 — endpoint-level idempotency replay short-circuit
+    that runs **before** ``gate_action()``. The original Owner who
+    successfully transferred ownership but lost the response (network
+    blip / proxy timeout) is no longer Owner; ``gate_action`` would
+    therefore reject the retry with 403. Detecting the replay before
+    the gate restores the contract that "same key + same target ⇒
+    cached outcome with replayed=true".
+
+    Returns:
+        * cached :class:`OwnershipTransferOutcome` (replayed=True) when
+          a row exists and the target matches.
+        * ``None`` when no prior consumption is recorded — caller MUST
+          continue with the normal gate + service flow.
+
+    Raises:
+        TransferConflictError: same key + DIFFERENT target → 409.
+    """
+    scoped_key = derive_scoped_idempotency_key(project_id, idempotency_key)
+    replay = await _load_replay_payload(session, scoped_idem_key=scoped_key)
+    if replay is None:
+        return None
+    cached_new_owner = replay["new_owner_id"]
+    cached_previous = replay["previous_owner_id"]
+    if cached_new_owner != new_owner_user_id:
+        raise TransferConflictError(
+            f"idempotency key {idempotency_key!r} previously consumed "
+            f"for a different target ({cached_new_owner}); refusing replay",
+        )
+    return OwnershipTransferOutcome(
+        project_id=project_id,
+        previous_owner_id=cached_previous,
+        new_owner_id=new_owner_user_id,
+        actor_user_id=requester_id,
+        idempotency_key=idempotency_key,
+        replayed=True,
+        request_id=request_id,
+        ip=ip,
+        user_agent=user_agent,
+    )
+
+
 async def transfer_ownership(
     session: AsyncSession,
     *,
@@ -267,13 +338,54 @@ async def transfer_ownership(
 
     previous_owner_id: UUID = project.owner_id
 
-    # 3. Phase 12 R1 致命 C2: re-verify the requester is STILL the Owner
+    # 3. Phase 12 R2 致命 C3: replay short-circuit BEFORE owner re-check.
+    # An HTTP retry from the original Owner-at-the-time-of-the-first-call
+    # whose ownership has since transferred MUST still be able to read
+    # the cached replay outcome — otherwise a network blip on a winning
+    # transfer would surface 409 to the caller who in fact succeeded.
+    # We therefore probe the outbox dedupe row first; if a row exists we
+    # return the cached outcome (or 409 if the target differs). Only
+    # when no prior consumption is recorded do we proceed to the owner
+    # re-check (C2 fix below).
+    #
+    # The ``outbox_events.idempotency_key`` column is VARCHAR(128); we
+    # SHA-256 the user-supplied key together with the project_id and
+    # store the hex digest as the unique slot. The hash collapses
+    # arbitrary-length caller keys into a fixed 64-char tail while
+    # preserving the spec's per-(project, key) namespace.
+    scoped_idem_key = derive_scoped_idempotency_key(project_id, idempotency_key)
+
+    existing_replay = await _load_replay_payload(
+        session, scoped_idem_key=scoped_idem_key
+    )
+    if existing_replay is not None:
+        cached_new_owner = existing_replay["new_owner_id"]
+        cached_previous = existing_replay["previous_owner_id"]
+        if cached_new_owner != new_owner_user_id:
+            raise TransferConflictError(
+                f"idempotency key {idempotency_key!r} previously consumed "
+                f"for a different target ({cached_new_owner}); refusing replay",
+            )
+        return OwnershipTransferOutcome(
+            project_id=project_id,
+            previous_owner_id=cached_previous,
+            new_owner_id=new_owner_user_id,
+            actor_user_id=requester_id,
+            idempotency_key=idempotency_key,
+            replayed=True,
+            request_id=request_id,
+            ip=ip,
+            user_agent=user_agent,
+        )
+
+    # 4. Phase 12 R1 致命 C2: re-verify the requester is STILL the Owner
     # *after* the FOR UPDATE returned. If a faster concurrent transfer
     # already moved ``projects.owner_id`` to someone else, the
     # gate_action() check the endpoint performed earlier (before the
     # advisory lock was acquired) is stale; surface 409 so the loser of
     # the race cannot accidentally write a transfer for which they no
-    # longer hold the Owner role.
+    # longer hold the Owner role. Replay short-circuit (above) already
+    # exited for the legitimate retry case.
     if previous_owner_id != requester_id:
         raise TransferConflictError(
             f"requester {requester_id} is not the current owner of project "
@@ -281,23 +393,14 @@ async def transfer_ownership(
             "transfer already changed ownership",
         )
 
-    # 4. Phase 12 R1 致命 C3: in-TX idempotency dedupe via outbox row.
-    # We insert a row into ``outbox_events`` with a deterministic
-    # ``idempotency_key`` and ``ON CONFLICT DO NOTHING``. When the
-    # RETURNING clause yields no row, a prior transfer already consumed
-    # the key and we resolve the replay outcome from the existing row's
-    # payload. The outbox UNIQUE constraint is enforced inside the
-    # current transaction so two parallel callers cannot both insert.
-    #
-    # The ``outbox_events.idempotency_key`` column is VARCHAR(128); we
-    # therefore SHA-256 the user-supplied key together with the
-    # project_id and store the hex digest as the unique slot. The hash
-    # collapses arbitrary-length caller keys into a fixed 64-char tail
-    # while preserving the spec's per-(project, key) namespace.
-    key_digest = hashlib.sha256(
-        f"{project_id}:{idempotency_key}".encode()
-    ).hexdigest()
-    scoped_idem_key = f"{_IDEMPOTENCY_KEY_PREFIX}{key_digest}"
+    # 5. In-TX idempotency dedupe via outbox row. We insert a row into
+    # ``outbox_events`` with a deterministic ``idempotency_key`` and
+    # ``ON CONFLICT DO NOTHING``. When the RETURNING clause yields no
+    # row, a parallel transfer racing on the same key just won the
+    # advisory lock + insert race; we re-load the freshly committed
+    # payload to honour the replay contract. The outbox UNIQUE
+    # constraint is enforced inside the current transaction so two
+    # parallel callers cannot both insert.
     transfer_payload: dict[str, Any] = {
         "project_id": str(project_id),
         "previous_owner_id": str(previous_owner_id),
@@ -335,9 +438,10 @@ async def transfer_ownership(
     )
     inserted_row = insert_result.first()
     if inserted_row is None:
-        # Replay path: existing outbox row already carries the original
-        # transfer's payload. Same target → return cached outcome with
-        # ``replayed=True``; different target → 409.
+        # Race-tail replay: the row was inserted by a parallel caller
+        # between our step-3 lookup and the INSERT above (e.g. two
+        # workers fanned out from the same retry shard). Re-load and
+        # honour the replay outcome.
         replay = await _load_replay_payload(
             session, scoped_idem_key=scoped_idem_key
         )
@@ -365,13 +469,13 @@ async def transfer_ownership(
             user_agent=user_agent,
         )
 
-    # 5. No-op transfer rejection — the target must differ from current.
+    # 6. No-op transfer rejection — the target must differ from current.
     if previous_owner_id == new_owner_user_id:
         raise InvalidTransferTargetError(
             "new_owner_user_id matches the current owner; nothing to transfer",
         )
 
-    # 6. Validate the target's ProjectMember row with ``FOR UPDATE`` so
+    # 7. Validate the target's ProjectMember row with ``FOR UPDATE`` so
     # a concurrent role change cannot demote them mid-transfer.
     # Use lazyload on ``user`` and ``project`` to avoid FOR UPDATE
     # incompatibility with LEFT OUTER JOIN (same fix as the Project query
@@ -403,7 +507,7 @@ async def transfer_ownership(
             "may receive ownership (FR-057)",
         )
 
-    # 7. Commit the owner change. ``Project.owner_id`` is the
+    # 8. Commit the owner change. ``Project.owner_id`` is the
     # source-of-truth; the previous Owner is intentionally NOT inserted
     # as an Admin row here because the matrix already grants Owner-equivalent
     # rights to the Owner of record. The previous Owner becomes a Guest
@@ -557,6 +661,8 @@ __all__ = [
     "OwnershipTransferOutcome",
     "ProjectNotFoundError",
     "TransferConflictError",
+    "derive_scoped_idempotency_key",
+    "peek_replay_outcome",
     "transfer_ownership",
     "trigger_post_commit_side_effects",
 ]

@@ -406,23 +406,23 @@ async def test_emit_followup_stage_grace_expired() -> None:
 
 
 async def test_idempotency_key_format_per_stage_only() -> None:
-    """Two _enqueue_stage calls for the same (project, stage) reuse the same key.
+    """Same dormancy episode + same stage → identical idempotency key.
 
-    Phase 12 R1 M2: the outbox idempotency key uses
-    ``dormancy:{project_id}:{stage}`` (no date component). Every beat
-    tick after the first collapses on the unique constraint regardless
-    of which UTC day it lands on. This test validates the KEY FORMAT by
-    calling _enqueue_stage twice with the same stage but different
-    dates and asserting both calls use the same key (so the second call
-    is guaranteed to be a no-op via ON CONFLICT DO NOTHING semantics
-    when paired with outbox_service).
+    Phase 12 R2 Major fix: the outbox idempotency key uses
+    ``dormancy:{project_id}:{dormant_since_unix}:{stage}`` so within a
+    single dormancy episode every beat tick reuses the same key
+    (collapsing on ``ON CONFLICT DO NOTHING``). The key MUST NOT vary
+    with the wall clock of the beat tick — only with the
+    ``dormant_since`` boundary. This test fixes ``dormant_since`` and
+    moves ``now`` across a UTC-day boundary; both keys must match.
     """
     day_1 = datetime(2025, 6, 9, 12, 0, 0, tzinfo=UTC)
     day_2 = datetime(2025, 6, 10, 9, 0, 0, tzinfo=UTC)  # next UTC day
+    dormant_since = day_1 - timedelta(hours=1)
 
     project = _make_project(
         status=ProjectStatus.DORMANT,
-        dormant_since=day_1 - timedelta(hours=1),
+        dormant_since=dormant_since,
     )
     owner = _make_user()
 
@@ -450,14 +450,88 @@ async def test_idempotency_key_format_per_stage_only() -> None:
 
     assert len(collected_keys) == 2, "Expected two enqueue calls"
     assert collected_keys[0] == collected_keys[1], (
-        f"Both calls for the same (project, stage) must reuse the same "
-        f"idempotency key irrespective of date "
-        f"(got {collected_keys[0]!r} vs {collected_keys[1]!r})"
+        f"Both calls for the same (project, dormant_since, stage) must "
+        f"reuse the same idempotency key irrespective of beat-tick wall "
+        f"clock (got {collected_keys[0]!r} vs {collected_keys[1]!r})"
     )
-    # Key MUST NOT contain a date marker (no YYYY-MM-DD suffix).
+    # Key MUST NOT contain a calendar-date marker (no YYYY-MM-DD suffix).
     assert "2025-" not in collected_keys[0], (
-        f"Idempotency key must not include a date component "
+        f"Idempotency key must not include a calendar-date component "
         f"(got {collected_keys[0]!r})"
+    )
+    # Key MUST embed the dormant_since UNIX seconds so re-DORMANT after
+    # restore generates a fresh key namespace (Phase 12 R2 Major fix).
+    expected_unix = int(dormant_since.timestamp())
+    assert str(expected_unix) in collected_keys[0], (
+        f"Idempotency key must embed dormant_since UNIX seconds "
+        f"({expected_unix}); got {collected_keys[0]!r}"
+    )
+
+
+async def test_idempotency_key_changes_after_restore_then_re_dormant() -> None:
+    """Re-DORMANT after restore yields a NEW idempotency key namespace.
+
+    Phase 12 R2 Major fix: previously the key was fixed at
+    ``dormancy:{project_id}:{stage}``, so when a project re-entered
+    DORMANT after a restore the legacy outbox row still occupied the
+    UNIQUE slot — the dispatcher therefore never delivered a new
+    notification for the second episode. The fix embeds
+    ``dormant_since_unix`` so each episode gets its own slot.
+    """
+    project_id = uuid4()
+    owner = _make_user()
+
+    first_dormant_since = datetime(2025, 1, 1, 0, 0, 0, tzinfo=UTC)
+    second_dormant_since = datetime(2025, 6, 1, 0, 0, 0, tzinfo=UTC)
+
+    collected_keys: list[str] = []
+
+    async def fake_enqueue(
+        _session: Any,
+        *,
+        event_type: str,
+        payload: dict[str, Any],
+        idempotency_key: str,
+    ) -> Any:
+        collected_keys.append(idempotency_key)
+        return uuid4()
+
+    session = _FakeSession()
+
+    # First dormancy episode.
+    project_first = _make_project(
+        status=ProjectStatus.DORMANT,
+        dormant_since=first_dormant_since,
+    )
+    project_first.id = project_id
+    # Second dormancy episode (post-restore).
+    project_second = _make_project(
+        status=ProjectStatus.DORMANT,
+        dormant_since=second_dormant_since,
+    )
+    project_second.id = project_id
+
+    with patch("echoroo.workers.dormancy_check.enqueue", new=fake_enqueue):
+        await _enqueue_stage(
+            session,
+            project=project_first,
+            owner=owner,
+            stage="stage_initial",
+            now=first_dormant_since,
+        )
+        await _enqueue_stage(
+            session,
+            project=project_second,
+            owner=owner,
+            stage="stage_initial",
+            now=second_dormant_since,
+        )
+
+    assert len(collected_keys) == 2
+    assert collected_keys[0] != collected_keys[1], (
+        "Re-DORMANT after restore MUST produce a fresh idempotency key "
+        "(otherwise the outbox UNIQUE constraint suppresses the second "
+        f"episode's stage_initial notification): got {collected_keys}"
     )
 
 

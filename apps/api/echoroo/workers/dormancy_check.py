@@ -235,15 +235,26 @@ async def _enqueue_stage(
         "evaluated_at": _sanitise_field(now.isoformat(), field_name="evaluated_at"),
     }
 
-    # FR-076a idempotency (Phase 12 R1 M2): per (project, stage) — not
-    # per-day. Each stage MUST emit at most ONE notification per project
-    # for the lifetime of the row's dormancy episode. Including the day
-    # in the key would cause every subsequent beat tick to enqueue a
-    # fresh row (the outbox ON CONFLICT branch updates retry_count to a
-    # no-op so the dispatcher would still see new rows for already-sent
-    # stages). The unique-by-(project, stage) key collapses every retry
-    # past the first into a no-op, eliminating the daily spam.
-    idempotency_key = f"dormancy:{project.id}:{stage}"
+    # FR-076a idempotency (Phase 12 R2 Major fix): per (project,
+    # dormant_since, stage) — not just per (project, stage). The R1
+    # design used a fixed key per project+stage so each stage fired at
+    # most ONCE during a dormancy episode, but it also blocked
+    # notifications when the same project re-entered DORMANT after a
+    # restore (legacy outbox row would shadow every future episode).
+    # Embedding the UNIX-second timestamp of ``dormant_since`` makes
+    # each dormancy episode get a fresh key namespace while keeping
+    # within-episode dedupe (every beat tick during the same episode
+    # produces the same key → ON CONFLICT DO NOTHING is a no-op).
+    if project.dormant_since is None:  # pragma: no cover — defensive
+        # _emit_followup_stages already filters NULL dormant_since rows.
+        # ``_enter_dormancy`` always sets dormant_since BEFORE calling
+        # this helper, so this branch only triggers on explicit misuse.
+        raise ValueError(
+            f"_enqueue_stage requires dormant_since to be set "
+            f"(project_id={project.id})"
+        )
+    dormant_since_unix = int(project.dormant_since.timestamp())
+    idempotency_key = f"dormancy:{project.id}:{dormant_since_unix}:{stage}"
     await enqueue(
         session,
         event_type=OUTBOX_EVENT_DORMANCY,

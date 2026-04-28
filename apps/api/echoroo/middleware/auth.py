@@ -5,7 +5,8 @@ from uuid import UUID
 
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from sqlalchemy import select
+from sqlalchemy import select, text
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from echoroo.core.database import DbSession
 from echoroo.models.user import User
@@ -16,6 +17,34 @@ security = HTTPBearer(auto_error=False)
 
 # Token prefix for API tokens
 API_TOKEN_PREFIX = "ecr_"
+
+
+async def _stamp_superuser_status(db: AsyncSession, user: User | None) -> None:
+    """Resolve and stamp ``user.is_superuser`` from the ``superusers`` table.
+
+    Phase 12 R2 致命 C1 fix: the User ORM model deliberately has NO
+    ``is_superuser`` column — superuser status is the single source-of-
+    truth held by the ``superusers`` table (``revoked_at IS NULL`` →
+    active). Auth dependencies MUST stamp the resolved status onto the
+    transient User instance so downstream gates
+    (:func:`echoroo.core.permissions._is_superuser`,
+    :func:`api.web_v1.admin._require_authenticated_superuser`) can consult
+    a uniform attribute without re-issuing the same SQL.
+
+    The probe matches the raw-SQL helper in
+    :mod:`echoroo.api.web_v1.auth._is_superuser`, keeping every
+    superuser-aware surface in lockstep.
+    """
+    if user is None:
+        return
+    probe = await db.execute(
+        text(
+            "SELECT 1 FROM superusers "
+            "WHERE user_id = :uid AND revoked_at IS NULL LIMIT 1"
+        ),
+        {"uid": user.id},
+    )
+    user.is_superuser = probe.scalar_one_or_none() is not None  # type: ignore[attr-defined]
 
 
 async def get_current_user(
@@ -66,11 +95,14 @@ async def get_current_user(
                 headers={"WWW-Authenticate": "Bearer"},
             )
 
+        await _stamp_superuser_status(db, user)
         return user
 
     # Otherwise, treat as JWT token
     auth_service = AuthService(db)
-    return await auth_service.get_current_user(token)
+    user = await auth_service.get_current_user(token)
+    await _stamp_superuser_status(db, user)
+    return user
 
 
 async def get_current_user_optional(
@@ -117,6 +149,7 @@ async def get_current_user_optional(
             result = await db.execute(select(User).where(User.id == user_id))
             user = result.scalar_one_or_none()
             if user is not None:
+                await _stamp_superuser_status(db, user)
                 return user
             # Fall through: a Principal without a backing User row is
             # treated as Guest rather than 401 to preserve the Public-read
@@ -133,10 +166,14 @@ async def get_current_user_optional(
     try:
         if token.startswith(API_TOKEN_PREFIX):
             token_service = TokenService(db)
-            return await token_service.authenticate_by_token(token)
+            user = await token_service.authenticate_by_token(token)
+            await _stamp_superuser_status(db, user)
+            return user
 
         auth_service = AuthService(db)
-        return await auth_service.get_current_user(token)
+        user = await auth_service.get_current_user(token)
+        await _stamp_superuser_status(db, user)
+        return user
     except HTTPException:
         # FR-016 Phase 5: a *bad* token on a Public endpoint must still allow
         # Guest fall-through rather than 401-ing the response. Production

@@ -101,11 +101,23 @@ async def setup_test_database(engine: AsyncEngine) -> None:
         )
         outbox_exists = bool(outbox_exists_result.scalar())
 
+        # Phase 12 R2: ``superusers`` (Alembic 0001, no ORM model) is
+        # probed by every authenticated request — must exist in the
+        # test DB.
+        superusers_exists_result = await conn.execute(
+            sa.text(
+                "SELECT EXISTS (SELECT 1 FROM information_schema.tables"
+                " WHERE table_name = 'superusers')"
+            )
+        )
+        superusers_exists = bool(superusers_exists_result.scalar())
+
     if (
         core_exists
         and search_exists
         and taxon_sensitivity_exists
         and outbox_exists
+        and superusers_exists
     ):
         # Schema is fully up to date — nothing to do.
         return
@@ -199,6 +211,41 @@ async def setup_test_database(engine: AsyncEngine) -> None:
                     last_error TEXT NULL,
                     idempotency_key VARCHAR(128) NULL UNIQUE
                 )
+                """
+            )
+        )
+
+        # Phase 12 R2 致命 C1 fix: ``superusers`` is also created by
+        # Alembic 0001 with no ORM model (only the
+        # ``echoroo.repositories.superuser_credentials`` stub references
+        # it). Auth dependencies probe this table on every authenticated
+        # request to stamp ``user.is_superuser``; tests therefore need
+        # the table to exist or every request 500s. We create it
+        # idempotently here so the existing test fixtures (which never
+        # promote a user to superuser) all see ``is_superuser=False``.
+        await conn.execute(
+            sa.text(
+                """
+                CREATE TABLE IF NOT EXISTS superusers (
+                    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    user_id UUID NOT NULL UNIQUE
+                        REFERENCES users (id) ON DELETE CASCADE,
+                    added_by_id UUID NULL REFERENCES users (id),
+                    added_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                    revoked_at TIMESTAMPTZ NULL,
+                    webauthn_credentials JSONB NOT NULL DEFAULT '[]'::jsonb,
+                    allowed_ip_cidrs VARCHAR[] NOT NULL DEFAULT ARRAY[]::VARCHAR[],
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+                )
+                """
+            )
+        )
+        await conn.execute(
+            sa.text(
+                """
+                CREATE INDEX IF NOT EXISTS ix_superusers_revoked_at
+                ON superusers (revoked_at)
                 """
             )
         )
@@ -310,6 +357,10 @@ async def cleanup_test_data(session: AsyncSession) -> None:
     await session.execute(sa.text(_safe_delete("taxa")))
     # Phase 12 R1: outbox events (idempotency dedupe + worker queue).
     await session.execute(sa.text(_safe_delete("outbox_events")))
+    # Phase 12 R2: superuser allow-list (FR-112a single source of truth).
+    # Must be cleared before ``DELETE FROM users`` because of the FK to
+    # users.id.
+    await session.execute(sa.text(_safe_delete("superusers")))
     # Tokens / login history / notifications
     await session.execute(sa.text(_safe_delete("api_tokens")))
     await session.execute(sa.text(_safe_delete("password_reset_tokens")))

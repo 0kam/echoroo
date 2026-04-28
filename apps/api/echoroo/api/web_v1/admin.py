@@ -122,11 +122,14 @@ async def _require_authenticated_superuser(
     through gate_action() without ever proving superuser status — a
     privilege escalation against FR-061.
 
-    The fix: verify ``is_superuser=True`` on the User record (set by the
-    auth dependency from the cookie session / WebAuthn middleware) and,
-    as a defence-in-depth guarantee against forged session attributes,
-    additionally consult the persisted ``superusers`` table. Either
-    check failing surfaces a 403 envelope before any project lookup.
+    The fix (Phase 12 R2 致命 C1): consult the persisted ``superusers``
+    table directly — that table is the SINGLE SOURCE OF TRUTH for
+    superuser status (FR-112a). The User ORM model deliberately has NO
+    persisted ``is_superuser`` column; the ``OptionalCurrentUser``
+    dependency stamps a transient ``is_superuser`` attribute via the
+    same ``superusers`` probe so downstream gates can read it without
+    re-issuing SQL. We re-probe here defensively in case a custom
+    auth path bypassed the stamper.
 
     Production transport (CSRF + AuthRouter + IP allowlist + WebAuthn)
     is already enforced upstream by the middleware chain; this helper
@@ -138,24 +141,12 @@ async def _require_authenticated_superuser(
             detail="Not authenticated",
         )
 
-    # Step 1: cookie-session/Bearer-token claim. The auth dependency
-    # populates ``User.is_superuser`` from the request principal /
-    # token claims. ``getattr`` keeps the helper robust against User
-    # rows that were minted by a path that did not stamp the flag.
-    if not bool(getattr(current_user, "is_superuser", False)):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail={
-                "error": "ERR_NOT_SUPERUSER",
-                "message": "superuser privileges are required for this endpoint",
-            },
-        )
-
-    # Step 2: defence-in-depth — verify the user truly has an active
-    # ``superusers`` row. A revoked / soft-removed superuser whose
-    # session predates the revocation is rejected here. Mirrors the
-    # raw-SQL probe used by ``api/web_v1/auth.py::_is_superuser`` so
-    # the two surfaces stay in sync.
+    # The ``superusers`` table is the canonical source of truth: a row
+    # with ``revoked_at IS NULL`` means the user is currently a
+    # superuser. Any other signal (transient stamps, session claims) is
+    # advisory only. Mirrors the raw-SQL probe used by
+    # ``api/web_v1/auth.py::_is_superuser`` so the two surfaces stay in
+    # lockstep.
     probe = await db.execute(
         sa.text(
             "SELECT 1 FROM superusers "
@@ -174,6 +165,11 @@ async def _require_authenticated_superuser(
                 ),
             },
         )
+
+    # Sync the transient stamp so a downstream ``_is_superuser`` check
+    # (e.g. inside ``is_allowed`` Step 0c) sees the verified status even
+    # if the auth dependency stamper missed this user.
+    current_user.is_superuser = True  # type: ignore[attr-defined]
 
 
 # ---------------------------------------------------------------------------

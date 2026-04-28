@@ -48,6 +48,7 @@ from echoroo.services.ownership_service import (
     InvalidTransferTargetError,
     ProjectNotFoundError,
     TransferConflictError,
+    peek_replay_outcome,
     transfer_ownership,
 )
 
@@ -157,6 +158,41 @@ async def transfer_project_ownership(
                 "error": "ERR_IDEMPOTENCY_KEY_REQUIRED",
                 "message": "X-Idempotency-Key header is required (FR-058).",
             },
+        )
+
+    # Phase 12 R2 致命 C3: idempotency replay short-circuit BEFORE
+    # gate_action(). An HTTP retry from the original Owner whose
+    # ownership has since transferred would otherwise fail the gate
+    # with 403 — robbing the caller of the cached outcome they should
+    # legitimately observe per FR-058. The peek probes the outbox dedupe
+    # row using the same scoped key the service writes; on a hit we
+    # return the cached outcome immediately. A target mismatch surfaces
+    # 409 (TransferConflictError) here just like inside the service.
+    try:
+        cached = await peek_replay_outcome(
+            db,
+            project_id=project_id,
+            idempotency_key=idempotency_key,
+            new_owner_user_id=payload.new_owner_user_id,
+            requester_id=current_user.id,
+            request_id=_request_id(request),
+            ip=_client_ip(request),
+            user_agent=_user_agent(request),
+        )
+    except TransferConflictError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "error": "ERR_CONFLICT",
+                "message": str(exc),
+            },
+        ) from exc
+    if cached is not None:
+        return TransferOwnershipResponse(
+            project_id=cached.project_id,
+            previous_owner_id=cached.previous_owner_id,
+            new_owner_id=cached.new_owner_id,
+            replayed=True,
         )
 
     # Stage-1 gate: only Owner holds TRANSFER_OWNERSHIP. ``gate_action``
