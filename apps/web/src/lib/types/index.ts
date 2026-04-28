@@ -605,6 +605,115 @@ export interface ProjectOverviewResponse {
 }
 
 // ============================================
+// Trusted User Types (Phase 10 / FR-041-046, FR-050)
+// ============================================
+
+/**
+ * Trusted overlay status. Mirrors the backend ``ProjectTrustedStatus``
+ * enum in ``apps/api/echoroo/models/enums.py`` and the
+ * ``TrustedUserResponse`` payload from
+ * ``specs/006-permissions-redesign/contracts/trusted.yaml``.
+ *
+ * - ``active``  — overlay is in effect
+ * - ``expired`` — ``expires_at`` reached (FR-044, auto-expire worker)
+ * - ``revoked`` — Owner explicitly revoked via DELETE (FR-046)
+ */
+export type ProjectTrustedStatus = 'active' | 'expired' | 'revoked';
+
+/**
+ * Permission name allowed on a Trusted invitation. Matches
+ * ``TRUSTED_ALLOWED_PERMISSIONS`` (FR-012) — a strict subset of the
+ * full Permission enum that the Owner may grant ephemerally.
+ */
+export type TrustedGrantedPermission =
+  | 'view_media'
+  | 'view_detection'
+  | 'view_precise_location'
+  | 'download'
+  | 'export'
+  | 'search_within_project'
+  | 'vote'
+  | 'comment';
+
+/**
+ * Single Trusted overlay row returned by ``GET /projects/{id}/trusted-users``.
+ */
+export interface TrustedUser {
+  id: string;
+  project_id: string;
+  user_id: string;
+  invitation_id: string;
+  granted_by_id: string;
+  granted_at: string;
+  expires_at: string;
+  status: ProjectTrustedStatus;
+  granted_permissions: TrustedGrantedPermission[];
+  revoked_at: string | null;
+}
+
+/**
+ * ``GET /projects/{id}/trusted-users`` envelope.
+ */
+export interface TrustedUserListResponse {
+  items: TrustedUser[];
+  total: number;
+}
+
+/**
+ * Body for ``POST /projects/{id}/trusted-users`` (Owner only).
+ *
+ * - ``duration_seconds`` — 1 second to 1 year (FR-043, default 90 days
+ *   on the backend; the Web UI defaults to 7 776 000 = 90 days).
+ * - ``granted_permissions`` — non-empty subset of
+ *   :type:`TrustedGrantedPermission`.
+ */
+export interface TrustedUserInviteRequest {
+  email: string;
+  granted_permissions: TrustedGrantedPermission[];
+  duration_seconds: number;
+}
+
+/**
+ * ``POST /projects/{id}/trusted-users`` 202 response. The plain-text
+ * invitation token is delivered out-of-band via email (FR-051) — only
+ * ``invitation_id`` leaves the API surface.
+ */
+export interface TrustedUserInviteResponse {
+  invitation_id: string;
+}
+
+/**
+ * Body for ``PATCH /projects/{id}/trusted-users/{trustedUserId}``
+ * (Owner only).
+ *
+ * Per the contract (``specs/006-permissions-redesign/contracts/trusted.yaml``)
+ * the only writable fields are ``expires_at`` (ISO-8601 datetime — the
+ * absolute new expiry, ``granted_at + 1 year`` upper bound) and
+ * ``granted_permissions`` (allowlist re-validated server-side). The Round 1
+ * "Major 4" finding flagged ``extension_seconds`` as contract-non-compliant;
+ * UI components compute the new ISO timestamp client-side from the
+ * datetime-local picker and send it via ``expires_at``.
+ */
+export interface TrustedUserUpdateRequest {
+  expires_at?: string | null;
+  granted_permissions?: TrustedGrantedPermission[] | null;
+}
+
+/**
+ * ``POST /projects/{project_id}/invitations/{token}/accept`` response.
+ *
+ * Backend echoes ``kind`` (``member`` or ``trusted``) plus the project_id;
+ * for Trusted invitations the ``trusted_user_id`` is also returned, and
+ * for Member invitations the ``member_id``.
+ */
+export interface InvitationAcceptResponse {
+  kind: 'member' | 'trusted';
+  project_id: string;
+  member_id?: string;
+  trusted_user_id?: string;
+}
+
+// ============================================
 // Project Member Types
 // ============================================
 

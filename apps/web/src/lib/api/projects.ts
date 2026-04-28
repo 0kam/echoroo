@@ -12,6 +12,13 @@ import type {
   ProjectMemberUpdateRequest,
   ProjectOverviewResponse,
   RestrictedConfigUpdateRequest,
+  TrustedUserInviteRequest,
+  TrustedUserInviteResponse,
+  TrustedUserListResponse,
+  TrustedUser,
+  TrustedUserUpdateRequest,
+  ProjectTrustedStatus,
+  InvitationAcceptResponse,
 } from '$lib/types';
 import { ApiError } from './client';
 import { apiClient } from './client';
@@ -57,34 +64,67 @@ function resolveBaseUrl(): string {
 }
 
 /**
- * PATCH a `/web-api/v1/...` endpoint with cookie-based session + CSRF.
+ * Issue a request to a `/web-api/v1/...` endpoint with cookie-based
+ * session + CSRF (mutating verbs only — GET still works, but the CSRF
+ * token is harmless on safe verbs).
  *
  * The shared `apiClient` is Bearer-token-oriented and was built for the
- * legacy `/api/v1/*` surface; the restricted-config Web UI endpoint
- * lives under `/web-api/v1/*` which requires the `X-CSRF-Token` header
- * sourced from the `echoroo_csrf` cookie. We keep this helper local to
- * `projects.ts` for now because it is the only non-auth Web UI mutation
- * the frontend needs in Phase 8; if more land in later phases we can
- * promote it to a shared module.
+ * legacy `/api/v1/*` surface; the Web UI endpoints under
+ * `/web-api/v1/*` require the `X-CSRF-Token` header sourced from the
+ * `echoroo_csrf` cookie for any non-safe verb. Promoted to a shared
+ * helper in Phase 10 (T520 / T521) so the Trusted overlay management
+ * + invitation accept flow can reuse the same envelope-aware error
+ * extraction logic.
+ *
+ * @param method Standard HTTP verb. The body is omitted automatically
+ *               for safe verbs (GET / HEAD / DELETE).
+ * @param path   Path under `/web-api/v1` (e.g. `/projects/{id}/trusted-users`).
+ * @param body   Request body. Stringified with `JSON.stringify`. Pass
+ *               `undefined` to send no body (e.g. POST accept which only
+ *               needs an idempotency header, or DELETE which never has
+ *               a body).
+ * @param extraHeaders Caller-supplied headers. Merged AFTER the default
+ *               headers so the caller can override (e.g. set
+ *               `X-Idempotency-Key` for FR-053 accept).
  */
-async function patchWebApi<T>(path: string, body: unknown): Promise<T> {
+async function callWebApi<T>(
+  method: 'GET' | 'POST' | 'PATCH' | 'DELETE',
+  path: string,
+  body?: unknown,
+  extraHeaders?: Record<string, string>,
+): Promise<T> {
   const url = `${resolveBaseUrl()}/web-api/v1${path}`;
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  // Forward the access-token Bearer alongside the cookie (defence in depth):
-  // the backend route resolves the principal via OptionalCurrentUser which
-  // accepts either credential type. The cookie path is the production one
-  // — Bearer is mostly a Vitest fallback.
-  const token = apiClient.getAccessToken();
-  if (token) headers['Authorization'] = `Bearer ${token}`;
+  const headers: Record<string, string> = {};
+  if (body !== undefined) {
+    headers['Content-Type'] = 'application/json';
+  }
+  // Round 3 polish — fix Major #1: do NOT forward an Authorization Bearer
+  // header to `/web-api/v1/*`. The Web UI surface is a strictly
+  // cookie + CSRF authenticated channel (Phase 7 design); mixing in a
+  // Bearer token here would couple the Web UI to the legacy `/api/v1`
+  // credential surface and bypass the per-mutation CSRF defence-in-depth
+  // story. The backend's `OptionalCurrentUser` dependency would happily
+  // accept the Bearer, but doing so would let a stolen access token
+  // perform Web mutations without the matching CSRF cookie — defeating
+  // the point of double-submit. Cookie + CSRF only.
   const csrfToken = getCsrfToken();
   if (csrfToken) headers['X-CSRF-Token'] = csrfToken;
+  if (extraHeaders) {
+    for (const [k, v] of Object.entries(extraHeaders)) {
+      headers[k] = v;
+    }
+  }
 
-  const response = await fetch(url, {
-    method: 'PATCH',
+  const init: RequestInit = {
+    method,
     credentials: 'include',
     headers,
-    body: JSON.stringify(body ?? {}),
-  });
+  };
+  if (body !== undefined) {
+    init.body = JSON.stringify(body);
+  }
+
+  const response = await fetch(url, init);
 
   if (!response.ok) {
     const errorData = await response.json().catch(() => ({ detail: 'Request failed' }));
@@ -118,6 +158,14 @@ async function patchWebApi<T>(path: string, body: unknown): Promise<T> {
     return (await response.json()) as T;
   }
   return {} as T;
+}
+
+/**
+ * Backwards-compatible alias for the Phase 8 PATCH helper. Still used
+ * by ``updateRestrictedConfig`` so the call-site stays terse.
+ */
+async function patchWebApi<T>(path: string, body: unknown): Promise<T> {
+  return callWebApi<T>('PATCH', path, body);
 }
 
 export const projectsApi = {
@@ -236,5 +284,126 @@ export const projectsApi = {
     config: RestrictedConfigUpdateRequest
   ): Promise<Project> => {
     return patchWebApi<Project>(`/projects/${projectId}/restricted-config`, config);
+  },
+
+  /**
+   * List Trusted overlays for a project (Phase 10 / T520, FR-050).
+   *
+   * Owner / Admin only. The optional ``status`` filter narrows the
+   * result to ``active`` / ``expired`` / ``revoked``. Members / Viewers
+   * receive a 403 from the backend, which surfaces as
+   * ``ApiError(status=403)`` for the caller to handle.
+   */
+  listTrustedUsers: async (
+    projectId: string,
+    status?: ProjectTrustedStatus,
+  ): Promise<TrustedUserListResponse> => {
+    const query = status ? `?status=${encodeURIComponent(status)}` : '';
+    return callWebApi<TrustedUserListResponse>(
+      'GET',
+      `/projects/${projectId}/trusted-users${query}`,
+    );
+  },
+
+  /**
+   * Issue a Trusted invitation (Phase 10 / T520, FR-050).
+   *
+   * Owner-only. Backend errors surface via ``ApiError.code``:
+   *
+   * - 422 ``ERR_SELF_TRUSTED_INVALID`` — owner targeted self.
+   * - 422 ``ERR_TRUSTED_TARGET_INVALID`` — target already has a project role.
+   * - 422 ``ERR_INVALID_TRUSTED_PERMISSION`` — granted_permissions outside
+   *   ``TRUSTED_ALLOWED_PERMISSIONS``.
+   * - 409 ``ERR_INVITATION_PENDING`` — pending invitation already exists.
+   */
+  inviteTrustedUser: async (
+    projectId: string,
+    body: TrustedUserInviteRequest,
+  ): Promise<TrustedUserInviteResponse> => {
+    return callWebApi<TrustedUserInviteResponse>(
+      'POST',
+      `/projects/${projectId}/trusted-users`,
+      body,
+    );
+  },
+
+  /**
+   * Extend / edit a Trusted overlay (Phase 10 / T520, FR-046).
+   *
+   * Owner-only. Empty body is rejected with 422 ``ERR_NO_OP``. Per the
+   * trusted contract (Round 2 polish, Major 4) only ``expires_at`` and
+   * ``granted_permissions`` are accepted; the absolute ISO datetime is
+   * the canonical representation of an extension.
+   */
+  updateTrustedUser: async (
+    projectId: string,
+    trustedUserId: string,
+    body: TrustedUserUpdateRequest,
+  ): Promise<TrustedUser> => {
+    return callWebApi<TrustedUser>(
+      'PATCH',
+      `/projects/${projectId}/trusted-users/${trustedUserId}`,
+      body,
+    );
+  },
+
+  /**
+   * Revoke a Trusted overlay (Phase 10 / T520, FR-046).
+   *
+   * Owner-only. Idempotent (revoking an already-revoked overlay still
+   * returns 204).
+   */
+  revokeTrustedUser: async (
+    projectId: string,
+    trustedUserId: string,
+  ): Promise<void> => {
+    await callWebApi<void>(
+      'DELETE',
+      `/projects/${projectId}/trusted-users/${trustedUserId}`,
+    );
+  },
+
+  /**
+   * Accept an invitation (Phase 10 / T521, FR-053 / FR-054).
+   *
+   * Required header ``X-Idempotency-Key`` — replays under the same key
+   * return the same outcome (200) so a double-click cannot create
+   * duplicate memberships. Backend error codes:
+   *
+   * - 403 ``ERR_EMAIL_MISMATCH`` — caller's email differs from the
+   *   invitation's stored hash.
+   * - 404 ``invitation not found`` — token unknown / project mismatch.
+   * - 410 ``ERR_INVITATION_TERMINAL_STATE`` — already accepted / expired
+   *   / revoked.
+   * - 409 ``ERR_INVITATION_CONFLICT`` — same idempotency key replayed
+   *   with a different token.
+   * - 503 — Redis idempotency cache unreachable.
+   */
+  acceptInvitation: async (
+    projectId: string,
+    token: string,
+    idempotencyKey: string,
+  ): Promise<InvitationAcceptResponse> => {
+    return callWebApi<InvitationAcceptResponse>(
+      'POST',
+      `/projects/${projectId}/invitations/${encodeURIComponent(token)}/accept`,
+      undefined,
+      { 'X-Idempotency-Key': idempotencyKey },
+    );
+  },
+
+  /**
+   * Recipient-driven self-decline (Phase 10 / T521, FR-107).
+   *
+   * Idempotent: an already-declined invitation still returns 204. All
+   * "cannot resolve / cannot match" outcomes (token unknown, email
+   * mismatch, cross-account) collapse to 404 per FR-055; terminal
+   * states (accepted / expired / revoked) return 410.
+   */
+  declineInvitation: async (projectId: string, token: string): Promise<void> => {
+    await callWebApi<void>(
+      'DELETE',
+      `/projects/${projectId}/invitations/${encodeURIComponent(token)}`,
+    );
   },
 };

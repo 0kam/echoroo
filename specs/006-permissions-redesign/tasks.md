@@ -299,23 +299,23 @@ description: "Task list for 006-permissions-redesign (revised after /speckit.ana
 
 ## Phase 10: US5 - Trusted User 招待（P2）
 
-- [ ] **T500** [US5] `models/project_invitation.py` 改修: kind + CHECK + email_hash + trusted_duration_seconds (FR-047、FR-048)
-- [ ] **T501** [P] [US5] `models/project_trusted_user.py` 新規 (FR-041)
-- [ ] **T502** [P] [US5] `services/invitation_service.py` 改修: HMAC 署名 + email 一致 + single TX + idempotency-key (FR-052、FR-053、FR-054、FR-055)
-- [ ] **T503** [P] [US5] `services/trusted_service.py` 新規: allowlist 再フィルタ + 期限 + 延長 + revoke (FR-012、FR-014、FR-043、FR-044、FR-046)
-- [ ] **T510** [US5] `api/web_v1/trusted.py` 新規（`contracts/trusted.yaml` 対応）(FR-050)
-- [ ] **T511** [P] [US5] `api/web_v1/projects/_members.py` に `/invitations/{token}/accept` 追加（T118 で分割済みなので衝突なし）(FR-053、FR-054)
-- [ ] **T512** [P] [US5] `api/web_v1/projects/_members.py` に `DELETE /invitations/{token}` 追加: **受信者** による pending 招待のセルフ decline。token lookup は accept と同じ HMAC 署名検証 + `token_hash` 比較、受信者 email 一致確認（FR-054 準拠）、成功時 `ProjectInvitation.status = DECLINED` 遷移（既存 enum + state machine 流用、新規 enum 値追加なし）+ 監査ログ記録。レスポンス: pending/既 DECLINED → 204（冪等、再 decline も 204 で status 不変）、accepted/expired/revoked → 410、token 未解決 or 他人 token or email 不一致 → 全て **404 に統一**（enumeration 対策、FR-055 準拠） (FR-107、FR-101c、FR-054、FR-055)
-- [ ] **T513b** [P] [US5] `apps/api/tests/contract/test_invitation_recipient_self_delete.py` TDD: pending 削除 204 + status=DECLINED、再 decline 204 冪等、accepted 410、expired 410、revoked 410、token 未解決 404、他人 token 404、email 不一致 404 (全て 404 統一で enumeration 回避) (FR-107、FR-055)
-- [ ] **T514** [P] [US5] `workers/trusted_long_lived_invalidation.py` 新規: WebSocket / SSE / streaming 接続で 5 分ごとに `active_trusted_capabilities` / `security_stamp` 再評価、revoke は Redis pub/sub で broadcast (NFR-008a)
-- [ ] **T515** [P] [US5] `workers/trusted_expiry_notifier.py` 期限 7 日前通知 (FR-045)
-- [ ] **T516** [P] [US5] `workers/trusted_auto_expire.py` expires_at で自動 expired (FR-044)
-- [ ] **T520** [P] [US5] `apps/web/src/routes/(app)/projects/[id]/trusted/+page.svelte` 新規 (FR-050)
-- [ ] **T521** [P] [US5] `apps/web/src/routes/(app)/invite/[token]/+page.svelte` 新規 (FR-053)
-- [ ] **T530** [P] [US5] `apps/api/tests/security/invitations/test_email_mismatch.py` TDD (FR-054)
-- [ ] **T531** [P] [US5] `apps/api/tests/security/invitations/test_double_accept_idempotency.py` TDD (FR-053)
-- [ ] **T532** [P] [US5] `apps/api/tests/security/authorization/test_trusted_allowlist_runtime.py` TDD: VIEW_AUDIT_LOG 手動 INSERT でも除外 (FR-014)
-- [ ] **T533** [US5] Playwright E2E: 発行 → accept → expire → revoke full flow (PR-003、SC-004 セキュリティ重要)
+- [x] **T500** [US5] `models/project_invitation.py` 改修: kind + CHECK + email_hash + trusted_duration_seconds (FR-047、FR-048)
+- [x] **T501** [P] [US5] `models/project_trusted_user.py` 新規 (FR-041)
+- [x] **T502** [P] [US5] `services/invitation_service.py` 改修: HMAC 署名 + email 一致 + single TX + idempotency-key (FR-052、FR-053、FR-054、FR-055)
+- [x] **T503** [P] [US5] `services/trusted_service.py` 新規: allowlist 再フィルタ + 期限 + 延長 + revoke (FR-012、FR-014、FR-043、FR-044、FR-046)
+- [x] **T510** [US5] `api/web_v1/trusted.py` 新規（`contracts/trusted.yaml` 対応）(FR-050)
+- [x] **T511** [P] [US5] `api/web_v1/projects/_members.py` に `/invitations/{token}/accept` 追加（T118 で分割済みなので衝突なし）(FR-053、FR-054)
+- [x] **T512** [P] [US5] `api/web_v1/projects/_members.py` に `DELETE /invitations/{token}` 追加: **受信者** による pending 招待のセルフ decline。token lookup は accept と同じ HMAC 署名検証 + `token_hash` 比較、受信者 email 一致確認（FR-054 準拠）、成功時 `ProjectInvitation.status = DECLINED` 遷移（既存 enum + state machine 流用、新規 enum 値追加なし）+ 監査ログ記録。レスポンス: pending/既 DECLINED → 204（冪等、再 decline も 204 で status 不変）、accepted/expired/revoked → 410、token 未解決 or 他人 token or email 不一致 → 全て **404 に統一**（enumeration 対策、FR-055 準拠） (FR-107、FR-101c、FR-054、FR-055)
+- [x] **T513b** [P] [US5] `apps/api/tests/contract/test_invitation_recipient_self_delete.py` TDD: pending 削除 204 + status=DECLINED、再 decline 204 冪等、accepted 410、expired 410、revoked 410、token 未解決 404、他人 token 404、email 不一致 404 (全て 404 統一で enumeration 回避) (FR-107、FR-055)
+- [x] **T514** [P] [US5] `workers/trusted_long_lived_invalidation.py` 新規: WebSocket / SSE / streaming 接続で 5 分ごとに `active_trusted_capabilities` / `security_stamp` 再評価、revoke は Redis pub/sub で broadcast (NFR-008a)
+- [x] **T515** [P] [US5] `workers/trusted_expiry_notifier.py` 期限 7 日前通知 (FR-045)
+- [x] **T516** [P] [US5] `workers/trusted_auto_expire.py` expires_at で自動 expired (FR-044)
+- [x] **T520** [P] [US5] `apps/web/src/routes/(app)/projects/[id]/trusted/+page.svelte` 新規 (FR-050)
+- [x] **T521** [P] [US5] `apps/web/src/routes/(app)/invite/[token]/+page.svelte` 新規 (FR-053) — Phase 10 Batch 4 で URL token leak 対策のため `(public)/invite/[token]/` に移動 + sessionStorage resume
+- [x] **T530** [P] [US5] `apps/api/tests/security/invitations/test_email_mismatch.py` TDD (FR-054)
+- [x] **T531** [P] [US5] `apps/api/tests/security/invitations/test_double_accept_idempotency.py` TDD (FR-053)
+- [x] **T532** [P] [US5] `apps/api/tests/security/authorization/test_trusted_allowlist_runtime.py` TDD: VIEW_AUDIT_LOG 手動 INSERT でも除外 (FR-014)
+- [x] **T533** [US5] Playwright E2E: 発行 → accept → expire → revoke full flow (PR-003、SC-004 セキュリティ重要)
 
 ---
 
