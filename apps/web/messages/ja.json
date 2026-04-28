@@ -2447,5 +2447,12 @@
   "invite_decline_confirm_message": "プロジェクトには追加されません。気が変わった場合はオーナーに招待の再発行を依頼してください。",
   "invite_decline_confirm_button": "辞退する",
   "invite_declined_message": "招待を辞退しました。",
-  "invite_decline_back_to_home": "ダッシュボードへ戻る"
+  "invite_decline_back_to_home": "ダッシュボードへ戻る",
+
+  "hspec_y_maps_tier_member": "高精度の位置",
+  "hspec_y_maps_tier_open": "おおよその範囲（約170m）",
+  "hspec_y_maps_tier_coarse": "粗い範囲（約1.2km）",
+  "hspec_y_maps_tier_very_coarse": "非常に粗い範囲（約9km）",
+  "hspec_y_maps_tier_hidden": "非開示の位置",
+  "hspec_y_maps_hidden_pin_label": "非開示"
 }

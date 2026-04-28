@@ -2447,5 +2447,12 @@
   "invite_decline_confirm_message": "You will not be added to the project. The Owner will need to re-issue the invitation if you change your mind.",
   "invite_decline_confirm_button": "Yes, decline",
   "invite_declined_message": "Invitation declined.",
-  "invite_decline_back_to_home": "Back to dashboard"
+  "invite_decline_back_to_home": "Back to dashboard",
+
+  "hspec_y_maps_tier_member": "Precise location",
+  "hspec_y_maps_tier_open": "Approximate area (~170 m)",
+  "hspec_y_maps_tier_coarse": "Coarse area (~1.2 km)",
+  "hspec_y_maps_tier_very_coarse": "Very coarse area (~9 km)",
+  "hspec_y_maps_tier_hidden": "Restricted location",
+  "hspec_y_maps_hidden_pin_label": "Restricted location"
 }

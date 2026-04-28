@@ -418,6 +418,53 @@ SITE_DELETE_ACTION: Action = register_action(
 )
 
 
+# =============================================================================
+# Phase 11 / T630 — superuser admin endpoints (FR-034 / FR-036 / FR-111)
+# =============================================================================
+#
+# The two looser-override mutations are *project-scope* actions (a project_id
+# is required to load the override row and write a project_audit_log entry),
+# but the Stage-1 gate also short-circuits them through
+# ``SUPERUSER_PROJECT_SCOPE_ALLOWLIST`` (FR-008b) so a superuser without an
+# explicit Permission cell still passes. ``required_permission`` is therefore
+# set to a sentinel value the matrix never grants outside the allowlist
+# branch — non-superusers always fail closed.
+
+PROJECT_TAXON_OVERRIDE_APPROVE_ACTION: Action = register_action(
+    Action(
+        name="project.taxon_override.approve_looser",
+        # Outside the SUPERUSER_PROJECT_SCOPE_ALLOWLIST short-circuit (FR-008b),
+        # this approval is reserved to superusers; ``EDIT_PROJECT`` is the
+        # closest matrix cell (Owner-only) so a non-superuser caller still
+        # fails the Permission check.
+        required_permission=Permission.EDIT_PROJECT,
+        is_mutating=True,
+    )
+)
+
+PROJECT_TAXON_OVERRIDE_REJECT_ACTION: Action = register_action(
+    Action(
+        name="project.taxon_override.reject_looser",
+        required_permission=Permission.EDIT_PROJECT,
+        is_mutating=True,
+    )
+)
+
+# IUCN force-resync is platform-scope: there is no project_id parameter and
+# the Celery task rewrites the global ``taxon_sensitivity`` table. We mark
+# the action ``is_platform_scope=True`` so :func:`is_allowed` routes it
+# through the Step-0a superuser-only branch.
+PLATFORM_IUCN_FORCE_RESYNC_ACTION: Action = register_action(
+    Action(
+        name="platform.iucn.force_resync",
+        required_permission=None,
+        is_mutating=True,
+        is_superuser_only=True,
+        is_platform_scope=True,
+    )
+)
+
+
 __all__ = [
     # Project
     "PROJECT_DELETE_ACTION",
@@ -466,4 +513,8 @@ __all__ = [
     "TAG_DELETE_ACTION",
     "TAG_UPDATE_ACTION",
     "UPLOAD_CREATE_ACTION",
+    # Superuser admin (Phase 11 / T630)
+    "PLATFORM_IUCN_FORCE_RESYNC_ACTION",
+    "PROJECT_TAXON_OVERRIDE_APPROVE_ACTION",
+    "PROJECT_TAXON_OVERRIDE_REJECT_ACTION",
 ]
