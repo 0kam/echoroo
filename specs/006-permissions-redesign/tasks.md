@@ -340,12 +340,12 @@ description: "Task list for 006-permissions-redesign (revised after /speckit.ana
 
 ## Phase 12: US7 - 所有権移譲と休眠検出（P2）
 
-- [ ] **T700** [US7] `services/ownership_service.py` 新規: `SELECT FOR UPDATE` + advisory lock + idempotency-key (FR-057、FR-058、FR-059)
-- [ ] **T701** [P] [US7] `workers/dormancy_check.py` 新規: 日次 + 3/1/1 週通知 + 366d grace (FR-060、SC-008)
-- [ ] **T702** [P] [US7] `api/web_v1/admin.py` に archive / restore endpoint (FR-061、FR-062)
-- [ ] **T703** [P] [US7] `apps/api/tests/security/race_conditions/test_ownership_transfer_race.py` TDD: 1000 並行で 1 件成功 (FR-058、SC-007)
-- [ ] **T704** [P] [US7] `apps/api/tests/unit/workers/test_dormancy_check.py` TDD: 366 日で dormant + 通知 (FR-060、SC-008)
-- [ ] **T705** [US7] Playwright E2E: Owner の所有権移譲 UI + dormant バッジ表示 (PR-003、architect B-4 対応)
+- [x] **T700** [US7] `services/ownership_service.py` 新規: `SELECT FOR UPDATE` + advisory lock + idempotency-key (FR-057、FR-058、FR-059)
+- [x] **T701** [P] [US7] `workers/dormancy_check.py` 新規: 日次 + 3/1/1 週通知 + 366d grace (FR-060、SC-008)
+- [x] **T702** [P] [US7] `api/web_v1/admin.py` に archive / restore endpoint (FR-061、FR-062)
+- [x] **T703** [P] [US7] `apps/api/tests/security/race_conditions/test_ownership_transfer_race.py` TDD: 1000 並行で 1 件成功 (FR-058、SC-007)
+- [x] **T704** [P] [US7] `apps/api/tests/unit/workers/test_dormancy_check.py` TDD: 366 日で dormant + 通知 (FR-060、SC-008)
+- [x] **T705** [US7] Playwright E2E: Owner の所有権移譲 UI + dormant バッジ表示 (PR-003、architect B-4 対応)
 
 ---
 
