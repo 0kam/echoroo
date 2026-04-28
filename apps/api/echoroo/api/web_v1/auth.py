@@ -782,31 +782,36 @@ def _failed_refresh_response(detail: str) -> JSONResponse:
 
 
 def _clear_session_cookies(response: Response) -> None:
+    # Cookie attributes on deletion MUST match the attributes used at
+    # set time so the browser actually evicts the cookie rather than
+    # creating a sibling. Development uses plain HTTP; staging/prod
+    # remain Secure (mirrors ``_set_session_cookies``).
+    secure_cookie = settings.ENVIRONMENT != "development"
     response.delete_cookie(
         key=settings.web_refresh_cookie_name,
         path="/web-api/v1/auth/refresh",
-        secure=True,
+        secure=secure_cookie,
         httponly=True,
         samesite="strict",
     )
     response.delete_cookie(
         key=settings.web_session_cookie_name,
         path="/web-api/v1/",
-        secure=True,
+        secure=secure_cookie,
         httponly=True,
         samesite="strict",
     )
     response.delete_cookie(
         key=settings.web_csrf_cookie_name,
         path="/",
-        secure=True,
+        secure=secure_cookie,
         httponly=False,
         samesite="strict",
     )
     response.delete_cookie(
         key=settings.web_logged_in_cookie_name,
         path="/",
-        secure=True,
+        secure=secure_cookie,
         httponly=True,
         samesite="strict",
     )
@@ -1534,21 +1539,78 @@ async def logout(
     request: Request,
     response: Response,
 ) -> Response:
-    family_id = request.cookies.get(settings.web_session_cookie_name)
-    if not family_id:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Session not found",
-        )
+    """Idempotent session termination.
 
-    store = SqlTokenStore(AsyncSessionLocal)
-    await store.revoke_family(family_id)
-    await _write_platform_audit(
-        actor_user_id=None,
-        action="auth.logout",
-        request=request,
-        detail={"family_id": family_id},
-    )
+    The endpoint is registered in :data:`PUBLIC_AUTH_PATHS` so it
+    bypasses both the auth router cookie-required guard and the CSRF
+    middleware. Rationale (Phase 4-5-6 #1):
+
+    * **CSRF exemption is safe.** Logout is a fully idempotent,
+      one-way operation — the worst-case forced-logout scenario
+      simply interrupts the victim's session without granting the
+      attacker any capability. OWASP's CSRF cheat sheet documents
+      logout as a standard CSRF-exempt endpoint for this reason.
+    * **Idempotency is required.** The SvelteKit hook marker cookie
+      ``echoroo_logged_in`` is ``HttpOnly`` and can only be cleared
+      by the server. If logout were to refuse calls without a live
+      session cookie (e.g. 401), a client whose session/CSRF cookies
+      have already been evicted (refresh failure, partial cookie
+      eviction, etc.) would be permanently wedged — the browser
+      would still display the marker and the user would have no way
+      to call any other endpoint to clear it. Returning 204 even
+      when no ``family_id`` cookie is present guarantees the client
+      can always drive itself back to a clean logged-out state.
+    * **Origin/Referer protection** continues to apply via the CORS
+      middleware's strict allowlist for credentialed requests, which
+      blocks cross-origin form posts to ``/web-api/v1/*`` from
+      attacker-controlled pages.
+    """
+    family_id = request.cookies.get(settings.web_session_cookie_name)
+    revoked = False
+    revoke_error: str | None = None
+    if family_id:
+        try:
+            store = SqlTokenStore(AsyncSessionLocal)
+            await store.revoke_family(family_id)
+            revoked = True
+        except Exception as exc:  # noqa: BLE001 - logout MUST stay idempotent
+            # A malformed/forged family_id cookie (e.g. arbitrary string,
+            # truncated UUID) MUST NOT prevent the client from clearing
+            # its cookies and recovering. We log the failure for
+            # forensics but still return 204 with cookies cleared.
+            logger.info(
+                "auth.logout: revoke_family failed; continuing with idempotent "
+                "cookie clear: %s",
+                exc.__class__.__name__,
+            )
+            revoke_error = exc.__class__.__name__
+
+    audit_detail: dict[str, Any]
+    if revoked:
+        audit_detail = {"family_id": family_id}
+    elif family_id:
+        audit_detail = {
+            "family_id": family_id,
+            "reason": "revoke_failed",
+            "error_class": revoke_error,
+        }
+    else:
+        # Audit the no-op too so forensics can distinguish a client
+        # that called logout with no session (recovery path) from a
+        # caller that successfully revoked a live family.
+        audit_detail = {"family_id": None, "reason": "no_session_cookie"}
+    try:
+        await _write_platform_audit(
+            actor_user_id=None,
+            action="auth.logout",
+            request=request,
+            detail=audit_detail,
+        )
+    except Exception as exc:  # noqa: BLE001 - logout MUST stay idempotent
+        logger.warning(
+            "auth.logout: audit write failed; continuing with cookie clear: %s",
+            exc.__class__.__name__,
+        )
     _clear_session_cookies(response)
     response.status_code = status.HTTP_204_NO_CONTENT
     return response

@@ -69,12 +69,25 @@ function createAuthStore() {
 
     /**
      * Initialize auth state by checking current session.
+     *
      * On page reload the in-memory access token is lost, so we proactively
      * attempt a token refresh before calling /users/me. This prevents child
      * routes from receiving 401 errors while the token is being restored.
-     * If both refresh and /users/me fail, the user is redirected to login.
+     *
+     * Behaviour modes (Phase 4-5-6 carry-over fix #3):
+     *   - `silent: false` (default) — when refresh / `/users/me` fails with
+     *     401 we redirect to `/login`. Used by auth-required routes.
+     *   - `silent: true` — fail-safe: clear auth state to `{user: null,
+     *     isAuthenticated: false}` but DO NOT trigger any client-side
+     *     navigation. Used by `(public)` and `(auth)` route groups so a
+     *     stale `echoroo_logged_in` marker cookie + invalid refresh
+     *     cookie does not bounce a Guest browsing `/en/explore/...` away
+     *     to `/login` (which `hooks.server.ts` then re-redirects to
+     *     `/dashboard` via the `isAuthRoute` rule, producing the
+     *     observed `/explore/projects` -> `/dashboard` symptom).
      */
-    async initialize(): Promise<void> {
+    async initialize(options: { silent?: boolean } = {}): Promise<void> {
+      const silent = options.silent ?? false;
       state.isLoading = true;
       try {
         // If no access token in memory (e.g., after a page reload), attempt
@@ -83,12 +96,14 @@ function createAuthStore() {
           try {
             await apiClient.refreshToken();
           } catch {
-            // Refresh failed - no valid session exists, redirect to login.
+            // Refresh failed - no valid session exists.
             state.user = null;
             state.isAuthenticated = false;
             apiClient.setAccessToken(null);
             state.isLoading = false;
-            await goto(localizeHref('/login'), { replaceState: true });
+            if (!silent) {
+              await goto(localizeHref('/login'), { replaceState: true });
+            }
             return;
           }
         }
@@ -104,13 +119,14 @@ function createAuthStore() {
         apiClient.setAccessToken(null);
 
         // If the error is a 401 (unauthorized), the refresh token is also invalid.
-        // Redirect to login so the user can re-authenticate.
+        // Redirect to login so the user can re-authenticate, unless we are
+        // running in silent mode for a public/auth route.
         const isUnauthorized =
           error instanceof Error &&
           'status' in error &&
           (error as { status: number }).status === 401;
 
-        if (isUnauthorized) {
+        if (isUnauthorized && !silent) {
           // Use replace to avoid adding login to the back-navigation stack
           await goto(localizeHref('/login'), { replaceState: true });
         }
@@ -212,11 +228,50 @@ function createAuthStore() {
 
 export const authStore = createAuthStore();
 
+/**
+ * Path prefixes that must NOT trigger an automatic redirect to /login when
+ * a background `/api/v1/auth/refresh` call fails. These correspond to the
+ * `(public)` and `(auth)` SvelteKit route groups: a Guest browsing a
+ * public Explore page or sitting on the login page itself should never be
+ * navigated away by an in-flight refresh failure (Phase 4-5-6 carry-over
+ * fix #3 for the `/en/explore/projects` -> `/en/dashboard` rerouting bug).
+ *
+ * The matcher is purposefully prefix-based so it works for both bare and
+ * locale-prefixed URLs (`/explore/...`, `/en/explore/...`, `/ja/login` ...).
+ */
+const NO_REDIRECT_PATH_SEGMENTS = [
+  '/explore',
+  '/invite',
+  '/login',
+  '/register',
+  '/forgot-password',
+  '/reset-password',
+  '/verify-email',
+  '/2fa',
+];
+
+function isOnNoRedirectPath(): boolean {
+  if (typeof window === 'undefined') {
+    return false;
+  }
+  // Strip a leading `/<2-letter locale>` segment (e.g. `/en`, `/ja`) before
+  // matching so locale-prefixed routes are detected too.
+  const path = window.location.pathname.replace(/^\/[a-z]{2}(?=\/|$)/, '');
+  return NO_REDIRECT_PATH_SEGMENTS.some(
+    (prefix) => path === prefix || path.startsWith(`${prefix}/`)
+  );
+}
+
 // Wire up the apiClient refresh failure callback so that when a background
 // request fails to refresh (e.g., mid-session expiry), the auth store is
-// cleared and the user is redirected to login.
+// cleared and the user is redirected to login — UNLESS the user is on a
+// public / auth route, in which case we only clear local state and let the
+// page render normally.
 apiClient.onRefreshFailed = () => {
   authStore.clearUser();
+  if (isOnNoRedirectPath()) {
+    return;
+  }
   goto(localizeHref('/login'), { replaceState: true }).catch(() => {
     // If SvelteKit navigation is not available (e.g., during SSR), fall back to hard redirect
     if (typeof window !== 'undefined') {

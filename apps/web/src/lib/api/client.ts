@@ -67,10 +67,78 @@ function getApiUrl(): string {
   return import.meta.env.PUBLIC_API_URL || 'http://localhost:8002';
 }
 
+/**
+ * Public-readable path matchers — kept in lock-step with the backend
+ * `auth_router.py` `public_path_prefix_allowlist` and
+ * `public_path_nested_allowlist` (Phase 5 / FR-016).
+ *
+ * The frontend uses these to:
+ *   1. Skip attaching the in-memory access token (Authorization header) for
+ *      Guest-readable endpoints. A stale / expired JWT on a public-readable
+ *      path would otherwise be evaluated as "authenticated request" by the
+ *      auth router and rejected with 401.
+ *   2. Skip the auto-refresh-on-401 retry for these paths. A 401 from a
+ *      public path indicates a real authorization decision (e.g. Restricted
+ *      project visibility), not an expired token, so refreshing wastes a
+ *      round-trip and can spiral into a refresh loop when the refresh
+ *      cookie itself is also expired.
+ *
+ * Patterns:
+ *   - `/web-api/v1/projects` (list)
+ *   - `/web-api/v1/projects/{id}` (detail)
+ *   - `/web-api/v1/projects/{id}/recordings` (Phase 5 nested allowlist)
+ *
+ * Anything else under `/web-api/v1/projects/{id}/...` (members, trusted
+ * users, etc.) is intentionally NOT matched here — those endpoints are
+ * cookie + CSRF protected and should keep the Authorization-free,
+ * credentials-include behaviour from `callWebApi` in `projects.ts`.
+ */
+const PUBLIC_PATH_PATTERNS: readonly RegExp[] = [
+  // /web-api/v1/projects, /web-api/v1/projects/, /web-api/v1/projects/{id},
+  // /web-api/v1/projects/{id}/, plus optional trailing query is stripped
+  // before matching by `stripQuery`.
+  /^\/web-api\/v1\/projects\/?$/,
+  /^\/web-api\/v1\/projects\/[^/]+\/?$/,
+  /^\/web-api\/v1\/projects\/[^/]+\/recordings\/?$/,
+];
+
+function stripQuery(endpoint: string): string {
+  const qIdx = endpoint.indexOf('?');
+  return qIdx === -1 ? endpoint : endpoint.slice(0, qIdx);
+}
+
+/**
+ * Return ``true`` when ``endpoint`` is a Guest-readable web-API path that
+ * MUST be issued without an Authorization header so an expired JWT cannot
+ * cause the backend auth router to reject the request.
+ *
+ * Only GET requests qualify; mutating verbs are never on the public
+ * allowlist (the backend allowlist also restricts to GET).
+ */
+export function isPublicReadablePath(
+  endpoint: string,
+  method: string = 'GET'
+): boolean {
+  if (method.toUpperCase() !== 'GET') return false;
+  const path = stripQuery(endpoint);
+  return PUBLIC_PATH_PATTERNS.some((pattern) => pattern.test(path));
+}
+
 export class ApiClient {
   private baseUrl: string;
   private accessToken: string | null = null;
   private refreshPromise: Promise<void> | null = null;
+  /**
+   * Latch that disables automatic refresh after the refresh cookie itself
+   * expired. Prevents a tight loop where every public-page background
+   * fetch (TanStack Query refetch on focus, etc.) re-attempts
+   * `/api/v1/auth/refresh` and gets 401 in response.
+   *
+   * Cleared by ``setAccessToken`` so a successful re-login (or any path
+   * that explicitly stamps a fresh access token) re-arms the auto-refresh
+   * machinery.
+   */
+  private refreshDisabledUntilLogin: boolean = false;
 
   constructor(baseUrl?: string) {
     this.baseUrl = baseUrl || getApiUrl();
@@ -81,6 +149,12 @@ export class ApiClient {
    */
   setAccessToken(token: string | null) {
     this.accessToken = token;
+    if (token) {
+      // A fresh token implies a successful login / refresh — re-arm the
+      // auto-refresh latch so subsequent 401s on private paths resume the
+      // normal refresh-and-retry flow.
+      this.refreshDisabledUntilLogin = false;
+    }
   }
 
   /**
@@ -105,9 +179,23 @@ export class ApiClient {
   onRefreshFailed: (() => void) | null = null;
 
   /**
-   * Refresh access token using refresh token from cookie
+   * Refresh access token using refresh token from cookie.
+   *
+   * When the refresh cookie itself is expired (server returns 401), we
+   * latch ``refreshDisabledUntilLogin`` so that subsequent 401s do NOT
+   * trigger another refresh attempt. This breaks the loop seen on the
+   * Guest-public pages where a stale auth cookie + private background
+   * fetches caused dozens of `/api/v1/auth/refresh` calls per page.
+   * The latch is cleared by ``setAccessToken`` on a successful login.
    */
   private async refreshAccessToken(): Promise<void> {
+    // If a previous refresh attempt failed with 401 we must NOT spin a
+    // new refresh — every subsequent call would also fail. Throw the
+    // canonical failure marker so the caller's `catch` branch runs.
+    if (this.refreshDisabledUntilLogin) {
+      throw new ApiError('Token refresh disabled until next login', 401);
+    }
+
     // If already refreshing, wait for that promise
     if (this.refreshPromise) {
       return this.refreshPromise;
@@ -127,7 +215,9 @@ export class ApiClient {
         if (!response.ok) {
           if (response.status === 401) {
             // Refresh token is invalid or expired - notify the auth layer
+            // and latch so we don't keep hammering the endpoint.
             this.accessToken = null;
+            this.refreshDisabledUntilLogin = true;
             if (this.onRefreshFailed) {
               this.onRefreshFailed();
             }
@@ -137,6 +227,8 @@ export class ApiClient {
 
         const data = await response.json();
         this.accessToken = data.access_token;
+        // Successful refresh — re-arm in case a previous attempt latched.
+        this.refreshDisabledUntilLogin = false;
       } finally {
         this.refreshPromise = null;
       }
@@ -151,13 +243,20 @@ export class ApiClient {
     retry = true
   ): Promise<T> {
     const url = `${this.baseUrl}${endpoint}`;
+    const method = (options.method ?? 'GET').toUpperCase();
+    const isPublic = isPublicReadablePath(endpoint, method);
 
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
     };
 
-    // Add Authorization header if access token exists
-    if (this.accessToken) {
+    // Path-aware Authorization: skip the Bearer header on Guest-readable
+    // public paths so a stale (expired) JWT held in memory cannot trip the
+    // backend auth router into 401-ing what should be an anonymous request.
+    // Authenticated visitors still get full access via the session cookie
+    // (the auth router falls through to `_authenticate_session` when the
+    // cookie is present on a public-allowlisted path).
+    if (this.accessToken && !isPublic) {
       headers['Authorization'] = `Bearer ${this.accessToken}`;
     }
 
@@ -177,8 +276,15 @@ export class ApiClient {
 
     let response = await fetch(url, config);
 
-    // Handle 401 Unauthorized - try to refresh token
-    if (response.status === 401 && retry) {
+    // Handle 401 Unauthorized - try to refresh token.
+    //
+    // Public-readable paths short-circuit this branch: a 401 from
+    // `/web-api/v1/projects/...` is an authorization decision (e.g.
+    // Restricted project), not an expired access token, so refreshing
+    // would only trigger a useless `/api/v1/auth/refresh` round-trip and
+    // potentially a refresh-loop when the refresh cookie itself is also
+    // expired.
+    if (response.status === 401 && retry && !isPublic) {
       try {
         await this.refreshAccessToken();
 
@@ -298,10 +404,12 @@ export class ApiClient {
     retry = true
   ): Promise<Response> {
     const url = `${this.baseUrl}${endpoint}`;
+    const method = (options.method ?? 'GET').toUpperCase();
+    const isPublic = isPublicReadablePath(endpoint, method);
 
     const headers: Record<string, string> = {};
 
-    if (this.accessToken) {
+    if (this.accessToken && !isPublic) {
       headers['Authorization'] = `Bearer ${this.accessToken}`;
     }
 
@@ -321,7 +429,7 @@ export class ApiClient {
 
     let response = await fetch(url, config);
 
-    if (response.status === 401 && retry) {
+    if (response.status === 401 && retry && !isPublic) {
       try {
         await this.refreshAccessToken();
 
@@ -355,9 +463,10 @@ export class ApiClient {
    */
   async fetchRaw(endpoint: string, retry = true): Promise<Response> {
     const url = `${this.baseUrl}${endpoint}`;
+    const isPublic = isPublicReadablePath(endpoint, 'GET');
 
     const headers: Record<string, string> = {};
-    if (this.accessToken) {
+    if (this.accessToken && !isPublic) {
       headers['Authorization'] = `Bearer ${this.accessToken}`;
     }
 
@@ -367,7 +476,7 @@ export class ApiClient {
       headers,
     });
 
-    if (response.status === 401 && retry) {
+    if (response.status === 401 && retry && !isPublic) {
       try {
         await this.refreshAccessToken();
 

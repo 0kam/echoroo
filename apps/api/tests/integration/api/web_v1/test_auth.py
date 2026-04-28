@@ -557,10 +557,19 @@ async def test_logout_revokes_family_and_clears_cookies(
 
 
 @pytest.mark.asyncio
-async def test_logout_without_csrf_returns_403_and_keeps_family_active(
+async def test_logout_without_csrf_is_exempt_and_revokes_family(
     client: AsyncClient,
     session_factory: object,
 ) -> None:
+    """Phase 4-5-6 #1: logout is CSRF-exempt and idempotent.
+
+    Logout must NOT require an X-CSRF-Token header. The marker cookie
+    ``echoroo_logged_in`` is HttpOnly so the client cannot self-clear
+    it when its CSRF cookie has already been evicted; refusing logout
+    in that state would wedge the user. Cross-site forced logout is
+    accepted as a non-issue because logout grants the attacker no
+    capability — it only ends the victim's own session.
+    """
     from echoroo.api.web_v1.auth import _decode_web_refresh_token
     from echoroo.core.auth import SqlTokenStore
     from echoroo.core.settings import get_settings
@@ -574,11 +583,41 @@ async def test_logout_without_csrf_returns_403_and_keeps_family_active(
     )
     assert refreshed.status_code == 200
 
+    # No X-CSRF-Token header: must still succeed and revoke the family.
     response = await client.post("/web-api/v1/auth/logout")
 
-    assert response.status_code == 403
-    assert response.json()["error_code"] == "csrf_failed"
-    assert not await SqlTokenStore(session_factory).is_family_revoked(claims.family_id)
+    assert response.status_code == 204
+    assert await SqlTokenStore(session_factory).is_family_revoked(claims.family_id)
+
+
+@pytest.mark.asyncio
+async def test_logout_without_session_cookie_is_idempotent(
+    client: AsyncClient,
+    session_factory: object,
+) -> None:
+    """Phase 4-5-6 #1: logout MUST succeed even with no session cookie.
+
+    A client that has already lost its session cookie (e.g. after a
+    refresh-rotation failure cleared cookies, or after a partial cookie
+    eviction) must still be able to call logout to drive itself back to
+    a clean state. We assert 204 and that the marker cookie is cleared.
+    """
+    from echoroo.core.settings import get_settings
+
+    settings_local = get_settings()
+    response = await client.post("/web-api/v1/auth/logout")
+
+    assert response.status_code == 204
+    set_cookie_headers = response.headers.get_list("set-cookie")
+    marker_clears = [
+        h
+        for h in set_cookie_headers
+        if h.startswith(f"{settings_local.web_logged_in_cookie_name}=")
+    ]
+    assert marker_clears, (
+        "logout must clear the marker cookie even when no session cookie "
+        f"was presented; got: {set_cookie_headers!r}"
+    )
 
 
 @pytest.mark.asyncio

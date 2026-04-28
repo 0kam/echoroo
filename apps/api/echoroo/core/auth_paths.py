@@ -24,6 +24,26 @@ Decision matrix
 * ``/web-api/v1/auth/reset-password``  — pre-session password reset.
 * ``/web-api/v1/auth/password-reset/request`` — pre-session password reset.
 * ``/web-api/v1/auth/password-reset/confirm`` — pre-session password reset.
+* ``/web-api/v1/auth/logout``          — idempotent session termination.
+
+Logout CSRF / auth exemption
+----------------------------
+Logout is treated as a **safe, idempotent** operation: the only side
+effect is revoking the caller's own refresh family and clearing their
+own cookies. OWASP's CSRF cheat sheet explicitly calls out logout as
+a typical CSRF-exempt endpoint because the worst-case forced-logout
+scenario merely interrupts the victim's session — it never lets the
+attacker act on the victim's behalf. Conversely, requiring CSRF on
+logout causes a real failure mode: the SvelteKit hook marker cookie
+``echoroo_logged_in`` is ``HttpOnly``, so once the client loses its
+CSRF token it cannot self-clear that marker, leaving the user wedged
+in a half-logged-in UI state with a live session they cannot
+terminate.
+
+The auth-router exemption (``principal=None``) is necessary because
+the logout handler operates entirely on cookies — it does not need
+an authenticated principal — and a stale/missing access token must
+not block session termination.
 
 Refresh CSRF decision
 ---------------------
@@ -63,6 +83,7 @@ PUBLIC_AUTH_PATHS: Final[tuple[str, ...]] = (
     "/web-api/v1/auth/reset-password",
     "/web-api/v1/auth/password-reset/request",
     "/web-api/v1/auth/password-reset/confirm",
+    "/web-api/v1/auth/logout",
 )
 
 
