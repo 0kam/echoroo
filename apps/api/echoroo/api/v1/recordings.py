@@ -36,7 +36,7 @@ from echoroo.core.database import DbSession
 from echoroo.core.permissions import Permission, gate_action
 from echoroo.core.response_filter import apply_response_filter
 from echoroo.core.settings import get_settings
-from echoroo.middleware.auth import API_TOKEN_PREFIX, CurrentUser
+from echoroo.middleware.auth import API_TOKEN_PREFIX, CurrentUser, _stamp_superuser_status
 from echoroo.models.user import User
 from echoroo.schemas.recording import (
     RecordingDetailResponse,
@@ -102,18 +102,34 @@ async def get_current_user_flexible(
         return None
 
     # Dispatch to the appropriate authentication back-end
+    #
+    # Phase 12 R3 follow-up (Major #2): every auth dependency MUST stamp
+    # ``user.is_superuser`` from the ``superusers`` source-of-truth before
+    # returning so downstream gates (Step 0c superuser short-circuit in
+    # :func:`echoroo.core.permissions.is_allowed`) can rely on a uniform
+    # attribute. Without this stamp the legacy v1 media endpoints
+    # (``/audio``, ``/stream``, ``/playback``, ``/spectrogram``,
+    # ``/download``) would fail to grant superuser owner-equivalent access
+    # because ``user.is_superuser`` would be ``False`` even for an active
+    # superuser principal. Mirrors :func:`get_current_user` /
+    # :func:`get_current_user_optional` from
+    # :mod:`echoroo.middleware.auth`.
+    user: User | None = None
     try:
         if raw_token.startswith(API_TOKEN_PREFIX):
             token_service = TokenService(db)
-            return await token_service.authenticate_by_token(raw_token)
-
-        auth_service = AuthService(db)
-        return await auth_service.get_current_user(raw_token)
+            user = await token_service.authenticate_by_token(raw_token)
+        else:
+            auth_service = AuthService(db)
+            user = await auth_service.get_current_user(raw_token)
     except HTTPException:
         # Bad token on a Public route -> Guest fall-through. The permission
         # gate will still 403 / 404 the response when the project is not
         # Public-readable.
         return None
+
+    await _stamp_superuser_status(db, user)
+    return user
 
 
 # Annotated type alias for the flexible auth dependency (media endpoints only)

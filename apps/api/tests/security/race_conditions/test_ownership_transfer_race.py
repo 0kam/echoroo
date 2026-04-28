@@ -324,13 +324,17 @@ async def test_idempotency_replay_via_outbox_dedupe(db_session: AsyncSession) ->
             )
 
         # Second call: same key + same target → replay (no mutation).
+        # Phase 12 R3 follow-up (Major #1): replay echoing requires the
+        # requester to match the original actor (the user who fired the
+        # first transfer). The original actor is ``owner``, so the retry
+        # arrives from ``owner.id`` even though they are no longer the
+        # current Owner.
         async with test_factory() as session:
             replay_outcome = await transfer_ownership(
                 session,
                 project_id=project.id,
-                # New requester is the new owner now (admin); same key.
                 new_owner_user_id=admin.id,
-                requester_id=admin.id,
+                requester_id=owner.id,
                 idempotency_key=key,
             )
             await session.commit()
@@ -341,13 +345,17 @@ async def test_idempotency_replay_via_outbox_dedupe(db_session: AsyncSession) ->
         assert replay_outcome.previous_owner_id == owner.id
 
         # Third call: same key + DIFFERENT target → 409 ERR_CONFLICT.
+        # The original actor (owner) re-uses the key with a different
+        # target; the cached outcome's target mismatches so we surface
+        # 409 instead of returning the replay. Using ``owner.id`` here
+        # exercises the actor-matched conflict path (R3 Major #1).
         async with test_factory() as session:
             with pytest.raises(TransferConflictError):
                 await transfer_ownership(
                     session,
                     project_id=project.id,
                     new_owner_user_id=other_admin.id,
-                    requester_id=admin.id,
+                    requester_id=owner.id,
                     idempotency_key=key,
                 )
             await session.rollback()
@@ -784,8 +792,14 @@ async def test_replay_same_key_same_target_returns_replayed_true(
                 session,
                 project_id=project.id,
                 new_owner_user_id=admin.id,
-                # The new owner (admin) is the requester for the replay.
-                requester_id=admin.id,
+                # Phase 12 R3 follow-up (Major #1): replay echoing now
+                # requires the *original* actor — the user whose
+                # ``user_id`` was recorded as ``actor_user_id`` /
+                # ``previous_owner_id`` in the cached outbox payload.
+                # The first call's actor is ``owner``, so a retry
+                # arriving from ``admin`` (the new Owner) would no
+                # longer be permitted to receive the cached outcome.
+                requester_id=owner.id,
                 idempotency_key=key,
             )
             await session.commit()

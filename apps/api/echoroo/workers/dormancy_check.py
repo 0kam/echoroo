@@ -272,9 +272,13 @@ async def _emit_followup_stages(
 
     Walks every ``ProjectStatus.DORMANT`` row and, for each stage offset
     in :data:`STAGE_OFFSETS` (excluding ``stage_initial``), checks
-    whether ``dormant_since + offset`` has elapsed AND no row for that
-    stage exists yet for the current UTC day. The per-day idempotency
-    key in :func:`_enqueue_stage` collapses redundant inserts.
+    whether ``dormant_since + offset`` has elapsed. The per-episode
+    idempotency key in :func:`_enqueue_stage` (scoped to
+    ``project_id`` + ``dormant_since`` UNIX-second + ``stage``) ensures
+    each stage fires exactly once per dormancy episode: every beat
+    tick during the same episode produces an identical key (ON CONFLICT
+    DO NOTHING is a no-op), and a restored project re-entering DORMANT
+    receives a fresh key namespace because ``dormant_since`` advances.
 
     Returns the count of newly-enqueued rows.
     """
@@ -302,9 +306,11 @@ async def _emit_followup_stages(
             elapsed = now - project.dormant_since
             if elapsed < offset:
                 continue
-            # The per-day idempotency key (set by ``_enqueue_stage``)
-            # makes this an UPSERT — the second beat tick on the same
-            # UTC day is a no-op.
+            # The per-episode idempotency key (set by ``_enqueue_stage``,
+            # scoped to project + dormant_since UNIX-second + stage)
+            # makes this an UPSERT — every subsequent beat tick during
+            # the same dormancy episode is a no-op, while a restored
+            # project re-entering DORMANT lands in a fresh key namespace.
             await _enqueue_stage(
                 session,
                 project=project,

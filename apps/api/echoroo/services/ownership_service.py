@@ -51,6 +51,7 @@ Concurrency model (FR-058)
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import logging
@@ -207,14 +208,31 @@ async def peek_replay_outcome(
     the gate restores the contract that "same key + same target ⇒
     cached outcome with replayed=true".
 
+    Phase 12 R3 follow-up (Major #1) — **requester actor binding**:
+    only the *original* actor (the user who fired the first transfer,
+    captured as ``actor_user_id`` / ``previous_owner_id`` in the cached
+    payload) may receive the cached outcome. Any other authenticated
+    caller who happens to know / guess the idempotency key + target
+    + project triple is treated as if no cached outcome existed
+    (returns ``None``); the call then falls through to the normal
+    Stage-1 ``gate_action()`` which rejects them with 403 (they no
+    longer hold the Owner role) — matching the spec's confidentiality
+    posture for ownership transfer history. We deliberately do NOT
+    raise 409 in the actor-mismatch branch because doing so would leak
+    "an idempotency key has been consumed on this project" to a
+    non-actor caller, which is itself a side-channel.
+
     Returns:
         * cached :class:`OwnershipTransferOutcome` (replayed=True) when
-          a row exists and the target matches.
-        * ``None`` when no prior consumption is recorded — caller MUST
-          continue with the normal gate + service flow.
+          a row exists, the target matches AND the requester matches the
+          previous actor.
+        * ``None`` when no prior consumption is recorded OR when the
+          requester is not the original actor — caller MUST continue
+          with the normal gate + service flow (which will 403 a
+          non-actor caller).
 
     Raises:
-        TransferConflictError: same key + DIFFERENT target → 409.
+        TransferConflictError: same key + same actor + DIFFERENT target → 409.
     """
     scoped_key = derive_scoped_idempotency_key(project_id, idempotency_key)
     replay = await _load_replay_payload(session, scoped_idem_key=scoped_key)
@@ -222,6 +240,16 @@ async def peek_replay_outcome(
         return None
     cached_new_owner = replay["new_owner_id"]
     cached_previous = replay["previous_owner_id"]
+    cached_actor = replay.get("actor_user_id")
+    # Actor binding: the cached outcome belongs to the user who fired
+    # the original transfer. Their user_id is recorded as
+    # ``actor_user_id`` in the outbox payload (and equals
+    # ``previous_owner_id`` because Owner is the only principal
+    # permitted to invoke the action). A different requester arriving
+    # with the same key + target falls through to the normal gate
+    # (which will 403 them) instead of receiving the replay echo.
+    if cached_actor is None or cached_actor != requester_id:
+        return None
     if cached_new_owner != new_owner_user_id:
         raise TransferConflictError(
             f"idempotency key {idempotency_key!r} previously consumed "
@@ -361,22 +389,29 @@ async def transfer_ownership(
     if existing_replay is not None:
         cached_new_owner = existing_replay["new_owner_id"]
         cached_previous = existing_replay["previous_owner_id"]
-        if cached_new_owner != new_owner_user_id:
-            raise TransferConflictError(
-                f"idempotency key {idempotency_key!r} previously consumed "
-                f"for a different target ({cached_new_owner}); refusing replay",
+        cached_actor = existing_replay.get("actor_user_id")
+        # Phase 12 R3 follow-up (Major #1): replay echoing requires the
+        # requester to match the original actor. Mismatch → fall through
+        # to the C2 owner re-check below, which raises 409 because a
+        # non-actor caller cannot still hold the Owner role on a project
+        # whose owner_id was already mutated by the cached transfer.
+        if cached_actor is not None and cached_actor == requester_id:
+            if cached_new_owner != new_owner_user_id:
+                raise TransferConflictError(
+                    f"idempotency key {idempotency_key!r} previously consumed "
+                    f"for a different target ({cached_new_owner}); refusing replay",
+                )
+            return OwnershipTransferOutcome(
+                project_id=project_id,
+                previous_owner_id=cached_previous,
+                new_owner_id=new_owner_user_id,
+                actor_user_id=requester_id,
+                idempotency_key=idempotency_key,
+                replayed=True,
+                request_id=request_id,
+                ip=ip,
+                user_agent=user_agent,
             )
-        return OwnershipTransferOutcome(
-            project_id=project_id,
-            previous_owner_id=cached_previous,
-            new_owner_id=new_owner_user_id,
-            actor_user_id=requester_id,
-            idempotency_key=idempotency_key,
-            replayed=True,
-            request_id=request_id,
-            ip=ip,
-            user_agent=user_agent,
-        )
 
     # 4. Phase 12 R1 致命 C2: re-verify the requester is STILL the Owner
     # *after* the FOR UPDATE returned. If a faster concurrent transfer
@@ -452,6 +487,15 @@ async def transfer_ownership(
             )
         cached_new_owner = replay["new_owner_id"]
         cached_previous = replay["previous_owner_id"]
+        cached_actor = replay.get("actor_user_id")
+        # Phase 12 R3 follow-up (Major #1): a non-actor requester losing
+        # the parallel race must not receive the cached outcome — surface
+        # 409 so they cannot enumerate previously-consumed keys.
+        if cached_actor is None or cached_actor != requester_id:
+            raise TransferConflictError(
+                f"idempotency key {idempotency_key!r} previously consumed "
+                "by a different actor; refusing replay",
+            )
         if cached_new_owner != new_owner_user_id:
             raise TransferConflictError(
                 f"idempotency key {idempotency_key!r} previously consumed "
@@ -597,7 +641,7 @@ async def _load_replay_payload(
     *,
     scoped_idem_key: str,
 ) -> dict[str, UUID] | None:
-    """Return the original ``new_owner_id`` / ``previous_owner_id`` from outbox.
+    """Return the original transfer payload from outbox, or ``None``.
 
     Phase 12 R1 致命 C3: this is invoked **inside** the active TX after
     an ``ON CONFLICT DO NOTHING`` reported the idempotency key is
@@ -605,11 +649,18 @@ async def _load_replay_payload(
     out whether the replay matches the original target (idempotent) or
     targets a different user (409 conflict).
 
+    Phase 12 R3 follow-up (Major #1) — also surfaces ``actor_user_id``
+    so :func:`peek_replay_outcome` can enforce requester binding.
+    Older payloads written before the R3 fix do not carry the field;
+    callers MUST treat a missing key as "actor mismatch" rather than
+    "wildcard match" (i.e. fall through to the normal gate path).
+
     Returns:
-        ``{"new_owner_id": UUID, "previous_owner_id": UUID}`` for a
-        well-formed payload, or ``None`` if the row is missing /
-        corrupted (defensive — should never happen because the unique
-        constraint just rejected our INSERT).
+        ``{"new_owner_id": UUID, "previous_owner_id": UUID,
+        "actor_user_id": UUID | None}`` for a well-formed payload, or
+        ``None`` if the row is missing / corrupted (defensive — should
+        never happen because the unique constraint just rejected our
+        INSERT).
     """
     stmt = sa.text(
         """
@@ -644,15 +695,23 @@ async def _load_replay_payload(
         return None
     new_owner_raw = payload.get("new_owner_id")
     prev_owner_raw = payload.get("previous_owner_id")
+    actor_raw = payload.get("actor_user_id")
     if new_owner_raw is None or prev_owner_raw is None:
         return None
     try:
-        return {
+        out: dict[str, UUID] = {
             "new_owner_id": UUID(str(new_owner_raw)),
             "previous_owner_id": UUID(str(prev_owner_raw)),
         }
     except ValueError:  # pragma: no cover — corrupted payload
         return None
+    # ``actor_user_id`` is a Phase 12 R3 follow-up addition; pre-existing
+    # rows in mid-deploy environments may lack the field. Decode when
+    # present, omit otherwise — callers fail-closed on the missing key.
+    if actor_raw is not None:
+        with contextlib.suppress(ValueError):  # pragma: no cover — corrupted payload
+            out["actor_user_id"] = UUID(str(actor_raw))
+    return out
 
 
 __all__ = [
