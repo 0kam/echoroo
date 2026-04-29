@@ -46,6 +46,14 @@ def _stamp_api_key_scopes(user: User, principal: object) -> None:
     raw_scopes = getattr(principal, "scopes", ()) or ()
     user._api_key_id = api_key_id  # type: ignore[attr-defined]
     user._api_key_scopes = tuple(raw_scopes)  # type: ignore[attr-defined]
+    # Phase 15 R3 NO-GO new-Major: stamp the optional per-key project
+    # binding so :func:`echoroo.core.permissions.gate_action` can compare
+    # it against the resource's project_id and reject mismatched calls
+    # with 403 ``api_key_project_scope_mismatch``. ``None`` means the
+    # key follows the owning user's full visibility.
+    user._api_key_project_id = getattr(  # type: ignore[attr-defined]
+        principal, "api_key_project_id", None
+    )
 
 
 async def _stamp_superuser_status(db: AsyncSession, user: User | None) -> None:
@@ -137,19 +145,31 @@ async def get_current_user(
             return {"user_id": user.id}
         ```
     """
-    # 1. API-key principal fast path (Phase 15 NO-GO C4).
+    # 1. Principal fast path (Phase 15 R3 NO-GO C4).
+    #
+    # ``AuthRouterMiddleware`` populates ``request.state.principal`` for
+    # BOTH first-party session cookies AND API-key Bearer credentials.
+    # Pre-R3 this branch only resolved the API-key shape (``api_key_id``
+    # set), which 401-ed cookie-only callers on every endpoint that
+    # depended on :data:`CurrentUser` (e.g. ``/web-api/v1/projects/{id}/
+    # audit-log``). The fix rehydrates the User row from
+    # ``principal.user_id`` regardless of ``auth_kind`` — API-key
+    # callers additionally get their scopes stamped via
+    # :func:`_stamp_api_key_scopes` so the Major-1 intersection still
+    # fires.
     principal = getattr(request.state, "principal", None)
     if principal is not None:
-        api_key_id = getattr(principal, "api_key_id", None)
         principal_user_id = getattr(principal, "user_id", None)
-        if api_key_id is not None and isinstance(principal_user_id, UUID):
+        if isinstance(principal_user_id, UUID):
             result = await db.execute(
                 select(User).where(User.id == principal_user_id)
             )
             user = result.scalar_one_or_none()
             if user is not None:
                 # Stamp the API-key scopes onto the User instance so
-                # downstream gates can apply Major-1 intersection.
+                # downstream gates can apply Major-1 intersection. The
+                # helper itself is a no-op when the principal lacks an
+                # ``api_key_id`` (i.e. cookie-session callers).
                 _stamp_api_key_scopes(user, principal)
                 await _stamp_superuser_status(db, user)
                 return user

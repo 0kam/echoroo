@@ -47,13 +47,13 @@ connections per Phase 15 connection-pool budget.
 Scoped record
 =============
 The :class:`ApiKeyRecord` returned by :meth:`DbApiKeyVerifier.verify`
-exposes ``user_id``, ``api_key_id``, and ``granted_permissions`` only —
-``project_id`` and ``allowed_ip_cidrs`` are intentionally omitted from
-the dataclass shape declared in :mod:`echoroo.middleware.auth_router`
-to keep the verifier protocol minimal. Downstream authorization
-(``project_id`` scope, IP allowlist) is handled by
-:func:`echoroo.core.permissions.is_allowed` and middleware that
-re-loads the row by ``api_key_id`` when needed.
+exposes ``user_id``, ``api_key_id``, ``granted_permissions`` and
+``project_id``. Phase 15 R3 NO-GO new-Major fix added ``project_id`` so
+the per-key project binding (``api_keys.project_id``) flows through to
+:func:`echoroo.core.permissions.gate_action` for the cross-project
+mismatch check. ``allowed_ip_cidrs`` remains owned by an outer IP
+enforcement middleware that re-loads the row by ``api_key_id`` when
+needed.
 """
 
 from __future__ import annotations
@@ -217,6 +217,11 @@ class DbApiKeyVerifier(ApiKeyVerifier):
                 api_key_id=row.id,
                 user_id=row.user_id,
                 granted_permissions=tuple(granted),
+                # Phase 15 R3 NO-GO new-Major: thread the optional
+                # per-key project binding through so the gate can
+                # enforce ``api_key_project_scope_mismatch`` on
+                # cross-project calls.
+                project_id=row.project_id,
             )
 
     # -- internals --------------------------------------------------------

@@ -309,6 +309,156 @@ async def test_revoke_apply_blocks_when_only_one_active_superuser(
 
 
 # ---------------------------------------------------------------------------
+# C3 R3 race — two concurrent revoke applies cannot both leave 0 active
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_revoke_apply_two_concurrent_revokes_leave_one_active(
+    db_session: AsyncSession,
+) -> None:
+    """Phase 15 R3 NO-GO C3: 2 active → 0 race must be impossible.
+
+    Pre-R3 the BEFORE UPDATE trigger only locked the target row, so two
+    concurrent revoke transactions targeting *different* superusers
+    each computed ``COUNT(*) - 1 = 1`` from the pre-image of their
+    sibling and passed the trigger guard, leaving zero active rows
+    after both commits.
+
+    The R3 fix adds ``pg_advisory_xact_lock(<constant>)`` at both the
+    service (defence in depth → clean Python exception) and trigger
+    (authoritative DB-level block) layers. This test drives a genuine
+    asyncpg-level race: two engines, two sessions, ``asyncio.gather``.
+    Exactly one revoke must succeed; the other must raise
+    ``LastSuperuserProtectionError`` (or surface as a
+    ``DBAPIError`` from the trigger when the service-side guard is
+    skipped). The post-condition is ``COUNT(active) == 1``.
+    """
+    # Wipe any pre-existing active superusers so we start with exactly
+    # the two we are about to seed.
+    await db_session.execute(
+        sa.update(Superuser).where(Superuser.revoked_at.is_(None)).values(
+            revoked_at=datetime.now(UTC)
+        )
+    )
+    await db_session.flush()
+
+    a_user = await _create_user(
+        db_session, email="phase15_r3_c3_a@example.com"
+    )
+    b_user = await _create_user(
+        db_session, email="phase15_r3_c3_b@example.com"
+    )
+    a_su = await _create_superuser(db_session, user=a_user)
+    b_su = await _create_superuser(db_session, user=b_user)
+
+    ticket_a = SuperuserApprovalRequest(
+        action=ACTION_SUPERUSER_REVOKE,
+        detail={
+            "target_superuser_id": str(a_su.id),
+            "target_user_id": str(a_user.id),
+        },
+        requested_by_id=a_su.id,
+        approvals=[],
+        status="pending",
+    )
+    ticket_b = SuperuserApprovalRequest(
+        action=ACTION_SUPERUSER_REVOKE,
+        detail={
+            "target_superuser_id": str(b_su.id),
+            "target_user_id": str(b_user.id),
+        },
+        requested_by_id=b_su.id,
+        approvals=[],
+        status="pending",
+    )
+    db_session.add_all([ticket_a, ticket_b])
+    await db_session.flush()
+    await db_session.commit()
+
+    ticket_a_id = ticket_a.id
+    ticket_b_id = ticket_b.id
+
+    # Two independent engines so each has its own asyncpg connection.
+    engine_a = create_async_engine(TEST_DATABASE_URL, poolclass=NullPool)
+    engine_b = create_async_engine(TEST_DATABASE_URL, poolclass=NullPool)
+    factory_a = async_sessionmaker(
+        engine_a, class_=AsyncSession, expire_on_commit=False
+    )
+    factory_b = async_sessionmaker(
+        engine_b, class_=AsyncSession, expire_on_commit=False
+    )
+
+    async def _do_revoke(
+        factory: Any, ticket_id: Any
+    ) -> Exception | None:
+        try:
+            async with factory() as s:
+                ticket = await s.get(SuperuserApprovalRequest, ticket_id)
+                assert ticket is not None
+                await revoke_superuser_apply(
+                    s,
+                    request=ticket,
+                    actor_user_id=None,
+                    request_id="",
+                    ip="",
+                    user_agent="",
+                    now=datetime.now(UTC),
+                )
+                await s.commit()
+            return None
+        except Exception as exc:  # noqa: BLE001
+            return exc
+
+    try:
+        results = await asyncio.gather(
+            _do_revoke(factory_a, ticket_a_id),
+            _do_revoke(factory_b, ticket_b_id),
+            return_exceptions=False,
+        )
+    finally:
+        await engine_a.dispose()
+        await engine_b.dispose()
+
+    # Exactly one revoke must succeed; the other must surface the
+    # last-superuser guard. Whichever transaction loses the advisory
+    # lock race observes ``active_before == 1`` at the service guard
+    # and raises ``LastSuperuserProtectionError``.
+    successes = [r for r in results if r is None]
+    failures = [r for r in results if r is not None]
+    assert len(successes) == 1, (
+        f"expected exactly one successful revoke, got {results!r}"
+    )
+    assert len(failures) == 1, (
+        f"expected exactly one failed revoke, got {results!r}"
+    )
+    assert isinstance(failures[0], LastSuperuserProtectionError), (
+        f"expected LastSuperuserProtectionError, got {failures[0]!r}"
+    )
+
+    # Post-condition: exactly one active superuser remains. Use a fresh
+    # engine because the shared ``db_session`` snapshot pre-dates the
+    # parallel commits.
+    verify_engine = create_async_engine(TEST_DATABASE_URL, poolclass=NullPool)
+    verify_factory = async_sessionmaker(
+        verify_engine, class_=AsyncSession, expire_on_commit=False
+    )
+    try:
+        async with verify_factory() as s:
+            count = await s.scalar(
+                sa.select(sa.func.count())
+                .select_from(Superuser)
+                .where(Superuser.revoked_at.is_(None))
+            )
+            assert count == 1, (
+                f"FR-111a violated — {count} active superusers remain "
+                "after concurrent revokes (expected exactly 1)"
+            )
+    finally:
+        await verify_engine.dispose()
+
+
+# ---------------------------------------------------------------------------
 # C1 race — two co-signers serialise on the FOR UPDATE lock
 # ---------------------------------------------------------------------------
 

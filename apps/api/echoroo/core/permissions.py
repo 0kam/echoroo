@@ -797,6 +797,17 @@ def is_allowed(
         allowed = user is not None
         if required == Permission.SEARCH_CROSS_PROJECT and normalized == "Guest":
             allowed = False
+        # Phase 15 R3 NO-GO Major 1: API keys must NOT silently inherit
+        # the caller's user-scope rights. A key issued with
+        # ``scopes=("view_detection",)`` should not be able to mint a
+        # second key (``MANAGE_API_KEY``) or pivot 2FA settings
+        # (``MANAGE_2FA``) just because its owning user trivially holds
+        # those user-scope permissions. Intersect the allow-bit with the
+        # API key's persisted scopes when authentication used an API
+        # key. ``None`` (session / JWT auth) preserves the legacy
+        # behaviour bit-for-bit.
+        if allowed and api_key_granted_permissions is not None:
+            allowed = required in api_key_granted_permissions
     else:
         allowed = required in effective if required is not None else False
 
@@ -980,6 +991,23 @@ async def gate_action(
     later in the same request. The wrapper is per-call, so cross-project
     leakage is structurally impossible.
     """
+    # Phase 15 R3 NO-GO new-Major: enforce per-key project binding BEFORE
+    # any DB lookup so a mismatched key cannot probe the existence of
+    # arbitrary projects (FR-079 / FR-099 anti-enumeration). When the
+    # caller authenticated with an API key bound to a specific project
+    # (``api_keys.project_id IS NOT NULL``), the bound id MUST match
+    # the gate's ``project_id`` argument. Mismatched calls raise 403
+    # ``api_key_project_scope_mismatch`` regardless of the user's
+    # underlying access — the scope is defence in depth on top of the
+    # Matrix gate. Keys with ``project_id IS NULL`` (i.e. user-scope
+    # keys) skip this branch and fall through to the Matrix.
+    bound_project_id = getattr(current_user, "_api_key_project_id", None)
+    if bound_project_id is not None and bound_project_id != project_id:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            detail="api_key_project_scope_mismatch",
+        )
+
     project = await load_project_or_404(db, project_id)
 
     principal: Any = current_user

@@ -75,11 +75,12 @@ is preserved per the Phase 13 baseline-edit policy.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from typing import Any, cast
+from typing import Any, Final, cast
 from uuid import UUID
 
 import sqlalchemy as sa
@@ -123,6 +124,21 @@ BREAK_GLASS_WINDOW: timedelta = timedelta(hours=72)
 #: superuser (FR-111). Soft alarm; the freeze logic lives in T154 admin
 #: middleware.
 BREAK_GLASS_REPLACEMENT_DEADLINE: timedelta = timedelta(hours=24)
+
+
+# Phase 15 R3 NO-GO C3: deterministic ``pg_advisory_xact_lock`` key shared
+# by ``revoke_superuser_apply`` and the ``prevent_last_superuser_deletion``
+# trigger (migration 0013). Two concurrent revoke transactions targeting
+# DIFFERENT rows would otherwise both observe ``COUNT(*) - 1 = 1`` and
+# pass the guard. Folding ``SHA-256("superuser_last_protection")`` into
+# the 63-bit positive range keeps the value stable across drivers
+# (mirrors the convention in :mod:`echoroo.services.audit_service`).
+_LAST_SUPERUSER_LOCK_KEY: Final[int] = (
+    int.from_bytes(
+        hashlib.sha256(b"superuser_last_protection").digest()[:8], "big"
+    )
+    & 0x7FFFFFFFFFFFFFFF
+)
 
 
 # Action identifiers — kept as stable string literals because dashboards
@@ -535,14 +551,25 @@ async def revoke_superuser_apply(
     detail = request.detail or {}
     target_id = UUID(str(detail["target_superuser_id"]))
 
-    # Phase 15 NO-GO C3: lock the target row + active superuser set so
-    # two concurrent revoke applies cannot both pass the count guard.
-    # SELECT FOR UPDATE on the target is enough for the row-state read,
-    # but the count must reflect a stable view of the table during the
-    # check; PostgreSQL UPDATEs against ``superusers`` from elsewhere
-    # are blocked by this lock when they touch the same row, and the
-    # paired trigger in migration 0012 catches anything that slips
-    # through (e.g. a different target chosen by a sibling ticket).
+    # Phase 15 R3 NO-GO C3: take the global advisory lock BEFORE the row
+    # lock + active-count probe so two concurrent revoke applies that
+    # target *different* rows still serialise on the count check. Without
+    # the advisory lock the per-row ``SELECT FOR UPDATE`` only blocks
+    # writers against the same target; sibling revokes of distinct
+    # superusers would each compute ``COUNT(*) - 1 = 1`` from the
+    # pre-image of the other and both pass the guard. The matching
+    # ``pg_advisory_xact_lock`` inside the BEFORE UPDATE trigger
+    # (migration 0013) is the authoritative defence — this service-side
+    # acquire is defence in depth that lets the API surface a clean
+    # ``LastSuperuserProtectionError`` instead of asyncpg's raw
+    # ``RAISE EXCEPTION`` text.
+    await session.execute(
+        sa.text("SELECT pg_advisory_xact_lock(:k)"),
+        {"k": _LAST_SUPERUSER_LOCK_KEY},
+    )
+
+    # Lock the target row + active superuser set so two concurrent
+    # revoke applies cannot both pass the count guard.
     locked_stmt = (
         sa.select(Superuser)
         .where(Superuser.id == target_id)

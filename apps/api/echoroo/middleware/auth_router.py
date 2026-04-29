@@ -104,6 +104,13 @@ class Principal:
     api_key_id: UUID | None
     scopes: tuple[str, ...]
     auth_kind: str
+    # Phase 15 R3 NO-GO new-Major fix: when the API key has a non-NULL
+    # ``api_keys.project_id`` value the key is constrained to that
+    # project. The gate compares this against ``gate_action(project_id=)``
+    # and returns 403 ``api_key_project_scope_mismatch`` on any mismatch.
+    # ``None`` for session principals and for API keys without a project
+    # binding (i.e. inherit the user's full visibility).
+    api_key_project_id: UUID | None = None
 
     @classmethod
     def for_session(
@@ -127,6 +134,7 @@ class Principal:
         user_id: UUID,
         api_key_id: UUID,
         scopes: tuple[str, ...],
+        project_id: UUID | None = None,
     ) -> Principal:
         return cls(
             user_id=user_id,
@@ -134,6 +142,7 @@ class Principal:
             api_key_id=api_key_id,
             scopes=scopes,
             auth_kind="api_key",
+            api_key_project_id=project_id,
         )
 
 
@@ -144,11 +153,21 @@ class Principal:
 
 @dataclass(frozen=True)
 class ApiKeyRecord:
-    """Persisted state of an API key after secret-hash matching."""
+    """Persisted state of an API key after secret-hash matching.
+
+    Phase 15 R3 NO-GO new-Major fix: ``project_id`` is now part of the
+    record so the optional per-key project scope (``api_keys.project_id``)
+    propagates through to the gate. ``None`` means the key is not bound
+    to any specific project — it follows the owning user's full
+    visibility. When ``project_id`` is set, every gate call MUST verify
+    that ``gate_action(project_id=...)`` matches; mismatches return 403
+    ``api_key_project_scope_mismatch``.
+    """
 
     api_key_id: UUID
     user_id: UUID
     granted_permissions: tuple[str, ...]
+    project_id: UUID | None = None
 
 
 class ApiKeyVerifier(Protocol):
@@ -440,6 +459,7 @@ class AuthRouterMiddleware(BaseHTTPMiddleware):
             user_id=record.user_id,
             api_key_id=record.api_key_id,
             scopes=tuple(record.granted_permissions),
+            project_id=record.project_id,
         )
 
     # -- Session (first-party) --------------------------------------------
