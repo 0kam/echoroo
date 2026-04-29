@@ -247,6 +247,294 @@ class RestoreResponse(BaseModel):
     )
 
 
+# =============================================================================
+# Phase 15 Batch 5a — Superuser CRUD admin endpoints (FR-111 / FR-072 / FR-084)
+# =============================================================================
+
+
+class SuperuserSummary(BaseModel):
+    """Snapshot of a ``superusers`` row for the admin list view.
+
+    Returned by ``GET /admin/superusers``. Mirrors the columns surfaced
+    by ``contracts/admin.yaml`` (operationId ``listSuperusers``).
+    """
+
+    model_config = ConfigDict(from_attributes=True, frozen=True)
+
+    id: UUID = Field(..., description="Superuser entitlement row id (FR-111)")
+    user_id: UUID = Field(..., description="Underlying user account id")
+    added_by_id: UUID | None = Field(
+        default=None,
+        description=(
+            "User that promoted this superuser (NULL for the genesis "
+            "bootstrap row)"
+        ),
+    )
+    added_at: datetime = Field(..., description="Promotion timestamp")
+    revoked_at: datetime | None = Field(
+        default=None,
+        description=(
+            "Revocation timestamp (NULL while active). Revoked rows are "
+            "preserved for the audit trail."
+        ),
+    )
+    allowed_ip_cidrs: list[str] = Field(
+        default_factory=list,
+        description="Optional CIDR allowlist enforced by auth middleware (FR-072)",
+    )
+    webauthn_credential_count: int = Field(
+        ...,
+        description=(
+            "Number of registered WebAuthn authenticators. Spec FR-111 "
+            "requires >= 2 (primary + backup); a value below 2 is a "
+            "warning state surfaced in the dashboard."
+        ),
+    )
+
+
+class SuperuserListResponse(BaseModel):
+    """Response body for ``GET /admin/superusers``."""
+
+    model_config = ConfigDict(frozen=True)
+
+    items: list[SuperuserSummary] = Field(
+        ..., description="All superuser rows (active + revoked, FR-111)"
+    )
+    active_count: int = Field(
+        ..., description="Number of rows with ``revoked_at IS NULL``"
+    )
+    min_superusers: int = Field(
+        ...,
+        description=(
+            "Spec floor (= 3). When ``active_count`` falls below this "
+            "threshold the platform enters break-glass mode (FR-111)."
+        ),
+    )
+    break_glass_active: bool = Field(
+        ...,
+        description=(
+            "True when the 72 h emergency window is open. Surfaced here "
+            "so the admin UI can render a banner without an extra round-trip."
+        ),
+    )
+
+
+class SuperuserAddRequest(BaseModel):
+    """Body for ``POST /admin/superusers``.
+
+    Promotes a user to superuser. The first three rows are seeded
+    directly (creation-time exception); subsequent additions open an
+    M-of-N approval ticket and require two co-signers (FR-111).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    target_user_id: UUID = Field(
+        ..., description="User to promote to superuser"
+    )
+    allowed_ip_cidrs: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Optional CIDR allowlist for the new superuser. Empty means "
+            "no IP restriction. Validated only as a list of strings here; "
+            "CIDR syntax is enforced by the auth middleware (FR-072)."
+        ),
+    )
+
+
+class SuperuserActionResponse(BaseModel):
+    """Generic envelope returned by superuser CRUD actions.
+
+    Distinguishes between three terminal states surfaced by the
+    M-of-N engine:
+
+    * ``"direct"``      — creation-time exception (count < 3) — the row
+                          was inserted immediately.
+    * ``"pending"``     — M-of-N approval ticket opened; awaiting two
+                          co-signers.
+    * ``"applied"``     — quorum met, the underlying mutation has been
+                          executed.
+    * ``"rejected"``    — ticket rejected by a co-signer.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    status: str = Field(
+        ...,
+        description=(
+            "Engine state: ``direct`` / ``pending`` / ``applied`` / ``rejected``"
+        ),
+    )
+    superuser_id: UUID | None = Field(
+        default=None,
+        description=(
+            "Resulting superuser row id. Populated for ``direct`` and "
+            "``applied`` (revoke); NULL while pending."
+        ),
+    )
+    approval_request_id: UUID | None = Field(
+        default=None,
+        description="``superuser_approval_requests.id`` while pending",
+    )
+    detail: dict[str, object] = Field(
+        default_factory=dict,
+        description="Engine outcome detail (action / counts / approver / etc.)",
+    )
+
+
+class SuperuserApprovalRequestSummary(BaseModel):
+    """Snapshot of a ``superuser_approval_requests`` row.
+
+    Returned by ``GET /admin/superusers/approval-requests``. Surfaces the
+    columns needed by the operator dashboard to render the M-of-N queue
+    (FR-111).
+    """
+
+    model_config = ConfigDict(from_attributes=True, frozen=True)
+
+    id: UUID = Field(..., description="Approval request row id")
+    action: str = Field(
+        ...,
+        description=(
+            "Pending action — ``superuser.add`` / ``superuser.revoke`` / "
+            "``backup_code_reset`` / ``looser_override_*``"
+        ),
+    )
+    detail: dict[str, object] | None = Field(
+        default=None,
+        description="Action-specific payload (target user, etc.)",
+    )
+    requested_by_id: UUID = Field(
+        ..., description="``superusers.id`` that opened the ticket"
+    )
+    approvals: list[dict[str, object]] = Field(
+        default_factory=list,
+        description="Co-signer entries appended by ``approve_request``",
+    )
+    status: str = Field(
+        ..., description="``pending`` / ``applied`` / ``rejected``"
+    )
+    created_at: datetime = Field(
+        ..., description="Ticket creation timestamp"
+    )
+    executed_at: datetime | None = Field(
+        default=None,
+        description="Final-decision timestamp (NULL while pending)",
+    )
+
+
+class SuperuserApprovalRequestListResponse(BaseModel):
+    """Response body for ``GET /admin/superusers/approval-requests``."""
+
+    model_config = ConfigDict(frozen=True)
+
+    items: list[SuperuserApprovalRequestSummary] = Field(
+        ..., description="Approval requests (filtered by ``status`` query param)"
+    )
+    pending_count: int = Field(
+        ..., description="Number of items with status=='pending'"
+    )
+    min_approvals: int = Field(
+        ..., description="Spec quorum (= 2)"
+    )
+
+
+class SuperuserRejectRequest(BaseModel):
+    """Body for ``POST /admin/superusers/approval-requests/{id}/reject``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    reason: str = Field(
+        ...,
+        min_length=1,
+        max_length=2_000,
+        description=(
+            "Why the ticket is being rejected. Stored on the approvals "
+            "JSONB array and embedded into the audit detail (FR-111)."
+        ),
+    )
+
+
+class SuperuserBreakGlassEnterRequest(BaseModel):
+    """Body for ``POST /admin/superusers/break-glass/enter``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    reason: str = Field(
+        ...,
+        min_length=1,
+        max_length=2_000,
+        description=(
+            "Why the break-glass window is being opened (operator-supplied)."
+        ),
+    )
+
+
+class SuperuserBreakGlassStatusResponse(BaseModel):
+    """Response body for ``GET /admin/superusers/break-glass/status``."""
+
+    model_config = ConfigDict(frozen=True)
+
+    active: bool = Field(
+        ..., description="True iff the 72 h window is currently open"
+    )
+    started_at: datetime | None = Field(
+        default=None,
+        description=(
+            "Start of the current window (NULL when inactive). Wall-clock "
+            "+ 72 h is the deadline."
+        ),
+    )
+    expires_at: datetime | None = Field(
+        default=None,
+        description="``started_at + 72h`` (NULL when inactive)",
+    )
+    replacement_deadline_at: datetime | None = Field(
+        default=None,
+        description=(
+            "``started_at + 24h`` — by which a replacement superuser must "
+            "be added per FR-111 (NULL when inactive)."
+        ),
+    )
+    reason: str | None = Field(
+        default=None,
+        description="Operator-supplied reason recorded at entry",
+    )
+
+
+class SuperuserIpAllowlistUpdateRequest(BaseModel):
+    """Body for ``PATCH /admin/superusers/{id}/ip-allowlist``.
+
+    Replaces ``superusers.allowed_ip_cidrs`` wholesale. CIDR syntax is
+    not validated here — the auth middleware (FR-072) parses each entry
+    and rejects mutating requests originating outside the allowlist.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    allowed_ip_cidrs: list[str] = Field(
+        ...,
+        description=(
+            "New allowlist (replaces the existing array). Empty means "
+            "no IP restriction."
+        ),
+    )
+
+
+class SuperuserIpAllowlistResponse(BaseModel):
+    """Response body for ``PATCH /admin/superusers/{id}/ip-allowlist``."""
+
+    model_config = ConfigDict(frozen=True)
+
+    superuser_id: UUID = Field(..., description="Updated superuser row id")
+    allowed_ip_cidrs: list[str] = Field(
+        ..., description="Persisted allowlist after the update"
+    )
+    updated_at: datetime = Field(
+        ..., description="Wall-clock timestamp of the update"
+    )
+
+
 class IucnForceResyncResponse(BaseModel):
     """Body for ``POST /admin/iucn/force-resync`` (FR-036).
 

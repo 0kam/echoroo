@@ -144,11 +144,16 @@ paths:
 
   /superusers:
     get:
-      summary: superuser 一覧（全 superuser が閲覧可）
+      summary: superuser 一覧（全 superuser が閲覧可、active + revoked）
       operationId: listSuperusers
       responses:
         "200":
           description: list
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SuperuserListResponse" }
+        "401": { description: 未認証 }
+        "403": { description: superuser ではない / API key ベタ拒否（FR-084） }
 
     post:
       summary: superuser 追加（既存 2 名 M-of-N 承認必須、FR-111）
@@ -160,21 +165,20 @@ paths:
         required: true
         content:
           application/json:
-            schema:
-              type: object
-              required: [user_id, allowed_ip_cidrs]
-              properties:
-                user_id: { type: string, format: uuid }
-                allowed_ip_cidrs:
-                  type: array
-                  items: { type: string }
+            schema: { $ref: "#/components/schemas/SuperuserAddRequest" }
       responses:
         "202":
-          description: SuperuserApprovalRequest 作成、2 名承認待ち
+          description: SuperuserApprovalRequest 作成、2 名承認待ち（または creation-time exception で direct insert）
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SuperuserActionResponse" }
+        "401": { description: 未認証 }
+        "403": { description: superuser ではない / API key ベタ拒否（FR-084） }
+        "409": { description: 既に superuser }
 
-  /superusers/{superuserId}:
-    delete:
-      summary: superuser revoke
+  /superusers/{superuserId}/revoke:
+    post:
+      summary: superuser revoke（M-of-N 承認チケット起票、FR-111）
       operationId: revokeSuperuser
       security:
         - superuserSession: []
@@ -184,30 +188,138 @@ paths:
       responses:
         "202":
           description: SuperuserApprovalRequest 作成、2 名承認 + 1→0 は DB trigger で block（FR-111a）
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SuperuserActionResponse" }
+        "401": { description: 未認証 }
+        "403": { description: superuser ではない / API key ベタ拒否 }
+        "404": { description: superuser 行が存在しない or 既に revoked }
+        "409": { description: 1→0 boundary（FR-111a 最終 1 名保護） }
 
-  /break-glass/activate:
-    post:
-      summary: superuser 空白期間の緊急 break-glass モード起動（残 1 名 + 創業者別チャンネル 2 要素、FR-111）
-      operationId: activateBreakGlass
-      security:
-        - superuserSession: []
-          csrfToken: []
-      responses:
-        "200":
-          description: 72h break-glass モード開始、24h 以内 superuser 追加必須
-
-  /approval-requests/{id}/approve:
-    post:
-      summary: SuperuserApprovalRequest に承認を付与
-      operationId: approveRequest
+  /superusers/{superuserId}/ip-allowlist:
+    patch:
+      summary: superuser IP allowlist 更新（FR-072）
+      operationId: updateSuperuserIpAllowlist
       security:
         - superuserSession: []
           csrfToken: []
       parameters:
-        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: superuserId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SuperuserIpAllowlistUpdateRequest" }
+      responses:
+        "200":
+          description: allowlist 更新済
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SuperuserIpAllowlistResponse" }
+        "401": { description: 未認証 }
+        "403": { description: superuser ではない / API key ベタ拒否 }
+        "404": { description: superuser 行が存在しない }
+        "409": { description: 対象 superuser が revoked 済 }
+
+  /superusers/approval-requests:
+    get:
+      summary: SuperuserApprovalRequest 一覧（M-of-N キュー）
+      operationId: listSuperuserApprovalRequests
+      parameters:
+        - name: status_filter
+          in: query
+          required: false
+          schema: { type: string, enum: [pending, applied, rejected] }
+      responses:
+        "200":
+          description: list
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SuperuserApprovalRequestListResponse" }
+        "401": { description: 未認証 }
+        "403": { description: superuser ではない }
+
+  /superusers/approval-requests/{approvalRequestId}/approve:
+    post:
+      summary: SuperuserApprovalRequest 承認付与（quorum 達成で自動 dispatch）
+      operationId: approveSuperuserRequest
+      security:
+        - superuserSession: []
+          csrfToken: []
+      parameters:
+        - { name: approvalRequestId, in: path, required: true, schema: { type: string, format: uuid } }
       responses:
         "200":
           description: approval 追加、必要数に達すれば自動実行
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SuperuserActionResponse" }
+        "401": { description: 未認証 }
+        "403": { description: superuser ではない / approver が revoked }
+        "404": { description: approval request が存在しない }
+        "409":
+          description: |
+            既に applied / rejected、duplicate approver、または最終 1 名保護
+            （FR-111a; ERR_LAST_SUPERUSER_PROTECTION）
+
+  /superusers/approval-requests/{approvalRequestId}/reject:
+    post:
+      summary: SuperuserApprovalRequest 却下（reason 必須）
+      operationId: rejectSuperuserRequest
+      security:
+        - superuserSession: []
+          csrfToken: []
+      parameters:
+        - { name: approvalRequestId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SuperuserRejectRequest" }
+      responses:
+        "200":
+          description: ticket rejected
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SuperuserActionResponse" }
+        "401": { description: 未認証 }
+        "403": { description: superuser ではない }
+        "404": { description: approval request が存在しない }
+        "409": { description: 既に applied / rejected }
+
+  /superusers/break-glass/enter:
+    post:
+      summary: 72h break-glass モード起動（残 1 名 + 創業者別チャンネル 2 要素、FR-111）
+      operationId: enterBreakGlass
+      security:
+        - superuserSession: []
+          csrfToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SuperuserBreakGlassEnterRequest" }
+      responses:
+        "200":
+          description: 72h break-glass モード開始、24h 以内 superuser 追加必須
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SuperuserBreakGlassStatusResponse" }
+        "401": { description: 未認証 }
+        "403": { description: superuser ではない }
+
+  /superusers/break-glass/status:
+    get:
+      summary: break-glass モード状態取得
+      operationId: getBreakGlassStatus
+      responses:
+        "200":
+          description: 現在の break-glass 状態
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SuperuserBreakGlassStatusResponse" }
+        "401": { description: 未認証 }
+        "403": { description: superuser ではない }
 
 components:
   securitySchemes:
@@ -218,3 +330,128 @@ components:
       description: >
         WebAuthn hardware key + IP allowlist を通過した superuser セッションのみ。
         programmatic API は不可（FR-084）。
+    csrfToken:
+      type: apiKey
+      in: header
+      name: X-CSRF-Token
+
+  schemas:
+    SuperuserSummary:
+      type: object
+      required: [id, user_id, added_at, allowed_ip_cidrs, webauthn_credential_count]
+      properties:
+        id: { type: string, format: uuid }
+        user_id: { type: string, format: uuid }
+        added_by_id: { type: string, format: uuid, nullable: true }
+        added_at: { type: string, format: date-time }
+        revoked_at: { type: string, format: date-time, nullable: true }
+        allowed_ip_cidrs:
+          type: array
+          items: { type: string }
+        webauthn_credential_count: { type: integer, minimum: 0 }
+
+    SuperuserListResponse:
+      type: object
+      required: [items, active_count, min_superusers, break_glass_active]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/SuperuserSummary" }
+        active_count: { type: integer, minimum: 0 }
+        min_superusers: { type: integer, minimum: 1 }
+        break_glass_active: { type: boolean }
+
+    SuperuserAddRequest:
+      type: object
+      required: [target_user_id]
+      additionalProperties: false
+      properties:
+        target_user_id: { type: string, format: uuid }
+        allowed_ip_cidrs:
+          type: array
+          items: { type: string }
+
+    SuperuserActionResponse:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [direct, pending, applied, rejected]
+        superuser_id: { type: string, format: uuid, nullable: true }
+        approval_request_id: { type: string, format: uuid, nullable: true }
+        detail:
+          type: object
+          additionalProperties: true
+
+    SuperuserApprovalRequestSummary:
+      type: object
+      required: [id, action, requested_by_id, approvals, status, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        action: { type: string }
+        detail: { type: object, additionalProperties: true, nullable: true }
+        requested_by_id: { type: string, format: uuid }
+        approvals:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        status:
+          type: string
+          enum: [pending, applied, rejected]
+        created_at: { type: string, format: date-time }
+        executed_at: { type: string, format: date-time, nullable: true }
+
+    SuperuserApprovalRequestListResponse:
+      type: object
+      required: [items, pending_count, min_approvals]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/SuperuserApprovalRequestSummary" }
+        pending_count: { type: integer, minimum: 0 }
+        min_approvals: { type: integer, minimum: 1 }
+
+    SuperuserRejectRequest:
+      type: object
+      required: [reason]
+      additionalProperties: false
+      properties:
+        reason: { type: string, minLength: 1, maxLength: 2000 }
+
+    SuperuserBreakGlassEnterRequest:
+      type: object
+      required: [reason]
+      additionalProperties: false
+      properties:
+        reason: { type: string, minLength: 1, maxLength: 2000 }
+
+    SuperuserBreakGlassStatusResponse:
+      type: object
+      required: [active]
+      properties:
+        active: { type: boolean }
+        started_at: { type: string, format: date-time, nullable: true }
+        expires_at: { type: string, format: date-time, nullable: true }
+        replacement_deadline_at: { type: string, format: date-time, nullable: true }
+        reason: { type: string, nullable: true }
+
+    SuperuserIpAllowlistUpdateRequest:
+      type: object
+      required: [allowed_ip_cidrs]
+      additionalProperties: false
+      properties:
+        allowed_ip_cidrs:
+          type: array
+          items: { type: string }
+
+    SuperuserIpAllowlistResponse:
+      type: object
+      required: [superuser_id, allowed_ip_cidrs, updated_at]
+      properties:
+        superuser_id: { type: string, format: uuid }
+        allowed_ip_cidrs:
+          type: array
+          items: { type: string }
+        updated_at: { type: string, format: date-time }

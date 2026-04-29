@@ -496,6 +496,108 @@ PLATFORM_IUCN_FORCE_RESYNC_ACTION: Action = register_action(
 )
 
 
+# =============================================================================
+# Phase 15 Batch 5a — Superuser CRUD admin endpoints (FR-111 / FR-072 / FR-084)
+# =============================================================================
+#
+# These platform-scope actions back the ``/web-api/v1/admin/superusers/*``
+# endpoints. All carry ``is_superuser_only=True`` so the Step -1 universal
+# api_key veto in :func:`echoroo.core.permissions.is_allowed` denies any
+# API-key principal regardless of its scopes (FR-084 PR-007). Cookie /
+# JWT session callers fall through to the Step 0a branch which permits
+# only authenticated superusers.
+
+SUPERUSER_LIST_ACTION: Action = register_action(
+    Action(
+        name="superuser.list",
+        required_permission=None,
+        is_mutating=False,
+        is_superuser_only=True,
+        is_platform_scope=True,
+    )
+)
+
+SUPERUSER_ADD_ACTION: Action = register_action(
+    Action(
+        name="superuser.add",
+        required_permission=None,
+        is_mutating=True,
+        is_superuser_only=True,
+        is_platform_scope=True,
+    )
+)
+
+SUPERUSER_REVOKE_ACTION: Action = register_action(
+    Action(
+        name="superuser.revoke",
+        required_permission=None,
+        is_mutating=True,
+        is_superuser_only=True,
+        is_platform_scope=True,
+    )
+)
+
+SUPERUSER_APPROVAL_REQUEST_LIST_ACTION: Action = register_action(
+    Action(
+        name="superuser.approval.list",
+        required_permission=None,
+        is_mutating=False,
+        is_superuser_only=True,
+        is_platform_scope=True,
+    )
+)
+
+SUPERUSER_APPROVE_REQUEST_ACTION: Action = register_action(
+    Action(
+        name="superuser.approval.approve",
+        required_permission=None,
+        is_mutating=True,
+        is_superuser_only=True,
+        is_platform_scope=True,
+    )
+)
+
+SUPERUSER_REJECT_REQUEST_ACTION: Action = register_action(
+    Action(
+        name="superuser.approval.reject",
+        required_permission=None,
+        is_mutating=True,
+        is_superuser_only=True,
+        is_platform_scope=True,
+    )
+)
+
+SUPERUSER_BREAK_GLASS_ENTER_ACTION: Action = register_action(
+    Action(
+        name="superuser.break_glass.enter",
+        required_permission=None,
+        is_mutating=True,
+        is_superuser_only=True,
+        is_platform_scope=True,
+    )
+)
+
+SUPERUSER_BREAK_GLASS_STATUS_ACTION: Action = register_action(
+    Action(
+        name="superuser.break_glass.status",
+        required_permission=None,
+        is_mutating=False,
+        is_superuser_only=True,
+        is_platform_scope=True,
+    )
+)
+
+SUPERUSER_IP_ALLOWLIST_UPDATE_ACTION: Action = register_action(
+    Action(
+        name="superuser.ip_allowlist.update",
+        required_permission=None,
+        is_mutating=True,
+        is_superuser_only=True,
+        is_platform_scope=True,
+    )
+)
+
+
 __all__ = [
     # Project
     "PROJECT_DELETE_ACTION",
@@ -551,4 +653,14 @@ __all__ = [
     # Project lifecycle (Phase 12 / T702)
     "PROJECT_ARCHIVE_ACTION",
     "PROJECT_RESTORE_ACTION",
+    # Superuser CRUD (Phase 15 Batch 5a)
+    "SUPERUSER_ADD_ACTION",
+    "SUPERUSER_APPROVAL_REQUEST_LIST_ACTION",
+    "SUPERUSER_APPROVE_REQUEST_ACTION",
+    "SUPERUSER_BREAK_GLASS_ENTER_ACTION",
+    "SUPERUSER_BREAK_GLASS_STATUS_ACTION",
+    "SUPERUSER_IP_ALLOWLIST_UPDATE_ACTION",
+    "SUPERUSER_LIST_ACTION",
+    "SUPERUSER_REJECT_REQUEST_ACTION",
+    "SUPERUSER_REVOKE_ACTION",
 ]
