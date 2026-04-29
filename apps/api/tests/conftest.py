@@ -140,7 +140,9 @@ async def setup_test_database(engine: AsyncEngine) -> None:
             ("projectmemberrole", ["admin", "member", "viewer"]),
             ("projectstatus", ["active", "dormant", "archived"]),
             ("projectlicense", ["CC0", "CC-BY", "CC-BY-NC", "CC-BY-SA"]),
-            ("setting_type", ["string", "number", "boolean", "json"]),
+            # Phase 13 P1 (T803a): ``setting_type`` enum was retired together
+            # with the ``system_settings.value_type`` column when system_settings
+            # values became JSONB-native. Do not declare it here.
             ("datasetvisibility", ["private", "public"]),
             ("datasetstatus", ["pending", "scanning", "processing", "completed", "failed"]),
             ("datetimeparsestatus", ["pending", "success", "failed"]),
@@ -267,15 +269,19 @@ async def setup_test_database(engine: AsyncEngine) -> None:
             )
         )
 
+        # Phase 13 P1 (T803a): seed the JSONB-native shape. The legacy
+        # ``value_type`` / ``description`` columns no longer exist; values
+        # are stored as native JSONB so booleans and numbers round-trip
+        # without manual encoding.
         await conn.execute(
             sa.text(
                 """
-                INSERT INTO system_settings (key, value, value_type, description, updated_at)
+                INSERT INTO system_settings (key, value, updated_at)
                 VALUES
-                    ('registration_mode', '"open"', 'string', 'User registration mode: open or invitation', CURRENT_TIMESTAMP),
-                    ('session_timeout_minutes', '120', 'number', 'Session timeout in minutes', CURRENT_TIMESTAMP),
-                    ('allow_registration', 'true', 'boolean', 'Whether new user registration is allowed', CURRENT_TIMESTAMP),
-                    ('setup_completed', 'false', 'boolean', 'Whether initial setup has been completed', CURRENT_TIMESTAMP)
+                    ('registration_mode', '"open"'::jsonb, CURRENT_TIMESTAMP),
+                    ('session_timeout_minutes', '120'::jsonb, CURRENT_TIMESTAMP),
+                    ('allow_registration', 'true'::jsonb, CURRENT_TIMESTAMP),
+                    ('setup_completed', 'false'::jsonb, CURRENT_TIMESTAMP)
                 ON CONFLICT (key) DO NOTHING
                 """
             )
@@ -372,9 +378,12 @@ async def cleanup_test_data(session: AsyncSession) -> None:
     # Clear system_settings references to users before deleting users
     await session.execute(sa.text("UPDATE system_settings SET updated_by_id = NULL"))
     await session.execute(sa.text("DELETE FROM users"))
-    # Reset setup_completed for setup tests
+    # Reset setup_completed for setup tests (Phase 13 P1: JSONB value).
     await session.execute(
-        sa.text("UPDATE system_settings SET value = 'false' WHERE key = 'setup_completed'")
+        sa.text(
+            "UPDATE system_settings SET value = 'false'::jsonb "
+            "WHERE key = 'setup_completed'"
+        )
     )
     await session.commit()
 

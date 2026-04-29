@@ -28,12 +28,26 @@ class AdminUserUpdateRequest(BaseModel):
 
 
 class SystemSettingResponse(BaseModel):
-    """System setting response schema."""
+    """System setting response schema.
+
+    Phase 13 P1 (T803a): values are now stored as native JSONB; the legacy
+    ``value_type`` and ``description`` fields are retired. ``value_type``
+    is preserved as a derived response field for backwards compatibility
+    with existing admin UI clients (computed from the runtime Python type
+    of ``value``).
+    """
 
     key: str = Field(..., description="Setting key")
-    value: str | int | float | bool | dict[str, object] = Field(..., description="Setting value")
-    value_type: str = Field(..., description="Value type (string, number, boolean, json)")
-    description: str | None = Field(None, description="Setting description")
+    value: str | int | float | bool | dict[str, object] | list[object] | None = Field(
+        ..., description="Setting value (native JSONB)"
+    )
+    value_type: str = Field(
+        ...,
+        description=(
+            "Derived value type label (string, number, boolean, json, null) — "
+            "computed from the runtime type of ``value`` for UI compatibility"
+        ),
+    )
     updated_at: datetime = Field(..., description="Last update timestamp")
 
 

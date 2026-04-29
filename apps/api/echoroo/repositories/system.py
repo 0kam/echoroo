@@ -1,4 +1,13 @@
-"""System settings repository for data access."""
+"""System settings repository for data access.
+
+Phase 13 P1 (T803a): updated to use native JSONB values. The legacy
+``value_type`` / ``description`` arguments were removed; callers should
+pass native Python objects (str, int, float, bool, dict, list) directly
+and the database will round-trip them via JSONB.
+"""
+
+from typing import Any
+from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -31,16 +40,35 @@ class SystemSettingRepository:
         )
         return result.scalar_one_or_none()
 
+    async def get_value(self, key: str, default: Any = None) -> Any:
+        """Get the JSONB value for a setting key.
+
+        Args:
+            key: Setting key to retrieve
+            default: Value to return if the key is not present
+
+        Returns:
+            The native Python object stored in the JSONB column, or
+            ``default`` if the row does not exist.
+        """
+        setting = await self.get_setting(key)
+        if setting is None:
+            return default
+        return setting.value
+
     async def set_setting(
-        self, key: str, value: str, value_type: str, description: str | None = None
+        self,
+        key: str,
+        value: Any,
+        updated_by_id: UUID | None = None,
     ) -> SystemSetting:
         """Create or update a system setting.
 
         Args:
             key: Setting key
-            value: Setting value (as string)
-            value_type: Type of the value ('string', 'number', 'boolean', 'json')
-            description: Optional description
+            value: Native Python value (str/int/float/bool/dict/list).
+                Stored as JSONB.
+            updated_by_id: Superuser id performing the update.
 
         Returns:
             Created or updated SystemSetting
@@ -48,18 +76,14 @@ class SystemSettingRepository:
         setting = await self.get_setting(key)
 
         if setting:
-            # Update existing
             setting.value = value
-            setting.value_type = value_type
-            if description is not None:
-                setting.description = description
+            if updated_by_id is not None:
+                setting.updated_by_id = updated_by_id
         else:
-            # Create new
             setting = SystemSetting(
                 key=key,
                 value=value,
-                value_type=value_type,
-                description=description,
+                updated_by_id=updated_by_id,
             )
             self.session.add(setting)
 
@@ -72,22 +96,23 @@ class SystemSettingRepository:
         Returns:
             True if setup_completed setting is true, False otherwise
         """
-        setting = await self.get_setting("setup_completed")
-        if not setting:
-            return False
-        # Value is stored as string "true" or "false"
-        return setting.value.lower() == "true"
+        value = await self.get_value("setup_completed", default=False)
+        if isinstance(value, bool):
+            return value
+        # Tolerate legacy string-encoded values just in case.
+        if isinstance(value, str):
+            return value.lower() == "true"
+        return bool(value)
 
-    async def mark_setup_completed(self) -> None:
-        """Mark the initial setup as completed.
+    async def mark_setup_completed(
+        self, updated_by_id: UUID | None = None
+    ) -> None:
+        """Mark the initial setup as completed."""
 
-        Sets the setup_completed setting to true.
-        """
         await self.set_setting(
             key="setup_completed",
-            value="true",
-            value_type="boolean",
-            description="Whether initial setup has been completed",
+            value=True,
+            updated_by_id=updated_by_id,
         )
 
     async def get_embedding_model(self) -> str:
@@ -95,33 +120,29 @@ class SystemSettingRepository:
 
         Reads the 'embedding_model' system setting, defaulting to 'perch'
         if the setting has not been explicitly configured by an admin.
-
-        Returns:
-            Embedding model name (e.g. 'perch' or 'birdnet').
         """
-        setting = await self.get_setting("embedding_model")
-        if setting is None or not setting.value:
-            return "perch"
-        return setting.value
+        value = await self.get_value("embedding_model")
+        if isinstance(value, str) and value:
+            return value
+        return "perch"
 
     async def get_birdnet_settings(self) -> dict[str, object]:
-        """Get BirdNET detection settings with defaults.
+        """Get BirdNET detection settings with defaults."""
 
-        Returns:
-            Dictionary with species_filter and min_conf settings,
-            falling back to defaults if not configured.
-        """
-        species_filter_setting = await self.get_setting("birdnet_species_filter")
-        min_conf_setting = await self.get_setting("birdnet_min_conf")
+        species_filter = await self.get_value("birdnet_species_filter")
+        min_conf_raw = await self.get_value("birdnet_min_conf")
 
-        species_filter: str = (
-            species_filter_setting.value if species_filter_setting else "none"
-        )
-        min_conf: float = (
-            float(min_conf_setting.value) if min_conf_setting else 0.25
-        )
+        species: str = species_filter if isinstance(species_filter, str) else "none"
+        try:
+            min_conf = (
+                float(min_conf_raw)
+                if min_conf_raw is not None
+                else 0.25
+            )
+        except (TypeError, ValueError):
+            min_conf = 0.25
 
         return {
-            "species_filter": species_filter,
+            "species_filter": species,
             "min_conf": min_conf,
         }

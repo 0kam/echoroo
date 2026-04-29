@@ -41,6 +41,10 @@ from sqlalchemy.dialects import postgresql
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 
 from alembic import op
+from echoroo._alembic_phase13_supporting_ddl import (
+    SUPPORTING_TABLES_REVERSE_DROP_ORDER,
+    apply_phase13_supporting_tables,
+)
 
 # Revision identifiers used by Alembic.
 revision: str = "0001"
@@ -54,11 +58,30 @@ depends_on: str | tuple[str, ...] | None = None
 # --------------------------------------------------------------------------- #
 
 # Legacy-compat enums reused by the supporting tables (datasets/detections/...)
+#
+# Phase 13 P1 (T803): ``detectionsource`` widened to seven values to match the
+# ORM canonical shape (BirdNET / Perch / Perch search / similarity search /
+# custom SVM / human / sampling round). On existing dev DBs the four new
+# values are also added by 0006a via ``ALTER TYPE ... ADD VALUE``; the
+# duplication is intentional so a fresh DB reaches the final shape from the
+# baseline alone (FR-113), and the delta migration remains idempotent for
+# DBs already past 0005.
 _LEGACY_ENUMS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("datasetstatus", ("pending", "scanning", "processing", "completed", "failed")),
     ("datasetvisibility", ("private", "public")),
     ("tagcategory", ("species", "sound_type", "quality")),
-    ("detectionsource", ("birdnet", "perch_search", "human")),
+    (
+        "detectionsource",
+        (
+            "birdnet",
+            "perch",
+            "perch_search",
+            "similarity_search",
+            "custom_svm",
+            "human",
+            "sampling_round",
+        ),
+    ),
     ("detectionstatus", ("unreviewed", "confirmed", "rejected")),
     ("annotationsource", ("human", "model")),
 )
@@ -84,6 +107,60 @@ _REDESIGN_ENUMS: tuple[tuple[str, tuple[str, ...]], ...] = (
     (
         "taxonoverrideapprovalstatus",
         ("applied", "pending_superuser_approval", "rejected"),
+    ),
+)
+
+
+# Phase 13 P1 (T803): 16 ORM-only enums needed by the 32 supporting tables
+# below. Names MUST match the ``Enum(name=...)`` parameter on each ORM
+# ``mapped_column``; see ``apps/api/echoroo/models/*.py``. The list mirrors
+# ``alembic/versions/0006_schema_reconcile_static.py::_PHASE13_ENUMS`` so a
+# fresh DB built from 0001 ends up byte-for-byte identical to a long-lived
+# dev DB that arrives via 0001 + 0005 + 0006 + 0006a. The ``setting_type``
+# enum was retired with ``system_settings.value_type`` in T803a so the
+# count is 16, not 17.
+_PHASE13_ENUMS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("datetimeparsestatus", ("pending", "success", "failed")),
+    ("annotation_set_status", ("sampling", "ready", "in_progress", "completed")),
+    ("annotation_segment_status", ("unannotated", "annotated", "skipped")),
+    (
+        "annotationtaskstatus",
+        ("pending", "in_progress", "completed", "review_pending"),
+    ),
+    ("annotationprojectvisibility", ("private", "public")),
+    ("reviewstatus", ("unreviewed", "approved", "rejected")),
+    ("geometrytype", ("BoundingBox", "TimeInterval")),
+    ("signalquality", ("solo", "dominant", "mixed")),
+    (
+        "consensusstatus",
+        ("needs_votes", "agreed", "rejected", "disputed"),
+    ),
+    ("detectionrunstatus", ("pending", "running", "completed", "failed")),
+    (
+        "uploadsessionstatus",
+        (
+            "issued",
+            "uploaded",
+            "validating",
+            "validated",
+            "importing",
+            "imported",
+            "failed",
+        ),
+    ),
+    (
+        "uploadfilestatus",
+        ("pending", "uploaded", "valid", "invalid", "imported"),
+    ),
+    ("searchsessionstatus", ("pending", "running", "completed", "failed")),
+    ("votetype", ("agree", "disagree", "unsure")),
+    (
+        "custommodelstatus",
+        ("draft", "training", "trained", "deployed", "failed", "archived"),
+    ),
+    (
+        "evaluation_run_status",
+        ("pending", "running", "completed", "failed"),
     ),
 )
 
@@ -130,6 +207,12 @@ def upgrade() -> None:  # noqa: PLR0915 — baseline migration, long by nature
 
     _create_enums(_LEGACY_ENUMS)
     _create_enums(_REDESIGN_ENUMS)
+    # Phase 13 P1 (T803): create the ORM-only enums up-front so the
+    # supporting tables emitted at the end of upgrade() can reference them.
+    _create_enums(_PHASE13_ENUMS)
+
+    # Phase 13 P1 (T803): pgvector for ``embeddings`` / ``search_query_embeddings``.
+    op.execute("CREATE EXTENSION IF NOT EXISTS vector")
 
     op.create_table(
         "users",
@@ -1157,6 +1240,16 @@ def upgrade() -> None:  # noqa: PLR0915 — baseline migration, long by nature
         """
     )
 
+    # ------------------------------------------------------------------ #
+    # T020h (Phase 13 P1 / T803) — emit the 32 ORM-only supporting tables
+    # so a fresh DB built from 0001 alone reaches the final Phase 13 shape.
+    # The same DDL block is re-emitted by 0006_schema_reconcile_static
+    # under ``IF NOT EXISTS`` for long-lived dev DBs that arrive via the
+    # delta path; both paths therefore converge on byte-for-byte identical
+    # final schemas. See ``echoroo._alembic_phase13_supporting_ddl``.
+    # ------------------------------------------------------------------ #
+    apply_phase13_supporting_tables()
+
 
 # --------------------------------------------------------------------------- #
 # Downgrade — full teardown (baseline is not meant to be partially reverted)
@@ -1172,6 +1265,13 @@ def downgrade() -> None:  # noqa: PLR0915
     op.execute("DROP TRIGGER IF EXISTS superuser_last_protection ON superusers")
     op.execute("DROP FUNCTION IF EXISTS forbid_audit_log_mutation()")
     op.execute("DROP FUNCTION IF EXISTS prevent_last_superuser_deletion()")
+
+    # Phase 13 P1 (T803): drop the supporting tables first since they FK
+    # back into projects / users / datasets / etc. ``detections`` is
+    # intentionally NOT in this list (its rows predate Phase 13 and are
+    # treated as part of the legacy core; it is dropped below).
+    for tname in SUPPORTING_TABLES_REVERSE_DROP_ORDER:
+        op.execute(f'DROP TABLE IF EXISTS "{tname}" CASCADE')
 
     # Drop tables in reverse FK dependency order.
     for table in (
@@ -1204,6 +1304,7 @@ def downgrade() -> None:  # noqa: PLR0915
     ):
         op.execute(f"DROP TABLE IF EXISTS {table} CASCADE")
 
+    _drop_enums(_PHASE13_ENUMS)
     _drop_enums(_REDESIGN_ENUMS)
     _drop_enums(_LEGACY_ENUMS)
 
