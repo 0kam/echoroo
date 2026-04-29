@@ -330,7 +330,10 @@ class TestViewerPreciseLocationHttpSurface:
         )
         assert response.status_code == 200, response.text
         body = response.json()
-        returned_h3 = body["h3_index"]
+        # Canonical wire key after Phase 13 P4 rename is ``h3_index_member``;
+        # the legacy ``h3_index`` alias is still emitted by response_filter
+        # for transitional readers but tests pin to the canonical name.
+        returned_h3 = body["h3_index_member"]
 
         # The original res-9 cell is hidden — the response cell is at the
         # toggle ceiling resolution. We assert the coarsening happened by
@@ -380,7 +383,8 @@ class TestViewerPreciseLocationHttpSurface:
         )
         assert response.status_code == 200, response.text
         body = response.json()
-        returned_h3 = body["h3_index"]
+        # Canonical wire key after Phase 13 P4 rename is ``h3_index_member``.
+        returned_h3 = body["h3_index_member"]
 
         # Toggle ON lifts VIEW_PRECISE_LOCATION → response keeps the raw
         # res-9 cell that the Site row stores.

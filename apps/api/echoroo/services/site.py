@@ -117,6 +117,23 @@ class SiteService:
                 detail=f"Invalid H3 index: {error}",
             )
 
+        # NFR-003: ``sites.h3_index_member_resolution`` CHECK constraint
+        # admits only 9 or 15. Reject other resolutions with 400 to keep
+        # the stored ``h3_index_member_resolution`` consistent with the
+        # cell precision (no silent rounding to 15 — that would create a
+        # mismatch where e.g. a res-7 cell is recorded as res-15).
+        if resolution not in (9, 15):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "error": "ERR_INVALID_H3_RESOLUTION",
+                    "message": (
+                        "H3 cell resolution must be 9 or 15, "
+                        f"got {resolution}"
+                    ),
+                },
+            )
+
         # Check for duplicate name
         existing = await self.site_repo.get_by_project_and_name(project_id, request.name)
         if existing:
@@ -133,18 +150,12 @@ class SiteService:
                 detail="Site with this H3 index already exists in project",
             )
 
-        # Resolve member resolution from the validated H3 index. The
-        # CHECK constraint on ``sites.h3_index_member_resolution`` only
-        # admits 9 or 15 (NFR-003), so callers passing other resolutions
-        # are rejected with 400 here rather than letting the DB raise.
-        member_resolution = resolution if resolution in (9, 15) else 15
-
         # Create site
         site = Site(
             project_id=project_id,
             name=request.name,
             h3_index_member=request.h3_index_member,
-            h3_index_member_resolution=member_resolution,
+            h3_index_member_resolution=resolution,
         )
 
         created_site = await self.site_repo.create(site)
@@ -282,6 +293,22 @@ class SiteService:
                     detail=f"Invalid H3 index: {error}",
                 )
 
+            # NFR-003: same 9-or-15 constraint as create_site. Reject any
+            # other resolution with 400 instead of silently rounding so
+            # the stored ``h3_index_member_resolution`` always matches
+            # the actual cell precision.
+            if resolution not in (9, 15):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail={
+                        "error": "ERR_INVALID_H3_RESOLUTION",
+                        "message": (
+                            "H3 cell resolution must be 9 or 15, "
+                            f"got {resolution}"
+                        ),
+                    },
+                )
+
             # Check for duplicate H3 index
             existing_h3 = await self.site_repo.get_by_project_and_h3(project_id, request.h3_index_member)
             if existing_h3 and existing_h3.id != site_id:
@@ -290,11 +317,7 @@ class SiteService:
                     detail="Site with this H3 index already exists in project",
                 )
             site.h3_index_member = request.h3_index_member
-            # Keep the resolution column aligned with the cell precision
-            # (NFR-003: only 9 or 15 are admitted by the CHECK constraint).
-            site.h3_index_member_resolution = (
-                resolution if resolution in (9, 15) else 15
-            )
+            site.h3_index_member_resolution = resolution
 
         updated_site = await self.site_repo.update(site)
         return SiteResponse.model_validate(updated_site)

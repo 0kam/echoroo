@@ -58,6 +58,19 @@ FORBIDDEN_NAMES: frozenset[str] = frozenset(
 # Forbidden prefixes (matched as ``name.startswith(prefix)``).
 FORBIDDEN_PREFIXES: tuple[str, ...] = ("gps_",)
 
+# Permanent name-level carve-outs from FORBIDDEN_PREFIXES. Names listed
+# here are intentional EXIF / GPS-handling identifiers that do NOT carry
+# raw coordinate data and are part of the privacy enforcement surface
+# itself (e.g. ``gps_stripped`` is the boolean monitor flag mandated by
+# FR-028a — it records whether GPS metadata WAS stripped, never stores
+# coordinate values). Distinct from the file-level allowlist which
+# tracks legacy-Phase-3 cleanup targets; entries here are stable.
+ALLOWED_NAMES: frozenset[str] = frozenset(
+    {
+        "gps_stripped",
+    }
+)
+
 # Default scan roots.
 DEFAULT_PY_ROOT = Path("apps/api/echoroo")
 DEFAULT_CONTRACTS_ROOT = Path("specs/006-permissions-redesign/contracts")
@@ -107,6 +120,8 @@ def _violation_fingerprint(rel_str: str, kind: str, name: str) -> str:
 
 def _is_forbidden(name: str) -> bool:
     if not name:
+        return False
+    if name in ALLOWED_NAMES:
         return False
     if name in FORBIDDEN_NAMES:
         return True

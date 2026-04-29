@@ -133,6 +133,45 @@ class TestSiteEndpoints:
 
         assert response.status_code == 400
 
+    async def test_create_site_rejects_non_member_resolution(
+        self,
+        client: AsyncClient,
+        auth_headers: dict[str, str],
+        test_project_id: str,
+    ) -> None:
+        """NFR-003: H3 cells outside res 9/15 must be rejected with 400.
+
+        Phase 13 P4 R1 contract: ``sites.h3_index_member_resolution`` is
+        constrained to {9, 15}. The service no longer silently rounds
+        unsupported resolutions to 15 — it returns a structured
+        ``ERR_INVALID_H3_RESOLUTION`` 400 so the stored resolution is
+        always consistent with the cell precision.
+        """
+        # res-7 cell — valid H3 index but outside the member-tier set.
+        # ``872f59484ffffff`` is Tokyo at resolution 7.
+        site_data = {
+            "name": "Coarse Site",
+            "h3_index_member": "872f59484ffffff",
+        }
+
+        response = await client.post(
+            f"/api/v1/projects/{test_project_id}/sites",
+            headers=auth_headers,
+            json=site_data,
+        )
+
+        assert response.status_code == 400, response.text
+        body = response.json()
+        # Detail may be either the structured payload (default) or a
+        # FastAPI-wrapped string under ``detail``.
+        detail = body.get("detail")
+        if isinstance(detail, dict):
+            assert detail.get("error") == "ERR_INVALID_H3_RESOLUTION"
+            assert "9 or 15" in detail.get("message", "")
+        else:
+            # Fallback: substring assertion on the string representation
+            assert "ERR_INVALID_H3_RESOLUTION" in str(body) or "9 or 15" in str(body)
+
     async def test_create_site_duplicate_name(
         self,
         client: AsyncClient,
