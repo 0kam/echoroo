@@ -79,11 +79,31 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_ALLOWLIST_PATHS: Final[tuple[str, ...]] = ("/health", "/metrics")
 DEFAULT_ENFORCEMENT_PREFIX: Final[str] = "/web-api/v1/"
-"""Path prefix this middleware applies to.
+"""Default path prefix the middleware applies to when no override is given.
 
-Anything outside this prefix bypasses enforcement entirely (see module
-docstring for the ``/api/v1/*`` deferral rationale). Phase 15 T155b
-extends coverage once :class:`ApiKeyVerifier` lands.
+Kept as a single string for backwards compatibility with callers that
+construct the middleware via ``enforcement_prefix=``. Phase 15 T155b
+introduces :data:`DEFAULT_ENFORCEMENT_PREFIXES` (plural) to cover both
+the session and programmatic surfaces; new callers should prefer the
+plural variant.
+"""
+
+DEFAULT_ENFORCEMENT_PREFIXES: Final[tuple[str, ...]] = (
+    "/web-api/v1/",
+    "/api/v1/",
+)
+"""Phase 15 T155b: dual-prefix enforcement.
+
+Once :class:`DbApiKeyVerifier` populates ``request.state.principal`` for
+``/api/v1/*`` Bearer callers, the same enrollment / cooldown gates that
+guard ``/web-api/v1/*`` SHOULD also guard the programmatic surface so a
+2FA-disabled user cannot escape the spec by switching to API-key auth.
+
+Anonymous / cookie-only ``/api/v1/*`` callers (see
+``AuthRouterConfig.allow_legacy_session_fallback``) carry
+``principal is None`` and short-circuit out of enforcement at the
+``principal is None or principal.user_id is None`` guard inside
+:meth:`TwoFactorEnforcementMiddleware.dispatch`.
 """
 
 TWO_FACTOR_SETUP_PATH: Final[str] = "/web-api/v1/auth/2fa/setup/totp"
@@ -155,14 +175,36 @@ class TwoFactorEnforcementMiddleware(BaseHTTPMiddleware):
         cooldown_restricted_patterns: Sequence[CooldownRestrictedPattern] = (
             COOLDOWN_RESTRICTED_PATTERNS
         ),
-        enforcement_prefix: str = DEFAULT_ENFORCEMENT_PREFIX,
+        enforcement_prefix: str | None = None,
+        enforcement_prefixes: Sequence[str] | None = None,
         user_resolver: Callable[[UUID], Awaitable[User | None]] | None = None,
         audit_writer: Callable[..., Awaitable[None]] | None = None,
     ) -> None:
         super().__init__(app)
         self.allowlist_paths = frozenset(allowlist_paths)
         self.cooldown_restricted_patterns = tuple(cooldown_restricted_patterns)
-        self.enforcement_prefix = enforcement_prefix
+        # Phase 15 T155b: support BOTH the legacy single-prefix kwarg
+        # (``enforcement_prefix``) and the dual-prefix variant
+        # (``enforcement_prefixes``) so existing tests pinning the
+        # ``/web-api/v1/`` scope keep working without modification while
+        # production swaps in the broader prefix set.
+        if enforcement_prefixes is not None and enforcement_prefix is not None:
+            raise ValueError(
+                "pass either enforcement_prefix or enforcement_prefixes, not both"
+            )
+        if enforcement_prefixes is not None:
+            prefixes = tuple(enforcement_prefixes)
+        elif enforcement_prefix is not None:
+            prefixes = (enforcement_prefix,)
+        else:
+            prefixes = (DEFAULT_ENFORCEMENT_PREFIX,)
+        if not prefixes:
+            raise ValueError("enforcement_prefixes must not be empty")
+        self.enforcement_prefixes: tuple[str, ...] = prefixes
+        # Backward-compatibility alias — some callers (and the
+        # ``__all__`` export list) still inspect ``enforcement_prefix``.
+        # We expose the FIRST configured prefix on that attribute.
+        self.enforcement_prefix: str = prefixes[0]
         # ``user_resolver`` and ``audit_writer`` are pluggable so the
         # existing fast unit tests can avoid spinning up Postgres while
         # the production wiring goes through ``AsyncSessionLocal``.
@@ -176,12 +218,11 @@ class TwoFactorEnforcementMiddleware(BaseHTTPMiddleware):
     ) -> Response:
         path = request.url.path
 
-        # Scope short-circuit. Anything outside the enforcement prefix
-        # (``/web-api/v1/*`` by default) bypasses the middleware so
-        # ``/api/v1/*`` and any other surface remains unaffected until
-        # Phase 15 T155b extends coverage to programmatic auth. See the
-        # module docstring for the full rationale.
-        if not path.startswith(self.enforcement_prefix):
+        # Scope short-circuit. Phase 15 T155b: enforcement now covers
+        # the configured prefix tuple (``/web-api/v1/*`` plus
+        # ``/api/v1/*`` in production). Paths outside every configured
+        # prefix bypass the middleware entirely.
+        if not any(path.startswith(p) for p in self.enforcement_prefixes):
             return await _call_next_with_response_polish(request, call_next)
 
         # Public allowlist short-circuit. ``TWO_FACTOR_SETUP_PATH`` is a
@@ -409,6 +450,7 @@ __all__ = [
     "CooldownRestrictedPattern",
     "DEFAULT_ALLOWLIST_PATHS",
     "DEFAULT_ENFORCEMENT_PREFIX",
+    "DEFAULT_ENFORCEMENT_PREFIXES",
     "ENFORCEMENT_AUDIT_ACTION",
     "PASSWORD_RESET_CONFIRM_CACHE_CONTROL",
     "PASSWORD_RESET_CONFIRM_PATH",

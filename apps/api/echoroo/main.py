@@ -31,9 +31,9 @@ from echoroo.middleware.security import (
     get_security_config_for_environment,
 )
 from echoroo.middleware.two_factor_enforcement import TwoFactorEnforcementMiddleware
+from echoroo.services.api_key_verification import DbApiKeyVerifier
 from echoroo.services.session_verification import (
     JwtSessionVerifier,
-    StubApiKeyVerifier,
 )
 
 settings = get_settings()
@@ -103,15 +103,19 @@ def create_app() -> FastAPI:
             cookie_name=settings.web_session_cookie_name,
         ),
     )
-    app.add_middleware(TwoFactorEnforcementMiddleware)
-    # NOTE: ``TwoFactorEnforcementMiddleware`` only enforces on the
-    # ``/web-api/v1/*`` first-party session surface (its
-    # ``DEFAULT_ENFORCEMENT_PREFIX``). The ``/api/v1/*`` programmatic
-    # surface is deliberately left out until Phase 15 task **T155b**
-    # wires the real :class:`ApiKeyVerifier` and switches the auth
-    # router's ``programmatic_prefix`` back to ``/api/v1``. See the
-    # module docstring of ``two_factor_enforcement`` for the full
-    # rationale.
+    # Phase 15 T155b: 2FA enforcement now covers BOTH the first-party
+    # session surface (``/web-api/v1/*``) AND the programmatic surface
+    # (``/api/v1/*``). API key verification (wired below via
+    # :class:`DbApiKeyVerifier`) populates ``request.state.principal``
+    # with the API key's owner ``user_id``; the enrollment / cooldown
+    # gates then read the same ``users`` row used by session callers.
+    # Anonymous fall-through (cookie-only legacy callers — see
+    # ``allow_legacy_session_fallback``) is unaffected because the
+    # middleware short-circuits when ``principal is None``.
+    app.add_middleware(
+        TwoFactorEnforcementMiddleware,
+        enforcement_prefixes=("/web-api/v1/", "/api/v1/"),
+    )
 
     # AuthRouter must run BEFORE TwoFactorEnforcement so the latter can
     # read ``request.state.principal``. Starlette's ``add_middleware``
@@ -159,16 +163,25 @@ def create_app() -> FastAPI:
     ] = (
         ("/web-api/v1/projects", "/recordings", frozenset({"GET"})),
     )
+    # Phase 15 T155b: programmatic prefix flipped back to ``/api/v1``.
+    # ``DbApiKeyVerifier`` (wired below) resolves Bearer credentials
+    # against the ``api_keys`` table. The ``allow_legacy_session_fallback``
+    # flag preserves the transitional period where the SvelteKit frontend
+    # still issues cookie-authenticated calls against ``/api/v1/*``: when
+    # no Bearer header is present the auth router leaves ``principal``
+    # empty and the legacy ``Depends(get_current_user)`` chain remains
+    # responsible for authentication.
     app.add_middleware(
         AuthRouterMiddleware,
         config=AuthRouterConfig(
-            api_key_verifier=StubApiKeyVerifier(),
+            api_key_verifier=DbApiKeyVerifier(AsyncSessionLocal),
             session_verifier=JwtSessionVerifier(AsyncSessionLocal),
-            programmatic_prefix="/__auth_router_disabled_until_phase15__",
+            programmatic_prefix="/api/v1",
             session_cookie_name=settings.web_session_cookie_name,
             public_path_allowlist=auth_router_allowlist,
             public_path_prefix_allowlist=auth_router_public_prefixes,
             public_path_nested_allowlist=auth_router_public_nested,
+            allow_legacy_session_fallback=True,
         ),
     )
 

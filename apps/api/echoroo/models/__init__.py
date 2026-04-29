@@ -17,6 +17,7 @@ from echoroo.models.annotation_set import (
 )
 from echoroo.models.annotation_task import AnnotationTask
 from echoroo.models.annotation_vote import AnnotationVote
+from echoroo.models.api_key import ApiKey
 from echoroo.models.base import Base, TimestampMixin, UUIDMixin
 from echoroo.models.clip import Clip
 from echoroo.models.clip_annotation import ClipAnnotation, clip_annotation_tags
@@ -97,6 +98,7 @@ __all__ = [
     "TimestampMixin",
     "UUIDMixin",
     # Core models
+    "ApiKey",
     "Clip",
     "Dataset",
     "License",

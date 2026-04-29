@@ -69,6 +69,13 @@ DEFAULT_ACCESS_COOKIE: Final[str] = "access_token"
 STATUS_SESSION_STALE: Final[int] = 419
 """Echoroo convention: 419 means session was revoked (security_stamp rotated)."""
 
+# Phase 15 T155b legacy-fallback sentinel. Returned by
+# ``_authenticate_api_key`` when ``allow_legacy_session_fallback`` is
+# set and the request has no Bearer header — signals the dispatcher to
+# leave ``request.state.principal = None`` so the legacy
+# ``Depends(get_current_user)`` cookie chain owns authentication.
+_LEGACY_FALLBACK_SENTINEL: Final[object] = object()
+
 
 # ---------------------------------------------------------------------------
 # Principal
@@ -250,6 +257,27 @@ class AuthRouterConfig:
     public_path_nested_allowlist: tuple[
         tuple[str, str, frozenset[str]], ...
     ] = field(default_factory=tuple)
+    # Phase 15 T155b: when ``True`` and the request hits the
+    # ``programmatic_prefix`` WITHOUT an ``Authorization: Bearer`` header,
+    # the middleware leaves ``request.state.principal = None`` and lets
+    # the request fall through to the legacy
+    # :func:`echoroo.middleware.auth.get_current_user` Depends-based
+    # cookie auth path. This preserves the transitional period where the
+    # SvelteKit frontend still calls ``/api/v1/*`` with a session cookie:
+    # without this flag every cookie-only call would 401 the moment the
+    # programmatic prefix is flipped back to ``/api/v1`` and the legacy
+    # UI surface would shatter wholesale.
+    #
+    # When a Bearer header IS present, the request still goes through
+    # the API-key verifier — invalid / revoked keys produce the usual
+    # 401 ``auth_invalid`` response (no silent downgrade to anonymous).
+    #
+    # The fallback is intentionally narrow: it only applies to the
+    # programmatic prefix and only when the Authorization header is
+    # absent / does not start with ``bearer ``. Any malformed Bearer
+    # value continues to return 401, matching the strict path used by
+    # the session prefix.
+    allow_legacy_session_fallback: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -345,6 +373,7 @@ class AuthRouterMiddleware(BaseHTTPMiddleware):
                 request.state.principal = None
                 return await call_next(request)
 
+        result: Principal | Response | object
         if path.startswith(self.config.programmatic_prefix):
             result = await self._authenticate_api_key(request)
         elif path.startswith(self.config.session_prefix):
@@ -356,6 +385,14 @@ class AuthRouterMiddleware(BaseHTTPMiddleware):
         if isinstance(result, Response):
             return result
 
+        if result is _LEGACY_FALLBACK_SENTINEL:
+            # Phase 15 T155b: cookie-only ``/api/v1/*`` request — leave
+            # ``principal`` empty so the downstream ``Depends`` chain
+            # owns authentication.
+            request.state.principal = None
+            return await call_next(request)
+
+        assert isinstance(result, Principal)
         request.state.principal = result
         return await call_next(request)
 
@@ -363,13 +400,31 @@ class AuthRouterMiddleware(BaseHTTPMiddleware):
 
     async def _authenticate_api_key(
         self, request: Request
-    ) -> Principal | Response:
+    ) -> Principal | Response | object:
         verifier = self.config.api_key_verifier
         if verifier is None:
             return _auth_failure(401, "auth_unavailable", "API key verifier not configured")
 
         auth_header = request.headers.get("Authorization", "")
         if not auth_header.lower().startswith("bearer "):
+            # Phase 15 T155b transition: when the legacy SvelteKit
+            # frontend still calls ``/api/v1/*`` with a session cookie
+            # (no Bearer header), let the request fall through to the
+            # legacy ``Depends(get_current_user)`` cookie-auth path
+            # instead of 401-ing it. The flag is opt-in via
+            # :attr:`AuthRouterConfig.allow_legacy_session_fallback` so
+            # tests / non-transitional deployments retain the strict
+            # Bearer-required behaviour.
+            if self.config.allow_legacy_session_fallback:
+                # Sentinel: signal the dispatcher to leave
+                # ``request.state.principal = None`` so the legacy
+                # ``Depends(get_current_user)`` chain runs. Using a
+                # ``Principal`` value with ``user_id=None`` would set
+                # ``request.state.principal`` to a truthy object and
+                # leak the half-resolved identity into downstream
+                # middlewares that distinguish ``None`` from
+                # "anonymous principal".
+                return _LEGACY_FALLBACK_SENTINEL
             return _auth_failure(
                 401, "auth_required", "Bearer API key required for /api/v1/*"
             )

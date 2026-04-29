@@ -395,18 +395,26 @@ async def test_real_chain_logged_out_request_passes_through(
 
 
 @pytest.mark.asyncio
-async def test_real_chain_legacy_api_v1_bypasses_enforcement(
+async def test_real_chain_api_v1_with_jwt_bearer_returns_auth_invalid(
     client: AsyncClient,
     session_factory: object,
 ) -> None:
-    """``/api/v1/*`` requests must NOT be blocked by this middleware.
+    """``/api/v1/*`` Bearer JWT (not an API key) is rejected by AuthRouter.
 
-    Phase 15 task T155b (when ``ApiKeyVerifier`` lands) will extend
-    enforcement to the programmatic surface. Until then, the
-    middleware MUST scope to ``/web-api/v1/*`` only — even an
-    unenrolled user reaching ``/api/v1/projects`` must see something
-    other than the enforcement 403/423 (typically a 401 from the
-    legacy Depends-based auth).
+    Phase 15 T155b flipped ``programmatic_prefix`` back to ``/api/v1``
+    and wired :class:`DbApiKeyVerifier`. A JWT access token does NOT
+    match the ``echoroo_<prefix>_<secret>`` API-key wire format, so the
+    verifier returns ``None`` and AuthRouter emits the usual 401
+    ``auth_invalid``. The 2FA enforcement middleware therefore never
+    runs for this request — the assertion contract (no 423, no
+    ``2FA enrollment required`` detail) holds for the same reason it
+    held pre-T155b: the request cannot reach the enforcement layer
+    while the auth layer still rejects it.
+
+    Cookie-only legacy callers exercise a different code path (see
+    :func:`test_real_chain_api_v1_with_cookie_only_falls_through_to_legacy`)
+    which depends on ``allow_legacy_session_fallback=True`` in the
+    AuthRouter config.
     """
     _, session_id, access_token = await _seed_user_and_session(
         session_factory, two_factor_enabled=False
