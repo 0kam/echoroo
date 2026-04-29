@@ -80,6 +80,8 @@ from echoroo.models.search_query_embedding import SearchQueryEmbedding
 from echoroo.models.search_session import SearchSession
 from echoroo.models.site import Site
 from echoroo.models.sound_event_annotation import SoundEventAnnotation, sound_event_annotation_tags
+from echoroo.models.superuser import Superuser
+from echoroo.models.superuser_approval_request import SuperuserApprovalRequest
 from echoroo.models.system import SystemSetting
 from echoroo.models.tag import Tag
 from echoroo.models.taxon import Taxon
@@ -108,6 +110,8 @@ __all__ = [
     "Recorder",
     "Recording",
     "Site",
+    "Superuser",
+    "SuperuserApprovalRequest",
     "SystemSetting",
     "User",
     "UserLoginNotificationSeen",
