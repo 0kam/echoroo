@@ -734,7 +734,14 @@ def upgrade() -> None:  # noqa: PLR0915 — baseline migration, long by nature
     )
     op.create_index("ix_sites_h3_index_member", "sites", ["h3_index_member"])
 
-    # datasets (supporting table, placeholder columns — Phase 3+ extends)
+    # datasets (Phase 13 P2 / T805 — final shape per data-model.md §3.22 +
+    # v5-final §2.2). Both ``recorder_id`` and ``license_id`` FKs are
+    # deferred until after ``apply_phase13_supporting_tables()`` (line
+    # ~1267) emits the ``recorders`` / ``licenses`` parent tables; the
+    # delta migration ``0008_datasets_extension`` mirrors the same final
+    # shape via idempotent ``ALTER TABLE`` so a fresh DB built from 0001
+    # alone reaches byte-for-byte the same schema as a long-lived DB
+    # arriving via 0001 → … → 0008.
     op.create_table(
         "datasets",
         sa.Column("id", UUID(as_uuid=True), primary_key=True, server_default=sa.text("gen_random_uuid()")),
@@ -744,24 +751,54 @@ def upgrade() -> None:  # noqa: PLR0915 — baseline migration, long by nature
             sa.ForeignKey("projects.id", ondelete="CASCADE"),
             nullable=False,
         ),
+        sa.Column(
+            "site_id",
+            UUID(as_uuid=True),
+            sa.ForeignKey("sites.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        # ``recorder_id`` / ``license_id`` FKs added below after
+        # apply_phase13_supporting_tables() materialises the parent tables.
+        sa.Column("recorder_id", sa.String(50), nullable=True),
+        sa.Column("license_id", sa.String(50), nullable=True),
+        sa.Column(
+            "created_by_id",
+            UUID(as_uuid=True),
+            sa.ForeignKey("users.id", ondelete="RESTRICT"),
+            nullable=False,
+        ),
         sa.Column("name", sa.String(200), nullable=False),
         sa.Column("description", sa.Text(), nullable=True),
-        sa.Column(
-            "status",
-            _enum("datasetstatus"),
-            nullable=False,
-            server_default=sa.text("'pending'::datasetstatus"),
-        ),
+        sa.Column("audio_dir", sa.String(500), nullable=True),
         sa.Column(
             "visibility",
             _enum("datasetvisibility"),
             nullable=False,
             server_default=sa.text("'private'::datasetvisibility"),
         ),
+        sa.Column(
+            "status",
+            _enum("datasetstatus"),
+            nullable=False,
+            server_default=sa.text("'pending'::datasetstatus"),
+        ),
+        sa.Column("doi", sa.String(255), nullable=True),
+        sa.Column("gain", sa.Float(), nullable=True),
+        sa.Column("note", sa.Text(), nullable=True),
+        sa.Column("datetime_pattern", sa.String(500), nullable=True),
+        sa.Column("datetime_format", sa.String(100), nullable=True),
+        sa.Column("datetime_timezone", sa.String(50), nullable=True),
+        sa.Column("total_files", sa.Integer(), nullable=False, server_default=sa.text("0")),
+        sa.Column("processed_files", sa.Integer(), nullable=False, server_default=sa.text("0")),
+        sa.Column("processing_error", sa.Text(), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("now()")),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("now()")),
+        sa.UniqueConstraint("project_id", "name", name="uq_dataset_project_name"),
     )
     op.create_index("ix_datasets_project_id", "datasets", ["project_id"])
+    op.create_index("ix_datasets_site_id", "datasets", ["site_id"])
+    op.create_index("ix_datasets_status", "datasets", ["status"])
+    op.create_index("ix_datasets_visibility", "datasets", ["visibility"])
 
     op.create_table(
         "recordings",
@@ -1265,6 +1302,37 @@ def upgrade() -> None:  # noqa: PLR0915 — baseline migration, long by nature
     # final schemas. See ``echoroo._alembic_phase13_supporting_ddl``.
     # ------------------------------------------------------------------ #
     apply_phase13_supporting_tables()
+
+    # Phase 13 P2 (T805): now that ``recorders`` and ``licenses`` exist
+    # (created inside ``apply_phase13_supporting_tables``), bind the two
+    # deferred FK constraints on ``datasets``. The columns themselves
+    # were added in the ``create_table`` call above; only the FK closures
+    # are deferred here. Idempotent via ``pg_constraint`` lookup.
+    op.execute(
+        """
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM pg_constraint
+                WHERE conname = 'fk_datasets_recorder_id'
+            ) THEN
+                ALTER TABLE datasets
+                ADD CONSTRAINT fk_datasets_recorder_id
+                FOREIGN KEY (recorder_id) REFERENCES recorders(id) ON DELETE SET NULL;
+            END IF;
+
+            IF NOT EXISTS (
+                SELECT 1 FROM pg_constraint
+                WHERE conname = 'fk_datasets_license_id'
+            ) THEN
+                ALTER TABLE datasets
+                ADD CONSTRAINT fk_datasets_license_id
+                FOREIGN KEY (license_id) REFERENCES licenses(id) ON DELETE SET NULL;
+            END IF;
+        END
+        $$;
+        """
+    )
 
     # Phase 13 P1.5 (T804): now that ``taxa`` exists (created inside
     # ``apply_phase13_supporting_tables``), promote ``tags.taxon_id`` to
