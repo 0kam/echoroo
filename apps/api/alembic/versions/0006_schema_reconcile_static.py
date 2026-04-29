@@ -125,6 +125,11 @@ def upgrade() -> None:  # noqa: PLR0915 — generated DDL block, long by nature
     # (also called from baseline 0001; harmless if already present).
     op.execute("CREATE EXTENSION IF NOT EXISTS pgcrypto")
 
+    # Phase 13 P0a: ensure pgvector is available for ``embeddings`` and
+    # ``search_query_embeddings`` (VECTOR(1536) columns below). Without
+    # this extension the CREATE TABLE statements fail on a fresh DB.
+    op.execute("CREATE EXTENSION IF NOT EXISTS vector")
+
     # Step 1 — create the 17 ORM-only enum types.
     _create_enums(_PHASE13_ENUMS)
 

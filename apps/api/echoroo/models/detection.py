@@ -17,6 +17,15 @@ output captured in the Phase 13 inventory (T800):
 - ``created_at`` / ``updated_at`` TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT
   ``now()``
 
+**Defaults note**: ``UUIDMixin`` / ``TimestampMixin`` supply Python-side
+defaults (``uuid4()``, ``datetime.now(UTC)``) — the ORM driver populates
+``id`` / ``created_at`` / ``updated_at`` on INSERT before the row reaches
+PostgreSQL, so the table-level ``gen_random_uuid()`` / ``now()`` server
+defaults are present (preserved by ``CREATE TABLE IF NOT EXISTS`` over
+the legacy schema) but never invoked from this ORM. Both layers produce
+the same value space; the asymmetry is intentional and applies uniformly
+to every model in the codebase.
+
 Indexes (existing, recreated idempotently by the static migration):
 
 - ``ix_detections_project_taxon`` on ``(project_id, taxon_id)``
