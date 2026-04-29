@@ -154,7 +154,7 @@ class AnnotationSet(UUIDMixin, TimestampMixin, Base):
         created_by_id: Creator user (FK, RESTRICT via ``ON DELETE`` default).
         name: Display name; unique within a project.
         filter_date_range: Optional ``{"start": "YYYY-MM-DD", "end": ...}``
-            JSONB restricting candidate recordings by ``recorded_at``.
+            JSONB restricting candidate recordings by ``datetime``.
         filter_time_of_day_range: Optional ``{"start": "HH:MM", "end": ...}``
             JSONB restricting by local time of day (may wrap midnight).
         segment_length_sec: Integer length of every sampled segment, >= 10.

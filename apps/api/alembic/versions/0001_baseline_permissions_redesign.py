@@ -805,20 +805,20 @@ def upgrade() -> None:  # noqa: PLR0915 — baseline migration, long by nature
     # DBs.
     op.create_index("ix_datasets_created_at", "datasets", ["created_at"])
 
+    # Phase 13 P3 (T806): recordings is materialised in its post-rename
+    # final shape directly here so a fresh DB built from 0001 alone
+    # reaches the same byte-for-byte schema as a long-lived dev DB that
+    # arrives via 0001 → … → 0008 → 0009. The companion delta
+    # ``0009_recordings_legacy_rename.py`` is therefore a no-op on
+    # fresh DBs (every IF EXISTS / IF NOT EXISTS guard short-circuits).
     op.create_table(
         "recordings",
         sa.Column("id", UUID(as_uuid=True), primary_key=True, server_default=sa.text("gen_random_uuid()")),
         sa.Column(
-            "project_id",
-            UUID(as_uuid=True),
-            sa.ForeignKey("projects.id", ondelete="CASCADE"),
-            nullable=False,
-        ),
-        sa.Column(
             "dataset_id",
             UUID(as_uuid=True),
             sa.ForeignKey("datasets.id", ondelete="CASCADE"),
-            nullable=True,
+            nullable=False,
         ),
         sa.Column(
             "site_id",
@@ -826,21 +826,55 @@ def upgrade() -> None:  # noqa: PLR0915 — baseline migration, long by nature
             sa.ForeignKey("sites.id", ondelete="SET NULL"),
             nullable=True,
         ),
-        sa.Column("path", sa.Text(), nullable=False),
-        sa.Column("duration_seconds", sa.Float(), nullable=True),
-        sa.Column("sample_rate", sa.Integer(), nullable=True),
-        sa.Column("channels", sa.Integer(), nullable=True),
-        sa.Column("recorded_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("filename", sa.String(255), nullable=False),
+        sa.Column("path", sa.String(500), nullable=False),
+        sa.Column("hash", sa.String(64), nullable=True),
+        sa.Column("duration", sa.Float(), nullable=False),
+        sa.Column("samplerate", sa.Integer(), nullable=False),
+        sa.Column("channels", sa.Integer(), nullable=False),
+        sa.Column("bit_depth", sa.Integer(), nullable=True),
+        sa.Column("datetime", sa.DateTime(timezone=True), nullable=True),
+        sa.Column(
+            "datetime_parse_status",
+            _enum("datetimeparsestatus"),
+            nullable=False,
+            server_default=sa.text("'pending'::datetimeparsestatus"),
+        ),
+        sa.Column("datetime_parse_error", sa.Text(), nullable=True),
+        sa.Column(
+            "time_expansion",
+            sa.Float(),
+            nullable=False,
+            server_default=sa.text("1.0"),
+        ),
+        sa.Column("note", sa.Text(), nullable=True),
         # Optional per-recording h3 override (nullable — falls back to site.h3_index_member)
         sa.Column("h3_index_member", sa.String(32), nullable=True),
         sa.Column("h3_index_member_resolution", sa.Integer(), nullable=True),
         sa.Column("gps_stripped", sa.Boolean(), nullable=False, server_default=sa.text("false")),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("now()")),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("now()")),
+        sa.UniqueConstraint("dataset_id", "path", name="uq_recording_dataset_path"),
+        sa.CheckConstraint(
+            "h3_index_member_resolution IS NULL "
+            "OR h3_index_member_resolution IN (9, 15)",
+            name="ck_recordings_h3_resolution",
+        ),
     )
-    op.create_index("ix_recordings_project_id", "recordings", ["project_id"])
     op.create_index("ix_recordings_dataset_id", "recordings", ["dataset_id"])
     op.create_index("ix_recordings_site_id", "recordings", ["site_id"])
+    op.create_index("ix_recordings_hash", "recordings", ["hash"])
+    op.create_index("ix_recordings_datetime", "recordings", ["datetime"])
+    op.create_index(
+        "ix_recordings_dataset_id_datetime",
+        "recordings",
+        ["dataset_id", "datetime"],
+    )
+    op.create_index(
+        "ix_recordings_h3_index_member",
+        "recordings",
+        ["h3_index_member"],
+    )
 
     # detections + annotations + tags (supporting tables, minimal FK-bearing schema)
     op.create_table(
