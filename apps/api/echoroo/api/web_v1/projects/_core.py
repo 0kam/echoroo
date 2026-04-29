@@ -75,14 +75,16 @@ from echoroo.services.project import (
 # Helpers — Phase 5 polish round 5 (重要 1): H3 generalisation for the
 # Web UI recording-list surface.
 #
-# ``apply_response_filter`` only generalises the field literally named
-# ``h3_index`` (it reads ``resource.h3_index_member`` + writes
-# ``obj.h3_index``). The :class:`PublicRecordingItem` shape exposes the cell
-# under the more readable name ``site_h3_index`` (it sits *on a Recording*,
-# but represents the *Site's* H3, hence the prefix). We therefore mirror
-# the well-tested adapter pattern from ``echoroo.api.v1.sites`` so the same
-# stage-2 generalisation runs against the raw site H3 (e.g. res 15) and
-# the coarsened cell is written back onto the Pydantic response field.
+# ``apply_response_filter`` writes the coarsened value back onto both
+# ``h3_index_member`` (canonical, post Phase 13 P4 / T807) and ``h3_index``
+# (legacy alias retained for transitional callers). It reads the precise
+# member cell from ``resource.h3_index_member``. The
+# :class:`PublicRecordingItem` shape exposes the cell under the more
+# readable name ``site_h3_index`` (it sits *on a Recording*, but
+# represents the *Site's* H3, hence the prefix). We therefore mirror the
+# adapter pattern from ``echoroo.api.v1.sites`` so the same stage-2
+# generalisation runs against the raw site H3 (e.g. res 15) and the
+# coarsened cell is written back onto the Pydantic response field.
 # ---------------------------------------------------------------------------
 
 
@@ -512,10 +514,14 @@ async def list_public_recordings(
     # Recording does not carry project_id directly — join via Dataset to keep
     # the BOLA / IDOR boundary explicit (Recording UUIDs from Project B must
     # never leak into Project A's list).
+    # Phase 13 P4 / T807: Site column is ``h3_index_member`` (full rename,
+    # spec data-model §3.10). The SELECT alias ``site_h3_index`` is kept
+    # because the wire field on :class:`PublicRecordingItem` is named
+    # ``site_h3_index`` (more readable on a Recording surface).
     base_query = (
         select(
             Recording,
-            Site.h3_index.label("site_h3_index"),
+            Site.h3_index_member.label("site_h3_index"),
         )
         .join(Dataset, Dataset.id == Recording.dataset_id)
         .outerjoin(Site, Site.id == Dataset.site_id)

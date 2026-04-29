@@ -733,6 +733,14 @@ def upgrade() -> None:  # noqa: PLR0915 — baseline migration, long by nature
         sa.UniqueConstraint("project_id", "h3_index_member", name="ux_sites_project_h3"),
     )
     op.create_index("ix_sites_h3_index_member", "sites", ["h3_index_member"])
+    # Phase 13 P4 / T807: ORM declares an additional ``ix_sites_project_id``
+    # index for fast project-scoped enumeration (mirrors the ORM
+    # ``Site.__table_args__`` Index entry). Created with ``if_not_exists``
+    # safety so a long-lived DB that already added it manually upgrades
+    # cleanly.
+    op.execute(
+        "CREATE INDEX IF NOT EXISTS ix_sites_project_id ON sites (project_id)"
+    )
 
     # datasets (Phase 13 P2 / T805 — final shape per data-model.md §3.22 +
     # v5-final §2.2). Both ``recorder_id`` and ``license_id`` FKs are

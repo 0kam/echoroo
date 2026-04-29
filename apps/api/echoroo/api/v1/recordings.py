@@ -353,13 +353,14 @@ async def get_recording(
             "name": recording.dataset.name,
         }
 
-    # Build site summary
+    # Build site summary (Phase 13 P4 / T807: ``h3_index_member`` matches
+    # ORM column + spec data-model §3.10 canonical name).
     site_summary = None
     if recording.dataset and recording.dataset.site:
         site_summary = {
             "id": recording.dataset.site.id,
             "name": recording.dataset.site.name,
-            "h3_index": recording.dataset.site.h3_index,
+            "h3_index_member": recording.dataset.site.h3_index_member,
         }
 
     response = RecordingDetailResponse(
@@ -465,13 +466,14 @@ async def update_recording(
             "name": recording.dataset.name,
         }
 
-    # Build site summary
+    # Build site summary (Phase 13 P4 / T807: ``h3_index_member`` matches
+    # ORM column + spec data-model §3.10 canonical name).
     site_summary = None
     if recording.dataset and recording.dataset.site:
         site_summary = {
             "id": recording.dataset.site.id,
             "name": recording.dataset.site.name,
-            "h3_index": recording.dataset.site.h3_index,
+            "h3_index_member": recording.dataset.site.h3_index_member,
         }
 
     response = RecordingDetailResponse(

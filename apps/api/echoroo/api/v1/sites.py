@@ -48,10 +48,17 @@ SiteResponseT = TypeVar("SiteResponseT", bound=SiteResponse)
 
 
 def _site_filter_resource(site: SiteResponse) -> SimpleNamespace:
-    """Adapt Site responses to the Stage-2 filter's member H3 contract."""
+    """Adapt Site responses to the Stage-2 filter's member H3 contract.
+
+    Phase 13 P4 / T807: ``SiteResponse.h3_index_member`` is now the
+    canonical field name on the Pydantic shape (matches ORM column +
+    spec data-model §3.10), so the adapter passes through the value
+    directly. The filter-internal name remains ``h3_index_member`` /
+    ``h3_index_member_resolution`` and is unchanged.
+    """
     return SimpleNamespace(
-        h3_index_member=site.h3_index,
-        h3_index_member_resolution=_h3_resolution(site.h3_index),
+        h3_index_member=site.h3_index_member,
+        h3_index_member_resolution=site.h3_index_member_resolution,
     )
 
 

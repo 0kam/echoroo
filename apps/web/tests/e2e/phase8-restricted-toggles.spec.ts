@@ -540,8 +540,9 @@ test.describe('Phase 8 US3 — Restricted owner toggles (T404, FR-014/020-022)',
       await login(page2, NONMEMBER);
       const bearer = await getBearerTokenAfterLogin(page2);
       // Non-members fetch sites via the public sites listing. This
-      // endpoint applies Stage-2 response filtering, so ``h3_index`` is
-      // already coarsened to the project's ``public_location_precision_h3_res``
+      // endpoint applies Stage-2 response filtering, so ``h3_index_member``
+      // (Phase 13 P4 / T807 canonical Site H3 wire field) is already
+      // coarsened to the project's ``public_location_precision_h3_res``
       // for non-members of a Restricted project.
       const sitesResponse = await page2.request.get(
         `/api/v1/projects/${RESTRICTED_PROJECT_ID}/sites?page=1&page_size=100`,
@@ -555,32 +556,32 @@ test.describe('Phase 8 US3 — Restricted owner toggles (T404, FR-014/020-022)',
         'non-member sites listing must return 200 for a Restricted project (gated by metadata-read)',
       ).toBe(200);
       const sitesBody = (await sitesResponse.json()) as {
-        items?: Array<{ h3_index?: string }>;
+        items?: Array<{ h3_index_member?: string }>;
       };
       const items = sitesBody.items ?? [];
       expect(
         items.length,
         'Restricted project must expose at least one site for the H3 resolution check',
       ).toBeGreaterThan(0);
-      // Pick the first site's coarsened h3_index and ask the backend
+      // Pick the first site's coarsened h3_index_member and ask the backend
       // for its decoded resolution. The /h3/validate endpoint requires
       // authentication only, so the non-member can call it.
-      const sampleIndex = items[0]?.h3_index;
+      const sampleIndex = items[0]?.h3_index_member;
       expect(
         typeof sampleIndex === 'string' && sampleIndex.length > 0,
-        'sites[].h3_index must be a non-empty string',
+        'sites[].h3_index_member must be a non-empty string',
       ).toBe(true);
       const h3Resp = await page2.request.post('/api/v1/h3/validate', {
         data: { h3_index: sampleIndex },
         headers: { Authorization: `Bearer ${bearer}` },
         failOnStatusCode: false,
       });
-      expect(h3Resp.status(), '/h3/validate must accept the site h3_index').toBe(200);
+      expect(h3Resp.status(), '/h3/validate must accept the site h3_index_member').toBe(200);
       const h3Body = (await h3Resp.json()) as { valid?: boolean; resolution?: number };
-      expect(h3Body.valid, 'site h3_index must validate as a real H3 cell').toBe(true);
+      expect(h3Body.valid, 'site h3_index_member must validate as a real H3 cell').toBe(true);
       expect(
         h3Body.resolution,
-        'non-member sites[].h3_index must be coarsened to resolution 5 (FR-021)',
+        'non-member sites[].h3_index_member must be coarsened to resolution 5 (FR-021)',
       ).toBe(5);
     } finally {
       await ctx.close();

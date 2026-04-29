@@ -35,7 +35,7 @@ async def test_site(
     site = Site(
         project_id=test_project.id,
         name="Integration Test Site",
-        h3_index="8928308280fffff",
+        h3_index_member="8928308280fffff",
     )
     db_session.add(site)
     await db_session.commit()

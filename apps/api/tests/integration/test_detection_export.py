@@ -77,7 +77,7 @@ async def export_site(db_session: AsyncSession, test_project: Project) -> Site:
     site = Site(
         project_id=test_project.id,
         name="Export Test Site",
-        h3_index="851fb46ffffffff",
+        h3_index_member="851fb46ffffffff",
     )
     db_session.add(site)
     await db_session.commit()

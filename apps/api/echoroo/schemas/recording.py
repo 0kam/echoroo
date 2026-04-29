@@ -20,11 +20,16 @@ class DatasetSummary(BaseModel):
 
 
 class SiteSummaryForRecording(BaseModel):
-    """Site summary for recording responses."""
+    """Site summary for recording responses.
+
+    Phase 13 P4 / T807: ``h3_index_member`` matches ORM
+    ``Site.h3_index_member`` and the spec data-model §3.10 canonical
+    name (full rename, no facade).
+    """
 
     id: UUID
     name: str
-    h3_index: str
+    h3_index_member: str
 
     model_config = {"from_attributes": True}
 

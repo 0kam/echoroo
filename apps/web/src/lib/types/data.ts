@@ -21,7 +21,19 @@ export interface Site {
   id: string;
   project_id: string;
   name: string;
-  h3_index: string;
+  /**
+   * Phase 13 P4 / T807 (2026-04-28): the canonical Site H3 field is
+   * named `h3_index_member` to match the ORM column + spec data-model
+   * §3.10. The Stage-2 response filter coarsens this in place when the
+   * caller is below member precision (FR-021 / FR-029); the field name
+   * is unchanged between precise and coarsened representations.
+   */
+  h3_index_member: string;
+  /**
+   * H3 resolution of `h3_index_member`. CHECK constraint forces 9 or 15
+   * (NFR-003). Defaults to 15.
+   */
+  h3_index_member_resolution: number;
   created_at: string;
   updated_at: string;
 }
@@ -31,12 +43,13 @@ export interface SiteDetail extends Site {
   recording_count: number;
   total_duration: number;
   /**
-   * Optional polygon boundary derived from `h3_index` on the backend.
+   * Optional polygon boundary derived from `h3_index_member` on the
+   * backend.
    *
    * Permissions redesign Round 2: `latitude`, `longitude`, and
    * `coordinate_uncertainty` were removed from `SiteDetailResponse`
-   * (FR-030).  All spatial signal now flows through `h3_index`; clients
-   * that need a centre point should derive it via `h3-js`'s
+   * (FR-030). All spatial signal now flows through `h3_index_member`;
+   * clients that need a centre point should derive it via `h3-js`'s
    * `cellToLatLng` rather than retain raw coordinates.
    */
   boundary: number[][] | null;
@@ -44,12 +57,12 @@ export interface SiteDetail extends Site {
 
 export interface SiteCreate {
   name: string;
-  h3_index: string;
+  h3_index_member: string;
 }
 
 export interface SiteUpdate {
   name?: string;
-  h3_index?: string;
+  h3_index_member?: string;
 }
 
 export interface SiteListResponse {
@@ -115,7 +128,8 @@ export interface UserSummary {
 export interface SiteSummary {
   id: string;
   name: string;
-  h3_index: string;
+  /** Phase 13 P4 / T807: canonical Site H3 field name (full rename). */
+  h3_index_member: string;
 }
 
 export interface Dataset {

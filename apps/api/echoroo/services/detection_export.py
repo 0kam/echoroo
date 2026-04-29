@@ -165,7 +165,7 @@ class DetectionExportService:
             return {}
 
         result = await self.db.execute(
-            select(Recording.id, Site.h3_index)
+            select(Recording.id, Site.h3_index_member)
             .join(Dataset, Recording.dataset_id == Dataset.id)
             .join(Site, Dataset.site_id == Site.id, isouter=True)
             .where(Recording.id.in_(recording_ids))
@@ -177,11 +177,11 @@ class DetectionExportService:
             _h3 = None
 
         out: dict[UUID, int] = {}
-        for rec_id, h3_index in result.all():
+        for rec_id, h3_index_member in result.all():
             res = _DEFAULT_MEMBER_H3_RESOLUTION
-            if h3_index and _h3 is not None:
+            if h3_index_member and _h3 is not None:
                 try:
-                    res = int(_h3.get_resolution(h3_index))
+                    res = int(_h3.get_resolution(h3_index_member))
                 except Exception:  # noqa: BLE001 - treat malformed as default
                     res = _DEFAULT_MEMBER_H3_RESOLUTION
             out[rec_id] = res

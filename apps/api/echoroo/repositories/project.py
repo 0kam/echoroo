@@ -242,19 +242,24 @@ class ProjectRepository(BaseRepository[Project]):
     ) -> list[Row[Any]]:
         """Get site summaries for project overview.
 
-        Returns site id, name, h3_index, dataset_count, recording_count per site.
+        Phase 13 P4 / T807: column ``h3_index_member`` matches the spec
+        data-model §3.10 canonical name (full rename, no facade).
+
+        Returns site id, name, h3_index_member, dataset_count, recording_count
+        per site.
 
         Args:
             project_id: Project's UUID
 
         Returns:
-            List of tuples: (id, name, h3_index, dataset_count, recording_count)
+            List of tuples: (id, name, h3_index_member, dataset_count,
+            recording_count)
         """
         result = await self.db.execute(
             select(
                 Site.id,
                 Site.name,
-                Site.h3_index,
+                Site.h3_index_member,
                 func.count(func.distinct(Dataset.id)).label("dataset_count"),
                 func.count(Recording.id).label("recording_count"),
             )
@@ -262,7 +267,7 @@ class ProjectRepository(BaseRepository[Project]):
             .outerjoin(Dataset, Dataset.site_id == Site.id)
             .outerjoin(Recording, Recording.dataset_id == Dataset.id)
             .where(Site.project_id == project_id)
-            .group_by(Site.id, Site.name, Site.h3_index)
+            .group_by(Site.id, Site.name, Site.h3_index_member)
             .order_by(Site.name)
         )
         return list(result.all())

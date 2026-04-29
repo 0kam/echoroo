@@ -237,7 +237,12 @@ class TestSiteDetailResponseFieldRemoval:
 
         fields = SiteDetailResponse.model_fields
         # Inherited from SiteResponse — the canonical anti-precision contract.
-        assert "h3_index" in fields
+        # Phase 13 P4 / T807 (2026-04-28): the field was renamed to the
+        # canonical ``h3_index_member`` to match ORM column + spec data-model
+        # §3.10. The legacy ``h3_index`` name is no longer present (full
+        # rename, no facade).
+        assert "h3_index_member" in fields
+        assert "h3_index" not in fields
 
 
 class TestComputeEffectiveResolutionUsesSensitivityH3Res:

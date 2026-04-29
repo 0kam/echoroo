@@ -206,7 +206,7 @@ async def t413_restricted_embedding(
     site = Site(
         project_id=t413_restricted_project.id,
         name="T413 Restricted Site",
-        h3_index="8928308280fffff",
+        h3_index_member="8928308280fffff",
     )
     db_session.add(site)
     await db_session.commit()
@@ -261,7 +261,7 @@ async def t413_public_embedding(
     site = Site(
         project_id=t413_public_project.id,
         name="T413 Public Site",
-        h3_index="8928308280fffff",
+        h3_index_member="8928308280fffff",
     )
     db_session.add(site)
     await db_session.commit()

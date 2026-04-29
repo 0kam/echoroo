@@ -694,16 +694,16 @@ class ProjectService:
         sites: list[ProjectOverviewSite] = []
         for row in site_rows:
             m = row._mapping
-            h3_index: str = m["h3_index"]
+            h3_index_member: str = m["h3_index_member"]
             try:
-                lat, lng = h3_to_center(h3_index)
+                lat, lng = h3_to_center(h3_index_member)
             except Exception:
                 lat, lng = None, None
             sites.append(
                 ProjectOverviewSite(
                     id=m["id"],
                     name=m["name"],
-                    h3_index=h3_index,
+                    h3_index_member=h3_index_member,
                     latitude=lat,
                     longitude=lng,
                     dataset_count=int(m["dataset_count"]),

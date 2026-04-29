@@ -32,7 +32,8 @@ Exit codes:
 
 Phase 2 status: lint IS implemented. CI wires it in warn-only mode in
 T100d; T100f flips it to hard-fail once Phase 3 has migrated all
-recording / site / detection schemas to ``h3_index`` only.
+recording / site / detection schemas to ``h3_index_member`` only
+(Phase 13 P4 / T807, full rename of the Site canonical column name).
 """
 from __future__ import annotations
 
@@ -137,7 +138,7 @@ def _scan_python_file(
                 if fp not in allowlist:
                     violations.append(
                         f"{rel_str}:{node.lineno}  forbidden field name "
-                        f"'{name}' (use h3_index instead)  [fingerprint: {fp}]"
+                        f"'{name}' (use h3_index_member instead)  [fingerprint: {fp}]"
                     )
             continue
 
@@ -151,7 +152,7 @@ def _scan_python_file(
                     if fp not in allowlist:
                         violations.append(
                             f"{rel_str}:{node.lineno}  forbidden field name "
-                            f"'{target.id}' (use h3_index instead)  "
+                            f"'{target.id}' (use h3_index_member instead)  "
                             f"[fingerprint: {fp}]"
                         )
             continue
@@ -169,7 +170,7 @@ def _scan_python_file(
                         if fp not in allowlist:
                             violations.append(
                                 f"{rel_str}:{node.lineno}  forbidden dict key "
-                                f"'{key.value}' (use h3_index instead)  "
+                                f"'{key.value}' (use h3_index_member instead)  "
                                 f"[fingerprint: {fp}]"
                             )
             continue
@@ -200,7 +201,7 @@ def _scan_yaml_file(
             line_no = source[: match.start()].count("\n") + 1
             violations.append(
                 f"{rel_str}:{line_no}  forbidden YAML key "
-                f"'{key}' (use h3_index instead)  [fingerprint: {fp}]"
+                f"'{key}' (use h3_index_member instead)  [fingerprint: {fp}]"
             )
     return violations
 

@@ -296,7 +296,7 @@ async def _seed_restricted_project_with_viewer(
     site = Site(
         project_id=project.id,
         name="T405 Site",
-        h3_index=_H3_RES_9_CELL,
+        h3_index_member=_H3_RES_9_CELL,
     )
     db.add(site)
     await db.commit()

@@ -94,7 +94,7 @@ class TestSiteEndpoints:
         """Test POST /api/v1/projects/{project_id}/sites - Create site."""
         site_data = {
             "name": "Test Site",
-            "h3_index": "8928308280fffff",
+            "h3_index_member": "8928308280fffff",
         }
 
         response = await client.post(
@@ -109,7 +109,7 @@ class TestSiteEndpoints:
         # Verify response structure matches SiteResponse
         assert "id" in data
         assert data["name"] == site_data["name"]
-        assert data["h3_index"] == site_data["h3_index"]
+        assert data["h3_index_member"] == site_data["h3_index_member"]
         assert "created_at" in data
         assert "updated_at" in data
 
@@ -122,7 +122,7 @@ class TestSiteEndpoints:
         """Test POST /api/v1/projects/{project_id}/sites with invalid H3 index."""
         site_data = {
             "name": "Test Site",
-            "h3_index": "invalid_h3_index",
+            "h3_index_member": "invalid_h3_index",
         }
 
         response = await client.post(
@@ -144,7 +144,7 @@ class TestSiteEndpoints:
         # Create first site
         site_data = {
             "name": "Duplicate Site",
-            "h3_index": "8928308280fffff",
+            "h3_index_member": "8928308280fffff",
         }
 
         response1 = await client.post(
@@ -157,7 +157,7 @@ class TestSiteEndpoints:
         # Try to create site with same name
         site_data2 = {
             "name": "Duplicate Site",
-            "h3_index": "8928308280bffff",  # Different valid H3 index (neighbor cell)
+            "h3_index_member": "8928308280bffff",  # Different valid H3 index (neighbor cell)
         }
 
         response2 = await client.post(
@@ -176,7 +176,7 @@ class TestSiteEndpoints:
         """Test POST /api/v1/projects/{project_id}/sites requires authentication."""
         site_data = {
             "name": "Test Site",
-            "h3_index": "8928308280fffff",
+            "h3_index_member": "8928308280fffff",
         }
 
         response = await client.post(
@@ -196,7 +196,7 @@ class TestSiteEndpoints:
         """Test POST /api/v1/projects/{project_id}/sites requires admin role."""
         site_data = {
             "name": "Test Site",
-            "h3_index": "8928308280fffff",
+            "h3_index_member": "8928308280fffff",
         }
 
         response = await client.post(
@@ -218,7 +218,7 @@ class TestSiteEndpoints:
         # Create a site first
         site_data = {
             "name": "Test Site",
-            "h3_index": "8928308280fffff",
+            "h3_index_member": "8928308280fffff",
         }
 
         create_response = await client.post(
@@ -240,7 +240,7 @@ class TestSiteEndpoints:
         # Verify response structure matches SiteDetailResponse
         assert data["id"] == site_id
         assert data["name"] == site_data["name"]
-        assert data["h3_index"] == site_data["h3_index"]
+        assert data["h3_index_member"] == site_data["h3_index_member"]
         assert "dataset_count" in data
         assert "recording_count" in data
 
@@ -284,7 +284,7 @@ class TestSiteEndpoints:
         # Create a site first
         site_data = {
             "name": "Original Site",
-            "h3_index": "8928308280fffff",
+            "h3_index_member": "8928308280fffff",
         }
 
         create_response = await client.post(
@@ -308,7 +308,7 @@ class TestSiteEndpoints:
         assert response.status_code == 200
         data = response.json()
         assert data["name"] == update_data["name"]
-        assert data["h3_index"] == site_data["h3_index"]  # Unchanged
+        assert data["h3_index_member"] == site_data["h3_index_member"]  # Unchanged
 
     async def test_update_site_not_found(
         self,
@@ -359,7 +359,7 @@ class TestSiteEndpoints:
         # Create a site first
         site_data = {
             "name": "Site to Delete",
-            "h3_index": "8928308280fffff",
+            "h3_index_member": "8928308280fffff",
         }
 
         create_response = await client.post(

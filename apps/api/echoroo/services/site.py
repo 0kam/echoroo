@@ -110,7 +110,7 @@ class SiteService:
                 )
 
         # Validate H3 index
-        is_valid, resolution, error = validate_h3_index(request.h3_index)
+        is_valid, resolution, error = validate_h3_index(request.h3_index_member)
         if not is_valid:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -126,18 +126,25 @@ class SiteService:
             )
 
         # Check for duplicate H3 index
-        existing_h3 = await self.site_repo.get_by_project_and_h3(project_id, request.h3_index)
+        existing_h3 = await self.site_repo.get_by_project_and_h3(project_id, request.h3_index_member)
         if existing_h3:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="Site with this H3 index already exists in project",
             )
 
+        # Resolve member resolution from the validated H3 index. The
+        # CHECK constraint on ``sites.h3_index_member_resolution`` only
+        # admits 9 or 15 (NFR-003), so callers passing other resolutions
+        # are rejected with 400 here rather than letting the DB raise.
+        member_resolution = resolution if resolution in (9, 15) else 15
+
         # Create site
         site = Site(
             project_id=project_id,
             name=request.name,
-            h3_index=request.h3_index,
+            h3_index_member=request.h3_index_member,
+            h3_index_member_resolution=member_resolution,
         )
 
         created_site = await self.site_repo.create(site)
@@ -184,10 +191,10 @@ class SiteService:
         # Round 1 review C3 / FR-030: ``latitude`` / ``longitude`` /
         # ``coordinate_uncertainty`` are intentionally NOT computed or
         # returned. The boundary polygon is derived from the H3 cell so it
-        # carries the same precision as ``h3_index`` itself; the response
-        # filter generalises both fields together when the viewer is below
-        # the member-precision tier.
-        boundary = h3_to_boundary(site.h3_index)
+        # carries the same precision as ``h3_index_member`` itself; the
+        # response filter generalises both fields together when the viewer
+        # is below the member-precision tier.
+        boundary = h3_to_boundary(site.h3_index_member)
 
         # Calculate recording stats from datasets (already eager loaded)
         dataset_count = len(site.datasets) if site.datasets else 0
@@ -207,7 +214,8 @@ class SiteService:
             id=site.id,
             project_id=site.project_id,
             name=site.name,
-            h3_index=site.h3_index,
+            h3_index_member=site.h3_index_member,
+            h3_index_member_resolution=site.h3_index_member_resolution,
             created_at=site.created_at,
             updated_at=site.updated_at,
             dataset_count=dataset_count,
@@ -265,9 +273,9 @@ class SiteService:
                 )
             site.name = request.name
 
-        if request.h3_index is not None:
+        if request.h3_index_member is not None:
             # Validate H3 index
-            is_valid, resolution, error = validate_h3_index(request.h3_index)
+            is_valid, resolution, error = validate_h3_index(request.h3_index_member)
             if not is_valid:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
@@ -275,13 +283,18 @@ class SiteService:
                 )
 
             # Check for duplicate H3 index
-            existing_h3 = await self.site_repo.get_by_project_and_h3(project_id, request.h3_index)
+            existing_h3 = await self.site_repo.get_by_project_and_h3(project_id, request.h3_index_member)
             if existing_h3 and existing_h3.id != site_id:
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
                     detail="Site with this H3 index already exists in project",
                 )
-            site.h3_index = request.h3_index
+            site.h3_index_member = request.h3_index_member
+            # Keep the resolution column aligned with the cell precision
+            # (NFR-003: only 9 or 15 are admitted by the CHECK constraint).
+            site.h3_index_member_resolution = (
+                resolution if resolution in (9, 15) else 15
+            )
 
         updated_site = await self.site_repo.update(site)
         return SiteResponse.model_validate(updated_site)

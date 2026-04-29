@@ -88,8 +88,18 @@ def apply_response_filter(
         override_map=override_map,
     )
 
+    # Phase 13 P4 / T807 (2026-04-28): write coarsened cell back to
+    # ``h3_index_member`` (canonical name on Site / Recording / Detection
+    # wire shapes after the full rename). Legacy ``h3_index`` is also
+    # written when present so the few transitional surfaces that still
+    # spell the field that way (web_v1 _public_recording adapter +
+    # similar SimpleNamespace consumers) keep working until they are
+    # migrated. ``_set_if_attr`` no-ops when the attribute is absent so
+    # this is a free defence-in-depth.
     member_h3 = getattr(res, "h3_index_member", None)
-    _set_if_attr(obj, "h3_index", _h3_to_parent(member_h3, effective_resolution))
+    coarsened = _h3_to_parent(member_h3, effective_resolution)
+    _set_if_attr(obj, "h3_index_member", coarsened)
+    _set_if_attr(obj, "h3_index", coarsened)
     _set_if_attr(obj, "location_generalization", effective_resolution)
 
     # 3. Species masking (FR-020 `mask_species_in_detection`).

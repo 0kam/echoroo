@@ -166,7 +166,7 @@ async def public_site(
     site = Site(
         project_id=public_active_project.id,
         name="T220 Site",
-        h3_index="8928308280fffff",
+        h3_index_member="8928308280fffff",
     )
     db_session.add(site)
     await db_session.commit()
@@ -838,7 +838,7 @@ class TestGuestArchivedDormantAudioStreamBlocked:
         site = Site(
             project_id=archived_public_project.id,
             name="T220-archived-site",
-            h3_index="8928308280fffff",
+            h3_index_member="8928308280fffff",
         )
         db_session.add(site)
         await db_session.commit()
@@ -1220,7 +1220,7 @@ async def public_site_high_precision(
     site = Site(
         project_id=public_active_project.id,
         name="T220 High Precision Site",
-        h3_index="8f2a10728906185",  # res 15
+        h3_index_member="8f2a10728906185",  # res 15
     )
     db_session.add(site)
     await db_session.commit()

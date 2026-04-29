@@ -195,7 +195,7 @@ async def t653_site(
     site = Site(
         project_id=t653_public_project.id,
         name="T653 Site",
-        h3_index="89283082803ffff",  # resolution 9
+        h3_index_member="89283082803ffff",  # resolution 9
     )
     db_session.add(site)
     await db_session.commit()

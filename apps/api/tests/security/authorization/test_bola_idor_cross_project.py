@@ -203,7 +203,7 @@ async def site_b(db_session: AsyncSession, project_b: Project) -> Site:
     site = Site(
         project_id=project_b.id,
         name="T134 Site B",
-        h3_index="8928308280fffff",
+        h3_index_member="8928308280fffff",
     )
     db_session.add(site)
     await db_session.commit()

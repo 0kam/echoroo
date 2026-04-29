@@ -77,7 +77,7 @@ async def test_clip(
     site = Site(
         project_id=test_project.id,
         name="Test Site",
-        h3_index="8928308280fffff",
+        h3_index_member="8928308280fffff",
     )
     db_session.add(site)
     await db_session.flush()

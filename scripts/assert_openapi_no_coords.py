@@ -3,8 +3,9 @@
 
 Enforces FR-028f / FR-091b / SC-019 against the rendered contract: every
 ``Recording`` / ``Site`` / ``Detection`` schema and parameter MUST expose
-``h3_index`` only — never raw ``lat``, ``lng``, ``latitude``,
-``longitude``, ``coordinates``, ``geo_point``, or ``gps_*`` keys.
+``h3_index_member`` only (Phase 13 P4 / T807 full rename) — never raw
+``lat``, ``lng``, ``latitude``, ``longitude``, ``coordinates``,
+``geo_point``, or ``gps_*`` keys.
 
 Detection strategy:
 
@@ -87,7 +88,8 @@ def _load_allowlist(path: Path) -> frozenset[str]:
     path starts with the prefix is dropped from the violation list. The
     Phase 2.10 #7 baseline allowlists exact ``$.components.schemas.X.properties.lat``
     style prefixes so the strict gate can run on every push while Phase 3
-    rewrites the schemas to ``h3_index`` only.
+    rewrites the schemas to ``h3_index_member`` only (Phase 13 P4 / T807
+    completes the Site canonical rename).
     """
     if not path.exists():
         return frozenset()

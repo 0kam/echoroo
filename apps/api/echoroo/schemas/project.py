@@ -68,11 +68,19 @@ class PublicOwnerResponse(BaseModel):
 
 
 class ProjectOverviewSite(BaseModel):
-    """Site summary within project overview."""
+    """Site summary within project overview.
+
+    Phase 13 P4 / T807: ``h3_index_member`` matches ORM
+    ``Site.h3_index_member`` and the spec data-model §3.10 canonical
+    name (full rename, no facade). ``latitude``/``longitude`` are
+    legacy convenience fields derived from the H3 cell centre and
+    nullable to preserve backwards compatibility on overview rendering;
+    consumers should prefer deriving the centre via ``h3-js``.
+    """
 
     id: UUID
     name: str
-    h3_index: str
+    h3_index_member: str
     latitude: float | None
     longitude: float | None
     recording_count: int

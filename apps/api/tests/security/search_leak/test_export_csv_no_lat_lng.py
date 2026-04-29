@@ -187,7 +187,7 @@ async def t312_site_public(
         project_id=t312_public_project.id,
         name="T312 Public Site",
         # Resolution-9 H3 index — get_resolution() returns 9 for this string.
-        h3_index="89283082803ffff",
+        h3_index_member="89283082803ffff",
     )
     db_session.add(site)
     await db_session.commit()
@@ -203,7 +203,7 @@ async def t312_site_restricted(
     site = Site(
         project_id=t312_restricted_project.id,
         name="T312 Restricted Site",
-        h3_index="89283082803ffff",
+        h3_index_member="89283082803ffff",
     )
     db_session.add(site)
     await db_session.commit()

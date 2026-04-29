@@ -186,7 +186,7 @@ async def t310_site(
     site = Site(
         project_id=t310_public_project.id,
         name="T310 Site",
-        h3_index="89283082803ffff",
+        h3_index_member="89283082803ffff",
     )
     db_session.add(site)
     await db_session.commit()
