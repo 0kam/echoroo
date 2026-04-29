@@ -407,6 +407,15 @@ description: "Task list for 006-permissions-redesign (revised after /speckit.ana
 - [ ] **T977** [P] [CR] `tests/security/key_rotation/test_cmk_deletion_window_guard.py` (Runbook CMK deletion 30 日 minimum)
 - [ ] **T978** [P] [CR] `tests/security/api_key/test_rotation_180d_scope_degrade.py` (FR-083、180 日 scope 縮退)
 - [ ] **T979** [P] [CR] `tests/security/authentication/test_clickjacking_frame_ancestors.py` (FR-102)
+- [ ] **T979a** [P] [CR] `tests/security/rate_limiting/test_password_reset_and_invitation_enumeration.py`: password reset / invitation accept が enumeration にならず、rate limit + 同一レスポンス + 監査が成立 (PR-007 Rate limiting、Phase 16 Codex 追補)
+- [ ] **T979b** [P] [CR] `tests/security/input_validation/test_mass_assignment_and_open_redirect.py`: role / is_superuser / scopes の mass assignment 拒否、redirect_url / next の open redirect 拒否 (PR-007 Input validation、A01/A04、Phase 16 Codex 追補)
+- [ ] **T979c** [P] [CR] `tests/security/invitations/test_invitation_xss_and_expired_accept.py`: invitation 表示名 / reason / email payload XSS 無害化、expired token accept 拒否 (PR-007 Input validation、Phase 16 Codex 追補)
+- [ ] **T979d** [P] [CR] `tests/security/api_key/test_allowed_ips_violation_counter.py`: API key allowed_ips 違反が拒否され、専用カウンタ + audit に出る (FR-072、Phase 16 Codex 追補)
+- [ ] **T979e** [P] [CR] `tests/security/crypto/test_dek_rewrap_and_kms_isolation.py`: DEK rewrap、`core/kms.py` 以外からの KMS 直接呼出禁止、key material 非露出 (FR-091b、PR-007 Crypto、Phase 16 Codex 追補)
+- [ ] **T979f** [P] [CR] `tests/security/supply_chain/test_dependency_lock_and_audit.py`: lockfile + hash/audit gate + CI artifact 改ざん検知 (OWASP A06/A08、Phase 16 Codex 追補)
+- [ ] **T979g** [P] [CR] `tests/security/ssrf/test_external_url_rejection.py`: 外部 URL を受ける入力面 allowlist。外部 URL 入力経路がない場合は静的 allowlist test で「該当入力面なし」を fail-closed で固定 (OWASP A10、Phase 16 Codex 追補)
+- [ ] **T979h** [P] [CR] `tests/security/misconfiguration/test_cors_and_env_security.py`: CORS wildcard+credentials 禁止、prod debug / offline bypass 禁止 (OWASP A05、Phase 16 Codex 追補)
+- [ ] **T979z** [P] [CR] `tests/security/authentication/test_admin_step_up_required.py`: backend step-up token (X-Step-Up-Token) なしで destructive admin API (`addSuperuser` / `revokeSuperuser` / `enterBreakGlass` / `updateIpAllowlist` / `approveSuperuserRequest` / `rejectSuperuserRequest`) が 401/403 を返す negative test (FR-111、Phase 15 backend wiring、Phase 16 Codex 追補)
 
 ### 16.2 Contract tests
 
@@ -414,7 +423,8 @@ description: "Task list for 006-permissions-redesign (revised after /speckit.ana
 - [ ] **T981** [P] [CR] `apps/api/tests/contract/test_security_headers.py` 新規: 全 path operation に HSTS / CSP / X-Frame 等のセキュリティヘッダ必須、Location / metadata 系レスポンスは `Cache-Control: private, no-store` 必須 (FR-025c)、CORS preflight 応答要件は FR-099 系を参照 (FR-102、FR-025c、FR-099、security C-1)
 - [ ] **T981b** [P] [CR] `apps/api/tests/security/search_leak/test_search_index_ready_on_toggle_on.py` 新規: `allow_detection_view` OFF → ON 切替時、検索 index 再構築完了 (`index_ready=true`) まで該当プロジェクトの detection が検索結果に含まれないことを TDD 検証 (FR-025b、SC-018 補完)
 - [ ] **T982** [P] [CR] `apps/api/tests/contract/test_auth_separation.py` 新規: `/api/v1/*` に Cookie 401、`/web-api/v1/*` に Bearer 401 (FR-077)
-- [ ] **T983** [P] [CR] `apps/api/tests/contract/test_operation_security_override.py` 新規: state-changing path operation で csrfToken override を assert (codex 致命 1 / 3)
+- [ ] **T983** [P] [CR] `apps/api/tests/contract/test_operation_security_override.py` 新規: state-changing path operation で csrfToken override を assert。Phase 15 admin の対象を最低限列挙: `addSuperuser` / `revokeSuperuser` / `updateSuperuserIpAllowlist` / `approveSuperuserRequest` / `rejectSuperuserRequest` / `enterBreakGlass` + 既存 admin state-changing `archive` / `restore` / `looserOverrideApprove` / `reset2fa` / `iucnResync` (codex 致命 1 / 3、Phase 16 Codex 追補で網羅)
+- [ ] **T984** [P] [CR] `apps/api/tests/contract/test_step_up_token_issuance.py` 新規: `/web-api/v1/auth/2fa/webauthn/verify` (or challenge complete) から短命 `X-Step-Up-Token` (例: 5 分 TTL、scope=`admin_destructive`) を発行し、destructive admin endpoint が require_step_up depends で要求する contract (FR-111、Phase 16 Codex 追補)
 
 ### 16.3 Performance 検証
 
@@ -423,15 +433,24 @@ description: "Task list for 006-permissions-redesign (revised after /speckit.ana
 - [ ] **T992** [P] [CR] 認証+権限 p95 < 30ms、クエリ p95 ≤ 4（NFR-001 + NFR-001a の bulk preload 含む）(NFR-001、NFR-001a、SC-015)
 - [ ] **T993** [P] [CR] 監査ログ 1000+ 並列 INSERT chain 整合性 (FR-093、SC-014)
 - [ ] **T994** [P] [CR] Grafana Dashboard + alerting: 2FA ログイン成功率 SLO < 95% で PagerDuty、30 日 1000 試行以上対象 (SC-006)
+- [ ] **T992a** [P] [CR] Detection list 100 件 p95 < 800ms (NFR-004 補完、Recording list と同 budget、Phase 16 Codex 追補)
+- [ ] **T992b** [P] [CR] Phase 15 admin endpoints の p95 計測: break-glass status / approval list / superuser list (Phase 15 Codex 追補)
+- [ ] **T992c** [P] [CR] WebAuthn challenge begin/complete latency + Redis challenge state TTL 計測 (Phase 16 Codex 追補)
+- [ ] **T992d** [P] [CR] API key verify hot path p95 / query budget: HMAC compare + 1-min last_used_at debounce + scope lookup (Phase 16 Codex 追補)
+- [ ] **T993a** [P] [CR] Audit chain failure path test: failure path でも fresh TX で audit row が必ず残ることを Phase 12 R4 規約に従って検証 (FR-093 補完、Phase 16 Codex 追補)
 
 ### 16.4 Mutation testing
 
-- [ ] **T995** [CR] mutmut の CI gate を **fail モードに昇格**、権限系 4 モジュール mutation score 80% 以上 (PR-004、SC-012)
+- [ ] **T995** [CR] mutmut の CI gate を **fail モードに昇格**、対象モジュール mutation score 80% 以上 (PR-004、SC-012)。Phase 16 Codex 追補により対象を以下に拡張:
+  - 必須: `core/permissions.py`, `core/actions.py`, `services/superuser_service.py`, `services/api_key_verification.py`
+  - 追加: `middleware/auth.py`, `middleware/auth_router.py`, `services/webauthn_service.py`, `workers/dormancy_check.py`
+  - 既存維持: `core/response_filter.py`, `core/audit.py`, `core/kms.py`
 
 ### 16.5 カバレッジ / Frontend
 
 - [ ] **T996** [CR] pytest-cov で権限系 95% / その他 85% カバレッジ強制 (PR-005、SC-013)
 - [ ] **T997** [CR] Frontend E2E full suite gate 化（各 US Phase で配置された Playwright を full suite として 1 回 green 確認、T133/T174/T221/T311/T324/T404/T414/T533/T652/T705/T842 含む）(PR-003)
+- [ ] **T997b** [P] [CR] `apps/web/tests/e2e/admin-superusers.spec.ts` 新規: admin login → superuser list → add request → approval list approve/reject → break-glass enter/status banner → IP allowlist save → destructive action requires WebAuthn gate。WebAuthn は Playwright mock で OK だが、「gate なしで API call されない」「成功後のみ call される」「backend step-up token が admin API request header に乗る」の 3 点を必須検証 (Phase 15 admin UI、Phase 16 Codex 追補)
 
 ### 16.6 Runbook 検証
 
