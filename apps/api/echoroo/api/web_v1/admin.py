@@ -76,8 +76,10 @@ from echoroo.schemas.admin import (
 from echoroo.services.audit_service import AuditLogService
 from echoroo.services.outbox_service import enqueue as outbox_enqueue
 from echoroo.services.superuser_approval_service import (
+    TaxonOverrideDecisionOutcome,
     approve_taxon_override,
     reject_taxon_override,
+    trigger_decision_post_commit_audit,
 )
 
 logger = logging.getLogger(__name__)
@@ -241,11 +243,13 @@ async def approve_looser_override(
         db=db,
     )
 
+    decision_outcome: TaxonOverrideDecisionOutcome
     try:
-        override = await approve_taxon_override(
+        decision_outcome = await approve_taxon_override(
             db,
             override_id=override_id,
             approver_superuser_id=_require_superuser_id(current_user),
+            actor_user_id=current_user.id,
             request_id=_request_id(request),
             ip=_client_ip(request),
             user_agent=_user_agent(request),
@@ -286,6 +290,8 @@ async def approve_looser_override(
             },
         ) from exc
 
+    override = decision_outcome.override
+
     # Cross-check the URL-level project_id against the row we just
     # mutated — the override id is globally unique so the path's
     # project_id is informational, but a mismatch is a sign the operator
@@ -308,24 +314,16 @@ async def approve_looser_override(
     # post-commit can blank the row out of the ORM identity map.
     response = TaxonOverrideResponse.model_validate(override)
 
-    # Mirror the project-scope audit row written by the service into
-    # ``platform_audit_log`` so the superuser dashboard renders without a
-    # JOIN. The platform write participates in the same transaction.
-    await AuditLogService(db).write_platform_event(
-        actor_user_id=current_user.id,
-        action="platform.project.taxon_override.approve_looser",
-        request_id=_request_id(request),
-        ip=_client_ip(request),
-        user_agent=_user_agent(request),
-        detail={
-            "project_id": str(project_id),
-            "override_id": str(override.id),
-            "taxon_id": override.taxon_id,
-            "sensitivity_h3_res": override.sensitivity_h3_res,
-        },
-    )
-
+    # Phase 13 P1 R3 follow-up (2026-04-28): audit rows are deferred to
+    # the post-commit hook below. Writing them in the request-scoped
+    # ``db`` session would violate the audit_service contract because
+    # PostgreSQL rejects ``SET TRANSACTION ISOLATION LEVEL SERIALIZABLE``
+    # on a connection that has already issued SQL (and ``approve_taxon_override``
+    # has done plenty: SELECT, UPDATE, _close_approval_request).
     await db.commit()
+
+    await trigger_decision_post_commit_audit(decision_outcome)
+
     return response
 
 
@@ -366,11 +364,13 @@ async def reject_looser_override(
         db=db,
     )
 
+    decision_outcome: TaxonOverrideDecisionOutcome
     try:
-        override = await reject_taxon_override(
+        decision_outcome = await reject_taxon_override(
             db,
             override_id=override_id,
             approver_superuser_id=_require_superuser_id(current_user),
+            actor_user_id=current_user.id,
             rejected_reason=payload.reason,
             request_id=_request_id(request),
             ip=_client_ip(request),
@@ -394,6 +394,8 @@ async def reject_looser_override(
             },
         ) from exc
 
+    override = decision_outcome.override
+
     if override.project_id != project_id:
         await db.rollback()
         raise HTTPException(
@@ -406,22 +408,13 @@ async def reject_looser_override(
 
     response = TaxonOverrideResponse.model_validate(override)
 
-    await AuditLogService(db).write_platform_event(
-        actor_user_id=current_user.id,
-        action="platform.project.taxon_override.reject_looser",
-        request_id=_request_id(request),
-        ip=_client_ip(request),
-        user_agent=_user_agent(request),
-        detail={
-            "project_id": str(project_id),
-            "override_id": str(override.id),
-            "taxon_id": override.taxon_id,
-            "sensitivity_h3_res": override.sensitivity_h3_res,
-            "rejected_reason": payload.reason,
-        },
-    )
-
+    # Phase 13 P1 R3 follow-up (2026-04-28): defer audit rows to the
+    # post-commit hook. See the matching note in
+    # ``approve_looser_override`` above for the rationale.
     await db.commit()
+
+    await trigger_decision_post_commit_audit(decision_outcome)
+
     return response
 
 
@@ -476,18 +469,43 @@ async def force_iucn_resync(
     async_result = sync_iucn_red_list.delay()
     enqueued_at = datetime.now(UTC)
 
-    await AuditLogService(db).write_platform_event(
-        actor_user_id=current_user.id,
-        action="platform.iucn.force_resync",
-        request_id=_request_id(request),
-        ip=_client_ip(request),
-        user_agent=_user_agent(request),
-        detail={
-            "task_id": async_result.id,
-            "enqueued_at": enqueued_at.isoformat(),
-        },
-    )
+    # Phase 13 P1 R3 follow-up (2026-04-28): the request-scoped ``db``
+    # session has already issued ``_require_authenticated_superuser``'s
+    # ``SELECT 1 FROM superusers`` probe, so PostgreSQL would reject the
+    # ``SET TRANSACTION ISOLATION LEVEL SERIALIZABLE`` upgrade that
+    # :class:`AuditLogService` issues as its first statement. Mirror the
+    # archive / restore endpoints below by writing the platform audit row
+    # in a fresh :class:`AsyncSessionLocal` after the main TX commits.
     await db.commit()
+
+    try:
+        async with AsyncSessionLocal() as platform_audit_session:
+            try:
+                await AuditLogService(
+                    platform_audit_session
+                ).write_platform_event(
+                    actor_user_id=current_user.id,
+                    action="platform.iucn.force_resync",
+                    request_id=_request_id(request),
+                    ip=_client_ip(request),
+                    user_agent=_user_agent(request),
+                    detail={
+                        "task_id": async_result.id,
+                        "enqueued_at": enqueued_at.isoformat(),
+                    },
+                )
+                await platform_audit_session.commit()
+            except Exception:
+                await platform_audit_session.rollback()
+                raise
+    except Exception as exc:  # noqa: BLE001 — soft alert; never blocks the dispatch
+        logger.warning(
+            "platform.iucn.force_resync audit write failed (FR-089 soft alert): "
+            "actor=%s task_id=%s error=%r",
+            current_user.id,
+            async_result.id,
+            exc,
+        )
 
     return IucnForceResyncResponse(
         task_id=async_result.id,

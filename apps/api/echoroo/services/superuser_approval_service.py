@@ -25,20 +25,48 @@ This module exposes:
 * :func:`apply_taxon_override` — idempotent entry point used by the
   project-owner taxon override endpoint. Stricter overrides land
   immediately; looser overrides land as ``pending_superuser_approval``
-  AND a matching ``superuser_approval_requests`` row is created.
+  AND a matching ``superuser_approval_requests`` row is created. Returns
+  a :class:`TaxonOverrideApplyOutcome` so the caller can fire the audit
+  side-effect after committing the main transaction.
 * :func:`approve_taxon_override` — mutation invoked from the superuser
-  admin endpoint when accepting a pending request.
+  admin endpoint when accepting a pending request. Returns a
+  :class:`TaxonOverrideDecisionOutcome`.
 * :func:`reject_taxon_override` — mirror of the above with a free-form
   ``rejected_reason`` recorded on both rows.
+* :func:`trigger_apply_post_commit_audit` /
+  :func:`trigger_decision_post_commit_audit` — fresh-session audit
+  writers invoked by the endpoint AFTER the main transaction commits.
 
-All three functions write a ``project_audit_log`` row through
-:class:`~echoroo.services.audit_service.AuditLogService` so the action is
-captured in the tamper-evident hash chain (FR-088 / FR-092).
+Audit session contract (Phase 13 P1 R3 follow-up, 2026-04-28)
+=============================================================
+:class:`~echoroo.services.audit_service.AuditLogService` issues
+``SET TRANSACTION ISOLATION LEVEL SERIALIZABLE`` as the very first
+statement on its session — PostgreSQL rejects the upgrade once any
+other SQL has executed on the same connection (see
+``apps/api/echoroo/services/audit_service.py:201``). The mutation
+helpers in this module load / flush ORM rows and therefore CANNOT
+write the audit row in the same session.
+
+Following the pattern established by
+:mod:`echoroo.services.ownership_service` and
+:mod:`echoroo.services.trusted_service`, the public functions:
+
+1. Mutate the domain rows (override status + ``superuser_approval_requests``)
+   inside the caller-owned :class:`AsyncSession`.
+2. Return an outcome dataclass capturing the audit envelope.
+3. Defer the audit row insert to ``trigger_*_post_commit_audit`` which
+   spins up a fresh :class:`AsyncSessionLocal` and writes BOTH the
+   project-scope row (FR-088) AND, for approve/reject, the matching
+   platform-scope row (mirrors the dashboard JOIN avoidance pattern in
+   ``api/web_v1/admin.py``). Audit failures are warning-logged so a
+   broken audit chain never rolls back a successful domain decision —
+   the FR-088 soft-alert posture matches ownership_service.
 """
 
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
@@ -46,6 +74,7 @@ from uuid import UUID
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from echoroo.core.database import AsyncSessionLocal
 from echoroo.models.enums import (
     TaxonOverrideApprovalStatus,
     TaxonOverrideDirection,
@@ -82,6 +111,59 @@ _APPROVAL_REQUEST_ACTION: str = "project.taxon_override.approve_looser"
 
 
 # =============================================================================
+# Outcome dataclasses (Phase 13 P1 R3 follow-up)
+# =============================================================================
+
+
+@dataclass(frozen=True)
+class TaxonOverrideApplyOutcome:
+    """Result of :func:`apply_taxon_override`.
+
+    The caller commits the main transaction first, then passes this
+    dataclass to :func:`trigger_apply_post_commit_audit` which writes
+    the ``project_audit_log`` row in a fresh session. ``audit_action``
+    distinguishes stricter (immediate) vs looser (pending) so the audit
+    row carries the correct action label.
+    """
+
+    override: ProjectTaxonSensitivityOverride
+    actor_user_id: UUID
+    project_id: UUID
+    audit_action: str
+    audit_detail: dict[str, Any] = field(default_factory=dict)
+    created_at: datetime | None = None
+    request_id: str = ""
+    ip: str = ""
+    user_agent: str = ""
+
+
+@dataclass(frozen=True)
+class TaxonOverrideDecisionOutcome:
+    """Result of :func:`approve_taxon_override` / :func:`reject_taxon_override`.
+
+    Carries the project-scope audit envelope plus the matching
+    platform-scope audit envelope so the post-commit hook can write both
+    rows in fresh sessions (mirrors the archive / restore endpoints in
+    :mod:`echoroo.api.web_v1.admin`). The endpoint no longer needs to
+    invoke :class:`AuditLogService` directly; the post-commit helper is
+    the single audit gate.
+    """
+
+    override: ProjectTaxonSensitivityOverride
+    actor_user_id: UUID
+    project_id: UUID
+    decision: str  # "approved" | "rejected"
+    project_audit_action: str
+    project_audit_detail: dict[str, Any]
+    platform_audit_action: str
+    platform_audit_detail: dict[str, Any]
+    created_at: datetime | None = None
+    request_id: str = ""
+    ip: str = ""
+    user_agent: str = ""
+
+
+# =============================================================================
 # Public API: apply_taxon_override
 # =============================================================================
 
@@ -97,7 +179,7 @@ async def apply_taxon_override(
     request_id: str = "",
     ip: str = "",
     user_agent: str = "",
-) -> ProjectTaxonSensitivityOverride:
+) -> TaxonOverrideApplyOutcome:
     """Create a per-project taxon sensitivity override (FR-033 / FR-034).
 
     Behaviour by ``direction``:
@@ -120,6 +202,13 @@ async def apply_taxon_override(
     the caller submits a duplicate stricter override the INSERT will
     raise an :class:`sqlalchemy.exc.IntegrityError` and the caller may
     surface a 409 to the user.
+
+    Phase 13 P1 R3 follow-up (2026-04-28): the audit row is NO LONGER
+    written inside this function. The caller MUST commit the main
+    transaction and then invoke :func:`trigger_apply_post_commit_audit`
+    so the audit writer (which requires a fresh session for
+    ``SET TRANSACTION ISOLATION LEVEL SERIALIZABLE``) sees an unsullied
+    connection.
     """
     now = datetime.now(UTC)
     is_stricter = direction == TaxonOverrideDirection.STRICTER
@@ -166,18 +255,17 @@ async def apply_taxon_override(
         )
         audit_detail["approval_request_id"] = str(approval_request_id)
 
-    await AuditLogService(session).write_project_event(
+    return TaxonOverrideApplyOutcome(
+        override=override,
         actor_user_id=requester_id,
         project_id=project_id,
-        action=audit_action,
+        audit_action=audit_action,
+        audit_detail=audit_detail,
+        created_at=now,
         request_id=request_id,
         ip=ip,
         user_agent=user_agent,
-        detail=audit_detail,
-        created_at=now,
     )
-
-    return override
 
 
 # =============================================================================
@@ -190,16 +278,34 @@ async def approve_taxon_override(
     *,
     override_id: UUID,
     approver_superuser_id: UUID,
+    actor_user_id: UUID | None = None,
     request_id: str = "",
     ip: str = "",
     user_agent: str = "",
-) -> ProjectTaxonSensitivityOverride:
+) -> TaxonOverrideDecisionOutcome:
     """Approve a pending looser override (FR-034).
 
     Flips ``approval_status`` from ``pending_superuser_approval`` to
     ``applied`` and stamps ``approved_by_id`` / ``approved_at``. Also
     transitions the matching ``superuser_approval_requests`` row to
     ``status='approved'``.
+
+    Phase 13 P1 R3 follow-up (2026-04-28): the audit rows are written
+    by :func:`trigger_decision_post_commit_audit` after the caller
+    commits the main TX. This function only mutates the domain rows and
+    returns a :class:`TaxonOverrideDecisionOutcome`.
+
+    Args:
+        session: Caller-owned async session — caller commits.
+        override_id: The override to approve.
+        approver_superuser_id: ``superusers.id`` of the approver
+            (NOT a ``users.id``). Used as the FK target of
+            ``ProjectTaxonSensitivityOverride.approved_by_id``.
+        actor_user_id: ``users.id`` of the operator. Recorded in the
+            audit chain. Falls back to ``approver_superuser_id`` for
+            backward compatibility, but production callers should pass
+            both because ``approved_by_id`` and ``actor_user_id_hash``
+            point to different ID spaces (FR-091, FR-112a).
 
     Raises:
         ValueError: when the override does not exist, was already
@@ -234,22 +340,32 @@ async def approve_taxon_override(
         now=now,
     )
 
-    await AuditLogService(session).write_project_event(
-        actor_user_id=approver_superuser_id,
+    audit_actor = actor_user_id if actor_user_id is not None else approver_superuser_id
+    project_detail: dict[str, Any] = {
+        "override_id": str(override.id),
+        "taxon_id": override.taxon_id,
+        "sensitivity_h3_res": override.sensitivity_h3_res,
+    }
+    platform_detail: dict[str, Any] = {
+        "project_id": str(override.project_id),
+        "override_id": str(override.id),
+        "taxon_id": override.taxon_id,
+        "sensitivity_h3_res": override.sensitivity_h3_res,
+    }
+    return TaxonOverrideDecisionOutcome(
+        override=override,
+        actor_user_id=audit_actor,
         project_id=override.project_id,
-        action=_AUDIT_ACTION_LOOSER_APPROVED,
+        decision="approved",
+        project_audit_action=_AUDIT_ACTION_LOOSER_APPROVED,
+        project_audit_detail=project_detail,
+        platform_audit_action="platform.project.taxon_override.approve_looser",
+        platform_audit_detail=platform_detail,
+        created_at=now,
         request_id=request_id,
         ip=ip,
         user_agent=user_agent,
-        detail={
-            "override_id": str(override.id),
-            "taxon_id": override.taxon_id,
-            "sensitivity_h3_res": override.sensitivity_h3_res,
-        },
-        created_at=now,
     )
-
-    return override
 
 
 # =============================================================================
@@ -263,10 +379,11 @@ async def reject_taxon_override(
     override_id: UUID,
     approver_superuser_id: UUID,
     rejected_reason: str,
+    actor_user_id: UUID | None = None,
     request_id: str = "",
     ip: str = "",
     user_agent: str = "",
-) -> ProjectTaxonSensitivityOverride:
+) -> TaxonOverrideDecisionOutcome:
     """Reject a pending looser override (FR-034).
 
     Sets ``approval_status = 'rejected'`` and records ``rejected_reason``.
@@ -274,6 +391,10 @@ async def reject_taxon_override(
     partial unique index + the ``approval_status='applied'`` filter in
     :func:`echoroo.services.taxon_sensitivity_service.bulk_load_override_map`,
     so no further bookkeeping is required.
+
+    Phase 13 P1 R3 follow-up (2026-04-28): audit rows are written by
+    :func:`trigger_decision_post_commit_audit` after the caller commits
+    the main TX. See :func:`approve_taxon_override` for the rationale.
     """
     now = datetime.now(UTC)
 
@@ -305,23 +426,155 @@ async def reject_taxon_override(
         now=now,
     )
 
-    await AuditLogService(session).write_project_event(
-        actor_user_id=approver_superuser_id,
+    audit_actor = actor_user_id if actor_user_id is not None else approver_superuser_id
+    project_detail: dict[str, Any] = {
+        "override_id": str(override.id),
+        "taxon_id": override.taxon_id,
+        "sensitivity_h3_res": override.sensitivity_h3_res,
+        "rejected_reason": rejected_reason,
+    }
+    platform_detail: dict[str, Any] = {
+        "project_id": str(override.project_id),
+        "override_id": str(override.id),
+        "taxon_id": override.taxon_id,
+        "sensitivity_h3_res": override.sensitivity_h3_res,
+        "rejected_reason": rejected_reason,
+    }
+    return TaxonOverrideDecisionOutcome(
+        override=override,
+        actor_user_id=audit_actor,
         project_id=override.project_id,
-        action=_AUDIT_ACTION_LOOSER_REJECTED,
+        decision="rejected",
+        project_audit_action=_AUDIT_ACTION_LOOSER_REJECTED,
+        project_audit_detail=project_detail,
+        platform_audit_action="platform.project.taxon_override.reject_looser",
+        platform_audit_detail=platform_detail,
+        created_at=now,
         request_id=request_id,
         ip=ip,
         user_agent=user_agent,
-        detail={
-            "override_id": str(override.id),
-            "taxon_id": override.taxon_id,
-            "sensitivity_h3_res": override.sensitivity_h3_res,
-            "rejected_reason": rejected_reason,
-        },
-        created_at=now,
     )
 
-    return override
+
+# =============================================================================
+# Post-commit audit hooks (Phase 13 P1 R3 follow-up, 2026-04-28)
+# =============================================================================
+
+
+async def trigger_apply_post_commit_audit(
+    outcome: TaxonOverrideApplyOutcome,
+) -> None:
+    """Write the ``project_audit_log`` row for an apply outcome.
+
+    Mirrors the pattern in
+    :func:`echoroo.services.ownership_service.trigger_post_commit_side_effects`:
+    the writer requires a fresh :class:`AsyncSessionLocal` because
+    :class:`AuditLogService` issues ``SET TRANSACTION ISOLATION LEVEL
+    SERIALIZABLE`` as the FIRST statement on its connection (see
+    ``apps/api/echoroo/services/audit_service.py:201``). Failures are
+    warning-logged so a flaky audit chain never rolls back a persisted
+    override decision (FR-088 soft-alert posture).
+    """
+    try:
+        async with AsyncSessionLocal() as audit_session:
+            try:
+                service = AuditLogService(audit_session)
+                await service.write_project_event(
+                    actor_user_id=outcome.actor_user_id,
+                    project_id=outcome.project_id,
+                    action=outcome.audit_action,
+                    request_id=outcome.request_id,
+                    ip=outcome.ip,
+                    user_agent=outcome.user_agent,
+                    detail=outcome.audit_detail,
+                    created_at=outcome.created_at,
+                )
+                await audit_session.commit()
+            except Exception:
+                await audit_session.rollback()
+                raise
+    except Exception as exc:  # noqa: BLE001 — soft alert; never blocks domain mutation
+        logger.warning(
+            "%s audit write failed (FR-088 soft alert): "
+            "project_id=%s actor=%s override_id=%s error=%r",
+            outcome.audit_action,
+            outcome.project_id,
+            outcome.actor_user_id,
+            outcome.audit_detail.get("override_id"),
+            exc,
+        )
+
+
+async def trigger_decision_post_commit_audit(
+    outcome: TaxonOverrideDecisionOutcome,
+) -> None:
+    """Write project + platform audit rows for an approve/reject outcome.
+
+    Both rows go through fresh :class:`AsyncSessionLocal` instances
+    (one per row) so the SERIALIZABLE upgrade succeeds. Either row
+    failing is warning-logged; the other still attempts. The endpoint
+    has already committed the override status mutation +
+    ``superuser_approval_requests`` close, so a hiccup here does not
+    revert the decision (FR-088).
+    """
+    # Project-scope row (FR-088, hash chain).
+    try:
+        async with AsyncSessionLocal() as project_audit_session:
+            try:
+                await AuditLogService(project_audit_session).write_project_event(
+                    actor_user_id=outcome.actor_user_id,
+                    project_id=outcome.project_id,
+                    action=outcome.project_audit_action,
+                    request_id=outcome.request_id,
+                    ip=outcome.ip,
+                    user_agent=outcome.user_agent,
+                    detail=outcome.project_audit_detail,
+                    created_at=outcome.created_at,
+                )
+                await project_audit_session.commit()
+            except Exception:
+                await project_audit_session.rollback()
+                raise
+    except Exception as exc:  # noqa: BLE001 — soft alert
+        logger.warning(
+            "%s project_audit_log write failed (FR-088 soft alert): "
+            "project_id=%s actor=%s override_id=%s error=%r",
+            outcome.project_audit_action,
+            outcome.project_id,
+            outcome.actor_user_id,
+            outcome.project_audit_detail.get("override_id"),
+            exc,
+        )
+
+    # Platform-scope row (FR-089, dashboard JOIN avoidance).
+    try:
+        async with AsyncSessionLocal() as platform_audit_session:
+            try:
+                await AuditLogService(
+                    platform_audit_session
+                ).write_platform_event(
+                    actor_user_id=outcome.actor_user_id,
+                    action=outcome.platform_audit_action,
+                    request_id=outcome.request_id,
+                    ip=outcome.ip,
+                    user_agent=outcome.user_agent,
+                    detail=outcome.platform_audit_detail,
+                    created_at=outcome.created_at,
+                )
+                await platform_audit_session.commit()
+            except Exception:
+                await platform_audit_session.rollback()
+                raise
+    except Exception as exc:  # noqa: BLE001 — soft alert
+        logger.warning(
+            "%s platform_audit_log write failed (FR-089 soft alert): "
+            "project_id=%s actor=%s override_id=%s error=%r",
+            outcome.platform_audit_action,
+            outcome.project_id,
+            outcome.actor_user_id,
+            outcome.platform_audit_detail.get("override_id"),
+            exc,
+        )
 
 
 # =============================================================================
@@ -490,7 +743,11 @@ async def _load_override(
 
 __all__ = [
     "ApprovalRequestCloseError",
+    "TaxonOverrideApplyOutcome",
+    "TaxonOverrideDecisionOutcome",
     "apply_taxon_override",
     "approve_taxon_override",
     "reject_taxon_override",
+    "trigger_apply_post_commit_audit",
+    "trigger_decision_post_commit_audit",
 ]
