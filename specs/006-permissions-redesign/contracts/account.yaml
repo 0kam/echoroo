@@ -52,10 +52,13 @@ paths:
         actor identifiers (FR-091a / FR-091b) so they cannot be
         re-personalised even by their subject.
 
-        Rate limit: 1 successful export per user per 24 hours
-        (TODO post-launch ratchet; current implementation enforces it
-        at application layer, not via Redis). A 429 is returned with
-        ``retry_after`` seconds when the quota is exhausted.
+        Rate limit: the contract reserves a 429 response for the
+        planned 1 successful export per user per 24 hours quota; the
+        current implementation does NOT yet enforce that cap (the
+        Redis-backed limiter lands as a post-launch ratchet). When
+        the limiter is wired up the response body will carry a
+        ``retry_after`` seconds field. Clients SHOULD treat 429 as
+        retryable irrespective of when the limiter activates.
       responses:
         "200":
           description: Export succeeded; the body is the full DSR payload.
@@ -120,9 +123,25 @@ paths:
                 $ref: '#/components/schemas/DsrDeleteResponse'
           headers:
             Set-Cookie:
+              description: >
+                The endpoint clears every session-related cookie issued
+                by the auth router so the browser stops replaying
+                stale credentials. The four cookies are:
+                ``echoroo_session`` (session JWT,
+                ``Path=/web-api/v1/``), ``echoroo_refresh`` (refresh
+                token, ``Path=/web-api/v1/auth/refresh``),
+                ``echoroo_csrf`` (CSRF token, ``Path=/``) and
+                ``echoroo_logged_in`` (SvelteKit hooks marker,
+                ``Path=/``). All four are emitted with ``Max-Age=0``
+                and the same ``HttpOnly`` / ``Secure`` /
+                ``SameSite=Strict`` attributes the issuer used —
+                attribute drift would create sibling cookies instead
+                of evicting them. See
+                ``echoroo.api.web_v1.auth._clear_session_cookies`` for
+                the canonical attribute set.
               schema:
                 type: string
-                example: "session_id=; Path=/web-api/v1/; HttpOnly; Secure; SameSite=Strict; Max-Age=0"
+                example: "echoroo_session=; Path=/web-api/v1/; HttpOnly; Secure; SameSite=Strict; Max-Age=0"
         "401":
           description: Not authenticated (or already deleted).
           content:
@@ -135,7 +154,12 @@ components:
     sessionCookie:
       type: apiKey
       in: cookie
-      name: session_id
+      name: echoroo_session
+      description: >
+        Session JWT issued by ``POST /web-api/v1/auth/login``
+        (settings ``web_session_cookie_name``). Both DSR endpoints
+        also accept the matching ``echoroo_csrf`` token via the
+        production CSRF middleware.
 
   schemas:
     Error:

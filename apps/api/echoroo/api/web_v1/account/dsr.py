@@ -40,6 +40,7 @@ from uuid import UUID
 import sqlalchemy as sa
 from fastapi import APIRouter, HTTPException, Request, Response, status
 
+from echoroo.api.web_v1.auth import _clear_session_cookies
 from echoroo.core.database import DbSession
 from echoroo.core.settings import get_settings
 from echoroo.middleware.auth import OptionalCurrentUser
@@ -335,11 +336,18 @@ async def dsr_delete(
     upgrade required by :class:`AuditLogService` cannot share a
     connection with prior SELECTs / UPDATEs).
 
-    The endpoint also clears the session cookie so the browser does
-    not keep replaying a now-invalid ``session_id`` value. The cookie
-    name (``session_id``) and attributes (``Path=/web-api/v1/``,
-    ``HttpOnly``, ``Secure``, ``SameSite=Strict``) match the issuer
-    in :mod:`echoroo.api.web_v1.auth`.
+    The endpoint also clears every session-related cookie so the
+    browser does not keep replaying now-invalid credentials. We
+    reuse :func:`echoroo.api.web_v1.auth._clear_session_cookies`
+    so the deleted-cookie attributes (``Path``, ``HttpOnly``,
+    ``Secure``, ``SameSite``) exactly match the issuer in
+    :mod:`echoroo.api.web_v1.auth`. That helper covers the four
+    cookies issued at login: the session JWT
+    (``echoroo_session``), the refresh token (``echoroo_refresh``),
+    the CSRF cookie (``echoroo_csrf``) and the SvelteKit
+    ``echoroo_logged_in`` marker. Using a mismatched attribute set
+    would create a sibling cookie instead of evicting the existing
+    one — see ``settings.web_*_cookie_name`` for the live values.
     """
     user = _require_authenticated(current_user)
 
@@ -379,16 +387,14 @@ async def dsr_delete(
     # change durable before the post-commit audit fires.
     await db.flush()
 
-    # Clear the session cookie so the browser stops replaying it.
-    # Mirror the issuer's attribute set so production caches do not
-    # keep a residual cookie around.
-    response.delete_cookie(
-        key="session_id",
-        path="/web-api/v1/",
-        httponly=True,
-        secure=True,
-        samesite="strict",
-    )
+    # Clear every session-related cookie so the browser stops
+    # replaying any of them. We delegate to the same helper the
+    # auth router uses for ``/logout`` and family-revocation paths
+    # (``echoroo.api.web_v1.auth._clear_session_cookies``) so the
+    # deletion attributes (``Path`` / ``Secure`` / ``HttpOnly`` /
+    # ``SameSite``) exactly match the issuer; otherwise the browser
+    # creates a sibling cookie instead of evicting the live one.
+    _clear_session_cookies(response)
 
     # The audit row is written by the post-commit hook. We schedule
     # it AFTER the dependency-managed commit by using FastAPI's

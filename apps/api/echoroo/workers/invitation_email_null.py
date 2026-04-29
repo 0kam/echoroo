@@ -56,10 +56,11 @@ logger = logging.getLogger(__name__)
 #: shorten the window without seeding the system_settings table.
 INVITATION_EMAIL_NULL_AFTER: Final[timedelta] = timedelta(days=30)
 
-#: Terminal statuses that make a row eligible for scrub. ``revoked``
-#: rows are also terminal but never carried plaintext that the
-#: recipient had not already received via email, so the same window
-#: applies.
+#: Terminal statuses that make a row eligible for scrub. The
+#: status-specific cutoff column for each is encoded directly in the
+#: UPDATE statement; this tuple exists only as documentation.
+#: ``revoked`` rows never carried plaintext the recipient had not
+#: already received via email, so the same window applies.
 _TERMINAL_STATUSES: Final[tuple[str, ...]] = (
     "accepted",
     "declined",
@@ -80,6 +81,27 @@ async def _sweep_eligible_rows(
     operator-triggered UPDATE racing on the same row never observes
     a half-applied state. The returned count drives the operator
     metric / log line.
+
+    The cutoff predicate is evaluated against the **status-specific**
+    transition timestamp, not ``updated_at``, because FR-106 measures
+    the 30-day window from "settled" — i.e. when the row reached its
+    terminal status — not from the most recent administrative edit.
+    Using ``updated_at`` would let an unrelated bookkeeping touch
+    (for example a future ``invited_by`` repair migration) reset the
+    countdown on every affected row. The mapping is:
+
+    * ``accepted`` → ``accepted_at``
+    * ``declined`` → ``declined_at``
+    * ``revoked``  → ``revoked_at``
+    * ``expired``  → ``expires_at`` (the boundary itself; FR-043)
+
+    A defensive ``<column> IS NOT NULL`` guard accompanies each
+    branch even though the ``invitation_settle_columns_align`` CHECK
+    constraint at
+    :mod:`echoroo.models.project.ProjectInvitation` already enforces
+    the invariant — a future schema migration that ever loosens that
+    constraint must not silently scrub rows that lack a transition
+    timestamp.
     """
     stmt = sa.text(
         """
@@ -87,8 +109,16 @@ async def _sweep_eligible_rows(
            SET email = NULL,
                updated_at = :now
          WHERE email IS NOT NULL
-           AND status = ANY(CAST(:terminal_statuses AS invitationstatus[]))
-           AND updated_at < :cutoff
+           AND (
+               (status = 'accepted' AND accepted_at IS NOT NULL
+                    AND accepted_at < :cutoff)
+            OR (status = 'declined' AND declined_at IS NOT NULL
+                    AND declined_at < :cutoff)
+            OR (status = 'revoked' AND revoked_at IS NOT NULL
+                    AND revoked_at < :cutoff)
+            OR (status = 'expired' AND expires_at IS NOT NULL
+                    AND expires_at < :cutoff)
+           )
         RETURNING id
         """
     )
@@ -96,7 +126,6 @@ async def _sweep_eligible_rows(
         stmt,
         {
             "now": datetime.now(UTC),
-            "terminal_statuses": list(_TERMINAL_STATUSES),
             "cutoff": cutoff,
         },
     )

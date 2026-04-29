@@ -17,11 +17,15 @@ The ``users`` table declares ``email`` and ``password_hash`` as
 ``NOT NULL`` (and ``email`` UNIQUE). Rather than running a schema
 migration we anonymise to fixed sentinel values:
 
-* ``email``         → ``deleted_<8-hex>@deleted.echoroo.invalid``
-                       — UNIQUE-safe (the 8-hex prefix is derived from
-                       the user's UUID so it is stable across retries
-                       and does not collide with another user's
-                       sentinel).
+* ``email``         → ``deleted_<32-hex>@deleted.echoroo.invalid``
+                       — UNIQUE-safe. The 32-character local part is
+                       the **full** ``users.id`` UUID hex (128 bits
+                       of entropy); a hypothetical collision sits at
+                       ~3.4×10^38, so the constraint cannot fire on
+                       any realistic account count. Determinism makes
+                       the sentinel idempotent: replaying the
+                       soft-delete on an already-anonymised row
+                       reproduces the exact same address.
 * ``display_name``  → ``"[deleted user]"``.
 * ``password_hash`` → ``"$deleted$"`` (a non-Argon2 prefix that
                        :func:`echoroo.services.auth.verify_password`
@@ -101,11 +105,14 @@ _PASSWORD_SENTINEL: str = "$deleted$"
 #: without further sanitisation.
 _DISPLAY_NAME_SENTINEL: str = "[deleted user]"
 
-#: Synthetic local part width. 8 hex characters give 16 bits of
-#: collision resistance per user — combined with the immutable
-#: ``users.id`` UUID prefix that is more than enough to keep the
-#: UNIQUE constraint satisfied across millions of accounts.
-_SENTINEL_HEX_WIDTH: int = 8
+#: Synthetic local part width. We use the FULL 32-character UUID
+#: hex so the sentinel inherits the source ``users.id``'s 128-bit
+#: entropy. A truncated prefix (the original 8-char form) collided
+#: at the birthday bound of ~65 K accounts — well inside the lifetime
+#: of a successful platform — and would have surfaced as a 500 from
+#: the ``users_email_key`` UNIQUE constraint. The full hex pushes the
+#: collision probability to ~3.4×10^38, i.e. effectively zero.
+_SENTINEL_HEX_WIDTH: int = 32
 
 #: Suffix used to build the sentinel email address. ``.invalid`` is
 #: reserved by RFC 6761 §6.4 so the address can never be a real
@@ -116,13 +123,15 @@ _SENTINEL_EMAIL_SUFFIX: str = "@deleted.echoroo.invalid"
 def _build_sentinel_email(user_id: UUID) -> str:
     """Return the deterministic sentinel email for a user.
 
-    The local part is the first ``_SENTINEL_HEX_WIDTH`` hex characters
-    of the user's UUID — this is unique per user (UUID v4 has 122
-    bits of entropy; an 8-char hex prefix collides at the birthday
-    bound of ~65 K accounts, but the trailing ``users.id`` is stamped
-    in ``audit.detail`` so even a hypothetical collision is auditable).
-    Determinism makes the operation idempotent: retrying a soft-delete
-    on an already-deleted row produces the exact same sentinel.
+    The local part is the **full** 32-character ``users.id`` UUID hex
+    (``_SENTINEL_HEX_WIDTH``). Using the full hex inherits the row's
+    own 128-bit entropy (collision ~3.4×10^38) so the
+    ``users_email_key`` UNIQUE constraint cannot fire on any realistic
+    account count — a previous truncated 8-char prefix collided at
+    the ~65 K birthday bound and could have surfaced a 500 from the
+    delete endpoint. Determinism makes the operation idempotent:
+    retrying a soft-delete on an already-deleted row reproduces the
+    exact same sentinel.
     """
     prefix = user_id.hex[:_SENTINEL_HEX_WIDTH]
     return f"deleted_{prefix}{_SENTINEL_EMAIL_SUFFIX}"
