@@ -799,6 +799,11 @@ def upgrade() -> None:  # noqa: PLR0915 — baseline migration, long by nature
     op.create_index("ix_datasets_site_id", "datasets", ["site_id"])
     op.create_index("ix_datasets_status", "datasets", ["status"])
     op.create_index("ix_datasets_visibility", "datasets", ["visibility"])
+    # Phase 13 P2 R2 (Codex follow-up): TimestampMixin declares
+    # created_at with index=True; materialise the index so fresh DBs
+    # match the ORM expectation that 0008 also brings to existing dev
+    # DBs.
+    op.create_index("ix_datasets_created_at", "datasets", ["created_at"])
 
     op.create_table(
         "recordings",

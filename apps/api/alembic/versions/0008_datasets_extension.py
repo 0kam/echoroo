@@ -255,15 +255,23 @@ def upgrade() -> None:
     op.execute(
         "CREATE INDEX IF NOT EXISTS ix_datasets_visibility ON datasets (visibility)"
     )
+    # Phase 13 P2 R2 (Codex follow-up): TimestampMixin declares
+    # created_at with index=True so the ORM expects
+    # ix_datasets_created_at. Materialise it here so P5 introspection
+    # parity holds for datasets.
+    op.execute(
+        "CREATE INDEX IF NOT EXISTS ix_datasets_created_at ON datasets (created_at)"
+    )
 
 
 # --------------------------------------------------------------------------- #
-# Downgrade — drop the 14 columns + 3 indexes + UNIQUE
+# Downgrade — drop the 14 columns + 4 indexes + UNIQUE
 # --------------------------------------------------------------------------- #
 
 
 def downgrade() -> None:
     # Drop indexes first (cheap; safe even if some never existed).
+    op.execute("DROP INDEX IF EXISTS ix_datasets_created_at")
     op.execute("DROP INDEX IF EXISTS ix_datasets_visibility")
     op.execute("DROP INDEX IF EXISTS ix_datasets_status")
     op.execute("DROP INDEX IF EXISTS ix_datasets_site_id")
