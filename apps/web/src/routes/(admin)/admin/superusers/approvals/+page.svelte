@@ -16,6 +16,8 @@
   } from '$lib/api/superusers';
   import { localizeHref, getLocale } from '$lib/paraglide/runtime';
   import * as m from '$lib/paraglide/messages';
+  import WebAuthnGatePrompt from '$lib/components/admin/WebAuthnGatePrompt.svelte';
+  import { focusTrap } from '$lib/actions/focusTrap';
 
   type StatusFilter = 'pending' | 'applied' | 'rejected' | 'all';
 
@@ -29,6 +31,11 @@
   let rejectReason = $state('');
   let rejectError = $state<string | null>(null);
   let isSubmittingReject = $state(false);
+
+  // WebAuthn step-up gate (FR-111).
+  let gateOpen = $state(false);
+  let pendingAction = $state<(() => Promise<void>) | null>(null);
+  let gateContextLabel = $state<'approve' | 'reject' | null>(null);
 
   async function load() {
     isLoading = true;
@@ -75,20 +82,25 @@
     return new Date(s).toLocaleString(getLocale());
   }
 
-  async function handleApprove(ticket: SuperuserApprovalRequestSummary) {
+  function handleApprove(ticket: SuperuserApprovalRequestSummary) {
+    // FR-111: gate every approve through WebAuthn before the API call.
     error = null;
     banner = null;
-    try {
-      const result = await superuserApi.approve(ticket.id);
-      if (result.status === 'applied') {
-        banner = m.admin_superusers_approvals_quorum_reached();
-      } else {
-        banner = m.admin_superusers_approvals_one_more_needed();
+    pendingAction = async () => {
+      try {
+        const result = await superuserApi.approve(ticket.id);
+        if (result.status === 'applied') {
+          banner = m.admin_superusers_approvals_quorum_reached();
+        } else {
+          banner = m.admin_superusers_approvals_one_more_needed();
+        }
+        await load();
+      } catch (err) {
+        error = mapError(err, m.admin_superusers_approvals_approve_failed());
       }
-      await load();
-    } catch (err) {
-      error = mapError(err, m.admin_superusers_approvals_approve_failed());
-    }
+    };
+    gateContextLabel = 'approve';
+    gateOpen = true;
   }
 
   function openReject(ticket: SuperuserApprovalRequestSummary) {
@@ -104,25 +116,56 @@
     rejectError = null;
   }
 
-  async function confirmReject() {
+  function confirmReject() {
     if (!rejectTarget) return;
     if (!rejectReason.trim()) {
       rejectError = m.admin_superusers_approvals_reject_reason_required();
       return;
     }
-    isSubmittingReject = true;
     rejectError = null;
-    try {
-      await superuserApi.reject(rejectTarget.id, rejectReason.trim());
-      banner = m.admin_superusers_approvals_rejected();
-      rejectTarget = null;
-      rejectReason = '';
-      await load();
-    } catch (err) {
-      rejectError = mapError(err, m.admin_superusers_approvals_reject_failed());
-    } finally {
-      isSubmittingReject = false;
+    const target = rejectTarget;
+    const reason = rejectReason.trim();
+    pendingAction = async () => {
+      isSubmittingReject = true;
+      try {
+        await superuserApi.reject(target.id, reason);
+        banner = m.admin_superusers_approvals_rejected();
+        rejectTarget = null;
+        rejectReason = '';
+        await load();
+      } catch (err) {
+        rejectError = mapError(err, m.admin_superusers_approvals_reject_failed());
+      } finally {
+        isSubmittingReject = false;
+      }
+    };
+    gateContextLabel = 'reject';
+    gateOpen = true;
+  }
+
+  function handleGateSuccess() {
+    pendingAction = null;
+    gateContextLabel = null;
+  }
+
+  function handleGateCancel() {
+    pendingAction = null;
+    if (gateContextLabel === 'approve') {
+      error = m.admin_superusers_webauthn_gate_cancelled();
+    } else if (gateContextLabel === 'reject') {
+      rejectError = m.admin_superusers_webauthn_gate_cancelled();
     }
+    gateContextLabel = null;
+  }
+
+  function handleGateError(message: string) {
+    pendingAction = null;
+    if (gateContextLabel === 'approve') {
+      error = message;
+    } else if (gateContextLabel === 'reject') {
+      rejectError = message;
+    }
+    gateContextLabel = null;
   }
 
   /**
@@ -321,7 +364,10 @@
     aria-modal="true"
     aria-labelledby="reject-title"
   >
-    <div class="w-full max-w-md rounded-lg bg-surface-card shadow-xl">
+    <div
+      use:focusTrap={{ onClose: cancelReject }}
+      class="w-full max-w-md rounded-lg bg-surface-card shadow-xl"
+    >
       <div class="border-b border-stone-200 px-6 py-4 dark:border-stone-700">
         <h2 id="reject-title" class="m-0 text-lg font-semibold">
           {m.admin_superusers_approvals_reject_title()}
@@ -377,4 +423,13 @@
     </div>
   </div>
 {/if}
+
+<!-- WebAuthn step-up gate (FR-111) -->
+<WebAuthnGatePrompt
+  bind:isOpen={gateOpen}
+  action={pendingAction}
+  onSuccess={handleGateSuccess}
+  onCancel={handleGateCancel}
+  onError={handleGateError}
+/>
 

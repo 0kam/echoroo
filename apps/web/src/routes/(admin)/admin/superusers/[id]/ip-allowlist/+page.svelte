@@ -18,6 +18,7 @@
   } from '$lib/api/superusers';
   import { localizeHref, getLocale } from '$lib/paraglide/runtime';
   import * as m from '$lib/paraglide/messages';
+  import WebAuthnGatePrompt from '$lib/components/admin/WebAuthnGatePrompt.svelte';
 
   const superuserId = $derived($page.params.id);
 
@@ -28,6 +29,10 @@
   let editorValue = $state('');
   let isSaving = $state(false);
   let invalidCidrs = $state<string[]>([]);
+
+  // WebAuthn step-up gate (FR-111).
+  let gateOpen = $state(false);
+  let pendingAction = $state<(() => Promise<void>) | null>(null);
 
   async function load() {
     isLoading = true;
@@ -64,12 +69,48 @@
       ) {
         return m.admin_superusers_api_key_forbidden();
       }
-      // Backend 422 surfaces the offending CIDRs in `detail.invalid_cidrs`
-      // when present.  We attempt to extract them defensively.
       return err.detail || err.message || fallback;
     }
     if (err instanceof Error) return err.message;
     return fallback;
+  }
+
+  /**
+   * Pull per-line CIDR errors out of a FastAPI 422 ``detail`` array.
+   *
+   * Pydantic emits one entry per offending field path; for our
+   * ``allowed_ip_cidrs: list[str]`` validator each entry's ``loc`` ends
+   * with the integer index of the bad row.  We pair the index with the
+   * raw line value so the UI can render "line N: <line>" alongside the
+   * server's human-readable ``msg``.
+   */
+  function extractInvalidLines(
+    err: ApiError,
+    submittedLines: string[],
+  ): { lines: string[]; messages: string[] } {
+    const lines: string[] = [];
+    const messages: string[] = [];
+    const body = err.body;
+    if (!body || typeof body !== 'object') return { lines, messages };
+    const detail = (body as { detail?: unknown }).detail;
+    if (!Array.isArray(detail)) return { lines, messages };
+    for (const entry of detail) {
+      if (!entry || typeof entry !== 'object') continue;
+      const loc = (entry as { loc?: unknown }).loc;
+      const msg = (entry as { msg?: unknown }).msg;
+      if (Array.isArray(loc)) {
+        // Find the trailing numeric index in the loc tuple.
+        for (let i = loc.length - 1; i >= 0; i -= 1) {
+          const part = loc[i];
+          if (typeof part === 'number' && part >= 0 && part < submittedLines.length) {
+            lines.push(submittedLines[part]!);
+            break;
+          }
+        }
+      }
+      if (typeof msg === 'string') messages.push(msg);
+    }
+    return { lines, messages };
   }
 
   function formatDate(s: string | null): string {
@@ -85,45 +126,64 @@
   }
 
   /**
-   * Lightweight client-side CIDR shape check.  Definitive validation is
-   * server-side; this pre-flight prevents the most common typos from
-   * burning a 422 round-trip.
+   * Phase 15 Batch 5b R2 (Codex Minor 1 fix).  Client-side CIDR regex
+   * validation has been removed — the backend
+   * (``ipaddress.ip_network(strict=False)`` inside the Pydantic
+   * validator) is the single source of truth.  The previous regex
+   * disagreed with the backend in both directions (e.g. it rejected
+   * bare-IP entries the backend canonicalised to ``/32`` and accepted
+   * ``999.999.999.999/99``-style garbage the backend immediately
+   * threw out), so we now POST whatever the operator typed and let
+   * the 422 response describe the offending rows.
    */
-  function looksLikeCidr(value: string): boolean {
-    const v4 = /^\d{1,3}(?:\.\d{1,3}){3}\/\d{1,2}$/;
-    const v6 = /^[0-9a-fA-F:]+\/\d{1,3}$/;
-    return v4.test(value) || v6.test(value);
-  }
-
-  async function handleSave(e: Event) {
+  function handleSave(e: Event) {
     e.preventDefault();
     if (!summary) return;
-    isSaving = true;
     error = null;
     banner = null;
     invalidCidrs = [];
 
     const lines = parseLines(editorValue);
-    const invalid = lines.filter((line) => !looksLikeCidr(line));
-    if (invalid.length > 0) {
-      invalidCidrs = invalid;
-      error = m.admin_superusers_ip_allowlist_invalid_local();
-      isSaving = false;
-      return;
-    }
+    const targetSummary = summary;
+    pendingAction = async () => {
+      isSaving = true;
+      try {
+        const result = await superuserApi.updateIpAllowlist(targetSummary.id, lines);
+        banner = m.admin_superusers_ip_allowlist_saved({
+          time: formatDate(result.updated_at),
+        });
+        // Reload from canonicalised server state.
+        await load();
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 422) {
+          const { lines: invalidLines, messages } = extractInvalidLines(err, lines);
+          invalidCidrs = invalidLines;
+          error =
+            messages.length > 0
+              ? messages.join('; ')
+              : m.admin_superusers_ip_allowlist_save_failed();
+        } else {
+          error = mapError(err, m.admin_superusers_ip_allowlist_save_failed());
+        }
+      } finally {
+        isSaving = false;
+      }
+    };
+    gateOpen = true;
+  }
 
-    try {
-      const result = await superuserApi.updateIpAllowlist(summary.id, lines);
-      banner = m.admin_superusers_ip_allowlist_saved({
-        time: formatDate(result.updated_at),
-      });
-      // Reload from canonicalised server state.
-      await load();
-    } catch (err) {
-      error = mapError(err, m.admin_superusers_ip_allowlist_save_failed());
-    } finally {
-      isSaving = false;
-    }
+  function handleGateSuccess() {
+    pendingAction = null;
+  }
+
+  function handleGateCancel() {
+    pendingAction = null;
+    error = m.admin_superusers_webauthn_gate_cancelled();
+  }
+
+  function handleGateError(message: string) {
+    pendingAction = null;
+    error = message;
   }
 </script>
 
@@ -165,11 +225,14 @@
     >
       <div>{error}</div>
       {#if invalidCidrs.length > 0}
-        <ul class="m-0 mt-2 list-disc pl-6 text-xs">
-          {#each invalidCidrs as cidr}
-            <li class="font-mono">{cidr}</li>
-          {/each}
-        </ul>
+        <div class="mt-2 text-xs">
+          <span class="font-medium">{m.admin_superusers_ip_allowlist_invalid_lines_label()}</span>
+          <ul class="m-0 mt-1 list-disc pl-6">
+            {#each invalidCidrs as cidr}
+              <li class="font-mono">{cidr}</li>
+            {/each}
+          </ul>
+        </div>
       {/if}
     </div>
   {/if}
@@ -227,3 +290,12 @@
     </div>
   {/if}
 </div>
+
+<!-- WebAuthn step-up gate (FR-111) -->
+<WebAuthnGatePrompt
+  bind:isOpen={gateOpen}
+  action={pendingAction}
+  onSuccess={handleGateSuccess}
+  onCancel={handleGateCancel}
+  onError={handleGateError}
+/>

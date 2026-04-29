@@ -18,15 +18,29 @@ export class ApiError extends Error {
    */
   public code: string | null;
 
+  /**
+   * Raw decoded JSON body of the error response, when available.
+   *
+   * Phase 15 Batch 5b R2 (Codex Minor 1 fix): the IP allowlist editor
+   * needs to inspect FastAPI 422 ``detail`` arrays
+   * (``[{loc, msg, type}, ...]``) so it can render per-line CIDR
+   * validation errors.  Storing the parsed body here keeps the typed
+   * ``detail`` string unchanged for legacy callers while letting new
+   * call sites opt into structured inspection.
+   */
+  public body: unknown;
+
   constructor(
     message: string,
     public status: number,
     public detail?: string,
-    code?: string | null
+    code?: string | null,
+    body?: unknown
   ) {
     super(message);
     this.name = 'ApiError';
     this.code = code ?? null;
+    this.body = body ?? null;
   }
 }
 

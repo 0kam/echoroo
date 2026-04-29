@@ -18,6 +18,7 @@
   } from '$lib/api/superusers';
   import { localizeHref, getLocale } from '$lib/paraglide/runtime';
   import * as m from '$lib/paraglide/messages';
+  import WebAuthnGatePrompt from '$lib/components/admin/WebAuthnGatePrompt.svelte';
 
   let status = $state<SuperuserBreakGlassStatusResponse | null>(null);
   let isLoading = $state(true);
@@ -27,6 +28,10 @@
   let reason = $state('');
   let isSubmitting = $state(false);
   let confirmed = $state(false);
+
+  // WebAuthn step-up gate (FR-111).
+  let gateOpen = $state(false);
+  let pendingAction = $state<(() => Promise<void>) | null>(null);
 
   async function load() {
     isLoading = true;
@@ -81,7 +86,7 @@
     });
   }
 
-  async function handleEnter(e: Event) {
+  function handleEnter(e: Event) {
     e.preventDefault();
     if (!reason.trim()) {
       error = m.admin_superusers_break_glass_reason_required();
@@ -91,19 +96,38 @@
       error = m.admin_superusers_break_glass_confirm_required();
       return;
     }
-    isSubmitting = true;
     error = null;
     banner = null;
-    try {
-      status = await superuserApi.enterBreakGlass(reason.trim());
-      banner = m.admin_superusers_break_glass_entered();
-      reason = '';
-      confirmed = false;
-    } catch (err) {
-      error = mapError(err, m.admin_superusers_break_glass_enter_failed());
-    } finally {
-      isSubmitting = false;
-    }
+    // FR-111: gate the destructive enter call through WebAuthn.
+    const submittedReason = reason.trim();
+    pendingAction = async () => {
+      isSubmitting = true;
+      try {
+        status = await superuserApi.enterBreakGlass(submittedReason);
+        banner = m.admin_superusers_break_glass_entered();
+        reason = '';
+        confirmed = false;
+      } catch (err) {
+        error = mapError(err, m.admin_superusers_break_glass_enter_failed());
+      } finally {
+        isSubmitting = false;
+      }
+    };
+    gateOpen = true;
+  }
+
+  function handleGateSuccess() {
+    pendingAction = null;
+  }
+
+  function handleGateCancel() {
+    pendingAction = null;
+    error = m.admin_superusers_webauthn_gate_cancelled();
+  }
+
+  function handleGateError(message: string) {
+    pendingAction = null;
+    error = message;
   }
 </script>
 
@@ -253,3 +277,12 @@
     </div>
   {/if}
 </div>
+
+<!-- WebAuthn step-up gate (FR-111) -->
+<WebAuthnGatePrompt
+  bind:isOpen={gateOpen}
+  action={pendingAction}
+  onSuccess={handleGateSuccess}
+  onCancel={handleGateCancel}
+  onError={handleGateError}
+/>

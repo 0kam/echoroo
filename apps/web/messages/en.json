@@ -528,6 +528,13 @@
   "admin_superusers_webauthn_verify_failed": "Hardware key verification failed.",
   "admin_superusers_webauthn_unsupported": "Your browser does not support WebAuthn. Use a recent Chrome / Firefox / Safari build over HTTPS.",
   "admin_superusers_webauthn_missing_interim_token": "An authenticated session token is required. Please sign in again.",
+  "admin_superusers_webauthn_gate_title": "Hardware key confirmation required",
+  "admin_superusers_webauthn_gate_description": "Tap your registered FIDO2 hardware key to confirm this destructive action. Per FR-111 every superuser-scoped change must be backed by a fresh authenticator presence proof.",
+  "admin_superusers_webauthn_gate_continue": "Tap hardware key",
+  "admin_superusers_webauthn_gate_in_progress": "Waiting for hardware key…",
+  "admin_superusers_webauthn_gate_cancelled": "Hardware key confirmation was cancelled. The action was not applied.",
+  "admin_superusers_webauthn_gate_failed": "Hardware key confirmation failed: {reason}",
+  "admin_superusers_ip_allowlist_invalid_lines_label": "Invalid CIDR entries:",
 
   "role_viewer": "Viewer",
   "role_member": "Member",

@@ -20,6 +20,8 @@
   import { localizeHref, getLocale } from '$lib/paraglide/runtime';
   import * as m from '$lib/paraglide/messages';
   import ConfirmDialog from '$lib/components/ui/ConfirmDialog.svelte';
+  import WebAuthnGatePrompt from '$lib/components/admin/WebAuthnGatePrompt.svelte';
+  import { focusTrap } from '$lib/actions/focusTrap';
 
   let listing = $state<SuperuserListResponse | null>(null);
   let isLoading = $state(true);
@@ -36,6 +38,12 @@
   // Revoke confirmation state
   let revokeTarget = $state<SuperuserSummary | null>(null);
   let revokeError = $state<string | null>(null);
+
+  // WebAuthn step-up gate (FR-111).  Every destructive admin action
+  // routes through this prompt before the API call fires.
+  let gateOpen = $state(false);
+  let pendingAction = $state<(() => Promise<void>) | null>(null);
+  let gateContextLabel = $state<'add' | 'revoke' | null>(null);
 
   async function load() {
     isLoading = true;
@@ -105,47 +113,91 @@
       addError = m.admin_superusers_add_missing_user_id();
       return;
     }
-    isSubmittingAdd = true;
     addError = null;
-    try {
-      const cidrs = parseCidrLines(addAllowedCidrs);
-      const result = await superuserApi.add({
-        target_user_id: addTargetUserId.trim(),
-        ...(cidrs.length > 0 ? { allowed_ip_cidrs: cidrs } : {}),
-      });
-      showAddModal = false;
-      banner =
-        result.status === 'pending'
-          ? m.admin_superusers_add_pending_banner({
-              ticket: result.approval_request_id ?? '',
-            })
-          : m.admin_superusers_add_direct_banner();
-      await load();
-    } catch (err) {
-      addError = mapError(err, m.admin_superusers_add_failed());
-    } finally {
-      isSubmittingAdd = false;
-    }
+    // FR-111: open the WebAuthn gate before issuing the API call.
+    const cidrs = parseCidrLines(addAllowedCidrs);
+    const targetUserId = addTargetUserId.trim();
+    pendingAction = async () => {
+      isSubmittingAdd = true;
+      try {
+        const result = await superuserApi.add({
+          target_user_id: targetUserId,
+          ...(cidrs.length > 0 ? { allowed_ip_cidrs: cidrs } : {}),
+        });
+        showAddModal = false;
+        banner =
+          result.status === 'pending'
+            ? m.admin_superusers_add_pending_banner({
+                ticket: result.approval_request_id ?? '',
+              })
+            : m.admin_superusers_add_direct_banner();
+        await load();
+      } catch (err) {
+        // Surface the failure on the still-open Add modal; the gate
+        // treats this as a "successful gate, failing action" and
+        // closes itself so the user can retry.
+        addError = mapError(err, m.admin_superusers_add_failed());
+      } finally {
+        isSubmittingAdd = false;
+      }
+    };
+    gateContextLabel = 'add';
+    gateOpen = true;
   }
 
-  async function confirmRevoke() {
+  function confirmRevoke() {
+    // ConfirmDialog ``onConfirm`` fires immediately after the user
+    // accepts the warning text — we now route the actual API call
+    // through the WebAuthn gate before applying it (FR-111).
     if (!revokeTarget) return;
     revokeError = null;
-    try {
-      const result = await superuserApi.revoke(revokeTarget.id);
-      banner = m.admin_superusers_revoke_pending_banner({
-        ticket: result.approval_request_id ?? '',
-      });
-      revokeTarget = null;
-      await load();
-    } catch (err) {
-      revokeError = mapError(err, m.admin_superusers_revoke_failed());
-    }
+    const target = revokeTarget;
+    pendingAction = async () => {
+      try {
+        const result = await superuserApi.revoke(target.id);
+        banner = m.admin_superusers_revoke_pending_banner({
+          ticket: result.approval_request_id ?? '',
+        });
+        revokeTarget = null;
+        await load();
+      } catch (err) {
+        // Surface the failure on the (still-open) confirm dialog.
+        revokeError = mapError(err, m.admin_superusers_revoke_failed());
+      }
+    };
+    gateContextLabel = 'revoke';
+    gateOpen = true;
   }
 
   function cancelRevoke() {
     revokeTarget = null;
     revokeError = null;
+  }
+
+  function handleGateSuccess() {
+    pendingAction = null;
+    gateContextLabel = null;
+  }
+
+  function handleGateCancel() {
+    // Surface a contextual error on whichever modal initiated the gate.
+    pendingAction = null;
+    if (gateContextLabel === 'add') {
+      addError = m.admin_superusers_webauthn_gate_cancelled();
+    } else if (gateContextLabel === 'revoke') {
+      revokeError = m.admin_superusers_webauthn_gate_cancelled();
+    }
+    gateContextLabel = null;
+  }
+
+  function handleGateError(message: string) {
+    pendingAction = null;
+    if (gateContextLabel === 'add') {
+      addError = message;
+    } else if (gateContextLabel === 'revoke') {
+      revokeError = message;
+    }
+    gateContextLabel = null;
   }
 </script>
 
@@ -345,7 +397,10 @@
     aria-modal="true"
     aria-labelledby="add-superuser-title"
   >
-    <div class="w-full max-w-md rounded-lg bg-surface-card shadow-xl">
+    <div
+      use:focusTrap={{ onClose: closeAddModal }}
+      class="w-full max-w-md rounded-lg bg-surface-card shadow-xl"
+    >
       <div class="border-b border-stone-200 px-6 py-4 dark:border-stone-700">
         <h2 id="add-superuser-title" class="m-0 text-lg font-semibold">
           {m.admin_superusers_add_modal_title()}
@@ -435,4 +490,13 @@
   errorMessage={revokeError}
   onConfirm={confirmRevoke}
   onCancel={cancelRevoke}
+/>
+
+<!-- WebAuthn step-up gate (FR-111) -->
+<WebAuthnGatePrompt
+  bind:isOpen={gateOpen}
+  action={pendingAction}
+  onSuccess={handleGateSuccess}
+  onCancel={handleGateCancel}
+  onError={handleGateError}
 />

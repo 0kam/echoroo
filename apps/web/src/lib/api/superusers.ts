@@ -116,6 +116,7 @@ async function request<T>(
       response.status,
       extractMessage(errorData, 'Request failed'),
       extractErrorCode(errorData),
+      errorData,
     );
   }
 

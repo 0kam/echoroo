@@ -528,6 +528,13 @@
   "admin_superusers_webauthn_verify_failed": "ハードウェアキー認証に失敗しました。",
   "admin_superusers_webauthn_unsupported": "ご利用のブラウザは WebAuthn 非対応です。HTTPS 上で最新の Chrome / Firefox / Safari をご利用ください。",
   "admin_superusers_webauthn_missing_interim_token": "認証セッショントークンが必要です。再度ログインしてください。",
+  "admin_superusers_webauthn_gate_title": "ハードウェアキーの確認が必要です",
+  "admin_superusers_webauthn_gate_description": "登録済 FIDO2 ハードウェアキーをタップして本操作を承認してください。FR-111 によりスーパーユーザー範囲の変更には毎回認証器の存在証明が必要です。",
+  "admin_superusers_webauthn_gate_continue": "ハードウェアキーをタップ",
+  "admin_superusers_webauthn_gate_in_progress": "ハードウェアキーの応答待ち…",
+  "admin_superusers_webauthn_gate_cancelled": "ハードウェアキー確認がキャンセルされたため操作は実行されませんでした。",
+  "admin_superusers_webauthn_gate_failed": "ハードウェアキー確認に失敗しました: {reason}",
+  "admin_superusers_ip_allowlist_invalid_lines_label": "不正な CIDR 行:",
 
   "role_viewer": "閲覧者",
   "role_member": "メンバー",
