@@ -130,12 +130,28 @@ async def setup_test_database(engine: AsyncEngine) -> None:
         )
         superusers_exists = bool(superusers_exists_result.scalar())
 
+        # Phase 15 NO-GO: ``superuser_approval_requests`` is the M-of-N
+        # ticket store created in :mod:`apps/api/alembic/versions/0001`
+        # and DDL-mirrored in this conftest. Probe it explicitly so an
+        # existing test DB that pre-dates the Phase 15 batch gets the
+        # CREATE TABLE block re-run.
+        approval_requests_exists_result = await conn.execute(
+            sa.text(
+                "SELECT EXISTS (SELECT 1 FROM information_schema.tables"
+                " WHERE table_name = 'superuser_approval_requests')"
+            )
+        )
+        approval_requests_exists = bool(
+            approval_requests_exists_result.scalar()
+        )
+
     if (
         core_exists
         and search_exists
         and taxon_sensitivity_exists
         and outbox_exists
         and superusers_exists
+        and approval_requests_exists
     ):
         # Schema is fully up to date — nothing to do.
         return
@@ -301,6 +317,32 @@ async def setup_test_database(engine: AsyncEngine) -> None:
             )
         )
 
+        # Phase 15 NO-GO regression: ``superuser_approval_requests`` (Alembic
+        # 0001) is not picked up by ``Base.metadata.create_all`` here because
+        # the real ORM model declares its FK against ``superusers.id`` which
+        # is created by the raw SQL above (the stub copy in metadata had a
+        # different shape and was filtered out via ``_phase13_stub``).
+        # The Phase 15 fix tests for ``approve_request`` race, duplicate
+        # detection, etc. need this table to exist.
+        await conn.execute(
+            sa.text(
+                """
+                CREATE TABLE IF NOT EXISTS superuser_approval_requests (
+                    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    action VARCHAR(64) NOT NULL,
+                    detail JSONB NOT NULL DEFAULT '{}'::jsonb,
+                    requested_by_id UUID NOT NULL REFERENCES superusers(id),
+                    requesting_user_id UUID NULL REFERENCES users(id),
+                    approvals JSONB NOT NULL DEFAULT '[]'::jsonb,
+                    status VARCHAR(32) NOT NULL DEFAULT 'pending',
+                    executed_at TIMESTAMPTZ NULL,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+                )
+                """
+            )
+        )
+
         # Phase 13 P1 R2 致命 #1: ``system_settings.updated_by_id`` is now
         # ``NOT NULL`` and FKs ``superusers.id``. The historical conftest
         # seed used to insert four ``registration_mode`` / ``allow_registration``
@@ -395,6 +437,10 @@ async def cleanup_test_data(session: AsyncSession) -> None:
     # Instead we drop every row and rely on tests to recreate any settings
     # they need via the admin service / repository helpers.
     await session.execute(sa.text(_safe_delete("system_settings")))
+    # Phase 15 NO-GO: M-of-N approval requests have FKs into superusers
+    # (requested_by_id) so they must be deleted BEFORE the parent rows
+    # below. The table is created in setup_test_database when missing.
+    await session.execute(sa.text(_safe_delete("superuser_approval_requests")))
     # Phase 12 R2: superuser allow-list (FR-112a single source of truth).
     # Must be cleared before ``DELETE FROM users`` because of the FK to
     # users.id.

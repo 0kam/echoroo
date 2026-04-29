@@ -1044,12 +1044,33 @@ async def gate_action(
             db, user_id=current_user.id, project_id=project_id
         )
 
+    # Phase 15 NO-GO Major 1: when the caller authenticated with an API
+    # key, ``echoroo.middleware.auth._stamp_api_key_scopes`` has already
+    # stamped ``user._api_key_scopes`` (a tuple of permission strings).
+    # We translate it into the :data:`Permission` frozenset that
+    # :func:`is_allowed` intersects with the matrix bundle. Unknown
+    # scope names are silently dropped (forward-compatible with newly
+    # added permissions on older clients) — the safe default is "deny".
+    api_key_granted: frozenset[Permission] | None = None
+    raw_scopes = getattr(current_user, "_api_key_scopes", None)
+    if raw_scopes is not None:
+        translated: set[Permission] = set()
+        for scope in raw_scopes:
+            try:
+                translated.add(
+                    scope if isinstance(scope, Permission) else Permission(scope)
+                )
+            except ValueError:
+                continue
+        api_key_granted = frozenset(translated)
+
     allowed, _ = is_allowed(
         action=action,
         user=principal,
         project=project,
         request=request,
         trusted_capabilities=trusted_capabilities,
+        api_key_granted_permissions=api_key_granted,
     )
     if not allowed:
         raise HTTPException(status.HTTP_403_FORBIDDEN, detail="action denied")

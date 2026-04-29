@@ -185,6 +185,17 @@ class WebAuthnRegistrationError(SuperuserServiceError):
     """Raised when WebAuthn credential persistence fails preconditions."""
 
 
+class LastSuperuserProtectionError(SuperuserServiceError):
+    """Raised when revocation would drop active superuser count below 1.
+
+    Phase 15 NO-GO C3 fix: paired with the BEFORE UPDATE trigger
+    extension shipped in migration ``0012``. The DB rejection is the
+    primary defence; this exception is the service-layer secondary
+    defence so the FastAPI layer can surface a 4xx without parsing
+    asyncpg ``RAISE EXCEPTION`` output.
+    """
+
+
 # =============================================================================
 # Outcome dataclasses
 # =============================================================================
@@ -457,7 +468,13 @@ async def revoke_superuser(
     The DB-side trigger ``superuser_last_protection`` (FR-111a) is the
     last-line defence: even if the engine somehow races to revoke the
     final row, PostgreSQL refuses unless ``app.superuser_deletion_override``
-    is set in the same session.
+    is set in the same session. Phase 15 NO-GO C3: that trigger covered
+    only DELETE; the new variant (migration ``0012``) extends it to
+    BEFORE UPDATE OF revoked_at so a soft-revoke that would push the
+    active count below 1 is also blocked. Service-side, we still
+    perform a SELECT FOR UPDATE + count check below as defence in depth
+    so the API layer surfaces a clean Python exception rather than a
+    raw asyncpg error.
     """
     now = datetime.now(UTC)
 
@@ -518,13 +535,35 @@ async def revoke_superuser_apply(
     detail = request.detail or {}
     target_id = UUID(str(detail["target_superuser_id"]))
 
-    target = await session.get(Superuser, target_id)
+    # Phase 15 NO-GO C3: lock the target row + active superuser set so
+    # two concurrent revoke applies cannot both pass the count guard.
+    # SELECT FOR UPDATE on the target is enough for the row-state read,
+    # but the count must reflect a stable view of the table during the
+    # check; PostgreSQL UPDATEs against ``superusers`` from elsewhere
+    # are blocked by this lock when they touch the same row, and the
+    # paired trigger in migration 0012 catches anything that slips
+    # through (e.g. a different target chosen by a sibling ticket).
+    locked_stmt = (
+        sa.select(Superuser)
+        .where(Superuser.id == target_id)
+        .with_for_update()
+    )
+    target = (await session.execute(locked_stmt)).scalar_one_or_none()
     if target is None:
         raise NotSuperuserError(f"superuser {target_id} disappeared")
     if target.revoked_at is not None:
         raise NotSuperuserError(f"superuser {target_id} already revoked")
 
     active_before = await _count_active_superusers(session)
+    if active_before <= 1:
+        # Service-side defence in depth — keep the DB trigger as the
+        # primary block but surface a clean Python exception so the
+        # API can return a friendlier error than asyncpg's raw
+        # ``RAISE EXCEPTION`` text.
+        raise LastSuperuserProtectionError(
+            f"cannot revoke superuser {target_id}: would leave 0 active "
+            "superusers (FR-111a)"
+        )
     target.revoked_at = now
     await session.flush()
     active_after = active_before - 1
@@ -616,9 +655,41 @@ async def approve_request(
     Raises:
         ApprovalRequestNotFoundError / ApprovalRequestStateError /
         DuplicateApprovalError per their docstrings.
+
+    Concurrency model (Phase 15 NO-GO C1 fix)
+    ==========================================
+    Two co-signers may approve the same ticket within microseconds. The
+    previous read-modify-write on the JSONB ``approvals`` array, executed
+    via ``session.get()`` without a row lock, allowed lost updates: each
+    transaction observed ``approvals=[A]`` and wrote ``[A, B]`` /
+    ``[A, C]`` respectively, producing a race where the last commit wins
+    and the other approval silently disappears. Worse, both branches
+    might cross the ``MIN_APPROVALS`` threshold and dispatch the
+    underlying action twice.
+
+    The fix issues a ``SELECT ... FOR UPDATE`` against the ticket row up
+    front so the second transaction blocks until the first commits or
+    rolls back. After the lock returns, the second writer re-reads the
+    JSONB list and sees the freshly-appended approval. The duplicate
+    check then catches its own re-attempt; a different writer simply
+    appends to the now-up-to-date array.
+
+    A secondary ``SELECT 1 FROM superusers`` guard rejects approvers
+    that have been revoked between login and quorum (Minor 1 fix).
     """
     now = datetime.now(UTC)
-    request = await session.get(SuperuserApprovalRequest, request_id_uuid)
+
+    # Phase 15 NO-GO C1: lock the ticket row up front so two co-signers
+    # serialise on this row. ``with_for_update`` returns the live row;
+    # SQLAlchemy's identity-map then makes subsequent attribute reads
+    # consistent with the locked snapshot.
+    locked_stmt = (
+        sa.select(SuperuserApprovalRequest)
+        .where(SuperuserApprovalRequest.id == request_id_uuid)
+        .with_for_update()
+    )
+    locked_result = await session.execute(locked_stmt)
+    request = locked_result.scalar_one_or_none()
     if request is None:
         raise ApprovalRequestNotFoundError(
             f"approval request {request_id_uuid} not found"
@@ -627,6 +698,24 @@ async def approve_request(
         raise ApprovalRequestStateError(
             f"approval request {request_id_uuid} is in status={request.status!r}; "
             "cannot append approval"
+        )
+
+    # Phase 15 NO-GO Minor 1: verify the approver is itself an active
+    # (non-revoked) superuser. The HTTP layer typically checks this
+    # already, but a stale dependency or direct service call must not
+    # bypass it — a revoked superuser must never be able to push a
+    # ticket past quorum.
+    approver_active_stmt = sa.select(sa.literal(1)).where(
+        Superuser.id == approver_superuser_id,
+        Superuser.revoked_at.is_(None),
+    )
+    approver_active = (
+        await session.execute(approver_active_stmt)
+    ).scalar_one_or_none()
+    if approver_active is None:
+        raise NotSuperuserError(
+            f"approver {approver_superuser_id} is not an active superuser; "
+            "cannot record approval"
         )
 
     approvals = list(request.approvals or [])
@@ -942,11 +1031,15 @@ async def enter_break_glass_mode(
     not the latest-event time).
 
     Note: ``system_settings.updated_by_id`` is NOT NULL and FK →
-    ``superusers.id`` (Phase 13 P1 R2 致命 #1). When ``actor_user_id``
-    is None we fall back to a no-op skip with a warning log; in
-    practice the caller path (``revoke_superuser_apply``) always has an
-    actor superuser. Genesis bootstrap never calls into this helper
-    because the count is already < 3 by definition.
+    ``superusers.id`` (Phase 13 P1 R2 致命 #1). The caller path
+    (``revoke_superuser_apply``) hands us the human ``users.id`` via
+    ``actor_user_id``; we must therefore resolve that to the active
+    ``superusers.id`` before stamping the system_settings row. Phase 15
+    NO-GO C2 fix: the previous implementation passed ``actor_user_id``
+    through as-is, which violates the FK and aborts the entire
+    transaction (3 → 2 revoke fails to apply). Genesis bootstrap never
+    calls into this helper because the count is already < 3 by
+    definition.
     """
     started_at = now or datetime.now(UTC)
     existing_started = await _system_setting_get(session, _SETTING_BREAK_GLASS_STARTED_AT)
@@ -967,11 +1060,13 @@ async def enter_break_glass_mode(
             status="applied",
         )
 
-    if actor_user_id is None:
+    superuser_id = await _resolve_active_superuser_id(session, actor_user_id)
+    if superuser_id is None:
         logger.warning(
-            "enter_break_glass_mode called without actor_user_id; "
-            "system_settings update skipped (NOT NULL FK to superusers.id). "
-            "reason=%r",
+            "enter_break_glass_mode could not resolve an active superuser id "
+            "for actor_user_id=%s; system_settings update skipped "
+            "(NOT NULL FK to superusers.id). reason=%r",
+            actor_user_id,
             reason,
         )
     else:
@@ -979,14 +1074,14 @@ async def enter_break_glass_mode(
             session,
             key=_SETTING_BREAK_GLASS_STARTED_AT,
             value=started_at.isoformat(),
-            updated_by_id=actor_user_id,
+            updated_by_id=superuser_id,
             now=started_at,
         )
         await _system_setting_upsert(
             session,
             key=_SETTING_BREAK_GLASS_REASON,
             value=reason,
-            updated_by_id=actor_user_id,
+            updated_by_id=superuser_id,
             now=started_at,
         )
 
@@ -1113,6 +1208,33 @@ async def _load_active_superuser_for_user(
     return result.scalar_one_or_none()
 
 
+async def _resolve_active_superuser_id(
+    session: AsyncSession, actor_user_id: UUID | None
+) -> UUID | None:
+    """Resolve ``users.id`` → active ``superusers.id`` (FR-111a).
+
+    Phase 15 NO-GO C2 fix: ``system_settings.updated_by_id`` is FK →
+    ``superusers.id``, NOT ``users.id``. Callers that only have the
+    human user id must resolve it through this helper before stamping
+    audit-style FK columns.
+
+    Returns ``None`` when ``actor_user_id`` is ``None`` or no active
+    superuser row matches — the caller is expected to skip the FK
+    write and emit a warning log in that case.
+    """
+    if actor_user_id is None:
+        return None
+    stmt = sa.select(Superuser.id).where(
+        Superuser.user_id == actor_user_id,
+        Superuser.revoked_at.is_(None),
+    )
+    result = await session.execute(stmt)
+    row = result.scalar_one_or_none()
+    if row is None:
+        return None
+    return UUID(str(row)) if not isinstance(row, UUID) else row
+
+
 async def _system_setting_get(
     session: AsyncSession, key: str
 ) -> Any | None:
@@ -1188,6 +1310,7 @@ __all__ = [
     "BREAK_GLASS_REPLACEMENT_DEADLINE",
     "BREAK_GLASS_WINDOW",
     "DuplicateApprovalError",
+    "LastSuperuserProtectionError",
     "MIN_APPROVALS",
     "MIN_SUPERUSERS",
     "MIN_WEBAUTHN_CREDENTIALS",

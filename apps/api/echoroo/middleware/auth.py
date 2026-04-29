@@ -19,6 +19,35 @@ security = HTTPBearer(auto_error=False)
 API_TOKEN_PREFIX = "ecr_"
 
 
+def _stamp_api_key_scopes(user: User, principal: object) -> None:
+    """Stamp the API-key scopes onto a transient User instance.
+
+    Phase 15 NO-GO C4 / Major 1 fix: when a request arrives via the
+    Bearer API-key path,
+    :class:`echoroo.middleware.auth_router.AuthRouterMiddleware` puts a
+    :class:`Principal` carrying ``api_key_id`` + ``scopes`` onto
+    ``request.state.principal``. The downstream permission gate
+    (:func:`echoroo.core.permissions.gate_action`) needs the scopes to
+    intersect them with the matrix's effective-permission bundle so an
+    API key with ``scopes=("VIEW_DETECTION",)`` cannot exercise the
+    full ``view_recording`` / ``vote`` / ``export`` bundle that its
+    owning user happens to hold.
+
+    The scopes flow as ``user._api_key_scopes`` — a transient attribute
+    consumed by the gate. The User ORM model has no column for them,
+    and the attribute lives only for the duration of the request.
+
+    Note on Phase 13 cohabitation: ``user._superuser_id`` already uses
+    the same single-underscore convention; both attributes coexist.
+    """
+    api_key_id = getattr(principal, "api_key_id", None)
+    if api_key_id is None:
+        return
+    raw_scopes = getattr(principal, "scopes", ()) or ()
+    user._api_key_id = api_key_id  # type: ignore[attr-defined]
+    user._api_key_scopes = tuple(raw_scopes)  # type: ignore[attr-defined]
+
+
 async def _stamp_superuser_status(db: AsyncSession, user: User | None) -> None:
     """Resolve and stamp ``user.is_superuser`` / ``user._superuser_id``.
 
@@ -57,24 +86,49 @@ async def _stamp_superuser_status(db: AsyncSession, user: User | None) -> None:
 
 
 async def get_current_user(
+    request: Request,
     db: DbSession,
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(security)],
 ) -> User:
-    """Get current authenticated user from JWT token or API token.
+    """Get current authenticated user from API key principal, JWT, or API token.
 
-    Supports two authentication methods:
-    1. JWT access token (standard)
-    2. API token (prefixed with 'ecr_')
+    Resolution priority (Phase 15 NO-GO C4 fix):
+
+      1. ``request.state.principal`` — populated by
+         :class:`AuthRouterMiddleware` after a successful API-key
+         (``echoroo_<prefix>_<secret>``) verification on
+         ``/api/v1/*``. The Bearer header has already been consumed
+         and verified by :class:`DbApiKeyVerifier`; this dependency
+         simply rehydrates the matching :class:`User` row and stamps
+         the API-key scopes onto it so the downstream permission
+         gate (:func:`echoroo.core.permissions.gate_action`) can
+         intersect them with the matrix bundle.
+
+      2. Bearer JWT — the long-standing programmatic / scripted path.
+
+      3. Bearer API token (``ecr_*`` legacy prefix) — pre-Phase-15
+         personal access tokens. Distinct from the new API keys: this
+         path is owned by :class:`TokenService`, not the auth-router
+         middleware.
+
+    The principal-fast-path is a strict superset of behaviour: when
+    no principal is attached (cookie-only, JWT, legacy token), every
+    pre-Phase-15 code path is preserved bit-for-bit.
 
     Args:
-        db: Database session
-        credentials: HTTP Bearer credentials
+        request: Incoming HTTP request — used to read
+            ``state.principal`` populated by
+            :class:`AuthRouterMiddleware`.
+        db: Database session.
+        credentials: HTTP Bearer credentials. May be ``None`` when an
+            API key was already consumed by the middleware (the
+            principal path does not need to re-read the header).
 
     Returns:
-        Current user instance
+        Current user instance.
 
     Raises:
-        HTTPException: If token is missing, invalid, or user not found
+        HTTPException 401 when no credential resolves to a user.
 
     Example:
         ```python
@@ -83,6 +137,26 @@ async def get_current_user(
             return {"user_id": user.id}
         ```
     """
+    # 1. API-key principal fast path (Phase 15 NO-GO C4).
+    principal = getattr(request.state, "principal", None)
+    if principal is not None:
+        api_key_id = getattr(principal, "api_key_id", None)
+        principal_user_id = getattr(principal, "user_id", None)
+        if api_key_id is not None and isinstance(principal_user_id, UUID):
+            result = await db.execute(
+                select(User).where(User.id == principal_user_id)
+            )
+            user = result.scalar_one_or_none()
+            if user is not None:
+                # Stamp the API-key scopes onto the User instance so
+                # downstream gates can apply Major-1 intersection.
+                _stamp_api_key_scopes(user, principal)
+                await _stamp_superuser_status(db, user)
+                return user
+            # Principal points at a vanished user → fall through to
+            # 401 below (do not silently downgrade to anonymous on a
+            # protected endpoint).
+
     if not credentials:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -149,8 +223,13 @@ async def get_current_user_optional(
     Returns:
         Authenticated :class:`User` or ``None`` for Guest.
     """
-    # 1. Cookie-session fast path — AuthRouterMiddleware has already verified
-    # the cookie + JWT and stashed the resolved Principal on request.state.
+    # 1. Cookie-session OR API-key fast path — AuthRouterMiddleware has
+    # already verified the cookie + JWT, OR resolved an API key, and
+    # stashed the resolved Principal on request.state. Phase 15 NO-GO
+    # C4: API-key callers also flow through this dependency on the
+    # public-read endpoints, so the scope stamping must happen here too
+    # otherwise Major 1 (effective_permissions intersection) loses its
+    # input on Public projects.
     principal = getattr(request.state, "principal", None)
     if principal is not None:
         user_id = getattr(principal, "user_id", None)
@@ -158,6 +237,8 @@ async def get_current_user_optional(
             result = await db.execute(select(User).where(User.id == user_id))
             user = result.scalar_one_or_none()
             if user is not None:
+                if getattr(principal, "api_key_id", None) is not None:
+                    _stamp_api_key_scopes(user, principal)
                 await _stamp_superuser_status(db, user)
                 return user
             # Fall through: a Principal without a backing User row is
