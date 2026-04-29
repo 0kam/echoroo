@@ -105,6 +105,7 @@ from echoroo.services.superuser_approval_service import (
     trigger_decision_post_commit_audit,
 )
 from echoroo.services.superuser_service import (
+    AlreadySuperuserError,
     ApprovalRequestNotFoundError,
     ApprovalRequestStateError,
     DuplicateApprovalError,
@@ -116,6 +117,74 @@ from echoroo.services.superuser_service import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/admin", tags=["admin"])
+
+
+# ---------------------------------------------------------------------------
+# Approval-request payload redaction (Phase 15 Batch 5a R2 — Codex Major 1)
+# ---------------------------------------------------------------------------
+#
+# ``superuser_approval_requests.detail`` and ``.approvals`` are JSONB
+# columns owned by :mod:`superuser_service`. The ``superuser.add`` ticket
+# embeds the operator-supplied ``webauthn_credentials`` raw payload into
+# the detail so the apply step can hand it to ``add_superuser_apply``
+# without an extra round trip. That payload includes WebAuthn public key
+# bytes, attestation objects, and other fields that the operator
+# dashboard does not need and that absolutely must not leak through the
+# admin list endpoint to ANY caller — even another superuser. The two
+# helpers below apply a fail-closed allowlist: any field not in the
+# explicit set is dropped silently. New service-side fields will not
+# leak through this surface unless the allowlist is updated.
+_DETAIL_ALLOWED_KEYS: frozenset[str] = frozenset(
+    {
+        # superuser.add tickets
+        "target_user_id",
+        "target_email_hash",
+        "target_role",
+        "allowed_ip_cidrs",
+        # superuser.revoke tickets
+        "target_superuser_id",
+        "revoke_reason",
+        # backup_code_reset / generic
+        "support_ticket_id",
+        "confirmed_factors",
+        "reason",
+        # looser override tickets (cross-cutting)
+        "override_id",
+        "project_id",
+        "taxon_id",
+        "direction",
+        "sensitivity_h3_res",
+    }
+)
+_APPROVAL_ENTRY_ALLOWED_KEYS: frozenset[str] = frozenset(
+    {
+        "superuser_id",
+        "approved_at",
+        "decided_at",
+        "decision",
+        "rejected_reason",
+        "reason",
+    }
+)
+
+
+def _redact_approval_detail(
+    detail: dict[str, object] | None,
+) -> dict[str, object] | None:
+    """Return ``detail`` with only allowlisted keys (FR-111 leak guard)."""
+    if detail is None:
+        return None
+    return {k: v for k, v in detail.items() if k in _DETAIL_ALLOWED_KEYS}
+
+
+def _redact_approvals_list(
+    approvals: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    """Strip non-allowlisted fields from each approval-history entry."""
+    return [
+        {k: v for k, v in entry.items() if k in _APPROVAL_ENTRY_ALLOWED_KEYS}
+        for entry in approvals
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -1246,9 +1315,17 @@ async def list_approval_requests(
         SuperuserApprovalRequestSummary(
             id=row.id,
             action=row.action,
-            detail=dict(row.detail) if row.detail else None,
+            # Phase 15 Batch 5a R2 — Codex Major 1: never expose raw
+            # JSONB ``detail`` / ``approvals``. The service layer
+            # embeds operator-supplied secrets (e.g. WebAuthn raw
+            # public-key payloads) into ``superuser.add`` ticket
+            # detail; the redaction helpers above enforce a
+            # fail-closed allowlist.
+            detail=_redact_approval_detail(
+                dict(row.detail) if row.detail else None
+            ),
             requested_by_id=row.requested_by_id,
-            approvals=list(row.approvals or []),
+            approvals=_redact_approvals_list(list(row.approvals or [])),
             status=row.status,
             created_at=row.created_at,
             executed_at=row.executed_at,
@@ -1336,6 +1413,19 @@ async def approve_request_endpoint(
             status_code=status.HTTP_409_CONFLICT,
             detail={
                 "error": "ERR_LAST_SUPERUSER_PROTECTION",
+                "message": str(exc),
+            },
+        ) from exc
+    except AlreadySuperuserError as exc:
+        # Phase 15 Batch 5a R2 — Codex Minor 1: a stale ``superuser.add``
+        # ticket whose target was already promoted (via a sibling
+        # creation-time exception or a parallel approve) raises
+        # AlreadySuperuserError on the apply path. Surface a clean
+        # 409 instead of the previous unhandled 500.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "error_code": "stale_add_ticket_target_already_superuser",
                 "message": str(exc),
             },
         ) from exc

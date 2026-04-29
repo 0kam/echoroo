@@ -1,13 +1,39 @@
 """Admin request and response schemas."""
 
 from datetime import datetime
+from ipaddress import AddressValueError, NetmaskValueError, ip_network
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from echoroo.models.enums import ProjectMemberRole
 from echoroo.schemas.auth import UserResponse
+
+
+def _validate_cidr_list(value: list[str]) -> list[str]:
+    """Validate and canonicalise a list of CIDR strings.
+
+    Phase 15 Batch 5a R2 (Codex Major 2 fix): reject malformed CIDR
+    entries at the API surface so the auth middleware never has to
+    parse garbage from ``superusers.allowed_ip_cidrs``. ``strict=False``
+    permits "10.0.0.5/24" style host-bit-set inputs but immediately
+    canonicalises to the network address ("10.0.0.0/24") so an
+    operator cannot smuggle a host-laden allowlist past the schema
+    that the middleware would later silently mask off.
+    """
+    validated: list[str] = []
+    for entry in value:
+        if not isinstance(entry, str):
+            raise ValueError(f"CIDR entry must be a string: {entry!r}")
+        if "/" not in entry:
+            raise ValueError(f"missing /prefix in CIDR: {entry!r}")
+        try:
+            network = ip_network(entry, strict=False)
+        except (AddressValueError, NetmaskValueError, ValueError) as exc:
+            raise ValueError(f"invalid CIDR {entry!r}: {exc}") from exc
+        validated.append(str(network))
+    return validated
 
 
 class AdminUserListResponse(BaseModel):
@@ -336,10 +362,16 @@ class SuperuserAddRequest(BaseModel):
         default_factory=list,
         description=(
             "Optional CIDR allowlist for the new superuser. Empty means "
-            "no IP restriction. Validated only as a list of strings here; "
-            "CIDR syntax is enforced by the auth middleware (FR-072)."
+            "no IP restriction. Each entry is parsed as a CIDR and "
+            "canonicalised (host bits zeroed) before persistence so the "
+            "auth middleware (FR-072) only sees well-formed networks."
         ),
     )
+
+    @field_validator("allowed_ip_cidrs")
+    @classmethod
+    def _validate_allowed_ip_cidrs(cls, v: list[str]) -> list[str]:
+        return _validate_cidr_list(v)
 
 
 class SuperuserActionResponse(BaseModel):
@@ -505,9 +537,12 @@ class SuperuserBreakGlassStatusResponse(BaseModel):
 class SuperuserIpAllowlistUpdateRequest(BaseModel):
     """Body for ``PATCH /admin/superusers/{id}/ip-allowlist``.
 
-    Replaces ``superusers.allowed_ip_cidrs`` wholesale. CIDR syntax is
-    not validated here — the auth middleware (FR-072) parses each entry
-    and rejects mutating requests originating outside the allowlist.
+    Replaces ``superusers.allowed_ip_cidrs`` wholesale. Phase 15 Batch
+    5a R2 (Codex Major 2 fix): each CIDR entry is now validated and
+    canonicalised at the API surface so the auth middleware (FR-072)
+    cannot be fed malformed input that would otherwise persist into
+    ``superusers.allowed_ip_cidrs`` and silently neuter the
+    allowlist gate.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -516,9 +551,15 @@ class SuperuserIpAllowlistUpdateRequest(BaseModel):
         ...,
         description=(
             "New allowlist (replaces the existing array). Empty means "
-            "no IP restriction."
+            "no IP restriction. Each entry is parsed as a CIDR and "
+            "canonicalised (host bits zeroed) before persistence."
         ),
     )
+
+    @field_validator("allowed_ip_cidrs")
+    @classmethod
+    def _validate_allowed_ip_cidrs(cls, v: list[str]) -> list[str]:
+        return _validate_cidr_list(v)
 
 
 class SuperuserIpAllowlistResponse(BaseModel):

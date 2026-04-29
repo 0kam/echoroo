@@ -875,4 +875,290 @@ async def test_action_response_detail_includes_engine_payload(
     assert detail["target_user_id"] == str(target.id)
 
 
+# ===========================================================================
+# Phase 15 Batch 5a R2 — Codex Major 1: approval list redaction (FR-111)
+# ===========================================================================
+
+
+@pytest.mark.asyncio
+async def test_list_approval_requests_redacts_webauthn_payload_from_detail(
+    db_session: AsyncSession,
+    admin_client_factory,  # type: ignore[no-untyped-def]
+) -> None:
+    """``superuser.add`` ticket detail must not leak WebAuthn raw payload.
+
+    The service layer embeds the operator-supplied
+    ``webauthn_credentials`` blob into ``superuser_approval_requests.detail``
+    so the apply step can hand it to ``add_superuser_apply``. The admin
+    list endpoint MUST redact that field (and any other future-leak
+    candidates) before serialising the response.
+    """
+    su_user = await _create_user(
+        db_session, email="batch5a_redact_detail_su@example.com"
+    )
+    su = await _create_superuser(db_session, user=su_user)
+
+    target_user_id = uuid4()
+    sentinel_pubkey = "AAAA-LEAKED-PUBLIC-KEY-PAYLOAD"
+    sentinel_assertion = "BBBB-LEAKED-WEBAUTHN-ASSERTION"
+    sentinel_email = "leaked.email@example.com"
+
+    ticket = SuperuserApprovalRequest(
+        action=ACTION_SUPERUSER_ADD,
+        detail={
+            "target_user_id": str(target_user_id),
+            # Allowlisted — must survive.
+            "allowed_ip_cidrs": ["10.0.0.0/24"],
+            # Non-allowlisted — must be dropped.
+            "webauthn_credentials": [
+                {
+                    "credential_id": "CRED-1",
+                    "public_key": sentinel_pubkey,
+                    "raw_assertion": sentinel_assertion,
+                }
+            ],
+            "registered_email": sentinel_email,
+        },
+        requested_by_id=su.id,
+        approvals=[
+            {
+                "superuser_id": str(su.id),
+                "approved_at": datetime.now(UTC).isoformat(),
+                # Non-allowlisted leak surface — must be dropped.
+                "webauthn_assertion": sentinel_assertion,
+                "raw_signed_challenge": sentinel_pubkey,
+            }
+        ],
+        status="pending",
+    )
+    db_session.add(ticket)
+    await db_session.commit()
+    await db_session.refresh(ticket)
+
+    async with await admin_client_factory(su_user) as client:
+        response = await client.get(
+            "/web-api/v1/admin/superusers/approval-requests"
+        )
+    assert response.status_code == 200
+    body = response.json()
+    matching = [item for item in body["items"] if item["id"] == str(ticket.id)]
+    assert matching, "ticket missing from response"
+    item = matching[0]
+
+    # Allowlisted fields survive.
+    assert item["detail"]["target_user_id"] == str(target_user_id)
+    assert item["detail"]["allowed_ip_cidrs"] == ["10.0.0.0/24"]
+
+    # Non-allowlisted fields are dropped.
+    assert "webauthn_credentials" not in item["detail"]
+    assert "registered_email" not in item["detail"]
+
+    # Sentinel substring scan — the payload must not appear ANYWHERE in
+    # the serialised response (defence in depth against future regressions
+    # that re-introduce a leaky field outside the allowlist).
+    serialised = response.text
+    assert sentinel_pubkey not in serialised, "WebAuthn public key leaked"
+    assert sentinel_assertion not in serialised, "WebAuthn assertion leaked"
+    assert sentinel_email not in serialised, "raw email leaked"
+
+    # ``approvals`` entries are also redacted.
+    for entry in item["approvals"]:
+        assert "webauthn_assertion" not in entry
+        assert "raw_signed_challenge" not in entry
+        # The allowlisted ``superuser_id`` / ``approved_at`` fields survive.
+        assert "superuser_id" in entry
+        assert "approved_at" in entry
+
+
+# ===========================================================================
+# Phase 15 Batch 5a R2 — Codex Major 2: CIDR validator (FR-072)
+# ===========================================================================
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "bad_cidr",
+    [
+        "not-a-cidr",
+        "10.0.0.0",  # missing /prefix
+        "999.999.999.999/24",  # invalid octets
+        "10.0.0.0/33",  # invalid IPv4 prefix length
+        "abc/24",
+    ],
+    ids=[
+        "garbage_token",
+        "missing_prefix",
+        "invalid_octets",
+        "prefix_out_of_range",
+        "non_numeric_host",
+    ],
+)
+async def test_ip_allowlist_update_rejects_invalid_cidr(
+    db_session: AsyncSession,
+    admin_client_factory,  # type: ignore[no-untyped-def]
+    bad_cidr: str,
+) -> None:
+    """PATCH ip-allowlist must 422 for any malformed CIDR entry."""
+    su_user = await _create_user(
+        db_session, email=f"batch5a_cidr_{abs(hash(bad_cidr))}_su@example.com"
+    )
+    await _create_superuser(db_session, user=su_user)
+
+    target_user = await _create_user(
+        db_session,
+        email=f"batch5a_cidr_{abs(hash(bad_cidr))}_target@example.com",
+    )
+    target = await _create_superuser(db_session, user=target_user)
+
+    async with await admin_client_factory(su_user) as client:
+        response = await client.patch(
+            f"/web-api/v1/admin/superusers/{target.id}/ip-allowlist",
+            json={"allowed_ip_cidrs": [bad_cidr]},
+        )
+    assert response.status_code == 422, (
+        f"bad CIDR {bad_cidr!r} should produce 422, got {response.status_code} "
+        f"body={response.text!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_ip_allowlist_update_canonicalises_host_bits(
+    db_session: AsyncSession,
+    admin_client_factory,  # type: ignore[no-untyped-def]
+) -> None:
+    """Host-bit-set entries are canonicalised to network address.
+
+    ``"10.0.0.5/24"`` is accepted (``strict=False``) and persisted as
+    ``"10.0.0.0/24"`` so the auth middleware never sees a host-laden
+    allowlist that would silently mask off in production.
+    """
+    su_user = await _create_user(
+        db_session, email="batch5a_cidr_canonical_su@example.com"
+    )
+    await _create_superuser(db_session, user=su_user)
+
+    target_user = await _create_user(
+        db_session, email="batch5a_cidr_canonical_target@example.com"
+    )
+    target = await _create_superuser(db_session, user=target_user)
+
+    async with await admin_client_factory(su_user) as client:
+        response = await client.patch(
+            f"/web-api/v1/admin/superusers/{target.id}/ip-allowlist",
+            json={"allowed_ip_cidrs": ["10.0.0.5/24", "192.168.1.50/16"]},
+        )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["allowed_ip_cidrs"] == ["10.0.0.0/24", "192.168.0.0/16"]
+
+
+@pytest.mark.asyncio
+async def test_add_superuser_rejects_invalid_cidr(
+    db_session: AsyncSession,
+    admin_client_factory,  # type: ignore[no-untyped-def]
+) -> None:
+    """POST /superusers must 422 when ``allowed_ip_cidrs`` has bad entries."""
+    su_user = await _create_user(
+        db_session, email="batch5a_add_bad_cidr_su@example.com"
+    )
+    await _create_superuser(db_session, user=su_user)
+    target = await _create_user(
+        db_session, email="batch5a_add_bad_cidr_target@example.com"
+    )
+
+    async with await admin_client_factory(su_user) as client:
+        response = await client.post(
+            "/web-api/v1/admin/superusers",
+            json={
+                "target_user_id": str(target.id),
+                "allowed_ip_cidrs": ["not-a-cidr"],
+            },
+        )
+    assert response.status_code == 422
+
+
+# ===========================================================================
+# Phase 15 Batch 5a R2 — Codex Minor 1: stale add ticket → 409 (not 500)
+# ===========================================================================
+
+
+@pytest.mark.asyncio
+async def test_approve_stale_add_ticket_returns_409(
+    db_session: AsyncSession,
+    admin_client_factory,  # type: ignore[no-untyped-def]
+) -> None:
+    """A ``superuser.add`` ticket whose target is already a superuser at the
+    apply step must surface ``AlreadySuperuserError`` as a clean 409 with
+    ``error_code='stale_add_ticket_target_already_superuser'`` (not 500).
+
+    Setup: 3 active superusers (so add goes through the M-of-N path,
+    creation-time exception bypassed), a pending ticket targeting a
+    user who has been promoted out-of-band (direct DB insert), and 2
+    distinct co-signers that will cross the quorum on the second
+    approve call.
+    """
+    # 3 active superusers → above MIN_SUPERUSERS so M-of-N applies.
+    su_a_user = await _create_user(
+        db_session, email="batch5a_stale_a@example.com"
+    )
+    su_a = await _create_superuser(db_session, user=su_a_user)
+    su_b_user = await _create_user(
+        db_session, email="batch5a_stale_b@example.com"
+    )
+    su_b = await _create_superuser(db_session, user=su_b_user)
+    su_c_user = await _create_user(
+        db_session, email="batch5a_stale_c@example.com"
+    )
+    await _create_superuser(db_session, user=su_c_user)
+
+    # Target user — already promoted directly so the apply step sees an
+    # ``existing active superuser`` row and raises ``AlreadySuperuserError``.
+    target_user = await _create_user(
+        db_session, email="batch5a_stale_target@example.com"
+    )
+    await _create_superuser(db_session, user=target_user)
+
+    # Pending ``superuser.add`` ticket targeting the same user.
+    ticket = SuperuserApprovalRequest(
+        action=ACTION_SUPERUSER_ADD,
+        detail={
+            "target_user_id": str(target_user.id),
+            "webauthn_credentials": [],
+            "allowed_ip_cidrs": [],
+        },
+        requested_by_id=su_a.id,
+        approvals=[],
+        status="pending",
+    )
+    db_session.add(ticket)
+    await db_session.commit()
+    await db_session.refresh(ticket)
+    ticket_id = ticket.id
+
+    # First approver (su_a) — appends to approvals, still pending
+    # (MIN_APPROVALS=2). The endpoint commits.
+    async with await admin_client_factory(su_a_user) as client:
+        first = await client.post(
+            f"/web-api/v1/admin/superusers/approval-requests/{ticket_id}/approve"
+        )
+        assert first.status_code == 200, first.text
+        assert first.json()["status"] == "pending"
+
+    # Second approver (su_b) — crosses quorum, triggers
+    # ``add_superuser_apply`` which raises ``AlreadySuperuserError``.
+    async with await admin_client_factory(su_b_user) as client:
+        second = await client.post(
+            f"/web-api/v1/admin/superusers/approval-requests/{ticket_id}/approve"
+        )
+    assert second.status_code == 409, second.text
+    body = second.json()
+    assert (
+        body["detail"]["error_code"]
+        == "stale_add_ticket_target_already_superuser"
+    )
+    # Sanity: the second SU id is referenced in the error narrative.
+    assert "message" in body["detail"]
+    assert str(su_b.id)  # sanity, ensures su_b row was created
+
+
 __all__: list[UUID | str] = []

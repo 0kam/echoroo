@@ -154,6 +154,11 @@ paths:
               schema: { $ref: "#/components/schemas/SuperuserListResponse" }
         "401": { description: 未認証 }
         "403": { description: superuser ではない / API key ベタ拒否（FR-084） }
+        "500":
+          description: 内部エラー
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
     post:
       summary: superuser 追加（既存 2 名 M-of-N 承認必須、FR-111）
@@ -175,6 +180,12 @@ paths:
         "401": { description: 未認証 }
         "403": { description: superuser ではない / API key ベタ拒否（FR-084） }
         "409": { description: 既に superuser }
+        "422": { description: 不正な CIDR 等のスキーマ違反 }
+        "500":
+          description: 内部エラー
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   /superusers/{superuserId}/revoke:
     post:
@@ -195,6 +206,11 @@ paths:
         "403": { description: superuser ではない / API key ベタ拒否 }
         "404": { description: superuser 行が存在しない or 既に revoked }
         "409": { description: 1→0 boundary（FR-111a 最終 1 名保護） }
+        "500":
+          description: 内部エラー
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   /superusers/{superuserId}/ip-allowlist:
     patch:
@@ -220,6 +236,12 @@ paths:
         "403": { description: superuser ではない / API key ベタ拒否 }
         "404": { description: superuser 行が存在しない }
         "409": { description: 対象 superuser が revoked 済 }
+        "422": { description: 不正な CIDR エントリ }
+        "500":
+          description: 内部エラー
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   /superusers/approval-requests:
     get:
@@ -238,6 +260,11 @@ paths:
               schema: { $ref: "#/components/schemas/SuperuserApprovalRequestListResponse" }
         "401": { description: 未認証 }
         "403": { description: superuser ではない }
+        "500":
+          description: 内部エラー
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   /superusers/approval-requests/{approvalRequestId}/approve:
     post:
@@ -259,8 +286,18 @@ paths:
         "404": { description: approval request が存在しない }
         "409":
           description: |
-            既に applied / rejected、duplicate approver、または最終 1 名保護
-            （FR-111a; ERR_LAST_SUPERUSER_PROTECTION）
+            既に applied / rejected、duplicate approver、最終 1 名保護
+            （FR-111a; ERR_LAST_SUPERUSER_PROTECTION）、
+            または stale ``superuser.add`` ticket（apply 時点で対象が既に
+            superuser; ``error_code=stale_add_ticket_target_already_superuser``）
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "500":
+          description: 内部エラー
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   /superusers/approval-requests/{approvalRequestId}/reject:
     post:
@@ -286,6 +323,11 @@ paths:
         "403": { description: superuser ではない }
         "404": { description: approval request が存在しない }
         "409": { description: 既に applied / rejected }
+        "500":
+          description: 内部エラー
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   /superusers/break-glass/enter:
     post:
@@ -307,6 +349,11 @@ paths:
               schema: { $ref: "#/components/schemas/SuperuserBreakGlassStatusResponse" }
         "401": { description: 未認証 }
         "403": { description: superuser ではない }
+        "500":
+          description: 内部エラー
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   /superusers/break-glass/status:
     get:
@@ -320,6 +367,11 @@ paths:
               schema: { $ref: "#/components/schemas/SuperuserBreakGlassStatusResponse" }
         "401": { description: 未認証 }
         "403": { description: superuser ではない }
+        "500":
+          description: 内部エラー
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
 components:
   securitySchemes:
@@ -455,3 +507,17 @@ components:
           type: array
           items: { type: string }
         updated_at: { type: string, format: date-time }
+
+    Error:
+      type: object
+      description: |
+        共通エラーエンベロープ。FastAPI ``HTTPException.detail`` の形に合わせ、
+        ``error`` または ``error_code`` のいずれかと ``message`` を返す。
+      properties:
+        detail:
+          type: object
+          properties:
+            error: { type: string }
+            error_code: { type: string }
+            message: { type: string }
+          additionalProperties: true
