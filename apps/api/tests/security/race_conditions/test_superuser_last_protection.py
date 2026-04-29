@@ -18,6 +18,19 @@ test suite.  Locally (fresh container), run::
 
     docker exec echoroo-backend uv run alembic upgrade head
 
+Additionally, the ``echoroo_app`` PostgreSQL role must exist in the test
+DB and have DML privileges on the ``superusers`` table.  This role is
+created automatically in the CI entrypoint and can be created locally::
+
+    docker exec echoroo-db psql -U postgres -d echoroo_test -c \\
+        "CREATE ROLE echoroo_app WITH LOGIN PASSWORD 'echoroo_app_test'; \\
+         GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO echoroo_app; \\
+         GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO echoroo_app;"
+
+Then install the trigger function (if not done by alembic on the test DB)::
+
+    docker exec echoroo-db psql -U postgres -d echoroo_test -f /tmp/install_trigger.sql
+
 Scenarios
 ---------
 1.  ``echoroo_app`` role: ``revoked_at = now()`` UPDATE (2 → 0) raises.
@@ -26,7 +39,8 @@ Scenarios
 4.  ``app.superuser_deletion_override = 'true'``: override permits the op.
 5.  Re-revoke of already-revoked row is NOT blocked (idempotent).
 6.  UPDATE of non-``revoked_at`` column does not fire the guard.
-7.  Advisory-lock race: concurrent 2 → 0 revokes — only one succeeds.
+7.  Advisory-lock race: concurrent 2 → 0 revokes as echoroo_app — advisory lock
+    ensures only 1 succeeds and final active count = 1.
 
 Note: endpoint-level tests are deferred to Batch 5.  This file focuses
 on the raw DB trigger / advisory-lock semantics.
@@ -36,6 +50,15 @@ they need independent DB connections to test concurrent behaviour and role
 switching. Each test manages its own engine lifecycle. The standard
 ``db_session`` fixture is intentionally NOT imported here to avoid FK
 cleanup conflicts with leftover approval request rows from other test suites.
+
+Role availability
+-----------------
+The trigger checks ``current_user = 'echoroo_app'``. This test suite uses
+``SET ROLE echoroo_app`` within a transaction started by the superuser
+``postgres`` connection (which has SUPERUSER privileges). This simulates
+the application connection without requiring a separate TCP authentication
+handshake as echoroo_app. The trigger fires based on the in-transaction
+``current_user`` value — i.e. after ``SET ROLE``.
 """
 
 from __future__ import annotations
@@ -49,6 +72,7 @@ from uuid import UUID, uuid4
 
 import pytest
 import sqlalchemy as sa
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import (
     async_sessionmaker,
     create_async_engine,
@@ -86,10 +110,10 @@ _LOCK_KEY: int = (
 )
 
 # ---------------------------------------------------------------------------
-# Skip guard: skip the whole module if trigger is not installed
+# Skip guard: skip the whole module if trigger or echoroo_app role is absent
 # ---------------------------------------------------------------------------
 
-pytestmark = pytest.mark.asyncio
+pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 
 
 def _make_engine() -> Any:
@@ -102,6 +126,15 @@ async def _trigger_exists(engine: Any) -> bool:
             sa.text(
                 "SELECT 1 FROM pg_proc WHERE proname = 'prevent_last_superuser_deletion'"
             )
+        )
+        return row.scalar() is not None
+
+
+async def _app_role_exists(engine: Any) -> bool:
+    """Return True if the echoroo_app role exists in the connected DB."""
+    async with engine.connect() as conn:
+        row = await conn.execute(
+            sa.text("SELECT 1 FROM pg_roles WHERE rolname = 'echoroo_app'")
         )
         return row.scalar() is not None
 
@@ -176,85 +209,147 @@ async def _count_active(conn: Any) -> int:
 
 # ---------------------------------------------------------------------------
 # Scenario 1: echoroo_app role — UPDATE 2 → 0 revokes is blocked
-#
-# Note: the echoroo_app role does not exist in the test DB (only ``echoroo``
-# and ``postgres``). The trigger inspects ``current_user`` and compares
-# against the literal string 'echoroo_app'. We therefore SET LOCAL ROLE to
-# simulate the app connection without needing the role to exist.
 # ---------------------------------------------------------------------------
 
 
 async def test_update_revoke_2_to_0_blocked_as_app_role() -> None:
     """UPDATE flipping 2 active → 0 must raise as echoroo_app role (SC-022).
 
-    This test will be skipped if the trigger function is not installed.
+    Uses ``SET ROLE echoroo_app`` within a postgres superuser transaction to
+    simulate the application connection. The trigger fires based on
+    ``current_user`` at trigger execution time (post SET ROLE). Expects
+    asyncpg.exceptions.RaiseError wrapped in DBAPIError.
     """
     engine = _make_engine()
     try:
         if not await _trigger_exists(engine):
             pytest.skip(
                 "prevent_last_superuser_deletion trigger not installed; "
-                "run `alembic upgrade head` to enable trigger-level tests"
+                "run `alembic upgrade head` + install trigger on test DB"
+            )
+        if not await _app_role_exists(engine):
+            pytest.skip(
+                "echoroo_app role absent in test DB; "
+                "create it with GRANT ALL ON TABLES before running trigger tests"
             )
 
+        sid_a: UUID
+        sid_b: UUID
+
+        # Seed two active superusers in a setup transaction (postgres role).
         async with engine.begin() as conn:
-            # Wipe pre-existing active superusers so the count is deterministic.
+            await _cleanup_t954_rows(conn)
             await conn.execute(
                 sa.text("UPDATE superusers SET revoked_at = now() WHERE revoked_at IS NULL")
             )
-
             uid_a = await _insert_user(conn, suffix="t954_s1a")
             uid_b = await _insert_user(conn, suffix="t954_s1b")
-            await _insert_superuser(conn, user_id=uid_a)
-            await _insert_superuser(conn, user_id=uid_b)
-
+            sid_a = await _insert_superuser(conn, user_id=uid_a)
+            sid_b = await _insert_superuser(conn, user_id=uid_b)
             assert await _count_active(conn) == 2
 
-            # Simulate the application connection role.
-            await conn.execute(sa.text("SET LOCAL ROLE echoroo"))
-            # Override current_user name so trigger believes it is echoroo_app.
-            # We cannot SET ROLE to a non-existent role; instead we replicate the
-            # scenario by setting the trigger's check value via a GUC the trigger
-            # reads. However, the trigger checks ``current_user``, not a GUC.
-            # Since echoroo_app does not exist in this test DB, we document the
-            # limitation: the trigger will run as 'echoroo' (which is NOT
-            # 'echoroo_app'), so the app-role check may fall through.
-            # We instead verify the ADVISORY LOCK path via the service layer in
-            # test_superuser_service_phase15_nogo.py. This test validates the
-            # structural trigger presence.
-            # Mark as xfail to document that echoroo_app role is absent in test DB.
-            pytest.xfail(
-                "echoroo_app role absent in test DB; trigger app-role path cannot be "
-                "verified here. Service-level guard (LastSuperuserProtectionError) is "
-                "validated in test_superuser_service_phase15_nogo.py."
+        # Attempt to revoke BOTH as echoroo_app — trigger must raise.
+        try:
+            async with engine.begin() as conn:
+                await conn.execute(sa.text("SET ROLE echoroo_app"))
+                # Verify the role switch took effect.
+                role_row = await conn.execute(sa.text("SELECT current_user"))
+                assert role_row.scalar() == "echoroo_app", (
+                    "SET ROLE did not take effect — echoroo_app role may lack LOGIN"
+                )
+                # Revoking both active rows would leave 0 active — trigger must block.
+                await conn.execute(
+                    sa.text(
+                        "UPDATE superusers SET revoked_at = now() "
+                        "WHERE id IN (:sid_a, :sid_b)"
+                    ),
+                    {"sid_a": str(sid_a), "sid_b": str(sid_b)},
+                )
+            pytest.fail(
+                "Expected trigger to raise RaiseError for 2→0 revoke as echoroo_app, "
+                "but the UPDATE succeeded — SC-022 trigger is not working."
+            )
+        except DBAPIError as exc:
+            assert "RaiseError" in type(exc.orig).__name__ or "RaiseError" in str(exc), (
+                f"Expected RaiseError from trigger, got: {exc}"
+            )
+            assert "Cannot revoke last superuser" in str(exc), (
+                f"Unexpected trigger message: {exc}"
+            )
+
+        # Post-condition: active count must not have changed (trigger rolled back).
+        async with engine.begin() as conn:
+            count = await _count_active(conn)
+            assert count == 2, (
+                f"Trigger should have blocked the revoke, "
+                f"but active count changed to {count}"
             )
     finally:
+        # Cleanup — run as postgres role so trigger does not interfere.
+        async with engine.begin() as conn:
+            await _cleanup_t954_rows(conn)
         await engine.dispose()
 
 
 # ---------------------------------------------------------------------------
-# Scenario 2: hard DELETE (1 → 0) blocked
+# Scenario 2: hard DELETE (1 → 0) blocked as echoroo_app
 # ---------------------------------------------------------------------------
 
 
 async def test_hard_delete_1_to_0_blocked_as_app_role() -> None:
     """Hard DELETE of last active superuser must raise as echoroo_app role.
 
-    Same echoroo_app limitation as scenario 1.
+    The DELETE branch of the trigger also takes the advisory lock and
+    checks ``COUNT(*) <= 1`` before raising.
     """
     engine = _make_engine()
     try:
         if not await _trigger_exists(engine):
             pytest.skip(
-                "prevent_last_superuser_deletion trigger not installed; "
-                "run `alembic upgrade head` to enable trigger-level tests"
+                "prevent_last_superuser_deletion trigger not installed"
             )
-        # echoroo_app role absent — xfail as documented.
-        pytest.xfail(
-            "echoroo_app role absent in test DB; DELETE trigger guard cannot be "
-            "verified at this level. See test_superuser_service_phase15_nogo.py."
-        )
+        if not await _app_role_exists(engine):
+            pytest.skip("echoroo_app role absent in test DB")
+
+        sid: UUID
+
+        async with engine.begin() as conn:
+            await _cleanup_t954_rows(conn)
+            await conn.execute(
+                sa.text("UPDATE superusers SET revoked_at = now() WHERE revoked_at IS NULL")
+            )
+            uid = await _insert_user(conn, suffix="t954_s2")
+            sid = await _insert_superuser(conn, user_id=uid)
+            assert await _count_active(conn) == 1
+
+        try:
+            async with engine.begin() as conn:
+                await conn.execute(sa.text("SET ROLE echoroo_app"))
+                await conn.execute(
+                    sa.text("DELETE FROM superusers WHERE id = :sid"),
+                    {"sid": str(sid)},
+                )
+            pytest.fail(
+                "Expected trigger to raise RaiseError for DELETE of last superuser "
+                "as echoroo_app, but the DELETE succeeded."
+            )
+        except DBAPIError as exc:
+            assert "RaiseError" in type(exc.orig).__name__ or "RaiseError" in str(exc), (
+                f"Expected RaiseError from trigger, got: {exc}"
+            )
+            assert "Cannot delete last superuser" in str(exc), (
+                f"Unexpected trigger message: {exc}"
+            )
+
+        # Post-condition: the row must still be present.
+        async with engine.begin() as conn:
+            count = await _count_active(conn)
+            assert count == 1, (
+                f"DELETE should have been blocked; active count = {count}"
+            )
     finally:
+        async with engine.begin() as conn:
+            await _cleanup_t954_rows(conn)
         await engine.dispose()
 
 
@@ -268,6 +363,7 @@ async def test_update_revoke_allowed_as_postgres_role() -> None:
 
     The trigger's first branch is ``IF current_user <> 'echoroo_app' THEN
     RETURN NEW``, so postgres / echoroo connections are not blocked.
+    After the revoke the active count must be 0.
     """
     engine = _make_engine()
     try:
@@ -286,43 +382,81 @@ async def test_update_revoke_allowed_as_postgres_role() -> None:
             sid = await _insert_superuser(conn, user_id=uid)
             assert await _count_active(conn) == 1
 
-            # current_user is 'echoroo' (not 'echoroo_app') — trigger must pass.
+            # current_user is 'postgres' (not 'echoroo_app') — trigger must pass.
             await conn.execute(
                 sa.text("UPDATE superusers SET revoked_at = now() WHERE id = :sid"),
                 {"sid": str(sid)},
             )
-            assert await _count_active(conn) == 0, (
-                "postgres/echoroo role should bypass the trigger guard"
+            count = await _count_active(conn)
+            assert count == 0, (
+                f"postgres/echoroo role should bypass the trigger guard; count={count}"
             )
     finally:
+        async with engine.begin() as conn:
+            await _cleanup_t954_rows(conn)
         await engine.dispose()
 
 
 # ---------------------------------------------------------------------------
 # Scenario 4: app.superuser_deletion_override GUC permits echoroo_app op
-#
-# Again — echoroo_app absent, so we document with xfail.
 # ---------------------------------------------------------------------------
 
 
 async def test_deletion_override_guc_permits_op() -> None:
     """``app.superuser_deletion_override = 'true'`` bypasses the trigger guard.
 
-    This tests the creator_founder override path (Alembic 0013).
+    Even as echoroo_app, setting the override GUC in the same LOCAL
+    transaction allows revoking the last superuser row (creator_founder
+    override path, Alembic 0013).
     """
     engine = _make_engine()
     try:
         if not await _trigger_exists(engine):
             pytest.skip(
-                "prevent_last_superuser_deletion trigger not installed; "
-                "run `alembic upgrade head` to enable trigger-level tests"
+                "prevent_last_superuser_deletion trigger not installed"
             )
-        pytest.xfail(
-            "echoroo_app role absent; GUC override path requires the role to "
-            "simulate the app connection. Structural coverage is complete for "
-            "the non-app role via scenario 3."
-        )
+        if not await _app_role_exists(engine):
+            pytest.skip("echoroo_app role absent in test DB")
+
+        sid: UUID
+
+        async with engine.begin() as conn:
+            await _cleanup_t954_rows(conn)
+            await conn.execute(
+                sa.text("UPDATE superusers SET revoked_at = now() WHERE revoked_at IS NULL")
+            )
+            uid = await _insert_user(conn, suffix="t954_s4")
+            sid = await _insert_superuser(conn, user_id=uid)
+            assert await _count_active(conn) == 1
+
+        # Same transaction: SET ROLE + SET LOCAL GUC + UPDATE.
+        async with engine.begin() as conn:
+            await conn.execute(sa.text("SET ROLE echoroo_app"))
+            await conn.execute(
+                sa.text("SET LOCAL \"app.superuser_deletion_override\" = 'true'")
+            )
+            # Should NOT raise — override GUC disables the trigger guard.
+            await conn.execute(
+                sa.text("UPDATE superusers SET revoked_at = now() WHERE id = :sid"),
+                {"sid": str(sid)},
+            )
+
+        # Post-condition: row is revoked (0 active for t954 users).
+        async with engine.begin() as conn:
+            result = await conn.execute(
+                sa.text(
+                    "SELECT COUNT(*) FROM superusers "
+                    "WHERE revoked_at IS NULL AND user_id IN "
+                    "(SELECT id FROM users WHERE email LIKE 't954_%@example.com')"
+                )
+            )
+            count = int(result.scalar())
+            assert count == 0, (
+                f"Override GUC should have allowed the revoke; active t954 count = {count}"
+            )
     finally:
+        async with engine.begin() as conn:
+            await _cleanup_t954_rows(conn)
         await engine.dispose()
 
 
@@ -336,7 +470,8 @@ async def test_rererevoke_already_revoked_row_not_blocked() -> None:
 
     The trigger only fires when ``OLD.revoked_at IS NULL AND
     NEW.revoked_at IS NOT NULL``. An already-revoked row should be
-    unaffected (idempotent re-revoke).
+    unaffected (idempotent re-revoke). Tested as echoroo_app to confirm
+    the trigger's conditional correctly bypasses the guard for this case.
     """
     engine = _make_engine()
     try:
@@ -345,6 +480,10 @@ async def test_rererevoke_already_revoked_row_not_blocked() -> None:
                 "prevent_last_superuser_deletion trigger not installed; "
                 "run `alembic upgrade head` to enable trigger-level tests"
             )
+        if not await _app_role_exists(engine):
+            pytest.skip("echoroo_app role absent in test DB")
+
+        sid_revoked: UUID
 
         async with engine.begin() as conn:
             await _cleanup_t954_rows(conn)
@@ -357,8 +496,10 @@ async def test_rererevoke_already_revoked_row_not_blocked() -> None:
             await _insert_superuser(conn, user_id=uid_active)
             sid_revoked = await _insert_superuser(conn, user_id=uid_revoked, revoked=True)
 
-            # Re-touching an already-revoked row (OLD.revoked_at non-NULL) must
-            # not raise — the trigger only guards the NULL → non-NULL transition.
+        # Re-touching an already-revoked row as echoroo_app must NOT raise.
+        # OLD.revoked_at IS NOT NULL → trigger's guard condition is False.
+        async with engine.begin() as conn:
+            await conn.execute(sa.text("SET ROLE echoroo_app"))
             await conn.execute(
                 sa.text(
                     "UPDATE superusers SET revoked_at = now() + interval '1 second' "
@@ -366,9 +507,23 @@ async def test_rererevoke_already_revoked_row_not_blocked() -> None:
                 ),
                 {"sid": str(sid_revoked)},
             )
-            # Active count unchanged.
-            assert await _count_active(conn) == 1
+
+        # Active count unchanged — the active row should still be active.
+        async with engine.begin() as conn:
+            result = await conn.execute(
+                sa.text(
+                    "SELECT COUNT(*) FROM superusers "
+                    "WHERE revoked_at IS NULL AND user_id IN "
+                    "(SELECT id FROM users WHERE email LIKE 't954_%@example.com')"
+                )
+            )
+            count = int(result.scalar())
+            assert count == 1, (
+                f"Active count must be 1 after idempotent re-revoke; got {count}"
+            )
     finally:
+        async with engine.begin() as conn:
+            await _cleanup_t954_rows(conn)
         await engine.dispose()
 
 
@@ -386,6 +541,10 @@ async def test_update_other_column_not_blocked() -> None:
                 "prevent_last_superuser_deletion trigger not installed; "
                 "run `alembic upgrade head` to enable trigger-level tests"
             )
+        if not await _app_role_exists(engine):
+            pytest.skip("echoroo_app role absent in test DB")
+
+        sid: UUID
 
         async with engine.begin() as conn:
             await _cleanup_t954_rows(conn)
@@ -395,7 +554,11 @@ async def test_update_other_column_not_blocked() -> None:
             uid = await _insert_user(conn, suffix="t954_s6")
             sid = await _insert_superuser(conn, user_id=uid)
 
-            # Update a non-revoked_at column with one active superuser remaining.
+        # Update a non-revoked_at column as echoroo_app — trigger must not fire.
+        # The BEFORE UPDATE trigger is declared ``OF revoked_at``, so it only
+        # fires when that specific column is in the SET clause.
+        async with engine.begin() as conn:
+            await conn.execute(sa.text("SET ROLE echoroo_app"))
             await conn.execute(
                 sa.text(
                     "UPDATE superusers SET allowed_ip_cidrs = ARRAY['192.168.0.0/24'] "
@@ -403,36 +566,41 @@ async def test_update_other_column_not_blocked() -> None:
                 ),
                 {"sid": str(sid)},
             )
-            # Row must still be active.
-            assert await _count_active(conn) == 1
+
+        # Row must still be active.
+        async with engine.begin() as conn:
+            result = await conn.execute(
+                sa.text(
+                    "SELECT COUNT(*) FROM superusers "
+                    "WHERE revoked_at IS NULL AND user_id IN "
+                    "(SELECT id FROM users WHERE email LIKE 't954_%@example.com')"
+                )
+            )
+            count = int(result.scalar())
+            assert count == 1, (
+                f"Non-revoked_at UPDATE must not trip the guard; active count = {count}"
+            )
     finally:
+        async with engine.begin() as conn:
+            await _cleanup_t954_rows(conn)
         await engine.dispose()
 
 
 # ---------------------------------------------------------------------------
-# Scenario 7: advisory-lock race — concurrent 2 → 0 revokes, one succeeds
-#
-# This mirrors test_revoke_apply_two_concurrent_revokes_leave_one_active in
-# test_superuser_service_phase15_nogo.py but drives the trigger directly via
-# raw SQL (both connections share the same role so the echoroo_app guard is
-# irrelevant here — the advisory lock itself must still serialize the ops).
+# Scenario 7: advisory-lock race — concurrent 2 → 0 revokes as echoroo_app,
+#             only one succeeds (active count = 1 at the end).
 # ---------------------------------------------------------------------------
 
 
 async def test_concurrent_revokes_advisory_lock_serialises() -> None:
-    """Concurrent 2-row → 0 revoke race: advisory lock must leave 1 active.
+    """Concurrent 2-row → 0 revoke race as echoroo_app: advisory lock serialises.
 
-    Since the test DB role is 'echoroo' (not 'echoroo_app'), the trigger
-    guard branch that raises the error does NOT fire. However, the
-    advisory lock IS taken because pg_advisory_xact_lock runs before the
-    guard check. What this test verifies is that:
-    (a) the trigger does NOT raise for the echoroo role, AND
-    (b) the service-side guard (LastSuperuserProtectionError) is what
-        enforces the invariant in production (validated separately).
+    Both transactions target different rows and both would leave 0 active
+    superusers if they both committed.  The advisory lock in the trigger
+    forces them to serialise: the first TX commits (1 active remains), the
+    second TX sees 0 active-after and raises.
 
-    The test is therefore a structural exercise rather than an
-    end-to-end enforcement test. It passes when the trigger function
-    exists and behaves as documented (no raise for non-app roles).
+    Final active count must be 1.
     """
     engine = _make_engine()
     try:
@@ -441,21 +609,22 @@ async def test_concurrent_revokes_advisory_lock_serialises() -> None:
                 "prevent_last_superuser_deletion trigger not installed; "
                 "run `alembic upgrade head` to enable trigger-level tests"
             )
+        if not await _app_role_exists(engine):
+            pytest.skip("echoroo_app role absent in test DB")
 
-        # Seed two active superusers, first cleaning any leftover t954 rows.
-        engine_setup = _make_engine()
-        factory_setup = async_sessionmaker(engine_setup, expire_on_commit=False)
-        async with factory_setup() as s_setup:
-            await _cleanup_t954_rows(s_setup)
-            await s_setup.execute(
+        sid_a: UUID
+        sid_b: UUID
+
+        # Seed two active superusers.
+        async with engine.begin() as conn:
+            await _cleanup_t954_rows(conn)
+            await conn.execute(
                 sa.text("UPDATE superusers SET revoked_at = now() WHERE revoked_at IS NULL")
             )
-            uid_a = await _insert_user(s_setup, suffix="t954_s7_a")
-            uid_b = await _insert_user(s_setup, suffix="t954_s7_b")
-            sid_a = await _insert_superuser(s_setup, user_id=uid_a)
-            sid_b = await _insert_superuser(s_setup, user_id=uid_b)
-            await s_setup.commit()
-        await engine_setup.dispose()
+            uid_a = await _insert_user(conn, suffix="t954_s7_a")
+            uid_b = await _insert_user(conn, suffix="t954_s7_b")
+            sid_a = await _insert_superuser(conn, user_id=uid_a)
+            sid_b = await _insert_superuser(conn, user_id=uid_b)
 
         engine_a = _make_engine()
         engine_b = _make_engine()
@@ -464,14 +633,11 @@ async def test_concurrent_revokes_advisory_lock_serialises() -> None:
 
         results: list[Exception | None] = []
 
-        async def _revoke(factory: Any, sid: UUID) -> Exception | None:
+        async def _revoke_as_app(factory: Any, sid: UUID) -> Exception | None:
+            """Attempt to revoke the given row as echoroo_app."""
             try:
                 async with factory() as s:
-                    # Take advisory lock (mirrors service layer).
-                    await s.execute(
-                        sa.text("SELECT pg_advisory_xact_lock(:k)"),
-                        {"k": _LOCK_KEY},
-                    )
+                    await s.execute(sa.text("SET ROLE echoroo_app"))
                     await s.execute(
                         sa.text(
                             "UPDATE superusers SET revoked_at = now() WHERE id = :sid"
@@ -485,33 +651,49 @@ async def test_concurrent_revokes_advisory_lock_serialises() -> None:
 
         try:
             r1, r2 = await asyncio.gather(
-                _revoke(factory_a, sid_a),
-                _revoke(factory_b, sid_b),
+                _revoke_as_app(factory_a, sid_a),
+                _revoke_as_app(factory_b, sid_b),
             )
             results = [r1, r2]
         finally:
             await engine_a.dispose()
             await engine_b.dispose()
 
-        # For non-echoroo_app roles, the trigger does NOT block. Both revokes
-        # will succeed and zero active rows result. This is the expected
-        # behaviour — the trigger protects only the app connection.
-        # Validate that both ops ran without DB errors.
-        assert all(r is None for r in results), (
-            f"unexpected error from raw-SQL revoke: {results!r}"
-        )
+        successes = [r for r in results if r is None]
+        failures = [r for r in results if r is not None]
 
-        # Post-condition: both rows are revoked (no app-role guard fired).
-        verify_engine = _make_engine()
-        verify_factory = async_sessionmaker(verify_engine, expire_on_commit=False)
-        try:
-            async with verify_factory() as vs:
-                count = await _count_active(vs)
-                # For non-app roles the trigger passes through — 0 active is correct.
-                assert count == 0, (
-                    f"expected 0 active superusers after non-app raw revoke, got {count}"
+        # Exactly one TX must succeed, the other must be blocked by the trigger.
+        assert len(successes) == 1, (
+            f"Expected exactly 1 successful revoke, got {len(successes)}. "
+            f"Results: {results!r}"
+        )
+        assert len(failures) == 1, (
+            f"Expected exactly 1 trigger-blocked failure, got {len(failures)}. "
+            f"Results: {results!r}"
+        )
+        # The failure must be a trigger RaiseError.
+        failed_exc = failures[0]
+        assert isinstance(failed_exc, DBAPIError), (
+            f"Expected DBAPIError (asyncpg.RaiseError), got {type(failed_exc)}: {failed_exc}"
+        )
+        assert "RaiseError" in type(failed_exc.orig).__name__ or "Cannot revoke" in str(
+            failed_exc
+        ), f"Unexpected error: {failed_exc}"
+
+        # Post-condition: exactly 1 active superuser remains (of the t954 race pair).
+        async with engine.begin() as conn:
+            result = await conn.execute(
+                sa.text(
+                    "SELECT COUNT(*) FROM superusers "
+                    "WHERE revoked_at IS NULL AND user_id IN "
+                    "(SELECT id FROM users WHERE email LIKE 't954_s7%@example.com')"
                 )
-        finally:
-            await verify_engine.dispose()
+            )
+            count = int(result.scalar())
+            assert count == 1, (
+                f"Advisory lock must leave exactly 1 active superuser; got {count}"
+            )
     finally:
+        async with engine.begin() as conn:
+            await _cleanup_t954_rows(conn)
         await engine.dispose()

@@ -718,7 +718,19 @@ def is_allowed(
 
     # --- Step 0a: platform-scope action -------------------------------------
     if action.is_platform_scope:
-        allowed = bool(user) and _is_superuser(user)
+        # FR-084 defence-in-depth: API key principals MUST NOT be permitted
+        # on superuser-only platform actions even when the owning user holds
+        # ``is_superuser=True``.  The middleware stamps ``is_superuser`` from
+        # the live ``superusers`` table for ALL authentication paths — including
+        # API key paths — so ``_is_superuser(user)`` alone is insufficient to
+        # block a superuser-owned API key from reaching this branch.
+        # We therefore add an explicit veto: any caller that has the
+        # ``_api_key_scopes`` attribute (stamped by ``_stamp_api_key_scopes``
+        # in :mod:`echoroo.middleware.auth`) is an API-key principal and is
+        # categorically denied platform-scope operations regardless of the
+        # underlying user's superuser status.
+        is_api_key_caller = getattr(user, "_api_key_scopes", None) is not None
+        allowed = bool(user) and _is_superuser(user) and not is_api_key_caller
         effective = frozenset(_SUPERUSER_PERMS) if allowed else frozenset()
         _stash_state(request, effective=effective, normalized_role="Superuser" if allowed else "Guest")
         return allowed, effective

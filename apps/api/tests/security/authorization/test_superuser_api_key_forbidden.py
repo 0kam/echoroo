@@ -276,3 +276,212 @@ def test_all_superuser_actions_flagged_platform_scope() -> None:
         assert action.required_permission is None, (
             f"{action.name!r} platform-scope action must have required_permission=None"
         )
+
+
+# ---------------------------------------------------------------------------
+# Integration-style: middleware _stamp_superuser_status path simulation
+#
+# These tests simulate the FULL middleware → gate_action pathway using
+# SimpleNamespace objects that mirror the exact attribute shape produced by
+# echoroo.middleware.auth after _stamp_superuser_status has been called.
+#
+# The critical invariant (FR-084 defence-in-depth):
+#   "Even if _stamp_superuser_status sets is_superuser=True on a User row that
+#    was fetched via an API-key request, the is_platform_scope branch in
+#    is_allowed MUST still veto the caller because _api_key_scopes is present."
+#
+# This is not a theoretical concern: auth.py line 173-174 shows that
+# _stamp_superuser_status IS called for API-key paths too (after the User row
+# is loaded). If the veto check were missing, a superuser-owned API key could
+# reach platform-scope operations.
+# ---------------------------------------------------------------------------
+
+
+def _simulate_middleware_stamp(
+    *,
+    is_superuser_in_db: bool,
+    has_api_key: bool,
+    scopes: tuple[str, ...] = ("view_detection",),
+    superuser_id: str | None = "su-id-t956-int",
+) -> SimpleNamespace:
+    """Build a User-like object as auth.py would after both stamp helpers run.
+
+    Replicates the attribute shape produced by:
+        1. db.execute(select(User).where(...)) → user row
+        2. _stamp_api_key_scopes(user, principal)   ← sets _api_key_scopes if API key
+        3. await _stamp_superuser_status(db, user)  ← always sets is_superuser
+    """
+    user = SimpleNamespace(
+        id="user-t956-integration",
+        # _stamp_superuser_status always sets these two attributes:
+        is_superuser=is_superuser_in_db,
+        _superuser_id=superuser_id if is_superuser_in_db else None,
+        project_role=None,
+    )
+    if has_api_key:
+        # _stamp_api_key_scopes sets these three attributes:
+        user._api_key_id = "apikey-t956-int"
+        user._api_key_scopes = scopes
+        user._api_key_project_id = None
+    return user
+
+
+class TestMiddlewareStampThenGateVeto:
+    """Verify is_allowed veto after _stamp_superuser_status has set is_superuser=True.
+
+    These tests use is_allowed directly with SimpleNamespace fixtures that
+    precisely mirror the attribute shape auth.py produces.  The test class
+    documents the exact code path that FR-084 defence-in-depth protects.
+    """
+
+    def test_superuser_api_key_vetoed_even_after_is_superuser_stamp(self) -> None:
+        """Core invariant: API key caller with is_superuser=True is still denied.
+
+        auth.py calls _stamp_superuser_status for API-key paths (line 174).
+        So the stamped User will have is_superuser=True AND _api_key_scopes set.
+        The is_platform_scope branch MUST veto based on _api_key_scopes presence.
+        """
+        # Simulate: superuser user authenticated via their own API key.
+        # _stamp_superuser_status runs → is_superuser=True
+        # _stamp_api_key_scopes runs  → _api_key_scopes=(...) present
+        user = _simulate_middleware_stamp(
+            is_superuser_in_db=True,
+            has_api_key=True,
+        )
+        project = _make_project()
+
+        for action in _SUPERUSER_ACTIONS:
+            allowed, _ = is_allowed(
+                action=action,
+                user=user,
+                project=project,
+                request=None,
+            )
+            assert allowed is False, (
+                f"Superuser API key caller (is_superuser=True + _api_key_scopes set) "
+                f"must be vetoed on {action.name!r}. "
+                f"This verifies the FR-084 veto in the is_platform_scope branch fires "
+                f"AFTER _stamp_superuser_status would have set is_superuser=True."
+            )
+
+    def test_superuser_session_caller_allowed_after_stamp(self) -> None:
+        """Positive control: superuser session caller (no _api_key_scopes) is allowed.
+
+        When auth.py runs _stamp_superuser_status for a cookie/JWT session,
+        it does NOT call _stamp_api_key_scopes (_api_key_scopes absent).
+        The is_platform_scope branch must allow this caller.
+        """
+        user = _simulate_middleware_stamp(
+            is_superuser_in_db=True,
+            has_api_key=False,  # session path: _stamp_api_key_scopes NOT called
+        )
+        project = _make_project()
+
+        for action in _SUPERUSER_ACTIONS:
+            allowed, _ = is_allowed(
+                action=action,
+                user=user,
+                project=project,
+                request=None,
+            )
+            assert allowed is True, (
+                f"Superuser session caller (is_superuser=True, no _api_key_scopes) "
+                f"must be allowed on {action.name!r} (positive control)"
+            )
+
+    def test_non_superuser_api_key_denied_platform_actions(self) -> None:
+        """Non-superuser user with API key: denied (is_superuser=False path)."""
+        user = _simulate_middleware_stamp(
+            is_superuser_in_db=False,
+            has_api_key=True,
+        )
+        project = _make_project()
+
+        for action in _SUPERUSER_ACTIONS:
+            allowed, _ = is_allowed(
+                action=action,
+                user=user,
+                project=project,
+                request=None,
+            )
+            assert allowed is False, (
+                f"Non-superuser API key caller must be denied {action.name!r} "
+                f"(control: fails on _is_superuser check before veto even fires)"
+            )
+
+    def test_platform_iucn_action_vetoed_for_superuser_api_key(self) -> None:
+        """Specific test for PLATFORM_IUCN_FORCE_RESYNC_ACTION (actions.py:488).
+
+        This action is defined in actions.py (not stub-registered here) and
+        exercises the real production action object to confirm the veto applies
+        to a concrete real-world platform action (not just the test stubs above).
+        """
+        from echoroo.core.actions import PLATFORM_IUCN_FORCE_RESYNC_ACTION
+
+        user = _simulate_middleware_stamp(
+            is_superuser_in_db=True,
+            has_api_key=True,
+            scopes=("view_detection", "view_recording"),
+        )
+        project = _make_project()
+
+        allowed, _ = is_allowed(
+            action=PLATFORM_IUCN_FORCE_RESYNC_ACTION,
+            user=user,
+            project=project,
+            request=None,
+        )
+        assert allowed is False, (
+            "PLATFORM_IUCN_FORCE_RESYNC_ACTION must be vetoed for a superuser-owned "
+            "API key (is_superuser=True + _api_key_scopes set). "
+            "FR-084: API key principals must never reach platform-scope operations."
+        )
+
+    def test_platform_iucn_action_allowed_for_superuser_session(self) -> None:
+        """Positive control: PLATFORM_IUCN_FORCE_RESYNC_ACTION allowed via session."""
+        from echoroo.core.actions import PLATFORM_IUCN_FORCE_RESYNC_ACTION
+
+        user = _simulate_middleware_stamp(
+            is_superuser_in_db=True,
+            has_api_key=False,
+        )
+        project = _make_project()
+
+        allowed, _ = is_allowed(
+            action=PLATFORM_IUCN_FORCE_RESYNC_ACTION,
+            user=user,
+            project=project,
+            request=None,
+        )
+        assert allowed is True, (
+            "PLATFORM_IUCN_FORCE_RESYNC_ACTION must be allowed for a superuser "
+            "session caller (no _api_key_scopes). Positive control."
+        )
+
+    def test_veto_attribute_inspection_matches_middleware_contract(self) -> None:
+        """Structural: the veto condition uses _api_key_scopes presence, not value.
+
+        The is_platform_scope branch does:
+            is_api_key_caller = getattr(user, "_api_key_scopes", None) is not None
+        This means even an empty tuple () triggers the veto — the presence of
+        the attribute itself (not its content) is the signal.
+        """
+        # Edge: _api_key_scopes = empty tuple — still triggers veto
+        user_empty_scopes = _simulate_middleware_stamp(
+            is_superuser_in_db=True,
+            has_api_key=True,
+            scopes=(),  # empty — but attribute IS present
+        )
+        project = _make_project()
+
+        for action in _SUPERUSER_ACTIONS:
+            allowed, _ = is_allowed(
+                action=action,
+                user=user_empty_scopes,
+                project=project,
+                request=None,
+            )
+            assert allowed is False, (
+                f"Empty _api_key_scopes=() still triggers veto on {action.name!r}. "
+                f"Veto is based on attribute PRESENCE, not scope content."
+            )

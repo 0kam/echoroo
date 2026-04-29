@@ -186,8 +186,12 @@ class TestHiddenTaxonSuperuserClamp:
         """Superuser with HIDDEN taxon map must get H3_RES_2 location."""
         from echoroo.core.permissions import _SUPERUSER_PERMS  # noqa: PLC2701
         project = _make_project(visibility=ProjectVisibility.PUBLIC)
-        obj = _make_response_obj(h3_index_member="8f283082a2a19f5")
-        resource = _make_resource(taxon_id="species-hidden")
+        # Use a real res-9 H3 cell as input (Tokyo area, res 9).
+        # "89283082807ffff" is a valid res-9 H3 cell.
+        input_h3_res9 = "89283082807ffff"
+        obj = _make_response_obj(h3_index_member=input_h3_res9)
+        resource = _make_resource(taxon_id="species-hidden", h3_res=H3_RES_9)
+        resource.h3_index_member = input_h3_res9
 
         # Build a sensitivity map where the taxon is HIDDEN (H3_RES_2).
         taxon_sensitivity_map = {"species-hidden": H3_RES_2}
@@ -202,13 +206,39 @@ class TestHiddenTaxonSuperuserClamp:
         )
 
         # The h3_index_member must now be a res-2 cell (coarsened).
-        # We just verify that the coarsening ran (withheld_reason set).
+        # Verify withheld_reason records the clamping.
         assert obj.withheld_reason is not None, (
             "withheld_reason must be set for HIDDEN taxon regardless of role"
         )
         assert "taxon_sensitivity" in obj.withheld_reason, (
             f"withheld_reason must mention taxon_sensitivity, got {obj.withheld_reason!r}"
         )
+
+        # FR-035 core assertion: output H3 cell is res-2 (coarsened from res-9).
+        # Use h3 library when available; fall back to structural string check.
+        output_cell = getattr(obj, "h3_index_member", None)
+        assert output_cell is not None, "h3_index_member must be set after filter"
+        assert output_cell != input_h3_res9, (
+            "h3_index_member must have been coarsened from the res-9 input cell "
+            "(FR-035: HIDDEN clamp forces H3_RES_2)"
+        )
+        try:
+            import h3 as _h3  # noqa: PLC0415 (lazy import, h3 may be absent in some envs)
+            output_res = _h3.get_resolution(output_cell)
+            assert output_res == H3_RES_2, (
+                f"Output H3 cell must be resolution {H3_RES_2} (HIDDEN clamp), "
+                f"got resolution {output_res} (cell={output_cell!r})"
+            )
+            # Also verify output is an ancestor of the original res-9 cell.
+            expected_parent = _h3.cell_to_parent(input_h3_res9, H3_RES_2)
+            assert output_cell == expected_parent, (
+                f"Output H3 cell {output_cell!r} must be the res-2 parent "
+                f"of input res-9 cell {input_h3_res9!r} (expected {expected_parent!r})"
+            )
+        except ImportError:
+            # h3 C extension not available in this test environment;
+            # structural assertion (cell changed) above already confirms coarsening.
+            pass
 
     def test_owner_hidden_taxon_also_clamped(self) -> None:
         """Owner role (like Superuser in real endpoints) is also subject to HIDDEN clamp."""
@@ -321,7 +351,7 @@ class TestPathFieldNotLeaked:
 
 
 @pytest.mark.xfail(
-    strict=False,
+    strict=True,
     reason=(
         "Raw export endpoint (/admin/projects/{id}/raw-export) is not yet "
         "implemented in Phase 15. This xfail records the TODO: when raw-export "
