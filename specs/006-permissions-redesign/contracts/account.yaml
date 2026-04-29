@@ -90,7 +90,8 @@ paths:
         Anonymises the ``users`` row in place:
 
         * ``email`` is replaced with the sentinel
-          ``deleted_<short_hash>@deleted.echoroo.invalid`` so the
+          ``deleted_<32-hex>@deleted.echoroo.invalid`` (the user's
+          full UUID hex, 16^32 ≈ 3.4e38 collision budget) so the
           UNIQUE constraint stays satisfied.
         * ``display_name`` is replaced with the sentinel
           ``"[deleted user]"``.
