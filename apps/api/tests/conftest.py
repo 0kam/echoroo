@@ -10,6 +10,7 @@ from unittest.mock import patch
 import pytest
 import sqlalchemy as sa
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -67,6 +68,23 @@ async def setup_test_database(engine: AsyncEngine) -> None:
        missing → targeted migration using the idempotent DO-block enum helper
        and raw CREATE TABLE SQL so that existing indexes are not touched.
     """
+    # Phase 13 P1 R2 致命 #1: register a stub ``superusers`` Table on
+    # ``Base.metadata`` *unconditionally*, even when the DB-side schema is
+    # already up to date. The stub is process-local (resets on every fresh
+    # interpreter) and is needed by every ORM operation that walks the
+    # ``system_settings.updated_by_id`` FK — including tests that run
+    # *after* a previous test already populated the schema. Skipping this
+    # block when the early-return below fires would leave subsequent ORM
+    # operations exposed to ``NoReferencedTableError`` from
+    # ``sort_tables_and_constraints``.
+    if "superusers" not in Base.metadata.tables:
+        sa.Table(
+            "superusers",
+            Base.metadata,
+            sa.Column("id", PgUUID(as_uuid=True), primary_key=True),
+            sa.Column("user_id", PgUUID(as_uuid=True), nullable=False),
+            info={"_phase13_stub": True},
+        )
     async with engine.connect() as conn:
         core_exists_result = await conn.execute(
             sa.text(
@@ -187,11 +205,52 @@ async def setup_test_database(engine: AsyncEngine) -> None:
         for type_name, values in enum_defs:
             await conn.execute(sa.text(_make_create_enum_sql(type_name, values)))
 
-        # Create all tables that don't already exist.
-        # Use checkfirst=True to skip tables that are already present so that
-        # existing indexes are not re-emitted (which would cause DuplicateTableError
-        # for tables that SQLAlchemy also generates auto-indexes for).
-        await conn.run_sync(lambda c: Base.metadata.create_all(c, checkfirst=True))
+        # Phase 13 P1 R2 致命 #1: the stub ``superusers`` Table was
+        # registered above (before the early-return) so SA can resolve the
+        # ``system_settings.updated_by_id`` FK during ``create_all``. Now
+        # we still need to CREATE the real ``superusers`` (and its parent
+        # ``users``) **before** the rest of ``create_all`` runs, so the FK
+        # constraint emitted on ``system_settings`` does not reference a
+        # missing relation.
+
+        # (b) Create ``users`` (ORM table) + raw ``superusers`` upfront.
+        users_table = Base.metadata.tables["users"]
+        await conn.run_sync(
+            lambda c: users_table.create(c, checkfirst=True)
+        )
+        await conn.execute(
+            sa.text(
+                """
+                CREATE TABLE IF NOT EXISTS superusers (
+                    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    user_id UUID NOT NULL UNIQUE
+                        REFERENCES users (id) ON DELETE CASCADE,
+                    added_by_id UUID NULL REFERENCES users (id),
+                    added_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                    revoked_at TIMESTAMPTZ NULL,
+                    webauthn_credentials JSONB NOT NULL DEFAULT '[]'::jsonb,
+                    allowed_ip_cidrs VARCHAR[] NOT NULL DEFAULT ARRAY[]::VARCHAR[],
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+                )
+                """
+            )
+        )
+
+        # Create remaining tables. Filter out the ``superusers`` stub —
+        # the real DDL is emitted above. Iterate ``tables.values()``
+        # (unsorted; sort still happens internally inside ``create_all``
+        # but it can now resolve the stub FK).
+        _tables_to_create = [
+            t
+            for t in Base.metadata.tables.values()
+            if not t.info.get("_phase13_stub")
+        ]
+        await conn.run_sync(
+            lambda c: Base.metadata.create_all(
+                c, tables=_tables_to_create, checkfirst=True
+            )
+        )
 
         # Phase 12 R1 fix: ``outbox_events`` is created by Alembic
         # migration 0001 (no SQLAlchemy ORM model exists yet) so
@@ -212,33 +271,6 @@ async def setup_test_database(engine: AsyncEngine) -> None:
                     processed_at TIMESTAMPTZ NULL,
                     last_error TEXT NULL,
                     idempotency_key VARCHAR(128) NULL UNIQUE
-                )
-                """
-            )
-        )
-
-        # Phase 12 R2 致命 C1 fix: ``superusers`` is also created by
-        # Alembic 0001 with no ORM model (only the
-        # ``echoroo.repositories.superuser_credentials`` stub references
-        # it). Auth dependencies probe this table on every authenticated
-        # request to stamp ``user.is_superuser``; tests therefore need
-        # the table to exist or every request 500s. We create it
-        # idempotently here so the existing test fixtures (which never
-        # promote a user to superuser) all see ``is_superuser=False``.
-        await conn.execute(
-            sa.text(
-                """
-                CREATE TABLE IF NOT EXISTS superusers (
-                    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-                    user_id UUID NOT NULL UNIQUE
-                        REFERENCES users (id) ON DELETE CASCADE,
-                    added_by_id UUID NULL REFERENCES users (id),
-                    added_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-                    revoked_at TIMESTAMPTZ NULL,
-                    webauthn_credentials JSONB NOT NULL DEFAULT '[]'::jsonb,
-                    allowed_ip_cidrs VARCHAR[] NOT NULL DEFAULT ARRAY[]::VARCHAR[],
-                    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-                    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
                 )
                 """
             )
@@ -269,23 +301,17 @@ async def setup_test_database(engine: AsyncEngine) -> None:
             )
         )
 
-        # Phase 13 P1 (T803a): seed the JSONB-native shape. The legacy
-        # ``value_type`` / ``description`` columns no longer exist; values
-        # are stored as native JSONB so booleans and numbers round-trip
-        # without manual encoding.
-        await conn.execute(
-            sa.text(
-                """
-                INSERT INTO system_settings (key, value, updated_at)
-                VALUES
-                    ('registration_mode', '"open"'::jsonb, CURRENT_TIMESTAMP),
-                    ('session_timeout_minutes', '120'::jsonb, CURRENT_TIMESTAMP),
-                    ('allow_registration', 'true'::jsonb, CURRENT_TIMESTAMP),
-                    ('setup_completed', 'false'::jsonb, CURRENT_TIMESTAMP)
-                ON CONFLICT (key) DO NOTHING
-                """
-            )
-        )
+        # Phase 13 P1 R2 致命 #1: ``system_settings.updated_by_id`` is now
+        # ``NOT NULL`` and FKs ``superusers.id``. The historical conftest
+        # seed used to insert four ``registration_mode`` / ``allow_registration``
+        # / ``session_timeout_minutes`` / ``setup_completed`` rows with a
+        # nullable FK; that path is no longer legal.
+        #
+        # No live code path *reads* those rows with a fail-required contract
+        # — every reader uses ``get_value(default=…)`` and tolerates a
+        # missing row — so the seed is now intentionally removed. Tests that
+        # need a specific setting must create it via the admin service /
+        # repository helpers (which resolve a real ``superusers.id`` first).
 
     return
 
@@ -363,6 +389,12 @@ async def cleanup_test_data(session: AsyncSession) -> None:
     await session.execute(sa.text(_safe_delete("taxa")))
     # Phase 12 R1: outbox events (idempotency dedupe + worker queue).
     await session.execute(sa.text(_safe_delete("outbox_events")))
+    # Phase 13 P1 R2 致命 #1: ``system_settings.updated_by_id`` is NOT NULL
+    # and FKs ``superusers.id``. The legacy cleanup path nulled the column
+    # out so we could ``DELETE FROM users`` next; that is no longer legal.
+    # Instead we drop every row and rely on tests to recreate any settings
+    # they need via the admin service / repository helpers.
+    await session.execute(sa.text(_safe_delete("system_settings")))
     # Phase 12 R2: superuser allow-list (FR-112a single source of truth).
     # Must be cleared before ``DELETE FROM users`` because of the FK to
     # users.id.
@@ -375,16 +407,7 @@ async def cleanup_test_data(session: AsyncSession) -> None:
     # Clear licenses and recorders
     await session.execute(sa.text(_safe_delete("licenses")))
     await session.execute(sa.text(_safe_delete("recorders")))
-    # Clear system_settings references to users before deleting users
-    await session.execute(sa.text("UPDATE system_settings SET updated_by_id = NULL"))
     await session.execute(sa.text("DELETE FROM users"))
-    # Reset setup_completed for setup tests (Phase 13 P1: JSONB value).
-    await session.execute(
-        sa.text(
-            "UPDATE system_settings SET value = 'false'::jsonb "
-            "WHERE key = 'setup_completed'"
-        )
-    )
     await session.commit()
 
 

@@ -76,8 +76,8 @@ Phase 1-12 累積編集による ORM ↔ DB ↔ spec の三方向乖離を Phase
 | 55 | `detection_runs` | 改修 (ORM 化、enum 実名統一) | Phase 13 P1、`detectionrunstatus` enum |
 | 56 | `detections` | 改修 (DB only → ORM 化) | Phase 13 P1 で ORM 化、`detectionsource` enum widening (`perch`, `similarity_search`, `custom_svm`, `sampling_round` 4 値追加) |
 
-**新規 enum 17 件** (Phase 13 P0a / P1 で追加、ORM canonical 命名):
-`datetimeparsestatus`, `annotation_set_status`, `annotation_segment_status`, `annotationtaskstatus`, `annotationprojectvisibility`, `reviewstatus`, `geometrytype`, `signalquality`, `consensusstatus`, `detectionrunstatus`, `uploadsessionstatus`, `uploadfilestatus`, `searchsessionstatus`, `setting_type`, `votetype`, `custommodelstatus`, `evaluation_run_status`
+**新規 enum 16 件** (Phase 13 P0a / P1 で追加、ORM canonical 命名。Phase 13 P1 R2 致命 #1 fix で `setting_type` は `system_settings.value` の JSONB 化と同時に廃止、17 → 16 に減):
+`datetimeparsestatus`, `annotation_set_status`, `annotation_segment_status`, `annotationtaskstatus`, `annotationprojectvisibility`, `reviewstatus`, `geometrytype`, `signalquality`, `consensusstatus`, `detectionrunstatus`, `uploadsessionstatus`, `uploadfilestatus`, `searchsessionstatus`, `votetype`, `custommodelstatus`, `evaluation_run_status`
 
 **enum widening** (Phase 13 P0b、`0006a_enum_widening.py` で `autocommit_block` + `ADD VALUE IF NOT EXISTS`):
 - `detectionsource`: `perch`, `similarity_search`, `custom_svm`, `sampling_round` (4 値追加)

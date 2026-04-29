@@ -60,15 +60,21 @@ class SystemSettingRepository:
         self,
         key: str,
         value: Any,
-        updated_by_id: UUID | None = None,
+        updated_by_id: UUID,
     ) -> SystemSetting:
         """Create or update a system setting.
+
+        Phase 13 P1 R2 致命 #1: ``updated_by_id`` is now NOT NULL and must
+        reference a row in ``superusers.id`` (the FK target changed in the
+        baseline schema; passing ``users.id`` violates the foreign-key
+        constraint). Callers MUST resolve the active superuser id first.
 
         Args:
             key: Setting key
             value: Native Python value (str/int/float/bool/dict/list).
                 Stored as JSONB.
-            updated_by_id: Superuser id performing the update.
+            updated_by_id: Active superuser id (``superusers.id``)
+                performing the update.
 
         Returns:
             Created or updated SystemSetting
@@ -77,8 +83,7 @@ class SystemSettingRepository:
 
         if setting:
             setting.value = value
-            if updated_by_id is not None:
-                setting.updated_by_id = updated_by_id
+            setting.updated_by_id = updated_by_id
         else:
             setting = SystemSetting(
                 key=key,
@@ -105,9 +110,15 @@ class SystemSettingRepository:
         return bool(value)
 
     async def mark_setup_completed(
-        self, updated_by_id: UUID | None = None
+        self, updated_by_id: UUID
     ) -> None:
-        """Mark the initial setup as completed."""
+        """Mark the initial setup as completed.
+
+        Phase 13 P1 R2 致命 #1: ``updated_by_id`` is required (NOT NULL FK
+        to ``superusers.id``). The setup wizard must have already promoted
+        the bootstrap user to superuser before calling this — that
+        ``superusers.id`` is the value to pass here.
+        """
 
         await self.set_setting(
             key="setup_completed",

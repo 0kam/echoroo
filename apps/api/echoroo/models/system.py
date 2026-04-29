@@ -12,6 +12,10 @@ Drift items reconciled by this rewrite (see ``/tmp/phase13-inventory.md`` §(e))
 * The phantom ``setting_type`` enum is no longer declared anywhere.
 * ``updated_by_id`` FK target changed from ``users`` to ``superusers``
   (only superusers may mutate system-wide settings; FR-094 / NFR-006).
+* ``updated_by_id`` is ``NOT NULL`` (Phase 13 P1 R2 致命 #1) — every row
+  must record the superuser who last persisted it. Boot-time defaults are
+  no longer seeded by the baseline migration; the bootstrap superuser
+  creation flow seeds them with a non-null FK.
 """
 
 from datetime import UTC, datetime
@@ -20,6 +24,7 @@ from uuid import UUID
 
 from sqlalchemy import DateTime, ForeignKey, String
 from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from echoroo.models.base import Base
@@ -58,10 +63,11 @@ class SystemSetting(Base):
         nullable=False,
         doc="Last update timestamp",
     )
-    updated_by_id: Mapped[UUID | None] = mapped_column(
+    updated_by_id: Mapped[UUID] = mapped_column(
+        PgUUID(as_uuid=True),
         ForeignKey("superusers.id"),
-        nullable=True,
-        doc="Superuser who last updated (None for boot-time defaults)",
+        nullable=False,
+        doc="Superuser who last updated (FK → superusers.id, NOT NULL)",
     )
 
     def __repr__(self) -> str:

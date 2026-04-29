@@ -364,25 +364,17 @@ def upgrade() -> None:  # noqa: PLR0915 — baseline migration, long by nature
             "updated_by_id",
             UUID(as_uuid=True),
             sa.ForeignKey("superusers.id"),
-            nullable=True,
+            # Phase 13 P1 R2 致命 #1: ``updated_by_id`` is NOT NULL per
+            # data-model.md §3.19. The baseline therefore intentionally
+            # does NOT seed any rows here — boot-time defaults for
+            # ``trusted_*``, ``dormant_threshold_seconds``,
+            # ``api_key_*`` and ``totp_*`` are seeded by the bootstrap
+            # superuser-creation flow (or by ``RepositoryService.set_setting``
+            # callers) once an active superuser id exists. Migration
+            # ``0006b`` brings any pre-existing dev DB rows in line with
+            # the NOT NULL contract.
+            nullable=False,
         ),
-    )
-
-    # NFR-006: seed system_settings initial values.
-    # updated_by_id is nullable here because the initial superuser is created
-    # after this migration by scripts.init_superuser; we fill it at that time.
-    op.execute(
-        """
-        INSERT INTO system_settings (key, value, updated_at, updated_by_id) VALUES
-            ('trusted_default_duration_seconds', '7776000'::jsonb, now(), NULL),
-            ('trusted_max_duration_seconds', '31536000'::jsonb, now(), NULL),
-            ('dormant_threshold_seconds', '31622400'::jsonb, now(), NULL),
-            ('api_key_rotation_warn_days', '90'::jsonb, now(), NULL),
-            ('api_key_scope_violation_window_seconds', '600'::jsonb, now(), NULL),
-            ('api_key_scope_violation_threshold', '10'::jsonb, now(), NULL),
-            ('totp_verify_window_per_15min', '5'::jsonb, now(), NULL),
-            ('totp_lockout_threshold', '10'::jsonb, now(), NULL)
-        """
     )
 
     # ------------------------------------------------------------------ #

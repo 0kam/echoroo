@@ -160,8 +160,92 @@ async def test_flexible_current_user_returns_none_for_missing_token(
     assert resolved is None
 
 
+@pytest.mark.asyncio
+async def test_flexible_current_user_stamps_superuser_id(
+    db_session: AsyncSession,
+) -> None:
+    """An active ``superusers`` row → ``user._superuser_id`` carries the FK id.
+
+    Phase 13 P1 R2 致命 #2 fix: admin handlers that persist FK references
+    to ``superusers.id`` (e.g. ``system_settings.updated_by_id``) must be
+    able to read the resolved superuser id off the transient User instance
+    without re-issuing the same SQL probe. The auth dependency now stamps
+    both ``is_superuser`` and ``_superuser_id`` for parity.
+    """
+    user = await _create_user(
+        db_session, email="r2_flex_su_id@example.com"
+    )
+    await _promote_superuser(db_session, user_id=user.id)
+    await db_session.commit()
+
+    # Look up the superusers.id we just inserted so we can compare.
+    su_id = (
+        await db_session.execute(
+            sa.text(
+                "SELECT id FROM superusers WHERE user_id = :uid"
+            ),
+            {"uid": user.id},
+        )
+    ).scalar_one()
+
+    token = create_access_token({"sub": str(user.id)})
+    request = MagicMock()
+
+    resolved = await get_current_user_flexible(
+        request=request,
+        db=db_session,
+        token=token,
+        credentials=None,
+    )
+
+    assert resolved is not None
+    assert resolved.id == user.id
+    assert resolved.is_superuser is True
+    # Phase 13 P1 R2 致命 #2: ``_superuser_id`` MUST equal the FK row id,
+    # NOT the user id. They are different UUIDs.
+    assert hasattr(resolved, "_superuser_id"), (
+        "auth dependency MUST stamp _superuser_id (Phase 13 P1 R2 #2)"
+    )
+    assert resolved._superuser_id == su_id  # type: ignore[attr-defined]
+    assert resolved._superuser_id != resolved.id  # type: ignore[attr-defined]
+
+
+@pytest.mark.asyncio
+async def test_flexible_current_user_stamps_superuser_id_none_for_plain(
+    db_session: AsyncSession,
+) -> None:
+    """A user with NO ``superusers`` row → ``_superuser_id is None``.
+
+    Locks in fail-closed behaviour for admin handlers that persist FK
+    references to ``superusers.id``: if the caller is somehow not actually
+    a superuser, the stamped attribute MUST be ``None`` so the handler can
+    raise 403 instead of inserting an invalid FK.
+    """
+    user = await _create_user(
+        db_session, email="r2_flex_su_id_none@example.com"
+    )
+    await db_session.commit()
+
+    token = create_access_token({"sub": str(user.id)})
+    request = MagicMock()
+
+    resolved = await get_current_user_flexible(
+        request=request,
+        db=db_session,
+        token=token,
+        credentials=None,
+    )
+
+    assert resolved is not None
+    assert getattr(resolved, "_superuser_id", "missing") is None, (
+        "non-superuser MUST be stamped with _superuser_id=None"
+    )
+
+
 __all__ = [
     "test_flexible_current_user_stamps_active_superuser",
     "test_flexible_current_user_stamps_non_superuser_false",
     "test_flexible_current_user_returns_none_for_missing_token",
+    "test_flexible_current_user_stamps_superuser_id",
+    "test_flexible_current_user_stamps_superuser_id_none_for_plain",
 ]

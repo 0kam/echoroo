@@ -33,8 +33,10 @@ that arrives at this revision starting from ``0005``.
 The companion revision ``0006a`` (separate file, autocommit-required) widens
 ``detectionsource`` with the four new values.
 
-Downgrade is a *partial* drop: only the ORM-only tables and the 17 ORM-only
-enums are removed. ``detections`` is preserved on downgrade because its rows
+Downgrade is a *partial* drop: only the ORM-only tables and the 16 ORM-only
+enums are removed (the ``setting_type`` enum was retired in Phase 13 P1
+T803a along with ``system_settings.value_type``, dropping the count from
+17 to 16). ``detections`` is preserved on downgrade because its rows
 predate this migration. A full schema teardown lives in ``scripts/wipe_database``.
 
 Phase 13 inventory artifact: ``/tmp/phase13-inventory.md`` (T800).

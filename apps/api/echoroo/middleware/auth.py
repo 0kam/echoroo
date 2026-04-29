@@ -20,7 +20,7 @@ API_TOKEN_PREFIX = "ecr_"
 
 
 async def _stamp_superuser_status(db: AsyncSession, user: User | None) -> None:
-    """Resolve and stamp ``user.is_superuser`` from the ``superusers`` table.
+    """Resolve and stamp ``user.is_superuser`` / ``user._superuser_id``.
 
     Phase 12 R2 致命 C1 fix: the User ORM model deliberately has NO
     ``is_superuser`` column — superuser status is the single source-of-
@@ -31,6 +31,13 @@ async def _stamp_superuser_status(db: AsyncSession, user: User | None) -> None:
     :func:`api.web_v1.admin._require_authenticated_superuser`) can consult
     a uniform attribute without re-issuing the same SQL.
 
+    Phase 13 P1 R2 致命 #2 fix: in addition to the boolean flag, stamp the
+    resolved ``superusers.id`` onto ``user._superuser_id`` so admin handlers
+    that persist FK references to the ``superusers`` table (e.g.
+    ``system_settings.updated_by_id``) can reach the correct id without
+    re-issuing the same SQL. ``users.id`` is **not** a valid FK target for
+    those columns and using it directly causes integrity violations.
+
     The probe matches the raw-SQL helper in
     :mod:`echoroo.api.web_v1.auth._is_superuser`, keeping every
     superuser-aware surface in lockstep.
@@ -39,12 +46,14 @@ async def _stamp_superuser_status(db: AsyncSession, user: User | None) -> None:
         return
     probe = await db.execute(
         text(
-            "SELECT 1 FROM superusers "
+            "SELECT id FROM superusers "
             "WHERE user_id = :uid AND revoked_at IS NULL LIMIT 1"
         ),
         {"uid": user.id},
     )
-    user.is_superuser = probe.scalar_one_or_none() is not None  # type: ignore[attr-defined]
+    superuser_id = probe.scalar_one_or_none()
+    user.is_superuser = superuser_id is not None  # type: ignore[attr-defined]
+    user._superuser_id = superuser_id  # type: ignore[attr-defined]
 
 
 async def get_current_user(
