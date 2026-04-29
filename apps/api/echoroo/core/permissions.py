@@ -736,17 +736,29 @@ def is_allowed(
         return allowed, effective
 
     # --- Step 0b: superuser project-scope allowlist -------------------------
+    # FR-084 defence-in-depth: same veto as Step 0a. The middleware
+    # (:mod:`echoroo.middleware.auth`) stamps ``is_superuser`` from the live
+    # ``superusers`` table for ALL authentication paths — including API key
+    # paths — so ``_is_superuser(user)`` alone would otherwise let a
+    # superuser-owned API key short-circuit through this allowlist
+    # (e.g. ``project.archive`` / ``project.restore``). We therefore
+    # require the caller to be a non-API-key principal here. API-key
+    # callers fall through to the normal Matrix path so the request can
+    # still succeed under regular project-role permissions if the API
+    # key's intersected scopes happen to grant the underlying permission.
     if (
         user is not None
         and _is_superuser(user)
+        and getattr(user, "_api_key_scopes", None) is None
         and action.name in SUPERUSER_PROJECT_SCOPE_ALLOWLIST
     ):
         effective = frozenset(_SUPERUSER_PERMS)
         _stash_state(request, effective=effective, normalized_role="Superuser")
         return True, effective
-        # Superusers without allowlist membership fall through to the normal
-        # path below — they effectively map to Owner on the target project
-        # (FR-112a), but still go through the Matrix + Response filter.
+        # Superusers without allowlist membership (or API-key principals)
+        # fall through to the normal path below — they effectively map to
+        # Owner on the target project (FR-112a), but still go through the
+        # Matrix + Response filter.
 
     # --- Step 0c: superuser-only project-scope hard-fail (Phase 12 R1 C1) ----
     # Project-scope actions flagged ``is_superuser_only=True`` MUST never

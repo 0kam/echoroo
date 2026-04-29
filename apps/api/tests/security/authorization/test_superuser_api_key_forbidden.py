@@ -458,6 +458,146 @@ class TestMiddlewareStampThenGateVeto:
             "session caller (no _api_key_scopes). Positive control."
         )
 
+    # ---------------------------------------------------------------------
+    # R3 — Step 0b project-scope superuser allowlist veto for API keys
+    #
+    # ``PROJECT_ARCHIVE_ACTION`` and ``PROJECT_RESTORE_ACTION`` are
+    # project-scope (NOT ``is_platform_scope=True``) but they ARE listed
+    # in :data:`SUPERUSER_PROJECT_SCOPE_ALLOWLIST` (FR-008b). Without the
+    # Step 0b veto, the middleware's ``_stamp_superuser_status`` (which
+    # runs for API key paths too — auth.py:173-174) would let a
+    # superuser-owned API key short-circuit through the allowlist branch
+    # and execute archive/restore without proving session-level
+    # superuser identity. R3 closes this by requiring
+    # ``_api_key_scopes`` to be absent in the Step 0b match — API key
+    # callers fall through to the Matrix path where they are denied
+    # because their intersected scopes do not grant ``EDIT_PROJECT``
+    # (or because Step 0c hard-fails non-superuser callers).
+    # ---------------------------------------------------------------------
+
+    def test_superuser_api_key_vetoed_on_project_archive_allowlist(self) -> None:
+        """Case (a): superuser-owned API key + project.archive → deny.
+
+        The Step 0b allowlist short-circuit MUST NOT apply because
+        ``_api_key_scopes`` is present. Falls through to the normal
+        Matrix path where the api-key scopes ``("view_detection",)``
+        do not grant EDIT_PROJECT → deny.
+        """
+        from echoroo.core.actions import PROJECT_ARCHIVE_ACTION
+
+        user = _simulate_middleware_stamp(
+            is_superuser_in_db=True,
+            has_api_key=True,
+            scopes=("view_detection",),
+        )
+        project = _make_project()
+
+        allowed, _ = is_allowed(
+            action=PROJECT_ARCHIVE_ACTION,
+            user=user,
+            project=project,
+            request=None,
+            api_key_granted_permissions=frozenset({Permission.VIEW_DETECTION}),
+        )
+        assert allowed is False, (
+            "Superuser-owned API key MUST NOT exercise PROJECT_ARCHIVE_ACTION "
+            "via the Step 0b allowlist short-circuit. FR-084 defence-in-depth: "
+            "the veto requires _api_key_scopes to be absent for the allowlist "
+            "match to fire; API key callers fall through to the Matrix path "
+            "where their intersected scopes are insufficient."
+        )
+
+    def test_superuser_api_key_vetoed_on_project_restore_allowlist(self) -> None:
+        """Case (b): superuser-owned API key + project.restore → deny.
+
+        Same veto as (a). The action is in the allowlist but the
+        ``_api_key_scopes`` presence prevents the short-circuit.
+        """
+        from echoroo.core.actions import PROJECT_RESTORE_ACTION
+
+        user = _simulate_middleware_stamp(
+            is_superuser_in_db=True,
+            has_api_key=True,
+            scopes=("view_detection",),
+        )
+        # ``project.restore`` only makes sense on archived projects, but
+        # Step 0b is evaluated before the Step 1 archived block — and Step
+        # 0b is the branch we're verifying is now vetoed.
+        project = _make_project(status="archived")
+
+        allowed, _ = is_allowed(
+            action=PROJECT_RESTORE_ACTION,
+            user=user,
+            project=project,
+            request=None,
+            api_key_granted_permissions=frozenset({Permission.VIEW_DETECTION}),
+        )
+        assert allowed is False, (
+            "Superuser-owned API key MUST NOT exercise PROJECT_RESTORE_ACTION "
+            "via the Step 0b allowlist short-circuit. FR-084 defence-in-depth."
+        )
+
+    def test_superuser_session_allowed_on_project_archive_positive_control(
+        self,
+    ) -> None:
+        """Case (c): cookie session superuser + project.archive → allow.
+
+        Positive control. A session caller has no ``_api_key_scopes``
+        attribute, so Step 0b's allowlist short-circuit fires normally
+        and grants the request. This proves the R3 veto only blocks API
+        key principals and does not regress legitimate session-based
+        superuser archive/restore flows.
+        """
+        from echoroo.core.actions import PROJECT_ARCHIVE_ACTION
+
+        user = _simulate_middleware_stamp(
+            is_superuser_in_db=True,
+            has_api_key=False,  # cookie/JWT path — no _api_key_scopes
+        )
+        project = _make_project()
+
+        allowed, _ = is_allowed(
+            action=PROJECT_ARCHIVE_ACTION,
+            user=user,
+            project=project,
+            request=None,
+        )
+        assert allowed is True, (
+            "Cookie-session superuser MUST still be allowed on "
+            "PROJECT_ARCHIVE_ACTION via the Step 0b allowlist short-circuit. "
+            "Positive control: the R3 veto must not regress session callers."
+        )
+
+    def test_non_superuser_api_key_denied_on_project_archive_control(self) -> None:
+        """Case (d): non-superuser API key + project.archive → deny (control).
+
+        This case never depended on the Step 0b veto — Step 0c
+        (``is_superuser_only`` hard-fail) already denies non-superuser
+        callers regardless of authentication path. Included here as a
+        regression guard to confirm the Step 0c invariant continues to
+        hold after the R3 patch.
+        """
+        from echoroo.core.actions import PROJECT_ARCHIVE_ACTION
+
+        user = _simulate_middleware_stamp(
+            is_superuser_in_db=False,
+            has_api_key=True,
+            scopes=("edit_project",),  # even with EDIT scope: still denied
+        )
+        project = _make_project()
+
+        allowed, _ = is_allowed(
+            action=PROJECT_ARCHIVE_ACTION,
+            user=user,
+            project=project,
+            request=None,
+            api_key_granted_permissions=frozenset({Permission.EDIT_PROJECT}),
+        )
+        assert allowed is False, (
+            "Non-superuser API key MUST be denied PROJECT_ARCHIVE_ACTION via "
+            "the Step 0c is_superuser_only hard-fail (control)."
+        )
+
     def test_veto_attribute_inspection_matches_middleware_contract(self) -> None:
         """Structural: the veto condition uses _api_key_scopes presence, not value.
 
