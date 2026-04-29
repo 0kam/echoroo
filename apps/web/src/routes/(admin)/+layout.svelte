@@ -1,6 +1,10 @@
 <script lang="ts">
   /**
    * Admin layout with top navigation header, matching the dashboard style.
+   *
+   * Phase 15 (006-permissions-redesign T955): adds the "Superusers"
+   * navigation entry and a break-glass status banner that is visible to
+   * every superuser whenever the platform is in break-glass mode (FR-111).
    */
 
   import { page } from '$app/stores';
@@ -10,6 +14,7 @@
   import * as m from '$lib/paraglide/messages';
   import LanguageSwitcher from '$lib/components/ui/LanguageSwitcher.svelte';
   import DarkModeToggle from '$lib/components/ui/DarkModeToggle.svelte';
+  import { superuserApi, type SuperuserBreakGlassStatusResponse } from '$lib/api/superusers';
 
   interface Props {
     children: import('svelte').Snippet;
@@ -20,15 +25,39 @@
   // Navigation items
   const navItems = $derived([
     { name: m.admin_nav_users(), href: '/admin/users' },
+    { name: m.admin_nav_superusers(), href: '/admin/superusers' },
     { name: m.admin_nav_settings(), href: '/admin/settings' },
     { name: m.admin_nav_licenses(), href: '/admin/licenses' },
     { name: m.admin_nav_recorders(), href: '/admin/recorders' },
   ]);
 
+  let breakGlass = $state<SuperuserBreakGlassStatusResponse | null>(null);
+
   // Redirect non-superusers away from admin (client-side guard)
   $effect(() => {
     if (!authStore.isLoading && authStore.user && !authStore.user.is_superuser) {
       goto(localizeHref('/dashboard'));
+    }
+  });
+
+  // Fetch break-glass status once we know we are an authenticated
+  // superuser.  Errors are swallowed: the banner is purely informational
+  // and must not block normal admin pages from rendering when the status
+  // endpoint is briefly unavailable.
+  $effect(() => {
+    if (
+      !authStore.isLoading &&
+      authStore.user &&
+      authStore.user.is_superuser
+    ) {
+      superuserApi
+        .breakGlassStatus()
+        .then((status) => {
+          breakGlass = status;
+        })
+        .catch(() => {
+          breakGlass = null;
+        });
     }
   });
 
@@ -124,6 +153,28 @@
       </div>
     {/if}
   </header>
+
+  <!-- Break-glass banner (FR-111): shown to all superusers when active -->
+  {#if breakGlass?.active}
+    <div
+      role="alert"
+      class="border-b border-danger/40 bg-danger-light px-4 py-2 text-xs font-medium text-danger"
+    >
+      <span class="font-semibold">
+        {m.admin_superusers_break_glass_banner_label()}
+      </span>
+      <span class="ml-2">
+        {m.admin_superusers_break_glass_banner_message()}
+      </span>
+      {#if breakGlass.expires_at}
+        <span class="ml-2 opacity-75">
+          {m.admin_superusers_break_glass_banner_expires({
+            time: new Date(breakGlass.expires_at).toLocaleString(),
+          })}
+        </span>
+      {/if}
+    </div>
+  {/if}
 
   <!-- Page content -->
   <main class="flex-1 overflow-auto p-4 sm:p-6 lg:p-8">

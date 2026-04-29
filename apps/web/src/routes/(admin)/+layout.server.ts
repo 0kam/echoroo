@@ -1,10 +1,19 @@
 /**
- * Admin layout server load
- * Checks if user is authenticated (superuser check happens client-side)
+ * Admin layout server load (Phase 15 / 006-permissions-redesign T955).
  *
- * The server hook only sets locals.isAuthenticated based on the refresh_token cookie.
- * Full user data (including is_superuser) is fetched client-side via the auth store.
- * This layout guard ensures the user at least has a valid session cookie.
+ * Two-stage gate:
+ *   1. The session cookie set by `hooks.server.ts` populates
+ *      `locals.isAuthenticated`.  When missing, redirect to /login with
+ *      the original path preserved as `redirect=`.
+ *   2. The full superuser check lives client-side in `+layout.svelte`
+ *      because the access token (and therefore /users/me) is bound to the
+ *      browser session, not the server-side session cookie.
+ *
+ * Per FR-084 the admin section is accessible only via the cookie session
+ * — programmatic API key callers cannot reach these routes because the
+ * backend rejects superuser actions when the request was authenticated
+ * via API key.  This layout server runs only on the SvelteKit edge so
+ * the same restriction is naturally upheld.
  */
 
 import { redirect } from '@sveltejs/kit';
@@ -12,11 +21,12 @@ import type { LayoutServerLoad } from './$types';
 import { localizeHref, deLocalizeHref } from '$lib/paraglide/runtime';
 
 export const load: LayoutServerLoad = async ({ locals, url }) => {
-  // Check if user is authenticated (set by hooks.server.ts)
   if (!locals.isAuthenticated) {
-    // Use de-localized path for the redirect parameter
     const returnPath = deLocalizeHref(url.pathname);
-    throw redirect(302, localizeHref(`/login?redirect=${encodeURIComponent(returnPath)}`));
+    throw redirect(
+      302,
+      localizeHref(`/login?redirect=${encodeURIComponent(returnPath)}`),
+    );
   }
 
   return {};
