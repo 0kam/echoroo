@@ -625,3 +625,188 @@ class TestMiddlewareStampThenGateVeto:
                 f"Empty _api_key_scopes=() still triggers veto on {action.name!r}. "
                 f"Veto is based on attribute PRESENCE, not scope content."
             )
+
+    # ---------------------------------------------------------------------
+    # R4 — Step -1 universal veto for is_superuser_only actions
+    #
+    # Codex R3 review identified a residual escalation path: the Step 0b
+    # veto only short-circuits the *allowlist branch*, but a superuser-owned
+    # API key carrying an ``EDIT_PROJECT`` (or broader) scope could fall
+    # through to the Matrix path, get its role upgraded to ``Owner`` (Step
+    # 2), and survive the ``api_key_granted_permissions`` intersection
+    # because Owner trivially holds ``EDIT_PROJECT``. The result was that
+    # ``PROJECT_ARCHIVE_ACTION`` (``is_superuser_only=True``) was still
+    # allowed through the Matrix branch even though the caller never
+    # proved session-level superuser identity. R4 closes this with a
+    # universal Step -1 veto: ANY ``is_superuser_only`` action is
+    # unconditionally denied for API-key principals.
+    # ---------------------------------------------------------------------
+
+    def test_superuser_api_key_with_edit_project_scope_still_denied_for_archive(
+        self,
+    ) -> None:
+        """R4 case (a): superuser API key + EDIT_PROJECT scope + archive → deny.
+
+        Codex R3 NO-GO: the R3 Step 0b veto sent the caller to the Matrix
+        path, where the Step 2 role upgrade ("Superuser → Owner") combined
+        with Owner's grant of ``EDIT_PROJECT`` survived the
+        ``api_key_granted_permissions`` intersection — green-lighting
+        ``PROJECT_ARCHIVE_ACTION``. R4's Step -1 universal veto must deny
+        this regardless of scope content because
+        ``PROJECT_ARCHIVE_ACTION.is_superuser_only`` is True.
+        """
+        from echoroo.core.actions import PROJECT_ARCHIVE_ACTION
+
+        user = _simulate_middleware_stamp(
+            is_superuser_in_db=True,
+            has_api_key=True,
+            scopes=("edit_project",),  # the dangerous scope
+        )
+        project = _make_project()
+
+        allowed, _ = is_allowed(
+            action=PROJECT_ARCHIVE_ACTION,
+            user=user,
+            project=project,
+            request=None,
+            api_key_granted_permissions=frozenset({Permission.EDIT_PROJECT}),
+        )
+        assert allowed is False, (
+            "Superuser-owned API key with EDIT_PROJECT scope MUST be denied "
+            "PROJECT_ARCHIVE_ACTION via the Step -1 universal veto. R4 fix: "
+            "without this veto, the Matrix path's Owner role upgrade would "
+            "let the EDIT_PROJECT scope survive the intersection and "
+            "incorrectly green-light an is_superuser_only action."
+        )
+
+    def test_superuser_api_key_with_edit_project_scope_still_denied_for_restore(
+        self,
+    ) -> None:
+        """R4 case (b): superuser API key + EDIT_PROJECT scope + restore → deny.
+
+        Same shape as (a) but for ``PROJECT_RESTORE_ACTION``. Both are in
+        ``SUPERUSER_PROJECT_SCOPE_ALLOWLIST`` and both are
+        ``is_superuser_only=True``.
+        """
+        from echoroo.core.actions import PROJECT_RESTORE_ACTION
+
+        user = _simulate_middleware_stamp(
+            is_superuser_in_db=True,
+            has_api_key=True,
+            scopes=("edit_project",),
+        )
+        project = _make_project(status="archived")
+
+        allowed, _ = is_allowed(
+            action=PROJECT_RESTORE_ACTION,
+            user=user,
+            project=project,
+            request=None,
+            api_key_granted_permissions=frozenset({Permission.EDIT_PROJECT}),
+        )
+        assert allowed is False, (
+            "Superuser-owned API key with EDIT_PROJECT scope MUST be denied "
+            "PROJECT_RESTORE_ACTION via the Step -1 universal veto."
+        )
+
+    def test_superuser_api_key_with_all_permissions_still_denied_for_archive(
+        self,
+    ) -> None:
+        """R4 case (c): even an API key granted ALL permissions cannot archive.
+
+        Most pessimistic scenario: a superuser-owned API key issued with
+        every available scope and ``api_key_granted_permissions`` set to
+        the full ``Permission`` set. The Step -1 veto must still deny
+        ``PROJECT_ARCHIVE_ACTION`` because ``is_superuser_only=True`` is
+        the dispositive signal — scope breadth is irrelevant.
+        """
+        from echoroo.core.actions import PROJECT_ARCHIVE_ACTION
+
+        all_scopes = tuple(p.value for p in Permission)
+        user = _simulate_middleware_stamp(
+            is_superuser_in_db=True,
+            has_api_key=True,
+            scopes=all_scopes,
+        )
+        project = _make_project()
+
+        allowed, _ = is_allowed(
+            action=PROJECT_ARCHIVE_ACTION,
+            user=user,
+            project=project,
+            request=None,
+            api_key_granted_permissions=frozenset(Permission),
+        )
+        assert allowed is False, (
+            "Superuser-owned API key with ALL permissions MUST be denied "
+            "PROJECT_ARCHIVE_ACTION. The Step -1 veto is unconditional: "
+            "is_superuser_only=True + _api_key_scopes present → deny, "
+            "regardless of scope/permission breadth."
+        )
+
+    def test_superuser_api_key_with_all_permissions_still_denied_for_iucn_resync(
+        self,
+    ) -> None:
+        """R4 case (d): platform-scope superuser action + full permissions → deny.
+
+        Confirms the universal Step -1 veto also covers platform-scope
+        superuser-only actions (``PLATFORM_IUCN_FORCE_RESYNC_ACTION``)
+        even when the API key holds every conceivable permission. This
+        is the same outcome the Step 0a veto already produced in R2;
+        R4 simply ensures the universal veto behaves consistently and
+        does not regress the Step 0a behaviour.
+        """
+        from echoroo.core.actions import PLATFORM_IUCN_FORCE_RESYNC_ACTION
+
+        all_scopes = tuple(p.value for p in Permission)
+        user = _simulate_middleware_stamp(
+            is_superuser_in_db=True,
+            has_api_key=True,
+            scopes=all_scopes,
+        )
+        project = _make_project()
+
+        allowed, _ = is_allowed(
+            action=PLATFORM_IUCN_FORCE_RESYNC_ACTION,
+            user=user,
+            project=project,
+            request=None,
+            api_key_granted_permissions=frozenset(Permission),
+        )
+        assert allowed is False, (
+            "Superuser-owned API key with ALL permissions MUST be denied "
+            "PLATFORM_IUCN_FORCE_RESYNC_ACTION. Step -1 universal veto "
+            "applies uniformly to platform-scope is_superuser_only actions."
+        )
+
+    def test_superuser_session_with_edit_project_scope_allowed_for_archive(
+        self,
+    ) -> None:
+        """R4 positive control: cookie-session superuser still passes archive.
+
+        Critical regression guard: the Step -1 universal veto must NOT
+        block legitimate session-based superuser archive operations. A
+        session caller has no ``_api_key_scopes`` attribute, so the Step
+        -1 veto's ``getattr(user, "_api_key_scopes", None) is not None``
+        check is False and the request continues to Step 0b's allowlist
+        short-circuit (allow).
+        """
+        from echoroo.core.actions import PROJECT_ARCHIVE_ACTION
+
+        user = _simulate_middleware_stamp(
+            is_superuser_in_db=True,
+            has_api_key=False,  # cookie/JWT path — no _api_key_scopes
+        )
+        project = _make_project()
+
+        allowed, _ = is_allowed(
+            action=PROJECT_ARCHIVE_ACTION,
+            user=user,
+            project=project,
+            request=None,
+        )
+        assert allowed is True, (
+            "Cookie-session superuser MUST still be allowed on "
+            "PROJECT_ARCHIVE_ACTION after the R4 Step -1 universal veto. "
+            "Positive control: the veto must only apply to API-key principals."
+        )

@@ -699,9 +699,11 @@ def is_allowed(
 
     Steps (fixed, non-recursive):
 
+        -1 API key universal veto for is_superuser_only actions
         0  authentication
         0a platform-scope action branch
         0b superuser project-scope allowlist branch
+        0c superuser-only project-scope hard-fail
         1  archived projects reject mutating actions
         2  normalize_role
         3  compute_effective_permissions
@@ -714,6 +716,32 @@ def is_allowed(
     # This function is pure — we trust the caller to have attached
     # ``user`` (None or an authenticated principal) already.
     if user is None and not _is_guest_action_permitted(action):
+        return False, frozenset()
+
+    # --- Step -1: API key universal veto for superuser-only actions ---------
+    # FR-084 defence-in-depth (Phase 15 R4 — Codex R3 NO-GO fix):
+    # ANY action flagged ``is_superuser_only=True`` MUST be unconditionally
+    # denied for API-key principals, regardless of action scope (platform
+    # vs project), regardless of whether the action name is on the
+    # ``SUPERUSER_PROJECT_SCOPE_ALLOWLIST``, and regardless of whether the
+    # API key happens to carry an ``EDIT_PROJECT`` (or any other) scope.
+    #
+    # Why this is necessary: the middleware (:mod:`echoroo.middleware.auth`)
+    # stamps ``is_superuser=True`` from the live ``superusers`` table for
+    # API-key authentication paths too (auth.py line 173-174). Without this
+    # universal veto, a superuser-owned API key carrying an ``EDIT_PROJECT``
+    # scope could fall through Steps 0b/0c (which only fail-closed for
+    # non-superusers) and land in the Matrix path, where the Step-2 role
+    # upgrade ("Superuser → Owner") combined with the Matrix's Owner-grants
+    # would let ``EDIT_PROJECT`` survive the
+    # ``api_key_granted_permissions`` intersection — green-lighting actions
+    # like ``project.archive`` that must require session-level superuser
+    # identity.
+    #
+    # Cookie/JWT session superusers (no ``_api_key_scopes`` attribute) are
+    # unaffected and continue through Steps 0a/0b/0c unchanged.
+    if action.is_superuser_only and getattr(user, "_api_key_scopes", None) is not None:
+        _stash_state(request, effective=frozenset(), normalized_role="Authenticated")
         return False, frozenset()
 
     # --- Step 0a: platform-scope action -------------------------------------
@@ -729,6 +757,15 @@ def is_allowed(
         # in :mod:`echoroo.middleware.auth`) is an API-key principal and is
         # categorically denied platform-scope operations regardless of the
         # underlying user's superuser status.
+        #
+        # NOTE (R4): this veto is now redundant with the Step -1 universal
+        # veto above (every platform-scope action in the catalog is also
+        # flagged ``is_superuser_only=True``). Kept here for clarity and as
+        # a second layer of defence-in-depth — should a future platform
+        # action be added that is NOT ``is_superuser_only=True``, the
+        # Step -1 universal veto would not catch it but this branch still
+        # would. This branch must therefore remain authoritative for the
+        # ``is_platform_scope`` decision.
         is_api_key_caller = getattr(user, "_api_key_scopes", None) is not None
         allowed = bool(user) and _is_superuser(user) and not is_api_key_caller
         effective = frozenset(_SUPERUSER_PERMS) if allowed else frozenset()
@@ -746,6 +783,14 @@ def is_allowed(
     # callers fall through to the normal Matrix path so the request can
     # still succeed under regular project-role permissions if the API
     # key's intersected scopes happen to grant the underlying permission.
+    #
+    # NOTE (R4): all members of ``SUPERUSER_PROJECT_SCOPE_ALLOWLIST`` are
+    # ``is_superuser_only=True``, so the Step -1 universal veto already
+    # blocks API-key callers from reaching this branch. The
+    # ``_api_key_scopes is None`` clause below is therefore redundant for
+    # the current allowlist but is kept to preserve the local invariant
+    # ("Step 0b never honours an API-key principal") in case the allowlist
+    # ever grows to include a non-``is_superuser_only`` action.
     if (
         user is not None
         and _is_superuser(user)
