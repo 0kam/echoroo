@@ -142,6 +142,12 @@ async def get_annotation_votes(
         annotation_id=annotation_id,
         current_user_id=viewer_user_id,
         viewer_role=viewer_role,
+        # Phase 13 P1.5 R3 (Codex follow-up): pass project-specific
+        # consensus thresholds so GET summary computes status the same
+        # way ``cast_vote`` does. Defaulting to 2 / 0.667 silently
+        # disagrees with projects that override either field.
+        min_votes=project.review_min_votes,
+        threshold=project.review_consensus_threshold,
     )
 
 
