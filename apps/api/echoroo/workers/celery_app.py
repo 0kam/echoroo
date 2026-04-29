@@ -104,6 +104,11 @@ app.conf.include = [
     # AsyncSession so a half-flipped state cannot leak into the audit
     # chain.
     "echoroo.workers.dormancy_check",
+    # GDPR PII null-out daily sweeps (Phase 14 / T902 / T903). Both
+    # workers issue a single ``UPDATE ... RETURNING id`` so they are
+    # idempotent and stateless across runs (FR-106 / FR-108).
+    "echoroo.workers.invitation_email_null",
+    "echoroo.workers.trusted_email_null",
 ]
 
 # Periodic tasks (beat schedule)
@@ -161,5 +166,21 @@ app.conf.beat_schedule = {
     "dormancy-check-daily": {
         "task": "echoroo.workers.dormancy_check.run_daily_dormancy_check",
         "schedule": crontab(hour=0, minute=0),
+    },
+    # FR-106 — NULL ``project_invitations.email`` 30 days after the row
+    # reached a terminal status. Daily at 02:30 UTC, sandwiched between
+    # the GBIF vernacular sync (02:00) and the trusted-email null-out
+    # (02:45) so the three sequential daily sweeps never overlap.
+    "invitation-email-null-daily": {
+        "task": "echoroo.workers.invitation_email_null.sweep_invitation_emails",
+        "schedule": crontab(hour=2, minute=30),
+    },
+    # FR-108 — NULL ``project_trusted_users.email_at_invitation`` 90
+    # days after revoke / lapse. Daily at 02:45 UTC, after the
+    # invitation sweep and before the trusted-expiry-notifier so the
+    # three GDPR / trusted lifecycle jobs run sequentially.
+    "trusted-email-null-daily": {
+        "task": "echoroo.workers.trusted_email_null.sweep_trusted_emails",
+        "schedule": crontab(hour=2, minute=45),
     },
 }
