@@ -241,6 +241,34 @@ def upgrade() -> None:
     )
 
     # ------------------------------------------------------------------ #
+    # Phase 13 P3 R2 (Codex follow-up — Major):
+    # filename was added with ``NOT NULL DEFAULT ''`` so the existing
+    # rows could be backfilled without an immediate value. The ORM /
+    # data-model and the fresh-DB baseline 0001 have NO column default,
+    # so leaving ``DEFAULT ''`` would surface as a P5 introspection
+    # drift between fresh and existing DBs. Drop it now — new INSERTs
+    # must always supply ``filename`` from the upload payload anyway.
+    # ------------------------------------------------------------------ #
+    op.execute(
+        """
+        DO $$
+        BEGIN
+            IF EXISTS (
+                SELECT 1
+                  FROM pg_attrdef ad
+                  JOIN pg_attribute a ON a.attnum = ad.adnum AND a.attrelid = ad.adrelid
+                  JOIN pg_class c ON c.oid = ad.adrelid
+                 WHERE c.relname = 'recordings'
+                   AND a.attname = 'filename'
+            ) THEN
+                ALTER TABLE recordings ALTER COLUMN filename DROP DEFAULT;
+            END IF;
+        END
+        $$;
+        """
+    )
+
+    # ------------------------------------------------------------------ #
     # Phase D — tighten existing nullable columns to NOT NULL and
     # narrow ``path`` from TEXT → VARCHAR(500). All idempotent.
     # ------------------------------------------------------------------ #
@@ -332,6 +360,13 @@ def upgrade() -> None:
         "CREATE INDEX IF NOT EXISTS ix_recordings_dataset_id_datetime "
         "ON recordings (dataset_id, datetime)"
     )
+    # Phase 13 P3 R2 (Codex follow-up): TimestampMixin.created_at has
+    # index=True so the ORM expects ix_recordings_created_at. datasets
+    # already follows this convention; recordings catches up here.
+    op.execute(
+        "CREATE INDEX IF NOT EXISTS ix_recordings_created_at "
+        "ON recordings (created_at)"
+    )
     op.execute(
         "CREATE INDEX IF NOT EXISTS ix_recordings_h3_index_member "
         "ON recordings (h3_index_member)"
@@ -348,6 +383,7 @@ def upgrade() -> None:
 def downgrade() -> None:
     # Drop indexes / constraints first.
     op.execute("DROP INDEX IF EXISTS ix_recordings_h3_index_member")
+    op.execute("DROP INDEX IF EXISTS ix_recordings_created_at")
     op.execute("DROP INDEX IF EXISTS ix_recordings_dataset_id_datetime")
     op.execute("DROP INDEX IF EXISTS ix_recordings_datetime")
     op.execute("DROP INDEX IF EXISTS ix_recordings_hash")

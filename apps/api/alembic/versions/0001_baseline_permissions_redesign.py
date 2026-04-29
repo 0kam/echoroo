@@ -875,6 +875,10 @@ def upgrade() -> None:  # noqa: PLR0915 — baseline migration, long by nature
         "recordings",
         ["h3_index_member"],
     )
+    # Phase 13 P3 R2 (Codex follow-up): TimestampMixin.created_at
+    # index=True; materialise on a fresh DB so 0009 brings existing
+    # dev DBs to the same final shape.
+    op.create_index("ix_recordings_created_at", "recordings", ["created_at"])
 
     # detections + annotations + tags (supporting tables, minimal FK-bearing schema)
     op.create_table(
