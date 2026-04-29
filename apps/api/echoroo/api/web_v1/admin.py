@@ -106,6 +106,34 @@ def _request_id(request: Request) -> str:
     return request.headers.get("x-request-id") or ""
 
 
+def _require_superuser_id(current_user: User | None) -> UUID:
+    """Return ``current_user._superuser_id`` or 403 if absent.
+
+    Phase 13 P1 R3 (Codex P1 R2 follow-up): the ``approve_taxon_override``
+    / ``reject_taxon_override`` endpoints used to write
+    ``current_user.id`` (the user's id) into ``approved_by_id`` —
+    a ``superusers.id`` FK — which would always raise an integrity
+    error in production. The auth dependency stamper now decorates
+    every authenticated user with ``_superuser_id`` (active
+    ``superusers.id``) when they hold a current superuser row. This
+    helper short-circuits to 403 if the stamp is missing so callers
+    never confuse the two ID spaces.
+    """
+    superuser_id: UUID | None = getattr(current_user, "_superuser_id", None)
+    if superuser_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "error": "ERR_NOT_SUPERUSER",
+                "message": (
+                    "caller is not stamped as an active superuser; "
+                    "_require_authenticated_superuser must run first"
+                ),
+            },
+        )
+    return superuser_id
+
+
 async def _require_authenticated_superuser(
     current_user: OptionalCurrentUser,
     db: DbSession,
@@ -217,7 +245,7 @@ async def approve_looser_override(
         override = await approve_taxon_override(
             db,
             override_id=override_id,
-            approver_superuser_id=current_user.id,
+            approver_superuser_id=_require_superuser_id(current_user),
             request_id=_request_id(request),
             ip=_client_ip(request),
             user_agent=_user_agent(request),
@@ -342,7 +370,7 @@ async def reject_looser_override(
         override = await reject_taxon_override(
             db,
             override_id=override_id,
-            approver_superuser_id=current_user.id,
+            approver_superuser_id=_require_superuser_id(current_user),
             rejected_reason=payload.reason,
             request_id=_request_id(request),
             ip=_client_ip(request),

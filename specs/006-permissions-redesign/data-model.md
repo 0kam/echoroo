@@ -830,15 +830,19 @@ class SystemSettings(Base):
     updated_by_id: Mapped[UUID] = mapped_column(ForeignKey("superusers.id"), nullable=False)
 ```
 
-初期値（baseline migration で seed）:
-- `trusted_default_duration_seconds`: 7776000 (90 日)
-- `trusted_max_duration_seconds`: 31536000 (1 年)
-- `dormant_threshold_seconds`: 31622400 (366 日、1 日 grace)
-- `api_key_rotation_warn_days`: 90
-- `api_key_scope_violation_window_seconds`: 600
-- `api_key_scope_violation_threshold`: 10
-- `totp_verify_window_per_15min`: 5
-- `totp_lockout_threshold`: 10
+初期値の運用 (Phase 13 P1 R2 / T803a 改訂):
+- baseline migration では **seed しない**。`updated_by_id` が NOT NULL + `superusers.id` FK のため、初代 superuser が登録される前は INSERT 不可
+- 初期 setup フロー (`/api/v1/setup/initialize`、Phase 4 で stub) で初代 superuser を作成した直後、admin が `/api/v1/admin/settings` から個別に設定する運用
+- 推奨デフォルト値:
+  - `trusted_default_duration_seconds`: 7776000 (90 日)
+  - `trusted_max_duration_seconds`: 31536000 (1 年)
+  - `dormant_threshold_seconds`: 31622400 (366 日、1 日 grace)
+  - `api_key_rotation_warn_days`: 90
+  - `api_key_scope_violation_window_seconds`: 600
+  - `api_key_scope_violation_threshold`: 10
+  - `totp_verify_window_per_15min`: 5
+  - `totp_lockout_threshold`: 10
+- 未設定時の reader 挙動: `repositories/system.py::get_value(key, default=...)` で fallback 値を返す
 
 ---
 
