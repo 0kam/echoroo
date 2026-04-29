@@ -959,7 +959,12 @@ async def get_sampling_round(
             similarity=item.similarity,
             decision_distance=item.decision_distance,
             annotation_id=item.annotation_id,
-            review_status=item.annotation.status.value if item.annotation else None,
+            # Phase 13 P1.5 R2 (Codex follow-up — Fatal): the DB-truth
+            # minimal :class:`Annotation` shape no longer carries
+            # ``status``. The custom-model sampling-round review-state
+            # workflow lives on Phase 14+ ``recording_annotations`` —
+            # always emit ``None`` until that table comes back online.
+            review_status=None,
             recording_id=item.embedding.recording_id if item.embedding else None,
             recording_filename=(
                 item.embedding.recording.filename

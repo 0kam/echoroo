@@ -18,7 +18,9 @@ from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from echoroo.core.database import DbSession
-from echoroo.models.annotation import Annotation
+from echoroo.models.recording_annotation import (
+    RecordingAnnotation as Annotation,  # Phase 14+ deferred (was rich-shape Annotation)
+)
 from echoroo.schemas.detection import DetectionResponse
 from echoroo.schemas.search import (
     BatchSearchResponse,

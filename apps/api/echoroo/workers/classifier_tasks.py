@@ -834,7 +834,9 @@ async def _run_custom_model_inference(
             from sqlalchemy.dialects.postgresql import insert as pg_insert
             from sqlalchemy.engine import CursorResult
 
-            from echoroo.models.annotation import Annotation
+            from echoroo.models.recording_annotation import (
+                RecordingAnnotation as Annotation,  # Phase 14+ deferred (was rich-shape Annotation)
+            )
 
             total_embeddings = 0
             total_annotations = 0
@@ -1351,8 +1353,10 @@ async def _generate_seed_samples(model_id: str, round_id: str) -> dict[str, Any]
             # ------------------------------------------------------------------
             # Step 7: Create Annotation records + SamplingRoundItem records
             # ------------------------------------------------------------------
-            from echoroo.models.annotation import Annotation  # noqa: PLC0415
             from echoroo.models.enums import DetectionSource, DetectionStatus  # noqa: PLC0415
+            from echoroo.models.recording_annotation import (
+                RecordingAnnotation as Annotation,  # Phase 14+ deferred (was rich-shape Annotation)  # noqa: PLC0415
+            )
 
             now = datetime.now(UTC)
             item_dicts: list[dict[str, Any]] = []
@@ -1938,8 +1942,10 @@ async def _run_al_iteration(model_id: str, round_id: str) -> dict[str, Any]:
         # ------------------------------------------------------------------
         # Step 8: Load pre-created round, mark it running, then insert items
         # ------------------------------------------------------------------
-        from echoroo.models.annotation import Annotation  # noqa: PLC0415
         from echoroo.models.enums import DetectionSource, DetectionStatus  # noqa: PLC0415
+        from echoroo.models.recording_annotation import (
+            RecordingAnnotation as Annotation,  # Phase 14+ deferred (was rich-shape Annotation)  # noqa: PLC0415
+        )
 
         async with session_factory() as db:
             from echoroo.repositories.sampling_round import (  # noqa: PLC0415

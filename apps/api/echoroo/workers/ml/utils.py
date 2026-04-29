@@ -22,8 +22,10 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from echoroo.models.annotation import Annotation
 from echoroo.models.enums import DetectionRunStatus
+from echoroo.models.recording_annotation import (
+    RecordingAnnotation as Annotation,  # Phase 14+ deferred (was rich-shape Annotation)
+)
 from echoroo.models.tag import Tag
 from echoroo.models.taxon import Taxon
 from echoroo.models.taxon_vernacular_name import TaxonVernacularName

@@ -32,13 +32,15 @@ from uuid import UUID
 
 from sqlalchemy import and_, select
 
-from echoroo.models.annotation import Annotation
 from echoroo.models.annotation_set import (
     AnnotationSegment,
     TimeRangeAnnotation,
 )
 from echoroo.models.detection_run import DetectionRun
 from echoroo.models.enums import DetectionSource
+from echoroo.models.recording_annotation import (
+    RecordingAnnotation as Annotation,  # Phase 14+ deferred (was rich-shape Annotation)
+)
 from echoroo.models.tag import Tag
 from echoroo.repositories.evaluation import (
     EvaluationResultRepository,

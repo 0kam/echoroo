@@ -202,8 +202,12 @@ class AnnotationVoteService:
         Raises:
             HTTPException: If annotation not found
         """
-        annotation = await self.annotation_repo.get_by_id(annotation_id)
-        if not annotation:
+        # Phase 13 P1.5 R2 (Codex follow-up — Fatal): existence-only probe
+        # on the DB-truth minimal ``annotations`` table. The legacy
+        # ``get_by_id`` rich-shape load is replaced because the rich-shape
+        # ORM (``RecordingAnnotation``) lives on a Phase 14+ deferred table
+        # that does not exist in the production DB.
+        if not await self.annotation_repo.exists(annotation_id):
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Detection not found",
@@ -225,11 +229,18 @@ class AnnotationVoteService:
             note=request.note,
         )
 
-        await self._update_annotation_status(annotation, min_votes, threshold)
+        # Phase 13 P1.5 R2 (Codex follow-up — Fatal):
+        # ``Annotation.status`` no longer exists on the DB-truth minimal
+        # shape. The consensus status is computed on the fly from votes in
+        # :meth:`get_vote_summary` and ``Detection`` carries the persisted
+        # status — re-using it for the persistent recompute is Phase 14+.
+        # See ``apps/api/echoroo/models/annotation.py`` module docstring.
         return await self.get_vote_summary(
             annotation_id,
             user_id,
             viewer_role=viewer_role,
+            min_votes=min_votes,
+            threshold=threshold,
         )
 
     async def delete_vote(
@@ -257,8 +268,9 @@ class AnnotationVoteService:
         Raises:
             HTTPException: If annotation not found or no vote to delete
         """
-        annotation = await self.annotation_repo.get_by_id(annotation_id)
-        if not annotation:
+        # Phase 13 P1.5 R2: existence-only probe on the DB-truth minimal
+        # shape (see ``cast_vote`` for the rationale).
+        if not await self.annotation_repo.exists(annotation_id):
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Detection not found",
@@ -274,11 +286,15 @@ class AnnotationVoteService:
                 detail="No vote found to delete",
             )
 
-        await self._update_annotation_status(annotation, min_votes, threshold)
+        # Phase 13 P1.5 R2: see ``cast_vote`` — consensus is computed on the
+        # fly in ``get_vote_summary`` from votes alone now that
+        # ``Annotation.status`` is Phase 14+ deferred.
         return await self.get_vote_summary(
             annotation_id,
             user_id,
             viewer_role=viewer_role,
+            min_votes=min_votes,
+            threshold=threshold,
         )
 
     async def get_vote_summary(
@@ -286,6 +302,8 @@ class AnnotationVoteService:
         annotation_id: UUID,
         current_user_id: UUID | None = None,
         viewer_role: str = "Authenticated",
+        min_votes: int = 2,
+        threshold: float = 0.667,
     ) -> VoteSummaryResponse:
         """Get the vote summary for an annotation.
 
@@ -305,8 +323,9 @@ class AnnotationVoteService:
         Raises:
             HTTPException: If annotation not found
         """
-        annotation = await self.annotation_repo.get_by_id(annotation_id)
-        if not annotation:
+        # Phase 13 P1.5 R2: existence-only probe on the DB-truth minimal
+        # ``annotations`` shape (see ``cast_vote`` for rationale).
+        if not await self.annotation_repo.exists(annotation_id):
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Detection not found",
@@ -374,6 +393,17 @@ class AnnotationVoteService:
 
         vote_items = [self._serialize_vote(v, viewer_role=viewer_role) for v in votes]
 
+        # Phase 13 P1.5 R2 (Codex follow-up — Fatal): compute consensus on
+        # the fly. The legacy persisted ``annotation.status`` column lives
+        # on the Phase 14+ ``recording_annotations`` table now and is not
+        # available on the DB-truth minimal ``Annotation`` shape.
+        consensus_status = self.compute_consensus(
+            agree_count=agree_count,
+            disagree_count=disagree_count,
+            min_votes=min_votes,
+            threshold=threshold,
+        )
+
         return VoteSummaryResponse(
             annotation_id=annotation_id,
             agree_count=agree_count,
@@ -382,7 +412,7 @@ class AnnotationVoteService:
             user_vote=user_vote,
             user_signal_quality=user_signal_quality,
             signal_quality_counts=signal_quality_counts,
-            consensus_status=annotation.status,
+            consensus_status=consensus_status,
             voters=vote_items,
             member_agree=member_agree,
             member_disagree=member_disagree,
@@ -541,39 +571,27 @@ class AnnotationVoteService:
         min_votes: int,
         threshold: float,
     ) -> None:
-        """Recompute and persist annotation.status from current vote counts.
+        """Phase 14+ deferred — was: persist annotation.status from votes.
 
-        For annotations sourced from the sampling pipeline (sampling_round),
-        a single agree/disagree vote is enough to confirm or reject
-        — the normal consensus thresholds are bypassed entirely.
+        Phase 13 P1.5 R2 (Codex follow-up — Fatal): the DB-truth minimal
+        ``Annotation`` shape no longer carries a ``status`` column. The
+        consensus state is now computed on the fly in
+        :meth:`get_vote_summary` from the vote tally, and persistence will
+        return when Phase 14+ introduces the ``recording_annotations`` table
+        with its own review-state lifecycle.
 
-        For all other sources the standard iNaturalist-inspired consensus
-        algorithm applies (min_votes + threshold).
+        SAMPLING_ROUND single-vote bypass behaviour is also deferred —
+        :class:`echoroo.workers.classifier_tasks` lives on the Phase 14+
+        ``RecordingAnnotation`` shape and will reinstate it.
 
         Args:
-            annotation: Annotation model instance to update
-            min_votes: Minimum decisive votes needed for consensus evaluation
-            threshold: Score threshold to reach 'agreed'
+            annotation: Annotation model (kept for signature compatibility).
+            min_votes: Unused, kept for signature compatibility.
+            threshold: Unused, kept for signature compatibility.
         """
-        counts = await self.vote_repo.count_by_annotation(annotation.id)
-        agree_count = counts.get(VoteType.AGREE, 0)
-        disagree_count = counts.get(VoteType.DISAGREE, 0)
-
-        if annotation.source in self._SINGLE_VOTE_SOURCES:
-            # Bypass consensus: first decisive vote wins immediately.
-            if agree_count >= 1:
-                new_status = DetectionStatus.CONFIRMED
-            elif disagree_count >= 1:
-                new_status = DetectionStatus.REJECTED
-            else:
-                new_status = DetectionStatus.UNREVIEWED
-        else:
-            new_status = self.compute_consensus(
-                agree_count=agree_count,
-                disagree_count=disagree_count,
-                min_votes=min_votes,
-                threshold=threshold,
-            )
-
-        annotation.status = new_status
-        await self.annotation_repo.db.flush()
+        # No-op — Phase 14+ recording_annotations will reinstate persistence.
+        # Kept as a thin shim so any legacy in-tree caller (e.g. background
+        # tasks not exercised by Phase 13) stays compilable; the live API
+        # path no longer calls this method.
+        del annotation, min_votes, threshold
+        return None

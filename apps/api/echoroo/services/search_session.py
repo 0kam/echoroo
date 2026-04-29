@@ -13,8 +13,10 @@ from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from echoroo.core.database import get_db
-from echoroo.models.annotation import Annotation
 from echoroo.models.enums import DetectionStatus, SearchSessionStatus
+from echoroo.models.recording_annotation import (
+    RecordingAnnotation as Annotation,  # Phase 14+ deferred (was rich-shape Annotation)
+)
 from echoroo.models.search_session import SearchSession
 
 

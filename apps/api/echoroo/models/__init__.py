@@ -74,6 +74,7 @@ from echoroo.models.project_taxon_override import ProjectTaxonSensitivityOverrid
 from echoroo.models.project_trusted_user import ProjectTrustedUser
 from echoroo.models.recorder import Recorder
 from echoroo.models.recording import Recording
+from echoroo.models.recording_annotation import RecordingAnnotation
 from echoroo.models.sampling_round import SamplingRound, SamplingRoundItem
 from echoroo.models.search_query_embedding import SearchQueryEmbedding
 from echoroo.models.search_session import SearchSession
@@ -134,6 +135,8 @@ __all__ = [
     "ConfirmedRegion",
     "Detection",
     "DetectionRun",
+    # Phase 14+ deferred (recording-level annotation review state)
+    "RecordingAnnotation",
     # Custom model (SVM classifier)
     "CustomModel",
     "SamplingRound",

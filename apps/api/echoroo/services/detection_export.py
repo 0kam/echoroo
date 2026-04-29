@@ -36,12 +36,14 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from echoroo.models.annotation import Annotation
 from echoroo.models.confirmed_region import ConfirmedRegion
 from echoroo.models.dataset import Dataset
 from echoroo.models.enums import DetectionSource, DetectionStatus, ProjectVisibility
 from echoroo.models.project import Project
 from echoroo.models.recording import Recording
+from echoroo.models.recording_annotation import (
+    RecordingAnnotation as Annotation,  # Phase 14+ deferred (was rich-shape Annotation)
+)
 from echoroo.models.site import Site
 
 

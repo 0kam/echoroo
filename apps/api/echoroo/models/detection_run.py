@@ -15,9 +15,9 @@ from echoroo.models.base import Base, TimestampMixin, UUIDMixin
 from echoroo.models.enums import DetectionRunStatus
 
 if TYPE_CHECKING:
-    from echoroo.models.annotation import Annotation
     from echoroo.models.dataset import Dataset
     from echoroo.models.project import Project
+    from echoroo.models.recording_annotation import RecordingAnnotation
 
 
 class DetectionRun(UUIDMixin, TimestampMixin, Base):
@@ -108,8 +108,12 @@ class DetectionRun(UUIDMixin, TimestampMixin, Base):
         "Dataset",
         lazy="joined",
     )
-    annotations: Mapped[list[Annotation]] = relationship(
-        "Annotation",
+    # Phase 13 P1.5 R2: rebound to ``RecordingAnnotation`` (Phase 14+ deferred).
+    # The legacy ``Annotation`` ORM was reduced to the DB-truth detection-based
+    # shape and no longer carries ``detection_run_id``; the recording-level
+    # association moves to the deferred ``recording_annotations`` table.
+    annotations: Mapped[list[RecordingAnnotation]] = relationship(
+        "RecordingAnnotation",
         back_populates="detection_run",
         lazy="select",
     )

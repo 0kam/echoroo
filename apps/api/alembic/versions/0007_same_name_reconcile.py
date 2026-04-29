@@ -237,6 +237,34 @@ def upgrade() -> None:
         """
     )
 
+    # ----------------------------------------------------------------- #
+    # Phase 13 P1.5 R2 (Codex follow-up — Major):
+    # ``annotation_votes (annotation_id, voter_user_id)`` UNIQUE constraint.
+    # The ORM has been declaring this since Phase 6 but earlier baselines
+    # forgot to materialise it on the DB; a race between two parallel
+    # ``cast_vote`` calls could persist two rows for the same (annotation,
+    # voter) pair on a stale DB. Idempotent so fresh DBs (baseline ``0001``
+    # already includes the constraint after this revision's batch edit)
+    # short-circuit. The constraint name matches the ORM declaration in
+    # ``echoroo.models.annotation_vote`` and the baseline 0001 batch edit.
+    # ----------------------------------------------------------------- #
+    op.execute(
+        """
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM pg_constraint
+                WHERE conname = 'uq_annotation_vote_user'
+            ) THEN
+                ALTER TABLE annotation_votes
+                ADD CONSTRAINT uq_annotation_vote_user
+                UNIQUE (annotation_id, voter_user_id);
+            END IF;
+        END
+        $$;
+        """
+    )
+
 
 # --------------------------------------------------------------------------- #
 # Downgrade — revert the tags 5-step. This drops the new columns and
@@ -248,6 +276,26 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    # Phase 13 P1.5 R2: drop the annotation_votes unique constraint added in
+    # the upgrade. The constraint stays on baseline-fresh DBs because the
+    # baseline 0001 batch edit also includes it; this branch only runs for
+    # DBs that were stamped at 0006b or earlier.
+    op.execute(
+        """
+        DO $$
+        BEGIN
+            IF EXISTS (
+                SELECT 1 FROM pg_constraint
+                WHERE conname = 'uq_annotation_vote_user'
+            ) THEN
+                ALTER TABLE annotation_votes
+                DROP CONSTRAINT uq_annotation_vote_user;
+            END IF;
+        END
+        $$;
+        """
+    )
+
     op.execute(
         """
         DO $$

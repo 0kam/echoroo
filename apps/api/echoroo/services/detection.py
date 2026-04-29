@@ -9,10 +9,24 @@ from fastapi import HTTPException, status
 from sqlalchemy import select as sa_select
 
 from echoroo.core.pagination import paginate
-from echoroo.models.annotation import Annotation
 from echoroo.models.annotation_vote import AnnotationVote
 from echoroo.models.confirmed_region import ConfirmedRegion
 from echoroo.models.enums import DetectionStatus, SignalQuality, VoteType
+
+# Phase 13 P1.5 R2 (Codex follow-up — Fatal): the rich-shape detection
+# review service (list / get / create / confirm / reject / change_species /
+# species_summary / temporal_summary / export_csv / export_ml_dataset)
+# operates on the Phase 14+ deferred ``RecordingAnnotation`` ORM bound to a
+# table that does not yet exist. The Phase 6 vote endpoints
+# (``cast_vote`` / ``delete_vote`` / ``get_vote_summary``) bypass this
+# service and go through ``services/annotation_vote.py`` which has been
+# rewritten on the DB-truth minimal :class:`Annotation` shape. Phase 14+
+# will reinstate the recording-level review-state lifecycle on a fresh
+# ``recording_annotations`` table; until then any caller of this service
+# fails at runtime with PostgreSQL ``relation does not exist`` — by design.
+from echoroo.models.recording_annotation import (
+    RecordingAnnotation as Annotation,  # Phase 14+ deferred
+)
 from echoroo.repositories.annotation import AnnotationRepository, TemporalSummaryRow
 from echoroo.repositories.annotation_vote import AnnotationVoteRepository
 from echoroo.repositories.confirmed_region import ConfirmedRegionRepository

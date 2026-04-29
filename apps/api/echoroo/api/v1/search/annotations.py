@@ -16,8 +16,10 @@ from echoroo.api.v1.search.utils import _annotation_to_detection_response
 from echoroo.core.database import DbSession
 from echoroo.core.permissions import check_project_access
 from echoroo.middleware.auth import CurrentUser
-from echoroo.models.annotation import Annotation
 from echoroo.models.enums import DetectionSource, DetectionStatus
+from echoroo.models.recording_annotation import (
+    RecordingAnnotation as Annotation,  # Phase 14+ deferred (was rich-shape Annotation)
+)
 from echoroo.schemas.detection import DetectionResponse
 from echoroo.schemas.search import SearchAnnotationCreate
 

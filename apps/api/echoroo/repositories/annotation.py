@@ -1,9 +1,28 @@
-"""Annotation repository for detection review database operations."""
+"""Annotation repository for detection review database operations.
+
+Phase 13 P1.5 R2 (Codex follow-up — Fatal): the legacy rich-shape methods
+(``list_annotations`` / ``species_summary`` / ``temporal_summary`` / ``create``
+/ ``create_batch`` / ``update`` / ``delete_by_detection_run``) operate on the
+Phase 14+ deferred :class:`RecordingAnnotation` ORM whose ``__tablename__`` is
+``recording_annotations_DEFERRED`` and does not exist in the database. They
+are kept compilable so legacy services / workers (search-session, evaluation,
+detection-export, ML workers) continue to typecheck while their tables come
+back online in Phase 14+; runtime calls will fail with PostgreSQL ``relation
+does not exist`` — by design.
+
+The two methods that survive into Phase 13 production traffic
+(:meth:`exists_in_project` and :meth:`get_by_id_in_project`) are rewritten on
+top of the DB-truth minimal :class:`Annotation` shape — they reach the
+project via the parent ``Detection`` row instead of the legacy
+``Annotation.recording_id -> Recording.dataset_id -> Dataset.project_id``
+chain that no longer compiles. See :class:`echoroo.models.annotation.Annotation`
+module docstring for the bridging strategy.
+"""
 
 from __future__ import annotations
 
 from datetime import date
-from typing import TypedDict
+from typing import TYPE_CHECKING, TypedDict
 from uuid import UUID
 
 from sqlalchemy import Integer, delete, func, select
@@ -11,10 +30,17 @@ from sqlalchemy.engine import CursorResult
 from sqlalchemy.orm import selectinload
 from sqlalchemy.sql.expression import cast
 
-from echoroo.models.annotation import Annotation
+from echoroo.models.annotation import Annotation as MinimalAnnotation
+from echoroo.models.detection import Detection
 from echoroo.models.enums import DetectionStatus
+from echoroo.models.recording_annotation import (
+    RecordingAnnotation as Annotation,  # Phase 14+ deferred (was rich-shape)
+)
 from echoroo.models.tag import Tag
 from echoroo.repositories.base import BaseRepository
+
+if TYPE_CHECKING:
+    pass
 
 
 class TemporalSummaryRow(TypedDict):
@@ -42,18 +68,19 @@ class SpeciesSummaryRow(TypedDict):
 
 
 class AnnotationRepository(BaseRepository[Annotation]):
-    """Repository for Annotation entity operations."""
+    """Repository for Annotation entity operations.
+
+    Phase 13 P1.5 R2: bound to :class:`RecordingAnnotation` for legacy
+    rich-shape methods (Phase 14+ deferred). The two methods used by the
+    Phase 13 vote API path are rewritten on the DB-truth minimal shape.
+    """
 
     model = Annotation
 
     async def get_by_id(self, annotation_id: UUID) -> Annotation | None:
-        """Get annotation by ID with all relationships loaded.
+        """Phase 14+ deferred — was: get rich-shape annotation with rels.
 
-        Args:
-            annotation_id: Annotation's UUID
-
-        Returns:
-            Annotation instance or None if not found
+        Production callers should use :meth:`get_by_id_in_project` instead.
         """
         result = await self.db.execute(
             select(Annotation)
@@ -70,21 +97,15 @@ class AnnotationRepository(BaseRepository[Annotation]):
     async def get_by_id_in_project(
         self, annotation_id: UUID, project_id: UUID
     ) -> Annotation | None:
-        """Get annotation by ID, restricted to the given project.
+        """Phase 14+ deferred — see ``exists_in_project`` for the
+        production-safe BOLA / IDOR guard built on the DB-truth minimal
+        :class:`Annotation` shape.
 
-        Verifies the integrity chain
-        ``Annotation.recording_id -> Recording.dataset_id -> Dataset.project_id``
-        so that an annotation UUID belonging to a different project returns
-        ``None`` instead of leaking the row (BOLA / IDOR guard, FR-008 /
-        FR-008a / FR-037).
-
-        Args:
-            annotation_id: Annotation's UUID.
-            project_id: Project UUID the annotation must belong to.
-
-        Returns:
-            Annotation instance with relationships loaded, or ``None`` when the
-            annotation does not exist or does not belong to ``project_id``.
+        This rich-shape variant continues to point at
+        :class:`RecordingAnnotation` so legacy services that load eager
+        relationships (``recording`` / ``tag`` / ``detection_run`` /
+        ``reviewed_by``) keep compiling. It will raise at runtime because
+        the deferred table does not exist.
         """
         from echoroo.models.dataset import Dataset
         from echoroo.models.recording import Recording
@@ -104,14 +125,42 @@ class AnnotationRepository(BaseRepository[Annotation]):
         )
         return result.scalar_one_or_none()
 
+    async def exists(self, annotation_id: UUID) -> bool:
+        """Lightweight existence probe on the DB-truth minimal shape.
+
+        Phase 13 P1.5 R2: replaces the legacy ``get_by_id`` truthiness check
+        that some service-layer callers used for "annotation exists" gating
+        without reading any rich-shape columns. The legacy ``get_by_id``
+        still routes to :class:`RecordingAnnotation` (Phase 14+ deferred);
+        callers that only need existence should use this method.
+
+        Args:
+            annotation_id: Annotation's UUID.
+
+        Returns:
+            ``True`` when the annotation row exists in the DB-truth
+            minimal ``annotations`` table.
+        """
+        result = await self.db.execute(
+            select(MinimalAnnotation.id).where(MinimalAnnotation.id == annotation_id)
+        )
+        return result.first() is not None
+
     async def exists_in_project(
         self, annotation_id: UUID, project_id: UUID
     ) -> bool:
         """Return ``True`` when an annotation belongs to ``project_id``.
 
-        Lighter-weight existence probe used by API handlers that only need
-        to enforce the BOLA / IDOR guard before delegating to a service
-        method that issues its own SELECT.
+        Phase 13 P1.5 R2 (Codex follow-up — Fatal): rewritten on the
+        DB-truth minimal :class:`Annotation` shape. The integrity chain
+        is now ``Annotation.detection_id -> Detection.project_id`` (FR-005);
+        ``Detection`` is the canonical recording- and project-scoped row
+        (the rich-shape ``Annotation.recording_id`` chain that the legacy
+        repository used does not exist in production DB).
+
+        Used as a BOLA / IDOR guard before the vote API delegates to
+        :meth:`AnnotationVoteService.cast_vote` /
+        :meth:`get_vote_summary` / :meth:`delete_vote`.
 
         Args:
             annotation_id: Annotation's UUID.
@@ -119,17 +168,13 @@ class AnnotationRepository(BaseRepository[Annotation]):
 
         Returns:
             ``True`` when the annotation exists in the given project,
-            ``False`` otherwise.
+            ``False`` otherwise (also for unknown annotations).
         """
-        from echoroo.models.dataset import Dataset
-        from echoroo.models.recording import Recording
-
         result = await self.db.execute(
-            select(Annotation.id)
-            .join(Recording, Annotation.recording_id == Recording.id)
-            .join(Dataset, Recording.dataset_id == Dataset.id)
-            .where(Annotation.id == annotation_id)
-            .where(Dataset.project_id == project_id)
+            select(MinimalAnnotation.id)
+            .join(Detection, MinimalAnnotation.detection_id == Detection.id)
+            .where(MinimalAnnotation.id == annotation_id)
+            .where(Detection.project_id == project_id)
         )
         return result.first() is not None
 
@@ -146,27 +191,16 @@ class AnnotationRepository(BaseRepository[Annotation]):
         page: int = 1,
         page_size: int = 50,
     ) -> tuple[list[Annotation], int]:
-        """List annotations for a project with optional filters and pagination.
+        """Phase 14+ deferred — list annotations using rich-shape filters.
 
-        Args:
-            project_id: Project's UUID (filters via recording -> dataset -> project)
-            tag_id: Optional tag filter
-            status: Optional review status filter
-            confidence_min: Optional minimum confidence score filter
-            confidence_max: Optional maximum confidence score filter
-            dataset_id: Optional dataset filter (via recording -> dataset)
-            recording_id: Optional specific recording filter
-            detection_run_id: Optional detection run filter
-            page: Page number (1-indexed)
-            page_size: Items per page
-
-        Returns:
-            Tuple of (list of annotations, total count)
+        Routes to :class:`RecordingAnnotation`. Will raise at runtime because
+        the ``recording_annotations_DEFERRED`` table does not exist; the
+        Phase 6 detections list endpoint should migrate to a
+        :class:`Detection`-based listing in Phase 14+.
         """
         from echoroo.models.dataset import Dataset
         from echoroo.models.recording import Recording
 
-        # Build join conditions to filter by project_id
         base_query = (
             select(Annotation)
             .join(Recording, Annotation.recording_id == Recording.id)
@@ -182,7 +216,6 @@ class AnnotationRepository(BaseRepository[Annotation]):
             .where(Dataset.project_id == project_id)
         )
 
-        # Apply optional filters
         if tag_id is not None:
             base_query = base_query.where(Annotation.tag_id == tag_id)
             count_query = count_query.where(Annotation.tag_id == tag_id)
@@ -211,11 +244,9 @@ class AnnotationRepository(BaseRepository[Annotation]):
             base_query = base_query.where(Annotation.detection_run_id == detection_run_id)
             count_query = count_query.where(Annotation.detection_run_id == detection_run_id)
 
-        # Get total count
         count_result = await self.db.execute(count_query)
         total: int = count_result.scalar_one()
 
-        # Get paginated results
         offset = (page - 1) * page_size
         result = await self.db.execute(
             base_query
@@ -239,22 +270,10 @@ class AnnotationRepository(BaseRepository[Annotation]):
         dataset_id: UUID | None = None,
         detection_run_id: UUID | None = None,
     ) -> list[SpeciesSummaryRow]:
-        """Get species detection summary grouped by tag.
+        """Phase 14+ deferred — species rollup keyed by tag.
 
-        Returns count, average confidence, and status breakdown per species tag.
-
-        When filtering by a specific detection_run_id, annotations without a
-        tag_id (e.g. custom_svm source) are included and grouped by source/model.
-        When no detection_run_id filter is applied, only tagged annotations are
-        returned, grouped by tag_id across all detection runs.
-
-        Args:
-            project_id: Project's UUID
-            dataset_id: Optional dataset filter
-            detection_run_id: Optional detection run filter
-
-        Returns:
-            List of dicts with tag info and aggregated statistics
+        Routes to :class:`RecordingAnnotation`. Will raise at runtime
+        because the deferred table does not exist.
         """
         from echoroo.models.dataset import Dataset
         from echoroo.models.detection_run import DetectionRun
@@ -276,8 +295,6 @@ class AnnotationRepository(BaseRepository[Annotation]):
             ]
 
         if detection_run_id is not None:
-            # When filtering by a specific run, include tag-less annotations and
-            # group by tag_id + source + model_name so custom_svm entries appear.
             query = (
                 select(
                     Annotation.tag_id,
@@ -332,7 +349,6 @@ class AnnotationRepository(BaseRepository[Annotation]):
                 for row in rows
             ]
 
-        # No detection_run_id filter: group by tag only, exclude tag-less annotations
         query_no_run = (
             select(
                 Annotation.tag_id,
@@ -384,26 +400,14 @@ class AnnotationRepository(BaseRepository[Annotation]):
         dataset_id: UUID | None = None,
         detection_run_id: UUID | None = None,
     ) -> list[TemporalSummaryRow]:
-        """Get hourly detection counts grouped by tag, date, and hour.
+        """Phase 14+ deferred — hourly detection counts grouped by tag.
 
-        Only includes recordings with a non-null datetime field.
-
-        Args:
-            project_id: Project's UUID
-            dataset_id: Optional dataset filter
-            detection_run_id: Optional detection run filter
-
-        Returns:
-            List of dicts with tag_id, date, hour, and count fields
+        Routes to :class:`RecordingAnnotation`. Will raise at runtime
+        because the deferred table does not exist.
         """
         from echoroo.models.dataset import Dataset
         from echoroo.models.recording import Recording
 
-        # Convert each recording's datetime to its dataset's timezone before
-        # extracting date and hour. PostgreSQL's ``AT TIME ZONE`` converts a
-        # ``timestamptz`` to a ``timestamp`` in the given zone, so EXTRACT
-        # will return the local hour. Falls back to UTC if the dataset has
-        # no timezone configured.
         tz_expr = func.coalesce(Dataset.datetime_timezone, "UTC")
         local_datetime = Recording.datetime.op("AT TIME ZONE")(tz_expr)
         date_expr = func.date(local_datetime).label("detection_date")
@@ -453,28 +457,14 @@ class AnnotationRepository(BaseRepository[Annotation]):
         ]
 
     async def create(self, annotation: Annotation) -> Annotation:
-        """Create a new annotation.
-
-        Args:
-            annotation: Annotation instance to create
-
-        Returns:
-            Created annotation instance
-        """
+        """Phase 14+ deferred — create a rich-shape annotation."""
         self.db.add(annotation)
         await self.db.flush()
         await self.db.refresh(annotation, ["recording", "tag", "detection_run", "reviewed_by"])
         return annotation
 
     async def create_batch(self, annotations: list[Annotation]) -> list[Annotation]:
-        """Create multiple annotations in a single flush.
-
-        Args:
-            annotations: List of Annotation instances to create
-
-        Returns:
-            List of created annotation instances
-        """
+        """Phase 14+ deferred — batch-create rich-shape annotations."""
         for annotation in annotations:
             self.db.add(annotation)
         await self.db.flush()
@@ -483,28 +473,13 @@ class AnnotationRepository(BaseRepository[Annotation]):
         return annotations
 
     async def update(self, annotation: Annotation) -> Annotation:
-        """Update an existing annotation.
-
-        Args:
-            annotation: Annotation instance with updated fields
-
-        Returns:
-            Updated annotation instance
-        """
+        """Phase 14+ deferred — update a rich-shape annotation."""
         await self.db.flush()
         await self.db.refresh(annotation, ["recording", "tag", "detection_run", "reviewed_by"])
         return annotation
 
-
     async def delete_by_detection_run(self, detection_run_id: UUID) -> int:
-        """Delete all annotations belonging to a detection run.
-
-        Args:
-            detection_run_id: DetectionRun's UUID
-
-        Returns:
-            Number of deleted annotations
-        """
+        """Phase 14+ deferred — bulk-delete annotations by run."""
         cursor: CursorResult[tuple[()]] = await self.db.execute(  # type: ignore[assignment]
             delete(Annotation).where(Annotation.detection_run_id == detection_run_id)
         )

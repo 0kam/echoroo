@@ -1,170 +1,132 @@
-"""Annotation model for detection review workflow.
+"""Annotation model — minimal DB-truth shape (Phase 13 P1.5 R2).
 
-This is a NEW annotation model for the detection review feature (003-detection-review).
-It is separate from the existing clip_annotations and sound_event_annotations tables
-which belong to the annotation project workflow.
+Phase 13 P1.5 R2 (Codex follow-up — Fatal): the ORM is now reduced to the
+minimal column shape that actually exists in the database (per the baseline
+``0001_baseline_permissions_redesign.py`` migration, table ``annotations``):
+
+* ``id`` UUID PK with ``gen_random_uuid()`` server default (UUIDMixin)
+* ``detection_id`` UUID NOT NULL FK ``detections.id`` ON DELETE CASCADE
+* ``user_id`` UUID NULL FK ``users.id``
+* ``source`` ENUM ``annotationsource`` NOT NULL
+* ``taxon_id`` VARCHAR(64) NULL — legacy GBIF taxon key (string-formatted
+  integer); rebinds to ``taxa.id`` in Phase 14+ alongside ``Detection``.
+* ``label`` VARCHAR(200) NULL — free-text label
+* ``created_at`` / ``updated_at`` TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT
+  ``now()`` (TimestampMixin)
+
+The previous rich-shape (``recording_id`` / ``tag_id`` / ``status`` /
+``confidence`` / ``start_time`` / ``end_time`` / ``freq_low`` / ``freq_high``
+/ ``reviewed_by_id`` / ``reviewed_at`` / ``search_session_id`` /
+``detection_run_id``) was an in-memory test artefact: those columns never
+existed on the production DB, so every API path that hit ``annotations``
+with the rich-shape ORM was silently broken in production. The columns are
+**deferred to Phase 14+** when a separate ``recording_annotations`` table
+will reinstate them with their own review-state lifecycle (status /
+confidence / voting / review history). Until that lands, recording-level
+review state is sourced from :class:`echoroo.models.detection.Detection`
+(which already carries ``recording_id`` / ``project_id`` / ``status`` /
+``confidence`` / ``start_time`` / ``end_time``) and from
+:class:`echoroo.models.annotation_vote.AnnotationVote` for the consensus
+state (Phase 6 vote system).
+
+Spec source of truth: ``/tmp/plan-merged-v5-final.md`` §0.1 "DB 真
+(detection-based)、ORM 縮退".
 """
 
 from __future__ import annotations
 
-from datetime import datetime
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from sqlalchemy import DateTime, Enum, Float, ForeignKey, Index
+from sqlalchemy import Enum, ForeignKey, Index, String
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from echoroo.models.base import Base, TimestampMixin, UUIDMixin
-from echoroo.models.enums import DetectionSource, DetectionStatus
+from echoroo.models.enums import AnnotationSource
 
 if TYPE_CHECKING:
-    from echoroo.models.detection_run import DetectionRun
-    from echoroo.models.recording import Recording
-    from echoroo.models.search_session import SearchSession
-    from echoroo.models.tag import Tag
+    from echoroo.models.detection import Detection
     from echoroo.models.user import User
 
 
 class Annotation(UUIDMixin, TimestampMixin, Base):
-    """Detection annotation for a specific time region in a recording.
+    """Detection-based annotation row — DB-truth minimal shape.
 
-    Created by ML models (BirdNET, Perch) or human reviewers. Can be confirmed,
-    rejected, or left unreviewed. Supports frequency range for spectrogram display.
+    Each annotation references a parent :class:`Detection` (the recording-
+    region candidate). Recording-level metadata (``recording_id`` /
+    ``project_id`` / ``start_time`` / ``end_time`` / ``confidence``) is
+    accessed via the ``detection`` relationship — this avoids duplicating
+    the spatial / temporal columns and keeps the DB normalised.
 
-    Attributes:
-        id: Unique identifier (UUID)
-        recording_id: Foreign key to the source recording
-        tag_id: Optional foreign key to species/sound tag
-        detection_run_id: Optional foreign key to the ML run that created this
-        source: Source of the detection (birdnet, perch_search, human)
-        status: Review status (unreviewed, confirmed, rejected)
-        confidence: Model confidence score (0.0-1.0), None for human annotations
-        start_time: Start time in seconds within the recording
-        end_time: End time in seconds within the recording
-        freq_low: Optional lower frequency bound in Hz
-        freq_high: Optional upper frequency bound in Hz
-        reviewed_by_id: Optional FK to user who reviewed this annotation
-        reviewed_at: Optional timestamp of review action
+    Phase 14+ deferred: a sibling ``recording_annotations`` table will carry
+    the review-state lifecycle (status / suggested tag / freq band / freq
+    band / reviewer info). Existing services that need those columns are
+    moved to :class:`echoroo.models.recording_annotation.RecordingAnnotation`
+    and skipped at runtime (the deferred table does not yet exist).
     """
 
     __tablename__ = "annotations"
 
-    recording_id: Mapped[UUID] = mapped_column(
+    detection_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("recordings.id", ondelete="CASCADE"),
+        ForeignKey("detections.id", ondelete="CASCADE"),
         nullable=False,
-        doc="Source recording ID",
+        doc="Parent detection (FR-070..FR-079 candidate region).",
     )
-    tag_id: Mapped[UUID | None] = mapped_column(
+    user_id: Mapped[UUID | None] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("tags.id", ondelete="SET NULL"),
+        ForeignKey("users.id"),
         nullable=True,
-        doc="Species or sound type tag ID",
+        doc=(
+            "Annotator user — NULL for ML-emitted annotations. The Phase 6"
+            " voting system tracks voter identity separately on"
+            " ``annotation_votes.voter_user_id``."
+        ),
     )
-    detection_run_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("detection_runs.id", ondelete="SET NULL"),
-        nullable=True,
-        doc="ML detection run that created this annotation",
-    )
-    source: Mapped[DetectionSource] = mapped_column(
+    source: Mapped[AnnotationSource] = mapped_column(
         Enum(
-            DetectionSource,
-            name="detectionsource",
+            AnnotationSource,
+            name="annotationsource",
             create_type=False,
-            values_callable=lambda x: [e.value for e in x],
+            values_callable=lambda enum_cls: [e.value for e in enum_cls],
         ),
         nullable=False,
-        doc="Source of the detection",
+        doc="How this annotation was produced (ML model / human / etc).",
     )
-    status: Mapped[DetectionStatus] = mapped_column(
-        Enum(
-            DetectionStatus,
-            name="detectionstatus",
-            create_type=False,
-            values_callable=lambda x: [e.value for e in x],
+    taxon_id: Mapped[str | None] = mapped_column(
+        String(64),
+        nullable=True,
+        doc=(
+            "Legacy taxon identifier — currently a stringified GBIF taxon"
+            " key. Phase 14+ migration will swap to a UUID FK to taxa.id"
+            " alongside the Detection table."
         ),
-        default=DetectionStatus.UNREVIEWED,
-        nullable=False,
-        doc="Review status",
     )
-    confidence: Mapped[float | None] = mapped_column(
-        Float,
+    label: Mapped[str | None] = mapped_column(
+        String(200),
         nullable=True,
-        doc="Model confidence score (0.0-1.0)",
-    )
-    start_time: Mapped[float] = mapped_column(
-        Float,
-        nullable=False,
-        doc="Start time in seconds within the recording",
-    )
-    end_time: Mapped[float] = mapped_column(
-        Float,
-        nullable=False,
-        doc="End time in seconds within the recording",
-    )
-    freq_low: Mapped[float | None] = mapped_column(
-        Float,
-        nullable=True,
-        doc="Lower frequency bound in Hz",
-    )
-    freq_high: Mapped[float | None] = mapped_column(
-        Float,
-        nullable=True,
-        doc="Upper frequency bound in Hz",
-    )
-    reviewed_by_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="SET NULL"),
-        nullable=True,
-        doc="User who reviewed this annotation",
-    )
-    reviewed_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True),
-        nullable=True,
-        doc="Timestamp of review action",
-    )
-    search_session_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("search_sessions.id", ondelete="SET NULL"),
-        nullable=True,
-        index=True,
-        doc="Search session that created this annotation",
+        doc="Free-text label (used by human annotators when no taxon match).",
     )
 
-    # Relationships
-    recording: Mapped[Recording] = relationship(
-        "Recording",
+    # Relationships ------------------------------------------------------ #
+    detection: Mapped[Detection] = relationship(
+        "Detection",
         lazy="raise",
+        doc="Parent Detection — carries recording_id, project_id, time range.",
     )
-    tag: Mapped[Tag | None] = relationship(
-        "Tag",
-        lazy="raise",
-    )
-    detection_run: Mapped[DetectionRun | None] = relationship(
-        "DetectionRun",
-        back_populates="annotations",
-        lazy="raise",
-    )
-    reviewed_by: Mapped[User | None] = relationship(
+    user: Mapped[User | None] = relationship(
         "User",
         lazy="raise",
-    )
-    search_session: Mapped[SearchSession | None] = relationship(
-        "SearchSession",
-        back_populates="annotations",
-        lazy="raise",
+        doc="Annotator user (NULL for ML-emitted rows).",
     )
 
     __table_args__ = (
-        Index("ix_annotations_recording_id", "recording_id"),
-        Index("ix_annotations_tag_id", "tag_id"),
-        Index("ix_annotations_detection_run_id", "detection_run_id"),
-        Index("ix_annotations_status", "status"),
-        Index("ix_annotations_source", "source"),
-        Index("ix_annotations_confidence", "confidence"),
+        Index("ix_annotations_detection", "detection_id"),
     )
 
     def __repr__(self) -> str:
-        return f"<Annotation(id={self.id}, source={self.source}, status={self.status})>"
+        return (
+            f"<Annotation(id={self.id}, detection_id={self.detection_id},"
+            f" source={self.source})>"
+        )

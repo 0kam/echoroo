@@ -920,6 +920,15 @@ def upgrade() -> None:  # noqa: PLR0915 — baseline migration, long by nature
             """,
             name="ck_annotation_votes_source_role_consistency",
         ),
+        # Phase 13 P1.5 R2 (Codex follow-up): one vote per (annotation, voter)
+        # — race-safe at the DB layer per FR-037 / FR-061a. ORM declares the
+        # same uniqueness in :class:`AnnotationVote` so the two layers stay
+        # aligned. The constraint name matches ``annotation_vote.py``.
+        sa.UniqueConstraint(
+            "annotation_id",
+            "voter_user_id",
+            name="uq_annotation_vote_user",
+        ),
     )
     op.create_index(
         "ix_annotation_votes_annotation", "annotation_votes", ["annotation_id"]
