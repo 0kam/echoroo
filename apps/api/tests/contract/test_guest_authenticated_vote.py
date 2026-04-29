@@ -277,7 +277,8 @@ async def _fetch_vote_row(
     result = await db.execute(
         sa.select(AnnotationVote).where(
             AnnotationVote.annotation_id == annotation_id,
-            AnnotationVote.user_id == user_id,
+            # Phase 13 P1.5 (T804): renamed from ``user_id``.
+            AnnotationVote.voter_user_id == user_id,
         )
     )
     return result.scalar_one_or_none()
@@ -296,7 +297,8 @@ async def _fetch_vote_columns(
         sa.text(
             "SELECT id, vote::text, source::text, project_role_at_vote::text "
             "FROM annotation_votes "
-            "WHERE annotation_id = :ann AND user_id = :uid"
+            # Phase 13 P1.5 (T804): renamed from ``user_id`` to ``voter_user_id``.
+            "WHERE annotation_id = :ann AND voter_user_id = :uid"
         ),
         {"ann": annotation_id, "uid": user_id},
     )
@@ -502,7 +504,9 @@ class TestVoteSourceImmutableOnRevote:
         original_id, original_vote, original_source, original_role = original
         assert original_source == AnnotationVoteSource.GUEST_AUTHENTICATED.value
         assert original_role is None
-        assert original_vote == "agree"
+        # Phase 13 P1.5 (T804): ``vote`` is now smallint at the DB layer.
+        # ``::text`` cast renders the canonical mapping AGREE=1.
+        assert original_vote == "1"
 
         # 2) Re-vote: change agree → disagree. Even if the upstream
         #    classification logic changed, FR-037 says source / role
@@ -522,7 +526,8 @@ class TestVoteSourceImmutableOnRevote:
         # Same row — re-votes upsert in place per FR-037.
         assert revoted_id == original_id
         # vote value DID change ...
-        assert revoted_vote == "disagree"
+        # Phase 13 P1.5: DISAGREE = -1 (smallint canonical mapping).
+        assert revoted_vote == "-1"
         # ... but source + role are FROZEN.
         assert revoted_source == original_source, (
             f"Re-vote leaked source mutation: was {original_source!r}, "

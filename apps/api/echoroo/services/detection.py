@@ -635,23 +635,25 @@ class DetectionService:
 
         result: dict[UUID, DetectionVoteCounts] = {}
         for annotation_id, votes in grouped.items():
-            agree_count = sum(1 for v in votes if v.vote == VoteType.AGREE)
-            disagree_count = sum(1 for v in votes if v.vote == VoteType.DISAGREE)
-            unsure_count = sum(1 for v in votes if v.vote == VoteType.UNSURE)
+            # Phase 13 P1.5 (T804): ``vote`` is now smallint at the DB layer;
+            # use the ``vote_enum`` ergonomic property for VoteType compares.
+            agree_count = sum(1 for v in votes if v.vote_enum == VoteType.AGREE)
+            disagree_count = sum(1 for v in votes if v.vote_enum == VoteType.DISAGREE)
+            unsure_count = sum(1 for v in votes if v.vote_enum == VoteType.UNSURE)
 
-            # Count signal quality values among agree votes
+            # Phase 13 P1.5: ``signal_quality`` was dropped from the vote
+            # row; emit zero counts to preserve the API contract until
+            # Phase 14+ recording_annotations reinstates it.
             signal_quality_counts: dict[str, int] = {q.value: 0 for q in SignalQuality}
-            for v in votes:
-                if v.vote == VoteType.AGREE and v.signal_quality is not None:
-                    signal_quality_counts[v.signal_quality] += 1
 
             user_vote: VoteType | None = None
             user_signal_quality: SignalQuality | None = None
             if current_user_id is not None:
                 for v in votes:
-                    if v.user_id == current_user_id:
-                        user_vote = v.vote
-                        user_signal_quality = v.signal_quality if v.vote == VoteType.AGREE else None
+                    if v.voter_user_id == current_user_id:
+                        user_vote = v.vote_enum
+                        # Phase 13 P1.5: signal_quality dropped — None until Phase 14+.
+                        user_signal_quality = None
                         break
 
             consensus_status = AnnotationVoteService.compute_consensus_status(

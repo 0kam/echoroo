@@ -171,6 +171,7 @@ class AnnotationVoteService:
         request: VoteCastRequest,
         source: AnnotationVoteSource,
         project_role_at_vote: ProjectMemberRole | None,
+        project_id: UUID,
         viewer_role: str = "Authenticated",
         min_votes: int = 2,
         threshold: float = 0.667,
@@ -208,12 +209,17 @@ class AnnotationVoteService:
                 detail="Detection not found",
             )
 
+        # Phase 13 P1.5 (T804): the recording-level fields
+        # (signal_quality / suggested_tag_id / note) are accepted by
+        # ``VoteCastRequest`` but no longer persisted. Phase 14+ will
+        # reinstate them via the ``recording_annotations`` table.
         await self.vote_repo.upsert(
             annotation_id=annotation_id,
             user_id=user_id,
             vote=request.vote,
             source=source,
             project_role_at_vote=project_role_at_vote,
+            project_id=project_id,
             signal_quality=request.signal_quality,
             suggested_tag_id=request.suggested_tag_id,
             note=request.note,
@@ -308,9 +314,11 @@ class AnnotationVoteService:
 
         votes = await self.vote_repo.list_by_annotation(annotation_id)
 
-        agree_count = sum(1 for v in votes if v.vote == VoteType.AGREE)
-        disagree_count = sum(1 for v in votes if v.vote == VoteType.DISAGREE)
-        unsure_count = sum(1 for v in votes if v.vote == VoteType.UNSURE)
+        # Phase 13 P1.5: ``vote`` is now a smallint at the DB layer; use the
+        # ``vote_enum`` ergonomic property for VoteType comparisons.
+        agree_count = sum(1 for v in votes if v.vote_enum == VoteType.AGREE)
+        disagree_count = sum(1 for v in votes if v.vote_enum == VoteType.DISAGREE)
+        unsure_count = sum(1 for v in votes if v.vote_enum == VoteType.UNSURE)
 
         # Per-source counts computed in Python because we already load all
         # votes for the voters[] response (FR-038/039 require both). Switching
@@ -319,48 +327,49 @@ class AnnotationVoteService:
         # FR-038: per-source aggregate counts
         member_agree = sum(
             1 for v in votes
-            if v.vote == VoteType.AGREE
+            if v.vote_enum == VoteType.AGREE
             and v.source == AnnotationVoteSource.MEMBER
         )
         member_disagree = sum(
             1 for v in votes
-            if v.vote == VoteType.DISAGREE
+            if v.vote_enum == VoteType.DISAGREE
             and v.source == AnnotationVoteSource.MEMBER
         )
         guest_authenticated_agree = sum(
             1 for v in votes
-            if v.vote == VoteType.AGREE
+            if v.vote_enum == VoteType.AGREE
             and v.source == AnnotationVoteSource.GUEST_AUTHENTICATED
         )
         guest_authenticated_disagree = sum(
             1 for v in votes
-            if v.vote == VoteType.DISAGREE
+            if v.vote_enum == VoteType.DISAGREE
             and v.source == AnnotationVoteSource.GUEST_AUTHENTICATED
         )
         trusted_user_agree = sum(
             1 for v in votes
-            if v.vote == VoteType.AGREE
+            if v.vote_enum == VoteType.AGREE
             and v.source == AnnotationVoteSource.TRUSTED_USER
         )
         trusted_user_disagree = sum(
             1 for v in votes
-            if v.vote == VoteType.DISAGREE
+            if v.vote_enum == VoteType.DISAGREE
             and v.source == AnnotationVoteSource.TRUSTED_USER
         )
 
-        # Count signal quality values among agree votes
+        # Phase 13 P1.5: ``signal_quality`` was dropped from the AnnotationVote
+        # row (Phase 14+ recording_annotations defer). The aggregate dict is
+        # emitted with zero counts so the API contract is unchanged.
         signal_quality_counts: dict[str, int] = {q.value: 0 for q in SignalQuality}
-        for v in votes:
-            if v.vote == VoteType.AGREE and v.signal_quality is not None:
-                signal_quality_counts[v.signal_quality] += 1
 
         user_vote: VoteType | None = None
         user_signal_quality: SignalQuality | None = None
         if current_user_id is not None:
             for v in votes:
-                if v.user_id == current_user_id:
-                    user_vote = v.vote
-                    user_signal_quality = v.signal_quality if v.vote == VoteType.AGREE else None
+                if v.voter_user_id == current_user_id:
+                    user_vote = v.vote_enum
+                    # Phase 13 P1.5: signal_quality column dropped from
+                    # AnnotationVote — always emit None until Phase 14+.
+                    user_signal_quality = None
                     break
 
         vote_items = [self._serialize_vote(v, viewer_role=viewer_role) for v in votes]
@@ -395,14 +404,22 @@ class AnnotationVoteService:
 
         Member votes are visible to all viewer roles regardless.
         """
-        v_user_id: UUID = vote.user_id
+        v_user_id: UUID = vote.voter_user_id
         v_source: AnnotationVoteSource = vote.source
 
-        # Pull the embedded user only when not masked — the relationship is
-        # ``lazy="raise"`` so we must avoid touching ``vote.user`` if we plan
-        # to drop it in the masking branch (otherwise we trigger a refresh
-        # the caller didn't ask for).
-        v_user = vote.user if hasattr(vote, "user") else None
+        # Phase 13 P1.5 (T804): the ``user`` relationship is now
+        # ``lazy="raise"`` and not eager-loaded by the repository. Use
+        # SQLAlchemy attribute inspection so that touching the attribute on
+        # an unloaded instance does not trigger an implicit load (FR-039
+        # masking has to run on every list response — masked votes must
+        # never trigger a DB round-trip).
+        try:
+            from sqlalchemy import inspect as sa_inspect
+
+            state = sa_inspect(vote)
+            v_user = vote.user if "user" not in state.unloaded else None
+        except Exception:  # pragma: no cover — defensive fallback
+            v_user = None
 
         should_mask = (
             v_source in _VOTER_ID_MASKED_SOURCES
@@ -427,10 +444,12 @@ class AnnotationVoteService:
             id=vote.id,
             annotation_id=vote.annotation_id,
             user_id=visible_user_id,
-            vote=vote.vote,
-            signal_quality=vote.signal_quality,
-            suggested_tag_id=vote.suggested_tag_id,
-            note=vote.note,
+            vote=vote.vote_enum,
+            # Phase 13 P1.5: dropped columns echoed as None until Phase 14+
+            # reinstates them via ``recording_annotations``.
+            signal_quality=None,
+            suggested_tag_id=None,
+            note=None,
             created_at=vote.created_at,
             user=visible_user,
             source=v_source,

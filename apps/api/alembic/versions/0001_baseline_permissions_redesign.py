@@ -851,6 +851,11 @@ def upgrade() -> None:  # noqa: PLR0915 — baseline migration, long by nature
     )
     op.create_index("ix_annotations_detection", "annotations", ["detection_id"])
 
+    # Phase 13 P1.5 (T804): tags table is materialised in its taxa-based
+    # final form (str64 ``taxon_id`` retired, replaced by a UUID FK to
+    # ``taxa`` once that table comes into existence at the end of this
+    # migration). The FK constraint and supporting index are added below
+    # after ``apply_phase13_supporting_tables()`` creates ``taxa``.
     op.create_table(
         "tags",
         sa.Column("id", UUID(as_uuid=True), primary_key=True, server_default=sa.text("gen_random_uuid()")),
@@ -860,14 +865,24 @@ def upgrade() -> None:  # noqa: PLR0915 — baseline migration, long by nature
             sa.ForeignKey("projects.id", ondelete="CASCADE"),
             nullable=False,
         ),
+        sa.Column(
+            "parent_id",
+            UUID(as_uuid=True),
+            sa.ForeignKey("tags.id", ondelete="SET NULL"),
+            nullable=True,
+        ),
         sa.Column("category", _enum("tagcategory"), nullable=False),
         sa.Column("name", sa.String(200), nullable=False),
-        sa.Column("taxon_id", sa.String(64), nullable=True),
+        sa.Column("taxon_id", UUID(as_uuid=True), nullable=True),
+        sa.Column("gbif_taxon_key", sa.Integer(), nullable=True),
+        sa.Column("scientific_name", sa.String(200), nullable=True),
+        sa.Column("common_name", sa.String(200), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("now()")),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("now()")),
         sa.UniqueConstraint("project_id", "category", "name", name="ux_tags_project_category_name"),
     )
     op.create_index("ix_tags_project_id", "tags", ["project_id"])
+    op.create_index("ix_tags_taxon_id", "tags", ["taxon_id"])
 
     # ------------------------------------------------------------------ #
     # T020c — annotation_votes + annotation_comments + taxon_sensitivities
@@ -1241,6 +1256,29 @@ def upgrade() -> None:  # noqa: PLR0915 — baseline migration, long by nature
     # final schemas. See ``echoroo._alembic_phase13_supporting_ddl``.
     # ------------------------------------------------------------------ #
     apply_phase13_supporting_tables()
+
+    # Phase 13 P1.5 (T804): now that ``taxa`` exists (created inside
+    # ``apply_phase13_supporting_tables``), promote ``tags.taxon_id`` to
+    # a foreign key against ``taxa.id``. The constraint is added with
+    # ``IF NOT EXISTS`` semantics via a DO block so re-runs / partial
+    # failures stay idempotent.
+    op.execute(
+        """
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1
+                FROM pg_constraint
+                WHERE conname = 'fk_tags_taxon_id'
+            ) THEN
+                ALTER TABLE tags
+                ADD CONSTRAINT fk_tags_taxon_id
+                FOREIGN KEY (taxon_id) REFERENCES taxa(id) ON DELETE SET NULL;
+            END IF;
+        END
+        $$;
+        """
+    )
 
 
 # --------------------------------------------------------------------------- #

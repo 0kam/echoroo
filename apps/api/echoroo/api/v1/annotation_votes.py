@@ -239,6 +239,9 @@ async def cast_annotation_vote(
         request=request,
         source=source,
         project_role_at_vote=role_at_vote,
+        # Phase 13 P1.5 (T804): project_id is required on the vote row
+        # (FR-061a integrity gate).
+        project_id=project_id,
         viewer_role=viewer_role,
         min_votes=min_votes,
         threshold=threshold,
