@@ -8,10 +8,40 @@ This test mechanically enforces the Phase 11 R3 forward-only convention that
                          Phase 13 final shape via
                          ``apply_phase13_supporting_tables``)
 
-    Path B ("upgraded"): empty DB --> alembic upgrade 0005 --> alembic
-                         upgrade head (the delta migrations
-                         0006/0006a/0006b/0007/0008/0009 must reconcile a
-                         long-lived dev DB to the same final shape)
+    Path B ("upgraded"): empty DB --> psql -f <pre-Phase13 0005 schema
+                         dump fixture> --> alembic upgrade head (the delta
+                         migrations 0006/0006a/0006b/0007/0008/0009 must
+                         reconcile a long-lived dev DB to the same final
+                         shape)
+
+Path B uses a **frozen** SQL dump captured against the pre-Phase 13
+``0005`` state (commit ``08c8ceb2``, "Phase 12 (US7 ownership + dormancy)
+complete") so the test continues to verify "real long-lived dev DB
+catches up via 0006-0009" even after the baseline 0001 was edited in
+Phase 13 P1 to emit the supporting tables eagerly. The Codex P5 R1
+review caught that loading the (now-Phase-13-aware) baseline 0001 to
+``0005`` in the upgraded path masks any drift the delta chain might
+fail to reconcile, defeating the purpose of the parity test.
+
+Fixture lives at:
+    apps/api/tests/integration/migrations/fixtures/pre_phase13_0005_schema.sql
+
+To regenerate (only when ``08c8ceb2`` is no longer the canonical
+pre-Phase-13 baseline):
+
+    git worktree add /tmp/pre-phase13 08c8ceb2
+    docker exec echoroo-db psql -U postgres -d postgres \
+        -c 'CREATE DATABASE phase13_p5_dump OWNER echoroo;'
+    docker run --rm --network echoroo-dev \
+        -v /tmp/pre-phase13/apps/api/alembic:/app/alembic:ro \
+        -v /tmp/pre-phase13/apps/api/alembic.ini:/app/alembic.ini:ro \
+        -v /tmp/pre-phase13/apps/api/echoroo:/app/echoroo:ro \
+        -e DATABASE_URL=postgresql+asyncpg://postgres:<pw>@db:5432/phase13_p5_dump \
+        -w /app echoroo-backend /opt/venv/bin/alembic upgrade 0005
+    docker exec echoroo-db pg_dump -U postgres --no-owner --no-privileges \
+        --no-tablespaces --no-comments --inserts phase13_p5_dump \
+        | grep -vE '^\\\\(restrict|unrestrict)' \
+        > apps/api/tests/integration/migrations/fixtures/pre_phase13_0005_schema.sql
 
 Both paths must produce byte-for-byte identical schemas across **9
 introspection axes** (per /tmp/plan-merged-v5-final.md §3 P5):
@@ -22,7 +52,10 @@ introspection axes** (per /tmp/plan-merged-v5-final.md §3 P5):
                                               ``pg_get_constraintdef``
     3. pg_index                            — index name / columns /
                                               uniqueness / partial predicate
-    4. pg_enum                             — enum label sets per type
+    4. pg_enum                             — enum label *set* per type
+                                              (set semantics — ordering
+                                              relaxed; see _collect_enums
+                                              docstring for rationale)
     5. FK ondelete (confdeltype)           — referential action codes
     6. pg_attribute.attnotnull             — NOT NULL flags
     7. pg_attrdef                          — column default expressions
@@ -46,6 +79,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -63,9 +97,19 @@ except ImportError:  # pragma: no cover - dep declared in pyproject dev extras
 API_ROOT = Path(__file__).resolve().parents[3]
 ALEMBIC_INI = API_ROOT / "alembic.ini"
 
-# Revision the dev DB is assumed to have already applied at the start of
-# Phase 13 (see project_006_implement_progress.md). The "upgraded" path
-# stops here, then continues to ``head`` via the Phase 13 delta chain.
+# Frozen SQL dump of the pre-Phase 13 dev DB at revision ``0005`` (commit
+# ``08c8ceb2``). The upgraded path replays this dump verbatim instead of
+# running ``alembic upgrade 0005`` against the current (now-Phase-13-aware)
+# baseline 0001 — that would mask any drift the 0006-0009 delta chain
+# fails to reconcile, defeating the parity test (Codex P5 R1).
+PRE_PHASE13_FIXTURE = (
+    Path(__file__).resolve().parent
+    / "fixtures"
+    / "pre_phase13_0005_schema.sql"
+)
+
+# Revision the frozen fixture is pinned to. Used in error messages and as
+# a sanity check after applying the dump.
 PHASE13_PRE_REVISION = "0005"
 
 
@@ -121,7 +165,14 @@ def _create_isolated_db(admin_url: str, db_name: str) -> str:
 
 
 def _alembic_upgrade(sync_url: str, target: str) -> None:
-    """Invoke ``alembic upgrade <target>`` against the given sync URL."""
+    """Invoke ``alembic upgrade <target>`` against the given sync URL.
+
+    Uses ``python -m alembic`` against the **current** interpreter
+    (``sys.executable``) so the test inherits whatever venv pytest was
+    launched from. Avoids ``uv run`` (which tries to manage the
+    project's ``.venv`` and may fail with permission errors when that
+    venv was created by a different user).
+    """
 
     async_url = sync_url.replace("postgresql://", "postgresql+asyncpg://")
     env = {
@@ -129,8 +180,16 @@ def _alembic_upgrade(sync_url: str, target: str) -> None:
         "DATABASE_URL": async_url,
         "ALEMBIC_SYNC_URL": sync_url,
     }
-    result = subprocess.run(
-        ["uv", "run", "alembic", "-c", str(ALEMBIC_INI), "upgrade", target],
+    result = subprocess.run(  # noqa: S603
+        [
+            sys.executable,
+            "-m",
+            "alembic",
+            "-c",
+            str(ALEMBIC_INI),
+            "upgrade",
+            target,
+        ],
         cwd=str(API_ROOT),
         env=env,
         capture_output=True,
@@ -142,6 +201,72 @@ def _alembic_upgrade(sync_url: str, target: str) -> None:
             f"alembic upgrade {target} failed against {sync_url}.\n"
             f"stdout:\n{result.stdout}\n"
             f"stderr:\n{result.stderr}"
+        )
+
+
+def _apply_fixture_dump(
+    container: PostgresContainer,
+    db_name: str,
+    fixture_path: Path,
+) -> None:
+    """Replay the pre-Phase 13 0005 SQL dump into ``db_name``.
+
+    The dump is copied into the running PostgreSQL container via
+    ``docker cp`` (testcontainers does not expose a file-copy helper),
+    then loaded with ``psql -v ON_ERROR_STOP=1 -f``. Loading via psql
+    rather than SQLAlchemy is required because the dump contains
+    multi-statement DDL/DML, dollar-quoted bodies, and JSONB literals
+    that cannot be reliably split client-side.
+    """
+
+    if not fixture_path.is_file():
+        pytest.fail(
+            "Pre-Phase 13 0005 schema fixture missing — expected "
+            f"{fixture_path}. See the module docstring for the "
+            "regeneration recipe."
+        )
+
+    wrapped = container.get_wrapped_container()
+    container_id = wrapped.id
+    if not container_id:
+        pytest.fail("Postgres container has no id; cannot docker cp fixture.")
+
+    target_path = "/tmp/pre_phase13_0005_schema.sql"
+    cp_result = subprocess.run(  # noqa: S603,S607
+        ["docker", "cp", str(fixture_path), f"{container_id}:{target_path}"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if cp_result.returncode != 0:
+        pytest.fail(
+            "docker cp of fixture into postgres container failed.\n"
+            f"stdout:\n{cp_result.stdout}\n"
+            f"stderr:\n{cp_result.stderr}"
+        )
+
+    exec_result = container.exec(
+        [
+            "psql",
+            "-U",
+            container.username,
+            "-d",
+            db_name,
+            "-v",
+            "ON_ERROR_STOP=1",
+            "-f",
+            target_path,
+        ]
+    )
+    if exec_result.exit_code != 0:
+        output = (
+            exec_result.output.decode("utf-8", errors="replace")
+            if isinstance(exec_result.output, (bytes, bytearray))
+            else str(exec_result.output)
+        )
+        pytest.fail(
+            f"psql -f {target_path} failed against {db_name}.\n"
+            f"output:\n{output}"
         )
 
 
@@ -157,12 +282,41 @@ def fresh_db_url(pg_container: PostgresContainer) -> str:
 
 @pytest.fixture(scope="module")
 def upgraded_db_url(pg_container: PostgresContainer) -> str:
-    """Return a sync URL for a DB created via the upgraded path (Path B)."""
+    """Return a sync URL for a DB created via the upgraded path (Path B).
+
+    Loads a frozen ``pre_phase13_0005_schema.sql`` dump that was captured
+    against commit ``08c8ceb2`` (Phase 12 complete, Phase 13 not yet
+    started) — this is the *real* pre-Phase-13 0005 shape. Running
+    ``alembic upgrade 0005`` against the *current* baseline 0001 would
+    instead emit the Phase-13-aware shape, masking any drift the delta
+    chain might fail to reconcile (Codex P5 R1).
+
+    After replaying the fixture, ``alembic upgrade head`` must drive the
+    schema through the Phase 13 delta chain
+    (0006/0006a/0006b/0007/0008/0009) and converge on the same final
+    shape as Path A.
+    """
 
     admin = _admin_url(pg_container)
-    url = _create_isolated_db(admin, "echoroo_p5_upgraded")
-    # Step 1: bring DB to the Phase 13 pre-state.
-    _alembic_upgrade(url, PHASE13_PRE_REVISION)
+    db_name = "echoroo_p5_upgraded"
+    url = _create_isolated_db(admin, db_name)
+    # Step 1: replay the frozen pre-Phase-13 0005 dump.
+    _apply_fixture_dump(pg_container, db_name, PRE_PHASE13_FIXTURE)
+    # Sanity-check the alembic_version row landed at 0005.
+    engine = create_engine(url)
+    try:
+        with engine.connect() as conn:
+            current = conn.execute(
+                sa.text("SELECT version_num FROM alembic_version")
+            ).scalar_one()
+    finally:
+        engine.dispose()
+    if current != PHASE13_PRE_REVISION:
+        pytest.fail(
+            "Fixture replay did not yield expected alembic_version="
+            f"{PHASE13_PRE_REVISION!r}; got {current!r}. Regenerate the "
+            "fixture or update PHASE13_PRE_REVISION."
+        )
     # Step 2: continue through the Phase 13 delta chain to head.
     _alembic_upgrade(url, "head")
     return url
@@ -266,25 +420,39 @@ def _collect_indexes(engine: Engine) -> dict[tuple[str, str], tuple[Any, ...]]:
     }
 
 
-def _collect_enums(engine: Engine) -> dict[str, tuple[str, ...]]:
-    """Axis 4: pg_enum label sets keyed by enum type name."""
+def _collect_enums(engine: Engine) -> dict[str, frozenset[str]]:
+    """Axis 4: pg_enum label *sets* keyed by enum type name.
+
+    Phase 13 P5 R2 (T809): enum label **ordering** is intentionally
+    relaxed to set semantics. PostgreSQL's ``ALTER TYPE ADD VALUE`` only
+    appends labels at the tail of an existing enum, so a long-lived dev
+    DB whose enum was extended in-place (e.g. ``detectionsource`` adding
+    ``'sampling_round'`` post-creation) cannot match the fresh path's
+    declaration order without a 4-step ``ALTER TYPE`` rewrite (rename
+    old → create new → cast columns → drop old). At pre-launch scale the
+    cost of that rewrite outweighs the parity benefit, so this collector
+    canonicalises to ``frozenset`` and the parity test asserts
+    *semantic* equivalence (same label set) rather than lexical
+    ordering. Membership additions / removals still surface as a diff.
+    """
 
     sql = sa.text(
         """
         SELECT
             t.typname AS type_name,
-            array_agg(e.enumlabel ORDER BY e.enumsortorder) AS labels
+            e.enumlabel AS label
           FROM pg_type t
           JOIN pg_enum e ON e.enumtypid = t.oid
           JOIN pg_namespace n ON n.oid = t.typnamespace
          WHERE n.nspname = 'public'
-         GROUP BY t.typname
-         ORDER BY t.typname
         """
     )
     with engine.connect() as conn:
         rows = conn.execute(sql).all()
-    return {r.type_name: tuple(r.labels) for r in rows}
+    grouped: dict[str, set[str]] = {}
+    for r in rows:
+        grouped.setdefault(r.type_name, set()).add(r.label)
+    return {name: frozenset(labels) for name, labels in grouped.items()}
 
 
 def _collect_fk_actions(
@@ -395,14 +563,23 @@ def _collect_triggers(engine: Engine) -> dict[tuple[str, str], str]:
 _VOLATILE_COLS = frozenset({"id", "created_at", "updated_at"})
 
 
-def _collect_seed_rows(engine: Engine) -> dict[tuple[str, str], dict[str, Any]]:
+def _collect_seed_rows(
+    engine: Engine,
+) -> dict[tuple[str, str], tuple[tuple[tuple[str, Any], ...], ...]]:
     """Axis 9: genesis rows of project_audit_log / platform_audit_log.
 
-    Returns ``{(table_name, action): {col: value}}`` with volatile columns
-    (``id``, ``created_at``, ``updated_at``) stripped.
+    Returns ``{(table_name, action): (row1, row2, ...)}`` where each row
+    is a sorted tuple of ``(column_name, value)`` pairs, with volatile
+    columns (``id``, ``created_at``, ``updated_at``) stripped.
+
+    Codex P5 R1 minor: previously this returned
+    ``dict[(table, action), dict]`` which collapsed duplicate genesis
+    rows into the last one written, hiding regressions where a delta
+    migration accidentally re-inserted genesis. Returning a tuple of
+    rows preserves cardinality so duplicates surface as a value diff.
     """
 
-    out: dict[tuple[str, str], dict[str, Any]] = {}
+    out: dict[tuple[str, str], tuple[tuple[tuple[str, Any], ...], ...]] = {}
     with engine.connect() as conn:
         for table in ("project_audit_log", "platform_audit_log"):
             cols = conn.execute(
@@ -425,6 +602,11 @@ def _collect_seed_rows(engine: Engine) -> dict[tuple[str, str], dict[str, Any]]:
                     "WHERE action = 'genesis' ORDER BY action"
                 )
             ).all()
+            # Group rows by (table, action) so duplicates surface as a
+            # multi-row tuple rather than collapsing to one.
+            grouped: dict[
+                tuple[str, str], list[tuple[tuple[str, Any], ...]]
+            ] = {}
             for row in rows:
                 rec = dict(zip(keep, row, strict=True))
                 # Cast bytes / memoryview-like values to bytes for stable
@@ -432,7 +614,14 @@ def _collect_seed_rows(engine: Engine) -> dict[tuple[str, str], dict[str, Any]]:
                 for k, v in list(rec.items()):
                     if isinstance(v, memoryview):
                         rec[k] = bytes(v)
-                out[(table, rec.get("action", ""))] = rec
+                action = str(rec.get("action", ""))
+                normalized = tuple(sorted(rec.items()))
+                grouped.setdefault((table, action), []).append(normalized)
+            for key, bucket in grouped.items():
+                # Sort within the bucket for deterministic comparison —
+                # equal-cardinality identical-content multisets must compare
+                # equal regardless of arrival order.
+                out[key] = tuple(sorted(bucket))
     return out
 
 
