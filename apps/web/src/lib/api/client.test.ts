@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { ApiClient, isPublicReadablePath } from './client';
+import { ApiClient, ApiError, isPublicReadablePath } from './client';
 
 describe('ApiClient', () => {
   let apiClient: ApiClient;
@@ -59,6 +59,60 @@ describe('ApiClient', () => {
     });
 
     await expect(apiClient.get('/api/v1/test')).rejects.toThrow('Not found');
+  });
+
+  it('exposes the parsed JSON body via ApiError.body (Phase 15 Batch 5b R3 Minor 4)', async () => {
+    // FastAPI 422 detail arrays must reach the caller untouched so
+    // per-line CIDR validation messages can be rendered by
+    // `extractInvalidLines` without a second fetch.
+    const detailArray = [
+      {
+        loc: ['body', 'allowed_ip_cidrs', 0],
+        msg: 'value is not a valid IPv4 or IPv6 network',
+        type: 'value_error',
+      },
+    ];
+    (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      ok: false,
+      status: 422,
+      json: async () => ({ detail: detailArray }),
+    });
+
+    let captured: ApiError | null = null;
+    try {
+      await apiClient.post('/api/v1/test', { allowed_ip_cidrs: ['bad'] });
+    } catch (err) {
+      captured = err as ApiError;
+    }
+    expect(captured).not.toBeNull();
+    expect(captured!).toBeInstanceOf(ApiError);
+    expect(captured!.status).toBe(422);
+    expect(captured!.body).toEqual({ detail: detailArray });
+    // `detail` was an array, so the legacy detail string stays
+    // unset (we only promote string detail to the message).
+    expect(captured!.detail).toBeUndefined();
+    expect(captured!.message).toBe('Request failed');
+  });
+
+  it('falls back to body=null when the error response is non-JSON (Phase 15 Batch 5b R3 Minor 4)', async () => {
+    (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      ok: false,
+      status: 502,
+      json: async () => {
+        throw new Error('not json');
+      },
+    });
+
+    let captured: ApiError | null = null;
+    try {
+      await apiClient.get('/api/v1/test');
+    } catch (err) {
+      captured = err as ApiError;
+    }
+    expect(captured).not.toBeNull();
+    expect(captured!.status).toBe(502);
+    expect(captured!.body).toBeNull();
+    expect(captured!.message).toBe('Request failed');
   });
 });
 

@@ -68,7 +68,13 @@
     try {
       const ran = await requireWebAuthn(action);
       if (!ran) {
-        localError = m.admin_superusers_webauthn_gate_cancelled();
+        // Phase 15 Batch 5b R3 (Codex Minor 1 fix): the modal must
+        // dismiss itself on cancel/error so the parent's
+        // ``pendingAction = null`` reset cannot leave a Continue-disabled
+        // ghost dialog behind. We still notify the parent so it can
+        // surface its own banner / clean up state.
+        localError = null;
+        isOpen = false;
         onCancel?.();
         return;
       }
@@ -82,7 +88,12 @@
         reason = err.message;
       }
       const message = m.admin_superusers_webauthn_gate_failed({ reason });
-      localError = message;
+      // Phase 15 Batch 5b R3 (Codex Minor 1 fix): close the modal so the
+      // parent surface (banner / form state) drives subsequent UX. The
+      // parent's ``onError`` handler is responsible for displaying the
+      // human-readable reason.
+      localError = null;
+      isOpen = false;
       onError?.(message);
     } finally {
       isProcessing = false;

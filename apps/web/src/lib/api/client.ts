@@ -380,28 +380,55 @@ export class ApiClient {
           headers: retryHeaders,
         });
       } catch {
-        // Refresh failed, throw original 401 error
-        const errorData = await response.json().catch(() => ({
-          detail: 'Unauthorized',
-        }));
+        // Refresh failed, throw original 401 error.
+        //
+        // Phase 15 Batch 5b R3 (Codex Minor 4): expose the parsed body
+        // through ``ApiError.body`` so call sites can inspect FastAPI
+        // 422-style ``detail`` arrays (or future structured envelopes)
+        // without re-fetching the response.  Falls back to ``null``
+        // when the response is non-JSON.
+        const errorData: unknown = await response
+          .json()
+          .catch(() => null);
+        const detailField =
+          errorData && typeof errorData === 'object'
+            ? (errorData as { detail?: unknown; message?: unknown }).detail ??
+              (errorData as { detail?: unknown; message?: unknown }).message
+            : null;
+        const detailString =
+          typeof detailField === 'string' ? detailField : undefined;
         throw new ApiError(
-          errorData.detail || errorData.message || 'Unauthorized',
+          detailString ?? 'Unauthorized',
           401,
-          errorData.detail || errorData.message,
-          extractErrorCode(errorData)
+          detailString,
+          extractErrorCode(errorData),
+          errorData
         );
       }
     }
 
     if (!response.ok) {
-      const errorData = await response.json().catch(() => ({
-        detail: 'An error occurred',
-      }));
+      // Phase 15 Batch 5b R3 (Codex Minor 4): mirror the 401 branch —
+      // parse the JSON body once and pass it through to
+      // ``ApiError.body`` so structured detail (FastAPI 422 arrays,
+      // ``{ error_code, message }`` envelopes) can be inspected by
+      // callers without re-fetching the response.  Non-JSON bodies
+      // surface as ``body=null`` and the legacy ``"Request failed"``
+      // message stays in place.
+      const errorData: unknown = await response.json().catch(() => null);
+      const detailField =
+        errorData && typeof errorData === 'object'
+          ? (errorData as { detail?: unknown; message?: unknown }).detail ??
+            (errorData as { detail?: unknown; message?: unknown }).message
+          : null;
+      const detailString =
+        typeof detailField === 'string' ? detailField : undefined;
       throw new ApiError(
-        errorData.detail || errorData.message || 'Request failed',
+        detailString ?? 'Request failed',
         response.status,
-        errorData.detail || errorData.message,
-        extractErrorCode(errorData)
+        detailString,
+        extractErrorCode(errorData),
+        errorData
       );
     }
 

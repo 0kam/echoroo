@@ -535,6 +535,7 @@
   "admin_superusers_webauthn_gate_cancelled": "ハードウェアキー確認がキャンセルされたため操作は実行されませんでした。",
   "admin_superusers_webauthn_gate_failed": "ハードウェアキー確認に失敗しました: {reason}",
   "admin_superusers_ip_allowlist_invalid_lines_label": "不正な CIDR 行:",
+  "admin_superusers_ip_allowlist_invalid_line_format": "{lineNumber} 行目: {value} — {message}",
 
   "role_viewer": "閲覧者",
   "role_member": "メンバー",

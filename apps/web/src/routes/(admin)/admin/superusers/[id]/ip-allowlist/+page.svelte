@@ -28,7 +28,24 @@
   let banner = $state<string | null>(null);
   let editorValue = $state('');
   let isSaving = $state(false);
-  let invalidCidrs = $state<string[]>([]);
+
+  /**
+   * Per-line CIDR validation failures returned by the backend
+   * (Phase 15 Batch 5b R3 Codex Minor 2 fix).
+   *
+   * ``lineNumber`` is **1-indexed** — Pydantic's ``loc`` tuple is
+   * 0-indexed but operators expect "row N" to match the textarea
+   * gutter, so we add 1 before storing here.  ``value`` carries the
+   * raw line text the operator submitted, ``message`` carries the
+   * human-readable validator error (`msg` field of the Pydantic
+   * detail entry).
+   */
+  interface InvalidCidrEntry {
+    lineNumber: number;
+    value: string;
+    message: string;
+  }
+  let invalidCidrs = $state<InvalidCidrEntry[]>([]);
 
   // WebAuthn step-up gate (FR-111).
   let gateOpen = $state(false);
@@ -80,37 +97,67 @@
    *
    * Pydantic emits one entry per offending field path; for our
    * ``allowed_ip_cidrs: list[str]`` validator each entry's ``loc`` ends
-   * with the integer index of the bad row.  We pair the index with the
-   * raw line value so the UI can render "line N: <line>" alongside the
-   * server's human-readable ``msg``.
+   * with the integer index of the bad row.  We pair the (1-indexed)
+   * line number with the raw line value and the validator's
+   * ``msg`` so the UI can render
+   * ``行 {lineNumber}: {value} — {message}``.
+   *
+   * Phase 15 Batch 5b R3 (Codex Minor 2 fix): the previous return
+   * shape exposed only the line value, so the UI could not render a
+   * row number even though ``loc`` already carried it.  We now bundle
+   * ``lineNumber`` (Pydantic 0-indexed → operator 1-indexed) with the
+   * value and message.  Entries that cannot be paired with a line
+   * (no numeric ``loc`` part) fall through to ``aggregateMessages``
+   * so the user still sees the explanation in the alert banner.
    */
   function extractInvalidLines(
     err: ApiError,
     submittedLines: string[],
-  ): { lines: string[]; messages: string[] } {
-    const lines: string[] = [];
-    const messages: string[] = [];
+  ): { entries: InvalidCidrEntry[]; aggregateMessages: string[] } {
+    const entries: InvalidCidrEntry[] = [];
+    const aggregateMessages: string[] = [];
     const body = err.body;
-    if (!body || typeof body !== 'object') return { lines, messages };
+    if (!body || typeof body !== 'object') {
+      return { entries, aggregateMessages };
+    }
     const detail = (body as { detail?: unknown }).detail;
-    if (!Array.isArray(detail)) return { lines, messages };
+    if (!Array.isArray(detail)) return { entries, aggregateMessages };
     for (const entry of detail) {
       if (!entry || typeof entry !== 'object') continue;
       const loc = (entry as { loc?: unknown }).loc;
       const msg = (entry as { msg?: unknown }).msg;
+      const messageText = typeof msg === 'string' ? msg : '';
+      let matchedLine: { lineNumber: number; value: string } | null = null;
       if (Array.isArray(loc)) {
         // Find the trailing numeric index in the loc tuple.
         for (let i = loc.length - 1; i >= 0; i -= 1) {
           const part = loc[i];
-          if (typeof part === 'number' && part >= 0 && part < submittedLines.length) {
-            lines.push(submittedLines[part]!);
+          if (
+            typeof part === 'number' &&
+            part >= 0 &&
+            part < submittedLines.length
+          ) {
+            matchedLine = {
+              lineNumber: part + 1,
+              value: submittedLines[part]!,
+            };
             break;
           }
         }
       }
-      if (typeof msg === 'string') messages.push(msg);
+      if (matchedLine) {
+        entries.push({
+          lineNumber: matchedLine.lineNumber,
+          value: matchedLine.value,
+          message: messageText,
+        });
+      } else if (messageText) {
+        // No row index in `loc` — surface the message in the banner
+        // so the operator still understands what failed.
+        aggregateMessages.push(messageText);
+      }
     }
-    return { lines, messages };
+    return { entries, aggregateMessages };
   }
 
   function formatDate(s: string | null): string {
@@ -156,11 +203,25 @@
         await load();
       } catch (err) {
         if (err instanceof ApiError && err.status === 422) {
-          const { lines: invalidLines, messages } = extractInvalidLines(err, lines);
-          invalidCidrs = invalidLines;
+          const { entries, aggregateMessages } = extractInvalidLines(
+            err,
+            lines,
+          );
+          invalidCidrs = entries;
+          // Build the banner message: prefer aggregate messages (entries
+          // that could not be paired with a row), then fall back to a
+          // distinct list of per-line messages so the alert still names
+          // the failure mode without duplicating the rendered list below.
+          const bannerMessages = aggregateMessages.slice();
+          if (bannerMessages.length === 0 && entries.length > 0) {
+            const distinctEntryMessages = Array.from(
+              new Set(entries.map((e) => e.message).filter((m) => m.length > 0)),
+            );
+            bannerMessages.push(...distinctEntryMessages);
+          }
           error =
-            messages.length > 0
-              ? messages.join('; ')
+            bannerMessages.length > 0
+              ? bannerMessages.join('; ')
               : m.admin_superusers_ip_allowlist_save_failed();
         } else {
           error = mapError(err, m.admin_superusers_ip_allowlist_save_failed());
@@ -228,8 +289,14 @@
         <div class="mt-2 text-xs">
           <span class="font-medium">{m.admin_superusers_ip_allowlist_invalid_lines_label()}</span>
           <ul class="m-0 mt-1 list-disc pl-6">
-            {#each invalidCidrs as cidr}
-              <li class="font-mono">{cidr}</li>
+            {#each invalidCidrs as entry (entry.lineNumber)}
+              <li class="font-mono">
+                {m.admin_superusers_ip_allowlist_invalid_line_format({
+                  lineNumber: entry.lineNumber,
+                  value: entry.value,
+                  message: entry.message,
+                })}
+              </li>
             {/each}
           </ul>
         </div>

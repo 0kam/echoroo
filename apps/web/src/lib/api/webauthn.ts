@@ -54,13 +54,59 @@ async function postJson<T>(path: string, body: unknown): Promise<T> {
 
   if (!response.ok) {
     const errorData = await response.json().catch(() => ({}));
-    const message =
-      (errorData && typeof errorData === 'object' && 'detail' in errorData
-        ? typeof (errorData as { detail: unknown }).detail === 'string'
-          ? ((errorData as { detail: string }).detail)
-          : null
-        : null) ?? 'WebAuthn request failed';
-    throw new ApiError(message, response.status, message);
+    // Phase 15 Batch 5b R3 (Codex Minor 3 fix): the structured error
+    // envelope can surface `detail` as either a plain string (legacy) or
+    // a `{ error_code, message }` object (FastAPI HTTPException with a
+    // dict detail, used by Phase 8 polish round 2 Major 1 fix). We
+    // accept both shapes so callers see the human-readable reason
+    // instead of the generic fallback. When `error_code` is present we
+    // prefix it (`code: message`) so log scrapers and error toasts can
+    // still pluck the stable identifier out of the message.
+    let message = 'WebAuthn request failed';
+    let code: string | null = null;
+    if (errorData && typeof errorData === 'object') {
+      const detail = (errorData as { detail?: unknown }).detail;
+      if (typeof detail === 'string' && detail.length > 0) {
+        message = detail;
+      } else if (detail && typeof detail === 'object') {
+        const detailObj = detail as { error_code?: unknown; message?: unknown };
+        const detailCode =
+          typeof detailObj.error_code === 'string' && detailObj.error_code.length > 0
+            ? detailObj.error_code
+            : null;
+        const detailMessage =
+          typeof detailObj.message === 'string' && detailObj.message.length > 0
+            ? detailObj.message
+            : null;
+        if (detailCode && detailMessage) {
+          message = `${detailCode}: ${detailMessage}`;
+          code = detailCode;
+        } else if (detailMessage) {
+          message = detailMessage;
+        } else if (detailCode) {
+          message = detailCode;
+          code = detailCode;
+        }
+      }
+      // Some endpoints surface the envelope at the top level
+      // (`{ error: "...", message: "..." }`) — fall back to that when
+      // `detail` was unhelpful.
+      if (message === 'WebAuthn request failed') {
+        const topMessage = (errorData as { message?: unknown }).message;
+        if (typeof topMessage === 'string' && topMessage.length > 0) {
+          message = topMessage;
+        }
+      }
+      if (!code) {
+        const topCode =
+          (errorData as { error?: unknown; code?: unknown }).error ??
+          (errorData as { error?: unknown; code?: unknown }).code;
+        if (typeof topCode === 'string' && topCode.length > 0) {
+          code = topCode;
+        }
+      }
+    }
+    throw new ApiError(message, response.status, message, code, errorData);
   }
 
   if (response.status === 204) return undefined as T;

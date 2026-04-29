@@ -535,6 +535,7 @@
   "admin_superusers_webauthn_gate_cancelled": "Hardware key confirmation was cancelled. The action was not applied.",
   "admin_superusers_webauthn_gate_failed": "Hardware key confirmation failed: {reason}",
   "admin_superusers_ip_allowlist_invalid_lines_label": "Invalid CIDR entries:",
+  "admin_superusers_ip_allowlist_invalid_line_format": "Line {lineNumber}: {value} — {message}",
 
   "role_viewer": "Viewer",
   "role_member": "Member",
