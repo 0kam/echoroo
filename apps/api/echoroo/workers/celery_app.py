@@ -25,6 +25,26 @@ app = Celery(
     backend=_settings.CELERY_RESULT_BACKEND,
 )
 
+# rediss:// (TLS) URLs from settings need explicit ssl_cert_reqs because
+# kombu/redis-py 5.x refuse to start without it (see
+# https://github.com/redis/redis-py/issues/2622). Map the URL scheme to
+# the standard ssl module constants so we keep CERT_REQUIRED in
+# production while still allowing dev to relax via REDIS_TLS_INSECURE=1.
+import ssl as _ssl  # noqa: E402
+
+if _settings.CELERY_BROKER_URL.startswith("rediss://") or _settings.CELERY_RESULT_BACKEND.startswith(
+    "rediss://"
+):
+    _redis_ssl_cert_reqs = (
+        _ssl.CERT_NONE
+        if getattr(_settings, "REDIS_TLS_INSECURE", False)
+        else _ssl.CERT_REQUIRED
+    )
+    if _settings.CELERY_BROKER_URL.startswith("rediss://"):
+        app.conf.broker_use_ssl = {"ssl_cert_reqs": _redis_ssl_cert_reqs}
+    if _settings.CELERY_RESULT_BACKEND.startswith("rediss://"):
+        app.conf.redis_backend_use_ssl = {"ssl_cert_reqs": _redis_ssl_cert_reqs}
+
 app.conf.update(
     task_serializer="json",
     accept_content=["json"],
