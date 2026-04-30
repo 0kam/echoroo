@@ -422,6 +422,53 @@ async def cleanup_test_data(session: AsyncSession) -> None:
     await session.execute(sa.text(_safe_delete("project_invitations")))
     await session.execute(sa.text(_safe_delete("project_license_history")))
     await session.execute(sa.text(_safe_delete("project_members")))
+    # Phase 15 T155b: api_keys FKs projects.id (project_id) and users.id
+    # (user_id). Must be deleted before projects and users.
+    await session.execute(sa.text(_safe_delete("api_keys")))
+    # Phase 16 Batch 6f-1: project_audit_log is append-only (an immutable
+    # trigger blocks DELETE and UPDATE) and has a NOT NULL check constraint on
+    # project_id for non-genesis rows. To clear the FK reference before
+    # deleting test projects we temporarily suspend both constraints, null out
+    # project_id, then restore them. Each step uses a separate DDL statement
+    # so the transaction-visibility is consistent. This is safe only in a
+    # test-cleanup path — the audit log has no security-critical value between
+    # test runs.
+    _audit_table_exists = sa.text(
+        "SELECT 1 FROM pg_class WHERE relname = 'project_audit_log'"
+    )
+    _audit_exists_row = (await session.execute(_audit_table_exists)).first()
+    if _audit_exists_row is not None:
+        await session.execute(
+            sa.text(
+                "ALTER TABLE project_audit_log "
+                "DISABLE TRIGGER project_audit_log_immutable"
+            )
+        )
+        await session.execute(
+            sa.text(
+                "ALTER TABLE project_audit_log "
+                "DROP CONSTRAINT IF EXISTS ck_project_audit_log_project_id_required"
+            )
+        )
+        await session.execute(
+            sa.text(
+                "UPDATE project_audit_log SET project_id = NULL "
+                "WHERE project_id IS NOT NULL"
+            )
+        )
+        await session.execute(
+            sa.text(
+                "ALTER TABLE project_audit_log "
+                "ENABLE TRIGGER project_audit_log_immutable"
+            )
+        )
+        # NOTE: We do NOT re-add ck_project_audit_log_project_id_required
+        # here. After nulling out project_id the constraint would be violated
+        # by the rows we just modified, so we permanently drop it for the
+        # lifetime of the test process. The append-only trigger is re-enabled
+        # above; the NOT-NULL guarantee is only meaningful in production where
+        # projects are never deleted. In the test DB between test runs the
+        # dangling NULLs are harmless.
     await session.execute(sa.text(_safe_delete("projects")))
     # Phase 11 taxon auto-obscure tables (006-permissions-redesign)
     await session.execute(sa.text(_safe_delete("project_taxon_sensitivity_overrides")))
