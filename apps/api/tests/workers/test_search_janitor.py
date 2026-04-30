@@ -134,7 +134,7 @@ async def test_user(db_session: AsyncSession) -> User:
     """Minimal test user for project ownership."""
     user = User(
         email="janitor_test@example.com",
-        hashed_password="$argon2id$v=19$m=65536,t=3,p=4$test",
+        password_hash="$argon2id$v=19$m=65536,t=3,p=4$test",
         display_name="Janitor Test User",
         is_active=True,
         is_verified=True,

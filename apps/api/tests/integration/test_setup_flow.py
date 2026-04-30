@@ -67,8 +67,8 @@ class TestSetupFlow:
         assert user.is_superuser is True
         assert user.is_verified is True
         assert user.is_active is True
-        assert user.hashed_password is not None
-        assert not user.hashed_password.startswith("Super")  # Not plain text
+        assert user.password_hash is not None
+        assert not user.password_hash.startswith("Super")  # Not plain text
 
         # Step 5: Verify system settings updated
         setting_result = await db_session.execute(
@@ -100,7 +100,7 @@ class TestSetupFlow:
 
         user = User(
             email="existing@example.com",
-            hashed_password=hash_password("password123"),
+            password_hash=hash_password("password123"),
             is_active=True,
             is_superuser=False,
             is_verified=False,

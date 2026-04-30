@@ -21,7 +21,7 @@ async def superuser(db_session: AsyncSession) -> User:
     """
     user = User(
         email="superuser@example.com",
-        hashed_password="$argon2id$v=19$m=65536,t=3,p=4$test",
+        password_hash="$argon2id$v=19$m=65536,t=3,p=4$test",
         display_name="Superuser",
         is_active=True,
         is_verified=True,
@@ -59,7 +59,7 @@ async def regular_user(db_session: AsyncSession) -> User:
     """
     user = User(
         email="regular@example.com",
-        hashed_password="$argon2id$v=19$m=65536,t=3,p=4$test",
+        password_hash="$argon2id$v=19$m=65536,t=3,p=4$test",
         display_name="Regular User",
         is_active=True,
         is_verified=True,
@@ -97,7 +97,7 @@ async def inactive_user(db_session: AsyncSession) -> User:
     """
     user = User(
         email="inactive@example.com",
-        hashed_password="$argon2id$v=19$m=65536,t=3,p=4$test",
+        password_hash="$argon2id$v=19$m=65536,t=3,p=4$test",
         display_name="Inactive User",
         is_active=False,
         is_verified=True,
@@ -299,7 +299,7 @@ class TestUpdateUser:
         # Create unverified user
         unverified = User(
             email="unverified@example.com",
-            hashed_password="$argon2id$v=19$m=65536,t=3,p=4$test",
+            password_hash="$argon2id$v=19$m=65536,t=3,p=4$test",
             is_active=True,
             is_verified=False,
         )

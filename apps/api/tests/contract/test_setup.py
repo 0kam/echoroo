@@ -106,7 +106,7 @@ class TestSetupInitializeEndpoint:
 
         # Ensure password is NOT in response
         assert "password" not in data
-        assert "hashed_password" not in data
+        assert "password_hash" not in data
 
     async def test_initialize_setup_minimal_fields(
         self, client: AsyncClient, db_session: AsyncSession

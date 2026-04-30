@@ -69,6 +69,15 @@ def kms_env(monkeypatch: pytest.MonkeyPatch) -> Iterator[dict[str, str]]:
     re-imports `echoroo.core.kms` so any module-level cached client is
     reset between tests.
     """
+    # Phase 16 Batch 6a: clear LocalStack endpoint envs *before* entering
+    # ``mock_aws()`` so moto can intercept the default regional endpoint.
+    # The dev container exports ``AWS_ENDPOINT_URL_KMS`` pointing at
+    # LocalStack, which would otherwise route boto3 requests to a real
+    # service and produce ``AlreadyExistsException`` from residual state.
+    monkeypatch.delenv("AWS_KMS_ENDPOINT", raising=False)
+    monkeypatch.delenv("AWS_ENDPOINT_URL_KMS", raising=False)
+    monkeypatch.delenv("AWS_ENDPOINT_URL", raising=False)
+
     with mock_aws():
         # AWS credentials need to be set even for moto — boto3 otherwise
         # raises NoCredentialsError before the mock intercepts.

@@ -33,35 +33,35 @@ class TestRoleBasedAccessControlFlow:
         # Setup: Create users
         owner = User(
             email="owner@example.com",
-            hashed_password="$argon2id$v=19$m=65536,t=3,p=4$test",
+            password_hash="$argon2id$v=19$m=65536,t=3,p=4$test",
             display_name="Owner User",
             is_active=True,
             is_verified=True,
         )
         admin = User(
             email="admin@example.com",
-            hashed_password="$argon2id$v=19$m=65536,t=3,p=4$test",
+            password_hash="$argon2id$v=19$m=65536,t=3,p=4$test",
             display_name="Admin User",
             is_active=True,
             is_verified=True,
         )
         member = User(
             email="member@example.com",
-            hashed_password="$argon2id$v=19$m=65536,t=3,p=4$test",
+            password_hash="$argon2id$v=19$m=65536,t=3,p=4$test",
             display_name="Member User",
             is_active=True,
             is_verified=True,
         )
         viewer = User(
             email="viewer@example.com",
-            hashed_password="$argon2id$v=19$m=65536,t=3,p=4$test",
+            password_hash="$argon2id$v=19$m=65536,t=3,p=4$test",
             display_name="Viewer User",
             is_active=True,
             is_verified=True,
         )
         outsider = User(
             email="outsider@example.com",
-            hashed_password="$argon2id$v=19$m=65536,t=3,p=4$test",
+            password_hash="$argon2id$v=19$m=65536,t=3,p=4$test",
             display_name="Outsider User",
             is_active=True,
             is_verified=True,
@@ -180,7 +180,7 @@ class TestRoleBasedAccessControlFlow:
         # Verify: Member cannot add new members
         temp_user = User(
             email="temp@example.com",
-            hashed_password="$argon2id$v=19$m=65536,t=3,p=4$test",
+            password_hash="$argon2id$v=19$m=65536,t=3,p=4$test",
             display_name="Temp User",
             is_active=True,
             is_verified=True,

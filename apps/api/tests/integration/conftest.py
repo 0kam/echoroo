@@ -39,7 +39,7 @@ async def test_user(db_session: AsyncSession) -> User:
     """
     user = User(
         email="integrationtest@example.com",
-        hashed_password="$argon2id$v=19$m=65536,t=3,p=4$test",
+        password_hash="$argon2id$v=19$m=65536,t=3,p=4$test",
         display_name="Integration Test User",
         is_active=True,
         is_verified=True,
@@ -62,7 +62,7 @@ async def member_user(db_session: AsyncSession) -> User:
     """
     user = User(
         email="integrationmember@example.com",
-        hashed_password="$argon2id$v=19$m=65536,t=3,p=4$test",
+        password_hash="$argon2id$v=19$m=65536,t=3,p=4$test",
         display_name="Integration Member User",
         is_active=True,
         is_verified=True,
@@ -85,7 +85,7 @@ async def other_user(db_session: AsyncSession) -> User:
     """
     user = User(
         email="integrationother@example.com",
-        hashed_password="$argon2id$v=19$m=65536,t=3,p=4$test",
+        password_hash="$argon2id$v=19$m=65536,t=3,p=4$test",
         display_name="Integration Other User",
         is_active=True,
         is_verified=True,

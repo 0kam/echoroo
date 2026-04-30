@@ -548,7 +548,7 @@ class TestPublicProjectResponseNoPII:
         body = response.text
 
         # Forbidden fields must not appear in the serialised response.
-        pii_fields = ["password_hash", "hashed_password", "security_stamp"]
+        pii_fields = ["password_hash", "password_hash", "security_stamp"]
         for field in pii_fields:
             assert field not in body, (
                 f"PII field '{field}' must not appear in ProjectResponse body"
@@ -564,7 +564,7 @@ class TestPublicProjectResponseNoPII:
         assert response.status_code == 200
         body = response.text
 
-        pii_fields = ["password_hash", "hashed_password", "security_stamp"]
+        pii_fields = ["password_hash", "password_hash", "security_stamp"]
         for field in pii_fields:
             assert field not in body, (
                 f"PII field '{field}' must not appear in ProjectListResponse body"
@@ -646,7 +646,7 @@ class TestPublicProjectOwnerNoEmail:
     """Polish round 2 (致命1): owner sub-object must not contain ``email``.
 
     The original :class:`TestPublicProjectResponseNoPII` only flagged
-    ``password_hash`` / ``hashed_password`` / ``security_stamp``; an Owner's
+    ``password_hash`` / ``password_hash`` / ``security_stamp``; an Owner's
     email address would still have leaked because it lives on the User row
     that is embedded via ``ProjectResponse.owner``. Phase 5 polish round 2
     swaps the embedded schema to :class:`PublicOwnerResponse` which exposes

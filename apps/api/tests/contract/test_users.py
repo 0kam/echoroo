@@ -16,7 +16,7 @@ async def test_user(db_session: AsyncSession) -> User:
     """Create a test user for profile tests."""
     user = User(
         email="testuser@example.com",
-        hashed_password=hash_password("TestPass123"),
+        password_hash=hash_password("TestPass123"),
         display_name="Test User",
         organization="Test Org",
         is_verified=True,

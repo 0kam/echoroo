@@ -59,10 +59,15 @@ def _override(
     direction: TaxonOverrideDirection,
     approval_status: TaxonOverrideApprovalStatus,
 ) -> SimpleNamespace:
+    # ORM column is ``sensitivity_h3_res`` per
+    # ``ProjectTaxonSensitivityOverride.sensitivity_h3_res``. Phase 16 Batch 6a
+    # aligned this fixture with the live attribute name (the earlier
+    # ``resolution`` was a docstring drift that silently dropped every override
+    # in red-phase tests).
     return SimpleNamespace(
         direction=direction,
         approval_status=approval_status,
-        resolution=resolution,
+        sensitivity_h3_res=resolution,
     )
 
 

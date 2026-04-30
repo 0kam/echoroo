@@ -38,7 +38,7 @@ from echoroo.models.user import User
 
 
 # Local user/auth fixtures — the shared ``tests/contract/conftest.py``
-# fixtures for users use the legacy ``hashed_password`` keyword argument
+# fixtures for users use the legacy ``password_hash`` keyword argument
 # which the User model no longer accepts (the column was renamed to
 # ``password_hash``). We define module-local fixtures with the modern
 # field name so this suite is self-contained instead of waiting on a

@@ -21,7 +21,7 @@ async def test_user(db_session: AsyncSession) -> User:
     """
     user = User(
         email="testuser@example.com",
-        hashed_password="$argon2id$v=19$m=65536,t=3,p=4$test",
+        password_hash="$argon2id$v=19$m=65536,t=3,p=4$test",
         display_name="Test User",
         is_active=True,
         is_verified=True,
@@ -44,7 +44,7 @@ async def other_user(db_session: AsyncSession) -> User:
     """
     user = User(
         email="otheruser@example.com",
-        hashed_password="$argon2id$v=19$m=65536,t=3,p=4$test",
+        password_hash="$argon2id$v=19$m=65536,t=3,p=4$test",
         display_name="Other User",
         is_active=True,
         is_verified=True,
@@ -67,7 +67,7 @@ async def member_user(db_session: AsyncSession) -> User:
     """
     user = User(
         email="member@example.com",
-        hashed_password="$argon2id$v=19$m=65536,t=3,p=4$test",
+        password_hash="$argon2id$v=19$m=65536,t=3,p=4$test",
         display_name="Member User",
         is_active=True,
         is_verified=True,
@@ -90,7 +90,7 @@ async def admin_user(db_session: AsyncSession) -> User:
     """
     user = User(
         email="admin@example.com",
-        hashed_password="$argon2id$v=19$m=65536,t=3,p=4$test",
+        password_hash="$argon2id$v=19$m=65536,t=3,p=4$test",
         display_name="Admin User",
         is_active=True,
         is_verified=True,

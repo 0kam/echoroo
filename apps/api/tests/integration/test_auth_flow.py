@@ -85,7 +85,7 @@ async def test_password_reset_flow(client: AsyncClient, db_session: AsyncSession
     # 1. Create user
     user = User(
         email="user@example.com",
-        hashed_password=hash_password("OldPass123"),
+        password_hash=hash_password("OldPass123"),
         is_verified=True,
         is_active=True,
     )
@@ -144,7 +144,7 @@ async def test_account_lockout_after_failed_attempts(
     # Create user
     user = User(
         email="user@example.com",
-        hashed_password=hash_password("CorrectPass123"),
+        password_hash=hash_password("CorrectPass123"),
         is_verified=True,
         is_active=True,
     )
@@ -185,7 +185,7 @@ async def test_email_verification_flow(client: AsyncClient, db_session: AsyncSes
     # 1. Create user with verification token
     user = User(
         email="user@example.com",
-        hashed_password=hash_password("TestPass123"),
+        password_hash=hash_password("TestPass123"),
         is_verified=False,
         email_verification_token="verification_token_123",
         email_verification_expires_at=datetime.now(UTC) + timedelta(hours=24),
@@ -214,7 +214,7 @@ async def test_token_refresh_rotation(client: AsyncClient, db_session: AsyncSess
     # Create user and login
     user = User(
         email="user@example.com",
-        hashed_password=hash_password("TestPass123"),
+        password_hash=hash_password("TestPass123"),
         is_verified=True,
         is_active=True,
     )

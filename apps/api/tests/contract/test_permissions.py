@@ -376,7 +376,7 @@ async def viewer_user(db_session: AsyncSession) -> User:
     """
     user = User(
         email="viewer@example.com",
-        hashed_password="$argon2id$v=19$m=65536,t=3,p=4$test",
+        password_hash="$argon2id$v=19$m=65536,t=3,p=4$test",
         display_name="Viewer User",
         is_active=True,
         is_verified=True,
