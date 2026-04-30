@@ -6,7 +6,8 @@ Note (Phase 16 Batch 6b): The legacy ``/api/v1/auth`` registration / login /
 email-verification / password-reset endpoints are Phase 4 stubs that return
 ``501 NOT IMPLEMENTED`` after the permissions-redesign. The first-party
 ``/web-api/v1/auth`` router is the only functional surface today (covered by
-``tests/contract/test_auth_web.py`` and the security suite). All tests in this
+``apps/api/tests/integration/api/web_v1/test_auth.py`` and the security suite).
+All tests in this
 module exercise the legacy contract and reference the dropped User columns
 ``is_active`` / ``is_verified`` / ``email_verification_token`` /
 ``email_verification_expires_at``. They are skipped here pending the
