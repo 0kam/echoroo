@@ -157,6 +157,18 @@ async def auth_headers_admin(db_session: AsyncSession, admin_user: User) -> dict
     return {"Authorization": f"Bearer {access_token}"}
 
 
+_DEFAULT_RESTRICTED_CONFIG: dict[str, object] = {
+    "allow_media_playback": False,
+    "allow_detection_view": False,
+    "mask_species_in_detection": False,
+    "allow_download": False,
+    "allow_export": False,
+    "allow_voting_and_comments": False,
+    "public_location_precision_h3_res": 2,
+    "allow_precise_location_to_viewer": False,
+}
+
+
 @pytest.fixture
 async def test_project(db_session: AsyncSession, test_user: User) -> Project:
     """Create a test project.
@@ -174,6 +186,9 @@ async def test_project(db_session: AsyncSession, test_user: User) -> Project:
         visibility=ProjectVisibility.RESTRICTED,
         license=ProjectLicense.CC_BY,
         owner_id=test_user.id,
+        # Phase 11 ck_projects_restricted_config_shape requires the eight
+        # canonical toggle keys whenever ``visibility='restricted'``.
+        restricted_config=dict(_DEFAULT_RESTRICTED_CONFIG),
     )
     db_session.add(project)
     await db_session.commit()

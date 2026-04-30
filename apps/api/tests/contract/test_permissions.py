@@ -521,8 +521,17 @@ class TestViewerPermissions:
         assert response.status_code == 403
         data = response.json()
         assert "detail" in data
-        # Error message should indicate insufficient permissions
-        assert "admin" in data["detail"].lower() or "permission" in data["detail"].lower()
+        # Phase 11+ permission gate returns the canonical "Action denied"
+        # envelope from :func:`echoroo.core.permissions.gate_action`. Older
+        # builds surfaced "admin" / "permission" verbiage; the test now
+        # accepts either family so it survives both surfaces.
+        detail_lower = data["detail"].lower()
+        assert (
+            "admin" in detail_lower
+            or "permission" in detail_lower
+            or "action denied" in detail_lower
+            or "denied" in detail_lower
+        )
 
     async def test_viewer_can_view_project(
         self,
@@ -821,4 +830,12 @@ class TestAdminPermissions:
 
         assert response.status_code == 403
         data = response.json()
-        assert "owner" in data["detail"].lower()
+        # Phase 11+ permission gate returns "Action denied" rather than
+        # owner-specific verbiage; accept either family so the assertion
+        # holds on both surfaces.
+        detail_lower = data["detail"].lower()
+        assert (
+            "owner" in detail_lower
+            or "action denied" in detail_lower
+            or "denied" in detail_lower
+        )

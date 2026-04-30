@@ -146,15 +146,35 @@ async def test_user(db_session: AsyncSession) -> User:
 
 @pytest.fixture
 async def test_project(db_session: AsyncSession, test_user: User) -> Project:
-    """Minimal test project."""
-    from echoroo.models.enums import ProjectVisibility
+    """Minimal test project.
+
+    Phase 11 schema constraints: ``ProjectVisibility.PRIVATE`` was removed
+    in favour of ``RESTRICTED``; ``license`` is NOT NULL; ``target_taxa``
+    column was removed; ``restricted_config`` must satisfy
+    ``ck_projects_restricted_config_shape`` whenever
+    ``visibility='restricted'``.
+    """
+    from echoroo.models.enums import (
+        ProjectLicense,
+        ProjectVisibility,
+    )
 
     project = Project(
         name="Janitor Test Project",
         description="For janitor tests",
-        target_taxa="Aves",
-        visibility=ProjectVisibility.PRIVATE,
+        visibility=ProjectVisibility.RESTRICTED,
+        license=ProjectLicense.CC_BY,
         owner_id=test_user.id,
+        restricted_config={
+            "allow_media_playback": False,
+            "allow_detection_view": False,
+            "mask_species_in_detection": False,
+            "allow_download": False,
+            "allow_export": False,
+            "allow_voting_and_comments": False,
+            "public_location_precision_h3_res": 2,
+            "allow_precise_location_to_viewer": False,
+        },
     )
     db_session.add(project)
     await db_session.commit()
