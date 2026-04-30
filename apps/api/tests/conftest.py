@@ -145,6 +145,25 @@ async def setup_test_database(engine: AsyncEngine) -> None:
             approval_requests_exists_result.scalar()
         )
 
+        # Phase 16 Batch 6g-2: ``platform_audit_log`` and ``project_audit_log``
+        # are created by Alembic 0001 (no ORM model). The T993/T993a performance
+        # tests write directly to these tables via ``AuditLogService``.
+        platform_audit_log_exists_result = await conn.execute(
+            sa.text(
+                "SELECT EXISTS (SELECT 1 FROM information_schema.tables"
+                " WHERE table_name = 'platform_audit_log')"
+            )
+        )
+        platform_audit_log_exists = bool(platform_audit_log_exists_result.scalar())
+
+        project_audit_log_exists_result = await conn.execute(
+            sa.text(
+                "SELECT EXISTS (SELECT 1 FROM information_schema.tables"
+                " WHERE table_name = 'project_audit_log')"
+            )
+        )
+        project_audit_log_exists = bool(project_audit_log_exists_result.scalar())
+
     if (
         core_exists
         and search_exists
@@ -152,6 +171,8 @@ async def setup_test_database(engine: AsyncEngine) -> None:
         and outbox_exists
         and superusers_exists
         and approval_requests_exists
+        and platform_audit_log_exists
+        and project_audit_log_exists
     ):
         # Schema is fully up to date — nothing to do.
         return
@@ -354,6 +375,133 @@ async def setup_test_database(engine: AsyncEngine) -> None:
         # missing row — so the seed is now intentionally removed. Tests that
         # need a specific setting must create it via the admin service /
         # repository helpers (which resolve a real ``superusers.id`` first).
+
+        # Phase 16 Batch 6g-2: ``project_audit_log`` and ``platform_audit_log``
+        # are created by Alembic 0001 (no ORM model). The Phase 12 R4 /
+        # T993 / T993a performance tests write directly to these tables via
+        # ``AuditLogService``. The HMAC-chain tables include immutable triggers;
+        # we CREATE them with IF NOT EXISTS and skip the trigger recreation if
+        # the function already exists (idempotent).
+        await conn.execute(
+            sa.text(
+                """
+                CREATE TABLE IF NOT EXISTS project_audit_log (
+                    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                    actor_user_id_hash VARCHAR(64) NOT NULL,
+                    project_id UUID REFERENCES projects(id) ON DELETE SET NULL,
+                    action VARCHAR(100) NOT NULL,
+                    detail JSONB NOT NULL DEFAULT '{}'::jsonb,
+                    request_id VARCHAR(64) NOT NULL,
+                    ip_hash VARCHAR(64) NOT NULL,
+                    user_agent_hash VARCHAR(64) NOT NULL,
+                    before JSONB NULL,
+                    after JSONB NULL,
+                    prev_hash VARCHAR(64) NOT NULL,
+                    row_hash VARCHAR(64) NOT NULL,
+                    CONSTRAINT ck_project_audit_log_project_id_required
+                        CHECK (action = 'genesis' OR project_id IS NOT NULL)
+                )
+                """
+            )
+        )
+        await conn.execute(
+            sa.text(
+                "CREATE INDEX IF NOT EXISTS ix_project_audit_log_project_created "
+                "ON project_audit_log (project_id, created_at DESC)"
+            )
+        )
+        await conn.execute(
+            sa.text(
+                "CREATE INDEX IF NOT EXISTS ix_project_audit_log_action_created "
+                "ON project_audit_log (action, created_at DESC)"
+            )
+        )
+        await conn.execute(
+            sa.text(
+                """
+                CREATE TABLE IF NOT EXISTS platform_audit_log (
+                    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                    actor_user_id_hash VARCHAR(64) NOT NULL,
+                    action VARCHAR(100) NOT NULL,
+                    detail JSONB NOT NULL DEFAULT '{}'::jsonb,
+                    request_id VARCHAR(64) NOT NULL,
+                    ip_hash VARCHAR(64) NOT NULL,
+                    user_agent_hash VARCHAR(64) NOT NULL,
+                    before JSONB NULL,
+                    after JSONB NULL,
+                    prev_hash VARCHAR(64) NOT NULL,
+                    row_hash VARCHAR(64) NOT NULL
+                )
+                """
+            )
+        )
+        await conn.execute(
+            sa.text(
+                "CREATE INDEX IF NOT EXISTS ix_platform_audit_log_action_created "
+                "ON platform_audit_log (action, created_at DESC)"
+            )
+        )
+        await conn.execute(
+            sa.text(
+                "CREATE INDEX IF NOT EXISTS ix_platform_audit_log_actor_created "
+                "ON platform_audit_log (actor_user_id_hash, created_at DESC)"
+            )
+        )
+        # Immutable trigger: prevent UPDATE/DELETE on audit log rows.
+        # Uses DO $$ block to skip creation if the function already exists.
+        await conn.execute(
+            sa.text(
+                """
+                DO $$ BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1 FROM pg_proc
+                        WHERE proname = 'prevent_audit_log_mutation'
+                    ) THEN
+                        CREATE FUNCTION prevent_audit_log_mutation()
+                        RETURNS trigger AS $fn$
+                        BEGIN
+                            RAISE EXCEPTION 'audit log rows are immutable';
+                        END;
+                        $fn$ LANGUAGE plpgsql;
+                    END IF;
+                END $$
+                """
+            )
+        )
+        await conn.execute(
+            sa.text(
+                """
+                DO $$ BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1 FROM pg_trigger
+                        WHERE tgname = 'platform_audit_log_immutable'
+                    ) THEN
+                        CREATE TRIGGER platform_audit_log_immutable
+                        BEFORE UPDATE OR DELETE ON platform_audit_log
+                        FOR EACH ROW EXECUTE FUNCTION prevent_audit_log_mutation();
+                    END IF;
+                END $$
+                """
+            )
+        )
+        await conn.execute(
+            sa.text(
+                """
+                DO $$ BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1 FROM pg_trigger
+                        WHERE tgname = 'project_audit_log_immutable'
+                    ) THEN
+                        CREATE TRIGGER project_audit_log_immutable
+                        BEFORE UPDATE OR DELETE ON project_audit_log
+                        FOR EACH ROW EXECUTE FUNCTION prevent_audit_log_mutation();
+                    END IF;
+                END $$
+                """
+            )
+        )
 
     return
 
