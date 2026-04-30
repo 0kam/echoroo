@@ -19,13 +19,25 @@ test suite.  Locally (fresh container), run::
     docker exec echoroo-backend uv run alembic upgrade head
 
 Additionally, the ``echoroo_app`` PostgreSQL role must exist in the test
-DB and have DML privileges on the ``superusers`` table.  This role is
-created automatically in the CI entrypoint and can be created locally::
+DB AND the connecting role (``postgres`` in CI / local dev) must be a
+member of ``echoroo_app`` so that ``SET ROLE echoroo_app`` is permitted.
+Without the membership grant the trigger guard cannot be exercised under
+the application role and the SC-022 scenarios silently skip via the
+``_can_set_app_role()`` probe (Phase 16 Codex 6e R2 finding).  The role
+is created automatically in the CI entrypoint and can be created
+locally::
 
     docker exec echoroo-db psql -U postgres -d echoroo_test -c \\
         "CREATE ROLE echoroo_app WITH LOGIN PASSWORD 'echoroo_app_test'; \\
          GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO echoroo_app; \\
-         GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO echoroo_app;"
+         GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO echoroo_app; \\
+         GRANT echoroo_app TO postgres;"
+
+The trailing ``GRANT echoroo_app TO postgres`` is the membership grant
+that lets the connecting superuser issue ``SET ROLE echoroo_app``.  In
+CI the test workflow MUST run the same statement after starting the
+PostgreSQL service (or after ``alembic upgrade head``).  CI workflow
+that omits this grant will see SC-022 coverage silently skip.
 
 Then install the trigger function (if not done by alembic on the test DB)::
 
