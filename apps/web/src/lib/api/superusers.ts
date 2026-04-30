@@ -11,9 +11,24 @@
  */
 
 import { ApiError } from './client';
+import { getActiveStepUpToken } from '$lib/utils/webauthnGating';
 
 const BASE = '/web-api/v1/admin';
 const CSRF_COOKIE_NAME = 'echoroo_csrf';
+const STEP_UP_HEADER_NAME = 'X-Step-Up-Token';
+
+// Phase 16 Batch 6g-3: which destructive admin paths require a
+// ``X-Step-Up-Token`` header. The backend gate
+// (``require_step_up_token``) is the source of truth — this list
+// mirrors it so callers without a cached token can be redirected to
+// the WebAuthn ceremony before issuing the request.
+const STEP_UP_REQUIRED_METHODS = new Set(['POST', 'PATCH']);
+function isStepUpRequiredPath(path: string): boolean {
+  // Destructive endpoints all live under /superusers/* (excluding GETs
+  // which are filtered by method). Listing endpoints stay on GET so the
+  // method filter alone is sufficient.
+  return path.startsWith('/superusers');
+}
 
 function resolveBaseUrl(): string {
   if (typeof window !== 'undefined') {
@@ -94,6 +109,14 @@ async function request<T>(
   if (method !== 'GET' && method !== 'HEAD') {
     const csrf = getCsrfToken();
     if (csrf) headers['X-CSRF-Token'] = csrf;
+  }
+
+  // Phase 16 Batch 6g-3: attach a fresh step-up token for destructive
+  // admin endpoints. Missing token → backend returns
+  // 401 ``step_up_token_required`` so the UI can prompt for WebAuthn.
+  if (STEP_UP_REQUIRED_METHODS.has(method) && isStepUpRequiredPath(path)) {
+    const stepUp = getActiveStepUpToken();
+    if (stepUp) headers[STEP_UP_HEADER_NAME] = stepUp;
   }
 
   if (init.headers) {

@@ -176,12 +176,23 @@ class WebAuthnChallengeBeginResponse(BaseModel):
 
 
 class WebAuthnChallengeCompleteResponse(BaseModel):
-    """Response body after WebAuthn authentication issues a session."""
+    """Response body after WebAuthn authentication issues a session.
+
+    Phase 16 Batch 6g-3: a successful assertion *also* produces a
+    short-lived ``step_up_token`` bound to ``scope='admin_destructive'``
+    so destructive admin endpoints can require a fresh hardware-key
+    presence check via the ``X-Step-Up-Token`` header. ``expires_at`` is
+    the absolute UTC ISO-8601 timestamp at which the token stops being
+    accepted.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     access_token: str
     expires_in: int
+    step_up_token: str
+    step_up_expires_at: str
+    step_up_scope: str
 
 
 class PasswordResetRequest(BaseModel):

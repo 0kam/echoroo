@@ -55,6 +55,10 @@ from echoroo.middleware.auth import get_current_user_optional
 from echoroo.models.superuser import Superuser
 from echoroo.models.superuser_approval_request import SuperuserApprovalRequest
 from echoroo.models.user import User
+from echoroo.services.step_up_token_service import (
+    SCOPE_ADMIN_DESTRUCTIVE,
+    issue_step_up_token,
+)
 from echoroo.services.superuser_service import (
     ACTION_SUPERUSER_ADD,
     ACTION_SUPERUSER_REVOKE,
@@ -291,7 +295,33 @@ async def admin_client_factory(  # type: ignore[no-untyped-def]
         user: User | None,
     ) -> AsyncClient:
         _override_user(user)
-        return AsyncClient(transport=transport, base_url="http://testserver")
+        # Phase 16 Batch 6g-3: destructive admin endpoints require a
+        # ``X-Step-Up-Token`` header. Inject one automatically so the
+        # 79 existing admin tests stay focused on their original
+        # invariants. Anonymous callers (user is None) still get a
+        # token — the destructive endpoint path through the gate runs
+        # *before* ``_require_authenticated_superuser``, so an
+        # anonymous-test sending a bogus token would receive a 401
+        # ``step_up_token_invalid`` instead of the expected
+        # ``Unauthenticated`` 401. Sending a structurally valid token
+        # keeps the gate transparent to those tests; the
+        # ``_require_authenticated_superuser`` body check still issues
+        # the 401 for anon callers.
+        headers: dict[str, str] = {}
+        token, _ = issue_step_up_token(
+            user_id=user.id if user is not None else uuid4(),
+            security_stamp=(
+                user.security_stamp if user is not None else "0" * 64
+            ),
+            assertion_id="test-fixture-credential",
+            scope=SCOPE_ADMIN_DESTRUCTIVE,
+        )
+        headers["X-Step-Up-Token"] = token
+        return AsyncClient(
+            transport=transport,
+            base_url="http://testserver",
+            headers=headers,
+        )
 
     return _factory
 

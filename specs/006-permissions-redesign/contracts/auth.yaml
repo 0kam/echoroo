@@ -159,7 +159,21 @@ paths:
               $ref: '#/components/schemas/WebAuthnAssertionRequest'
       responses:
         "200":
-          description: WebAuthn 認証成功、superuser session 発行
+          description: >
+            WebAuthn 認証成功、superuser session 発行 + Phase 16 Batch 6g-3
+            step-up token 発行（``X-Step-Up-Token`` ヘッダ + body
+            ``step_up_token`` の両方で返却、scope=``admin_destructive``、TTL 5 分）
+          headers:
+            X-Step-Up-Token:
+              description: >
+                Phase 16 Batch 6g-3: 5 分 TTL の step-up JWT。
+                以後の destructive admin リクエストに同じヘッダで添付する。
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebAuthnChallengeCompleteResponse'
 
   /auth/logout:
     post:
@@ -354,3 +368,36 @@ components:
       type: object
       description: WebAuthn authentication ceremony の response
       additionalProperties: true
+
+    WebAuthnChallengeCompleteResponse:
+      type: object
+      description: >
+        WebAuthn 認証完了レスポンス。Phase 16 Batch 6g-3 で
+        ``step_up_token`` (5 分 TTL) を含む。
+      required:
+        - access_token
+        - expires_in
+        - step_up_token
+        - step_up_expires_at
+        - step_up_scope
+      additionalProperties: false
+      properties:
+        access_token:
+          type: string
+          description: 新規 access token (JWT)
+        expires_in:
+          type: integer
+          description: access_token の TTL (秒)
+        step_up_token:
+          type: string
+          description: >
+            destructive admin 用 step-up JWT。
+            ``X-Step-Up-Token`` ヘッダで再送する。
+        step_up_expires_at:
+          type: string
+          format: date-time
+          description: step_up_token の絶対失効時刻 (ISO 8601 UTC)
+        step_up_scope:
+          type: string
+          enum: [admin_destructive]
+          description: step_up_token のスコープ。Phase 16 では admin_destructive のみ。

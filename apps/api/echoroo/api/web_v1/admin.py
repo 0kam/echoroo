@@ -48,7 +48,7 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 import sqlalchemy as sa
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.exc import IntegrityError
 
 from echoroo.core.actions import (
@@ -70,6 +70,7 @@ from echoroo.core.actions import (
 from echoroo.core.database import AsyncSessionLocal, DbSession
 from echoroo.core.permissions import Action, gate_action, is_allowed, load_project_or_404
 from echoroo.middleware.auth import OptionalCurrentUser
+from echoroo.middleware.step_up import require_step_up_token
 from echoroo.models.enums import ProjectStatus
 from echoroo.models.project import ProjectMember
 from echoroo.models.superuser import Superuser
@@ -98,6 +99,7 @@ from echoroo.schemas.admin import (
 from echoroo.services import superuser_service
 from echoroo.services.audit_service import AuditLogService
 from echoroo.services.outbox_service import enqueue as outbox_enqueue
+from echoroo.services.step_up_token_service import SCOPE_ADMIN_DESTRUCTIVE
 from echoroo.services.superuser_approval_service import (
     TaxonOverrideDecisionOutcome,
     approve_taxon_override,
@@ -1149,6 +1151,8 @@ async def list_superusers(
         "M-of-N path and 201-equivalent ``status='direct'`` for the "
         "creation-time exception."
     ),
+    # Phase 16 Batch 6g-3: gate destructive admin via step-up token.
+    dependencies=[Depends(require_step_up_token(SCOPE_ADMIN_DESTRUCTIVE))],
 )
 async def add_superuser_endpoint(
     payload: SuperuserAddRequest,
@@ -1223,6 +1227,8 @@ async def add_superuser_endpoint(
         "The DB trigger ``superuser_last_protection`` (FR-111a) is the "
         "last-line defence against revoking the final row."
     ),
+    # Phase 16 Batch 6g-3: gate destructive admin via step-up token.
+    dependencies=[Depends(require_step_up_token(SCOPE_ADMIN_DESTRUCTIVE))],
 )
 async def revoke_superuser_endpoint(
     superuser_id: UUID,
@@ -1356,6 +1362,8 @@ async def list_approval_requests(
         "When ``approvals`` reaches the spec quorum (= 2) the engine "
         "dispatches the underlying mutation in the same transaction."
     ),
+    # Phase 16 Batch 6g-3: gate destructive admin via step-up token.
+    dependencies=[Depends(require_step_up_token(SCOPE_ADMIN_DESTRUCTIVE))],
 )
 async def approve_request_endpoint(
     approval_request_id: UUID,
@@ -1466,6 +1474,8 @@ async def approve_request_endpoint(
         "JSONB ``approvals`` array so the dashboard renders the full "
         "history."
     ),
+    # Phase 16 Batch 6g-3: gate destructive admin via step-up token.
+    dependencies=[Depends(require_step_up_token(SCOPE_ADMIN_DESTRUCTIVE))],
 )
 async def reject_request_endpoint(
     approval_request_id: UUID,
@@ -1540,6 +1550,8 @@ async def reject_request_endpoint(
         "be added within 24 h. Idempotent: a second call within the "
         "window preserves the original ``started_at``."
     ),
+    # Phase 16 Batch 6g-3: gate destructive admin via step-up token.
+    dependencies=[Depends(require_step_up_token(SCOPE_ADMIN_DESTRUCTIVE))],
 )
 async def enter_break_glass(
     payload: SuperuserBreakGlassEnterRequest,
@@ -1671,6 +1683,8 @@ async def _read_break_glass_status(
         "requests originating outside the allowlist; syntax validation "
         "is delegated to that layer."
     ),
+    # Phase 16 Batch 6g-3: gate destructive admin via step-up token.
+    dependencies=[Depends(require_step_up_token(SCOPE_ADMIN_DESTRUCTIVE))],
 )
 async def update_ip_allowlist(
     superuser_id: UUID,

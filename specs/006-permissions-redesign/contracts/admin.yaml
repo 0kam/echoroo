@@ -166,6 +166,7 @@ paths:
       security:
         - superuserSession: []
           csrfToken: []
+          stepUpToken: []
       requestBody:
         required: true
         content:
@@ -194,6 +195,7 @@ paths:
       security:
         - superuserSession: []
           csrfToken: []
+          stepUpToken: []
       parameters:
         - { name: superuserId, in: path, required: true, schema: { type: string, format: uuid } }
       responses:
@@ -219,6 +221,7 @@ paths:
       security:
         - superuserSession: []
           csrfToken: []
+          stepUpToken: []
       parameters:
         - { name: superuserId, in: path, required: true, schema: { type: string, format: uuid } }
       requestBody:
@@ -273,6 +276,7 @@ paths:
       security:
         - superuserSession: []
           csrfToken: []
+          stepUpToken: []
       parameters:
         - { name: approvalRequestId, in: path, required: true, schema: { type: string, format: uuid } }
       responses:
@@ -306,6 +310,7 @@ paths:
       security:
         - superuserSession: []
           csrfToken: []
+          stepUpToken: []
       parameters:
         - { name: approvalRequestId, in: path, required: true, schema: { type: string, format: uuid } }
       requestBody:
@@ -336,6 +341,7 @@ paths:
       security:
         - superuserSession: []
           csrfToken: []
+          stepUpToken: []
       requestBody:
         required: true
         content:
@@ -386,6 +392,16 @@ components:
       type: apiKey
       in: header
       name: X-CSRF-Token
+    stepUpToken:
+      type: apiKey
+      in: header
+      name: X-Step-Up-Token
+      description: >
+        Phase 16 Batch 6g-3: short-lived (5 min) JWT issued by
+        ``POST /auth/2fa/webauthn/challenge`` after a successful
+        WebAuthn assertion. Required by every destructive admin endpoint
+        (FR-111 hardware-key gate). ``scope='admin_destructive'`` is the
+        only currently-issued scope.
 
   schemas:
     SuperuserSummary:

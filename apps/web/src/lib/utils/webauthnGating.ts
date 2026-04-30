@@ -123,6 +123,133 @@ export async function ensureHardwareKeyPresence(): Promise<boolean> {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Phase 16 Batch 6g-3: step-up token storage
+// ---------------------------------------------------------------------------
+//
+// After the user completes a WebAuthn ceremony the backend
+// (``POST /web-api/v1/auth/2fa/webauthn/challenge``) issues a 5-minute
+// step-up JWT bound to ``scope='admin_destructive'``. Every subsequent
+// destructive admin call MUST attach the token via ``X-Step-Up-Token``
+// or the backend gate (``require_step_up_token``) returns 401/403.
+//
+// We persist the latest token in ``sessionStorage`` so:
+//   * Tab refreshes inside the 5-minute window do not force a redundant
+//     ceremony.
+//   * The token is wiped on tab close — matching the spec's "one
+//     hardware-touch per workflow" expectation.
+
+const STEP_UP_STORAGE_KEY = 'echoroo.stepUpToken';
+
+interface StoredStepUpToken {
+  token: string;
+  expiresAt: number; // ms epoch
+  scope: string;
+}
+
+function loadStoredStepUpToken(): StoredStepUpToken | null {
+  if (typeof sessionStorage === 'undefined') return null;
+  try {
+    const raw = sessionStorage.getItem(STEP_UP_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as StoredStepUpToken;
+    if (
+      typeof parsed.token !== 'string' ||
+      typeof parsed.expiresAt !== 'number' ||
+      typeof parsed.scope !== 'string'
+    ) {
+      return null;
+    }
+    if (parsed.expiresAt <= Date.now()) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function persistStepUpToken(stored: StoredStepUpToken): void {
+  if (typeof sessionStorage === 'undefined') return;
+  sessionStorage.setItem(STEP_UP_STORAGE_KEY, JSON.stringify(stored));
+}
+
+export function clearStepUpToken(): void {
+  if (typeof sessionStorage === 'undefined') return;
+  sessionStorage.removeItem(STEP_UP_STORAGE_KEY);
+}
+
+/**
+ * Read the currently-cached step-up token, returning ``null`` when
+ * absent or expired. Callers (e.g. ``superusers.ts`` request wrapper)
+ * use this to attach the ``X-Step-Up-Token`` header. When the token
+ * has expired or is missing the caller should re-prompt the user via
+ * :func:`requireWebAuthn`.
+ */
+export function getActiveStepUpToken(
+  scope: string = 'admin_destructive',
+): string | null {
+  const stored = loadStoredStepUpToken();
+  if (!stored) return null;
+  if (stored.scope !== scope) return null;
+  return stored.token;
+}
+
+/**
+ * Run the WebAuthn ceremony, then exchange the assertion at the
+ * backend ``/web-api/v1/auth/2fa/webauthn/challenge`` endpoint to
+ * obtain a fresh step-up token.
+ *
+ * Phase 16 Batch 6g-3 placeholder: end-to-end ceremony wiring with
+ * the backend ``interim_token`` flow lives in a follow-up batch.
+ * Today we still run the local presence ceremony for the UX gate;
+ * the token retrieval is invoked here so tests can mock it. When the
+ * full flow lands the body of this function will POST to the
+ * challenge endpoint and capture the response's ``step_up_token``
+ * field via the same path.
+ */
+export async function performWebAuthnAndCaptureStepUpToken(): Promise<{
+  ran: boolean;
+  token: string | null;
+}> {
+  const ok = await ensureHardwareKeyPresence();
+  if (!ok) return { ran: false, token: null };
+  // The legacy endpoint chain returns the step-up token alongside the
+  // session refresh; in Phase 16 we surface it from the
+  // ``/2fa/webauthn/challenge`` complete branch. The detailed wiring
+  // (interim-token + assertion exchange) is the responsibility of the
+  // 2FA login flow; this helper documents the contract for downstream
+  // consumers and exposes ``getActiveStepUpToken`` for header
+  // attachment.
+  const cached = getActiveStepUpToken();
+  return { ran: true, token: cached };
+}
+
+/**
+ * Persist a step-up token captured from
+ * ``WebAuthnChallengeCompleteResponse.step_up_token``. Call this from
+ * the WebAuthn login completion path so destructive admin calls can
+ * pick up the latest token automatically.
+ */
+export function rememberStepUpToken(payload: {
+  token: string;
+  expiresAt: string | number;
+  scope: string;
+}): void {
+  const expiresMs =
+    typeof payload.expiresAt === 'number'
+      ? payload.expiresAt
+      : Date.parse(payload.expiresAt);
+  if (!Number.isFinite(expiresMs)) {
+    throw new WebAuthnGateError(
+      'step_up_expires_at could not be parsed as a date',
+    );
+  }
+  persistStepUpToken({
+    token: payload.token,
+    expiresAt: expiresMs,
+    scope: payload.scope,
+  });
+}
+
 /**
  * Wrap a destructive action so it only runs after a successful
  * WebAuthn ceremony.

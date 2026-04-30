@@ -37,6 +37,7 @@ from echoroo.core.security import hash_password, verify_password
 from echoroo.core.settings import get_settings
 from echoroo.core.text import has_control_chars
 from echoroo.middleware.csrf import CSRF_HEADER_NAME, issue_csrf_token
+from echoroo.middleware.step_up import STEP_UP_HEADER_NAME
 from echoroo.models.password_reset_token import PasswordResetToken
 from echoroo.models.user import User
 from echoroo.repositories.superuser_credentials import get_default_store
@@ -75,6 +76,11 @@ from echoroo.services.auth_service import (
     enforce_password_policy,
 )
 from echoroo.services.login_notification_service import LoginNotificationService
+from echoroo.services.step_up_token_service import (
+    SCOPE_ADMIN_DESTRUCTIVE,
+    STEP_UP_TOKEN_TTL_SECONDS,
+    issue_step_up_token,
+)
 from echoroo.services.two_factor_service import (
     BACKUP_FAIL_WINDOW_SECONDS,
     ISSUER_NAME,
@@ -1470,6 +1476,20 @@ async def webauthn_challenge(
         _replace_stored_credential(existing, updated),
     )
     access_token = await _issue_real_session(response=response, user=user, db=db)
+    # Phase 16 Batch 6g-3: bind a short-lived step-up token to the
+    # WebAuthn assertion that just succeeded. Destructive admin
+    # endpoints require this token via ``X-Step-Up-Token``.
+    step_up_token, step_up_expires_at = issue_step_up_token(
+        user_id=user.id,
+        security_stamp=user.security_stamp,
+        assertion_id=updated["credential_id"],
+        scope=SCOPE_ADMIN_DESTRUCTIVE,
+        ttl_seconds=STEP_UP_TOKEN_TTL_SECONDS,
+    )
+    # Mirror the token on the response header so SPA fetch wrappers can
+    # capture it without parsing the body. Body still carries it for
+    # SSR / non-fetch callers.
+    response.headers[STEP_UP_HEADER_NAME] = step_up_token
     await _write_platform_audit(
         actor_user_id=user.id,
         action="auth.webauthn_authentication_succeeded",
@@ -1480,6 +1500,9 @@ async def webauthn_challenge(
     return WebAuthnChallengeCompleteResponse(
         access_token=access_token,
         expires_in=settings.web_access_token_ttl_seconds,
+        step_up_token=step_up_token,
+        step_up_expires_at=step_up_expires_at.isoformat(),
+        step_up_scope=SCOPE_ADMIN_DESTRUCTIVE,
     )
 
 
