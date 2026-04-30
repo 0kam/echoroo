@@ -23,8 +23,7 @@ async def test_user(db_session: AsyncSession) -> User:
         email="testuser@example.com",
         password_hash="$argon2id$v=19$m=65536,t=3,p=4$test",
         display_name="Test User",
-        is_active=True,
-        is_verified=True,
+        security_stamp="contract-stamp-test",
     )
     db_session.add(user)
     await db_session.commit()
@@ -46,8 +45,7 @@ async def other_user(db_session: AsyncSession) -> User:
         email="otheruser@example.com",
         password_hash="$argon2id$v=19$m=65536,t=3,p=4$test",
         display_name="Other User",
-        is_active=True,
-        is_verified=True,
+        security_stamp="contract-stamp-other",
     )
     db_session.add(user)
     await db_session.commit()
@@ -69,8 +67,7 @@ async def member_user(db_session: AsyncSession) -> User:
         email="member@example.com",
         password_hash="$argon2id$v=19$m=65536,t=3,p=4$test",
         display_name="Member User",
-        is_active=True,
-        is_verified=True,
+        security_stamp="contract-stamp-member",
     )
     db_session.add(user)
     await db_session.commit()
@@ -92,8 +89,7 @@ async def admin_user(db_session: AsyncSession) -> User:
         email="admin@example.com",
         password_hash="$argon2id$v=19$m=65536,t=3,p=4$test",
         display_name="Admin User",
-        is_active=True,
-        is_verified=True,
+        security_stamp="contract-stamp-admin",
     )
     db_session.add(user)
     await db_session.commit()

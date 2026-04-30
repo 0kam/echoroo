@@ -378,8 +378,7 @@ async def viewer_user(db_session: AsyncSession) -> User:
         email="viewer@example.com",
         password_hash="$argon2id$v=19$m=65536,t=3,p=4$test",
         display_name="Viewer User",
-        is_active=True,
-        is_verified=True,
+        security_stamp="viewer-stamp",
     )
     db_session.add(user)
     await db_session.commit()

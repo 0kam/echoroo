@@ -1,6 +1,10 @@
 """Integration tests for authentication flows.
 
 Tests complete authentication scenarios end-to-end.
+
+Note (Phase 16 Batch 6b): Exercises the legacy ``/api/v1/auth`` flow which is
+a Phase 4 stub returning 501, and references User columns dropped in Phase 13
+(``is_active`` / ``is_verified``). Skipped pending /api/v1/auth reinstatement.
 """
 
 import pytest
@@ -9,6 +13,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from echoroo.core.security import hash_password
 from echoroo.models.user import User
+
+pytest.skip(
+    (
+        "Legacy /api/v1/auth integration flow — endpoints stubbed in Phase 4 "
+        "and references User columns dropped in Phase 13."
+    ),
+    allow_module_level=True,
+)
 
 
 @pytest.mark.asyncio

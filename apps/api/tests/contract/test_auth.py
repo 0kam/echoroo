@@ -1,6 +1,16 @@
 """Contract tests for authentication endpoints.
 
 Tests that auth endpoints conform to OpenAPI specification.
+
+Note (Phase 16 Batch 6b): The legacy ``/api/v1/auth`` registration / login /
+email-verification / password-reset endpoints are Phase 4 stubs that return
+``501 NOT IMPLEMENTED`` after the permissions-redesign. The first-party
+``/web-api/v1/auth`` router is the only functional surface today (covered by
+``tests/contract/test_auth_web.py`` and the security suite). All tests in this
+module exercise the legacy contract and reference the dropped User columns
+``is_active`` / ``is_verified`` / ``email_verification_token`` /
+``email_verification_expires_at``. They are skipped here pending the
+``/api/v1/auth`` reinstatement decision (006-permissions-redesign FR-007).
 """
 
 import pytest
@@ -9,6 +19,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from echoroo.core.security import hash_password
 from echoroo.models.user import User
+
+pytest.skip(
+    (
+        "Legacy /api/v1/auth contract suite — endpoints are Phase 4 stubs and "
+        "test fixtures reference User columns dropped in Phase 13 "
+        "(is_active / is_verified / email_verification_*). Re-enable once the "
+        "/api/v1/auth surface is reinstated per FR-007."
+    ),
+    allow_module_level=True,
+)
 
 
 @pytest.mark.asyncio

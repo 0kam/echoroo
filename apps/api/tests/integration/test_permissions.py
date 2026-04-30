@@ -35,36 +35,31 @@ class TestRoleBasedAccessControlFlow:
             email="owner@example.com",
             password_hash="$argon2id$v=19$m=65536,t=3,p=4$test",
             display_name="Owner User",
-            is_active=True,
-            is_verified=True,
+            security_stamp="rbac-stamp-owner",
         )
         admin = User(
             email="admin@example.com",
             password_hash="$argon2id$v=19$m=65536,t=3,p=4$test",
             display_name="Admin User",
-            is_active=True,
-            is_verified=True,
+            security_stamp="rbac-stamp-admin",
         )
         member = User(
             email="member@example.com",
             password_hash="$argon2id$v=19$m=65536,t=3,p=4$test",
             display_name="Member User",
-            is_active=True,
-            is_verified=True,
+            security_stamp="rbac-stamp-member",
         )
         viewer = User(
             email="viewer@example.com",
             password_hash="$argon2id$v=19$m=65536,t=3,p=4$test",
             display_name="Viewer User",
-            is_active=True,
-            is_verified=True,
+            security_stamp="rbac-stamp-viewer",
         )
         outsider = User(
             email="outsider@example.com",
             password_hash="$argon2id$v=19$m=65536,t=3,p=4$test",
             display_name="Outsider User",
-            is_active=True,
-            is_verified=True,
+            security_stamp="rbac-stamp-outsider",
         )
 
         db_session.add_all([owner, admin, member, viewer, outsider])
@@ -182,8 +177,7 @@ class TestRoleBasedAccessControlFlow:
             email="temp@example.com",
             password_hash="$argon2id$v=19$m=65536,t=3,p=4$test",
             display_name="Temp User",
-            is_active=True,
-            is_verified=True,
+            security_stamp="rbac-stamp-temp",
         )
         db_session.add(temp_user)
         await db_session.commit()

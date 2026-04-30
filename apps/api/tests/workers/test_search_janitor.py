@@ -136,8 +136,7 @@ async def test_user(db_session: AsyncSession) -> User:
         email="janitor_test@example.com",
         password_hash="$argon2id$v=19$m=65536,t=3,p=4$test",
         display_name="Janitor Test User",
-        is_active=True,
-        is_verified=True,
+        security_stamp="janitor-stamp",
     )
     db_session.add(user)
     await db_session.commit()
