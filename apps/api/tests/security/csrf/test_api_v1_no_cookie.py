@@ -156,15 +156,25 @@ async def _seed_api_key(
     user: User,
     project: Project,
 ) -> str:
-    """Insert a minimal api_keys row and return the raw wire key."""
+    """Insert a minimal api_keys row and return the raw wire key.
+
+    Wire format: ``echoroo_<8-char-hex>_<url-safe-secret>``
+
+    The prefix random part uses ``secrets.token_hex(4)`` (8 lowercase hex
+    characters) to guarantee the 8-char ``[A-Za-z0-9]`` regex constraint in
+    :func:`echoroo.services.api_key_verification.parse_api_key`.
+    ``token_urlsafe`` can produce ``-`` or ``_`` within the first 8 characters
+    which would cause ``parse_api_key`` to return ``None`` and the test to fail
+    with an unrelated 401 rather than a 200.
+    """
+    from datetime import UTC, datetime, timedelta
+
     from echoroo.models.api_key import ApiKey
 
     raw_secret = secrets.token_urlsafe(32)
-    prefix_random = secrets.token_urlsafe(6)[:8]  # 8 chars alphanumeric
+    prefix_random = secrets.token_hex(4)  # exactly 8 lowercase hex chars [0-9a-f]
     prefix = f"echoroo_{prefix_random}"
     hashed = hashlib.sha256(raw_secret.encode()).hexdigest()
-
-    from datetime import UTC, datetime, timedelta
 
     key = ApiKey(
         id=uuid.uuid4(),
@@ -324,5 +334,44 @@ async def test_api_v1_cookie_plus_jwt_returns_401(
     )
     assert response.status_code == 401, (
         f"/api/v1/projects with cookie+JWT must return 401, "
+        f"got {response.status_code}: {response.text!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# T972-6: valid echoroo_* API key → 200 (positive test)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_api_v1_with_valid_api_key_returns_200(
+    unshimmed_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """GET /api/v1/projects/{id} with a valid echoroo_* API key → 200.
+
+    This is the positive-path counterpart to T972-1 through T972-5.  It
+    demonstrates that the production :class:`DbApiKeyVerifier` (no JWT shim)
+    correctly accepts a well-formed ``echoroo_<prefix>_<secret>`` credential
+    when the matching ``api_keys`` row exists in the database, is not revoked,
+    and has not expired.
+
+    The constant-time compare in :func:`hmac.compare_digest` operates on the
+    SHA-256 hex digest of ``raw_secret``.  The fixture uses
+    ``secrets.token_hex(4)`` for the 8-character prefix segment to guarantee
+    the ``[A-Za-z0-9]{8}`` constraint in the wire-format regex; the secret
+    half is a ``token_urlsafe(32)`` string whose ``-`` / ``_`` characters are
+    permitted by the ``[A-Za-z0-9_\\-]+`` secret group.
+    """
+    owner, project = await _seed_user_and_project(db_session)
+    raw_key = await _seed_api_key(db_session, user=owner, project=project)
+    await db_session.commit()
+
+    response = await unshimmed_client.get(
+        f"/api/v1/projects/{project.id}",
+        headers={"Authorization": f"Bearer {raw_key}"},
+    )
+    assert response.status_code == 200, (
+        f"GET /api/v1/projects with valid echoroo_* API key must return 200, "
         f"got {response.status_code}: {response.text!r}"
     )

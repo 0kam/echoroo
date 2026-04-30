@@ -398,3 +398,104 @@ async def test_cookies_cleared_on_logout_also_samesite_strict(
             f"Cleared cookie {cookie_name!r} must carry SameSite=Strict, "
             f"got: {matching[0]!r}"
         )
+
+
+# ---------------------------------------------------------------------------
+# T971-7: Secure attribute is set in staging/production ENVIRONMENT
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_all_session_cookies_are_secure(
+    monkeypatch: pytest.MonkeyPatch,
+    session_factory_t971: object,
+) -> None:
+    """All four session cookies carry the Secure attribute when ENVIRONMENT != development.
+
+    In development the ``Secure`` flag is intentionally omitted (plain HTTP
+    localhost). In staging / production it MUST be present so cookies are
+    never transmitted over plain HTTP.  This test force-sets
+    ``auth_module.settings.ENVIRONMENT`` to ``"staging"`` for the duration
+    of the request, triggering the ``secure_cookie = True`` branch inside
+    ``_set_session_cookies``, then asserts that every issued cookie carries
+    ``Secure`` in its header.
+    """
+    import collections.abc
+
+    from httpx import ASGITransport, AsyncClient
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from echoroo.api.web_v1 import auth as auth_module
+    from echoroo.core.database import get_db
+    from echoroo.core.settings import get_settings
+    from echoroo.main import create_app
+    from echoroo.services.auth_service import AlwaysFreshHibp, InMemoryLoginAttemptRecorder
+
+    settings = get_settings()
+
+    # Force Secure=True branch for this test.
+    monkeypatch.setattr(auth_module.settings, "ENVIRONMENT", "staging")
+
+    async def override_get_db() -> collections.abc.AsyncGenerator[AsyncSession, None]:
+        async with session_factory_t971() as session:  # type: ignore[operator]
+            try:
+                yield session
+                await session.commit()
+            except Exception:
+                await session.rollback()
+                raise
+
+    async def _noop_audit(**_kwargs: object) -> None:
+        pass
+
+    monkeypatch.setattr(auth_module, "AsyncSessionLocal", session_factory_t971)
+    monkeypatch.setattr(auth_module, "_write_platform_audit", _noop_audit)
+    monkeypatch.setattr(auth_module, "compute_pii_hash", lambda value: f"hash:{value}")
+    monkeypatch.setattr(auth_module, "_login_attempts", InMemoryLoginAttemptRecorder())
+    monkeypatch.setattr(auth_module, "_hibp_checker", AlwaysFreshHibp())
+    auth_module._register_windows.clear()  # noqa: SLF001
+
+    app = create_app()
+    app.dependency_overrides[get_db] = override_get_db
+
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="https://testserver",
+        ) as client:
+            user = await _create_user(
+                session_factory_t971, email="t971_secure@example.com"
+            )
+            refresh_token = await _seed_refresh_token(session_factory_t971, user)
+            response = await client.post(
+                "/web-api/v1/auth/refresh",
+                cookies={settings.web_refresh_cookie_name: refresh_token},
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200, (
+        f"Refresh must succeed for Secure-attribute test, got {response.status_code}: "
+        f"{response.text!r}"
+    )
+
+    set_cookie_headers = response.headers.get_list("set-cookie")
+    for cookie_name in (
+        settings.web_refresh_cookie_name,
+        settings.web_session_cookie_name,
+        settings.web_csrf_cookie_name,
+        settings.web_logged_in_cookie_name,
+    ):
+        matching = [h for h in set_cookie_headers if h.startswith(f"{cookie_name}=")]
+        assert matching, (
+            f"Cookie {cookie_name!r} not found in Set-Cookie headers: "
+            f"{set_cookie_headers!r}"
+        )
+        header_lower = matching[0].lower()
+        assert "secure" in header_lower, (
+            f"Cookie {cookie_name!r} must carry Secure attribute in staging/production "
+            f"(FR-097), got: {matching[0]!r}"
+        )
+        assert "samesite=strict" in header_lower, (
+            f"Cookie {cookie_name!r} must carry SameSite=Strict, got: {matching[0]!r}"
+        )
