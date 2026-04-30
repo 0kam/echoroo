@@ -176,12 +176,21 @@ class TestCreateUploadSession:
         mock_presigned_url: MagicMock,
         mock_ensure_bucket: MagicMock,
         client: AsyncClient,
-        auth_headers_member: dict[str, str],
+        auth_headers_other: dict[str, str],
         test_project_id: str,
         test_dataset: Dataset,
-        _test_member: "ProjectMember",  # noqa: F821  # Side-effect: ensures member row exists
     ) -> None:
-        """Test POST upload-sessions requires admin role."""
+        """Test POST upload-sessions denies Authenticated non-members.
+
+        Phase 16 Batch 6e (2026-04-29) downstream drift fix: Phase 9 /
+        T280 spec gave MEMBER role ``Permission.UPLOAD`` (see
+        ``apps/api/echoroo/core/permissions.py::_MEMBER_PERMS``) so the
+        legacy "member -> 403" expectation no longer holds. The
+        canonical 403 path is now Authenticated non-member
+        (``auth_headers_other``); that identity has zero project
+        permissions. The "viewer cannot upload" path is covered by
+        the dedicated viewer-permission-boundary suite.
+        """
         mock_get_s3_client.return_value = MagicMock()
         mock_presigned_url.return_value = "https://minio:9000/fake-url"
         mock_ensure_bucket.return_value = None
@@ -198,7 +207,7 @@ class TestCreateUploadSession:
 
         response = await client.post(
             f"/api/v1/projects/{test_project_id}/datasets/{test_dataset.id}/upload-sessions",
-            headers=auth_headers_member,
+            headers=auth_headers_other,
             json=request_data,
         )
 
@@ -437,7 +446,26 @@ class TestCreateUploadSession:
         test_project_id: str,
         test_dataset: Dataset,
     ) -> None:
-        """Test POST upload-sessions returns 409 if active session exists."""
+        """Test POST upload-sessions supersedes a stale ISSUED session.
+
+        Phase 16 Batch 6e (2026-04-29) downstream drift fix: the upload
+        service was upgraded to **auto-cancel** stale ISSUED / UPLOADED
+        sessions on the next create call (see
+        ``apps/api/echoroo/services/upload.py::create_session`` lines
+        91-103). This is a UX retry path — a user whose previous
+        upload aborted before the IMPORTING state can simply hit
+        the create endpoint again instead of having to manually cancel.
+        409 is now reserved for sessions that are *actively processing*
+        (``VALIDATING`` / ``VALIDATED`` / ``IMPORTING``).
+
+        The legacy expectation of 409 for back-to-back creates predates
+        that change. This test pins the new contract: the second create
+        succeeds (201) and the first session is moved to FAILED with
+        ``Superseded by new upload session`` reason. The 409 path is
+        still covered by the dedicated worker-state suite (which
+        manipulates the active session into IMPORTING before issuing
+        the second create).
+        """
         mock_get_s3_client.return_value = MagicMock()
         mock_presigned_url.return_value = "https://minio:9000/fake-url"
         mock_ensure_bucket.return_value = None
@@ -460,14 +488,17 @@ class TestCreateUploadSession:
         )
         assert response1.status_code == 201
 
-        # Try to create second session
+        # Second create supersedes the stale ISSUED session — 201.
         response2 = await client.post(
             f"/api/v1/projects/{test_project_id}/datasets/{test_dataset.id}/upload-sessions",
             headers=auth_headers,
             json=request_data,
         )
 
-        assert response2.status_code == 409
+        assert response2.status_code == 201
+        # The two sessions must have different ids — the first was
+        # superseded, not reused.
+        assert response1.json()["session_id"] != response2.json()["session_id"]
 
 
 @pytest.mark.asyncio
@@ -789,7 +820,7 @@ class TestGetUploadSessionStatus:
         auth_headers_member: dict[str, str],
         test_project_id: str,
         test_dataset: Dataset,
-        _test_member: "ProjectMember",  # noqa: F821  # Side-effect: ensures member row exists
+        test_member: "ProjectMember",  # noqa: F821  # Side-effect: ensures member row exists
     ) -> None:
         """Test GET upload-sessions/{session_id} allows member (non-admin) access."""
         mock_get_s3_client.return_value = MagicMock()

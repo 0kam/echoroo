@@ -17,20 +17,46 @@ from echoroo.models.user import User
 
 
 @pytest.fixture
-async def test_dataset(db_session: AsyncSession, test_project: Project) -> Dataset:
+async def test_site_for_confirmed(
+    db_session: AsyncSession, test_project: Project
+) -> "Site":  # noqa: F821
+    """Local Site fixture for confirmed-region dataset chain.
+
+    Phase 16 Batch 6e (2026-04-29) downstream drift fix: ``datasets``
+    now has a NOT NULL ``site_id`` (Phase 13 / T807).
+    """
+    from echoroo.models.site import Site as _Site
+
+    site = _Site(
+        project_id=test_project.id,
+        name="Confirmed Region Test Site",
+        h3_index_member="8928308280fffff",
+    )
+    db_session.add(site)
+    await db_session.commit()
+    await db_session.refresh(site)
+    return site
+
+
+@pytest.fixture
+async def test_dataset(
+    db_session: AsyncSession,
+    test_project: Project,
+    test_site_for_confirmed: "Site",  # noqa: F821
+    test_user: User,
+) -> Dataset:
     """Create a test dataset.
 
-    Args:
-        db_session: Database session
-        test_project: Parent project
-
-    Returns:
-        Test dataset instance
+    Phase 16 Batch 6e (2026-04-29) downstream drift fix: drop legacy
+    ``audio_dir`` (removed from ``Dataset`` ORM), populate the
+    NOT NULL ``site_id`` from the local site fixture and
+    ``created_by_id`` from the shared owner.
     """
     dataset = Dataset(
         project_id=test_project.id,
+        site_id=test_site_for_confirmed.id,
+        created_by_id=test_user.id,
         name="Test Dataset",
-        audio_dir="/data/audio",
         status=DatasetStatus.COMPLETED,
         visibility=DatasetVisibility.PRIVATE,
     )

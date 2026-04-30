@@ -139,6 +139,31 @@ async def _app_role_exists(engine: Any) -> bool:
         return row.scalar() is not None
 
 
+async def _can_set_app_role(engine: Any) -> bool:
+    """Return True if the connecting user can ``SET ROLE echoroo_app``.
+
+    Phase 16 Batch 6e (2026-04-29) test infra fix 1C: when the test
+    suite runs against the dev compose stack the connecting role
+    (``echoroo``) is **not** a member of ``echoroo_app`` and is not a
+    Postgres superuser, so ``SET ROLE`` raises ``InsufficientPrivilege``
+    before the trigger can fire. The trigger semantics under the
+    ``echoroo_app`` identity are exercised in CI where the role
+    grant is set up automatically; locally we skip the role-bound
+    cases rather than green-light a false negative.
+
+    See spec ``specs/006-permissions-redesign/data-model.md`` §6.2 for
+    the canonical FR-111a / SC-022 grant matrix and the CI
+    ``GRANT echoroo_app TO echoroo`` step.
+    """
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(sa.text("SET ROLE echoroo_app"))
+            await conn.execute(sa.text("RESET ROLE"))
+        return True
+    except Exception:
+        return False
+
+
 # ---------------------------------------------------------------------------
 # Raw SQL helpers — bypass ORM to exercise trigger directly
 # ---------------------------------------------------------------------------
@@ -232,6 +257,13 @@ async def test_update_revoke_2_to_0_blocked_as_app_role() -> None:
                 "echoroo_app role absent in test DB; "
                 "create it with GRANT ALL ON TABLES before running trigger tests"
             )
+        if not await _can_set_app_role(engine):
+            pytest.skip(
+                "connecting role lacks SET ROLE echoroo_app privilege "
+                "(local dev only — CI grants membership). "
+                "See specs/006-permissions-redesign/data-model.md §6.2 "
+                "for the FR-111a / SC-022 grant matrix."
+            )
 
         sid_a: UUID
         sid_b: UUID
@@ -310,6 +342,13 @@ async def test_hard_delete_1_to_0_blocked_as_app_role() -> None:
             )
         if not await _app_role_exists(engine):
             pytest.skip("echoroo_app role absent in test DB")
+        if not await _can_set_app_role(engine):
+            pytest.skip(
+                "connecting role lacks SET ROLE echoroo_app privilege "
+                "(local dev only — CI grants membership). "
+                "See specs/006-permissions-redesign/data-model.md §6.2 "
+                "for the FR-111a / SC-022 grant matrix."
+            )
 
         sid: UUID
 
@@ -417,6 +456,13 @@ async def test_deletion_override_guc_permits_op() -> None:
             )
         if not await _app_role_exists(engine):
             pytest.skip("echoroo_app role absent in test DB")
+        if not await _can_set_app_role(engine):
+            pytest.skip(
+                "connecting role lacks SET ROLE echoroo_app privilege "
+                "(local dev only — CI grants membership). "
+                "See specs/006-permissions-redesign/data-model.md §6.2 "
+                "for the FR-111a / SC-022 grant matrix."
+            )
 
         sid: UUID
 
@@ -482,6 +528,13 @@ async def test_rererevoke_already_revoked_row_not_blocked() -> None:
             )
         if not await _app_role_exists(engine):
             pytest.skip("echoroo_app role absent in test DB")
+        if not await _can_set_app_role(engine):
+            pytest.skip(
+                "connecting role lacks SET ROLE echoroo_app privilege "
+                "(local dev only — CI grants membership). "
+                "See specs/006-permissions-redesign/data-model.md §6.2 "
+                "for the FR-111a / SC-022 grant matrix."
+            )
 
         sid_revoked: UUID
 
@@ -543,6 +596,13 @@ async def test_update_other_column_not_blocked() -> None:
             )
         if not await _app_role_exists(engine):
             pytest.skip("echoroo_app role absent in test DB")
+        if not await _can_set_app_role(engine):
+            pytest.skip(
+                "connecting role lacks SET ROLE echoroo_app privilege "
+                "(local dev only — CI grants membership). "
+                "See specs/006-permissions-redesign/data-model.md §6.2 "
+                "for the FR-111a / SC-022 grant matrix."
+            )
 
         sid: UUID
 
@@ -611,6 +671,13 @@ async def test_concurrent_revokes_advisory_lock_serialises() -> None:
             )
         if not await _app_role_exists(engine):
             pytest.skip("echoroo_app role absent in test DB")
+        if not await _can_set_app_role(engine):
+            pytest.skip(
+                "connecting role lacks SET ROLE echoroo_app privilege "
+                "(local dev only — CI grants membership). "
+                "See specs/006-permissions-redesign/data-model.md §6.2 "
+                "for the FR-111a / SC-022 grant matrix."
+            )
 
         sid_a: UUID
         sid_b: UUID

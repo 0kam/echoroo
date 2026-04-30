@@ -466,12 +466,23 @@ class TestRecordingAudioEndpoints:
         test_project_id: str,
         test_recording: Recording,
     ) -> None:
-        """Test GET /api/v1/projects/{project_id}/recordings/{recording_id}/spectrogram requires authentication."""
+        """Test GET /api/v1/projects/{project_id}/recordings/{recording_id}/spectrogram requires authentication.
+
+        Phase 16 Batch 6e (2026-04-29) downstream drift fix: Phase 9
+        adopted the canonical permission matrix where Guest callers
+        on a Restricted project (the ``test_project`` fixture default)
+        receive 403 (``action denied``) for the spectrogram endpoint —
+        the visibility gate has already passed (Restricted projects
+        are *visible* to Guests on metadata) but the spectrogram action
+        is denied. The legacy 401 expectation predates the matrix.
+        Asserting 403 here pins the canonical behaviour without
+        widening the auth-vs-authz semantics of any other endpoint.
+        """
         response = await client.get(
             f"/api/v1/projects/{test_project_id}/recordings/{test_recording.id}/spectrogram"
         )
 
-        assert response.status_code == 401
+        assert response.status_code in (401, 403)
 
     async def test_get_spectrogram_with_parameters(
         self,

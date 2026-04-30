@@ -1,7 +1,30 @@
-"""Integration tests for API token authentication."""
+"""Integration tests for API token authentication.
+
+Phase 16 Batch 6e (2026-04-29) deprecated-surface skip
+=====================================================
+
+The legacy ``/api/v1/users/me/api-tokens`` create + auth flow is a
+501 Not Implemented stub for the duration of the Phase 4 / T150a-d
+rewrite (see ``apps/api/echoroo/services/token.py::_raise_phase4_stub``).
+Phase 13 (T700-T705) introduced the replacement ``/api/v1/api-keys``
+surface; the new integration tests live in
+``tests/integration/test_api_keys.py``.
+
+Per the Codex Option C 第 4 段 strategy this whole file is skipped
+via a module-level marker. Track the cleanup ticket in
+``specs/006-permissions-redesign/tasks.md`` Batch 6f.
+"""
 
 import pytest
 from httpx import AsyncClient
+
+pytestmark = pytest.mark.skip(
+    reason=(
+        "Deprecated /api/v1/users/me/api-tokens flow (501 stub). "
+        "Replaced by /api/v1/api-keys in Phase 13 / T700-T705. "
+        "See specs/006-permissions-redesign/spec.md US3 / FR-130."
+    )
+)
 
 
 class TestAPITokenAuthentication:

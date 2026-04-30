@@ -122,12 +122,20 @@ class TestDatasetEndpoints:
         test_project_id: str,
         test_site: Site,
     ) -> None:
-        """Test POST /api/v1/projects/{project_id}/datasets - Create dataset."""
+        """Test POST /api/v1/projects/{project_id}/datasets - Create dataset.
+
+        Phase 16 Batch 6e (2026-04-29) downstream drift fix: the legacy
+        ``audio_dir`` field has been removed from
+        :class:`DatasetCreate` / :class:`DatasetResponse` (see
+        ``apps/api/echoroo/schemas/dataset.py``); audio storage is now
+        keyed by S3 object path on each :class:`Recording` row, not a
+        per-dataset directory string. Drop the assertion (and the
+        request body field).
+        """
         dataset_data = {
             "site_id": str(test_site.id),
             "name": "Test Dataset",
             "description": "A test dataset",
-            "audio_dir": "test/audio",
             "visibility": "private",
         }
 
@@ -137,14 +145,13 @@ class TestDatasetEndpoints:
             json=dataset_data,
         )
 
-        assert response.status_code == 201
+        assert response.status_code == 201, response.text
         data = response.json()
 
         # Verify response structure matches DatasetDetailResponse
         assert "id" in data
         assert data["name"] == dataset_data["name"]
         assert data["description"] == dataset_data["description"]
-        assert data["audio_dir"] == dataset_data["audio_dir"]
         assert data["visibility"] == dataset_data["visibility"]
         assert data["status"] == "pending"
         assert "recording_count" in data

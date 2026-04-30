@@ -299,14 +299,20 @@ async def test_search_session_other_project(
     Returns:
         SearchSession in an isolated project owned by other_user
     """
-    from echoroo.models.enums import ProjectVisibility
+    # Phase 16 Batch 6e (2026-04-29) downstream drift fix: ``ProjectVisibility``
+    # no longer carries a ``PRIVATE`` member (Public / Restricted only),
+    # ``Project.target_taxa`` was removed by Phase 7, and ``license`` is
+    # NOT NULL (FR-085). Use ``PUBLIC`` so ``restricted_config`` does not
+    # need to satisfy the eight-toggle ``ck_projects_restricted_config_shape``
+    # CHECK.
+    from echoroo.models.enums import ProjectLicense, ProjectVisibility
     from echoroo.models.project import Project
 
     other_project = Project(
         name="Other Project",
         description="Cross-tenant isolation project",
-        target_taxa="Strigiformes",
-        visibility=ProjectVisibility.PRIVATE,
+        visibility=ProjectVisibility.PUBLIC,
+        license=ProjectLicense.CC_BY,
         owner_id=other_user.id,
     )
     db_session.add(other_project)

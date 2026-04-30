@@ -261,7 +261,18 @@ class TestMemberForbidden:
         member_membership: ProjectMember,
         test_project: Project,
     ) -> None:
-        """POST /projects/{id}/custom-models (TRAIN_MODEL) → 403 for Member."""
+        """POST /projects/{id}/custom-models (TRAIN_MODEL) → 403 for Member.
+
+        Phase 16 Batch 6e (2026-04-29) middleware-ordering fix: FastAPI
+        resolves request body Pydantic validation **as part of**
+        dependency resolution, so a body missing the required
+        ``target_tag_id`` field 422s before the permission gate fires.
+        Provide a contract-shaped body so the gate has a chance to
+        deny on TRAIN_MODEL. The 422-vs-validation behaviour is the
+        intended FastAPI default — there is no ordering bug to fix
+        on the implementation side; the test simply needs to send a
+        body the schema accepts.
+        """
         response = await client.post(
             f"/api/v1/projects/{test_project.id}/custom-models",
             headers=member_headers,
@@ -269,6 +280,7 @@ class TestMemberForbidden:
                 "name": "Test Model",
                 "description": "A test model",
                 "base_model": "birdnet",
+                "target_tag_id": _FAKE_UUID,
             },
         )
         assert response.status_code == 403, (
@@ -301,11 +313,18 @@ class TestMemberForbidden:
         member_membership: ProjectMember,
         test_project: Project,
     ) -> None:
-        """POST /projects/{id}/custom-models/{m}/apply (TRAIN_MODEL) → 403 for Member."""
+        """POST /projects/{id}/custom-models/{m}/apply (TRAIN_MODEL) → 403 for Member.
+
+        Phase 16 Batch 6e (2026-04-29) middleware-ordering fix: ``dataset_id``
+        is a **query** parameter on this endpoint (not a body field), so
+        the legacy ``json={"dataset_id": ...}`` produced a 422 for the
+        missing query before the permission gate ran. Pass it via
+        ``params=`` so the gate decides on TRAIN_MODEL.
+        """
         response = await client.post(
             f"/api/v1/projects/{test_project.id}/custom-models/{_FAKE_UUID}/apply",
             headers=member_headers,
-            json={"dataset_id": _FAKE_UUID},
+            params={"dataset_id": _FAKE_UUID},
         )
         assert response.status_code == 403, (
             f"Expected 403 for Member on POST /custom-models/{{m}}/apply, "

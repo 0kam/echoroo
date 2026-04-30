@@ -216,21 +216,31 @@ class TestUploadWorkflow:
         assert response1.status_code == 201
         session1_id = response1.json()["session_id"]
 
-        # Try to create second session (should fail with conflict)
+        # Phase 16 Batch 6e (2026-04-29) downstream drift fix: the upload
+        # service now auto-cancels stale ISSUED / UPLOADED sessions on
+        # the next create call (see
+        # ``apps/api/echoroo/services/upload.py::create_session`` lines
+        # 91-103) so a back-to-back create succeeds with a fresh
+        # session id and the original is moved to FAILED with the
+        # ``Superseded by new upload session`` reason. 409 is now
+        # reserved for sessions actively in
+        # ``VALIDATING`` / ``VALIDATED`` / ``IMPORTING``.
         response2 = await client.post(
             f"/api/v1/projects/{test_project_id}/datasets/{test_dataset.id}/upload-sessions",
             headers=auth_headers,
             json={"files": files},
         )
-        assert response2.status_code == 409
+        assert response2.status_code == 201
+        session2_id = response2.json()["session_id"]
+        assert session2_id != session1_id
 
-        # Verify first session is still active
+        # First session must now be FAILED (superseded), not ISSUED.
         status_response = await client.get(
             f"/api/v1/projects/{test_project_id}/datasets/{test_dataset.id}/upload-sessions/{session1_id}",
             headers=auth_headers,
         )
         assert status_response.status_code == 200
-        assert status_response.json()["status"] == "issued"
+        assert status_response.json()["status"] == "failed"
 
     @patch("echoroo.api.v1.uploads.s3.ensure_bucket_exists")
     @patch("echoroo.core.s3.generate_presigned_upload_url")
@@ -246,7 +256,7 @@ class TestUploadWorkflow:
         auth_headers_other: dict[str, str],
         test_project_id: str,
         test_dataset: Dataset,
-        _test_member: "ProjectMember",  # noqa: F821  # Side-effect: ensures member row exists
+        test_member: "ProjectMember",  # noqa: F821  # Side-effect: ensures member row exists
     ) -> None:
         """Test access control: Owner manages, member views, outsider denied."""
         mock_get_s3_client.return_value = MagicMock()

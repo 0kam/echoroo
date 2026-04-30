@@ -8,10 +8,32 @@ import soundfile as sf
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from echoroo.core.jwt import create_access_token
-from echoroo.models.enums import ProjectMemberRole
+from echoroo.models.enums import (
+    ProjectLicense,
+    ProjectMemberRole,
+    ProjectVisibility,
+)
 from echoroo.models.project import Project, ProjectMember
 from echoroo.models.site import Site
 from echoroo.models.user import User
+
+# Phase 16 Batch 6e (2026-04-29) downstream drift fix: Phase 7 / T320
+# (FR-085) made ``license`` NOT NULL on ``projects``. Phase 11 added the
+# ``ck_projects_restricted_config_shape`` CHECK that requires the eight
+# canonical toggle keys when ``visibility = 'restricted'``. The shared
+# integration ``test_project`` fixture must populate both so the legacy
+# upload / annotation / review workflows continue to flow through the
+# project-create step without 22NotNull on PG insert.
+_DEFAULT_RESTRICTED_CONFIG: dict[str, object] = {
+    "allow_media_playback": False,
+    "allow_detection_view": False,
+    "mask_species_in_detection": False,
+    "allow_download": False,
+    "allow_export": False,
+    "allow_voting_and_comments": False,
+    "public_location_precision_h3_res": 2,
+    "allow_precise_location_to_viewer": False,
+}
 
 
 @pytest.fixture
@@ -154,6 +176,10 @@ async def test_project(db_session: AsyncSession, test_user: User, member_user: U
         name="Test Project",
         description="Test project for integration tests",
         owner_id=test_user.id,
+        # Phase 16 Batch 6e drift fix: Phase 7 made license NOT NULL.
+        license=ProjectLicense.CC_BY,
+        visibility=ProjectVisibility.RESTRICTED,
+        restricted_config=dict(_DEFAULT_RESTRICTED_CONFIG),
     )
     db_session.add(project)
     await db_session.flush()

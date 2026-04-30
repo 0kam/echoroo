@@ -105,11 +105,24 @@ class TestProjectEndpoints:
         client: AsyncClient,
         auth_headers: dict[str, str],
     ) -> None:
-        """Test POST /api/v1/projects - Create project."""
+        """Test POST /api/v1/projects - Create project.
+
+        Phase 16 Batch 6e (2026-04-29) downstream drift fix: Phase 7 / T320
+        (FR-085) made ``license`` required at creation and the spec
+        eliminated ``"private"`` visibility (Public / Restricted only).
+        The legacy body using ``"visibility": "private"`` and no license
+        now 422s on schema validation. Use ``visibility="public"`` here so
+        the test does not also need to populate the eight-toggle
+        ``restricted_config`` shape required by the
+        ``ck_projects_restricted_config_shape`` DB CHECK; the goal of
+        the assertion is the contract envelope, not the Restricted
+        toggle plumbing (which has its own dedicated suites).
+        """
         project_data = {
             "name": "Test Project",
             "description": "A test research project",
-            "visibility": "private",
+            "visibility": "public",
+            "license": "CC-BY",
         }
 
         response = await client.post(
@@ -118,7 +131,7 @@ class TestProjectEndpoints:
             json=project_data,
         )
 
-        assert response.status_code == 201
+        assert response.status_code == 201, response.text
         data = response.json()
 
         # Verify response structure matches ProjectResponse
@@ -135,9 +148,18 @@ class TestProjectEndpoints:
         client: AsyncClient,
         auth_headers: dict[str, str],
     ) -> None:
-        """Test POST /api/v1/projects with minimal required fields."""
+        """Test POST /api/v1/projects with minimal required fields.
+
+        Phase 16 Batch 6e (2026-04-29) downstream drift fix: Phase 7 / T320
+        (FR-085) made ``visibility`` and ``license`` required at creation.
+        The legacy "minimal = name only" expectation no longer matches
+        the contract; the new minimum is name + visibility + license.
+        Use ``"public"`` to skip the Restricted toggle plumbing.
+        """
         project_data = {
             "name": "Minimal Project",
+            "visibility": "public",
+            "license": "CC-BY",
         }
 
         response = await client.post(
@@ -151,7 +173,7 @@ class TestProjectEndpoints:
 
         assert data["name"] == project_data["name"]
         assert data["description"] is None
-        assert data["visibility"] == "private"  # default
+        assert data["visibility"] == "public"
 
     async def test_create_project_validation_error(
         self,
@@ -223,13 +245,27 @@ class TestProjectEndpoints:
         auth_headers_other: dict[str, str],
         test_project_id: str,
     ) -> None:
-        """Test GET /api/v1/projects/{projectId} without access."""
+        """Test GET /api/v1/projects/{projectId} without access.
+
+        Phase 16 Batch 6e (2026-04-29) downstream drift fix: the legacy
+        expectation was 403 because the old "private" visibility hid
+        all non-member detail. Phase 9 (FR-018 / FR-019) replaced that
+        with the Public / Restricted matrix: a Restricted project (the
+        ``test_project`` fixture default) **does** allow Authenticated
+        non-members to read the detail metadata via
+        ``Permission.VIEW_PROJECT_METADATA`` so the Web UI can render
+        the "Request access" callout (US4 AC2). Restricted detail
+        responses still scrub ``restricted_config`` / owner email for
+        non-members (covered by the dedicated Phase 9 / US4 suites).
+        The expectation here is therefore 200 — Authenticated callers
+        always reach the Restricted-metadata surface.
+        """
         response = await client.get(
             f"/api/v1/projects/{test_project_id}",
             headers=auth_headers_other,
         )
 
-        assert response.status_code == 403
+        assert response.status_code == 200, response.text
 
     async def test_update_project(
         self,
@@ -277,12 +313,22 @@ class TestProjectEndpoints:
         client: AsyncClient,
         auth_headers: dict[str, str],
     ) -> None:
-        """Test DELETE /api/v1/projects/{projectId} - Delete project."""
+        """Test DELETE /api/v1/projects/{projectId} - Delete project.
+
+        Phase 16 Batch 6e (2026-04-29) downstream drift fix: Phase 7 / T320
+        requires ``visibility`` + ``license`` at creation; bringing the
+        request body in line with the contract so the delete path can
+        actually reach the DELETE assertion.
+        """
         # Create a project to delete
         create_response = await client.post(
             "/api/v1/projects",
             headers=auth_headers,
-            json={"name": "Project to Delete"},
+            json={
+                "name": "Project to Delete",
+                "visibility": "public",
+                "license": "CC-BY",
+            },
         )
         project_id = create_response.json()["id"]
 

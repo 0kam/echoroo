@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, StrictBool
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, StrictBool, model_serializer
 
 from echoroo.models.enums import (
     ProjectLicense,
@@ -65,6 +65,26 @@ class PublicOwnerResponse(BaseModel):
     email: str | None = None
 
     model_config = {"from_attributes": True}
+
+    # Phase 16 Batch 6e (2026-04-29) 真の実害 fix 1A: when ``email`` is
+    # ``None`` the **key itself** must not appear in the JSON body. The
+    # original Phase 9 contract scrubbed the value to ``None`` on every
+    # path that is not "Authenticated caller + Restricted project", but
+    # the resulting body still carried ``"email": null`` which is a PII
+    # *shape* leak (a hostile crawler can map which projects are
+    # Restricted by looking at the absence of the slot, and the slot's
+    # mere presence telegraphs that the API stores an email). Dropping
+    # the key entirely when scrubbed keeps the privacy contract tight:
+    # only the Restricted+Authenticated branch (where the scrubber
+    # leaves ``email`` populated) emits the field at all.
+    @model_serializer(mode="wrap")
+    def _drop_email_when_scrubbed(
+        self, handler: Any
+    ) -> dict[str, Any]:
+        data: dict[str, Any] = handler(self)
+        if data.get("email") is None:
+            data.pop("email", None)
+        return data
 
 
 class ProjectOverviewSite(BaseModel):

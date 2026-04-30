@@ -8,9 +8,56 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from echoroo.models.dataset import Dataset
 from echoroo.models.detection_run import DetectionRun
-from echoroo.models.enums import DetectionRunStatus
+from echoroo.models.enums import DatasetStatus, DatasetVisibility, DetectionRunStatus
 from echoroo.models.project import Project
+from echoroo.models.site import Site
+
+
+@pytest.fixture
+async def test_site_for_runs(
+    db_session: AsyncSession, test_project: Project
+) -> Site:
+    """Local Site fixture for detection-run create tests."""
+    site = Site(
+        project_id=test_project.id,
+        name="Detection Run Test Site",
+        h3_index_member="8928308280fffff",
+    )
+    db_session.add(site)
+    await db_session.commit()
+    await db_session.refresh(site)
+    return site
+
+
+@pytest.fixture
+async def test_dataset_for_runs(
+    db_session: AsyncSession,
+    test_project: Project,
+    test_site_for_runs: Site,
+) -> Dataset:
+    """Local Dataset fixture for detection-run create tests.
+
+    Phase 16 Batch 6e (2026-04-29) downstream drift fix: the
+    :class:`DetectionRunCreate` schema now requires ``dataset_id``
+    (Phase 11 / FR-007). Add a minimal Dataset row owned by the
+    test project so the contract create test can populate the
+    field. ``site_id`` is NOT NULL on the ``datasets`` table so we
+    reuse the shared ``test_site`` fixture.
+    """
+    dataset = Dataset(
+        project_id=test_project.id,
+        site_id=test_site_for_runs.id,
+        created_by_id=test_project.owner_id,
+        name="Detection Run Test Dataset",
+        status=DatasetStatus.COMPLETED,
+        visibility=DatasetVisibility.PRIVATE,
+    )
+    db_session.add(dataset)
+    await db_session.commit()
+    await db_session.refresh(dataset)
+    return dataset
 
 
 @pytest.fixture
@@ -123,10 +170,20 @@ class TestDetectionRunCRUDEndpoints:
         client: AsyncClient,
         auth_headers: dict[str, str],
         test_project_id: str,
+        test_dataset_for_runs: Dataset,
     ) -> None:
-        """Test POST /api/v1/projects/{project_id}/detection-runs - create run."""
+        """Test POST /api/v1/projects/{project_id}/detection-runs - create run.
+
+        Phase 16 Batch 6e (2026-04-29) downstream drift fix: the schema
+        ``DetectionRunCreate`` now requires ``dataset_id``.
+        """
+        # Phase 16 Batch 6e (2026-04-29) downstream drift fix: the live
+        # endpoint validates ``model_name`` against the registry of
+        # available models (``["birdnet", "perch"]``) and 400s on
+        # ``"BirdNET-Analyzer"``. Use the canonical lowercase id.
         run_data = {
-            "model_name": "BirdNET-Analyzer",
+            "dataset_id": str(test_dataset_for_runs.id),
+            "model_name": "birdnet",
             "model_version": "2.4",
             "parameters": {"min_confidence": 0.5, "overlap": 0.0},
         }
@@ -137,7 +194,7 @@ class TestDetectionRunCRUDEndpoints:
             json=run_data,
         )
 
-        assert response.status_code == 201
+        assert response.status_code == 201, response.text
         data = response.json()
 
         assert "id" in data

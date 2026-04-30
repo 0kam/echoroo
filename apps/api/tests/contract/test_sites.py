@@ -12,7 +12,7 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 if TYPE_CHECKING:
-    from echoroo.models.project import ProjectMember
+    pass
 
 
 @pytest.mark.asyncio
@@ -228,11 +228,20 @@ class TestSiteEndpoints:
     async def test_create_site_not_admin(
         self,
         client: AsyncClient,
-        auth_headers_member: dict[str, str],
+        auth_headers_other: dict[str, str],
         test_project_id: str,
-        test_member: ProjectMember,  # noqa: F821
     ) -> None:
-        """Test POST /api/v1/projects/{project_id}/sites requires admin role."""
+        """Test POST /api/v1/projects/{project_id}/sites denies non-members.
+
+        Phase 16 Batch 6e (2026-04-29) downstream drift fix: Phase 9 / T280
+        spec gave MEMBER role ``Permission.MANAGE_SITE`` (see
+        ``apps/api/echoroo/core/permissions.py::_MEMBER_PERMS``). So a
+        member-role caller can in fact create sites; the legacy
+        "not admin = 403" expectation predates that change. Repoint
+        the assertion to ``auth_headers_other`` (Authenticated
+        non-member) — that role has zero project permissions and is
+        the canonical 403-producing identity for site mutations.
+        """
         site_data = {
             "name": "Test Site",
             "h3_index_member": "8928308280fffff",
@@ -240,7 +249,7 @@ class TestSiteEndpoints:
 
         response = await client.post(
             f"/api/v1/projects/{test_project_id}/sites",
-            headers=auth_headers_member,
+            headers=auth_headers_other,
             json=site_data,
         )
 
@@ -370,18 +379,23 @@ class TestSiteEndpoints:
     async def test_update_site_not_admin(
         self,
         client: AsyncClient,
-        auth_headers_member: dict[str, str],
+        auth_headers_other: dict[str, str],
         test_project_id: str,
-        test_member: ProjectMember,  # noqa: F821
-        db_session: AsyncSession,
     ) -> None:
-        """Test PATCH /api/v1/projects/{project_id}/sites/{site_id} requires admin role."""
+        """Test PATCH /api/v1/projects/{project_id}/sites/{site_id} denies non-members.
+
+        Phase 16 Batch 6e (2026-04-29) downstream drift fix: see
+        :func:`test_create_site_not_admin` — MEMBER role has
+        ``MANAGE_SITE`` so a member caller would 404 (site not found)
+        instead of 403. Use ``auth_headers_other`` to pin the
+        Authenticated non-member 403 path.
+        """
         fake_id = "00000000-0000-0000-0000-000000000000"
         update_data = {"name": "Updated Site"}
 
         response = await client.patch(
             f"/api/v1/projects/{test_project_id}/sites/{fake_id}",
-            headers=auth_headers_member,
+            headers=auth_headers_other,
             json=update_data,
         )
 
@@ -441,15 +455,20 @@ class TestSiteEndpoints:
     async def test_delete_site_not_admin(
         self,
         client: AsyncClient,
-        auth_headers_member: dict[str, str],
+        auth_headers_other: dict[str, str],
         test_project_id: str,
-        test_member: ProjectMember,  # noqa: F821
     ) -> None:
-        """Test DELETE /api/v1/projects/{project_id}/sites/{site_id} requires admin role."""
+        """Test DELETE /api/v1/projects/{project_id}/sites/{site_id} denies non-members.
+
+        Phase 16 Batch 6e (2026-04-29) downstream drift fix: see
+        :func:`test_create_site_not_admin` — MEMBER role has
+        ``MANAGE_SITE``. Use ``auth_headers_other`` for the
+        canonical 403 (Authenticated non-member) path.
+        """
         fake_id = "00000000-0000-0000-0000-000000000000"
         response = await client.delete(
             f"/api/v1/projects/{test_project_id}/sites/{fake_id}",
-            headers=auth_headers_member,
+            headers=auth_headers_other,
         )
 
         assert response.status_code == 403
