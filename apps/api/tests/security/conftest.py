@@ -32,7 +32,7 @@ _SECURITY_ROOT = Path(__file__).resolve().parent
 
 
 def pytest_collection_modifyitems(
-    config: pytest.Config,
+    config: pytest.Config,  # noqa: ARG001 — pytest hookspec requires this name
     items: list[pytest.Item],
 ) -> None:
     """Auto-tag every test under ``tests/security/**`` with ``@pytest.mark.security``.
@@ -49,9 +49,17 @@ def pytest_collection_modifyitems(
         # to ``fspath`` for compatibility with older plugins. The string
         # comparison is platform-aware via ``Path``.
         try:
-            item_path = Path(str(item.path))
+            raw_path = Path(str(item.path))
         except (AttributeError, TypeError):
-            item_path = Path(str(item.fspath))
+            raw_path = Path(str(item.fspath))
+        # Codex Round 4 Minor: resolve() the item path before relative_to
+        # so symlink-based test runners (worktree, monorepo bind-mounts)
+        # do not silently miss items whose physical location matches
+        # _SECURITY_ROOT under a different alias.
+        try:
+            item_path = raw_path.resolve()
+        except (OSError, RuntimeError):
+            item_path = raw_path
         try:
             item_path.relative_to(_SECURITY_ROOT)
         except ValueError:
