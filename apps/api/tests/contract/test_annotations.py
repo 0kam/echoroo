@@ -105,7 +105,7 @@ async def test_clip(
     site = Site(
         project_id=test_project.id,
         name="Annotations Test Site",
-        h3_index="8928308281fffff",
+        h3_index_member="8928308281fffff",
     )
     db_session.add(site)
     await db_session.flush()

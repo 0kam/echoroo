@@ -1,5 +1,6 @@
 <script lang="ts">
   import * as m from '$lib/paraglide/messages';
+  import { focusTrap } from '$lib/actions/focusTrap';
 
   interface Props {
     isOpen?: boolean;
@@ -49,15 +50,7 @@
       handleCancel();
     }
   }
-
-  function handleKeydown(event: KeyboardEvent) {
-    if (event.key === 'Escape' && !isProcessing) {
-      handleCancel();
-    }
-  }
 </script>
-
-<svelte:window onkeydown={handleKeydown} />
 
 {#if isOpen}
   <!-- svelte-ignore a11y_click_events_have_key_events -->
@@ -69,7 +62,10 @@
     aria-labelledby="confirm-dialog-title"
     tabindex="-1"
   >
-    <div class="w-full max-w-md overflow-y-auto rounded-lg bg-surface-card shadow-xl">
+    <div
+      use:focusTrap={{ onClose: handleCancel }}
+      class="w-full max-w-md overflow-y-auto rounded-lg bg-surface-card shadow-xl"
+    >
       <!-- Header -->
       <div class="border-b border-stone-200 px-6 py-4">
         <h2 id="confirm-dialog-title" class="m-0 text-lg font-semibold text-stone-900">{title}</h2>

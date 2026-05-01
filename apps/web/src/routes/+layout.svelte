@@ -5,6 +5,7 @@
   import { authStore } from '$lib/stores/auth.svelte';
   import { onMount } from 'svelte';
   import { browser } from '$app/environment';
+  import { page } from '$app/state';
   import type { Snippet } from 'svelte';
   import ToastContainer from '$lib/components/ui/ToastContainer.svelte';
 
@@ -14,10 +15,29 @@
 
   let { children }: Props = $props();
 
-  // Initialize auth state on mount (client-side only)
+  /**
+   * Returns true when the current SvelteKit route belongs to the `(public)`
+   * or `(auth)` route group. These groups must never trigger a client-side
+   * redirect to `/login` from auth initialization — a Guest browsing
+   * `/en/explore/projects` with a stale `echoroo_logged_in` cookie should
+   * stay on the explore page even when `/api/v1/auth/refresh` returns 401.
+   *
+   * Phase 4-5-6 carry-over fix #3.
+   */
+  function isAuthAgnosticRoute(): boolean {
+    const id = page.route.id ?? '';
+    return id.includes('/(public)') || id.includes('/(auth)');
+  }
+
+  // Initialize auth state on mount (client-side only).
+  // On `(public)` / `(auth)` routes we run in `silent` mode so a failed
+  // refresh does NOT bounce the visitor to `/login` (which the server-side
+  // `isAuthRoute` rule would then re-redirect to `/dashboard`, causing the
+  // observed `/en/explore/projects` -> `/en/dashboard` rerouting).
   onMount(() => {
     if (browser) {
-      authStore.initialize().catch((error) => {
+      const silent = isAuthAgnosticRoute();
+      authStore.initialize({ silent }).catch((error) => {
         console.error('Auth initialization failed:', error);
       });
     }

@@ -59,18 +59,24 @@ class SiteRepository(BaseRepository[Site]):
         )
         return result.scalar_one_or_none()
 
-    async def get_by_project_and_h3(self, project_id: UUID, h3_index: str) -> Site | None:
-        """Get site by project ID and H3 index.
+    async def get_by_project_and_h3(self, project_id: UUID, h3_index_member: str) -> Site | None:
+        """Get site by project ID and H3 member cell.
+
+        Phase 13 P4 / T807: column ``h3_index_member`` matches the spec
+        data-model §3.10 / FR-028 canonical name.
 
         Args:
             project_id: Project's UUID
-            h3_index: H3 cell identifier
+            h3_index_member: H3 cell identifier at member precision
 
         Returns:
             Site instance or None if not found
         """
         result = await self.db.execute(
-            select(Site).where(Site.project_id == project_id, Site.h3_index == h3_index)
+            select(Site).where(
+                Site.project_id == project_id,
+                Site.h3_index_member == h3_index_member,
+            )
         )
         return result.scalar_one_or_none()
 

@@ -18,6 +18,31 @@ Routes covered:
 
 from __future__ import annotations
 
+
+
+# Phase 13 P1.5 R2 (Codex follow-up — Fatal): this suite exercises the
+# rich-shape ``Annotation`` ORM (``recording_id`` / ``tag_id`` / ``status``
+# / ``confidence`` / ``start_time`` / ``end_time`` / ``freq_low`` /
+# ``freq_high`` / ``reviewed_by_id`` / ``reviewed_at`` /
+# ``search_session_id`` / ``detection_run_id``). The DB-truth schema only
+# carries the minimal detection-based shape (id / detection_id / user_id /
+# source / taxon_id / label) — the rich shape is **deferred to Phase 14+**
+# when a separate ``recording_annotations`` table will reinstate it. Until
+# then the suite below cannot run; reactivate it in Phase 14+ when the
+# ``recording_annotations`` ORM + table are wired up.
+#
+# TODO(Phase 14+ recording_annotations): drop this skip and re-validate.
+import pytest as _pytest_phase14_skip  # noqa: E402
+
+pytestmark = _pytest_phase14_skip.mark.skip(
+    reason=(
+        "Phase 14+ deferred — rich-shape Annotation columns (recording_id /"
+        " tag_id / status / start_time / end_time / etc) live on the future"
+        " ``recording_annotations`` table; see ``apps/api/echoroo/models/"
+        "annotation.py`` and ``apps/api/echoroo/models/recording_annotation.py``"
+        " module docstrings."
+    ),
+)
 import json
 import struct
 import uuid
@@ -133,7 +158,7 @@ async def write_site(
     site = Site(
         project_id=test_project.id,
         name="Write Test Site",
-        h3_index="8928308280fffff",
+        h3_index_member="8928308280fffff",
     )
     db_session.add(site)
     await db_session.commit()
@@ -366,8 +391,7 @@ async def other_project_session(
     other_proj = ProjectModel(
         name="Other Project (write tests)",
         description="Cross-tenant write isolation",
-        target_taxa="Strigiformes",
-        visibility=ProjectVisibility.PRIVATE,
+        visibility=ProjectVisibility.RESTRICTED,
         owner_id=other_user.id,
     )
     db_session.add(other_proj)

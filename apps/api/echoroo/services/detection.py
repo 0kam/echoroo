@@ -9,14 +9,30 @@ from fastapi import HTTPException, status
 from sqlalchemy import select as sa_select
 
 from echoroo.core.pagination import paginate
-from echoroo.models.annotation import Annotation
 from echoroo.models.annotation_vote import AnnotationVote
 from echoroo.models.confirmed_region import ConfirmedRegion
 from echoroo.models.enums import DetectionStatus, SignalQuality, VoteType
-from echoroo.models.taxon_vernacular_name import TaxonVernacularName
+
+# Phase 13 P1.5 R2 (Codex follow-up — Fatal): the rich-shape detection
+# review service (list / get / create / confirm / reject / change_species /
+# species_summary / temporal_summary / export_csv / export_ml_dataset)
+# operates on the Phase 14+ deferred ``RecordingAnnotation`` ORM bound to a
+# table that does not yet exist. The Phase 6 vote endpoints
+# (``cast_vote`` / ``delete_vote`` / ``get_vote_summary``) bypass this
+# service and go through ``services/annotation_vote.py`` which has been
+# rewritten on the DB-truth minimal :class:`Annotation` shape. Phase 14+
+# will reinstate the recording-level review-state lifecycle on a fresh
+# ``recording_annotations`` table; until then any caller of this service
+# fails at runtime with PostgreSQL ``relation does not exist`` — by design.
+from echoroo.models.recording_annotation import (
+    RecordingAnnotation as Annotation,  # Phase 14+ deferred
+)
 from echoroo.repositories.annotation import AnnotationRepository, TemporalSummaryRow
 from echoroo.repositories.annotation_vote import AnnotationVoteRepository
 from echoroo.repositories.confirmed_region import ConfirmedRegionRepository
+from echoroo.repositories.detection_run import DetectionRunRepository
+from echoroo.repositories.recording import RecordingRepository
+from echoroo.repositories.tag import TagRepository
 from echoroo.schemas.annotation_vote import DetectionVoteCounts
 from echoroo.schemas.detection import (
     ChangeSpeciesRequest,
@@ -31,6 +47,7 @@ from echoroo.schemas.detection import (
     SpeciesTemporalData,
 )
 from echoroo.schemas.tag import TagResponse
+from echoroo.services.vernacular import resolve_vernacular_names
 
 
 class DetectionService:
@@ -41,6 +58,9 @@ class DetectionService:
         annotation_repo: AnnotationRepository,
         confirmed_region_repo: ConfirmedRegionRepository,
         vote_repo: AnnotationVoteRepository | None = None,
+        recording_repo: RecordingRepository | None = None,
+        tag_repo: TagRepository | None = None,
+        detection_run_repo: DetectionRunRepository | None = None,
     ) -> None:
         """Initialize service with repositories.
 
@@ -48,10 +68,18 @@ class DetectionService:
             annotation_repo: Annotation repository instance
             confirmed_region_repo: ConfirmedRegion repository instance
             vote_repo: Optional AnnotationVoteRepository for loading vote counts
+            recording_repo: Optional RecordingRepository for project ownership checks
+            tag_repo: Optional TagRepository for project ownership checks
+            detection_run_repo: Optional DetectionRunRepository for project ownership checks
         """
         self.annotation_repo = annotation_repo
         self.confirmed_region_repo = confirmed_region_repo
         self.vote_repo = vote_repo
+        self.recording_repo = recording_repo or RecordingRepository(annotation_repo.db)
+        self.tag_repo = tag_repo or TagRepository(annotation_repo.db)
+        self.detection_run_repo = detection_run_repo or DetectionRunRepository(
+            annotation_repo.db
+        )
 
     async def list_detections(
         self,
@@ -68,6 +96,7 @@ class DetectionService:
         current_user_id: UUID | None = None,
         min_votes: int = 2,
         threshold: float = 0.667,
+        locale: str = "en",
     ) -> DetectionListResponse:
         """List detections for a project with optional filtering and pagination.
 
@@ -85,6 +114,7 @@ class DetectionService:
             current_user_id: Optional current user ID for including their vote
             min_votes: Minimum votes required for consensus (from project settings)
             threshold: Consensus agreement threshold (from project settings)
+            locale: Locale code used to resolve vernacular names on embedded tags
 
         Returns:
             Paginated detection list response
@@ -112,7 +142,21 @@ class DetectionService:
             threshold=threshold,
         )
 
-        items = [self._to_response(a, vote_counts_map.get(a.id)) for a in annotations]
+        # Batch-resolve vernacular names for all distinct taxon IDs so the
+        # embedded TagResponse objects can be populated without N+1 queries.
+        taxon_ids = [
+            a.tag.taxon_id
+            for a in annotations
+            if a.tag is not None and a.tag.taxon_id is not None
+        ]
+        vernacular_map = await resolve_vernacular_names(
+            self.annotation_repo.db, taxon_ids, locale
+        )
+
+        items = [
+            self._to_response(a, vote_counts_map.get(a.id), vernacular_map)
+            for a in annotations
+        ]
 
         return DetectionListResponse(
             items=items,
@@ -129,8 +173,8 @@ class DetectionService:
     ) -> dict[UUID, str]:
         """Batch-resolve vernacular names for a list of taxon IDs.
 
-        Fetches primary vernacular names in one query to avoid N+1 queries.
-        Falls back to any vernacular name for the locale if no primary exists.
+        Thin wrapper around :func:`resolve_vernacular_names` kept for
+        backwards compatibility with internal callers.
 
         Args:
             taxon_ids: List of taxon UUIDs to resolve
@@ -139,27 +183,9 @@ class DetectionService:
         Returns:
             Mapping of taxon_id to vernacular name string
         """
-        if not taxon_ids:
-            return {}
-
-        result = await self.annotation_repo.db.execute(
-            sa_select(TaxonVernacularName)
-            .where(TaxonVernacularName.taxon_id.in_(taxon_ids))
-            .where(TaxonVernacularName.locale == locale)
-            .order_by(
-                TaxonVernacularName.taxon_id,
-                TaxonVernacularName.is_primary.desc(),
-            )
+        return await resolve_vernacular_names(
+            self.annotation_repo.db, taxon_ids, locale
         )
-        vernacular_names = result.scalars().all()
-
-        # Build mapping: keep only the first (highest priority) entry per taxon_id
-        mapping: dict[UUID, str] = {}
-        for vn in vernacular_names:
-            if vn.taxon_id not in mapping:
-                mapping[vn.taxon_id] = vn.name
-
-        return mapping
 
     async def get_species_summary(
         self,
@@ -330,6 +356,7 @@ class DetectionService:
         current_user_id: UUID | None = None,
         min_votes: int = 2,
         threshold: float = 0.667,
+        locale: str = "en",
     ) -> DetectionResponse:
         """Get a detection annotation by ID.
 
@@ -338,6 +365,7 @@ class DetectionService:
             current_user_id: Optional current user ID for including their vote
             min_votes: Minimum votes required for consensus (from project settings)
             threshold: Consensus agreement threshold (from project settings)
+            locale: Locale code used to resolve vernacular names on the embedded tag
 
         Returns:
             Detection response
@@ -357,11 +385,19 @@ class DetectionService:
             min_votes=min_votes,
             threshold=threshold,
         )
-        return self._to_response(annotation, vote_counts_map.get(annotation.id))
+        taxon_ids: list[UUID] = []
+        if annotation.tag is not None and annotation.tag.taxon_id is not None:
+            taxon_ids.append(annotation.tag.taxon_id)
+        vernacular_map = await resolve_vernacular_names(
+            self.annotation_repo.db, taxon_ids, locale
+        )
+        return self._to_response(
+            annotation, vote_counts_map.get(annotation.id), vernacular_map
+        )
 
     async def create(
         self,
-        project_id: UUID,  # noqa: ARG002 - used for future authorization
+        project_id: UUID,
         request: DetectionCreate,
     ) -> DetectionResponse:
         """Create a new detection annotation.
@@ -373,6 +409,33 @@ class DetectionService:
         Returns:
             Created detection response
         """
+        if not await self.recording_repo.exists_in_project(request.recording_id, project_id):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="recording not found",
+            )
+
+        if request.tag_id is not None and not await self.tag_repo.get_by_id_in_project(
+            request.tag_id,
+            project_id,
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="tag not found",
+            )
+
+        if (
+            request.detection_run_id is not None
+            and not await self.detection_run_repo.exists_in_project(
+                request.detection_run_id,
+                project_id,
+            )
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="detection run not found",
+            )
+
         annotation = Annotation(
             recording_id=request.recording_id,
             tag_id=request.tag_id,
@@ -488,6 +551,7 @@ class DetectionService:
         detection_id: UUID,
         request: ChangeSpeciesRequest,
         user_id: UUID,
+        project_id: UUID,
     ) -> DetectionResponse:
         """Change the species tag of a detection annotation.
 
@@ -497,6 +561,7 @@ class DetectionService:
             detection_id: Annotation's UUID
             request: Change species request with new tag and optional time range
             user_id: ID of the user making the change
+            project_id: Project's UUID for tag ownership validation
 
         Returns:
             Updated detection response
@@ -509,6 +574,12 @@ class DetectionService:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Detection not found",
+            )
+
+        if not await self.tag_repo.get_by_id_in_project(request.new_tag_id, project_id):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="tag not found",
             )
 
         annotation.tag_id = request.new_tag_id
@@ -578,23 +649,25 @@ class DetectionService:
 
         result: dict[UUID, DetectionVoteCounts] = {}
         for annotation_id, votes in grouped.items():
-            agree_count = sum(1 for v in votes if v.vote == VoteType.AGREE)
-            disagree_count = sum(1 for v in votes if v.vote == VoteType.DISAGREE)
-            unsure_count = sum(1 for v in votes if v.vote == VoteType.UNSURE)
+            # Phase 13 P1.5 (T804): ``vote`` is now smallint at the DB layer;
+            # use the ``vote_enum`` ergonomic property for VoteType compares.
+            agree_count = sum(1 for v in votes if v.vote_enum == VoteType.AGREE)
+            disagree_count = sum(1 for v in votes if v.vote_enum == VoteType.DISAGREE)
+            unsure_count = sum(1 for v in votes if v.vote_enum == VoteType.UNSURE)
 
-            # Count signal quality values among agree votes
+            # Phase 13 P1.5: ``signal_quality`` was dropped from the vote
+            # row; emit zero counts to preserve the API contract until
+            # Phase 14+ recording_annotations reinstates it.
             signal_quality_counts: dict[str, int] = {q.value: 0 for q in SignalQuality}
-            for v in votes:
-                if v.vote == VoteType.AGREE and v.signal_quality is not None:
-                    signal_quality_counts[v.signal_quality] += 1
 
             user_vote: VoteType | None = None
             user_signal_quality: SignalQuality | None = None
             if current_user_id is not None:
                 for v in votes:
-                    if v.user_id == current_user_id:
-                        user_vote = v.vote
-                        user_signal_quality = v.signal_quality if v.vote == VoteType.AGREE else None
+                    if v.voter_user_id == current_user_id:
+                        user_vote = v.vote_enum
+                        # Phase 13 P1.5: signal_quality dropped — None until Phase 14+.
+                        user_signal_quality = None
                         break
 
             consensus_status = AnnotationVoteService.compute_consensus_status(
@@ -620,12 +693,17 @@ class DetectionService:
     def _to_response(
         annotation: Annotation,
         vote_counts: DetectionVoteCounts | None = None,
+        vernacular_map: dict[UUID, str] | None = None,
     ) -> DetectionResponse:
         """Convert an Annotation model to a DetectionResponse schema.
 
         Args:
             annotation: Annotation model instance
             vote_counts: Optional pre-loaded vote counts for this annotation
+            vernacular_map: Optional mapping of ``taxon_id`` to locale-resolved
+                vernacular name. When the embedded tag has a ``taxon_id`` that
+                is present in the mapping, ``TagResponse.vernacular_name`` is
+                populated; otherwise it remains ``None``.
 
         Returns:
             DetectionResponse instance
@@ -633,6 +711,13 @@ class DetectionService:
         tag_response = None
         if annotation.tag is not None:
             tag_response = TagResponse.model_validate(annotation.tag)
+            if (
+                vernacular_map is not None
+                and annotation.tag.taxon_id is not None
+            ):
+                tag_response.vernacular_name = vernacular_map.get(
+                    annotation.tag.taxon_id
+                )
 
         return DetectionResponse(
             id=annotation.id,

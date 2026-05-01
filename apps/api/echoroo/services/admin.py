@@ -1,10 +1,10 @@
 """Admin service for user and system management."""
 
-import json
+from typing import Any, NoReturn
 from uuid import UUID
 
 from fastapi import HTTPException, status
-from sqlalchemy import func, or_, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from echoroo.models.system import SystemSetting
@@ -17,7 +17,36 @@ from echoroo.schemas.admin import (
     SystemSettingResponse,
     SystemSettingsUpdateRequest,
 )
-from echoroo.schemas.auth import UserResponse
+
+
+def _derive_value_type(value: Any) -> str:
+    """Derive a UI-facing value-type label from a JSONB value.
+
+    Used to keep the ``SystemSettingResponse.value_type`` field stable for
+    legacy clients after Phase 13 dropped the ``setting_type`` enum column.
+    """
+
+    if isinstance(value, bool):
+        return "boolean"
+    if isinstance(value, int | float):
+        return "number"
+    if isinstance(value, str):
+        return "string"
+    if value is None:
+        return "null"
+    return "json"
+
+_PHASE4_STUB_DETAIL = (
+    "This endpoint is being rewritten in Phase 4 T150a-d / T155. "
+    "Use the new auth flow when available."
+)
+
+
+def _raise_phase4_stub() -> NoReturn:
+    raise HTTPException(
+        status_code=status.HTTP_501_NOT_IMPLEMENTED,
+        detail=_PHASE4_STUB_DETAIL,
+    )
 
 
 class AdminService:
@@ -51,44 +80,8 @@ class AdminService:
         Returns:
             Paginated user list with total count
         """
-        # Build query
-        query = select(User)
-
-        # Apply filters
-        if search:
-            search_pattern = f"%{search}%"
-            query = query.where(
-                or_(
-                    func.lower(User.email).like(func.lower(search_pattern)),
-                    func.lower(User.display_name).like(func.lower(search_pattern)),
-                )
-            )
-
-        if is_active is not None:
-            query = query.where(User.is_active == is_active)
-
-        # Count total
-        count_query = select(func.count()).select_from(query.subquery())
-        total_result = await self.db.execute(count_query)
-        total = total_result.scalar_one()
-
-        # Apply pagination
-        offset = (page - 1) * limit
-        query = query.order_by(User.created_at.desc()).offset(offset).limit(limit)
-
-        # Execute query
-        result = await self.db.execute(query)
-        users = result.scalars().all()
-
-        # Convert to response schemas
-        items = [UserResponse.model_validate(user) for user in users]
-
-        return AdminUserListResponse(
-            items=items,
-            total=total,
-            page=page,
-            limit=limit,
-        )
+        del page, limit, search, is_active
+        _raise_phase4_stub()
 
     async def update_user(
         self,
@@ -109,56 +102,15 @@ class AdminService:
         Raises:
             HTTPException: If user not found or trying to disable last superuser
         """
-        user = await self.user_repo.get_by_id(user_id)
-        if not user:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="User not found",
-            )
-
-        # Check if trying to disable or demote the last superuser
-        if (request.is_active is False and user.is_superuser) or (
-            request.is_superuser is False and user.is_superuser
-        ):
-            # Count active superusers
-            query = select(func.count()).select_from(User).where(User.is_superuser == True)  # noqa: E712
-            if request.is_active is False:
-                # If deactivating, count other active superusers
-                query = query.where(User.is_active == True, User.id != user_id)  # noqa: E712
-            elif request.is_superuser is False:
-                # If demoting, count other superusers
-                query = query.where(User.id != user_id)
-
-            result = await self.db.execute(query)
-            superuser_count = result.scalar_one()
-
-            if superuser_count == 0:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Cannot disable or remove superuser role from the last superuser",
-                )
-
-        # Apply updates
-        if request.is_active is not None:
-            user.is_active = request.is_active
-
-        if request.is_superuser is not None:
-            user.is_superuser = request.is_superuser
-
-        if request.is_verified is not None:
-            user.is_verified = request.is_verified
-
-        # Save changes
-        await self.db.commit()
-        await self.db.refresh(user)
-
-        return user
+        del user_id, request, admin_id
+        _raise_phase4_stub()
 
     async def get_system_settings(self) -> dict[str, SystemSettingResponse]:
         """Get all system settings.
 
         Returns:
-            Dictionary mapping setting key to setting details
+            Dictionary mapping setting key to setting details. Values are
+            returned as native Python objects (Phase 13 P1: JSONB-backed).
         """
         query = select(SystemSetting)
         result = await self.db.execute(query)
@@ -167,9 +119,8 @@ class AdminService:
         return {
             setting.key: SystemSettingResponse(
                 key=setting.key,
-                value=self._parse_setting_value(setting.value, setting.value_type),
-                value_type=setting.value_type,
-                description=setting.description,
+                value=setting.value,
+                value_type=_derive_value_type(setting.value),
                 updated_at=setting.updated_at,
             )
             for setting in settings
@@ -182,49 +133,35 @@ class AdminService:
     ) -> None:
         """Update system settings.
 
-        Args:
-            request: Settings update request
-            admin_id: UUID of admin performing the update
+        Phase 13 P1 (T803a): values are stored as native JSONB; the
+        ``admin_id`` parameter must reference a row in ``superusers.id``
+        (FK target changed in the schema). Caller layer (``api/v1/admin``)
+        is responsible for resolving the current user to a superuser id.
         """
-        # Update each provided setting
+
         if request.registration_mode is not None:
             await self._update_setting(
-                "registration_mode",
-                request.registration_mode,
-                "string",
-                admin_id,
+                "registration_mode", request.registration_mode, admin_id
             )
-
         if request.allow_registration is not None:
             await self._update_setting(
-                "allow_registration",
-                "true" if request.allow_registration else "false",
-                "boolean",
-                admin_id,
+                "allow_registration", request.allow_registration, admin_id
             )
-
         if request.session_timeout_minutes is not None:
             await self._update_setting(
                 "session_timeout_minutes",
-                str(request.session_timeout_minutes),
-                "number",
+                request.session_timeout_minutes,
                 admin_id,
             )
-
         if request.birdnet_species_filter is not None:
             await self._update_setting(
                 "birdnet_species_filter",
                 request.birdnet_species_filter,
-                "string",
                 admin_id,
             )
-
         if request.birdnet_min_conf is not None:
             await self._update_setting(
-                "birdnet_min_conf",
-                str(request.birdnet_min_conf),
-                "number",
-                admin_id,
+                "birdnet_min_conf", request.birdnet_min_conf, admin_id
             )
 
         await self.db.commit()
@@ -232,61 +169,21 @@ class AdminService:
     async def _update_setting(
         self,
         key: str,
-        value: str,
-        value_type: str,
+        value: Any,
         admin_id: UUID,
     ) -> None:
-        """Update a single system setting.
+        """Update a single system setting (JSONB-backed)."""
 
-        Args:
-            key: Setting key
-            value: Setting value (as string)
-            value_type: Type of the value
-            admin_id: UUID of admin performing the update
-        """
         setting = await self.setting_repo.get_setting(key)
-
         if setting:
             setting.value = value
-            setting.value_type = value_type
             setting.updated_by_id = admin_id
         else:
             setting = SystemSetting(
                 key=key,
                 value=value,
-                value_type=value_type,
                 updated_by_id=admin_id,
             )
             self.db.add(setting)
 
         await self.db.flush()
-
-    def _parse_setting_value(
-        self, value: str, value_type: str
-    ) -> str | int | float | bool | dict[str, object]:
-        """Parse setting value based on its type.
-
-        Args:
-            value: String representation of the value
-            value_type: Type of the value
-
-        Returns:
-            Parsed value in appropriate type
-        """
-        if value_type == "boolean":
-            return value.lower() == "true"
-        elif value_type == "number":
-            # Try to parse as int first, fall back to float for decimal values
-            try:
-                int_val = int(value)
-                # If the string has a decimal point, preserve as float
-                if "." in value:
-                    return float(value)
-                return int_val
-            except ValueError:
-                return float(value)
-        elif value_type == "json":
-            parsed: dict[str, object] = json.loads(value)
-            return parsed
-        else:  # string
-            return value

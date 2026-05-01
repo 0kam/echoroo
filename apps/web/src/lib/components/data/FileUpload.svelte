@@ -106,7 +106,7 @@
         source: `upload-session://${sessionId}`,
       }).catch((err) => {
         step = 'error';
-        errorMessage = err instanceof Error ? err.message : 'Failed to start import.';
+        errorMessage = err instanceof Error ? err.message : m.file_upload_import_start_failed();
       });
     } else if (data.status === 'imported') {
       step = 'done';
@@ -115,7 +115,7 @@
       onComplete?.();
     } else if (data.status === 'failed') {
       step = 'error';
-      errorMessage = data.error ?? 'Import process failed on the server.';
+      errorMessage = data.error ?? m.file_upload_import_server_failed();
     }
   });
 
@@ -135,11 +135,11 @@
 
     for (const file of files) {
       if (!isAcceptedFile(file)) {
-        errors.push(`"${file.name}" is not a supported audio format.`);
+        errors.push(m.file_upload_invalid_format({ name: file.name }));
         continue;
       }
       if (file.size > MAX_FILE_SIZE_BYTES) {
-        errors.push(`"${file.name}" exceeds the 1 GB size limit.`);
+        errors.push(m.file_upload_exceeds_size({ name: file.name }));
         continue;
       }
       valid.push(file);
@@ -158,7 +158,7 @@
     const combined = [...selectedFiles, ...newFiles];
 
     if (combined.length > MAX_FILE_COUNT) {
-      errorMessage = `You may upload at most ${MAX_FILE_COUNT} files at once. Only the first ${MAX_FILE_COUNT} will be used.`;
+      errorMessage = m.file_upload_max_count_exceeded({ max: MAX_FILE_COUNT });
       selectedFiles = combined.slice(0, MAX_FILE_COUNT);
     } else {
       selectedFiles = combined;
@@ -216,7 +216,7 @@
       step = 'polling';
     } catch (e) {
       step = 'error';
-      errorMessage = e instanceof Error ? e.message : 'An unexpected error occurred during upload.';
+      errorMessage = e instanceof Error ? e.message : m.file_upload_unexpected_error();
     }
   }
 
@@ -304,7 +304,7 @@
 </script>
 
 <div class="rounded-lg border border-card bg-surface-card p-6">
-  <h3 class="mb-4 text-base font-semibold text-stone-900">Upload Audio Files</h3>
+  <h3 class="mb-4 text-base font-semibold text-stone-900">{m.file_upload_heading()}</h3>
 
   <!-- ── Step: File Selection ─────────────────────────────────────────────── -->
   {#if step === 'select'}
@@ -347,15 +347,14 @@
           <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
           <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
         </svg>
-        <span class="text-sm font-medium text-stone-700">Computing file checksums...</span>
+        <span class="text-sm font-medium text-stone-700">{m.file_upload_hashing()}</span>
         <span class="ml-auto text-sm text-stone-500">{hashingProgress}%</span>
       </div>
       <div class="h-2 overflow-hidden rounded-full bg-stone-200">
         <div class="h-full bg-primary-600 transition-all duration-200" style="width: {hashingProgress}%"></div>
       </div>
       <p class="text-xs text-stone-400">
-        Verifying integrity of {selectedFiles.length} file{selectedFiles.length !== 1 ? 's' : ''}.
-        This may take a moment for large files.
+        {m.file_upload_hashing_hint({ count: selectedFiles.length })}
       </p>
     </div>
   {/if}
@@ -367,7 +366,7 @@
         <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
         <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
       </svg>
-      <span class="text-sm font-medium text-stone-700">Creating upload session...</span>
+      <span class="text-sm font-medium text-stone-700">{m.file_upload_creating_session()}</span>
     </div>
   {/if}
 
@@ -387,7 +386,7 @@
         <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
         <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
       </svg>
-      <span class="text-sm font-medium text-stone-700">Finalizing upload and starting import...</span>
+      <span class="text-sm font-medium text-stone-700">{m.file_upload_finalizing()}</span>
     </div>
   {/if}
 
@@ -416,9 +415,9 @@
         <div>
           <div class="mb-1.5 flex justify-between text-sm text-stone-500">
             {#if status.status === 'validating' || status.status === 'validated'}
-              <span>{status.validated_files} / {status.total_files} files validated</span>
+              <span>{m.file_upload_validated({ validated: status.validated_files, total: status.total_files })}</span>
             {:else}
-              <span>{status.imported_files} / {status.total_files} files imported</span>
+              <span>{m.file_upload_imported({ imported: status.imported_files, total: status.total_files })}</span>
             {/if}
             <span>{status.progress_percent.toFixed(1)}%</span>
           </div>
@@ -433,7 +432,7 @@
         <!-- Invalid files warning -->
         {#if status.files.some((f) => f.status === 'invalid')}
           <div class="rounded-md border border-warning/20 bg-warning-light p-3">
-            <p class="mb-1.5 text-xs font-medium text-warning">Some files failed validation:</p>
+            <p class="mb-1.5 text-xs font-medium text-warning">{m.file_upload_validation_warning()}</p>
             <ul class="space-y-1">
               {#each status.files.filter((f) => f.status === 'invalid') as invalidFile}
                 <li class="text-xs text-warning">
@@ -461,10 +460,10 @@
           </svg>
         </div>
         <div>
-          <p class="font-medium text-success">Upload and import complete</p>
+          <p class="font-medium text-success">{m.file_upload_complete()}</p>
           {#if status}
             <p class="text-sm text-success">
-              Successfully imported {status.imported_files} recording{status.imported_files !== 1 ? 's' : ''}.
+              {m.file_upload_success({ count: status.imported_files })}
             </p>
           {/if}
         </div>
@@ -473,7 +472,7 @@
       {#if status?.files.some((f) => f.status === 'invalid')}
         <div class="rounded-md border border-warning/20 bg-warning-light p-3">
           <p class="mb-1.5 text-xs font-medium text-warning">
-            {status.files.filter((f) => f.status === 'invalid').length} file{status.files.filter((f) => f.status === 'invalid').length !== 1 ? 's' : ''} could not be imported:
+            {m.file_upload_import_warning({ count: status.files.filter((f) => f.status === 'invalid').length })}
           </p>
           <ul class="space-y-1">
             {#each status.files.filter((f) => f.status === 'invalid') as invalidFile}
@@ -493,7 +492,7 @@
           onclick={resetToSelect}
           class="rounded-md border border-stone-300 bg-surface-card px-4 py-2 text-sm font-medium text-stone-700 transition-colors hover:bg-stone-50"
         >
-          Upload More Files
+          {m.file_upload_more()}
         </button>
       </div>
     </div>
@@ -508,10 +507,10 @@
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
               d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
           </svg>
-          <span class="text-sm font-semibold text-danger">Upload Error</span>
+          <span class="text-sm font-semibold text-danger">{m.file_upload_error()}</span>
         </div>
         <p class="whitespace-pre-wrap break-words font-mono text-sm text-danger">
-          {errorMessage ?? 'An unknown error occurred.'}
+          {errorMessage ?? m.file_upload_unknown_error()}
         </p>
       </div>
 
@@ -520,7 +519,7 @@
           onclick={resetToSelect}
           class="rounded-md border border-stone-300 bg-surface-card px-4 py-2 text-sm font-medium text-stone-700 transition-colors hover:bg-stone-50"
         >
-          Try Again
+          {m.file_upload_try_again()}
         </button>
       </div>
     </div>

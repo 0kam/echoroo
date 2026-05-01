@@ -74,7 +74,7 @@
     error = null;
 
     if (!modelName.trim()) {
-      error = 'Model name is required.';
+      error = m.models_train_model_name_required();
       return;
     }
 
@@ -165,7 +165,7 @@
         </h2>
         <button
           type="button"
-          aria-label="Close dialog"
+          aria-label={m.models_train_from_search_close_aria()}
           class="rounded-md p-1 text-stone-400 transition-colors hover:text-stone-700 dark:hover:text-stone-300"
           onclick={onClose}
         >
@@ -183,7 +183,7 @@
         <!-- Target species (read-only) -->
         <div>
           <div class="mb-1 block text-sm font-medium text-stone-700 dark:text-stone-300">
-            Target Species
+            {m.models_train_target_species_label()}
           </div>
           <div class="rounded-lg border border-stone-200 bg-stone-50 px-3 py-2 dark:border-stone-700 dark:bg-stone-800">
             <p class="text-sm font-medium text-stone-800 dark:text-stone-200 italic">
@@ -203,7 +203,7 @@
             for="create-model-name"
             class="mb-1 block text-sm font-medium text-stone-700 dark:text-stone-300"
           >
-            Model Name
+            {m.models_train_model_name_label()}
           </label>
           <input
             id="create-model-name"
@@ -215,7 +215,7 @@
                    focus:border-primary-500 focus:ring-2
                    disabled:opacity-50
                    dark:border-stone-600 dark:bg-stone-800 dark:text-stone-100"
-            placeholder="e.g. Turdus merula classifier"
+            placeholder={m.models_train_model_name_placeholder()}
           />
         </div>
 
@@ -235,7 +235,7 @@
             >
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
             </svg>
-            Advanced Sampling Settings
+            {m.models_train_advanced_settings()}
           </button>
 
           {#if showAdvanced}
@@ -247,7 +247,7 @@
                   for="easy-positive-k"
                   class="mb-1 block text-sm font-medium text-stone-700 dark:text-stone-300"
                 >
-                  Obvious Matches
+                  {m.models_train_obvious_matches_label()}
                   <span class="ml-1 font-mono text-xs text-stone-400">({easyPositiveK})</span>
                 </label>
                 <input
@@ -261,7 +261,7 @@
                   class="w-full accent-primary-600 disabled:opacity-50"
                 />
                 <p class="mt-0.5 text-xs text-stone-400">
-                  Sounds very similar to your reference (nearest neighbours)
+                  {m.models_train_obvious_matches_hint()}
                 </p>
               </div>
 
@@ -271,7 +271,7 @@
                   for="boundary-m"
                   class="mb-1 block text-sm font-medium text-stone-700 dark:text-stone-300"
                 >
-                  Borderline Matches
+                  {m.models_train_borderline_matches_label()}
                   <span class="ml-1 font-mono text-xs text-stone-400">({boundaryM})</span>
                 </label>
                 <input
@@ -285,7 +285,7 @@
                   class="w-full accent-primary-600 disabled:opacity-50"
                 />
                 <p class="mt-0.5 text-xs text-stone-400">
-                  Sounds on the edge of similarity — important for teaching the boundary
+                  {m.models_train_borderline_matches_hint()}
                 </p>
               </div>
 
@@ -295,7 +295,7 @@
                   for="others-p"
                   class="mb-1 block text-sm font-medium text-stone-700 dark:text-stone-300"
                 >
-                  Background Samples
+                  {m.models_train_background_samples_label()}
                   <span class="ml-1 font-mono text-xs text-stone-400">({othersP})</span>
                 </label>
                 <input
@@ -309,7 +309,7 @@
                   class="w-full accent-primary-600 disabled:opacity-50"
                 />
                 <p class="mt-0.5 text-xs text-stone-400">
-                  Random background sounds to provide negative examples
+                  {m.models_train_background_samples_hint()}
                 </p>
               </div>
             </div>
@@ -334,7 +334,7 @@
           disabled={isSubmitting}
           onclick={onClose}
         >
-          Cancel
+          {m.models_train_cancel()}
         </button>
         <button
           type="button"
@@ -350,9 +350,9 @@
               <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
               <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
             </svg>
-            Creating...
+            {m.models_train_creating()}
           {:else}
-            Create & Start Sampling
+            {m.models_train_create_and_sample()}
           {/if}
         </button>
       </div>

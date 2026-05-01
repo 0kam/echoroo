@@ -55,7 +55,7 @@
       day: 'numeric',
     });
     const version = run.model_version.replace(/^v/, '');
-    return `${run.model_name} v${version} - ${date} (${run.annotation_count} ${locale === 'ja' ? '件の検出' : 'detections'})`;
+    return `${run.model_name} v${version} - ${date} (${run.annotation_count} ${m.detection_run_detections_unit()})`;
   }
 
   // Lazy-load temporal data only when the "Activity Patterns" tab is selected
@@ -111,7 +111,7 @@
 
     <!-- Tab navigation -->
     <div class="mb-6 border-b border-stone-200">
-      <nav class="-mb-px flex gap-6" aria-label="Detection views">
+      <nav class="-mb-px flex gap-6" aria-label={m.detection_views_aria()}>
         <button
           type="button"
           on:click={() => (activeTab = 'species-list')}

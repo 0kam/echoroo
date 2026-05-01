@@ -123,8 +123,8 @@ async def _run_detection(
         # ------------------------------------------------------------------
         # Step 3: Load all recordings for the dataset
         # Eagerly load dataset -> site so that geo-filter code can access
-        # first_recording.dataset.site.h3_index after the session is closed
-        # without raising DetachedInstanceError.
+        # first_recording.dataset.site.h3_index_member after the session is
+        # closed without raising DetachedInstanceError.
         # Join against Dataset to enforce project_id ownership (defense-in-depth).
         # ------------------------------------------------------------------
         async with session_factory() as db:
@@ -174,7 +174,7 @@ async def _run_detection(
             wrapper = BirdNETWrapper.get_instance()
             first_recording = recordings[0]
             site = getattr(getattr(first_recording, "dataset", None), "site", None)
-            h3_index: str | None = getattr(site, "h3_index", None)
+            h3_index_member: str | None = getattr(site, "h3_index_member", None)
 
             week: int | None = None
             for rec in recordings:
@@ -182,9 +182,9 @@ async def _run_detection(
                     week = rec.datetime.isocalendar()[1]
                     break
 
-            if h3_index is not None and week is not None:
+            if h3_index_member is not None and week is not None:
                 try:
-                    lat, lon = h3_to_center(h3_index)
+                    lat, lon = h3_to_center(h3_index_member)
                     custom_species_list = wrapper.get_species_for_location(lat, lon, week)
                     logger.info(
                         "Geo filter: lat=%.4f, lon=%.4f, week=%d -> %d species",

@@ -1,9 +1,8 @@
 """Authentication service with business logic."""
 
 import logging
-import secrets
 import time
-from datetime import UTC, datetime, timedelta
+from typing import NoReturn
 from uuid import UUID
 
 from fastapi import HTTPException, status
@@ -12,7 +11,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from echoroo.core.jwt import create_access_token, create_refresh_token, decode_token
 from echoroo.core.redis import get_redis_connection
-from echoroo.core.security import hash_password, verify_password
 from echoroo.core.settings import get_settings
 from echoroo.models.user import User
 from echoroo.repositories.user import UserRepository
@@ -22,11 +20,21 @@ from echoroo.schemas.auth import (
     TokenResponse,
     UserRegisterRequest,
 )
-from echoroo.services.captcha import verify_turnstile
-from echoroo.services.email import send_password_reset_email, send_verification_email
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
+
+_PHASE4_STUB_DETAIL = (
+    "This endpoint is being rewritten in Phase 4 T150a-d / T155. "
+    "Use the new auth flow when available."
+)
+
+
+def _raise_phase4_stub() -> NoReturn:
+    raise HTTPException(
+        status_code=status.HTTP_501_NOT_IMPLEMENTED,
+        detail=_PHASE4_STUB_DETAIL,
+    )
 
 
 class AuthService:
@@ -115,44 +123,8 @@ class AuthService:
         Raises:
             HTTPException: If email already exists, CAPTCHA invalid, or validation fails
         """
-        # Check if email already exists
-        existing_user = await self.user_repo.get_by_email(request.email)
-        if existing_user:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Email already registered",
-            )
-
-        # Verify CAPTCHA if provided
-        if request.captcha_token:
-            captcha_valid = await verify_turnstile(request.captcha_token, client_ip)
-            if not captcha_valid:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Invalid CAPTCHA",
-                )
-
-        # Generate email verification token
-        verification_token = secrets.token_urlsafe(32)
-        verification_expires = datetime.now(UTC) + timedelta(hours=24)
-
-        # Create user
-        user = User(
-            email=request.email,
-            hashed_password=hash_password(request.password),
-            display_name=request.display_name,
-            is_verified=False,
-            email_verification_token=verification_token,
-            email_verification_expires_at=verification_expires,
-        )
-
-        user = await self.user_repo.create(user)
-        await self.db.commit()
-
-        # Send verification email (non-blocking)
-        await send_verification_email(user.email, verification_token)
-
-        return user
+        del request, client_ip
+        _raise_phase4_stub()
 
     async def login(
         self, request: LoginRequest, client_ip: str, user_agent: str | None = None
@@ -170,101 +142,8 @@ class AuthService:
         Raises:
             HTTPException: If credentials invalid, account locked, or rate limited
         """
-        # Check failed attempts for rate limiting
-        failed_attempts = await self.user_repo.get_recent_failed_attempts(request.email)
-        failed_attempts_ip = await self.user_repo.get_recent_failed_attempts_by_ip(client_ip)
-
-        # Account lockout after too many failed attempts (check first before CAPTCHA)
-        if failed_attempts >= 5:
-            raise HTTPException(
-                status_code=status.HTTP_423_LOCKED,
-                detail="Account temporarily locked due to too many failed attempts",
-            )
-
-        # Require CAPTCHA after threshold
-        if failed_attempts >= 3 or failed_attempts_ip >= 3:
-            if not request.captcha_token:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="CAPTCHA required after multiple failed attempts",
-                )
-            captcha_valid = await verify_turnstile(request.captcha_token, client_ip)
-            if not captcha_valid:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Invalid CAPTCHA",
-                )
-
-        # Get user
-        user = await self.user_repo.get_by_email(request.email)
-        if not user or not verify_password(request.password, user.hashed_password):
-            # Record failed attempt
-            await self.user_repo.record_login_attempt(
-                email=request.email,
-                ip_address=client_ip,
-                success=False,
-                user_agent=user_agent,
-            )
-            await self.db.commit()
-
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid email or password",
-            )
-
-        # Check if account is active
-        if not user.is_active:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Account is disabled",
-            )
-
-        # Check if email is verified (optional - can be enforced via settings)
-        # if not user.is_verified:
-        #     raise HTTPException(
-        #         status_code=status.HTTP_403_FORBIDDEN,
-        #         detail="Email not verified",
-        #     )
-
-        # Record successful login
-        await self.user_repo.record_login_attempt(
-            email=request.email,
-            ip_address=client_ip,
-            success=True,
-            user_agent=user_agent,
-            user_id=user.id,
-        )
-
-        # Update last login timestamp
-        user.last_login_at = datetime.now(UTC)
-        await self.user_repo.update(user)
-        await self.db.commit()
-
-        # Clear any existing revocation marker so a fresh login always succeeds.
-        # This handles the case where a previous "replay attack detected" incorrectly
-        # set the revoked_user key due to a race condition with concurrent refresh requests.
-        redis = await self._get_redis()
-        if redis:
-            try:
-                await redis.delete(f"{self._REVOCATION_KEY_PREFIX}{user.id}")
-                logger.debug("Cleared revocation marker for user %s on login", user.id)
-            except Exception:
-                logger.warning(
-                    "Failed to clear revocation marker for user %s", user.id, exc_info=True
-                )
-
-        # Generate tokens (only include user ID, not email, to minimize JWT payload exposure)
-        token_data = {"sub": str(user.id)}
-        access_token = create_access_token(token_data)
-        refresh_token = create_refresh_token(token_data)
-
-        token_response = TokenResponse(
-            access_token=access_token,
-            token_type="bearer",
-            expires_in=settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES * 60,
-        )
-
-        return token_response, refresh_token
+        del request, client_ip, user_agent
+        _raise_phase4_stub()
 
     async def logout(self, user_id: UUID) -> None:
         """Logout user by revoking all active tokens via Redis.
@@ -314,7 +193,7 @@ class AuthService:
         # Get user
         user_id = UUID(payload.get("sub", ""))
         user = await self.user_repo.get_by_id(user_id)
-        if not user or not user.is_active:
+        if not user or user.deleted_at is not None:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="User not found or inactive",
@@ -410,32 +289,8 @@ class AuthService:
         Raises:
             HTTPException: If token is invalid or expired
         """
-        user = await self.user_repo.get_by_verification_token(token)
-
-        if not user:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid verification token",
-            )
-
-        # Check token expiration
-        if not user.email_verification_expires_at or datetime.now(
-            UTC
-        ) > user.email_verification_expires_at:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Verification token expired",
-            )
-
-        # Mark as verified
-        user.is_verified = True
-        user.email_verification_token = None
-        user.email_verification_expires_at = None
-
-        await self.user_repo.update(user)
-        await self.db.commit()
-
-        return user
+        del token
+        _raise_phase4_stub()
 
     async def request_password_reset(self, email: str) -> None:
         """Request password reset (always returns success for security).
@@ -446,23 +301,8 @@ class AuthService:
         Note:
             Always returns success even if email doesn't exist (security best practice)
         """
-        user = await self.user_repo.get_by_email(email)
-
-        if user and user.is_active:
-            # Generate reset token
-            reset_token = secrets.token_urlsafe(32)
-            reset_expires = datetime.now(UTC) + timedelta(hours=1)
-
-            user.password_reset_token = reset_token
-            user.password_reset_expires_at = reset_expires
-
-            await self.user_repo.update(user)
-            await self.db.commit()
-
-            # Send reset email
-            await send_password_reset_email(user.email, reset_token)
-
-        # Always return success (don't leak email existence)
+        del email
+        _raise_phase4_stub()
 
     async def confirm_password_reset(self, request: PasswordResetConfirm) -> None:
         """Reset password using token.
@@ -473,34 +313,8 @@ class AuthService:
         Raises:
             HTTPException: If token is invalid or expired
         """
-        user = await self.user_repo.get_by_reset_token(request.token)
-
-        if not user:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid reset token",
-            )
-
-        # Check token expiration
-        if not user.password_reset_expires_at or datetime.now(
-            UTC
-        ) > user.password_reset_expires_at:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Reset token expired",
-            )
-
-        # Update password
-        user.hashed_password = hash_password(request.password)
-        user.password_reset_token = None
-        user.password_reset_expires_at = None
-
-        await self.user_repo.update(user)
-        await self.db.commit()
-
-        # Revoke all existing tokens so any previously-issued sessions are invalidated
-        logger.info("Password reset confirmed for user %s; revoking all tokens", user.id)
-        await self.revoke_user_tokens(user.id)
+        del request
+        _raise_phase4_stub()
 
     async def get_current_user(self, token: str) -> User:
         """Get current user from access token.
@@ -542,7 +356,7 @@ class AuthService:
                 headers={"WWW-Authenticate": "Bearer"},
             )
 
-        if not user.is_active:
+        if user.deleted_at is not None:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="User account is disabled",

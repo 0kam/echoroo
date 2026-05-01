@@ -18,6 +18,7 @@
   import { castVote, deleteVote } from '$lib/api/votes';
   import type { DetectionStatus, DetectionListResponse, VoteSummary, VoteValue, SignalQuality } from '$lib/types/detection';
   import * as m from '$lib/paraglide/messages';
+  import { getLocale } from '$lib/paraglide/runtime';
   import { createReviewNavigation } from '$lib/utils/reviewNavigation.svelte';
   import DetectionCard from './DetectionCard.svelte';
 
@@ -50,8 +51,23 @@
   // DOM references for card elements (scroll-into-view)
   let cardElements: (HTMLElement | null)[] = $state([]);
 
-  // Query key includes all filter params
-  const detectionsQueryKey = $derived(['detections', projectId, tagId, statusFilter, confidenceMin, page, PAGE_SIZE, detectionRunId]);
+  // Active UI locale — forwarded so the backend attaches `vernacular_name`
+  // to embedded Tag records and kept in the query key so a language switch
+  // invalidates the client-side cache cleanly.
+  const locale = $derived(getLocale());
+
+  // Query key includes all filter params and the active locale.
+  const detectionsQueryKey = $derived([
+    'detections',
+    projectId,
+    tagId,
+    statusFilter,
+    confidenceMin,
+    page,
+    PAGE_SIZE,
+    detectionRunId,
+    locale,
+  ]);
 
   const detectionsQuery = $derived(
     createQuery({
@@ -65,6 +81,7 @@
           page,
           page_size: PAGE_SIZE,
           detection_run_id: detectionRunId,
+          locale,
         }),
       placeholderData: (prev: DetectionListResponse | undefined) => prev,
     })
@@ -93,7 +110,15 @@
           user_signal_quality: detection.votes.user_signal_quality,
           signal_quality_counts: detection.votes.signal_quality_counts ?? { solo: 0, dominant: 0, mixed: 0 },
           consensus_status: detection.votes.consensus_status,
-          votes: [],
+          // Compact list-response counts do not include voters[] or per-source
+          // breakdown; lazy-load via getAnnotationVoteSummary() when needed.
+          voters: [],
+          member_agree: 0,
+          member_disagree: 0,
+          guest_authenticated_agree: 0,
+          guest_authenticated_disagree: 0,
+          trusted_user_agree: 0,
+          trusted_user_disagree: 0,
         };
         changed = true;
       }

@@ -16,9 +16,7 @@ from echoroo.schemas.site import (
     SiteUpdate,
 )
 from echoroo.services.h3_utils import (
-    h3_coordinate_uncertainty,
     h3_to_boundary,
-    h3_to_center,
     validate_h3_index,
 )
 
@@ -39,7 +37,13 @@ class SiteService:
         self.project_repo = project_repo
 
     async def list_sites(
-        self, user_id: UUID, project_id: UUID, page: int = 1, page_size: int = 20
+        self,
+        user_id: UUID,
+        project_id: UUID,
+        page: int = 1,
+        page_size: int = 20,
+        *,
+        enforce_access: bool = True,
     ) -> SiteListResponse:
         """List all sites for a project.
 
@@ -55,13 +59,13 @@ class SiteService:
         Raises:
             HTTPException: If access denied
         """
-        # Check project access
-        has_access = await self.project_repo.has_project_access(project_id, user_id)
-        if not has_access:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Access denied to project",
-            )
+        if enforce_access:
+            has_access = await self.project_repo.has_project_access(project_id, user_id)
+            if not has_access:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Access denied to project",
+                )
 
         # Validate pagination
         pagination = paginate(page, page_size, default_page_size=20, max_page_size=100)
@@ -77,7 +81,12 @@ class SiteService:
         )
 
     async def create_site(
-        self, user_id: UUID, project_id: UUID, request: SiteCreate
+        self,
+        user_id: UUID,
+        project_id: UUID,
+        request: SiteCreate,
+        *,
+        enforce_access: bool = True,
     ) -> SiteResponse:
         """Create a new site in a project.
 
@@ -92,20 +101,37 @@ class SiteService:
         Raises:
             HTTPException: If not admin, invalid H3 index, or duplicate site
         """
-        # Check project access
-        is_admin = await self.project_repo.is_project_admin(project_id, user_id)
-        if not is_admin:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Admin access required to create sites",
-            )
+        if enforce_access:
+            is_admin = await self.project_repo.is_project_admin(project_id, user_id)
+            if not is_admin:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Admin access required to create sites",
+                )
 
         # Validate H3 index
-        is_valid, resolution, error = validate_h3_index(request.h3_index)
+        is_valid, resolution, error = validate_h3_index(request.h3_index_member)
         if not is_valid:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Invalid H3 index: {error}",
+            )
+
+        # NFR-003: ``sites.h3_index_member_resolution`` CHECK constraint
+        # admits only 9 or 15. Reject other resolutions with 400 to keep
+        # the stored ``h3_index_member_resolution`` consistent with the
+        # cell precision (no silent rounding to 15 — that would create a
+        # mismatch where e.g. a res-7 cell is recorded as res-15).
+        if resolution not in (9, 15):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "error": "ERR_INVALID_H3_RESOLUTION",
+                    "message": (
+                        "H3 cell resolution must be 9 or 15, "
+                        f"got {resolution}"
+                    ),
+                },
             )
 
         # Check for duplicate name
@@ -117,7 +143,7 @@ class SiteService:
             )
 
         # Check for duplicate H3 index
-        existing_h3 = await self.site_repo.get_by_project_and_h3(project_id, request.h3_index)
+        existing_h3 = await self.site_repo.get_by_project_and_h3(project_id, request.h3_index_member)
         if existing_h3:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
@@ -128,14 +154,20 @@ class SiteService:
         site = Site(
             project_id=project_id,
             name=request.name,
-            h3_index=request.h3_index,
+            h3_index_member=request.h3_index_member,
+            h3_index_member_resolution=resolution,
         )
 
         created_site = await self.site_repo.create(site)
         return SiteResponse.model_validate(created_site)
 
     async def get_site(
-        self, user_id: UUID, project_id: UUID, site_id: UUID
+        self,
+        user_id: UUID,
+        project_id: UUID,
+        site_id: UUID,
+        *,
+        enforce_access: bool = True,
     ) -> SiteDetailResponse:
         """Get site details.
 
@@ -150,13 +182,13 @@ class SiteService:
         Raises:
             HTTPException: If access denied or site not found
         """
-        # Check project access
-        has_access = await self.project_repo.has_project_access(project_id, user_id)
-        if not has_access:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Access denied to project",
-            )
+        if enforce_access:
+            has_access = await self.project_repo.has_project_access(project_id, user_id)
+            if not has_access:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Access denied to project",
+                )
 
         site = await self.site_repo.get_by_id_with_stats(site_id)
         if not site or site.project_id != project_id:
@@ -165,10 +197,15 @@ class SiteService:
                 detail="Site not found",
             )
 
-        # Get H3 properties
-        lat, lng = h3_to_center(site.h3_index)
-        boundary = h3_to_boundary(site.h3_index)
-        uncertainty = h3_coordinate_uncertainty(site.h3_index)
+        # Get H3 properties.
+        #
+        # Round 1 review C3 / FR-030: ``latitude`` / ``longitude`` /
+        # ``coordinate_uncertainty`` are intentionally NOT computed or
+        # returned. The boundary polygon is derived from the H3 cell so it
+        # carries the same precision as ``h3_index_member`` itself; the
+        # response filter generalises both fields together when the viewer
+        # is below the member-precision tier.
+        boundary = h3_to_boundary(site.h3_index_member)
 
         # Calculate recording stats from datasets (already eager loaded)
         dataset_count = len(site.datasets) if site.datasets else 0
@@ -188,20 +225,24 @@ class SiteService:
             id=site.id,
             project_id=site.project_id,
             name=site.name,
-            h3_index=site.h3_index,
+            h3_index_member=site.h3_index_member,
+            h3_index_member_resolution=site.h3_index_member_resolution,
             created_at=site.created_at,
             updated_at=site.updated_at,
             dataset_count=dataset_count,
             recording_count=recording_count,
             total_duration=total_duration,
-            latitude=lat,
-            longitude=lng,
-            coordinate_uncertainty=uncertainty,
             boundary=boundary,
         )
 
     async def update_site(
-        self, user_id: UUID, project_id: UUID, site_id: UUID, request: SiteUpdate
+        self,
+        user_id: UUID,
+        project_id: UUID,
+        site_id: UUID,
+        request: SiteUpdate,
+        *,
+        enforce_access: bool = True,
     ) -> SiteResponse:
         """Update site settings.
 
@@ -217,13 +258,13 @@ class SiteService:
         Raises:
             HTTPException: If not admin, site not found, or duplicate site
         """
-        # Check admin access
-        is_admin = await self.project_repo.is_project_admin(project_id, user_id)
-        if not is_admin:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Admin access required to update sites",
-            )
+        if enforce_access:
+            is_admin = await self.project_repo.is_project_admin(project_id, user_id)
+            if not is_admin:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Admin access required to update sites",
+                )
 
         site = await self.site_repo.get_by_id(site_id)
         if not site or site.project_id != project_id:
@@ -243,29 +284,51 @@ class SiteService:
                 )
             site.name = request.name
 
-        if request.h3_index is not None:
+        if request.h3_index_member is not None:
             # Validate H3 index
-            is_valid, resolution, error = validate_h3_index(request.h3_index)
+            is_valid, resolution, error = validate_h3_index(request.h3_index_member)
             if not is_valid:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=f"Invalid H3 index: {error}",
                 )
 
+            # NFR-003: same 9-or-15 constraint as create_site. Reject any
+            # other resolution with 400 instead of silently rounding so
+            # the stored ``h3_index_member_resolution`` always matches
+            # the actual cell precision.
+            if resolution not in (9, 15):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail={
+                        "error": "ERR_INVALID_H3_RESOLUTION",
+                        "message": (
+                            "H3 cell resolution must be 9 or 15, "
+                            f"got {resolution}"
+                        ),
+                    },
+                )
+
             # Check for duplicate H3 index
-            existing_h3 = await self.site_repo.get_by_project_and_h3(project_id, request.h3_index)
+            existing_h3 = await self.site_repo.get_by_project_and_h3(project_id, request.h3_index_member)
             if existing_h3 and existing_h3.id != site_id:
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
                     detail="Site with this H3 index already exists in project",
                 )
-            site.h3_index = request.h3_index
+            site.h3_index_member = request.h3_index_member
+            site.h3_index_member_resolution = resolution
 
         updated_site = await self.site_repo.update(site)
         return SiteResponse.model_validate(updated_site)
 
     async def delete_site(
-        self, user_id: UUID, project_id: UUID, site_id: UUID
+        self,
+        user_id: UUID,
+        project_id: UUID,
+        site_id: UUID,
+        *,
+        enforce_access: bool = True,
     ) -> None:
         """Delete a site and all associated data.
 
@@ -277,13 +340,13 @@ class SiteService:
         Raises:
             HTTPException: If not admin or site not found
         """
-        # Check admin access
-        is_admin = await self.project_repo.is_project_admin(project_id, user_id)
-        if not is_admin:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Admin access required to delete sites",
-            )
+        if enforce_access:
+            is_admin = await self.project_repo.is_project_admin(project_id, user_id)
+            if not is_admin:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Admin access required to delete sites",
+                )
 
         site = await self.site_repo.get_by_id(site_id)
         if not site or site.project_id != project_id:

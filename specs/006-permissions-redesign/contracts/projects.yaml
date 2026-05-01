@@ -1,0 +1,467 @@
+openapi: 3.1.0
+info:
+  title: Echoroo Projects API
+  version: "1.0.0"
+  description: >
+    Project CRUD / visibility 変更 / restricted_config トグル / ownership transfer / license 管理。
+    programmatic API (`/api/v1/`) と first-party session API (`/web-api/v1/`) の両方で利用可能、
+    認証方式は path ごとに security block で明示する（contracts/README.md 参照）。
+
+servers:
+  - url: https://echoroo.app/api/v1
+    description: Programmatic API（Bearer API key 必須、Cookie 不可）
+  - url: https://echoroo.app/web-api/v1
+    description: First-party session API（Cookie + CSRF、API key 不可）
+
+# file-level security: 最も緩い「read-only」経路を default として宣言
+# （apiKeyAuth OR sessionCookie のいずれか）
+# state-changing 操作 (POST/PATCH/DELETE) は path operation で
+# `security: [{apiKeyAuth: []}, {sessionCookie: [], csrfToken: []}]` に override
+# 認証前 endpoint は存在しない（全 path operation で security 必須）
+security:
+  - apiKeyAuth: []        # programmatic 経路
+  - sessionCookie: []     # first-party read (Cookie のみ)
+
+paths:
+  /projects:
+    get:
+      summary: プロジェクト一覧
+      description: |
+        - Guest: Public のメタ + Restricted のメタ（FR-013 / FR-019）
+        - Authenticated 以上: 自分が所属するプロジェクト + 上記
+      operationId: listProjects
+      parameters:
+        - name: visibility
+          in: query
+          schema: { type: string, enum: [public, restricted] }
+        - name: status
+          in: query
+          schema: { type: string, enum: [active, dormant, archived] }
+        - name: page
+          in: query
+          schema: { type: integer, default: 1 }
+      responses:
+        "200":
+          description: 一覧
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectListResponse'
+
+    post:
+      summary: プロジェクト作成
+      description: CC ライセンス必須（FR-085）。作成者が Owner になる
+      operationId: createProject
+      security:
+        - apiKeyAuth: []
+        - sessionCookie: []
+          csrfToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProjectCreateRequest'
+      responses:
+        "201":
+          description: 作成完了
+        "422":
+          description: ERR_LICENSE_REQUIRED 等
+
+  /projects/{id}:
+    get:
+      summary: プロジェクト詳細
+      description: |
+        Response filter 適用:
+        - Guest (Public): メタ + 種リスト概要
+        - Guest (Restricted): メタ + 種リスト概要のみ
+        - Authenticated 以上: 加えて Restricted トグル設定（Owner/Admin のみ）
+      operationId: getProject
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: 詳細
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectDetailResponse'
+        "404":
+          description: 存在しない
+
+    patch:
+      summary: プロジェクト更新（mutable allowlist のみ、FR-063）
+      operationId: updateProject
+      security:
+        - apiKeyAuth: []
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProjectUpdateRequest'
+      responses:
+        "200":
+          description: 更新完了
+        "422":
+          description: ERR_UNKNOWN_FIELD (allowlist 外、FR-064)
+        "403":
+          description: ERR_PROJECT_ARCHIVED など
+
+    delete:
+      summary: プロジェクト削除（Owner のみ、DELETE_PROJECT permission）
+      operationId: deleteProject
+      security:
+        - apiKeyAuth: []
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204":
+          description: 削除完了
+
+  /projects/{id}/transfer-ownership:
+    post:
+      summary: 所有権移譲（Admin のみ対象、FR-057）
+      operationId: transferOwnership
+      security:
+        - apiKeyAuth: []
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: X-Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [new_owner_user_id]
+              additionalProperties: false
+              properties:
+                new_owner_user_id:
+                  type: string
+                  format: uuid
+      responses:
+        "200":
+          description: 完了
+        "400":
+          description: ERR_INVALID_TRANSFER_TARGET
+        "409":
+          description: ERR_CONFLICT（並行実行）
+
+  /projects/{id}/restricted-config:
+    patch:
+      summary: Restricted トグル変更（Admin 以上、FR-014 / FR-020〜022）
+      operationId: updateRestrictedConfig
+      security:
+        - apiKeyAuth: []
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RestrictedConfig'
+      responses:
+        "200":
+          description: 即時権限ガード反映、検索 index 再構築は非同期（FR-024）
+        "422":
+          description: unknown key / invalid value
+
+  /projects/{id}/members:
+    get:
+      operationId: listProjectMembers
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: メンバー一覧（Admin / Owner のみ、MANAGE_MEMBERS）
+
+    post:
+      summary: メンバー招待（Owner / Admin、FR-050）
+      operationId: inviteMember
+      security:
+        - apiKeyAuth: []
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MemberInviteRequest'
+      responses:
+        "202":
+          description: 招待メール送信（enumeration 対策で成功/失敗同じレスポンス、FR-055）
+        "422":
+          description: ERR_VIEWER_ON_PUBLIC_PROJECT（Public に Viewer 招待）
+
+  /projects/{id}/members/{userId}:
+    delete:
+      summary: メンバー削除（Admin 以上、ApiKey 自動 revoke は outbox で非同期、FR-076）
+      operationId: removeMember
+      security:
+        - apiKeyAuth: []
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: userId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "204":
+          description: 削除完了
+
+    patch:
+      summary: ロール変更
+      operationId: updateMemberRole
+      security:
+        - apiKeyAuth: []
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: userId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [role]
+              additionalProperties: false
+              properties:
+                role: { type: string, enum: [viewer, member, admin] }
+                expires_at:
+                  type: string
+                  format: date-time
+                  nullable: true
+                  description: Viewer のみ、期限付き運用
+      responses:
+        "200":
+          description: 更新完了、監査ログ記録
+
+  /projects/{id}/invitations/{token}/accept:
+    post:
+      summary: 招待受諾（email 一致確認、single TX、FR-053 / FR-054）
+      operationId: acceptInvitation
+      security:
+        - apiKeyAuth: []
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: token, in: path, required: true, schema: { type: string } }
+        - { name: X-Idempotency-Key, in: header, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: ProjectMember または ProjectTrustedUser が作成
+        "403":
+          description: ERR_EMAIL_MISMATCH
+        "410":
+          description: 期限切れ or revoked
+
+  /projects/{id}/invitations/{token}:
+    delete:
+      summary: 招待の受信者セルフ decline（FR-107）
+      description: |
+        pending 状態の招待を **受信者自身** が decline する (decline アクション、spec state machine L921 の '(decline) → declined' 経路)。
+        accept endpoint と同じ HMAC 署名検証 + `token_hash` 比較で token resolve、受信者 email 一致確認（FR-054 と同じ NFKC + case-insensitive）。
+        成功時 `ProjectInvitation.status = DECLINED` 遷移（既存 enum 値、新規追加なし）、監査ログ記録。
+        404 統一方針 (enumeration 対策、FR-055 準拠): token 未解決・他人 token・email 不一致はすべて 404 を返し、pending 招待の存在を漏らさない。
+        accepted / expired / revoked 済みは 410。冪等性: 既に DECLINED で再 DELETE しても 204 (status 不変)。
+        Owner/Admin 側の招待取り消し（owner revoke、state machine の revoked 遷移）は本 endpoint の範囲外、別 endpoint で担保予定（将来 FR）。
+      operationId: declineInvitationByRecipient
+      security:
+        - apiKeyAuth: []
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: token, in: path, required: true, schema: { type: string } }
+      responses:
+        "204":
+          description: 削除完了 (pending → DECLINED、または既に DECLINED で冪等)
+        "404":
+          description: token 未解決 / 他人 token / email 不一致 (enumeration 対策で統一、FR-055)
+        "410":
+          description: accepted / expired / revoked 済み (終状態、decline 不可)
+
+  /projects/{id}/license:
+    patch:
+      summary: ライセンス変更（MANAGE_LICENSE、ProjectLicenseHistory 記録）
+      operationId: updateLicense
+      security:
+        - apiKeyAuth: []
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [license]
+              additionalProperties: false
+              properties:
+                license: { type: string, enum: [CC0, CC-BY, CC-BY-NC, CC-BY-SA] }
+      responses:
+        "200":
+          description: 変更完了、過去 export は不変
+
+  /projects/{id}/license-history:
+    get:
+      summary: ライセンス変更履歴
+      operationId: getLicenseHistory
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: 履歴（昇順）
+
+components:
+  securitySchemes:
+    apiKeyAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: "ek_live_{prefix}_{secret}"
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: session_id
+    csrfToken:
+      type: apiKey
+      in: header
+      name: X-CSRF-Token
+
+  schemas:
+    ProjectListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/ProjectSummary' }
+        total: { type: integer }
+        page: { type: integer }
+
+    ProjectSummary:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        description: { type: string, nullable: true }
+        visibility: { type: string, enum: [public, restricted] }
+        status: { type: string, enum: [active, dormant, archived] }
+        license: { type: string }
+        owner_display_name: { type: string }
+        dataset_count: { type: integer }
+        species_preview: { type: array, items: { type: string }, maxItems: 5 }
+
+    ProjectDetailResponse:
+      allOf:
+        - $ref: '#/components/schemas/ProjectSummary'
+        - type: object
+          properties:
+            restricted_config:
+              $ref: '#/components/schemas/RestrictedConfig'
+              description: Admin / Owner のみ表示、それ以外は omit
+
+    ProjectCreateRequest:
+      type: object
+      required: [name, visibility, license]
+      additionalProperties: false
+      properties:
+        name: { type: string, maxLength: 200 }
+        description: { type: string, nullable: true }
+        visibility: { type: string, enum: [public, restricted] }
+        license: { type: string, enum: [CC0, CC-BY, CC-BY-NC, CC-BY-SA] }
+        restricted_config: { $ref: '#/components/schemas/RestrictedConfig' }
+
+    ProjectUpdateRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        name: { type: string }
+        description: { type: string, nullable: true }
+        visibility: { type: string, enum: [public, restricted] }
+        restricted_config: { $ref: '#/components/schemas/RestrictedConfig' }
+        license: { type: string }
+      description: |
+        他のフィールド（owner_id, status, license_history, created_at）は 422 ERR_UNKNOWN_FIELD。
+        Restricted → Public 変更時は UI で acknowledge checkbox 必須（FR-007）
+
+    RestrictedConfig:
+      type: object
+      additionalProperties: false
+      required:
+        - allow_media_playback
+        - allow_detection_view
+        - mask_species_in_detection
+        - allow_download
+        - allow_export
+        - allow_voting_and_comments
+        - public_location_precision_h3_res
+        - allow_precise_location_to_viewer
+      properties:
+        allow_media_playback: { type: boolean, default: false }
+        allow_detection_view: { type: boolean, default: false }
+        mask_species_in_detection: { type: boolean, default: false }
+        allow_download: { type: boolean, default: false }
+        allow_export: { type: boolean, default: false }
+        allow_voting_and_comments: { type: boolean, default: false }
+        public_location_precision_h3_res:
+          type: integer
+          enum: [2, 5, 7, 9, 15]
+          default: 2
+          description: "spec FR-027 の離散値。2=HIDDEN, 5=~30km, 7=~5km, 9=~175m, 15=member 精密"
+        allow_precise_location_to_viewer: { type: boolean, default: false }
+
+    MemberInviteRequest:
+      type: object
+      required: [email, role]
+      additionalProperties: false
+      properties:
+        email: { type: string, format: email }
+        role: { type: string, enum: [viewer, member, admin] }
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: Viewer のみ

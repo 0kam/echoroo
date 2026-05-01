@@ -1,0 +1,2 @@
+user default off nopass resetchannels -@all
+user echoroo on >echoroo-dev-redis-password ~* &* +@all

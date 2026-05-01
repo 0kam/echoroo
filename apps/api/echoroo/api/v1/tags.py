@@ -1,11 +1,23 @@
-"""Tag management API endpoints."""
+"""Tag management API endpoints.
+
+Phase 3 (T121, FR-006 / FR-008 / FR-008a): the tag CREATE path operation now
+routes through the central :func:`is_allowed` gate using
+:data:`TAG_CREATE_ACTION` (:data:`Permission.CREATE_TAG`). Read endpoints keep
+their existing behaviour — they are not yet wrapped because tag visibility is
+implicit through the parent project read permission, but the gate hook is in
+place via ``gate_action`` and can be enabled when the matrix entry is finalised.
+"""
+
+from __future__ import annotations
 
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 
+from echoroo.core.actions import TAG_CREATE_ACTION, TAG_DELETE_ACTION, TAG_UPDATE_ACTION
 from echoroo.core.database import DbSession
+from echoroo.core.permissions import gate_action
 from echoroo.middleware.auth import CurrentUser
 from echoroo.models.enums import TagCategory
 from echoroo.repositories.tag import TagRepository
@@ -52,8 +64,17 @@ async def list_tags(
     search: str | None = None,
     page: int = 1,
     page_size: int = 50,
+    locale: str = Query(
+        "en",
+        pattern="^(en|ja)$",
+        description="Locale code for vernacular name resolution (en, ja)",
+    ),
 ) -> TagListResponse:
     """List tags for a project.
+
+    Read endpoint — kept on the legacy auth-only check pending the Phase 3
+    matrix entry for ``tag.list``. The CREATE endpoint below already gates
+    through :data:`TAG_CREATE_ACTION`.
 
     Args:
         project_id: Project's UUID
@@ -63,6 +84,7 @@ async def list_tags(
         search: Optional search string
         page: Page number (default: 1)
         page_size: Items per page (default: 50)
+        locale: Locale code used to populate ``vernacular_name`` on each tag
 
     Returns:
         Paginated list of tags
@@ -76,6 +98,7 @@ async def list_tags(
         search=search,
         page=page,
         page_size=page_size,
+        locale=locale,
     )
 
 
@@ -89,27 +112,47 @@ async def list_tags(
 async def create_tag(
     project_id: UUID,
     request: TagCreate,
+    http_request: Request,
     current_user: CurrentUser,
     service: TagServiceDep,
     db: DbSession,
+    locale: str = Query(
+        "en",
+        pattern="^(en|ja)$",
+        description="Locale code for vernacular name resolution (en, ja)",
+    ),
 ) -> TagResponse:
     """Create a new tag.
 
+    Guarded by :data:`TAG_CREATE_ACTION` (:data:`Permission.CREATE_TAG`).
+
     Args:
         project_id: Project's UUID
-        request: Tag creation data
+        request: Tag creation payload (Pydantic body)
+        http_request: FastAPI :class:`Request` used by the gate to stash
+            stage-1 state on ``request.state``. Named ``http_request`` to
+            avoid colliding with the body parameter ``request``.
         current_user: Current authenticated user
         service: Tag service instance
         db: Database session
+        locale: Locale code used to populate ``vernacular_name`` on the response
 
     Returns:
         Created tag
 
     Raises:
         401: Not authenticated
+        403: Permission denied
         422: Validation error
     """
-    tag = await service.create(project_id=project_id, request=request)
+    await gate_action(
+        action=TAG_CREATE_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=http_request,
+        db=db,
+    )
+    tag = await service.create(project_id=project_id, request=request, locale=locale)
     await db.commit()
     return tag
 
@@ -157,6 +200,11 @@ async def get_statistics(
     project_id: UUID,
     current_user: CurrentUser,
     service: TagServiceDep,
+    locale: str = Query(
+        "en",
+        pattern="^(en|ja)$",
+        description="Locale code for vernacular name resolution (en, ja)",
+    ),
 ) -> list[TagStatistic]:
     """Get tag usage statistics.
 
@@ -166,6 +214,7 @@ async def get_statistics(
         project_id: Project's UUID
         current_user: Current authenticated user
         service: Tag service instance
+        locale: Locale code used to populate ``vernacular_name`` on each tag
 
     Returns:
         List of tag statistics ordered by usage count descending
@@ -173,7 +222,7 @@ async def get_statistics(
     Raises:
         401: Not authenticated
     """
-    return await service.get_statistics(project_id=project_id)
+    return await service.get_statistics(project_id=project_id, locale=locale)
 
 
 @router.get(
@@ -187,6 +236,11 @@ async def get_tag(
     tag_id: UUID,
     current_user: CurrentUser,
     service: TagServiceDep,
+    locale: str = Query(
+        "en",
+        pattern="^(en|ja)$",
+        description="Locale code for vernacular name resolution (en, ja)",
+    ),
 ) -> TagDetailResponse:
     """Get tag by ID with children.
 
@@ -195,6 +249,8 @@ async def get_tag(
         tag_id: Tag's UUID
         current_user: Current authenticated user
         service: Tag service instance
+        locale: Locale code used to populate ``vernacular_name`` on the tag
+            and each of its children
 
     Returns:
         Tag detail with children and usage count
@@ -203,7 +259,7 @@ async def get_tag(
         401: Not authenticated
         404: Tag not found
     """
-    return await service.get_detail(tag_id=tag_id)
+    return await service.get_detail(tag_id=tag_id, locale=locale)
 
 
 @router.patch(
@@ -216,9 +272,15 @@ async def update_tag(
     project_id: UUID,
     tag_id: UUID,
     request: TagUpdate,
+    http_request: Request,
     current_user: CurrentUser,
     service: TagServiceDep,
     db: DbSession,
+    locale: str = Query(
+        "en",
+        pattern="^(en|ja)$",
+        description="Locale code for vernacular name resolution (en, ja)",
+    ),
 ) -> TagResponse:
     """Update tag.
 
@@ -226,18 +288,34 @@ async def update_tag(
         project_id: Project's UUID
         tag_id: Tag's UUID
         request: Update data
+        http_request: FastAPI :class:`Request` used by the gate to stash
+            stage-1 state on ``request.state``. Named ``http_request`` to
+            avoid colliding with the body parameter ``request``.
         current_user: Current authenticated user
         service: Tag service instance
         db: Database session
+        locale: Locale code used to populate ``vernacular_name`` on the response
 
     Returns:
         Updated tag
 
     Raises:
         401: Not authenticated
+        403: Permission denied
         404: Tag not found
     """
-    tag = await service.update(tag_id=tag_id, request=request)
+    await gate_action(
+        action=TAG_UPDATE_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=http_request,
+        db=db,
+    )
+    existing_tag = await service.tag_repo.get_by_id_in_project(tag_id, project_id)
+    if existing_tag is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="tag not found")
+
+    tag = await service.update(tag_id=tag_id, request=request, locale=locale)
     await db.commit()
     return tag
 
@@ -251,6 +329,7 @@ async def update_tag(
 async def delete_tag(
     project_id: UUID,
     tag_id: UUID,
+    http_request: Request,
     current_user: CurrentUser,
     service: TagServiceDep,
     db: DbSession,
@@ -260,13 +339,27 @@ async def delete_tag(
     Args:
         project_id: Project's UUID
         tag_id: Tag's UUID
+        http_request: FastAPI :class:`Request` used by the gate to stash
+            stage-1 state on ``request.state``.
         current_user: Current authenticated user
         service: Tag service instance
         db: Database session
 
     Raises:
         401: Not authenticated
+        403: Permission denied
         404: Tag not found
     """
+    await gate_action(
+        action=TAG_DELETE_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=http_request,
+        db=db,
+    )
+    existing_tag = await service.tag_repo.get_by_id_in_project(tag_id, project_id)
+    if existing_tag is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="tag not found")
+
     await service.delete(tag_id=tag_id)
     await db.commit()

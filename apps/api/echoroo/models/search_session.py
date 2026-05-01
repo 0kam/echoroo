@@ -15,8 +15,8 @@ from echoroo.models.base import Base, TimestampMixin, UUIDMixin
 from echoroo.models.enums import SearchSessionStatus
 
 if TYPE_CHECKING:
-    from echoroo.models.annotation import Annotation
     from echoroo.models.project import Project
+    from echoroo.models.recording_annotation import RecordingAnnotation
     from echoroo.models.user import User
 
 
@@ -117,6 +117,8 @@ class SearchSession(UUIDMixin, TimestampMixin, Base):
     celery_job_id: Mapped[str | None] = mapped_column(
         String(100),
         nullable=True,
+        unique=True,
+        index=True,
         doc="Celery task ID for async job tracking",
     )
     reference_audio_keys: Mapped[list[str] | None] = mapped_column(
@@ -149,8 +151,10 @@ class SearchSession(UUIDMixin, TimestampMixin, Base):
         "User",
         lazy="raise",
     )
-    annotations: Mapped[list[Annotation]] = relationship(
-        "Annotation",
+    # Phase 13 P1.5 R2: rebound to ``RecordingAnnotation`` (Phase 14+ deferred).
+    # See ``apps/api/echoroo/models/recording_annotation.py`` module docstring.
+    annotations: Mapped[list[RecordingAnnotation]] = relationship(
+        "RecordingAnnotation",
         back_populates="search_session",
         lazy="raise",
     )

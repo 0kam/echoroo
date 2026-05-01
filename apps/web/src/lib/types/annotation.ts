@@ -65,8 +65,15 @@ export interface Tag {
   gbif_taxon_key?: number | null;
   /** Scientific name (species tags only) */
   scientific_name?: string | null;
-  /** Common / vernacular name (species tags only) */
+  /** Common / vernacular name (species tags only) — English default */
   common_name?: string | null;
+  /**
+   * Locale-resolved vernacular name.
+   *
+   * Backend resolves this against the request's `locale` query parameter.
+   * Null when no vernacular entry is available for the active locale.
+   */
+  vernacular_name?: string | null;
   /** Global taxon identifier linking this tag to the taxa table */
   taxon_id?: string | null;
   /** ISO 8601 creation timestamp */

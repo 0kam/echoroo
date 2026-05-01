@@ -8,7 +8,7 @@ export default defineConfig({
       project: './project.inlang',
       outdir: './src/lib/paraglide',
       cleanOutdir: false,
-      strategy: ['url', 'baseLocale'],
+      strategy: ['url', 'cookie', 'baseLocale'],
       // URL patterns: both /en/ and /ja/ prefixes always present.
       // The base locale (English) also gets the /en/ prefix.
       urlPatterns: [
@@ -42,6 +42,10 @@ export default defineConfig({
     host: '0.0.0.0',
     proxy: {
       '/api': {
+        target: process.env.ECHOROO_API_URL || 'http://localhost:8002',
+        changeOrigin: true
+      },
+      '/web-api': {
         target: process.env.ECHOROO_API_URL || 'http://localhost:8002',
         changeOrigin: true
       },

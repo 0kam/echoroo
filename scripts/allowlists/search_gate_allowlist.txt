@@ -1,0 +1,17 @@
+# Allowlist for scripts/lint_search_gate.py.
+#
+# Phase 2.11 P1-a: line-level fingerprint format. Each non-comment
+# line is <file>:<select-MODEL|select_from-MODEL>:direct-<kind>-outside-search-gate.
+# The fingerprint is locked to a SPECIFIC (file, model) combination.
+#
+# Phase 3 must drive each entry to empty before final cleanup.
+#
+# Inline comments use TWO SPACES + #.
+
+# Phase 2.11 P1-a baseline 2026-04-25.
+apps/api/echoroo/api/v1/search/annotations.py:select-Annotation:direct-select-outside-search-gate  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/repositories/annotation.py:select-Annotation:direct-select-outside-search-gate  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/repositories/annotation.py:select_from-Annotation:direct-select_from-outside-search-gate  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/services/detection_export.py:select-Annotation:direct-select-outside-search-gate  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/services/search_session.py:select-Annotation:direct-select-outside-search-gate  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/workers/evaluation_tasks.py:select-Annotation:direct-select-outside-search-gate  # legacy: Phase 3 US11 T1xx

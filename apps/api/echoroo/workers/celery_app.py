@@ -25,6 +25,26 @@ app = Celery(
     backend=_settings.CELERY_RESULT_BACKEND,
 )
 
+# rediss:// (TLS) URLs from settings need explicit ssl_cert_reqs because
+# kombu/redis-py 5.x refuse to start without it (see
+# https://github.com/redis/redis-py/issues/2622). Map the URL scheme to
+# the standard ssl module constants so we keep CERT_REQUIRED in
+# production while still allowing dev to relax via REDIS_TLS_INSECURE=1.
+import ssl as _ssl  # noqa: E402
+
+if _settings.CELERY_BROKER_URL.startswith("rediss://") or _settings.CELERY_RESULT_BACKEND.startswith(
+    "rediss://"
+):
+    _redis_ssl_cert_reqs = (
+        _ssl.CERT_NONE
+        if getattr(_settings, "REDIS_TLS_INSECURE", False)
+        else _ssl.CERT_REQUIRED
+    )
+    if _settings.CELERY_BROKER_URL.startswith("rediss://"):
+        app.conf.broker_use_ssl = {"ssl_cert_reqs": _redis_ssl_cert_reqs}
+    if _settings.CELERY_RESULT_BACKEND.startswith("rediss://"):
+        app.conf.redis_backend_use_ssl = {"ssl_cert_reqs": _redis_ssl_cert_reqs}
+
 app.conf.update(
     task_serializer="json",
     accept_content=["json"],
@@ -60,17 +80,107 @@ app.conf.include = [
     "echoroo.workers.annotation_sampling_tasks",
     "echoroo.workers.evaluation_tasks",
     "echoroo.workers.model_preloader",
+    # Outbox processor + handler registry. The dispatcher modules
+    # below register themselves into ``OUTBOX_HANDLERS`` at import
+    # time; without listing them here Celery would never import
+    # them and the registered handlers would silently be missing
+    # at row-claim time (research.md §6, FR-104).
+    "echoroo.workers.outbox_processor",
+    "echoroo.workers.login_notification_dispatcher",
+    # Trusted overlay lifecycle workers (Phase 10 / FR-044, FR-045).
+    # ``trusted_long_lived_invalidation`` is intentionally NOT listed here
+    # — it is a coroutine started by the FastAPI lifespan, not a Celery
+    # task module (see its docstring for the threading rationale).
+    "echoroo.workers.trusted_auto_expire",
+    "echoroo.workers.trusted_expiry_notifier",
+    # Outbox dispatcher for ``trusted_user.expiry_notification``. MUST be
+    # imported by every worker process so the handler is registered into
+    # ``OUTBOX_HANDLERS`` before ``process_outbox_batch`` claims a row;
+    # otherwise the default handler raises ``NotImplementedError`` and
+    # the FR-045 warning email is never delivered.
+    "echoroo.workers.trusted_expiry_dispatcher",
+    # Dormancy detection (Phase 12 / T701 / FR-060). Runs daily; the
+    # bound task does the SELECT + UPDATE + outbox enqueue in a single
+    # AsyncSession so a half-flipped state cannot leak into the audit
+    # chain.
+    "echoroo.workers.dormancy_check",
+    # GDPR PII null-out daily sweeps (Phase 14 / T902 / T903). Both
+    # workers issue a single ``UPDATE ... RETURNING id`` so they are
+    # idempotent and stateless across runs (FR-106 / FR-108).
+    "echoroo.workers.invitation_email_null",
+    "echoroo.workers.trusted_email_null",
 ]
 
 # Periodic tasks (beat schedule)
 app.conf.beat_schedule = {
     "cleanup-orphan-uploads": {
         "task": "echoroo.workers.upload_tasks.cleanup_orphan_uploads",
-        "schedule": crontab(minute=0),  # Every hour
+        "schedule": crontab(minute=0),  # Every hour at :00
+    },
+    "cleanup-orphan-search-reference": {
+        "task": "echoroo.workers.search_tasks.cleanup_orphan_search_reference",
+        "schedule": crontab(minute=30),  # Every hour at :30 (offset from uploads)
     },
     "fetch-japanese-vernacular-names-weekly": {
         "task": "echoroo.workers.taxon_tasks.fetch_japanese_vernacular_names",
         "schedule": crontab(hour=2, minute=0, day_of_week=0),  # Every Sunday at 02:00 UTC
         "kwargs": {"batch_size": 100},
+    },
+    # Drain the transactional outbox at 1Hz-ish (every 30s — the
+    # spec's SLO is p95 ≤ 10s end-to-end which is set by the worker
+    # poll cadence, not the beat trigger). Each beat tick fans the
+    # work out across ``-c 4`` worker-cpu processes; the actual
+    # ``SELECT ... FOR UPDATE SKIP LOCKED`` claim happens inside the
+    # task body. Beat-driven invocation is the canonical wiring per
+    # research.md §6.
+    "drain-outbox-events": {
+        "task": "echoroo.workers.outbox_processor.process_outbox_batch",
+        "schedule": 30.0,  # seconds — see docstring above.
+    },
+    # FR-044 — flip Trusted overlay rows to ``status='expired'`` once
+    # ``expires_at`` is in the past. Hourly cadence at minute=5 keeps the
+    # job out of the on-the-hour upload janitor's window so a slow
+    # PostgreSQL UPDATE on one job never starves the other. The gate
+    # already enforces expiry at request time; this worker is the
+    # defence-in-depth bookkeeping pass that lets the management UI
+    # filter on ``status='active'`` directly.
+    "trusted-auto-expire-hourly": {
+        "task": "echoroo.workers.trusted_auto_expire.auto_expire_trusted_users",
+        "schedule": crontab(minute=5),
+    },
+    # FR-045 — pre-emptively notify Trusted users + Owners 7 days before
+    # an overlay's ``expires_at`` so they have a window to renew. Daily
+    # at 03:00 UTC mirrors the GBIF vernacular sync's off-peak slot;
+    # idempotency is guaranteed by the per-day key in
+    # :func:`echoroo.workers.trusted_expiry_notifier._idempotency_key`.
+    "trusted-expiry-notifier-daily": {
+        "task": (
+            "echoroo.workers.trusted_expiry_notifier.notify_expiring_trusted_users"
+        ),
+        "schedule": crontab(hour=3, minute=0),
+    },
+    # FR-060 — dormancy detection daily at 00:00 UTC. The single-worker
+    # invariant is enforced inside the task via
+    # ``pg_try_advisory_xact_lock`` (see ``dormancy_check._try_acquire_lock``)
+    # so a beat collision with a manual dispatch is safe.
+    "dormancy-check-daily": {
+        "task": "echoroo.workers.dormancy_check.run_daily_dormancy_check",
+        "schedule": crontab(hour=0, minute=0),
+    },
+    # FR-106 — NULL ``project_invitations.email`` 30 days after the row
+    # reached a terminal status. Daily at 02:30 UTC, sandwiched between
+    # the GBIF vernacular sync (02:00) and the trusted-email null-out
+    # (02:45) so the three sequential daily sweeps never overlap.
+    "invitation-email-null-daily": {
+        "task": "echoroo.workers.invitation_email_null.sweep_invitation_emails",
+        "schedule": crontab(hour=2, minute=30),
+    },
+    # FR-108 — NULL ``project_trusted_users.email_at_invitation`` 90
+    # days after revoke / lapse. Daily at 02:45 UTC, after the
+    # invitation sweep and before the trusted-expiry-notifier so the
+    # three GDPR / trusted lifecycle jobs run sequentially.
+    "trusted-email-null-daily": {
+        "task": "echoroo.workers.trusted_email_null.sweep_trusted_emails",
+        "schedule": crontab(hour=2, minute=45),
     },
 }

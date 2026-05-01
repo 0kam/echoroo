@@ -68,7 +68,7 @@ class PerchDirectInference:
         RuntimeError
             If the model path cannot be resolved (e.g. not yet downloaded).
         """
-        import tensorflow as tf
+        import tensorflow as tf  # type: ignore[import-untyped]
         from birdnet.acoustic.models.perch_v2.pb import (
             AcousticPBDownloaderPerchV2,
         )

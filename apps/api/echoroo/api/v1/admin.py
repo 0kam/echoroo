@@ -3,7 +3,7 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Query, status
+from fastapi import APIRouter, HTTPException, Query, status
 
 from echoroo.core.database import DbSession
 from echoroo.core.pagination import paginate
@@ -164,8 +164,19 @@ async def update_system_settings(
         403: Not a superuser
         422: Validation error
     """
+    # Phase 13 P1 R2 致命 #2 fix: ``system_settings.updated_by_id`` FKs
+    # ``superusers.id`` (NOT ``users.id``). The auth dependency stamps the
+    # resolved superuser id onto the transient User instance via
+    # :func:`_stamp_superuser_status` so we can persist the correct FK
+    # without re-issuing the same SQL.
+    superuser_id = getattr(current_user, "_superuser_id", None)
+    if superuser_id is None:  # pragma: no cover - upstream gate enforces
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Active superuser row not found",
+        )
     admin_service = AdminService(db)
-    await admin_service.update_system_settings(request, current_user.id)
+    await admin_service.update_system_settings(request, superuser_id)
     return {"message": "Settings updated successfully"}
 
 

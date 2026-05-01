@@ -7,6 +7,8 @@ from typing import TYPE_CHECKING
 from uuid import UUID
 
 from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
     DateTime,
     Enum,
     Float,
@@ -26,6 +28,7 @@ from echoroo.models.enums import DatetimeParseStatus
 if TYPE_CHECKING:
     from echoroo.models.clip import Clip
     from echoroo.models.dataset import Dataset
+    from echoroo.models.site import Site
 
 
 class Recording(UUIDMixin, TimestampMixin, Base):
@@ -55,6 +58,15 @@ class Recording(UUIDMixin, TimestampMixin, Base):
         ForeignKey("datasets.id", ondelete="CASCADE"),
         nullable=False,
         doc="Parent dataset ID",
+    )
+    site_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("sites.id", ondelete="SET NULL"),
+        nullable=True,
+        doc=(
+            "Optional override for the linked site. NULL ⇒ inherit "
+            "``dataset.site_id`` (data-model.md §3.11, FR-028a)."
+        ),
     )
     filename: Mapped[str] = mapped_column(
         String(255),
@@ -123,12 +135,40 @@ class Recording(UUIDMixin, TimestampMixin, Base):
         nullable=True,
         doc="User notes",
     )
+    h3_index_member: Mapped[str | None] = mapped_column(
+        String(32),
+        nullable=True,
+        doc=(
+            "Per-recording H3 cell override; NULL ⇒ inherit "
+            "``site.h3_index_member`` (data-model.md §3.11, FR-028a)."
+        ),
+    )
+    h3_index_member_resolution: Mapped[int | None] = mapped_column(
+        Integer,
+        nullable=True,
+        doc=(
+            "H3 resolution for the override (9 or 15). NULL ⇒ inherit "
+            "from site (data-model.md §3.11)."
+        ),
+    )
+    gps_stripped: Mapped[bool] = mapped_column(
+        Boolean,
+        default=False,
+        server_default="false",
+        nullable=False,
+        doc="EXIF GPS strip monitor flag (FR-028a).",
+    )
 
     # Relationships
     dataset: Mapped[Dataset] = relationship(
         "Dataset",
         back_populates="recordings",
         lazy="joined",
+    )
+    site: Mapped[Site | None] = relationship(
+        "Site",
+        lazy="joined",
+        foreign_keys="[Recording.site_id]",
     )
     clips: Mapped[list[Clip]] = relationship(
         "Clip",
@@ -138,10 +178,17 @@ class Recording(UUIDMixin, TimestampMixin, Base):
 
     __table_args__ = (
         UniqueConstraint("dataset_id", "path", name="uq_recording_dataset_path"),
+        CheckConstraint(
+            "h3_index_member_resolution IS NULL "
+            "OR h3_index_member_resolution IN (9, 15)",
+            name="ck_recordings_h3_resolution",
+        ),
         Index("ix_recordings_dataset_id", "dataset_id"),
+        Index("ix_recordings_site_id", "site_id"),
         Index("ix_recordings_hash", "hash"),
         Index("ix_recordings_datetime", "datetime"),
         Index("ix_recordings_dataset_id_datetime", "dataset_id", "datetime"),
+        Index("ix_recordings_h3_index_member", "h3_index_member"),
     )
 
     def __repr__(self) -> str:

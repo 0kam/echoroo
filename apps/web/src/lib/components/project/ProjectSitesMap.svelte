@@ -29,9 +29,9 @@
   function buildHexGeoJSON(siteList: ProjectOverviewSite[]): GeoJSON.FeatureCollection {
     const features: GeoJSON.Feature[] = [];
     for (const site of siteList) {
-      if (!site.h3_index || !isValidCell(site.h3_index)) continue;
+      if (!site.h3_index_member || !isValidCell(site.h3_index_member)) continue;
       // cellToBoundary returns [lat, lng][] in h3-js v4; swap to [lng, lat] for GeoJSON.
-      const boundary = cellToBoundary(site.h3_index);
+      const boundary = cellToBoundary(site.h3_index_member);
       // Explicitly map to [lng, lat] and close the ring (GeoJSON requires first === last).
       const ring: [number, number][] = boundary.map((c): [number, number] => [c[1], c[0]]);
       const first = ring[0];
@@ -150,11 +150,11 @@
     markers = [];
 
     for (const site of siteList) {
-      if (!site.h3_index || !isValidCell(site.h3_index)) continue;
+      if (!site.h3_index_member || !isValidCell(site.h3_index_member)) continue;
 
       // Always derive marker position from H3 cell center to ensure it aligns with the hex polygon.
       // cellToLatLng returns [lat, lng]; MapLibre expects [lng, lat].
-      const [lat, lng] = cellToLatLng(site.h3_index);
+      const [lat, lng] = cellToLatLng(site.h3_index_member);
 
       const el = createPinElement(site.id, site.name, site.recording_count);
 
@@ -173,11 +173,12 @@
   ) {
     const coords: [number, number][] = [];
 
+    // Permissions redesign Round 2: derive every centre coordinate from
+    // `h3_index`.  Raw `latitude`/`longitude` are no longer carried on
+    // the response (FR-030), so this is the single source of truth.
     for (const site of siteList) {
-      if (site.latitude != null && site.longitude != null) {
-        coords.push([site.longitude, site.latitude]);
-      } else if (site.h3_index && isValidCell(site.h3_index)) {
-        const [lat, lng] = cellToLatLng(site.h3_index);
+      if (site.h3_index_member && isValidCell(site.h3_index_member)) {
+        const [lat, lng] = cellToLatLng(site.h3_index_member);
         coords.push([lng, lat]);
       }
     }

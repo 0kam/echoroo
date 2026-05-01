@@ -6,12 +6,20 @@
   import { goto } from '$app/navigation';
   import { projectsApi } from '$lib/api/projects';
   import { ApiError } from '$lib/api/client';
-  import { localizeHref, getLocale } from '$lib/paraglide/runtime';
+  import { localizeHref } from '$lib/paraglide/runtime';
   import * as m from '$lib/paraglide/messages';
-  import type { Project } from '$lib/types';
+  import type { ProjectSummary } from '$lib/types';
 
-  // State
-  let projects = $state<Project[]>([]);
+  // State.
+  //
+  // Phase 9 / FR-018, FR-019: the list endpoint returns `ProjectSummary`
+  // rows — a deliberately narrow projection over `Project` that strips
+  // `restricted_config`, the full `owner` sub-object, and timestamps so
+  // Guest enumeration of Restricted projects cannot leak any field
+  // beyond the documented summary slot. The list view is therefore
+  // limited to `name / description / visibility / status / license /
+  // owner_display_name / dataset_count / species_preview`.
+  let projects = $state<ProjectSummary[]>([]);
   let total = $state(0);
   let page = $state(1);
   let limit = $state(20);
@@ -197,11 +205,18 @@
           <!-- Project Header -->
           <div class="mb-4 flex items-start justify-between">
             <h3 class="text-lg font-semibold text-stone-900">{project.name}</h3>
+            <!--
+              Three-way visibility badge. `restricted` was added by
+              the Permissions Redesign (FR-014); `private` survives
+              only as a legacy literal for unmigrated projects.
+            -->
             <span
               class="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium {project.visibility ===
               'public'
                 ? 'bg-success-light text-success'
-                : 'bg-stone-100 text-stone-800 dark:bg-stone-700 dark:text-stone-300'}"
+                : project.visibility === 'restricted'
+                  ? 'bg-warning-light text-warning'
+                  : 'bg-stone-100 text-stone-800 dark:bg-stone-700 dark:text-stone-300'}"
             >
               {#if project.visibility === 'public'}
                 <svg class="mr-1 h-3 w-3" fill="currentColor" viewBox="0 0 20 20">
@@ -212,6 +227,17 @@
                   />
                 </svg>
                 {m.project_visibility_public()}
+              {:else if project.visibility === 'restricted'}
+                <!-- Key icon, distinct from the closed-padlock used for
+                     legacy private projects. -->
+                <svg class="mr-1 h-3 w-3" fill="currentColor" viewBox="0 0 20 20">
+                  <path
+                    fill-rule="evenodd"
+                    d="M18 8a6 6 0 01-7.743 5.743L10 14l-1 1-1 1H6v2H2v-4l4.257-4.257A6 6 0 1118 8zm-6-4a1 1 0 100 2 2 2 0 012 2 1 1 0 102 0 4 4 0 00-4-4z"
+                    clip-rule="evenodd"
+                  />
+                </svg>
+                {m.project_visibility_restricted()}
               {:else}
                 <svg class="mr-1 h-3 w-3" fill="currentColor" viewBox="0 0 20 20">
                   <path
@@ -232,21 +258,16 @@
             <p class="mb-4 text-sm italic text-stone-400">{m.project_no_description()}</p>
           {/if}
 
-          <!-- Project Metadata -->
+          <!--
+            Project Metadata.
+
+            Phase 9 / FR-019: the summary slot only carries
+            `owner_display_name`, `dataset_count`, and a small
+            `species_preview` list. Older fields (`target_taxa`,
+            `created_at`, full `owner.email`) live on `ProjectResponse`
+            and are visible only on the detail page.
+          -->
           <div class="space-y-2 text-xs text-stone-500">
-            {#if project.target_taxa}
-              <div class="flex items-center">
-                <svg class="mr-2 h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    stroke-width="2"
-                    d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z"
-                  />
-                </svg>
-                <span class="truncate">{project.target_taxa}</span>
-              </div>
-            {/if}
             <div class="flex items-center">
               <svg class="mr-2 h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path
@@ -256,7 +277,7 @@
                   d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"
                 />
               </svg>
-              <span>{project.owner.display_name || project.owner.email}</span>
+              <span class="truncate">{project.owner_display_name}</span>
             </div>
             <div class="flex items-center">
               <svg class="mr-2 h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -264,11 +285,26 @@
                   stroke-linecap="round"
                   stroke-linejoin="round"
                   stroke-width="2"
-                  d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"
+                  d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4"
                 />
               </svg>
-              <span>{m.project_created({ date: new Date(project.created_at).toLocaleDateString(getLocale()) })}</span>
+              <span>{project.dataset_count === 1
+                ? m.project_summary_dataset_count_one()
+                : m.project_summary_dataset_count_other({ count: project.dataset_count })}</span>
             </div>
+            {#if project.species_preview.length > 0}
+              <div class="flex items-start">
+                <svg class="mr-2 mt-0.5 h-4 w-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width="2"
+                    d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z"
+                  />
+                </svg>
+                <span class="line-clamp-1">{project.species_preview.join(', ')}</span>
+              </div>
+            {/if}
           </div>
         </div>
       {/each}

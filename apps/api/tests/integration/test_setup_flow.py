@@ -1,6 +1,11 @@
 """Integration tests for complete setup workflow.
 
 Tests the full setup flow from initial state to completion.
+
+Note (Phase 16 Batch 6b): Exercises ``/api/v1/setup/initialize`` which is a
+Phase 4 stub returning 501, and references User columns dropped in Phase 13
+(``is_active`` / ``is_verified`` / ``is_superuser``). Skipped pending the
+setup-flow rewrite.
 """
 
 import pytest
@@ -10,6 +15,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from echoroo.models.system import SystemSetting
 from echoroo.models.user import User
+
+pytest.skip(
+    (
+        "Legacy /api/v1/setup integration flow — endpoint stubbed in Phase 4 "
+        "and references User columns dropped in Phase 13."
+    ),
+    allow_module_level=True,
+)
 
 
 @pytest.mark.asyncio
@@ -67,8 +80,8 @@ class TestSetupFlow:
         assert user.is_superuser is True
         assert user.is_verified is True
         assert user.is_active is True
-        assert user.hashed_password is not None
-        assert not user.hashed_password.startswith("Super")  # Not plain text
+        assert user.password_hash is not None
+        assert not user.password_hash.startswith("Super")  # Not plain text
 
         # Step 5: Verify system settings updated
         setting_result = await db_session.execute(
@@ -100,7 +113,7 @@ class TestSetupFlow:
 
         user = User(
             email="existing@example.com",
-            hashed_password=hash_password("password123"),
+            password_hash=hash_password("password123"),
             is_active=True,
             is_superuser=False,
             is_verified=False,

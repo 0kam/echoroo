@@ -249,10 +249,20 @@ class CorsConfig(TypedDict, total=False):
 
 
 def get_production_cors_config(allowed_origins: list[str]) -> CorsConfig:
-    """Get restrictive CORS configuration for production."""
+    """Get restrictive CORS configuration for production.
+
+    Per the CORS specification, ``allow_credentials=True`` MUST NOT be
+    combined with ``allow_origins=["*"]``.  If the caller accidentally
+    passes a wildcard allowlist, we force ``allow_credentials=False`` so
+    the application never produces an insecure misconfiguration at startup.
+    """
+    # CORS spec forbids Allow-Credentials: true with Allow-Origin: *.
+    # Guard against misconfiguration even when the caller passes "*".
+    has_wildcard = "*" in allowed_origins
+    credentials = not has_wildcard  # credentials only when origins are explicit
     return CorsConfig(
         allow_origins=allowed_origins,
-        allow_credentials=True,
+        allow_credentials=credentials,
         allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
         allow_headers=[
             "Accept",
@@ -274,10 +284,16 @@ def get_production_cors_config(allowed_origins: list[str]) -> CorsConfig:
 
 
 def get_development_cors_config(allowed_origins: list[str]) -> CorsConfig:
-    """Get permissive CORS configuration for development."""
+    """Get permissive CORS configuration for development.
+
+    Applies the same wildcard-vs-credentials guard as the production config
+    to prevent normalising an insecure pattern in development.
+    """
+    has_wildcard = "*" in allowed_origins
+    credentials = not has_wildcard
     return CorsConfig(
         allow_origins=allowed_origins,
-        allow_credentials=True,
+        allow_credentials=credentials,
         allow_methods=["*"],
         allow_headers=["*"],
         max_age=600,

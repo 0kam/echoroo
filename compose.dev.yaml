@@ -29,7 +29,9 @@ services:
     networks:
       - echoroo-net
 
-  # Redis for rate limiting and caching
+  # Redis for rate limiting and caching.
+  # TLS + AUTH (requirepass) + ACL enabled per NFR-007 (006-permissions-redesign).
+  # Generate dev certs once via `./scripts/gen-redis-dev-cert.sh` before first start.
   redis:
     image: redis:7-alpine
     container_name: echoroo-redis
@@ -38,9 +40,23 @@ services:
       - "${REDIS_PORT:-6379}:6379"
     volumes:
       - redis-data:/data
-    command: redis-server --appendonly yes
+      - ./config/redis/redis.conf:/etc/redis/redis.conf:ro
+      - ./config/redis/users.acl:/etc/redis/users.acl:ro
+      - ./config/redis/tls:/etc/redis/tls:ro
+    command: ["redis-server", "/etc/redis/redis.conf"]
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      # Health probe must also speak TLS + AUTH. Use the CA to verify.
+      test:
+        - "CMD"
+        - "redis-cli"
+        - "--tls"
+        - "--cacert"
+        - "/etc/redis/tls/ca.crt"
+        - "-a"
+        - "${REDIS_PASSWORD:-echoroo-dev-redis-password}"
+        - "--user"
+        - "${REDIS_USERNAME:-echoroo}"
+        - "ping"
       interval: 10s
       timeout: 5s
       retries: 5
@@ -52,7 +68,7 @@ services:
     image: localstack/localstack:latest
     container_name: echoroo-localstack
     environment:
-      - SERVICES=s3
+      - SERVICES=s3,kms
       - PERSISTENCE=1
       - EXTRA_CORS_ALLOWED_ORIGINS=http://localhost:5173,http://localhost:3000
       - EXTRA_CORS_ALLOWED_HEADERS=content-type,x-amz-content-sha256,x-amz-date,authorization,x-amz-security-token,x-amz-checksum-sha256
@@ -96,9 +112,13 @@ services:
       - backend-data:/data
       # ML model cache (shared with worker)
       - ml-models-data:/home/appuser/.local/share/birdnet
+      # Redis TLS CA (read-only) — required so the backend can verify the
+      # dev Redis self-signed cert when connecting via rediss://.
+      - ./config/redis/tls:/etc/redis/tls:ro
     environment:
       - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-echoroo}
-      - REDIS_URL=redis://redis:6379/0
+      - REDIS_URL=rediss://${REDIS_USERNAME:-echoroo}:${REDIS_PASSWORD:-echoroo-dev-redis-password}@redis:6379/0?ssl_ca_certs=/etc/redis/tls/ca.crt
+      - REDIS_TLS_CA_FILE=/etc/redis/tls/ca.crt
       - APP_URL=http://localhost:${ECHOROO_FRONTEND_PORT:-5173}
       - DEBUG=true
       - ENVIRONMENT=development
@@ -113,9 +133,17 @@ services:
       - S3_ACCESS_KEY=echoroo
       - S3_SECRET_KEY=echoroo-dev
       - S3_BUCKET=echoroo
-      - CELERY_BROKER_URL=redis://redis:6379/0
-      - CELERY_RESULT_BACKEND=redis://redis:6379/1
+      - CELERY_BROKER_URL=rediss://${REDIS_USERNAME:-echoroo}:${REDIS_PASSWORD:-echoroo-dev-redis-password}@redis:6379/0?ssl_ca_certs=/etc/redis/tls/ca.crt
+      - CELERY_RESULT_BACKEND=rediss://${REDIS_USERNAME:-echoroo}:${REDIS_PASSWORD:-echoroo-dev-redis-password}@redis:6379/1?ssl_ca_certs=/etc/redis/tls/ca.crt
       - XENO_CANTO_API_KEY=${XENO_CANTO_API_KEY:-}
+      # AWS / KMS — LocalStack KMS backs envelope encryption (TOTP DEK),
+      # PII hashing, audit chain HMAC, and invitation token signing
+      # (006-permissions-redesign). LocalStack accepts any non-empty creds.
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - AWS_DEFAULT_REGION=us-east-1
+      - AWS_KMS_REGION=us-east-1
+      - AWS_ENDPOINT_URL_KMS=http://localstack:4566
     healthcheck:
       test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 15s
@@ -143,9 +171,10 @@ services:
               capabilities: [gpu]
     environment:
       - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-echoroo}
-      - REDIS_URL=redis://redis:6379/0
-      - CELERY_BROKER_URL=redis://redis:6379/0
-      - CELERY_RESULT_BACKEND=redis://redis:6379/1
+      - REDIS_URL=rediss://${REDIS_USERNAME:-echoroo}:${REDIS_PASSWORD:-echoroo-dev-redis-password}@redis:6379/0?ssl_ca_certs=/etc/redis/tls/ca.crt
+      - REDIS_TLS_CA_FILE=/etc/redis/tls/ca.crt
+      - CELERY_BROKER_URL=rediss://${REDIS_USERNAME:-echoroo}:${REDIS_PASSWORD:-echoroo-dev-redis-password}@redis:6379/0?ssl_ca_certs=/etc/redis/tls/ca.crt
+      - CELERY_RESULT_BACKEND=rediss://${REDIS_USERNAME:-echoroo}:${REDIS_PASSWORD:-echoroo-dev-redis-password}@redis:6379/1?ssl_ca_certs=/etc/redis/tls/ca.crt
       - S3_ENDPOINT_URL=http://localstack:4566
       - S3_ACCESS_KEY=echoroo
       - S3_SECRET_KEY=echoroo-dev
@@ -153,11 +182,18 @@ services:
       - AUDIO_ROOT=/data/audio
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      # AWS / KMS — see backend service for rationale.
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - AWS_DEFAULT_REGION=us-east-1
+      - AWS_KMS_REGION=us-east-1
+      - AWS_ENDPOINT_URL_KMS=http://localstack:4566
     volumes:
       - ./apps/api:/app
       - backend-data:/data
       - ${ECHOROO_AUDIO_DIR:-/tmp/echoroo-audio}:/data/audio:ro
       - ml-models-data:/home/appuser/.local/share/birdnet
+      - ./config/redis/tls:/etc/redis/tls:ro
     depends_on:
       db:
         condition: service_healthy
@@ -178,19 +214,27 @@ services:
     command: uv run celery -A echoroo.workers.celery_app worker -l info --pool=solo -Q default -n worker-cpu@%h
     environment:
       - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-echoroo}
-      - REDIS_URL=redis://redis:6379/0
-      - CELERY_BROKER_URL=redis://redis:6379/0
-      - CELERY_RESULT_BACKEND=redis://redis:6379/1
+      - REDIS_URL=rediss://${REDIS_USERNAME:-echoroo}:${REDIS_PASSWORD:-echoroo-dev-redis-password}@redis:6379/0?ssl_ca_certs=/etc/redis/tls/ca.crt
+      - REDIS_TLS_CA_FILE=/etc/redis/tls/ca.crt
+      - CELERY_BROKER_URL=rediss://${REDIS_USERNAME:-echoroo}:${REDIS_PASSWORD:-echoroo-dev-redis-password}@redis:6379/0?ssl_ca_certs=/etc/redis/tls/ca.crt
+      - CELERY_RESULT_BACKEND=rediss://${REDIS_USERNAME:-echoroo}:${REDIS_PASSWORD:-echoroo-dev-redis-password}@redis:6379/1?ssl_ca_certs=/etc/redis/tls/ca.crt
       - S3_ENDPOINT_URL=http://localstack:4566
       - S3_ACCESS_KEY=echoroo
       - S3_SECRET_KEY=echoroo-dev
       - S3_BUCKET=echoroo
       - AUDIO_ROOT=/data/audio
+      # AWS / KMS — see backend service for rationale.
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - AWS_DEFAULT_REGION=us-east-1
+      - AWS_KMS_REGION=us-east-1
+      - AWS_ENDPOINT_URL_KMS=http://localstack:4566
     volumes:
       - ./apps/api:/app
       - backend-data:/data
       - ${ECHOROO_AUDIO_DIR:-/tmp/echoroo-audio}:/data/audio:ro
       - ml-models-data:/home/appuser/.local/share/birdnet
+      - ./config/redis/tls:/etc/redis/tls:ro
     depends_on:
       db:
         condition: service_healthy
@@ -208,11 +252,19 @@ services:
       dockerfile: Dockerfile.dev
     command: uv run celery -A echoroo.workers.celery_app beat -l info
     environment:
-      - REDIS_URL=redis://redis:6379/0
-      - CELERY_BROKER_URL=redis://redis:6379/0
-      - CELERY_RESULT_BACKEND=redis://redis:6379/1
+      - REDIS_URL=rediss://${REDIS_USERNAME:-echoroo}:${REDIS_PASSWORD:-echoroo-dev-redis-password}@redis:6379/0?ssl_ca_certs=/etc/redis/tls/ca.crt
+      - REDIS_TLS_CA_FILE=/etc/redis/tls/ca.crt
+      - CELERY_BROKER_URL=rediss://${REDIS_USERNAME:-echoroo}:${REDIS_PASSWORD:-echoroo-dev-redis-password}@redis:6379/0?ssl_ca_certs=/etc/redis/tls/ca.crt
+      - CELERY_RESULT_BACKEND=rediss://${REDIS_USERNAME:-echoroo}:${REDIS_PASSWORD:-echoroo-dev-redis-password}@redis:6379/1?ssl_ca_certs=/etc/redis/tls/ca.crt
+      # AWS / KMS — see backend service for rationale.
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - AWS_DEFAULT_REGION=us-east-1
+      - AWS_KMS_REGION=us-east-1
+      - AWS_ENDPOINT_URL_KMS=http://localstack:4566
     volumes:
       - ./apps/api:/app
+      - ./config/redis/tls:/etc/redis/tls:ro
     depends_on:
       redis:
         condition: service_started

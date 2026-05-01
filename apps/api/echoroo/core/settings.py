@@ -1,10 +1,10 @@
 """Application settings and configuration management."""
 
 from functools import lru_cache
-from typing import Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import Field, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import Field, field_validator, model_validator
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -50,6 +50,26 @@ class Settings(BaseSettings):
         default=["http://localhost:5173", "http://localhost:3000"],
         description="CORS allowed origins",
     )
+    webauthn_rp_id: str = Field(
+        default="localhost",
+        validation_alias="ECHOROO_WEBAUTHN_RP_ID",
+        description="WebAuthn relying party ID",
+    )
+    webauthn_rp_name: str = Field(
+        default="Echoroo",
+        validation_alias="ECHOROO_WEBAUTHN_RP_NAME",
+        description="WebAuthn relying party display name",
+    )
+    webauthn_origins: Annotated[list[str], NoDecode] = Field(
+        default=["http://localhost:3000"],
+        validation_alias="ECHOROO_WEBAUTHN_ORIGINS",
+        description="Allowed WebAuthn browser origins",
+    )
+    webauthn_challenge_ttl_seconds: int = Field(
+        default=300,
+        validation_alias="ECHOROO_WEBAUTHN_CHALLENGE_TTL_SECONDS",
+        description="WebAuthn Redis challenge TTL in seconds",
+    )
 
     # Password Hashing (Argon2id OWASP configuration)
     ARGON2_MEMORY_COST: int = 19456  # 19 MiB
@@ -87,6 +107,23 @@ class Settings(BaseSettings):
 
     # Session
     SESSION_TIMEOUT_MINUTES: int = 120  # 2 hours
+    web_session_cookie_name: str = "echoroo_session"
+    web_refresh_cookie_name: str = "echoroo_refresh"
+    web_csrf_cookie_name: str = "echoroo_csrf"
+    # Non-sensitive marker cookie set on Path=/ so SvelteKit hooks.server.ts
+    # can detect logged-in state for page-route auth guards. Carries no
+    # sensitive content (literal value "1"); the real session/refresh/csrf
+    # cookies remain scoped to /web-api/v1/* per spec FR-021.
+    web_logged_in_cookie_name: str = "echoroo_logged_in"
+    web_session_secret: str = Field(
+        default="dev-web-session-secret-change-in-production",
+        description="First-party web session HMAC/JWT secret",
+    )
+    web_access_token_ttl_seconds: int = 900
+    web_refresh_token_ttl_seconds: int = 30 * 24 * 3600
+    web_interim_token_ttl_seconds: int = 900
+    webauthn_interim_token_ttl_seconds: int = 300
+    web_app_base_url: str = "https://echoroo.app"
 
     # API Tokens
     API_TOKEN_PREFIX: str = "ecr_"
@@ -100,6 +137,15 @@ class Settings(BaseSettings):
     AUDIO_CACHE_DIR: str | None = Field(
         default=None,
         description="Directory for caching spectrograms (optional)",
+    )
+    # Phase 5 polish round 3 (重要1): make the S3 audio cache directory
+    # configurable so tests (and CI runners that cannot write to /data) can
+    # point this at a tmp_path. Production keeps the historical /data
+    # default — overriding it through the environment is a no-op for the
+    # running deployment.
+    S3_AUDIO_CACHE_DIR: str = Field(
+        default="/data/s3_audio_cache",
+        description="Directory used by AudioService to cache files downloaded from S3",
     )
 
     # S3 / Object Storage
@@ -120,9 +166,21 @@ class Settings(BaseSettings):
     # Project storage quota
     DEFAULT_STORAGE_QUOTA: int = 100 * 1024 * 1024 * 1024  # 100GB default
 
+    # Janitor (orphan S3 cleanup)
+    JANITOR_DRY_RUN: bool = True  # default True; flip to False after prod monitoring
+    JANITOR_AGE_HOURS: int = 24  # orphan age threshold (hours)
+
     # Celery
     CELERY_BROKER_URL: str = "redis://localhost:6379/0"
     CELERY_RESULT_BACKEND: str = "redis://localhost:6379/1"
+
+    @field_validator("webauthn_origins", mode="before")
+    @classmethod
+    def parse_webauthn_origins(cls, value: Any) -> Any:
+        """Accept ECHOROO_WEBAUTHN_ORIGINS as a comma-separated list."""
+        if isinstance(value, str):
+            return [origin.strip() for origin in value.split(",") if origin.strip()]
+        return value
 
     @model_validator(mode="after")
     def validate_production_secrets(self) -> "Settings":
@@ -135,6 +193,13 @@ class Settings(BaseSettings):
             if self.JWT_SECRET_KEY in weak_defaults or len(self.JWT_SECRET_KEY) < 32:
                 raise ValueError(
                     "JWT_SECRET_KEY must be a strong secret (min 32 chars) in production/staging"
+                )
+            if (
+                self.web_session_secret == "dev-web-session-secret-change-in-production"
+                or len(self.web_session_secret) < 32
+            ):
+                raise ValueError(
+                    "web_session_secret must be a strong secret (min 32 chars) in production/staging"
                 )
             if self.S3_SECRET_KEY == "echoroo-dev":
                 raise ValueError(

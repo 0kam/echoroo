@@ -5,7 +5,7 @@ persisted (``segment_length_sec``, ``num_segments``, optional date and
 time-of-day filters), this task:
 
 1. Fetches candidate recordings from the owning dataset, filtered by
-   ``recorded_at`` (date filter) and local time-of-day (if present).
+   ``datetime`` (date filter) and local time-of-day (if present).
 2. Enumerates the set of contiguous, non-overlapping ``(recording_id,
    start_time_sec)`` slots that can fit a ``segment_length_sec`` window.
 3. Uniformly samples ``num_segments`` slots without replacement.

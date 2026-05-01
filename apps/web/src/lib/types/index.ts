@@ -324,22 +324,138 @@ export interface APITokenCreateResponse extends APIToken {
 // ============================================
 
 /**
- * Project visibility enum
+ * Project visibility enum.
+ *
+ * NOTE: `'restricted'` was introduced by the Permissions Redesign
+ * (Phase 8 / FR-014). The legacy `'private'` literal is kept here for
+ * backwards compatibility with older frontend call-sites that have not
+ * yet been migrated; the backend contract
+ * (`specs/006-permissions-redesign/contracts/projects.yaml`) only
+ * accepts `public` and `restricted`.
  */
-export type ProjectVisibility = 'private' | 'public';
+export type ProjectVisibility = 'private' | 'public' | 'restricted';
+
+/**
+ * Discrete H3 resolution buckets allowed for the
+ * `public_location_precision_h3_res` Restricted-mode toggle (FR-021 /
+ * FR-027). Lower numbers are coarser; `2` means HIDDEN (no public
+ * location surfaced).
+ */
+export type RestrictedH3Resolution = 2 | 5 | 7 | 9 | 15;
+
+/**
+ * Restricted-mode capability toggles persisted on
+ * `Project.restricted_config` (FR-014 / FR-020-022).
+ *
+ * Mirrors the `RestrictedConfig` schema in
+ * `specs/006-permissions-redesign/contracts/projects.yaml` (lines
+ * 430-454). All eight keys are required at the API layer — defaults
+ * live on the backend model column for newly created projects only.
+ */
+export interface RestrictedConfig {
+  allow_media_playback: boolean;
+  allow_detection_view: boolean;
+  mask_species_in_detection: boolean;
+  allow_download: boolean;
+  allow_export: boolean;
+  allow_voting_and_comments: boolean;
+  public_location_precision_h3_res: RestrictedH3Resolution;
+  allow_precise_location_to_viewer: boolean;
+}
+
+/**
+ * Request body for `PATCH /web-api/v1/projects/{id}/restricted-config`
+ * (Phase 8 / T400). Same shape as `RestrictedConfig` — the backend
+ * Pydantic schema (`RestrictedConfigUpdateRequest`) enforces
+ * `Extra.forbid` and `StrictBool` so the entire object must be sent.
+ */
+export type RestrictedConfigUpdateRequest = RestrictedConfig;
+
+/**
+ * Project license enum (Phase 7 / FR-085).
+ *
+ * The Permissions Redesign (006) requires every new project to declare a
+ * Creative Commons license at create time. This enum mirrors the
+ * `ProjectCreateRequest.license` enum in
+ * `specs/006-permissions-redesign/contracts/projects.yaml` (CC0, CC-BY,
+ * CC-BY-NC, CC-BY-SA).
+ */
+export type ProjectLicense = 'CC0' | 'CC-BY' | 'CC-BY-NC' | 'CC-BY-SA';
 
 /**
  * Project entity
+ *
+ * `restricted_config` and `restricted_config_version` were added by
+ * the Permissions Redesign (Phase 8 / FR-014, FR-024). They are
+ * optional on this type for backwards compatibility — the backend
+ * always returns them on the redesigned `/projects` endpoints, but
+ * older response shapes may omit them. UI code that surfaces the
+ * toggles MUST check for presence and fall back to a Public-style
+ * UI when missing.
  */
+/**
+ * Public-safe owner sub-object embedded in `Project`.
+ *
+ * Mirrors `PublicOwnerResponse` in
+ * `apps/api/echoroo/schemas/project.py`. Phase 5 polish round 2 /
+ * FR-030 deliberately strips PII (`email`, `last_login_at`,
+ * `created_at`) from the owner so Guest callers on Public + Active
+ * projects cannot pivot from a project response into the owner's
+ * private profile. The display string + opaque ID is enough for a "by
+ * <author>" byline.
+ *
+ * If the backend ever surfaces a contact email (via a privileged route
+ * such as `GET /projects/{id}/owner-contact` for Authenticated callers
+ * on Restricted projects, US4 AC2), it will be added here as an
+ * **optional** field — the default shape stays PII-free.
+ */
+export interface ProjectOwner {
+  id: string;
+  display_name: string | null;
+  /**
+   * Optional contact email for the owner. Currently never populated by
+   * the public list / detail surfaces (FR-030). Reserved for a future
+   * privileged contact route — see the T411 mailto: implementation in
+   * `routes/(app)/projects/[id]/+page.svelte`, which falls back to a
+   * "no public contact" notice when this is absent.
+   */
+  email?: string | null;
+}
+
 export interface Project {
   id: string;
   name: string;
   description?: string;
   target_taxa?: string;
   visibility: ProjectVisibility;
-  owner: User;
+  license?: ProjectLicense | string;
+  /**
+   * Project status (Phase 9 / FR-019). Optional for backwards
+   * compatibility — older detail responses may omit it.
+   */
+  status?: ProjectStatus;
+  /**
+   * Owner sub-object — public-safe (FR-030). See `ProjectOwner`.
+   */
+  owner: ProjectOwner;
   created_at: string;
   updated_at: string;
+  /** Restricted-mode capability toggles (FR-014). */
+  restricted_config?: RestrictedConfig;
+  /** Monotonic version bumped on every restricted-config PATCH (FR-024). */
+  restricted_config_version?: number;
+  /**
+   * Caller's effective project role (Phase 9 polish round 2 Major 2,
+   * FR-014). Resolved server-side from the (project, current_user) pair
+   * so the Web UI can gate the Restricted "Request access" callout on
+   * a single field instead of probing the admin-only `GET /members`
+   * endpoint (which 403s for Members / Viewers and would silently put
+   * every Member in the non-member bucket).
+   *
+   * `null` for Guest and for Authenticated non-members; one of
+   * `"owner" | "admin" | "member" | "viewer"` otherwise.
+   */
+  current_user_role?: 'owner' | 'admin' | 'member' | 'viewer' | null;
 }
 
 /**
@@ -348,13 +464,18 @@ export interface Project {
 export type ProjectResponse = Project;
 
 /**
- * Project create request
+ * Project create request.
+ *
+ * `visibility` and `license` are both required by the contract
+ * (`specs/006-permissions-redesign/contracts/projects.yaml`,
+ * `ProjectCreateRequest.required = [name, visibility, license]`).
  */
 export interface ProjectCreateRequest {
   name: string;
   description?: string;
   target_taxa?: string;
-  visibility?: ProjectVisibility;
+  visibility: ProjectVisibility;
+  license: ProjectLicense;
 }
 
 /**
@@ -365,10 +486,78 @@ export interface ProjectUpdateRequest {
   description?: string;
   target_taxa?: string;
   visibility?: ProjectVisibility;
+  license?: ProjectLicense;
 }
 
 /**
- * Project list response with pagination
+ * Project lifecycle status (Phase 9 / FR-019).
+ *
+ * Mirrors `ProjectStatus` in `apps/api/echoroo/models/enums.py` and the
+ * `status` enum in `contracts/projects.yaml` (`active`, `dormant`,
+ * `archived`).
+ */
+export type ProjectStatus = 'active' | 'dormant' | 'archived';
+
+/**
+ * Project summary returned by `GET /projects` list endpoints (Phase 9 /
+ * FR-018, FR-019, FR-030).
+ *
+ * Mirrors `ProjectSummary` at
+ * `specs/006-permissions-redesign/contracts/projects.yaml` (lines
+ * 384-395) and the backend `ProjectSummary` Pydantic model
+ * (`apps/api/echoroo/schemas/project.py`). Deliberately omits
+ * `restricted_config`, `restricted_config_version`, the `owner`
+ * sub-object (only `owner_display_name` is exposed), and timestamps so
+ * Guest enumeration of Restricted projects (FR-019) cannot leak any
+ * field beyond the documented summary slot.
+ */
+export interface ProjectSummary {
+  id: string;
+  name: string;
+  description: string | null;
+  visibility: ProjectVisibility;
+  status: ProjectStatus;
+  license: ProjectLicense;
+  /**
+   * Public-safe display string for the owner. Falls back to the
+   * local-part of the email on the backend so this is **never** the
+   * full email address (FR-030).
+   */
+  owner_display_name: string;
+  /** Number of Datasets attached to this project. */
+  dataset_count: number;
+  /**
+   * Up to 5 most-frequent species labels for the project (Phase 11
+   * backlog — backend currently emits an empty array).
+   */
+  species_preview: string[];
+}
+
+/**
+ * Paginated `ProjectSummary` list response — the canonical list contract
+ * (Phase 9 / FR-018, FR-019).
+ *
+ * Mirrors `ProjectListResponse` at
+ * `contracts/projects.yaml:374-382`. The contract intentionally exposes
+ * only `items / total / page` — no `limit` field — because the page
+ * size is known from the request query and never echoed back. Do not
+ * extend this with `limit` to "match" `PaginationMeta`; that would
+ * drift from the contract.
+ */
+export interface ProjectSummaryListResponse {
+  items: ProjectSummary[];
+  total: number;
+  page: number;
+}
+
+/**
+ * @deprecated Phase 9 / FR-018, FR-019 — public list surfaces
+ * (`/api/v1/projects` and `/web-api/v1/projects`) now return
+ * `ProjectSummaryListResponse` instead, so the Restricted enumeration
+ * contract cannot leak `restricted_config` or any field beyond the
+ * documented summary slot. This type is kept only for any in-tree
+ * helper that still wants the full body alongside pagination metadata
+ * (e.g., admin tooling); do not add new references.
  */
 export interface ProjectListResponse extends PaginationMeta {
   items: Project[];
@@ -384,9 +573,18 @@ export interface ProjectListResponse extends PaginationMeta {
 export interface ProjectOverviewSite {
   id: string;
   name: string;
-  h3_index: string;
-  latitude: number | null;
-  longitude: number | null;
+  /**
+   * Phase 13 P4 / T807 (2026-04-28): canonical Site H3 field is
+   * `h3_index_member` (matches ORM column + spec data-model §3.10).
+   * Permissions redesign Round 2: raw `latitude` / `longitude` are no
+   * longer surfaced on the frontend. All spatial signal flows through
+   * `h3_index_member`; consumers that need a centre point should
+   * derive it via `h3-js`'s `cellToLatLng`. This keeps FR-030
+   * enforcement uniform and prevents bypassing the auto-obscure
+   * pipeline by holding onto stale member-precise coordinates
+   * client-side.
+   */
+  h3_index_member: string;
   recording_count: number;
   dataset_count: number;
 }
@@ -413,6 +611,115 @@ export interface ProjectOverviewResponse {
   total_sites: number;
   /** Total duration in seconds */
   total_duration: number;
+}
+
+// ============================================
+// Trusted User Types (Phase 10 / FR-041-046, FR-050)
+// ============================================
+
+/**
+ * Trusted overlay status. Mirrors the backend ``ProjectTrustedStatus``
+ * enum in ``apps/api/echoroo/models/enums.py`` and the
+ * ``TrustedUserResponse`` payload from
+ * ``specs/006-permissions-redesign/contracts/trusted.yaml``.
+ *
+ * - ``active``  — overlay is in effect
+ * - ``expired`` — ``expires_at`` reached (FR-044, auto-expire worker)
+ * - ``revoked`` — Owner explicitly revoked via DELETE (FR-046)
+ */
+export type ProjectTrustedStatus = 'active' | 'expired' | 'revoked';
+
+/**
+ * Permission name allowed on a Trusted invitation. Matches
+ * ``TRUSTED_ALLOWED_PERMISSIONS`` (FR-012) — a strict subset of the
+ * full Permission enum that the Owner may grant ephemerally.
+ */
+export type TrustedGrantedPermission =
+  | 'view_media'
+  | 'view_detection'
+  | 'view_precise_location'
+  | 'download'
+  | 'export'
+  | 'search_within_project'
+  | 'vote'
+  | 'comment';
+
+/**
+ * Single Trusted overlay row returned by ``GET /projects/{id}/trusted-users``.
+ */
+export interface TrustedUser {
+  id: string;
+  project_id: string;
+  user_id: string;
+  invitation_id: string;
+  granted_by_id: string;
+  granted_at: string;
+  expires_at: string;
+  status: ProjectTrustedStatus;
+  granted_permissions: TrustedGrantedPermission[];
+  revoked_at: string | null;
+}
+
+/**
+ * ``GET /projects/{id}/trusted-users`` envelope.
+ */
+export interface TrustedUserListResponse {
+  items: TrustedUser[];
+  total: number;
+}
+
+/**
+ * Body for ``POST /projects/{id}/trusted-users`` (Owner only).
+ *
+ * - ``duration_seconds`` — 1 second to 1 year (FR-043, default 90 days
+ *   on the backend; the Web UI defaults to 7 776 000 = 90 days).
+ * - ``granted_permissions`` — non-empty subset of
+ *   :type:`TrustedGrantedPermission`.
+ */
+export interface TrustedUserInviteRequest {
+  email: string;
+  granted_permissions: TrustedGrantedPermission[];
+  duration_seconds: number;
+}
+
+/**
+ * ``POST /projects/{id}/trusted-users`` 202 response. The plain-text
+ * invitation token is delivered out-of-band via email (FR-051) — only
+ * ``invitation_id`` leaves the API surface.
+ */
+export interface TrustedUserInviteResponse {
+  invitation_id: string;
+}
+
+/**
+ * Body for ``PATCH /projects/{id}/trusted-users/{trustedUserId}``
+ * (Owner only).
+ *
+ * Per the contract (``specs/006-permissions-redesign/contracts/trusted.yaml``)
+ * the only writable fields are ``expires_at`` (ISO-8601 datetime — the
+ * absolute new expiry, ``granted_at + 1 year`` upper bound) and
+ * ``granted_permissions`` (allowlist re-validated server-side). The Round 1
+ * "Major 4" finding flagged ``extension_seconds`` as contract-non-compliant;
+ * UI components compute the new ISO timestamp client-side from the
+ * datetime-local picker and send it via ``expires_at``.
+ */
+export interface TrustedUserUpdateRequest {
+  expires_at?: string | null;
+  granted_permissions?: TrustedGrantedPermission[] | null;
+}
+
+/**
+ * ``POST /projects/{project_id}/invitations/{token}/accept`` response.
+ *
+ * Backend echoes ``kind`` (``member`` or ``trusted``) plus the project_id;
+ * for Trusted invitations the ``trusted_user_id`` is also returned, and
+ * for Member invitations the ``member_id``.
+ */
+export interface InvitationAcceptResponse {
+  kind: 'member' | 'trusted';
+  project_id: string;
+  member_id?: string;
+  trusted_user_id?: string;
 }
 
 // ============================================

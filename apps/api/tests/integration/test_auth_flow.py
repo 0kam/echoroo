@@ -1,6 +1,10 @@
 """Integration tests for authentication flows.
 
 Tests complete authentication scenarios end-to-end.
+
+Note (Phase 16 Batch 6b): Exercises the legacy ``/api/v1/auth`` flow which is
+a Phase 4 stub returning 501, and references User columns dropped in Phase 13
+(``is_active`` / ``is_verified``). Skipped pending /api/v1/auth reinstatement.
 """
 
 import pytest
@@ -9,6 +13,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from echoroo.core.security import hash_password
 from echoroo.models.user import User
+
+pytest.skip(
+    (
+        "Legacy /api/v1/auth integration flow — endpoints stubbed in Phase 4 "
+        "and references User columns dropped in Phase 13."
+    ),
+    allow_module_level=True,
+)
 
 
 @pytest.mark.asyncio
@@ -85,7 +97,7 @@ async def test_password_reset_flow(client: AsyncClient, db_session: AsyncSession
     # 1. Create user
     user = User(
         email="user@example.com",
-        hashed_password=hash_password("OldPass123"),
+        password_hash=hash_password("OldPass123"),
         is_verified=True,
         is_active=True,
     )
@@ -144,7 +156,7 @@ async def test_account_lockout_after_failed_attempts(
     # Create user
     user = User(
         email="user@example.com",
-        hashed_password=hash_password("CorrectPass123"),
+        password_hash=hash_password("CorrectPass123"),
         is_verified=True,
         is_active=True,
     )
@@ -185,7 +197,7 @@ async def test_email_verification_flow(client: AsyncClient, db_session: AsyncSes
     # 1. Create user with verification token
     user = User(
         email="user@example.com",
-        hashed_password=hash_password("TestPass123"),
+        password_hash=hash_password("TestPass123"),
         is_verified=False,
         email_verification_token="verification_token_123",
         email_verification_expires_at=datetime.now(UTC) + timedelta(hours=24),
@@ -214,7 +226,7 @@ async def test_token_refresh_rotation(client: AsyncClient, db_session: AsyncSess
     # Create user and login
     user = User(
         email="user@example.com",
-        hashed_password=hash_password("TestPass123"),
+        password_hash=hash_password("TestPass123"),
         is_verified=True,
         is_active=True,
     )

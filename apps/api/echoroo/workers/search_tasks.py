@@ -11,13 +11,20 @@ import json
 import logging
 import shutil
 import time
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from uuid import UUID
 
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from echoroo.core.s3 import (
+    S3ObjectMeta,
+    delete_objects_batch,
+    delete_objects_by_prefix,
+    list_objects_paginated,
+)
 from echoroo.core.settings import get_settings
 from echoroo.workers.celery_app import app
 from echoroo.workers.db_utils import get_worker_engine_and_session_factory
@@ -126,8 +133,14 @@ async def _run_batch_search(
             service = SimilaritySearchService(db)
 
             # Update session status to RUNNING
+            # Scope lookup by (celery_job_id, project_id) to match other call sites
+            # (api/v1/search/batch.py, services/search_session.py) and provide
+            # defence-in-depth beyond the unique constraint on celery_job_id.
             session_result = await db.execute(
-                select(SearchSession).where(SearchSession.celery_job_id == job_id)
+                select(SearchSession).where(
+                    SearchSession.celery_job_id == job_id,
+                    SearchSession.project_id == UUID(project_id),
+                )
             )
             search_session = session_result.scalar_one_or_none()
             if search_session is not None:
@@ -568,6 +581,13 @@ async def _run_batch_search_with_progress(
         best_by_candidate: dict[str, dict[str, Any]] = {}
 
         for qv in query_vectors:
+            # Phase 9 polish round 2 Major 1: this Celery batch worker is
+            # invoked from an in-project context (the request was already
+            # authorised against ``project_id`` upstream). Members must
+            # keep seeing detections regardless of the Restricted
+            # ``allow_detection_view`` toggle (FR-019 / FR-020), so we
+            # opt out of the SQL gate that ``search_by_vector`` now
+            # applies by default after Phase 9 (Major 1).
             vec_results = await service.search_by_vector(
                 project_id=project_id,
                 query_vector=qv,
@@ -575,6 +595,7 @@ async def _run_batch_search_with_progress(
                 limit=request.limit_per_species * 3,
                 min_similarity=request.min_similarity,
                 dataset_id=dataset_id,
+                respect_restricted_toggle=False,
             )
             for sim_result in vec_results:
                 candidate_key = str(sim_result.embedding_id)
@@ -624,3 +645,349 @@ async def _run_batch_search_with_progress(
         "total_matches": total_matches,
         "search_duration_ms": elapsed_ms,
     }
+
+
+# ---------------------------------------------------------------------------
+# Orphan S3 janitor for search_reference/ prefix
+# ---------------------------------------------------------------------------
+
+SEARCH_REFERENCE_PREFIX = "search_reference/"
+
+
+def _parse_search_reference_key(key: str) -> tuple[UUID, str, str] | None:
+    """Parse a search_reference/{project_uuid}/{job_id}/{file} key.
+
+    Returns (project_id, job_id, file_part) or None if the key does not match
+    the expected layout or has a non-UUID project_id. Non-UUID project_id
+    values are treated as malformed and skipped to avoid accidental deletion
+    of unrelated legacy keys.
+    """
+    if not key.startswith(SEARCH_REFERENCE_PREFIX):
+        return None
+    remainder = key[len(SEARCH_REFERENCE_PREFIX) :]
+    parts = remainder.split("/", 2)
+    if len(parts) < 3:
+        return None
+    try:
+        project_id = UUID(parts[0])
+    except ValueError:
+        return None
+    job_id = parts[1]
+    if not job_id:
+        return None
+    return (project_id, job_id, parts[2])
+
+
+def _extract_species_config_s3_keys(species_config: Any) -> list[str]:
+    """Extract all s3_key values from a species_config JSONB structure.
+
+    Expected shape: list[{"sources": [{"s3_key": "..."}, ...], ...}, ...].
+    Defensive against None / non-list inputs and malformed nested shapes.
+    """
+    if not species_config or not isinstance(species_config, list):
+        return []
+    keys: list[str] = []
+    for species in species_config:
+        if not isinstance(species, dict):
+            continue
+        sources = species.get("sources")
+        if not isinstance(sources, list):
+            continue
+        for source in sources:
+            if not isinstance(source, dict):
+                continue
+            s3_key = source.get("s3_key")
+            if isinstance(s3_key, str) and s3_key:
+                keys.append(s3_key)
+    return keys
+
+
+async def _collect_db_reference_state(
+    db: AsyncSession,
+) -> tuple[set[str], set[tuple[UUID, str]]]:
+    """Collect known S3 keys and (project_id, celery_job_id) tuples from the DB.
+
+    Returns:
+        Tuple of ``(known_keys, known_job_prefixes)`` where:
+          - ``known_keys``: all S3 keys referenced by any SearchSession (via
+            ``reference_audio_keys`` or ``species_config[*].sources[*].s3_key``).
+          - ``known_job_prefixes``: ``(project_id, celery_job_id)`` pairs for
+            sessions that have a celery_job_id, used to short-circuit Case A
+            prefix-level deletion so we never delete the prefix of an active /
+            recorded session.
+    """
+    from echoroo.models.search_session import SearchSession
+
+    stmt = select(
+        SearchSession.project_id,
+        SearchSession.celery_job_id,
+        SearchSession.reference_audio_keys,
+        SearchSession.species_config,
+    )
+    result = await db.execute(stmt)
+    known_keys: set[str] = set()
+    known_job_prefixes: set[tuple[UUID, str]] = set()
+    for project_id, celery_job_id, ref_keys, species_config in result.all():
+        if ref_keys:
+            for key in ref_keys:
+                if isinstance(key, str) and key:
+                    known_keys.add(key)
+        known_keys.update(_extract_species_config_s3_keys(species_config))
+        if celery_job_id:
+            known_job_prefixes.add((project_id, str(celery_job_id)))
+    return known_keys, known_job_prefixes
+
+
+def _classify_orphans(
+    aged_objects: list[S3ObjectMeta],
+    known_keys: set[str],
+    known_job_prefixes: set[tuple[UUID, str]],
+) -> tuple[dict[tuple[UUID, str], list[S3ObjectMeta]], list[S3ObjectMeta]]:
+    """Classify orphan S3 objects into prefix-level and individual deletions.
+
+    Prefix-level candidates are job prefixes where:
+      - ``(project_id, job_id)`` is not in ``known_job_prefixes`` (no session
+        with this celery_job_id exists), AND
+      - none of the keys under this prefix are in ``known_keys``.
+
+    Individual candidates are orphan keys under prefixes that have at least
+    some DB-referenced keys (Case B/C mixed-state prefixes), or whose job
+    prefix matches an active session.
+
+    Keys whose prefix cannot be parsed are skipped entirely — they are not
+    considered orphans and are not deleted by this janitor.
+    """
+    grouped: dict[tuple[UUID, str], list[S3ObjectMeta]] = {}
+    for obj in aged_objects:
+        parsed = _parse_search_reference_key(obj.key)
+        if parsed is None:
+            logger.debug("janitor: skipping unparseable key: %s", obj.key)
+            continue
+        project_id, job_id, _ = parsed
+        grouped.setdefault((project_id, job_id), []).append(obj)
+
+    prefix_groups: dict[tuple[UUID, str], list[S3ObjectMeta]] = {}
+    individual: list[S3ObjectMeta] = []
+    for (project_id, job_id), objs in grouped.items():
+        if (project_id, job_id) in known_job_prefixes:
+            # A session exists for this job; delete only keys NOT referenced.
+            for obj in objs:
+                if obj.key not in known_keys:
+                    individual.append(obj)
+            continue
+        # No session with this celery_job_id. If ANY key under this prefix is
+        # still referenced (e.g. a rerun copied it forward) keep safely and
+        # delete only the unreferenced subset individually.
+        any_referenced = any(obj.key in known_keys for obj in objs)
+        if any_referenced:
+            for obj in objs:
+                if obj.key not in known_keys:
+                    individual.append(obj)
+        else:
+            prefix_groups[(project_id, job_id)] = objs
+    return prefix_groups, individual
+
+
+async def _run_orphan_search_reference_cleanup() -> dict[str, Any]:
+    """Async implementation of the orphan janitor for search_reference/ prefix.
+
+    Ordering:
+      1. List S3 objects under ``search_reference/`` BEFORE reading the DB.
+         This biases the race toward false NEGATIVES (miss some orphans this
+         run, pick them up next run) rather than false positives (deleting
+         a key that was just committed to the DB).
+      2. Read DB reference state.
+      3. Age filter (default ``JANITOR_AGE_HOURS`` = 24h).
+      4. Classify into prefix-level vs individual deletions.
+      5. Delete (or log-only when ``JANITOR_DRY_RUN`` is true).
+    """
+    settings = get_settings()
+    dry_run = settings.JANITOR_DRY_RUN
+    cutoff = datetime.now(UTC) - timedelta(hours=settings.JANITOR_AGE_HOURS)
+
+    # Step 1: list S3 objects FIRST (before DB read).
+    all_objects = list(list_objects_paginated(SEARCH_REFERENCE_PREFIX))
+    total_scanned = len(all_objects)
+
+    # Step 2: read DB reference state AFTER the S3 list has been materialised.
+    engine, session_factory = get_worker_engine_and_session_factory()
+    try:
+        async with session_factory() as db:
+            known_keys, known_job_prefixes = await _collect_db_reference_state(db)
+    finally:
+        await engine.dispose()
+
+    # Step 3: age filter.
+    aged = [obj for obj in all_objects if obj.last_modified < cutoff]
+
+    # Step 4: classify.
+    prefix_groups, individual_orphans = _classify_orphans(
+        aged, known_keys, known_job_prefixes
+    )
+
+    prefix_delete_count = sum(len(objs) for objs in prefix_groups.values())
+    total_orphan_keys = prefix_delete_count + len(individual_orphans)
+
+    if dry_run:
+        logger.info(
+            "janitor: DRY RUN -- would delete %d prefix groups (%d keys) + %d individual keys",
+            len(prefix_groups),
+            prefix_delete_count,
+            len(individual_orphans),
+        )
+        for (pid, jid), objs in prefix_groups.items():
+            logger.info(
+                "janitor: DRY RUN prefix delete search_reference/%s/%s/ (%d keys)",
+                pid,
+                jid,
+                len(objs),
+            )
+        for obj in individual_orphans[:50]:  # truncate log volume
+            logger.info("janitor: DRY RUN individual delete %s", obj.key)
+        return {
+            "dry_run": True,
+            "total_scanned": total_scanned,
+            "prefix_groups": len(prefix_groups),
+            "prefix_keys": prefix_delete_count,
+            "individual_keys": len(individual_orphans),
+            "deleted": 0,
+            "failed": 0,
+        }
+
+    deleted_count = 0
+    failed_count = 0
+
+    # Case A optimisation: prefix-level bulk delete.
+    for (pid, jid), objs in prefix_groups.items():
+        try:
+            n = delete_objects_by_prefix(f"{SEARCH_REFERENCE_PREFIX}{pid}/{jid}/")
+            deleted_count += n
+            logger.info(
+                "janitor: prefix deleted search_reference/%s/%s/ (%d keys)",
+                pid,
+                jid,
+                n,
+            )
+        except Exception as exc:  # best-effort; next run picks it up
+            failed_count += len(objs)
+            logger.warning(
+                "janitor: prefix delete failed for search_reference/%s/%s/: %s",
+                pid,
+                jid,
+                exc,
+            )
+
+    # Case B/C: individual keys, chunked to 1000 per s3:DeleteObjects call.
+    chunk_size = 1000
+    for i in range(0, len(individual_orphans), chunk_size):
+        chunk = individual_orphans[i : i + chunk_size]
+        keys = [obj.key for obj in chunk]
+        try:
+            result = delete_objects_batch(keys)
+            deleted_count += len(result.deleted)
+            failed_count += len(result.errors)
+            if result.errors:
+                sample = [(e.key, e.code, e.message) for e in result.errors[:10]]
+                logger.warning(
+                    "janitor: partial batch deletion failure (%d errors); sample=%s",
+                    len(result.errors),
+                    sample,
+                )
+        except Exception as exc:
+            failed_count += len(chunk)
+            logger.warning("janitor: batch delete raised: %s", exc)
+
+    logger.info(
+        "janitor: complete. scanned=%d total_orphans=%d deleted=%d failed=%d",
+        total_scanned,
+        total_orphan_keys,
+        deleted_count,
+        failed_count,
+    )
+
+    return {
+        "dry_run": False,
+        "total_scanned": total_scanned,
+        "prefix_groups": len(prefix_groups),
+        "prefix_keys": prefix_delete_count,
+        "individual_keys": len(individual_orphans),
+        "deleted": deleted_count,
+        "failed": failed_count,
+    }
+
+
+# ---------------------------------------------------------------------------
+# FR-025a — async search-index rebuild on Restricted toggle ON->OFF
+# ---------------------------------------------------------------------------
+
+
+@app.task(name="echoroo.workers.search_tasks.rebuild_search_index_for_project")  # type: ignore[untyped-decorator]
+def rebuild_search_index_for_project(
+    project_id: str, version: int
+) -> dict[str, Any]:
+    """Rebuild search index for a project after restricted_config changes.
+
+    Phase 8 polish round 2 致命 3 — register the canonical task name so
+    :func:`echoroo.services.restricted_config_service._enqueue_search_index_rebuild`
+    has a real worker target. Without this registration the ``send_task``
+    call from the service layer would land in the broker but no consumer
+    would ever pick it up, silently dropping the FR-025a step-2 cleanup.
+
+    FR-025a step 2 (async index rebuild)
+    ------------------------------------
+
+    Step 1 (immediate exclusion) is handled at the **permission gate**
+    layer — every detection / search request reads the freshly-committed
+    ``restricted_config`` and the gate denies access when
+    ``allow_detection_view=False``. This Celery task only runs when the
+    toggle flips ``True → False`` and is responsible for purging cached
+    index entries (OpenSearch / pgvector / FTS) that may otherwise leak
+    detection rows for a few seconds after the toggle change.
+
+    Phase 11 will implement the actual rebuild; until then this task is
+    a logged no-op that ack's the message so the queue stays drained.
+
+    Args:
+        project_id: UUID string of the project whose toggles changed.
+        version: New ``restricted_config_version`` value (bumped by the
+            service). Logged so operators can correlate the rebuild with
+            the toggle change in ``project_audit_log``.
+
+    Returns:
+        Dict with ``status``, ``project_id``, ``version`` keys so Celery's
+        result backend can record the run for observability tooling.
+    """
+    logger.info(
+        "rebuild_search_index_for_project enqueued (Phase 11 stub): "
+        "project_id=%s version=%s",
+        project_id,
+        version,
+    )
+    return {
+        "status": "stub",
+        "project_id": project_id,
+        "version": version,
+    }
+
+
+@app.task(name="echoroo.workers.search_tasks.cleanup_orphan_search_reference")  # type: ignore[untyped-decorator]
+def cleanup_orphan_search_reference() -> dict[str, Any]:
+    """Remove orphan S3 objects under the ``search_reference/`` prefix.
+
+    Detects keys that:
+      - match ``search_reference/{valid_project_uuid}/{job_id}/{file}``
+      - are older than ``JANITOR_AGE_HOURS`` (default 24h)
+      - are not referenced by any SearchSession (via ``reference_audio_keys``
+        or ``species_config[*].sources[*].s3_key``) AND whose
+        ``(project_id, job_id)`` is not present in the known_job_prefixes set.
+
+    For job prefixes where no key is DB-referenced AND celery_job_id is
+    unknown, deletes the entire prefix in one batch (Case A optimisation).
+    Otherwise deletes individual orphan keys via s3:DeleteObjects (chunked
+    to 1000 keys per call).
+
+    Honours ``JANITOR_DRY_RUN`` (default true) to log candidates without
+    deleting.
+    """
+    logger.info("Starting orphan search_reference cleanup")
+    return asyncio.run(_run_orphan_search_reference_cleanup())

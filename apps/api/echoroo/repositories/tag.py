@@ -34,6 +34,24 @@ class TagRepository(BaseRepository[Tag]):
         )
         return result.scalar_one_or_none()
 
+    async def get_by_id_in_project(self, tag_id: UUID, project_id: UUID) -> Tag | None:
+        """Get tag by ID scoped to a project.
+
+        Args:
+            tag_id: Tag's UUID
+            project_id: Project's UUID
+
+        Returns:
+            Tag instance or None if not found in the project
+        """
+        result = await self.db.execute(
+            select(Tag)
+            .where(Tag.id == tag_id)
+            .where(Tag.project_id == project_id)
+            .options(selectinload(Tag.project))
+        )
+        return result.scalar_one_or_none()
+
     async def list_by_project(
         self,
         project_id: UUID,
@@ -114,7 +132,6 @@ class TagRepository(BaseRepository[Tag]):
         await self.db.flush()
         await self.db.refresh(tag, ["project"])
         return tag
-
 
     async def find_by_name_and_category(
         self,

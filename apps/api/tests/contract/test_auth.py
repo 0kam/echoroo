@@ -1,6 +1,17 @@
 """Contract tests for authentication endpoints.
 
 Tests that auth endpoints conform to OpenAPI specification.
+
+Note (Phase 16 Batch 6b): The legacy ``/api/v1/auth`` registration / login /
+email-verification / password-reset endpoints are Phase 4 stubs that return
+``501 NOT IMPLEMENTED`` after the permissions-redesign. The first-party
+``/web-api/v1/auth`` router is the only functional surface today (covered by
+``apps/api/tests/integration/api/web_v1/test_auth.py`` and the security suite).
+All tests in this
+module exercise the legacy contract and reference the dropped User columns
+``is_active`` / ``is_verified`` / ``email_verification_token`` /
+``email_verification_expires_at``. They are skipped here pending the
+``/api/v1/auth`` reinstatement decision (006-permissions-redesign FR-007).
 """
 
 import pytest
@@ -9,6 +20,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from echoroo.core.security import hash_password
 from echoroo.models.user import User
+
+pytest.skip(
+    (
+        "Legacy /api/v1/auth contract suite — endpoints are Phase 4 stubs and "
+        "test fixtures reference User columns dropped in Phase 13 "
+        "(is_active / is_verified / email_verification_*). Re-enable once the "
+        "/api/v1/auth surface is reinstated per FR-007."
+    ),
+    allow_module_level=True,
+)
 
 
 @pytest.mark.asyncio
@@ -38,7 +59,7 @@ async def test_register_user_email_exists(client: AsyncClient, db_session: Async
     # Create existing user
     existing_user = User(
         email="existing@example.com",
-        hashed_password=hash_password("password123"),
+        password_hash=hash_password("password123"),
         is_verified=True,
     )
     db_session.add(existing_user)
@@ -96,7 +117,7 @@ async def test_login_success(client: AsyncClient, db_session: AsyncSession) -> N
     # Create user
     user = User(
         email="user@example.com",
-        hashed_password=hash_password("TestPass123"),
+        password_hash=hash_password("TestPass123"),
         is_verified=True,
         is_active=True,
     )
@@ -127,7 +148,7 @@ async def test_login_invalid_credentials(client: AsyncClient, db_session: AsyncS
     # Create user
     user = User(
         email="user@example.com",
-        hashed_password=hash_password("CorrectPass123"),
+        password_hash=hash_password("CorrectPass123"),
         is_verified=True,
         is_active=True,
     )
@@ -160,7 +181,7 @@ async def test_login_inactive_user(client: AsyncClient, db_session: AsyncSession
     """Test login with inactive account returns 403."""
     user = User(
         email="inactive@example.com",
-        hashed_password=hash_password("TestPass123"),
+        password_hash=hash_password("TestPass123"),
         is_verified=True,
         is_active=False,
     )
@@ -185,7 +206,7 @@ async def test_logout_success(client: AsyncClient, db_session: AsyncSession) -> 
     # Create user and login
     user = User(
         email="user@example.com",
-        hashed_password=hash_password("TestPass123"),
+        password_hash=hash_password("TestPass123"),
         is_verified=True,
         is_active=True,
     )
@@ -227,7 +248,7 @@ async def test_refresh_token_success(client: AsyncClient, db_session: AsyncSessi
     # Create user and login
     user = User(
         email="user@example.com",
-        hashed_password=hash_password("TestPass123"),
+        password_hash=hash_password("TestPass123"),
         is_verified=True,
         is_active=True,
     )
@@ -277,7 +298,7 @@ async def test_password_reset_request(client: AsyncClient, db_session: AsyncSess
     # Create user
     user = User(
         email="user@example.com",
-        hashed_password=hash_password("TestPass123"),
+        password_hash=hash_password("TestPass123"),
         is_verified=True,
         is_active=True,
     )
@@ -307,7 +328,7 @@ async def test_verify_email(client: AsyncClient, db_session: AsyncSession) -> No
     # Create user with verification token
     user = User(
         email="user@example.com",
-        hashed_password=hash_password("TestPass123"),
+        password_hash=hash_password("TestPass123"),
         is_verified=False,
         email_verification_token="valid_token_123",
         email_verification_expires_at=datetime.now(UTC) + timedelta(hours=24),
@@ -343,7 +364,7 @@ async def test_verify_email_expired_token(client: AsyncClient, db_session: Async
     # Create user with expired verification token
     user = User(
         email="user@example.com",
-        hashed_password=hash_password("TestPass123"),
+        password_hash=hash_password("TestPass123"),
         is_verified=False,
         email_verification_token="expired_token",
         email_verification_expires_at=datetime.now(UTC) - timedelta(hours=1),

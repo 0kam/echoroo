@@ -45,7 +45,7 @@
             <h3 class="m-0 mb-1 text-base font-semibold text-stone-900">{site.name}</h3>
             <p class="m-0 mb-1 text-xs text-stone-500">
               H3:
-              <code class="rounded bg-stone-100 px-1 py-0.5 font-mono">{site.h3_index}</code>
+              <code class="rounded bg-stone-100 px-1 py-0.5 font-mono">{site.h3_index_member}</code>
             </p>
             <p class="m-0 text-xs text-stone-400">Created: {formatDate(site.created_at)}</p>
           </div>

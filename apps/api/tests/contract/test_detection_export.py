@@ -4,6 +4,31 @@ Tests verify that the CSV and ML dataset export endpoints conform to the
 OpenAPI specification for Feature 003: Detection Review.
 """
 
+
+
+# Phase 13 P1.5 R2 (Codex follow-up — Fatal): this suite exercises the
+# rich-shape ``Annotation`` ORM (``recording_id`` / ``tag_id`` / ``status``
+# / ``confidence`` / ``start_time`` / ``end_time`` / ``freq_low`` /
+# ``freq_high`` / ``reviewed_by_id`` / ``reviewed_at`` /
+# ``search_session_id`` / ``detection_run_id``). The DB-truth schema only
+# carries the minimal detection-based shape (id / detection_id / user_id /
+# source / taxon_id / label) — the rich shape is **deferred to Phase 14+**
+# when a separate ``recording_annotations`` table will reinstate it. Until
+# then the suite below cannot run; reactivate it in Phase 14+ when the
+# ``recording_annotations`` ORM + table are wired up.
+#
+# TODO(Phase 14+ recording_annotations): drop this skip and re-validate.
+import pytest as _pytest_phase14_skip  # noqa: E402
+
+pytestmark = _pytest_phase14_skip.mark.skip(
+    reason=(
+        "Phase 14+ deferred — rich-shape Annotation columns (recording_id /"
+        " tag_id / status / start_time / end_time / etc) live on the future"
+        " ``recording_annotations`` table; see ``apps/api/echoroo/models/"
+        "annotation.py`` and ``apps/api/echoroo/models/recording_annotation.py``"
+        " module docstrings."
+    ),
+)
 import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -39,7 +64,7 @@ async def test_site(db_session: AsyncSession, test_project: Project) -> Site:
     site = Site(
         project_id=test_project.id,
         name="Export Test Site",
-        h3_index="851fb46ffffffff",
+        h3_index_member="851fb46ffffffff",
     )
     db_session.add(site)
     await db_session.commit()

@@ -1,0 +1,49 @@
+# Allowlist for scripts/assert_openapi_no_coords.py.
+#
+# Each non-empty / non-comment line is a JSONPath PREFIX. Any hit whose
+# rendered path begins with the prefix is dropped from the violation
+# list. The Phase 2.10 #7 baseline allowlists the legacy schemas that
+# still expose lat/lng so the strict gate can run on every push while
+# Phase 3 US11 rewrites each schema to ``h3_index`` only.
+#
+# Allowlist baseline established 2026-04-25; Phase 3 must drive each
+# entry to empty before final cleanup.
+#
+# Format:
+#   * One JSONPath prefix per line.
+#   * Lines beginning with `#` are comments.
+#   * Trailing whitespace is ignored.
+
+# legacy: cleaned in Phase 3 US11 T1xx — GeometrySchema GeoJSON
+# coordinates array. Used by the legacy site-geometry endpoint; Phase 3
+# will switch to a h3_index-only contract.
+$.components.schemas.GeometrySchema.properties.coordinates
+$.components.schemas.GeometrySchema.required
+
+# legacy: cleaned in Phase 3 US11 T1xx — H3 conversion utility schemas.
+# These genuinely need lat/lng input because they are the H3-conversion
+# endpoint, but the routes will be moved behind admin-only guards in
+# Phase 3 and the schemas renamed to internal-only.
+$.components.schemas.H3FromCoordinatesRequest.properties.latitude
+$.components.schemas.H3FromCoordinatesRequest.properties.longitude
+$.components.schemas.H3FromCoordinatesRequest.required
+$.components.schemas.H3FromCoordinatesResponse.properties.latitude
+$.components.schemas.H3FromCoordinatesResponse.properties.longitude
+$.components.schemas.H3FromCoordinatesResponse.required
+$.components.schemas.H3ValidationResponse.properties.latitude
+$.components.schemas.H3ValidationResponse.properties.longitude
+
+# legacy: cleaned in Phase 3 US11 T1xx — Site response schemas predate
+# H3 redesign; Phase 3 rewrites these to h3_index only.
+$.components.schemas.ProjectOverviewSite.properties.latitude
+$.components.schemas.ProjectOverviewSite.properties.longitude
+$.components.schemas.ProjectOverviewSite.required
+$.components.schemas.SiteDetailResponse.properties.latitude
+$.components.schemas.SiteDetailResponse.properties.longitude
+
+# legacy: cleaned in Phase 3 US11 T1xx — XenoCantoRecording is a third-
+# party data shape; once the admin-only gate is wired in Phase 3 the
+# raw lat/lng can be retained internally and stripped at the response
+# boundary.
+$.components.schemas.XenoCantoRecording.properties.latitude
+$.components.schemas.XenoCantoRecording.properties.longitude

@@ -1,13 +1,16 @@
 """Pytest configuration and fixtures."""
 
 import os
+import tempfile
 from collections.abc import AsyncGenerator
+from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
 import pytest
 import sqlalchemy as sa
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -16,9 +19,12 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.pool import NullPool
 
+from echoroo.api.v1.recordings import get_audio_service
 from echoroo.core.database import get_db
+from echoroo.core.settings import get_settings
 from echoroo.main import create_app
 from echoroo.models.base import Base
+from echoroo.services.audio import AudioService
 
 # Test database URL — override via TEST_DATABASE_URL env var to allow running
 # from inside Docker containers where the DB is accessible via a service hostname
@@ -62,6 +68,23 @@ async def setup_test_database(engine: AsyncEngine) -> None:
        missing → targeted migration using the idempotent DO-block enum helper
        and raw CREATE TABLE SQL so that existing indexes are not touched.
     """
+    # Phase 13 P1 R2 致命 #1: register a stub ``superusers`` Table on
+    # ``Base.metadata`` *unconditionally*, even when the DB-side schema is
+    # already up to date. The stub is process-local (resets on every fresh
+    # interpreter) and is needed by every ORM operation that walks the
+    # ``system_settings.updated_by_id`` FK — including tests that run
+    # *after* a previous test already populated the schema. Skipping this
+    # block when the early-return below fires would leave subsequent ORM
+    # operations exposed to ``NoReferencedTableError`` from
+    # ``sort_tables_and_constraints``.
+    if "superusers" not in Base.metadata.tables:
+        sa.Table(
+            "superusers",
+            Base.metadata,
+            sa.Column("id", PgUUID(as_uuid=True), primary_key=True),
+            sa.Column("user_id", PgUUID(as_uuid=True), nullable=False),
+            info={"_phase13_stub": True},
+        )
     async with engine.connect() as conn:
         core_exists_result = await conn.execute(
             sa.text(
@@ -77,7 +100,114 @@ async def setup_test_database(engine: AsyncEngine) -> None:
         )
         search_exists = bool(search_exists_result.scalar())
 
-    if core_exists and search_exists:
+        # Phase 11: taxon auto-obscure tables (006-permissions-redesign).
+        taxon_sensitivity_exists_result = await conn.execute(
+            sa.text(
+                "SELECT EXISTS (SELECT 1 FROM information_schema.tables"
+                " WHERE table_name = 'taxon_sensitivities')"
+            )
+        )
+        taxon_sensitivity_exists = bool(taxon_sensitivity_exists_result.scalar())
+
+        # Phase 12 R1: outbox_events lives only in Alembic 0001 (no ORM
+        # model yet) so it must be created explicitly when missing.
+        outbox_exists_result = await conn.execute(
+            sa.text(
+                "SELECT EXISTS (SELECT 1 FROM information_schema.tables"
+                " WHERE table_name = 'outbox_events')"
+            )
+        )
+        outbox_exists = bool(outbox_exists_result.scalar())
+
+        # Phase 12 R2: ``superusers`` (Alembic 0001, no ORM model) is
+        # probed by every authenticated request — must exist in the
+        # test DB.
+        superusers_exists_result = await conn.execute(
+            sa.text(
+                "SELECT EXISTS (SELECT 1 FROM information_schema.tables"
+                " WHERE table_name = 'superusers')"
+            )
+        )
+        superusers_exists = bool(superusers_exists_result.scalar())
+
+        # Phase 15 NO-GO: ``superuser_approval_requests`` is the M-of-N
+        # ticket store created in :mod:`apps/api/alembic/versions/0001`
+        # and DDL-mirrored in this conftest. Probe it explicitly so an
+        # existing test DB that pre-dates the Phase 15 batch gets the
+        # CREATE TABLE block re-run.
+        approval_requests_exists_result = await conn.execute(
+            sa.text(
+                "SELECT EXISTS (SELECT 1 FROM information_schema.tables"
+                " WHERE table_name = 'superuser_approval_requests')"
+            )
+        )
+        approval_requests_exists = bool(
+            approval_requests_exists_result.scalar()
+        )
+
+        # Phase 16 Batch 6g-2: ``platform_audit_log`` and ``project_audit_log``
+        # are created by Alembic 0001 (no ORM model). The T993/T993a performance
+        # tests write directly to these tables via ``AuditLogService``.
+        platform_audit_log_exists_result = await conn.execute(
+            sa.text(
+                "SELECT EXISTS (SELECT 1 FROM information_schema.tables"
+                " WHERE table_name = 'platform_audit_log')"
+            )
+        )
+        platform_audit_log_exists = bool(platform_audit_log_exists_result.scalar())
+
+        project_audit_log_exists_result = await conn.execute(
+            sa.text(
+                "SELECT EXISTS (SELECT 1 FROM information_schema.tables"
+                " WHERE table_name = 'project_audit_log')"
+            )
+        )
+        project_audit_log_exists = bool(project_audit_log_exists_result.scalar())
+
+        # Phase 16 Batch 6g-2 R2 (Codex Minor 1): the early-return previously
+        # only confirmed audit-log *tables* existed — but if a prior test
+        # process aborted between CREATE TABLE and CREATE TRIGGER, the
+        # ``platform_audit_log_immutable`` / ``project_audit_log_immutable``
+        # triggers (and the ``ck_project_audit_log_project_id_required``
+        # check constraint) could be missing. Skipping the re-attach path
+        # in that state would let the T993/T993a tests DELETE rows that
+        # production code can never delete, masking real append-only
+        # contract regressions. Probe the triggers + constraint here so
+        # the schema-up-to-date predicate is genuinely complete.
+        platform_trigger_exists_result = await conn.execute(
+            sa.text(
+                "SELECT EXISTS (SELECT 1 FROM pg_trigger"
+                " WHERE tgname = 'platform_audit_log_immutable')"
+            )
+        )
+        platform_trigger_exists = bool(platform_trigger_exists_result.scalar())
+
+        project_trigger_exists_result = await conn.execute(
+            sa.text(
+                "SELECT EXISTS (SELECT 1 FROM pg_trigger"
+                " WHERE tgname = 'project_audit_log_immutable')"
+            )
+        )
+        project_trigger_exists = bool(project_trigger_exists_result.scalar())
+
+        # The check constraint may be permanently dropped by ``cleanup_test_data``
+        # (project_id null-out path) — we only require it on a *fresh* DB.
+        # If the table exists but the trigger is missing, we fall through
+        # to the full setup; the constraint absence alone does not force a
+        # re-attach.
+
+    if (
+        core_exists
+        and search_exists
+        and taxon_sensitivity_exists
+        and outbox_exists
+        and superusers_exists
+        and approval_requests_exists
+        and platform_audit_log_exists
+        and project_audit_log_exists
+        and platform_trigger_exists
+        and project_trigger_exists
+    ):
         # Schema is fully up to date — nothing to do.
         return
 
@@ -94,9 +224,14 @@ async def setup_test_database(engine: AsyncEngine) -> None:
     # so that newly added tables/enums are picked up on existing test databases.
     async with engine.begin() as conn:
         enum_defs: list[tuple[str, list[str]]] = [
-            ("projectvisibility", ["private", "public"]),
+            ("projectvisibility", ["private", "public", "restricted"]),
             ("projectrole", ["admin", "member", "viewer"]),
-            ("setting_type", ["string", "number", "boolean", "json"]),
+            ("projectmemberrole", ["admin", "member", "viewer"]),
+            ("projectstatus", ["active", "dormant", "archived"]),
+            ("projectlicense", ["CC0", "CC-BY", "CC-BY-NC", "CC-BY-SA"]),
+            # Phase 13 P1 (T803a): ``setting_type`` enum was retired together
+            # with the ``system_settings.value_type`` column when system_settings
+            # values became JSONB-native. Do not declare it here.
             ("datasetvisibility", ["private", "public"]),
             ("datasetstatus", ["pending", "scanning", "processing", "completed", "failed"]),
             ("datetimeparsestatus", ["pending", "success", "failed"]),
@@ -106,7 +241,13 @@ async def setup_test_database(engine: AsyncEngine) -> None:
             ("reviewstatus", ["unreviewed", "approved", "rejected"]),
             ("annotationsource", ["human", "model"]),
             ("geometrytype", ["BoundingBox", "TimeInterval"]),
-            ("detectionsource", ["birdnet", "perch_search", "human"]),
+            (
+                "detectionsource",
+                [
+                    "birdnet", "perch", "perch_search", "similarity_search",
+                    "custom_svm", "human", "sampling_round",
+                ],
+            ),
             ("detectionstatus", ["unreviewed", "confirmed", "rejected"]),
             ("detectionrunstatus", ["pending", "running", "completed", "failed"]),
             (
@@ -115,26 +256,283 @@ async def setup_test_database(engine: AsyncEngine) -> None:
             ),
             ("uploadfilestatus", ["pending", "uploaded", "valid", "invalid", "imported"]),
             ("searchsessionstatus", ["pending", "running", "completed", "failed"]),
+            ("votetype", ["agree", "disagree", "unsure"]),
+            (
+                "annotationvotesource",
+                ["member", "guest_authenticated", "trusted_user"],
+            ),
+            ("signalquality", ["solo", "dominant", "mixed"]),
+            ("consensusstatus", ["needs_votes", "agreed", "rejected", "disputed"]),
+            ("annotationsetstatus", ["sampling", "ready", "in_progress", "completed"]),
+            ("annotationsegmentstatus", ["unannotated", "annotated", "skipped"]),
+            # Phase 11 taxon auto-obscure enums (006-permissions-redesign)
+            ("taxonsensitivitysource", ["iucn", "moe_rdb", "manual"]),
+            ("taxonoverridedirection", ["stricter", "looser"]),
+            (
+                "taxonoverrideapprovalstatus",
+                ["applied", "pending_superuser_approval", "rejected"],
+            ),
         ]
         for type_name, values in enum_defs:
             await conn.execute(sa.text(_make_create_enum_sql(type_name, values)))
 
-        # Create all tables that don't already exist.
-        # Use checkfirst=True to skip tables that are already present so that
-        # existing indexes are not re-emitted (which would cause DuplicateTableError
-        # for tables that SQLAlchemy also generates auto-indexes for).
-        await conn.run_sync(lambda c: Base.metadata.create_all(c, checkfirst=True))
+        # Phase 13 P1 R2 致命 #1: the stub ``superusers`` Table was
+        # registered above (before the early-return) so SA can resolve the
+        # ``system_settings.updated_by_id`` FK during ``create_all``. Now
+        # we still need to CREATE the real ``superusers`` (and its parent
+        # ``users``) **before** the rest of ``create_all`` runs, so the FK
+        # constraint emitted on ``system_settings`` does not reference a
+        # missing relation.
 
+        # (b) Create ``users`` (ORM table) + raw ``superusers`` upfront.
+        users_table = Base.metadata.tables["users"]
+        await conn.run_sync(
+            lambda c: users_table.create(c, checkfirst=True)
+        )
         await conn.execute(
             sa.text(
                 """
-                INSERT INTO system_settings (key, value, value_type, description, updated_at)
-                VALUES
-                    ('registration_mode', '"open"', 'string', 'User registration mode: open or invitation', CURRENT_TIMESTAMP),
-                    ('session_timeout_minutes', '120', 'number', 'Session timeout in minutes', CURRENT_TIMESTAMP),
-                    ('allow_registration', 'true', 'boolean', 'Whether new user registration is allowed', CURRENT_TIMESTAMP),
-                    ('setup_completed', 'false', 'boolean', 'Whether initial setup has been completed', CURRENT_TIMESTAMP)
-                ON CONFLICT (key) DO NOTHING
+                CREATE TABLE IF NOT EXISTS superusers (
+                    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    user_id UUID NOT NULL UNIQUE
+                        REFERENCES users (id) ON DELETE CASCADE,
+                    added_by_id UUID NULL REFERENCES users (id),
+                    added_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                    revoked_at TIMESTAMPTZ NULL,
+                    webauthn_credentials JSONB NOT NULL DEFAULT '[]'::jsonb,
+                    allowed_ip_cidrs VARCHAR[] NOT NULL DEFAULT ARRAY[]::VARCHAR[],
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+                )
+                """
+            )
+        )
+
+        # Create remaining tables. Filter out the ``superusers`` stub —
+        # the real DDL is emitted above. Iterate ``tables.values()``
+        # (unsorted; sort still happens internally inside ``create_all``
+        # but it can now resolve the stub FK).
+        _tables_to_create = [
+            t
+            for t in Base.metadata.tables.values()
+            if not t.info.get("_phase13_stub")
+        ]
+        await conn.run_sync(
+            lambda c: Base.metadata.create_all(
+                c, tables=_tables_to_create, checkfirst=True
+            )
+        )
+
+        # Phase 12 R1 fix: ``outbox_events`` is created by Alembic
+        # migration 0001 (no SQLAlchemy ORM model exists yet) so
+        # ``Base.metadata.create_all`` does NOT pick it up. Tests that
+        # exercise the ownership_service / dormancy_check workers need
+        # the table to be present, so we create it idempotently here.
+        await conn.execute(
+            sa.text(
+                """
+                CREATE TABLE IF NOT EXISTS outbox_events (
+                    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                    event_type VARCHAR(100) NOT NULL,
+                    payload JSONB NOT NULL,
+                    status VARCHAR(20) NOT NULL DEFAULT 'pending',
+                    retry_count INTEGER NOT NULL DEFAULT 0,
+                    next_retry_at TIMESTAMPTZ NULL,
+                    processed_at TIMESTAMPTZ NULL,
+                    last_error TEXT NULL,
+                    idempotency_key VARCHAR(128) NULL UNIQUE
+                )
+                """
+            )
+        )
+        await conn.execute(
+            sa.text(
+                """
+                CREATE INDEX IF NOT EXISTS ix_superusers_revoked_at
+                ON superusers (revoked_at)
+                """
+            )
+        )
+        await conn.execute(
+            sa.text(
+                """
+                CREATE INDEX IF NOT EXISTS ix_outbox_events_status_next_retry
+                ON outbox_events (status, next_retry_at)
+                WHERE status IN ('pending', 'processing')
+                """
+            )
+        )
+        await conn.execute(
+            sa.text(
+                """
+                CREATE INDEX IF NOT EXISTS ix_outbox_events_event_type_created
+                ON outbox_events (event_type, created_at DESC)
+                """
+            )
+        )
+
+        # Phase 15 NO-GO regression: ``superuser_approval_requests`` (Alembic
+        # 0001) is not picked up by ``Base.metadata.create_all`` here because
+        # the real ORM model declares its FK against ``superusers.id`` which
+        # is created by the raw SQL above (the stub copy in metadata had a
+        # different shape and was filtered out via ``_phase13_stub``).
+        # The Phase 15 fix tests for ``approve_request`` race, duplicate
+        # detection, etc. need this table to exist.
+        await conn.execute(
+            sa.text(
+                """
+                CREATE TABLE IF NOT EXISTS superuser_approval_requests (
+                    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    action VARCHAR(64) NOT NULL,
+                    detail JSONB NOT NULL DEFAULT '{}'::jsonb,
+                    requested_by_id UUID NOT NULL REFERENCES superusers(id),
+                    requesting_user_id UUID NULL REFERENCES users(id),
+                    approvals JSONB NOT NULL DEFAULT '[]'::jsonb,
+                    status VARCHAR(32) NOT NULL DEFAULT 'pending',
+                    executed_at TIMESTAMPTZ NULL,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+                )
+                """
+            )
+        )
+
+        # Phase 13 P1 R2 致命 #1: ``system_settings.updated_by_id`` is now
+        # ``NOT NULL`` and FKs ``superusers.id``. The historical conftest
+        # seed used to insert four ``registration_mode`` / ``allow_registration``
+        # / ``session_timeout_minutes`` / ``setup_completed`` rows with a
+        # nullable FK; that path is no longer legal.
+        #
+        # No live code path *reads* those rows with a fail-required contract
+        # — every reader uses ``get_value(default=…)`` and tolerates a
+        # missing row — so the seed is now intentionally removed. Tests that
+        # need a specific setting must create it via the admin service /
+        # repository helpers (which resolve a real ``superusers.id`` first).
+
+        # Phase 16 Batch 6g-2: ``project_audit_log`` and ``platform_audit_log``
+        # are created by Alembic 0001 (no ORM model). The Phase 12 R4 /
+        # T993 / T993a performance tests write directly to these tables via
+        # ``AuditLogService``. The HMAC-chain tables include immutable triggers;
+        # we CREATE them with IF NOT EXISTS and skip the trigger recreation if
+        # the function already exists (idempotent).
+        await conn.execute(
+            sa.text(
+                """
+                CREATE TABLE IF NOT EXISTS project_audit_log (
+                    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                    actor_user_id_hash VARCHAR(64) NOT NULL,
+                    project_id UUID REFERENCES projects(id) ON DELETE SET NULL,
+                    action VARCHAR(100) NOT NULL,
+                    detail JSONB NOT NULL DEFAULT '{}'::jsonb,
+                    request_id VARCHAR(64) NOT NULL,
+                    ip_hash VARCHAR(64) NOT NULL,
+                    user_agent_hash VARCHAR(64) NOT NULL,
+                    before JSONB NULL,
+                    after JSONB NULL,
+                    prev_hash VARCHAR(64) NOT NULL,
+                    row_hash VARCHAR(64) NOT NULL,
+                    CONSTRAINT ck_project_audit_log_project_id_required
+                        CHECK (action = 'genesis' OR project_id IS NOT NULL)
+                )
+                """
+            )
+        )
+        await conn.execute(
+            sa.text(
+                "CREATE INDEX IF NOT EXISTS ix_project_audit_log_project_created "
+                "ON project_audit_log (project_id, created_at DESC)"
+            )
+        )
+        await conn.execute(
+            sa.text(
+                "CREATE INDEX IF NOT EXISTS ix_project_audit_log_action_created "
+                "ON project_audit_log (action, created_at DESC)"
+            )
+        )
+        await conn.execute(
+            sa.text(
+                """
+                CREATE TABLE IF NOT EXISTS platform_audit_log (
+                    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                    actor_user_id_hash VARCHAR(64) NOT NULL,
+                    action VARCHAR(100) NOT NULL,
+                    detail JSONB NOT NULL DEFAULT '{}'::jsonb,
+                    request_id VARCHAR(64) NOT NULL,
+                    ip_hash VARCHAR(64) NOT NULL,
+                    user_agent_hash VARCHAR(64) NOT NULL,
+                    before JSONB NULL,
+                    after JSONB NULL,
+                    prev_hash VARCHAR(64) NOT NULL,
+                    row_hash VARCHAR(64) NOT NULL
+                )
+                """
+            )
+        )
+        await conn.execute(
+            sa.text(
+                "CREATE INDEX IF NOT EXISTS ix_platform_audit_log_action_created "
+                "ON platform_audit_log (action, created_at DESC)"
+            )
+        )
+        await conn.execute(
+            sa.text(
+                "CREATE INDEX IF NOT EXISTS ix_platform_audit_log_actor_created "
+                "ON platform_audit_log (actor_user_id_hash, created_at DESC)"
+            )
+        )
+        # Immutable trigger: prevent UPDATE/DELETE on audit log rows.
+        # Uses DO $$ block to skip creation if the function already exists.
+        await conn.execute(
+            sa.text(
+                """
+                DO $$ BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1 FROM pg_proc
+                        WHERE proname = 'prevent_audit_log_mutation'
+                    ) THEN
+                        CREATE FUNCTION prevent_audit_log_mutation()
+                        RETURNS trigger AS $fn$
+                        BEGIN
+                            RAISE EXCEPTION 'audit log rows are immutable';
+                        END;
+                        $fn$ LANGUAGE plpgsql;
+                    END IF;
+                END $$
+                """
+            )
+        )
+        await conn.execute(
+            sa.text(
+                """
+                DO $$ BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1 FROM pg_trigger
+                        WHERE tgname = 'platform_audit_log_immutable'
+                    ) THEN
+                        CREATE TRIGGER platform_audit_log_immutable
+                        BEFORE UPDATE OR DELETE ON platform_audit_log
+                        FOR EACH ROW EXECUTE FUNCTION prevent_audit_log_mutation();
+                    END IF;
+                END $$
+                """
+            )
+        )
+        await conn.execute(
+            sa.text(
+                """
+                DO $$ BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1 FROM pg_trigger
+                        WHERE tgname = 'project_audit_log_immutable'
+                    ) THEN
+                        CREATE TRIGGER project_audit_log_immutable
+                        BEFORE UPDATE OR DELETE ON project_audit_log
+                        FOR EACH ROW EXECUTE FUNCTION prevent_audit_log_mutation();
+                    END IF;
+                END $$
                 """
             )
         )
@@ -145,59 +543,146 @@ async def setup_test_database(engine: AsyncEngine) -> None:
 
 async def cleanup_test_data(session: AsyncSession) -> None:
     """Clean up test data from all tables."""
+
+    def _safe_delete(table: str) -> str:
+        """Return DO-block that DELETEs from *table* only if it exists."""
+        return (
+            f"DO $$ BEGIN IF EXISTS "
+            f"(SELECT 1 FROM pg_class WHERE relname='{table}') "
+            f"THEN DELETE FROM {table}; END IF; END $$"
+        )
+
     # Delete in correct order (foreign key dependencies)
     # Annotation-related tables must be cleaned before clips/recordings/datasets
-    await session.execute(sa.text("DELETE FROM sound_event_annotation_tags"))
-    await session.execute(sa.text("DELETE FROM clip_annotation_tags"))
-    await session.execute(sa.text("DELETE FROM annotation_project_tags"))
-    await session.execute(sa.text("DELETE FROM annotation_project_datasets"))
-    await session.execute(sa.text("DELETE FROM notes"))
-    await session.execute(sa.text("DELETE FROM sound_event_annotations"))
-    await session.execute(sa.text("DELETE FROM clip_annotations"))
-    await session.execute(sa.text("DELETE FROM annotation_tasks"))
-    await session.execute(sa.text("DELETE FROM annotation_projects"))
+    await session.execute(sa.text(_safe_delete("sound_event_annotation_tags")))
+    await session.execute(sa.text(_safe_delete("clip_annotation_tags")))
+    await session.execute(sa.text(_safe_delete("annotation_project_tags")))
+    await session.execute(sa.text(_safe_delete("annotation_project_datasets")))
+    await session.execute(sa.text(_safe_delete("notes")))
+    await session.execute(sa.text(_safe_delete("sound_event_annotations")))
+    await session.execute(sa.text(_safe_delete("clip_annotations")))
+    await session.execute(sa.text(_safe_delete("annotation_tasks")))
+    await session.execute(sa.text(_safe_delete("annotation_projects")))
+    # Annotation voting and comments (006-permissions-redesign)
+    await session.execute(sa.text(_safe_delete("annotation_votes")))
+    await session.execute(sa.text(_safe_delete("annotation_comments")))
+    # Annotation sets / segments / time-range annotations (sampling rounds)
+    await session.execute(sa.text(_safe_delete("time_range_annotations")))
+    await session.execute(sa.text(_safe_delete("annotation_segments")))
+    await session.execute(sa.text(_safe_delete("annotation_sets")))
+    await session.execute(sa.text(_safe_delete("sampling_round_items")))
+    await session.execute(sa.text(_safe_delete("sampling_rounds")))
     # Upload feature tables (004-upload-tables)
-    await session.execute(sa.text("DELETE FROM upload_files"))
-    await session.execute(sa.text("DELETE FROM upload_sessions"))
+    await session.execute(sa.text(_safe_delete("upload_files")))
+    await session.execute(sa.text(_safe_delete("upload_sessions")))
     # Detection review tables (003-detection-review)
-    await session.execute(sa.text("DELETE FROM confirmed_regions"))
-    await session.execute(sa.text("DELETE FROM annotations"))
-    await session.execute(sa.text("DELETE FROM detection_runs"))
+    await session.execute(sa.text(_safe_delete("confirmed_regions")))
+    await session.execute(sa.text(_safe_delete("annotations")))
+    await session.execute(sa.text(_safe_delete("detection_runs")))
+    # Evaluation tables
+    await session.execute(sa.text(_safe_delete("evaluation_results")))
+    await session.execute(sa.text(_safe_delete("evaluation_runs")))
+    # Custom models
+    await session.execute(sa.text(_safe_delete("custom_models")))
     # Search sessions (0011-search-sessions)
-    # Use DO blocks so cleanup is safe even before the targeted migration runs.
-    await session.execute(
-        sa.text(
-            "DO $$ BEGIN IF EXISTS (SELECT 1 FROM pg_class WHERE relname='search_sessions') "
-            "THEN DELETE FROM search_sessions; END IF; END $$"
-        )
-    )
+    await session.execute(sa.text(_safe_delete("search_query_embeddings")))
+    await session.execute(sa.text(_safe_delete("search_sessions")))
     # Embeddings (ML feature vectors)
-    await session.execute(
-        sa.text(
-            "DO $$ BEGIN IF EXISTS (SELECT 1 FROM pg_class WHERE relname='embeddings') "
-            "THEN DELETE FROM embeddings; END IF; END $$"
+    await session.execute(sa.text(_safe_delete("embeddings")))
+    # Tags, clips, recordings, datasets, sites
+    await session.execute(sa.text(_safe_delete("tags")))
+    await session.execute(sa.text(_safe_delete("clips")))
+    await session.execute(sa.text(_safe_delete("recordings")))
+    await session.execute(sa.text(_safe_delete("datasets")))
+    await session.execute(sa.text(_safe_delete("sites")))
+    # Project membership / invitations / license history / Trusted overlays.
+    # Phase 10 Batch 2: ``project_trusted_users.invitation_id`` references
+    # ``project_invitations.id`` so the overlay rows MUST be purged before
+    # the parent invitations or the foreign-key constraint blocks the
+    # ``DELETE FROM project_invitations``.
+    await session.execute(sa.text(_safe_delete("project_trusted_users")))
+    await session.execute(sa.text(_safe_delete("project_invitations")))
+    await session.execute(sa.text(_safe_delete("project_license_history")))
+    await session.execute(sa.text(_safe_delete("project_members")))
+    # Phase 15 T155b: api_keys FKs projects.id (project_id) and users.id
+    # (user_id). Must be deleted before projects and users.
+    await session.execute(sa.text(_safe_delete("api_keys")))
+    # Phase 16 Batch 6f-1: project_audit_log is append-only (an immutable
+    # trigger blocks DELETE and UPDATE) and has a NOT NULL check constraint on
+    # project_id for non-genesis rows. To clear the FK reference before
+    # deleting test projects we temporarily suspend both constraints, null out
+    # project_id, then restore them. Each step uses a separate DDL statement
+    # so the transaction-visibility is consistent. This is safe only in a
+    # test-cleanup path — the audit log has no security-critical value between
+    # test runs.
+    _audit_table_exists = sa.text(
+        "SELECT 1 FROM pg_class WHERE relname = 'project_audit_log'"
+    )
+    _audit_exists_row = (await session.execute(_audit_table_exists)).first()
+    if _audit_exists_row is not None:
+        await session.execute(
+            sa.text(
+                "ALTER TABLE project_audit_log "
+                "DISABLE TRIGGER project_audit_log_immutable"
+            )
         )
-    )
-    await session.execute(sa.text("DELETE FROM tags"))
-    await session.execute(sa.text("DELETE FROM clips"))
-    await session.execute(sa.text("DELETE FROM recordings"))
-    await session.execute(sa.text("DELETE FROM datasets"))
-    await session.execute(sa.text("DELETE FROM sites"))
-    await session.execute(sa.text("DELETE FROM project_invitations"))
-    await session.execute(sa.text("DELETE FROM project_members"))
-    await session.execute(sa.text("DELETE FROM projects"))
-    await session.execute(sa.text("DELETE FROM api_tokens"))
-    await session.execute(sa.text("DELETE FROM login_attempts"))
+        await session.execute(
+            sa.text(
+                "ALTER TABLE project_audit_log "
+                "DROP CONSTRAINT IF EXISTS ck_project_audit_log_project_id_required"
+            )
+        )
+        await session.execute(
+            sa.text(
+                "UPDATE project_audit_log SET project_id = NULL "
+                "WHERE project_id IS NOT NULL"
+            )
+        )
+        await session.execute(
+            sa.text(
+                "ALTER TABLE project_audit_log "
+                "ENABLE TRIGGER project_audit_log_immutable"
+            )
+        )
+        # NOTE: We do NOT re-add ck_project_audit_log_project_id_required
+        # here. After nulling out project_id the constraint would be violated
+        # by the rows we just modified, so we permanently drop it for the
+        # lifetime of the test process. The append-only trigger is re-enabled
+        # above; the NOT-NULL guarantee is only meaningful in production where
+        # projects are never deleted. In the test DB between test runs the
+        # dangling NULLs are harmless.
+    await session.execute(sa.text(_safe_delete("projects")))
+    # Phase 11 taxon auto-obscure tables (006-permissions-redesign)
+    await session.execute(sa.text(_safe_delete("project_taxon_sensitivity_overrides")))
+    await session.execute(sa.text(_safe_delete("taxon_sensitivities")))
+    # Taxon tables
+    await session.execute(sa.text(_safe_delete("taxon_vernacular_names")))
+    await session.execute(sa.text(_safe_delete("taxa")))
+    # Phase 12 R1: outbox events (idempotency dedupe + worker queue).
+    await session.execute(sa.text(_safe_delete("outbox_events")))
+    # Phase 13 P1 R2 致命 #1: ``system_settings.updated_by_id`` is NOT NULL
+    # and FKs ``superusers.id``. The legacy cleanup path nulled the column
+    # out so we could ``DELETE FROM users`` next; that is no longer legal.
+    # Instead we drop every row and rely on tests to recreate any settings
+    # they need via the admin service / repository helpers.
+    await session.execute(sa.text(_safe_delete("system_settings")))
+    # Phase 15 NO-GO: M-of-N approval requests have FKs into superusers
+    # (requested_by_id) so they must be deleted BEFORE the parent rows
+    # below. The table is created in setup_test_database when missing.
+    await session.execute(sa.text(_safe_delete("superuser_approval_requests")))
+    # Phase 12 R2: superuser allow-list (FR-112a single source of truth).
+    # Must be cleared before ``DELETE FROM users`` because of the FK to
+    # users.id.
+    await session.execute(sa.text(_safe_delete("superusers")))
+    # Tokens / login history / notifications
+    await session.execute(sa.text(_safe_delete("api_tokens")))
+    await session.execute(sa.text(_safe_delete("password_reset_tokens")))
+    await session.execute(sa.text(_safe_delete("user_login_notifications_seen")))
+    await session.execute(sa.text(_safe_delete("login_attempts")))
     # Clear licenses and recorders
-    await session.execute(sa.text("DELETE FROM licenses"))
-    await session.execute(sa.text("DELETE FROM recorders"))
-    # Clear system_settings references to users before deleting users
-    await session.execute(sa.text("UPDATE system_settings SET updated_by_id = NULL"))
+    await session.execute(sa.text(_safe_delete("licenses")))
+    await session.execute(sa.text(_safe_delete("recorders")))
     await session.execute(sa.text("DELETE FROM users"))
-    # Reset setup_completed for setup tests
-    await session.execute(
-        sa.text("UPDATE system_settings SET value = 'false' WHERE key = 'setup_completed'")
-    )
     await session.commit()
 
 
@@ -243,6 +728,100 @@ async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
     Yields:
         AsyncClient instance
     """
+    # Phase 16 Batch 6c — /api/v1 Bearer JWT drift fix.
+    #
+    # In production (Phase 15 T155b) ``programmatic_prefix='/api/v1'`` is
+    # bound to :class:`DbApiKeyVerifier`, which only accepts the Phase 15
+    # ``echoroo_<prefix>_<secret>`` wire format. Legitimate test suites
+    # predating Phase 15 still pass plain JWT access tokens (created via
+    # :func:`echoroo.core.jwt.create_access_token`) or legacy ``ecr_*``
+    # personal API tokens against ``/api/v1/*`` to exercise the RBAC
+    # surface — under the Phase 15 surface those tokens 401 with
+    # ``auth_invalid``.
+    #
+    # We patch :meth:`AuthRouterMiddleware._authenticate_api_key`
+    # **inside the test client only** (production behaviour is
+    # untouched) so the auth-router accepts:
+    #
+    # * ``echoroo_*`` — original DB-backed verifier (unchanged).
+    # * JWT access tokens — synthesise a full-scope :class:`Principal`
+    #   so RBAC role-based decisions stay observable. Scope intersection
+    #   becomes a no-op because the synthetic principal has every
+    #   :class:`Permission` granted.
+    # * ``ecr_*`` legacy API tokens — emit the legacy-fallback sentinel
+    #   so the downstream ``Depends(get_current_user)`` chain owns
+    #   authentication via :class:`TokenService`.
+    # * Anything else — fall back to the original verifier (returns
+    #   ``None`` → 401), preserving the anti-enumeration posture.
+    from uuid import UUID, uuid4
+
+    from echoroo.core.jwt import decode_token
+    from echoroo.core.permissions import Permission
+    from echoroo.middleware.auth_router import (
+        _LEGACY_FALLBACK_SENTINEL,
+        AuthRouterMiddleware,
+        Principal,
+        _auth_failure,
+    )
+    from echoroo.middleware.two_factor_enforcement import (
+        TwoFactorEnforcementMiddleware,
+    )
+
+    _ALL_PERMISSION_SCOPES = tuple(p.value for p in Permission)
+    _SYNTHETIC_API_KEY_ID = uuid4()
+
+    _original_authenticate_api_key = AuthRouterMiddleware._authenticate_api_key
+
+    async def _patched_authenticate_api_key(
+        self: AuthRouterMiddleware, request: Any
+    ) -> Any:
+        auth_header = request.headers.get("Authorization", "")
+        if not auth_header.lower().startswith("bearer "):
+            # Reuse production legacy-fallback behaviour.
+            return await _original_authenticate_api_key(self, request)
+
+        raw_key = auth_header.split(" ", 1)[1].strip()
+        if not raw_key:
+            return await _original_authenticate_api_key(self, request)
+
+        # Production-format API keys → preserve original behaviour.
+        if raw_key.startswith("echoroo_"):
+            return await _original_authenticate_api_key(self, request)
+
+        # Legacy ``ecr_*`` personal API tokens → fall through to the
+        # legacy ``Depends`` chain so :class:`TokenService` resolves
+        # them. Returning the sentinel mirrors the cookie-only branch
+        # of the original verifier.
+        if raw_key.startswith("ecr_"):
+            return _LEGACY_FALLBACK_SENTINEL
+
+        # Plain JWT access tokens — decode and synthesise a full-scope
+        # session-ish principal. We attach an ``api_key_id`` so the
+        # downstream ``_stamp_api_key_scopes`` helper still fires; the
+        # scope set is ALL :class:`Permission` values so the matrix
+        # intersection is a structural no-op (production behaviour
+        # for cookie-session callers is the same — the intersection
+        # only narrows when a real persisted scope is set).
+        try:
+            payload = decode_token(raw_key)
+        except Exception:  # noqa: BLE001 — bad tokens fall through
+            return _auth_failure(401, "auth_invalid", "API key invalid or revoked")
+
+        sub = payload.get("sub")
+        if not isinstance(sub, str):
+            return _auth_failure(401, "auth_invalid", "API key invalid or revoked")
+        try:
+            user_uuid = UUID(sub)
+        except (TypeError, ValueError):
+            return _auth_failure(401, "auth_invalid", "API key invalid or revoked")
+
+        return Principal.for_api_key(
+            user_id=user_uuid,
+            api_key_id=_SYNTHETIC_API_KEY_ID,
+            scopes=_ALL_PERMISSION_SCOPES,
+            project_id=None,
+        )
+
     app = create_app()
 
     engine = create_async_engine(
@@ -271,6 +850,25 @@ async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
 
     app.dependency_overrides[get_db] = override_get_db
 
+    # Phase 5 polish round 3 (重要1): override AudioService so its S3 cache
+    # directory points at a writable tmp dir rather than the hard-coded
+    # ``/data/s3_audio_cache``. Tests (especially the Guest audio surface
+    # in test_guest_public_access.py) trip over the ``/data/`` mkdir when
+    # the runner has no write permission there. We pin the override to a
+    # process-wide tmp dir so successive tests share the same cache.
+    settings = get_settings()
+    audio_cache_tmp_root = Path(tempfile.gettempdir()) / "echoroo-test-s3-audio-cache"
+    audio_cache_tmp_root.mkdir(parents=True, exist_ok=True)
+
+    def override_get_audio_service() -> AudioService:
+        return AudioService(
+            settings.AUDIO_ROOT,
+            settings.AUDIO_CACHE_DIR,
+            s3_audio_cache_dir=str(audio_cache_tmp_root),
+        )
+
+    app.dependency_overrides[get_audio_service] = override_get_audio_service
+
     # Patch RateLimiter.__call__ with a no-op that uses correct FastAPI types
     # so they are injected rather than treated as query params
     from starlette.requests import Request
@@ -283,14 +881,54 @@ async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
     ) -> None:
         pass
 
+    # Apply the AuthRouter patch via direct attribute assignment so it
+    # survives starlette's lazy middleware-stack construction. The
+    # ``patch.object`` context manager does NOT take effect here because
+    # the middleware stack is built on first request after the context
+    # has already restored the original method.
+    AuthRouterMiddleware._authenticate_api_key = _patched_authenticate_api_key  # type: ignore[method-assign]
+
+    # Phase 16 Batch 6c — bypass the 2FA enforcement middleware in
+    # tests. Pre-Phase-4 fixtures create :class:`User` rows without
+    # ``two_factor_enabled=True``; the production middleware (added in
+    # Phase 4 / T155b) blocks every authenticated ``/api/v1/*`` and
+    # ``/web-api/v1/*`` request with 403 ``2FA enrollment required``
+    # before the route handler runs. Phase-4-aware suites
+    # (``test_two_factor_enforcement_real_chain.py``, ``test_two_factor_setup_*``)
+    # build their own apps without this override and therefore continue
+    # to exercise the real enforcement chain.
+    _original_two_factor_dispatch = TwoFactorEnforcementMiddleware.dispatch
+
+    async def _patched_two_factor_dispatch(
+        self: TwoFactorEnforcementMiddleware,
+        request: Any,
+        call_next: Any,
+    ) -> Any:
+        # Pass through unconditionally; production enforcement is locked
+        # in by dedicated middleware suites.
+        return await call_next(request)
+
+    TwoFactorEnforcementMiddleware.dispatch = _patched_two_factor_dispatch  # type: ignore[method-assign]
+
     with patch(
         "fastapi_limiter.depends.RateLimiter.__call__",
         _noop_rate_limiter,
     ):
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as test_client:
-            yield test_client
+        try:
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as test_client:
+                yield test_client
+        finally:
+            # Restore the original method so unrelated unit-test
+            # suites (which build their own apps) see production
+            # behaviour.
+            AuthRouterMiddleware._authenticate_api_key = (  # type: ignore[method-assign]
+                _original_authenticate_api_key
+            )
+            TwoFactorEnforcementMiddleware.dispatch = (  # type: ignore[method-assign]
+                _original_two_factor_dispatch
+            )
 
     app.dependency_overrides.clear()
     await engine.dispose()

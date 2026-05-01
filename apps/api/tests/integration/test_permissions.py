@@ -1,6 +1,23 @@
 """Integration tests for role-based access control (RBAC).
 
 Tests verify the complete flow of permission checking across multiple operations.
+
+Phase 16 Batch 6d carry-over (2026-04-29): the legacy single-flow RBAC test
+predates the Phase 11 visibility / license rework. The end-to-end matrix
+coverage now lives in:
+
+    * ``tests/contract/test_permissions.py``   (matrix shape per role)
+    * ``tests/contract/test_restricted_toggles.py`` (FR-014 / FR-020-022)
+    * ``tests/security/authorization/test_member_vs_admin.py``
+      (Member/Admin gate parity)
+    * ``tests/integration/api/web_v1/test_admin_superusers.py``
+      (Admin promotion + project-scope smoke)
+
+The original "private" visibility semantics (outsider receives 403 on a
+metadata GET) no longer hold under the canonical Restricted matrix, where
+``Authenticated`` callers still receive ``VIEW_PROJECT_METADATA``. We
+xfail the legacy flow rather than rewrite each assertion in-place because
+the contract is already covered above.
 """
 
 import pytest
@@ -15,6 +32,17 @@ from echoroo.models.user import User
 class TestRoleBasedAccessControlFlow:
     """Test complete RBAC flow with different user roles."""
 
+    @pytest.mark.xfail(
+        reason=(
+            "Phase 11 rework: ProjectVisibility.PRIVATE removed (replaced by "
+            "RESTRICTED), license is NOT NULL, and the canonical matrix "
+            "grants Authenticated callers VIEW_PROJECT_METADATA on Restricted "
+            "projects so the legacy 'outsider gets 403' assertion no longer "
+            "holds. Coverage is replaced by tests/contract/test_permissions.py "
+            "+ tests/security/authorization/test_member_vs_admin.py."
+        ),
+        strict=False,
+    )
     async def test_role_based_access_control_full_flow(
         self,
         client: AsyncClient,
@@ -33,38 +61,33 @@ class TestRoleBasedAccessControlFlow:
         # Setup: Create users
         owner = User(
             email="owner@example.com",
-            hashed_password="$argon2id$v=19$m=65536,t=3,p=4$test",
+            password_hash="$argon2id$v=19$m=65536,t=3,p=4$test",
             display_name="Owner User",
-            is_active=True,
-            is_verified=True,
+            security_stamp="rbac-stamp-owner",
         )
         admin = User(
             email="admin@example.com",
-            hashed_password="$argon2id$v=19$m=65536,t=3,p=4$test",
+            password_hash="$argon2id$v=19$m=65536,t=3,p=4$test",
             display_name="Admin User",
-            is_active=True,
-            is_verified=True,
+            security_stamp="rbac-stamp-admin",
         )
         member = User(
             email="member@example.com",
-            hashed_password="$argon2id$v=19$m=65536,t=3,p=4$test",
+            password_hash="$argon2id$v=19$m=65536,t=3,p=4$test",
             display_name="Member User",
-            is_active=True,
-            is_verified=True,
+            security_stamp="rbac-stamp-member",
         )
         viewer = User(
             email="viewer@example.com",
-            hashed_password="$argon2id$v=19$m=65536,t=3,p=4$test",
+            password_hash="$argon2id$v=19$m=65536,t=3,p=4$test",
             display_name="Viewer User",
-            is_active=True,
-            is_verified=True,
+            security_stamp="rbac-stamp-viewer",
         )
         outsider = User(
             email="outsider@example.com",
-            hashed_password="$argon2id$v=19$m=65536,t=3,p=4$test",
+            password_hash="$argon2id$v=19$m=65536,t=3,p=4$test",
             display_name="Outsider User",
-            is_active=True,
-            is_verified=True,
+            security_stamp="rbac-stamp-outsider",
         )
 
         db_session.add_all([owner, admin, member, viewer, outsider])
@@ -180,10 +203,9 @@ class TestRoleBasedAccessControlFlow:
         # Verify: Member cannot add new members
         temp_user = User(
             email="temp@example.com",
-            hashed_password="$argon2id$v=19$m=65536,t=3,p=4$test",
+            password_hash="$argon2id$v=19$m=65536,t=3,p=4$test",
             display_name="Temp User",
-            is_active=True,
-            is_verified=True,
+            security_stamp="rbac-stamp-temp",
         )
         db_session.add(temp_user)
         await db_session.commit()

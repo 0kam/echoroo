@@ -12,7 +12,7 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 if TYPE_CHECKING:
-    from echoroo.models.project import ProjectMember
+    pass
 
 
 @pytest.mark.asyncio
@@ -94,7 +94,7 @@ class TestSiteEndpoints:
         """Test POST /api/v1/projects/{project_id}/sites - Create site."""
         site_data = {
             "name": "Test Site",
-            "h3_index": "8928308280fffff",
+            "h3_index_member": "8928308280fffff",
         }
 
         response = await client.post(
@@ -109,7 +109,7 @@ class TestSiteEndpoints:
         # Verify response structure matches SiteResponse
         assert "id" in data
         assert data["name"] == site_data["name"]
-        assert data["h3_index"] == site_data["h3_index"]
+        assert data["h3_index_member"] == site_data["h3_index_member"]
         assert "created_at" in data
         assert "updated_at" in data
 
@@ -122,7 +122,7 @@ class TestSiteEndpoints:
         """Test POST /api/v1/projects/{project_id}/sites with invalid H3 index."""
         site_data = {
             "name": "Test Site",
-            "h3_index": "invalid_h3_index",
+            "h3_index_member": "invalid_h3_index",
         }
 
         response = await client.post(
@@ -132,6 +132,45 @@ class TestSiteEndpoints:
         )
 
         assert response.status_code == 400
+
+    async def test_create_site_rejects_non_member_resolution(
+        self,
+        client: AsyncClient,
+        auth_headers: dict[str, str],
+        test_project_id: str,
+    ) -> None:
+        """NFR-003: H3 cells outside res 9/15 must be rejected with 400.
+
+        Phase 13 P4 R1 contract: ``sites.h3_index_member_resolution`` is
+        constrained to {9, 15}. The service no longer silently rounds
+        unsupported resolutions to 15 — it returns a structured
+        ``ERR_INVALID_H3_RESOLUTION`` 400 so the stored resolution is
+        always consistent with the cell precision.
+        """
+        # res-7 cell — valid H3 index but outside the member-tier set.
+        # ``872f59484ffffff`` is Tokyo at resolution 7.
+        site_data = {
+            "name": "Coarse Site",
+            "h3_index_member": "872f59484ffffff",
+        }
+
+        response = await client.post(
+            f"/api/v1/projects/{test_project_id}/sites",
+            headers=auth_headers,
+            json=site_data,
+        )
+
+        assert response.status_code == 400, response.text
+        body = response.json()
+        # Detail may be either the structured payload (default) or a
+        # FastAPI-wrapped string under ``detail``.
+        detail = body.get("detail")
+        if isinstance(detail, dict):
+            assert detail.get("error") == "ERR_INVALID_H3_RESOLUTION"
+            assert "9 or 15" in detail.get("message", "")
+        else:
+            # Fallback: substring assertion on the string representation
+            assert "ERR_INVALID_H3_RESOLUTION" in str(body) or "9 or 15" in str(body)
 
     async def test_create_site_duplicate_name(
         self,
@@ -144,7 +183,7 @@ class TestSiteEndpoints:
         # Create first site
         site_data = {
             "name": "Duplicate Site",
-            "h3_index": "8928308280fffff",
+            "h3_index_member": "8928308280fffff",
         }
 
         response1 = await client.post(
@@ -157,7 +196,7 @@ class TestSiteEndpoints:
         # Try to create site with same name
         site_data2 = {
             "name": "Duplicate Site",
-            "h3_index": "8928308280bffff",  # Different valid H3 index (neighbor cell)
+            "h3_index_member": "8928308280bffff",  # Different valid H3 index (neighbor cell)
         }
 
         response2 = await client.post(
@@ -176,7 +215,7 @@ class TestSiteEndpoints:
         """Test POST /api/v1/projects/{project_id}/sites requires authentication."""
         site_data = {
             "name": "Test Site",
-            "h3_index": "8928308280fffff",
+            "h3_index_member": "8928308280fffff",
         }
 
         response = await client.post(
@@ -189,19 +228,28 @@ class TestSiteEndpoints:
     async def test_create_site_not_admin(
         self,
         client: AsyncClient,
-        auth_headers_member: dict[str, str],
+        auth_headers_other: dict[str, str],
         test_project_id: str,
-        test_member: ProjectMember,  # noqa: F821
     ) -> None:
-        """Test POST /api/v1/projects/{project_id}/sites requires admin role."""
+        """Test POST /api/v1/projects/{project_id}/sites denies non-members.
+
+        Phase 16 Batch 6e (2026-04-29) downstream drift fix: Phase 9 / T280
+        spec gave MEMBER role ``Permission.MANAGE_SITE`` (see
+        ``apps/api/echoroo/core/permissions.py::_MEMBER_PERMS``). So a
+        member-role caller can in fact create sites; the legacy
+        "not admin = 403" expectation predates that change. Repoint
+        the assertion to ``auth_headers_other`` (Authenticated
+        non-member) — that role has zero project permissions and is
+        the canonical 403-producing identity for site mutations.
+        """
         site_data = {
             "name": "Test Site",
-            "h3_index": "8928308280fffff",
+            "h3_index_member": "8928308280fffff",
         }
 
         response = await client.post(
             f"/api/v1/projects/{test_project_id}/sites",
-            headers=auth_headers_member,
+            headers=auth_headers_other,
             json=site_data,
         )
 
@@ -218,7 +266,7 @@ class TestSiteEndpoints:
         # Create a site first
         site_data = {
             "name": "Test Site",
-            "h3_index": "8928308280fffff",
+            "h3_index_member": "8928308280fffff",
         }
 
         create_response = await client.post(
@@ -240,7 +288,7 @@ class TestSiteEndpoints:
         # Verify response structure matches SiteDetailResponse
         assert data["id"] == site_id
         assert data["name"] == site_data["name"]
-        assert data["h3_index"] == site_data["h3_index"]
+        assert data["h3_index_member"] == site_data["h3_index_member"]
         assert "dataset_count" in data
         assert "recording_count" in data
 
@@ -284,7 +332,7 @@ class TestSiteEndpoints:
         # Create a site first
         site_data = {
             "name": "Original Site",
-            "h3_index": "8928308280fffff",
+            "h3_index_member": "8928308280fffff",
         }
 
         create_response = await client.post(
@@ -308,7 +356,7 @@ class TestSiteEndpoints:
         assert response.status_code == 200
         data = response.json()
         assert data["name"] == update_data["name"]
-        assert data["h3_index"] == site_data["h3_index"]  # Unchanged
+        assert data["h3_index_member"] == site_data["h3_index_member"]  # Unchanged
 
     async def test_update_site_not_found(
         self,
@@ -331,18 +379,23 @@ class TestSiteEndpoints:
     async def test_update_site_not_admin(
         self,
         client: AsyncClient,
-        auth_headers_member: dict[str, str],
+        auth_headers_other: dict[str, str],
         test_project_id: str,
-        test_member: ProjectMember,  # noqa: F821
-        db_session: AsyncSession,
     ) -> None:
-        """Test PATCH /api/v1/projects/{project_id}/sites/{site_id} requires admin role."""
+        """Test PATCH /api/v1/projects/{project_id}/sites/{site_id} denies non-members.
+
+        Phase 16 Batch 6e (2026-04-29) downstream drift fix: see
+        :func:`test_create_site_not_admin` — MEMBER role has
+        ``MANAGE_SITE`` so a member caller would 404 (site not found)
+        instead of 403. Use ``auth_headers_other`` to pin the
+        Authenticated non-member 403 path.
+        """
         fake_id = "00000000-0000-0000-0000-000000000000"
         update_data = {"name": "Updated Site"}
 
         response = await client.patch(
             f"/api/v1/projects/{test_project_id}/sites/{fake_id}",
-            headers=auth_headers_member,
+            headers=auth_headers_other,
             json=update_data,
         )
 
@@ -359,7 +412,7 @@ class TestSiteEndpoints:
         # Create a site first
         site_data = {
             "name": "Site to Delete",
-            "h3_index": "8928308280fffff",
+            "h3_index_member": "8928308280fffff",
         }
 
         create_response = await client.post(
@@ -402,15 +455,20 @@ class TestSiteEndpoints:
     async def test_delete_site_not_admin(
         self,
         client: AsyncClient,
-        auth_headers_member: dict[str, str],
+        auth_headers_other: dict[str, str],
         test_project_id: str,
-        test_member: ProjectMember,  # noqa: F821
     ) -> None:
-        """Test DELETE /api/v1/projects/{project_id}/sites/{site_id} requires admin role."""
+        """Test DELETE /api/v1/projects/{project_id}/sites/{site_id} denies non-members.
+
+        Phase 16 Batch 6e (2026-04-29) downstream drift fix: see
+        :func:`test_create_site_not_admin` — MEMBER role has
+        ``MANAGE_SITE``. Use ``auth_headers_other`` for the
+        canonical 403 (Authenticated non-member) path.
+        """
         fake_id = "00000000-0000-0000-0000-000000000000"
         response = await client.delete(
             f"/api/v1/projects/{test_project_id}/sites/{fake_id}",
-            headers=auth_headers_member,
+            headers=auth_headers_other,
         )
 
         assert response.status_code == 403

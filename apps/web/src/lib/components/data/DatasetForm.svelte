@@ -187,7 +187,7 @@
   <!-- Advanced options -->
   <details open class="rounded-md border border-stone-200 bg-stone-50 p-4">
     <summary class="cursor-pointer select-none text-sm font-medium text-stone-700 hover:text-primary-600">
-      Advanced Options
+      {m.form_dataset_advanced_options()}
     </summary>
 
     <div class="mt-4 flex flex-col gap-4">
@@ -216,49 +216,49 @@
         </div>
 
         <div class="flex flex-col gap-1.5">
-          <label for="license" class="text-sm font-medium text-stone-700">License</label>
+          <label for="license" class="text-sm font-medium text-stone-700">{m.form_dataset_license_label()}</label>
           <input
             id="license"
             type="text"
             bind:value={licenseId}
-            placeholder="License ID (optional)"
+            placeholder={m.form_dataset_license_placeholder()}
             class="rounded-md border border-stone-300 px-3 py-2 text-sm focus:border-primary-500 focus:outline-none"
           />
-          <p class="text-xs text-stone-400">Data license identifier</p>
+          <p class="text-xs text-stone-400">{m.form_dataset_license_hint()}</p>
         </div>
       </div>
 
       <div class="grid grid-cols-2 gap-4">
         <div class="flex flex-col gap-1.5">
-          <label for="doi" class="text-sm font-medium text-stone-700">DOI</label>
+          <label for="doi" class="text-sm font-medium text-stone-700">{m.form_dataset_doi_label()}</label>
           <input
             id="doi"
             type="text"
             bind:value={doi}
-            placeholder="10.xxxx/xxxxx (optional)"
+            placeholder={m.form_dataset_doi_placeholder()}
             class="rounded-md border border-stone-300 px-3 py-2 text-sm focus:border-primary-500 focus:outline-none"
           />
         </div>
 
         <div class="flex flex-col gap-1.5">
-          <label for="gain" class="text-sm font-medium text-stone-700">Gain (dB)</label>
+          <label for="gain" class="text-sm font-medium text-stone-700">{m.form_dataset_gain_label()}</label>
           <input
             id="gain"
             type="number"
             step="0.1"
             bind:value={gain}
-            placeholder="0.0"
+            placeholder={m.form_dataset_gain_placeholder()}
             class="rounded-md border border-stone-300 px-3 py-2 text-sm focus:border-primary-500 focus:outline-none"
           />
         </div>
       </div>
 
       <div class="flex flex-col gap-1.5">
-        <label for="note" class="text-sm font-medium text-stone-700">Note</label>
+        <label for="note" class="text-sm font-medium text-stone-700">{m.form_dataset_note_label()}</label>
         <textarea
           id="note"
           bind:value={note}
-          placeholder="Additional notes"
+          placeholder={m.form_dataset_note_placeholder()}
           rows="2"
           class="resize-y rounded-md border border-stone-300 px-3 py-2 text-sm focus:border-primary-500 focus:outline-none"
         ></textarea>
@@ -267,34 +267,34 @@
       <!-- Datetime extraction (edit mode only) -->
       {#if isEdit}
         <div class="border-t border-stone-200 pt-4">
-          <h4 class="mb-1 text-sm font-semibold text-stone-700">Datetime Extraction (Optional)</h4>
+          <h4 class="mb-1 text-sm font-semibold text-stone-700">{m.form_dataset_datetime_heading()}</h4>
           <p class="mb-3 text-xs text-stone-500">
-            Configure how to extract recording datetime from filenames. If not provided, file modification time will be used.
+            {m.form_dataset_datetime_desc()}
           </p>
 
           <div class="grid grid-cols-2 gap-4">
             <div class="flex flex-col gap-1.5">
-              <label for="datetime-pattern" class="text-sm font-medium text-stone-700">Regex Pattern</label>
+              <label for="datetime-pattern" class="text-sm font-medium text-stone-700">{m.form_dataset_regex_label()}</label>
               <input
                 id="datetime-pattern"
                 type="text"
                 bind:value={datetimePattern}
-                placeholder="e.g., (\d{8}_\d{6})"
+                placeholder={m.form_dataset_regex_placeholder()}
                 class="rounded-md border border-stone-300 px-3 py-2 font-mono text-sm focus:border-primary-500 focus:outline-none"
               />
-              <p class="text-xs text-stone-400">Regular expression to extract datetime from filename</p>
+              <p class="text-xs text-stone-400">{m.form_dataset_regex_hint()}</p>
             </div>
 
             <div class="flex flex-col gap-1.5">
-              <label for="datetime-format" class="text-sm font-medium text-stone-700">Datetime Format</label>
+              <label for="datetime-format" class="text-sm font-medium text-stone-700">{m.form_dataset_datetime_format_label()}</label>
               <input
                 id="datetime-format"
                 type="text"
                 bind:value={datetimeFormat}
-                placeholder="e.g., %Y%m%d_%H%M%S"
+                placeholder={m.form_dataset_datetime_format_placeholder()}
                 class="rounded-md border border-stone-300 px-3 py-2 font-mono text-sm focus:border-primary-500 focus:outline-none"
               />
-              <p class="text-xs text-stone-400">Python strptime format for parsing</p>
+              <p class="text-xs text-stone-400">{m.form_dataset_datetime_format_hint()}</p>
             </div>
           </div>
 
@@ -306,38 +306,38 @@
               class="rounded-md border border-stone-300 bg-surface-card px-3 py-2 text-sm focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
             >
               <option value="">{m.datetime_config_timezone_none()}</option>
-              <optgroup label="UTC">
-                <option value="UTC">UTC</option>
+              <optgroup label={m.timezone_group_utc()}>
+                <option value="UTC">{m.timezone_utc()}</option>
               </optgroup>
-              <optgroup label="Asia">
-                <option value="Asia/Tokyo">Asia/Tokyo (JST, UTC+9)</option>
-                <option value="Asia/Shanghai">Asia/Shanghai (CST, UTC+8)</option>
-                <option value="Asia/Singapore">Asia/Singapore (SGT, UTC+8)</option>
-                <option value="Asia/Kolkata">Asia/Kolkata (IST, UTC+5:30)</option>
-                <option value="Asia/Dubai">Asia/Dubai (GST, UTC+4)</option>
+              <optgroup label={m.timezone_group_asia()}>
+                <option value="Asia/Tokyo">{m.timezone_asia_tokyo()}</option>
+                <option value="Asia/Shanghai">{m.timezone_asia_shanghai()}</option>
+                <option value="Asia/Singapore">{m.timezone_asia_singapore()}</option>
+                <option value="Asia/Kolkata">{m.timezone_asia_kolkata()}</option>
+                <option value="Asia/Dubai">{m.timezone_asia_dubai()}</option>
               </optgroup>
-              <optgroup label="Australia / Pacific">
-                <option value="Australia/Sydney">Australia/Sydney (AEST/AEDT)</option>
-                <option value="Australia/Perth">Australia/Perth (AWST, UTC+8)</option>
-                <option value="Pacific/Auckland">Pacific/Auckland (NZST/NZDT)</option>
+              <optgroup label={m.timezone_group_australia_pacific()}>
+                <option value="Australia/Sydney">{m.timezone_australia_sydney_dst()}</option>
+                <option value="Australia/Perth">{m.timezone_australia_perth()}</option>
+                <option value="Pacific/Auckland">{m.timezone_pacific_auckland_dst()}</option>
               </optgroup>
-              <optgroup label="Europe">
-                <option value="Europe/London">Europe/London (GMT/BST)</option>
-                <option value="Europe/Paris">Europe/Paris (CET/CEST)</option>
-                <option value="Europe/Berlin">Europe/Berlin (CET/CEST)</option>
-                <option value="Europe/Helsinki">Europe/Helsinki (EET/EEST)</option>
+              <optgroup label={m.timezone_group_europe()}>
+                <option value="Europe/London">{m.timezone_europe_london_dst()}</option>
+                <option value="Europe/Paris">{m.timezone_europe_paris_dst()}</option>
+                <option value="Europe/Berlin">{m.timezone_europe_berlin_dst()}</option>
+                <option value="Europe/Helsinki">{m.timezone_europe_helsinki_dst()}</option>
               </optgroup>
-              <optgroup label="America">
-                <option value="America/New_York">America/New_York (EST/EDT)</option>
-                <option value="America/Chicago">America/Chicago (CST/CDT)</option>
-                <option value="America/Denver">America/Denver (MST/MDT)</option>
-                <option value="America/Los_Angeles">America/Los_Angeles (PST/PDT)</option>
-                <option value="America/Anchorage">America/Anchorage (AKST/AKDT)</option>
-                <option value="America/Sao_Paulo">America/Sao_Paulo (BRT)</option>
+              <optgroup label={m.timezone_group_america()}>
+                <option value="America/New_York">{m.timezone_america_new_york_dst()}</option>
+                <option value="America/Chicago">{m.timezone_america_chicago_dst()}</option>
+                <option value="America/Denver">{m.timezone_america_denver_dst()}</option>
+                <option value="America/Los_Angeles">{m.timezone_america_los_angeles_dst()}</option>
+                <option value="America/Anchorage">{m.timezone_america_anchorage_dst()}</option>
+                <option value="America/Sao_Paulo">{m.timezone_america_sao_paulo_br()}</option>
               </optgroup>
-              <optgroup label="Africa">
-                <option value="Africa/Nairobi">Africa/Nairobi (EAT, UTC+3)</option>
-                <option value="Africa/Johannesburg">Africa/Johannesburg (SAST, UTC+2)</option>
+              <optgroup label={m.timezone_group_africa()}>
+                <option value="Africa/Nairobi">{m.timezone_africa_nairobi()}</option>
+                <option value="Africa/Johannesburg">{m.timezone_africa_johannesburg()}</option>
               </optgroup>
             </select>
             <p class="text-xs text-stone-400">{m.datetime_config_timezone_hint()}</p>

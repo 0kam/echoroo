@@ -1,13 +1,26 @@
 """Setup service for initial system configuration."""
 
+from typing import NoReturn
+
 from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from echoroo.core.security import hash_password
 from echoroo.models.user import User
 from echoroo.repositories.system import SystemSettingRepository
 from echoroo.schemas.setup import SetupInitializeRequest, SetupStatusResponse
+
+_PHASE4_STUB_DETAIL = (
+    "This endpoint is being rewritten in Phase 4 T150a-d / T155. "
+    "Use the new auth flow when available."
+)
+
+
+def _raise_phase4_stub() -> NoReturn:
+    raise HTTPException(
+        status_code=status.HTTP_501_NOT_IMPLEMENTED,
+        detail=_PHASE4_STUB_DETAIL,
+    )
 
 
 class SetupService:
@@ -59,40 +72,5 @@ class SetupService:
         Raises:
             HTTPException: 403 if setup is already completed or users exist
         """
-        # Check if setup is already completed
-        setup_completed = await self.system_repo.is_setup_completed()
-        if setup_completed:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Initial setup has already been completed",
-            )
-
-        # Check if any users already exist
-        result = await self.session.execute(select(User).limit(1))
-        existing_user = result.scalar_one_or_none()
-        if existing_user:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Users already exist. Setup cannot be performed.",
-            )
-
-        # Create the first admin user
-        user = User(
-            email=request.email,
-            hashed_password=hash_password(request.password),
-            display_name=request.display_name,
-            is_active=True,
-            is_superuser=True,  # First user is always superuser
-            is_verified=True,  # Auto-verify first user
-        )
-
-        self.session.add(user)
-
-        # Mark setup as completed
-        await self.system_repo.mark_setup_completed()
-
-        # Commit transaction
-        await self.session.commit()
-        await self.session.refresh(user)
-
-        return user
+        del request
+        _raise_phase4_stub()

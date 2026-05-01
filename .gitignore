@@ -26,4 +26,10 @@ CLAUDE.md
 
 .vscode/
 .claude/
-.playwright-mcp
+.playwright-mcp/
+apps/api/.ruff_cache/
+
+# Redis TLS material — generated at dev-stack startup, never committed
+config/redis/tls/*.crt
+config/redis/tls/*.key
+!config/redis/tls/.gitkeep

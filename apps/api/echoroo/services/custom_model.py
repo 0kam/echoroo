@@ -6,6 +6,7 @@ import logging
 from typing import Any
 from uuid import UUID
 
+from fastapi import HTTPException, status
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -62,6 +63,31 @@ class CustomModelService:
             CustomModel instance or None if not found
         """
         return await self._repo.get_by_id_and_project(model_id, project_id)
+
+    async def get_model_or_404(
+        self,
+        model_id: UUID,
+        project_id: UUID,
+    ) -> CustomModel:
+        """Fetch a CustomModel by ID, scoped to the given project.
+
+        Args:
+            model_id: CustomModel's UUID
+            project_id: Project's UUID (used for scoping)
+
+        Returns:
+            CustomModel instance
+
+        Raises:
+            HTTPException: 404 if model not found in project
+        """
+        model = await self.get_model(model_id, project_id)
+        if model is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Custom model not found",
+            )
+        return model
 
     async def list_models(
         self,
@@ -141,6 +167,7 @@ class CustomModelService:
                 dataset_id_val = session.parameters.get("dataset_id")
                 if dataset_id_val is not None:
                     from uuid import UUID as _UUID  # noqa: PLC0415
+
                     model.dataset_id = _UUID(str(dataset_id_val))
 
         return await self._repo.create(model)
@@ -254,9 +281,7 @@ class CustomModelService:
         """
         # Store reference embedding IDs and sampling config in training_config
         updated_config: dict[str, Any] = dict(model.training_config or {})
-        updated_config["reference_embedding_ids"] = [
-            str(eid) for eid in reference_embedding_ids
-        ]
+        updated_config["reference_embedding_ids"] = [str(eid) for eid in reference_embedding_ids]
         if seed_sampling_request is not None:
             updated_config["sampling_config"] = {
                 "easy_positive_k": seed_sampling_request.easy_positive_k,
@@ -278,9 +303,7 @@ class CustomModelService:
             await self.db.flush()
 
         # Create the pending SamplingRound record
-        sampling_config_data: dict[str, Any] | None = updated_config.get(
-            "sampling_config"
-        )
+        sampling_config_data: dict[str, Any] | None = updated_config.get("sampling_config")
         round_ = await self._round_repo.create_round(
             custom_model_id=model.id,
             round_number=0,
@@ -401,10 +424,7 @@ class CustomModelService:
         confirmed_count = int(count_row.confirmed_count or 0)
         rejected_count = int(count_row.rejected_count or 0)
 
-        if (
-            confirmed_count < _MIN_LABELS_FOR_AL_ROUND
-            or rejected_count < _MIN_LABELS_FOR_AL_ROUND
-        ):
+        if confirmed_count < _MIN_LABELS_FOR_AL_ROUND or rejected_count < _MIN_LABELS_FOR_AL_ROUND:
             raise ValueError(
                 "Insufficient labeled data: need at least "
                 f"{_MIN_LABELS_FOR_AL_ROUND} confirmed and "
@@ -508,4 +528,3 @@ class CustomModelService:
         await self.db.commit()
 
         return detection_run
-

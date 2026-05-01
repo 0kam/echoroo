@@ -69,7 +69,7 @@ class AnnotationSetCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=200, description="Display name")
     filter_date_range: DateRangeFilter | None = Field(
         default=None,
-        description="Optional inclusive date filter on recording.recorded_at",
+        description="Optional inclusive date filter on recording.datetime",
     )
     filter_time_of_day_range: TimeOfDayRangeFilter | None = Field(
         default=None,

@@ -1,0 +1,171 @@
+# Allowlist for scripts/lint_permission_guard.py.
+#
+# Phase 2.11 P1-a: line-level fingerprint format. Each non-comment
+# line is <file>:<function_name>:missing-permission-guard. The
+# fingerprint is locked to a SPECIFIC violation so adding a new
+# unguarded endpoint to a file that already has allowlisted entries
+# fails the lint (the previous file-level allowlist silently inherited
+# every new violation in the same file).
+#
+# Phase 3 must drive each entry to empty before final cleanup.
+# Adding a new entry requires a justifying PR comment.
+#
+# Inline comments use TWO SPACES + #. Lines beginning with #
+# are full-line comments. See scripts/allowlists/README.md.
+
+# Phase 2.11 P1-a baseline established 2026-04-25 (replacing the file-
+# level baseline from Phase 2.10 #7). Each entry inherits the same
+# "Phase 3 US11 T1xx" cleanup target.
+apps/api/echoroo/api/v1/admin.py:create_license:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/admin.py:create_recorder:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/admin.py:delete_license:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/admin.py:delete_recorder:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/admin.py:get_license:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/admin.py:get_recorder:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/admin.py:get_system_settings:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/admin.py:list_licenses:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/admin.py:list_recorders:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/admin.py:list_users:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/admin.py:update_license:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/admin.py:update_recorder:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/admin.py:update_system_settings:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/admin.py:update_user:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/annotation_projects.py:create_annotation_project:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/annotation_projects.py:delete_annotation_project:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/annotation_projects.py:export_annotations:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/annotation_projects.py:generate_tasks:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/annotation_projects.py:get_annotation_project:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/annotation_projects.py:list_annotation_projects:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/annotation_projects.py:update_annotation_project:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/annotation_sets.py:add_palette_species:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/annotation_sets.py:create_annotation_set:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/annotation_sets.py:delete_annotation_set:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/annotation_sets.py:dispatch_sampling:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/annotation_sets.py:get_annotation_set:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/annotation_sets.py:list_annotation_sets:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/annotation_sets.py:list_set_segments:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/annotation_sets.py:remove_palette_species:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/annotation_sets.py:update_annotation_set:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/annotation_tasks.py:complete_task:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/annotation_tasks.py:get_next_task:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/annotation_tasks.py:get_task:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/annotation_tasks.py:list_tasks:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/annotation_tasks.py:update_task:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/annotations.py:add_clip_tag:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/annotations.py:add_note:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/annotations.py:add_sound_event_tag:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/annotations.py:batch_tag_clips:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/annotations.py:create_sound_event:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/annotations.py:delete_sound_event:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/annotations.py:get_or_create_clip_annotation:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/annotations.py:list_sound_events:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/annotations.py:remove_clip_tag:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/annotations.py:remove_sound_event_tag:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/annotations.py:review_clip_annotation:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/annotations.py:update_sound_event:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/clips.py:create_clip:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/clips.py:delete_clip:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/clips.py:download_clip:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/clips.py:generate_clips:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/clips.py:get_clip:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/clips.py:get_clip_audio:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/clips.py:get_clip_spectrogram:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/clips.py:list_clips:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/clips.py:update_clip:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/confirmed_regions.py:create_confirmed_region:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/confirmed_regions.py:delete_confirmed_region:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/confirmed_regions.py:list_confirmed_regions:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/datasets.py:apply_datetime_pattern:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/datasets.py:auto_detect_datetime:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/datasets.py:create_dataset:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/datasets.py:delete_dataset:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/datasets.py:export_dataset:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/datasets.py:get_dataset:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/datasets.py:get_dataset_statistics:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/datasets.py:get_datetime_config:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/datasets.py:get_import_status:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/datasets.py:list_datasets:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/datasets.py:start_import:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/datasets.py:test_datetime_pattern:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/datasets.py:update_dataset:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/detection_runs.py:list_available_models:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/detections.py:change_species:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/detections.py:confirm_detection:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/detections.py:create_detection:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/detections.py:delete_detection:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/detections.py:export_csv:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/detections.py:export_ml_dataset:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/detections.py:get_detection:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/detections.py:get_species_summary:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/detections.py:get_temporal_data:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/detections.py:list_detections:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/detections.py:reject_detection:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/h3.py:get_h3_from_coordinates:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/h3.py:validate_h3:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/projects.py:add_project_member:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/projects.py:create_project:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/projects.py:delete_project:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/projects.py:get_project:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/projects.py:get_project_overview:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/projects.py:list_project_members:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/projects.py:list_projects:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/projects.py:remove_project_member:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/projects.py:update_project:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/projects.py:update_project_member_role:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/recorders.py:list_recorders:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/recordings.py:delete_recording:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/recordings.py:download_recording:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/recordings.py:get_playback_audio:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/recordings.py:get_recording:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/recordings.py:get_spectrogram:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/recordings.py:stream_audio:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/recordings.py:stream_audio_legacy:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/recordings.py:update_recording:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/search/sessions.py:delete_search_session:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/search/sessions.py:export_search_session_csv:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/search/sessions.py:export_search_session_recordings_csv:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/search/sessions.py:get_search_session:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/search/sessions.py:get_session_similarity_distribution:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/search/sessions.py:get_session_time_distribution:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/search/sessions.py:list_search_sessions:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/search/sessions.py:rerun_search_session:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/search/sessions.py:sample_session_similarity_range:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/search/sessions.py:stream_reference_audio:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/search/sessions.py:update_search_session:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/search/similarity.py:get_embedding_stats:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/search/similarity.py:search_similar:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/search/similarity.py:search_similar_by_audio:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/segments.py:create_annotation:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/segments.py:create_segment_note:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/segments.py:get_segment:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/segments.py:update_segment:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/settings.py:get_embedding_model:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/sites.py:create_site:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/sites.py:delete_site:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/sites.py:get_site:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/sites.py:list_sites:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/sites.py:update_site:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/tags.py:create_tag:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/tags.py:delete_tag:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/tags.py:gbif_suggest:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/tags.py:get_statistics:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/tags.py:get_tag:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/tags.py:list_tags:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/tags.py:update_tag:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/taxa.py:gbif_search_taxa:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/taxa.py:get_taxon:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/taxa.py:list_taxa:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/taxa.py:search_taxa:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/time_range_annotations.py:create_annotation_note:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/time_range_annotations.py:delete_annotation:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/time_range_annotations.py:update_annotation:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/uploads.py:complete_upload_session:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/uploads.py:create_upload_session:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/uploads.py:get_upload_session_status:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/users.py:change_password:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/users.py:create_api_token:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/users.py:get_current_user:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/users.py:list_api_tokens:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/users.py:revoke_api_token:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/users.py:update_current_user:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/xeno_canto.py:proxy_sonogram:missing-permission-guard  # legacy: Phase 3 US11 T1xx

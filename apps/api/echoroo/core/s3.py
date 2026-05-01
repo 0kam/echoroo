@@ -2,13 +2,38 @@
 
 from __future__ import annotations
 
-from typing import Any
+from collections.abc import Iterator
+from datetime import datetime
+from typing import Any, NamedTuple
 
 import boto3
 from botocore.config import Config
 from botocore.exceptions import ClientError
 
 from echoroo.core.settings import get_settings
+
+
+class S3ObjectMeta(NamedTuple):
+    """Metadata for an S3 object returned by list_objects_paginated."""
+
+    key: str
+    last_modified: datetime
+    size: int
+
+
+class S3DeletionError(NamedTuple):
+    """Structured error returned by delete_objects_batch for a failed key."""
+
+    key: str
+    code: str
+    message: str
+
+
+class BatchDeleteResult(NamedTuple):
+    """Result of a delete_objects_batch call."""
+
+    deleted: list[str]
+    errors: list[S3DeletionError]
 
 
 def get_s3_client() -> Any:
@@ -211,3 +236,78 @@ def get_object_stream(
         params["Range"] = byte_range
     response = client.get_object(**params)
     return response["Body"]
+
+
+def list_objects_paginated(prefix: str, client: Any = None) -> Iterator[S3ObjectMeta]:
+    """Yield S3 objects under prefix using ContinuationToken pagination.
+
+    Args:
+        prefix: S3 key prefix to list under.
+        client: Optional boto3 S3 client. Created from settings if omitted.
+
+    Yields:
+        S3ObjectMeta for each object under the prefix.
+    """
+    settings = get_settings()
+    client = client or get_s3_client()
+    continuation_token: str | None = None
+    while True:
+        kwargs: dict[str, Any] = {
+            "Bucket": settings.S3_BUCKET,
+            "Prefix": prefix,
+            "MaxKeys": 1000,
+        }
+        if continuation_token:
+            kwargs["ContinuationToken"] = continuation_token
+        response = client.list_objects_v2(**kwargs)
+        for obj in response.get("Contents", []) or []:
+            yield S3ObjectMeta(
+                key=obj["Key"],
+                last_modified=obj["LastModified"],  # boto3 returns tz-aware datetime
+                size=obj.get("Size", 0),
+            )
+        if not response.get("IsTruncated"):
+            break
+        continuation_token = response.get("NextContinuationToken")
+        if not continuation_token:
+            break
+
+
+def delete_objects_batch(keys: list[str], client: Any = None) -> BatchDeleteResult:
+    """Delete up to 1000 keys via s3:DeleteObjects API.
+
+    Args:
+        keys: List of S3 object keys to delete (max 1000 per call).
+        client: Optional boto3 S3 client.
+
+    Returns:
+        BatchDeleteResult with deleted keys and structured errors.
+
+    Raises:
+        ValueError: If keys list exceeds 1000 entries.
+    """
+    if not keys:
+        return BatchDeleteResult(deleted=[], errors=[])
+    if len(keys) > 1000:
+        raise ValueError(
+            f"delete_objects_batch supports up to 1000 keys per call, got {len(keys)}"
+        )
+    settings = get_settings()
+    client = client or get_s3_client()
+    response = client.delete_objects(
+        Bucket=settings.S3_BUCKET,
+        Delete={
+            "Objects": [{"Key": k} for k in keys],
+            "Quiet": False,
+        },
+    )
+    deleted = [obj["Key"] for obj in response.get("Deleted", []) or []]
+    errors = [
+        S3DeletionError(
+            key=err.get("Key", ""),
+            code=err.get("Code", "Unknown"),
+            message=err.get("Message", ""),
+        )
+        for err in response.get("Errors", []) or []
+    ]
+    return BatchDeleteResult(deleted=deleted, errors=errors)

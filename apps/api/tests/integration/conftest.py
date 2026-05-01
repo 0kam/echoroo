@@ -8,10 +8,32 @@ import soundfile as sf
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from echoroo.core.jwt import create_access_token
-from echoroo.models.enums import ProjectRole
+from echoroo.models.enums import (
+    ProjectLicense,
+    ProjectMemberRole,
+    ProjectVisibility,
+)
 from echoroo.models.project import Project, ProjectMember
 from echoroo.models.site import Site
 from echoroo.models.user import User
+
+# Phase 16 Batch 6e (2026-04-29) downstream drift fix: Phase 7 / T320
+# (FR-085) made ``license`` NOT NULL on ``projects``. Phase 11 added the
+# ``ck_projects_restricted_config_shape`` CHECK that requires the eight
+# canonical toggle keys when ``visibility = 'restricted'``. The shared
+# integration ``test_project`` fixture must populate both so the legacy
+# upload / annotation / review workflows continue to flow through the
+# project-create step without 22NotNull on PG insert.
+_DEFAULT_RESTRICTED_CONFIG: dict[str, object] = {
+    "allow_media_playback": False,
+    "allow_detection_view": False,
+    "mask_species_in_detection": False,
+    "allow_download": False,
+    "allow_export": False,
+    "allow_voting_and_comments": False,
+    "public_location_precision_h3_res": 2,
+    "allow_precise_location_to_viewer": False,
+}
 
 
 @pytest.fixture
@@ -39,10 +61,9 @@ async def test_user(db_session: AsyncSession) -> User:
     """
     user = User(
         email="integrationtest@example.com",
-        hashed_password="$argon2id$v=19$m=65536,t=3,p=4$test",
+        password_hash="$argon2id$v=19$m=65536,t=3,p=4$test",
         display_name="Integration Test User",
-        is_active=True,
-        is_verified=True,
+        security_stamp="integration-stamp-test",
     )
     db_session.add(user)
     await db_session.commit()
@@ -62,10 +83,9 @@ async def member_user(db_session: AsyncSession) -> User:
     """
     user = User(
         email="integrationmember@example.com",
-        hashed_password="$argon2id$v=19$m=65536,t=3,p=4$test",
+        password_hash="$argon2id$v=19$m=65536,t=3,p=4$test",
         display_name="Integration Member User",
-        is_active=True,
-        is_verified=True,
+        security_stamp="integration-stamp-member",
     )
     db_session.add(user)
     await db_session.commit()
@@ -85,10 +105,9 @@ async def other_user(db_session: AsyncSession) -> User:
     """
     user = User(
         email="integrationother@example.com",
-        hashed_password="$argon2id$v=19$m=65536,t=3,p=4$test",
+        password_hash="$argon2id$v=19$m=65536,t=3,p=4$test",
         display_name="Integration Other User",
-        is_active=True,
-        is_verified=True,
+        security_stamp="integration-stamp-other",
     )
     db_session.add(user)
     await db_session.commit()
@@ -157,6 +176,10 @@ async def test_project(db_session: AsyncSession, test_user: User, member_user: U
         name="Test Project",
         description="Test project for integration tests",
         owner_id=test_user.id,
+        # Phase 16 Batch 6e drift fix: Phase 7 made license NOT NULL.
+        license=ProjectLicense.CC_BY,
+        visibility=ProjectVisibility.RESTRICTED,
+        restricted_config=dict(_DEFAULT_RESTRICTED_CONFIG),
     )
     db_session.add(project)
     await db_session.flush()
@@ -165,7 +188,7 @@ async def test_project(db_session: AsyncSession, test_user: User, member_user: U
     admin_member = ProjectMember(
         project_id=project.id,
         user_id=test_user.id,
-        role=ProjectRole.ADMIN,
+        role=ProjectMemberRole.ADMIN,
         invited_by_id=test_user.id,
     )
     db_session.add(admin_member)
@@ -174,7 +197,7 @@ async def test_project(db_session: AsyncSession, test_user: User, member_user: U
     member = ProjectMember(
         project_id=project.id,
         user_id=member_user.id,
-        role=ProjectRole.MEMBER,
+        role=ProjectMemberRole.MEMBER,
         invited_by_id=test_user.id,
     )
     db_session.add(member)
@@ -211,7 +234,7 @@ async def test_member(db_session: AsyncSession, test_project: Project, member_us
     member = ProjectMember(
         project_id=test_project.id,
         user_id=member_user.id,
-        role=ProjectRole.MEMBER,
+        role=ProjectMemberRole.MEMBER,
         invited_by_id=test_project.owner_id,
     )
     db_session.add(member)
@@ -234,7 +257,7 @@ async def test_site(db_session: AsyncSession, test_project: Project) -> Site:
     site = Site(
         project_id=test_project.id,
         name="Test Site",
-        h3_index="851fb46ffffffff",  # Valid H3 index
+        h3_index_member="851fb46ffffffff",  # Valid H3 index
     )
     db_session.add(site)
     await db_session.commit()

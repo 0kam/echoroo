@@ -18,16 +18,20 @@ const API_BASE = '/api/v1';
 
 /**
  * Fetch paginated tags for a project.
+ *
+ * Pass `locale` so the backend can resolve each tag's `vernacular_name` for
+ * the requested language (BCP-47 code, e.g. "en", "ja").
  */
 export async function fetchTags(
   projectId: string,
-  params: TagListParams = {}
+  params: TagListParams & { locale?: string } = {}
 ): Promise<TagListResponse> {
   const searchParams = new URLSearchParams();
   if (params.page) searchParams.set('page', params.page.toString());
   if (params.page_size) searchParams.set('page_size', params.page_size.toString());
   if (params.category) searchParams.set('category', params.category);
   if (params.search) searchParams.set('search', params.search);
+  if (params.locale) searchParams.set('locale', params.locale);
 
   const url = `${API_BASE}/projects/${projectId}/tags?${searchParams}`;
   return apiClient.get<TagListResponse>(url);
@@ -35,9 +39,19 @@ export async function fetchTags(
 
 /**
  * Fetch a single tag by ID.
+ *
+ * `locale` is forwarded so the backend can resolve the localised
+ * `vernacular_name` field on the returned tag.
  */
-export async function fetchTag(projectId: string, tagId: string): Promise<TagDetail> {
-  return apiClient.get<TagDetail>(`${API_BASE}/projects/${projectId}/tags/${tagId}`);
+export async function fetchTag(
+  projectId: string,
+  tagId: string,
+  params: { locale?: string } = {},
+): Promise<TagDetail> {
+  const searchParams = new URLSearchParams();
+  if (params.locale) searchParams.set('locale', params.locale);
+  const qs = searchParams.toString() ? `?${searchParams.toString()}` : '';
+  return apiClient.get<TagDetail>(`${API_BASE}/projects/${projectId}/tags/${tagId}${qs}`);
 }
 
 /**
@@ -81,7 +95,18 @@ export async function fetchGBIFSuggestions(
 
 /**
  * Fetch tag usage statistics for a project.
+ *
+ * Forward `locale` so each returned tag's `vernacular_name` matches the
+ * caller's active UI language.
  */
-export async function fetchTagStatistics(projectId: string): Promise<TagStatistic[]> {
-  return apiClient.get<TagStatistic[]>(`${API_BASE}/projects/${projectId}/tags/statistics`);
+export async function fetchTagStatistics(
+  projectId: string,
+  params: { locale?: string } = {},
+): Promise<TagStatistic[]> {
+  const searchParams = new URLSearchParams();
+  if (params.locale) searchParams.set('locale', params.locale);
+  const qs = searchParams.toString() ? `?${searchParams.toString()}` : '';
+  return apiClient.get<TagStatistic[]>(
+    `${API_BASE}/projects/${projectId}/tags/statistics${qs}`,
+  );
 }

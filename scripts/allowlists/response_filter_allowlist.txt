@@ -1,0 +1,21 @@
+# Allowlist for scripts/lint_response_filter.py.
+#
+# Phase 2.11 P1-a: line-level fingerprint format. Each non-comment
+# line is <file>:<function_name>:missing-response-filter. The
+# fingerprint is locked to a SPECIFIC endpoint, so adding a new
+# Recording/Detection/Site endpoint to an already-allowlisted file
+# fails the lint.
+#
+# Phase 3 must drive each entry to empty before final cleanup.
+#
+# Inline comments use TWO SPACES + #.
+
+# Phase 2.11 P1-a baseline 2026-04-25.
+apps/api/echoroo/api/v1/detections.py:change_species:missing-response-filter  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/detections.py:confirm_detection:missing-response-filter  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/detections.py:create_detection:missing-response-filter  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/detections.py:get_detection:missing-response-filter  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/detections.py:reject_detection:missing-response-filter  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/search/annotations.py:create_search_annotation:missing-response-filter  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/sites.py:create_site:missing-response-filter  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/sites.py:update_site:missing-response-filter  # legacy: Phase 3 US11 T1xx

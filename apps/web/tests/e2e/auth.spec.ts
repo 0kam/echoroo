@@ -3,6 +3,7 @@
  */
 
 import { test, expect } from '@playwright/test';
+import { generateTotpCode, waitForFreshTotpWindow } from './helpers/totp';
 
 // Test data
 const testUser = {
@@ -321,6 +322,117 @@ test.describe('Authentication', () => {
       await page.goto('/dashboard');
 
       // Should redirect to login
+      await expect(page).toHaveURL(/\/login/);
+    });
+  });
+
+  test.describe('Two-Factor Authentication Flow', () => {
+    /**
+     * Full enrollment flow: register a fresh user, log in for the first
+     * time, complete 2FA setup, and arrive at the dashboard.
+     */
+    test('register-then-first-login forces 2FA setup', async ({ page }) => {
+      const fresh = {
+        email: `2fa-${Date.now()}@example.com`,
+        password: 'TestPassword123!',
+        displayName: 'TwoFA User',
+      };
+
+      // 1. Register
+      await page.goto('/register');
+      await expect(page.locator('[data-testid="register-2fa-notice"]')).toBeVisible();
+      await page.fill('#email', fresh.email);
+      await page.fill('#displayName', fresh.displayName);
+      await page.fill('#password', fresh.password);
+      await page.fill('#confirmPassword', fresh.password);
+      await page.click('button[type="submit"]');
+
+      // Should redirect to /login?registered=true&email=...
+      await expect(page).toHaveURL(/\/login\?registered=true/);
+
+      // 2. Login (first time)
+      await page.fill('#password', fresh.password);
+      await page.click('button[type="submit"]');
+
+      // Backend instructs the FE to redirect to the 2FA setup page.
+      // The setup page lives in (auth) so unauthenticated users can reach it.
+      await expect(page).toHaveURL(/\/2fa-setup/);
+
+      // 3. Capture the secret rendered on the page, then submit the TOTP code.
+      const secretLocator = page.locator('[data-testid="two-factor-secret"]');
+      await expect(secretLocator).toBeVisible();
+      const secret = (await secretLocator.textContent())?.trim();
+      expect(secret, 'TOTP secret should be visible on setup page').toBeTruthy();
+
+      await waitForFreshTotpWindow();
+      const code = generateTotpCode(secret as string);
+      await page.fill('[data-testid="two-factor-setup-code-input"]', code);
+      await page.click('[data-testid="two-factor-confirm"]');
+
+      // 4. Backup codes screen
+      await expect(page.locator('[data-testid="two-factor-backup-codes"]')).toBeVisible();
+      await page.check('[data-testid="backup-codes-saved"]');
+      await page.click('[data-testid="backup-codes-continue"]');
+
+      // 5. Dashboard
+      await expect(page).toHaveURL(/\/dashboard/);
+    });
+
+    /**
+     * Login flow for a user that has 2FA already enabled. Assumes the test
+     * environment seeds a user whose TOTP secret is available via env var.
+     */
+    test('login with 2FA-enabled user completes with TOTP', async ({ page }) => {
+      const email = process.env.E2E_2FA_USER_EMAIL;
+      const password = process.env.E2E_2FA_USER_PASSWORD;
+      const secret = process.env.E2E_2FA_USER_TOTP_SECRET;
+
+      test.skip(
+        !email || !password || !secret,
+        'E2E_2FA_USER_* env vars not set — skip until seeded fixture is available',
+      );
+
+      await page.goto('/login');
+      await page.fill('#email', email as string);
+      await page.fill('#password', password as string);
+      await page.click('button[type="submit"]');
+
+      // Step 2 form should appear
+      await expect(page.locator('[data-testid="two-factor-form"]')).toBeVisible();
+
+      await waitForFreshTotpWindow();
+      const code = generateTotpCode(secret as string);
+      await page.fill('[data-testid="two-factor-code-input"]', code);
+      await page.click('[data-testid="two-factor-submit"]');
+
+      await expect(page).toHaveURL(/\/dashboard/);
+    });
+
+    /**
+     * Invalid TOTP codes during the challenge step show an error and do
+     * NOT advance the user to the dashboard.
+     */
+    test('login with invalid TOTP shows error', async ({ page }) => {
+      const email = process.env.E2E_2FA_USER_EMAIL;
+      const password = process.env.E2E_2FA_USER_PASSWORD;
+
+      test.skip(
+        !email || !password,
+        'E2E_2FA_USER_* env vars not set — skip until seeded fixture is available',
+      );
+
+      await page.goto('/login');
+      await page.fill('#email', email as string);
+      await page.fill('#password', password as string);
+      await page.click('button[type="submit"]');
+
+      await expect(page.locator('[data-testid="two-factor-form"]')).toBeVisible();
+
+      await page.fill('[data-testid="two-factor-code-input"]', '000000');
+      await page.click('[data-testid="two-factor-submit"]');
+
+      await expect(page.locator('[data-testid="two-factor-error"]')).toBeVisible();
+      // Should NOT have navigated away from the login page.
       await expect(page).toHaveURL(/\/login/);
     });
   });

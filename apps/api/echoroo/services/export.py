@@ -95,8 +95,8 @@ class ExportService:
         site = dataset.site
         lat = None
         lng = None
-        if site and site.h3_index:
-            lat, lng = h3_to_center(site.h3_index)
+        if site and site.h3_index_member:
+            lat, lng = h3_to_center(site.h3_index_member)
 
         writer.writerow(
             [
@@ -267,8 +267,8 @@ class ExportService:
 
         # Get coordinates from site
         coordinates: list[float] = []
-        if dataset.site and dataset.site.h3_index:
-            lat, lng = h3_to_center(dataset.site.h3_index)
+        if dataset.site and dataset.site.h3_index_member:
+            lat, lng = h3_to_center(dataset.site.h3_index_member)
             coordinates = [lng, lat]  # GeoJSON uses [lng, lat]
 
         datapackage = {

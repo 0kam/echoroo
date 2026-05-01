@@ -50,7 +50,7 @@ async def get_current_user(
     "/me",
     response_model=UserResponse,
     summary="Update current user profile",
-    description="Update display name and/or organization of the current user",
+    description="Update display name of the current user",
 )
 async def update_current_user(
     request: UserUpdateRequest,

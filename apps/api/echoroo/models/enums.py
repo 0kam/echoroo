@@ -6,16 +6,74 @@ from enum import StrEnum
 class ProjectVisibility(StrEnum):
     """Project visibility levels."""
 
-    PRIVATE = "private"
     PUBLIC = "public"
+    RESTRICTED = "restricted"
 
 
-class ProjectRole(StrEnum):
+class ProjectMemberRole(StrEnum):
     """Project member roles with different permission levels."""
 
-    ADMIN = "admin"  # Full control: manage members, edit settings, edit data
-    MEMBER = "member"  # Can view and edit data
-    VIEWER = "viewer"  # Read-only access
+    VIEWER = "viewer"
+    MEMBER = "member"
+    ADMIN = "admin"
+
+
+class ProjectInvitationKind(StrEnum):
+    """Kind of a :class:`ProjectInvitation`.
+
+    FR-047: a single ``project_invitations`` table covers both Member and
+    Trusted invitations. The ``kind`` discriminator selects which subset
+    of columns is mandatory (see ``ck_project_invitations_kind_fields``).
+    """
+
+    MEMBER = "member"
+    TRUSTED = "trusted"
+
+
+class ProjectInvitationStatus(StrEnum):
+    """Lifecycle of a :class:`ProjectInvitation`.
+
+    FR-053: ``pending`` is the only state from which ``accept`` may
+    transition. Status × timestamp consistency is guarded by
+    ``ck_project_invitations_status_timestamps`` in the baseline migration.
+    """
+
+    PENDING = "pending"
+    ACCEPTED = "accepted"
+    DECLINED = "declined"
+    EXPIRED = "expired"
+    REVOKED = "revoked"
+
+
+class ProjectTrustedStatus(StrEnum):
+    """Lifecycle of a :class:`ProjectTrustedUser` overlay.
+
+    FR-041 / FR-044: ``active`` is the only state for which the gate may
+    grant overlay permissions. ``expired`` is set by the auto-expire
+    worker (T516); ``revoked`` is set explicitly by Owner/Admin via
+    :func:`echoroo.services.trusted_service.revoke_trusted_user`.
+    """
+
+    ACTIVE = "active"
+    EXPIRED = "expired"
+    REVOKED = "revoked"
+
+
+class ProjectStatus(StrEnum):
+    """Project lifecycle status."""
+
+    ACTIVE = "active"
+    DORMANT = "dormant"
+    ARCHIVED = "archived"
+
+
+class ProjectLicense(StrEnum):
+    """Project data license."""
+
+    CC0 = "CC0"
+    CC_BY = "CC-BY"
+    CC_BY_NC = "CC-BY-NC"
+    CC_BY_SA = "CC-BY-SA"
 
 
 class SettingType(StrEnum):
@@ -124,6 +182,56 @@ class VoteType(StrEnum):
     AGREE = "agree"
     DISAGREE = "disagree"
     UNSURE = "unsure"
+
+
+class AnnotationVoteSource(StrEnum):
+    """Source classification for annotation votes and comments."""
+
+    MEMBER = "member"
+    GUEST_AUTHENTICATED = "guest_authenticated"
+    TRUSTED_USER = "trusted_user"
+
+
+class TaxonSensitivitySource(StrEnum):
+    """Source of a global :class:`TaxonSensitivity` row (FR-032).
+
+    The auto-obscure pipeline (FR-029..032) ranks rows so that ``manual`` wins
+    over ``moe_rdb`` which wins over ``iucn`` when computing the effective
+    masking resolution for a taxon (spec L313-365 ``compute_effective_resolution``).
+    """
+
+    IUCN = "iucn"
+    MOE_RDB = "moe_rdb"
+    MANUAL = "manual"
+
+
+class TaxonOverrideDirection(StrEnum):
+    """Direction of a per-project taxon sensitivity override (FR-033).
+
+    ``stricter`` means the project owner increases masking (lower H3 res);
+    these apply immediately. ``looser`` means the owner relaxes masking
+    (higher H3 res); these require superuser approval (FR-034) and may be
+    rejected, captured by the companion
+    :class:`TaxonOverrideApprovalStatus` enum.
+    """
+
+    STRICTER = "stricter"
+    LOOSER = "looser"
+
+
+class TaxonOverrideApprovalStatus(StrEnum):
+    """Approval lifecycle for a project taxon override (FR-034).
+
+    A ``stricter`` override is always created with ``applied`` (no approval
+    needed). A ``looser`` override is created with ``pending_superuser_approval``
+    and transitions to ``applied`` once a superuser approves, or ``rejected``
+    if denied. The CHECK constraint ``ck_taxon_overrides_direction_vs_approval``
+    in the baseline migration enforces these legal combinations.
+    """
+
+    APPLIED = "applied"
+    PENDING_SUPERUSER_APPROVAL = "pending_superuser_approval"
+    REJECTED = "rejected"
 
 
 class SignalQuality(StrEnum):

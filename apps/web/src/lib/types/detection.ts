@@ -46,6 +46,25 @@ export type SignalQuality = 'solo' | 'dominant' | 'mixed';
 export type ConsensusStatus = 'needs_votes' | 'agreed' | 'disputed' | 'rejected';
 
 /**
+ * Voter relationship to the project at vote-creation time (FR-037).
+ * Snapshot is immutable per backend contract — re-voting does not refresh it.
+ *
+ * - `member`: the voter was a project member (any role) at vote time
+ * - `guest_authenticated`: the voter was an authenticated non-member
+ *   (Public-project participation)
+ * - `trusted_user`: the voter was an active Trusted user (cross-project
+ *   moderator). Phase 6 does not produce these but the type allows future
+ *   compatibility.
+ */
+export type AnnotationVoteSource = 'member' | 'guest_authenticated' | 'trusted_user';
+
+/**
+ * Project member role recorded as a snapshot at vote-creation time
+ * (FR-037). Null when `source` is not `member`.
+ */
+export type ProjectRoleAtVote = 'viewer' | 'member' | 'admin';
+
+/**
  * Minimal user info embedded in vote responses.
  * Mirrors the backend VoteUserInfo Pydantic schema.
  */
@@ -58,14 +77,22 @@ export interface VoteUserInfo {
 /**
  * A single vote cast by a user on a detection.
  * Mirrors the backend VoteResponse Pydantic schema.
+ *
+ * FR-039: `user_id` (and the embedded `user` info) are masked to `null` for
+ * non-Owner / non-Admin viewers when the vote's `source` is
+ * `guest_authenticated` or `trusted_user`. The vote itself, `source`,
+ * and `project_role_at_vote` remain visible. Member votes are never masked.
  */
 export interface DetectionVote {
   /** Unique identifier */
   id: string;
   /** Annotation this vote belongs to */
   annotation_id: string;
-  /** User who cast the vote */
-  user_id: string;
+  /**
+   * Voter UUID. Null when masked under FR-039 (non-Owner / non-Admin viewer
+   * looking at a guest_authenticated / trusted_user vote).
+   */
+  user_id: string | null;
   /** The vote value */
   vote: VoteValue;
   /** Signal quality assessment — only present on agree votes */
@@ -76,13 +103,28 @@ export interface DetectionVote {
   note: string | null;
   /** ISO 8601 creation timestamp */
   created_at: string;
-  /** User info (id, email, display_name) */
-  user: VoteUserInfo;
+  /**
+   * Embedded voter info. Null when `user_id` is masked under FR-039.
+   */
+  user: VoteUserInfo | null;
+  /**
+   * Voter relationship at vote-creation time (FR-037, immutable snapshot).
+   */
+  source: AnnotationVoteSource;
+  /**
+   * Voter project role at vote-creation time. Null when `source` is not
+   * `member` (FR-037, immutable snapshot).
+   */
+  project_role_at_vote: ProjectRoleAtVote | null;
 }
 
 /**
  * Aggregated vote summary for a detection.
  * Mirrors the backend VoteSummaryResponse Pydantic schema.
+ *
+ * FR-038: per-source aggregate counts (`member_*` / `guest_authenticated_*` /
+ * `trusted_user_*`) are exposed independently so the UI can render the
+ * 3-source breakdown required by US2 acceptance scenario #3.
  */
 export interface VoteSummary {
   /** Annotation identifier */
@@ -101,8 +143,24 @@ export interface VoteSummary {
   user_signal_quality: SignalQuality | null;
   /** Breakdown of agree votes by signal quality */
   signal_quality_counts: { solo: number; dominant: number; mixed: number };
-  /** All votes with voter info */
-  votes: DetectionVote[];
+  /**
+   * Individual vote records. Field name matches backend's
+   * `VoteSummaryResponse.voters` (renamed from `votes` in Phase 6).
+   * Non-member / Trusted entries may have `user_id=null` under FR-039.
+   */
+  voters: DetectionVote[];
+  /** Agree votes from project members (FR-038). */
+  member_agree: number;
+  /** Disagree votes from project members (FR-038). */
+  member_disagree: number;
+  /** Agree votes from authenticated non-members (FR-038). */
+  guest_authenticated_agree: number;
+  /** Disagree votes from authenticated non-members (FR-038). */
+  guest_authenticated_disagree: number;
+  /** Agree votes from active Trusted users (FR-038). */
+  trusted_user_agree: number;
+  /** Disagree votes from active Trusted users (FR-038). */
+  trusted_user_disagree: number;
 }
 
 /**
@@ -246,8 +304,13 @@ export interface SpeciesSummary {
   tag_id: string;
   /** Human-readable tag name */
   tag_name: string;
-  /** Common / vernacular name of the species; null if not available */
+  /** English common name; null if not available */
   common_name: string | null;
+  /**
+   * Locale-resolved vernacular name for the requested `locale` query param.
+   * Null when no vernacular entry is available for the active locale.
+   */
+  vernacular_name?: string | null;
   /** Scientific name of the species; null if not a species tag */
   scientific_name: string | null;
   /** Total number of detections for this species */
@@ -382,8 +445,13 @@ export interface SpeciesTemporalData {
   tag_id: string;
   /** Scientific name of the species */
   scientific_name: string;
-  /** Common / vernacular name; null if not available */
+  /** English common name; null if not available */
   common_name: string | null;
+  /**
+   * Locale-resolved vernacular name for the requested `locale` query param.
+   * Null when no vernacular entry is available for the active locale.
+   */
+  vernacular_name?: string | null;
   /** Total detection count across all time slots */
   total_detections: number;
   /** Hourly detection data points */

@@ -1,0 +1,255 @@
+openapi: 3.1.0
+info:
+  title: Echoroo Detections API
+  version: "1.0.0"
+  description: >
+    Detection 一覧 / 詳細 / エクスポート / 投票 / コメント。
+    全エンドポイントで check_project_access + Response filter 必須（spec 指摘の漏れを塞ぐ）。
+    生 lat/lng はレスポンスに含まれない（FR-028〜031）。
+
+servers:
+  - url: https://echoroo.app/api/v1
+    description: Programmatic API（Bearer API key 必須）
+  - url: https://echoroo.app/web-api/v1
+    description: First-party session API（Cookie + CSRF）
+
+# file-level security: read-only default (apiKeyAuth OR sessionCookie)
+# state-changing (投票・コメント等) は path operation で apiKeyAuth or (sessionCookie + csrfToken) に override
+security:
+  - apiKeyAuth: []
+  - sessionCookie: []
+
+paths:
+  /projects/{id}/detections:
+    get:
+      summary: Detection list（Permission gate + Response filter 通過）
+      description: |
+        - Visibility + Restricted toggle に応じて VIEW_DETECTION を判定
+        - 各 detection の h3_index は compute_effective_resolution で解像度調整
+        - mask_species_in_detection=true なら species を "(masked)" に置換
+        - location_generalization / withheld_reason 列を必ず返す（FR-086）
+      operationId: listDetections
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - name: species
+          in: query
+          schema: { type: string }
+        - name: site_id
+          in: query
+          schema: { type: string, format: uuid }
+        - name: start_time
+          in: query
+          schema: { type: string, format: date-time }
+        - name: end_time
+          in: query
+          schema: { type: string, format: date-time }
+        - name: min_confidence
+          in: query
+          schema: { type: number }
+        - name: page
+          in: query
+          schema: { type: integer, default: 1 }
+        - name: page_size
+          in: query
+          schema: { type: integer, default: 100, maximum: 500 }
+      responses:
+        "200":
+          description: Detection list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DetectionListResponse'
+        "403":
+          description: VIEW_DETECTION なし（Restricted で allow_detection_view=OFF など）
+
+  /projects/{id}/detections/{detectionId}:
+    get:
+      summary: Detection 詳細
+      operationId: getDetection
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: detectionId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: 詳細（Response filter 適用）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Detection'
+
+  /projects/{id}/detections/export/csv:
+    get:
+      summary: CSV エクスポート（EXPORT permission 必須）
+      description: |
+        CSV ヘッダに以下が必ず含まれる（FR-086）:
+        - license
+        - license_history_url
+        - location_generalization (H3 resolution)
+        - withheld_reason
+        生 lat/lng は含まれない
+      operationId: exportDetectionsCsv
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - $ref: '#/components/parameters/SpeciesFilter'
+      responses:
+        "200":
+          description: CSV stream
+          content:
+            text/csv:
+              schema: { type: string }
+
+  /projects/{id}/detections/export/ml-dataset:
+    post:
+      summary: ML dataset エクスポート（EXPORT permission、非同期 Celery）
+      description: ZIP 作成は Celery task、署名付き S3 URL が完成メールで送られる
+      operationId: exportMlDataset
+      security:
+        - apiKeyAuth: []
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "202":
+          description: ジョブ登録完了、job_id を返す
+
+  /projects/{id}/annotations/{annotationId}/votes:
+    get:
+      summary: 投票一覧（集計 3 カウント別、非メンバー/Trusted 個票は Owner/Admin のみ）
+      operationId: listAnnotationVotes
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: annotationId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: 集計 + 可視個票
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VoteAggregateResponse'
+
+    post:
+      summary: 投票（VOTE permission）
+      description: source は member / guest_authenticated / trusted_user を自動判定
+      operationId: createAnnotationVote
+      security:
+        - apiKeyAuth: []
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: annotationId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [decision]
+              additionalProperties: false
+              properties:
+                decision: { type: string, enum: [agree, disagree] }
+      responses:
+        "201":
+          description: 投票登録、immutable
+
+  /projects/{id}/annotations/{annotationId}/comments:
+    get:
+      summary: コメント一覧（source バッジ付き）
+      operationId: listAnnotationComments
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: annotationId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: コメント list
+
+    post:
+      summary: コメント投稿（COMMENT permission）
+      operationId: createAnnotationComment
+      security:
+        - apiKeyAuth: []
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: annotationId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [body]
+              additionalProperties: false
+              properties:
+                body: { type: string, maxLength: 2000 }
+      responses:
+        "201":
+          description: コメント登録
+
+components:
+  securitySchemes:
+    apiKeyAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: "ek_live_{prefix}_{secret}"
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: session_id
+    csrfToken:
+      type: apiKey
+      in: header
+      name: X-CSRF-Token
+
+  parameters:
+    SpeciesFilter:
+      name: species
+      in: query
+      schema: { type: string }
+
+  schemas:
+    DetectionListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/Detection' }
+        total: { type: integer }
+        page: { type: integer }
+
+    Detection:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        recording_id: { type: string, format: uuid }
+        species: { type: string, description: "mask_species_in_detection=true の場合 '(masked)'" }
+        start_time: { type: number, description: "秒単位" }
+        end_time: { type: number }
+        confidence: { type: number }
+        h3_index: { type: string, description: "compute_effective_resolution の結果（動的、生 lat/lng は含まれない）" }
+        location_generalization: { type: integer, description: "適用された H3 resolution（FR-086）" }
+        withheld_reason:
+          type: string
+          enum: [none, project_toggle, taxon_sensitivity, hidden]
+          description: 粗化理由
+
+    VoteAggregateResponse:
+      type: object
+      properties:
+        member_agree: { type: integer }
+        member_disagree: { type: integer }
+        guest_authenticated_agree: { type: integer }
+        guest_authenticated_disagree: { type: integer }
+        trusted_user_agree: { type: integer }
+        trusted_user_disagree: { type: integer }
+        voters:
+          type: array
+          description: 非メンバー / Trusted 票の個票 user_id は Owner / Admin のみ、他ロールは null にマスク（投票自体は可視）（FR-039）
+          items:
+            type: object
+            properties:
+              user_id: { type: string, format: uuid, nullable: true }
+              source: { type: string, enum: [member, guest_authenticated, trusted_user] }
+              project_role_at_vote: { type: string, nullable: true }

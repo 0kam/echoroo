@@ -75,7 +75,11 @@ class Dataset(UUIDMixin, TimestampMixin, Base):
     )
     created_by_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("users.id"),
+        # Phase 13 P2 R2 (Codex follow-up): ON DELETE RESTRICT to match
+        # the spec / 0008 / baseline FK action. NOT NULL prevents
+        # SET NULL, so RESTRICT is the only sane choice — deleting a
+        # user that owns datasets requires explicit ownership transfer.
+        ForeignKey("users.id", ondelete="RESTRICT"),
         nullable=False,
         doc="User who created dataset",
     )

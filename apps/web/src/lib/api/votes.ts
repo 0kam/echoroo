@@ -29,6 +29,19 @@ function annotationVoteUrl(projectId: string, annotationId: string): string {
 }
 
 /**
+ * Fetch the full vote summary (including `voters[]` and per-source counts)
+ * for a detection.  The detection list endpoint only embeds compact
+ * `DetectionVoteCounts`; lazy-load this when the UI needs the per-source
+ * breakdown or the voter list (FR-038 / FR-039).
+ */
+export async function getDetectionVoteSummary(
+  projectId: string,
+  detectionId: string
+): Promise<VoteSummary> {
+  return apiClient.get<VoteSummary>(detectionVoteUrl(projectId, detectionId));
+}
+
+/**
  * Cast or update a vote on a detection.
  * If the user already has a vote, it is updated.
  *

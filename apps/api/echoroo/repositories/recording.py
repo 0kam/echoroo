@@ -32,6 +32,47 @@ class RecordingRepository(BaseRepository[Recording]):
         )
         return result.scalar_one_or_none()
 
+    async def get_by_id_in_project(
+        self, recording_id: UUID, project_id: UUID
+    ) -> Recording | None:
+        """Get recording by ID, restricted to the given project.
+
+        Verifies the integrity chain Recording -> Dataset -> Project so that
+        a recording UUID belonging to a different project returns ``None``
+        instead of leaking the row (BOLA / IDOR guard, FR-008 / FR-008a).
+
+        Args:
+            recording_id: Recording's UUID.
+            project_id: Project UUID the recording must belong to.
+
+        Returns:
+            Recording instance with relationships loaded, or ``None`` when the
+            recording does not exist or does not belong to ``project_id``.
+        """
+        from echoroo.models.dataset import Dataset
+
+        result = await self.db.execute(
+            select(Recording)
+            .join(Dataset, Recording.dataset_id == Dataset.id)
+            .where(Recording.id == recording_id)
+            .where(Dataset.project_id == project_id)
+            .options(selectinload(Recording.dataset))
+        )
+        return result.scalar_one_or_none()
+
+    async def exists_in_project(self, recording_id: UUID, project_id: UUID) -> bool:
+        """Return True when the recording belongs to a dataset in the project."""
+        from echoroo.models.dataset import Dataset
+
+        result = await self.db.execute(
+            select(Recording.id)
+            .join(Dataset, Recording.dataset_id == Dataset.id)
+            .where(Recording.id == recording_id)
+            .where(Dataset.project_id == project_id)
+            .limit(1)
+        )
+        return result.scalar_one_or_none() is not None
+
     async def get_by_dataset_and_path(self, dataset_id: UUID, path: str) -> Recording | None:
         """Get recording by dataset ID and path.
 

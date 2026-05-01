@@ -12,6 +12,7 @@ dependencies = [
     "pydantic-settings>=2.6.0",
     "pyjwt>=2.10.0",
     "passlib[argon2]>=1.7.4",
+    "argon2-cffi>=23.1",
     "python-multipart>=0.0.17",
     "fastapi-limiter>=0.1.6",
     "redis>=5.2.0",
@@ -36,6 +37,11 @@ dependencies = [
     "pgvector>=0.3.0",
     "scikit-learn>=1.5.0",
     "joblib>=1.4.0",
+    # 006 permissions redesign: 2FA / WebAuthn / KMS envelope encryption
+    "pyotp>=2.9.0,<3.0",
+    # webauthn: scheduled for use in T146 WebAuthnService
+    "webauthn>=2.5.0,<3.0",
+    "cryptography>=44.0,<46.0",
 ]
 
 [project.optional-dependencies]
@@ -49,6 +55,9 @@ dev = [
     "types-passlib>=1.7.7",
     "pyyaml>=6.0",
     "types-pyyaml>=6.0",
+    # 006 permissions redesign: mutation testing + integration test containers
+    "mutmut>=3.2,<4.0",
+    "testcontainers[postgres,redis]>=4.9,<5.0",
 ]
 
 [build-system]
@@ -134,6 +143,11 @@ module = [
 ]
 ignore_missing_imports = true
 
+# TODO Phase 4 T150a: drop this override once tests are migrated off legacy User attrs
+[[tool.mypy.overrides]]
+module = ["tests.*"]
+ignore_errors = true
+
 [tool.pytest.ini_options]
 minversion = "8.0"
 addopts = "-ra -q --strict-markers --cov=echoroo --cov-report=term-missing"
@@ -141,16 +155,45 @@ testpaths = ["tests"]
 pythonpath = ["."]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "integration: marks integration tests (deselect with '-m \"not integration\"')",
+    "requires_postgres: marks tests that require a real PostgreSQL container (testcontainers)",
+    # Phase 16 Batch 6g-2 R2 (Codex Minor 3): the ``performance`` marker is
+    # **opt-in only** — CI deselects these tests via ``pytest -m "not
+    # performance"`` (see ``.github/workflows/ci.yml`` ``backend-tests`` job)
+    # because latency assertions are environment-sensitive and would flap on
+    # GitHub-hosted runners. Latency assertions also gate on
+    # ``RUN_PERF_LATENCY=true`` for an additional opt-in. Run locally with
+    # ``pytest -m performance`` to exercise them.
+    "performance: marks tests that measure latency / p95 budgets (CI default: skipped via '-m \"not performance\"', opt-in locally with '-m performance')",
+    # Phase 16 Batch 6h-3 (T998): the ``requires_runbook`` marker gates tests
+    # that actually invoke the bootstrap scripts against a live database / S3
+    # / KMS / IUCN API. CI runs the smoke subset (``-m "not requires_runbook"``)
+    # which only validates ``--help`` exit codes and CLI argument regressions
+    # without touching infrastructure. Operators can opt-in locally via
+    # ``pytest -m requires_runbook`` against the Docker Compose dev stack
+    # documented in quickstart §3.
+    "requires_runbook: marks runbook tests that require a live infra stack (CI default: skipped via '-m \"not requires_runbook\"', opt-in locally with '-m requires_runbook')",
+]
 
 [tool.coverage.run]
+# T996 (Phase 16 Batch 6h-2): branch coverage enabled for accurate permission
+# module measurement (PR-005, SC-013).
 source = ["echoroo"]
+branch = true
 omit = [
     "*/tests/*",
     "*/__init__.py",
     "*/migrations/*",
+    "echoroo/__main__.py",
+    "echoroo/scripts/*",
 ]
 
 [tool.coverage.report]
+# T996: show_missing enabled so CI logs highlight uncovered lines.
+show_missing = true
+skip_covered = false
 exclude_lines = [
     "pragma: no cover",
     "def __repr__",
@@ -162,8 +205,50 @@ exclude_lines = [
     "@(abc\\.)?abstractmethod",
 ]
 
+[tool.mutmut]
+# T995 (Phase 16 Batch 6h-1): 11-module mutation testing gate (PR-004, SC-012).
+#
+# Required modules:
+#   core/permissions.py, core/actions.py,
+#   services/superuser_service.py, services/api_key_verification.py
+#
+# Additional modules (Phase 16 Codex extension):
+#   middleware/auth.py, middleware/auth_router.py,
+#   services/webauthn_service.py, workers/dormancy_check.py
+#
+# Existing (maintained from Phase 2):
+#   core/response_filter.py, core/audit.py, core/kms.py
+#
+# Target score: >= 80% (spec PR-004, SC-012). Enforced by CI hard gate.
+# See also: apps/api/mutmut.toml (documentation reference, not read by mutmut 3.x).
+paths_to_mutate = [
+    "echoroo/core/permissions.py",
+    "echoroo/core/actions.py",
+    "echoroo/core/response_filter.py",
+    "echoroo/core/audit.py",
+    "echoroo/core/kms.py",
+    "echoroo/services/superuser_service.py",
+    "echoroo/services/api_key_verification.py",
+    "echoroo/middleware/auth.py",
+    "echoroo/middleware/auth_router.py",
+    "echoroo/services/webauthn_service.py",
+    "echoroo/workers/dormancy_check.py",
+]
+tests_dir = ["tests/unit/", "tests/security/"]
+# Runner: use python -m pytest for portability across uv and CI venvs.
+# --no-cov avoids coverage overhead per mutant.
+# --override-ini=addopts= clears project-level addopts.
+pytest_add_cli_args = [
+    "-x",
+    "--no-cov",
+    "--override-ini=addopts=",
+]
+
 [dependency-groups]
 dev = [
+    "fakeredis>=2.23",
     "httpx>=0.28.1",
+    # Required by tests/unit/core/test_kms.py for mock AWS KMS.
+    "moto>=5.0",
     "mypy>=1.19.1",
 ]

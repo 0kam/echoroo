@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from sqlalchemy import Boolean, ForeignKey, String, UniqueConstraint
+from sqlalchemy import Boolean, ForeignKey, Index, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -56,6 +56,11 @@ class TaxonVernacularName(UUIDMixin, TimestampMixin, Base):
 
     __table_args__ = (
         UniqueConstraint("taxon_id", "locale", "source", name="uq_taxon_vernacular_locale_source"),
+        Index(
+            "ix_taxon_vernacular_names_locale_taxon_id",
+            "locale",
+            "taxon_id",
+        ),
     )
 
     def __repr__(self) -> str:

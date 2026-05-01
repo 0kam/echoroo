@@ -4,7 +4,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from echoroo.core.jwt import create_access_token
-from echoroo.models.enums import ProjectRole, ProjectVisibility
+from echoroo.models.enums import ProjectLicense, ProjectMemberRole, ProjectVisibility
 from echoroo.models.project import Project, ProjectMember
 from echoroo.models.user import User
 
@@ -21,10 +21,9 @@ async def test_user(db_session: AsyncSession) -> User:
     """
     user = User(
         email="testuser@example.com",
-        hashed_password="$argon2id$v=19$m=65536,t=3,p=4$test",
+        password_hash="$argon2id$v=19$m=65536,t=3,p=4$test",
         display_name="Test User",
-        is_active=True,
-        is_verified=True,
+        security_stamp="contract-stamp-test",
     )
     db_session.add(user)
     await db_session.commit()
@@ -44,10 +43,9 @@ async def other_user(db_session: AsyncSession) -> User:
     """
     user = User(
         email="otheruser@example.com",
-        hashed_password="$argon2id$v=19$m=65536,t=3,p=4$test",
+        password_hash="$argon2id$v=19$m=65536,t=3,p=4$test",
         display_name="Other User",
-        is_active=True,
-        is_verified=True,
+        security_stamp="contract-stamp-other",
     )
     db_session.add(user)
     await db_session.commit()
@@ -67,10 +65,9 @@ async def member_user(db_session: AsyncSession) -> User:
     """
     user = User(
         email="member@example.com",
-        hashed_password="$argon2id$v=19$m=65536,t=3,p=4$test",
+        password_hash="$argon2id$v=19$m=65536,t=3,p=4$test",
         display_name="Member User",
-        is_active=True,
-        is_verified=True,
+        security_stamp="contract-stamp-member",
     )
     db_session.add(user)
     await db_session.commit()
@@ -90,10 +87,9 @@ async def admin_user(db_session: AsyncSession) -> User:
     """
     user = User(
         email="admin@example.com",
-        hashed_password="$argon2id$v=19$m=65536,t=3,p=4$test",
+        password_hash="$argon2id$v=19$m=65536,t=3,p=4$test",
         display_name="Admin User",
-        is_active=True,
-        is_verified=True,
+        security_stamp="contract-stamp-admin",
     )
     db_session.add(user)
     await db_session.commit()
@@ -161,6 +157,18 @@ async def auth_headers_admin(db_session: AsyncSession, admin_user: User) -> dict
     return {"Authorization": f"Bearer {access_token}"}
 
 
+_DEFAULT_RESTRICTED_CONFIG: dict[str, object] = {
+    "allow_media_playback": False,
+    "allow_detection_view": False,
+    "mask_species_in_detection": False,
+    "allow_download": False,
+    "allow_export": False,
+    "allow_voting_and_comments": False,
+    "public_location_precision_h3_res": 2,
+    "allow_precise_location_to_viewer": False,
+}
+
+
 @pytest.fixture
 async def test_project(db_session: AsyncSession, test_user: User) -> Project:
     """Create a test project.
@@ -175,9 +183,12 @@ async def test_project(db_session: AsyncSession, test_user: User) -> Project:
     project = Project(
         name="Test Project",
         description="A test project",
-        target_taxa="Passeriformes",
-        visibility=ProjectVisibility.PRIVATE,
+        visibility=ProjectVisibility.RESTRICTED,
+        license=ProjectLicense.CC_BY,
         owner_id=test_user.id,
+        # Phase 11 ck_projects_restricted_config_shape requires the eight
+        # canonical toggle keys whenever ``visibility='restricted'``.
+        restricted_config=dict(_DEFAULT_RESTRICTED_CONFIG),
     )
     db_session.add(project)
     await db_session.commit()
@@ -243,7 +254,7 @@ async def test_member(
     member = ProjectMember(
         user_id=member_user.id,
         project_id=test_project.id,
-        role=ProjectRole.MEMBER,
+        role=ProjectMemberRole.MEMBER,
         invited_by_id=test_project.owner_id,
     )
     db_session.add(member)
@@ -284,7 +295,7 @@ async def test_admin_member(
     member = ProjectMember(
         user_id=admin_user.id,
         project_id=test_project.id,
-        role=ProjectRole.ADMIN,
+        role=ProjectMemberRole.ADMIN,
         invited_by_id=test_project.owner_id,
     )
     db_session.add(member)

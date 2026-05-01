@@ -78,20 +78,6 @@ async function checkSetupStatus(): Promise<{
 }
 
 /**
- * Check if a refresh token cookie value appears structurally valid (non-empty).
- * We intentionally do NOT call the backend refresh endpoint here to avoid a
- * race condition: the client-side auth store also calls /auth/refresh on
- * initialization, and hitting the endpoint twice with the same token causes
- * the backend to detect a replay attack and revoke the session.
- *
- * True token validity is verified lazily by the client when it calls
- * /api/v1/users/me (which triggers a refresh internally if needed).
- */
-function isRefreshTokenPresent(refreshToken: string): boolean {
-  return refreshToken.trim().length > 0;
-}
-
-/**
  * Combined Paraglide i18n + auth handle.
  *
  * The paraglideMiddleware must wrap the entire auth logic so that
@@ -145,23 +131,14 @@ async function handleAuth(
     throw redirect(303, localizeHref('/login'));
   }
 
-  // Check if user has refresh token cookie (indicates authenticated session)
-  const refreshToken = cookies.get('refresh_token');
-  let isAuthenticated = false;
-
-  if (refreshToken) {
-    // Only check that the refresh token cookie is present and non-empty.
-    // We deliberately avoid calling the backend /auth/refresh endpoint here
-    // because the client-side auth store also calls it on initialization.
-    // Calling it twice with the same token triggers a replay-attack detection
-    // on the backend and causes the session to be revoked.
-    //
-    // The client is responsible for all token refresh operations.
-    // If the token is actually expired or revoked, the client's /users/me
-    // call will fail with 401, the client will attempt a refresh, and if that
-    // also fails it will redirect to /login.
-    isAuthenticated = isRefreshTokenPresent(refreshToken);
-  }
+  // Detect logged-in state via the non-sensitive `echoroo_logged_in` marker
+  // cookie set by the new web-auth backend (`/web-api/v1/auth/*`). The real
+  // session/refresh/csrf cookies are scoped to `/web-api/v1/*` and so are
+  // NOT visible to SvelteKit page routes. The marker cookie carries no
+  // sensitive content (literal `"1"`) and exists only so this guard can
+  // tell whether a session was established.
+  const loggedInMarker = cookies.get('echoroo_logged_in');
+  const isAuthenticated = loggedInMarker === '1';
 
   // Store auth state in locals for use in load functions
   event.locals.isAuthenticated = isAuthenticated;

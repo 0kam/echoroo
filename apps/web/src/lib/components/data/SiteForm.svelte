@@ -18,7 +18,7 @@
   // Initialize form fields from site prop once on mount
   $effect(() => {
     name = site?.name ?? '';
-    h3Index = site?.h3_index ?? '';
+    h3Index = site?.h3_index_member ?? '';
   });
   let isSubmitting = $state(false);
   let error = $state('');
@@ -41,7 +41,7 @@
     isSubmitting = true;
 
     try {
-      await onSubmit({ name: name.trim(), h3_index: h3Index });
+      await onSubmit({ name: name.trim(), h3_index_member: h3Index });
     } catch (e) {
       error = e instanceof Error ? e.message : m.error_save_site();
     } finally {

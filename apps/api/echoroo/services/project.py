@@ -1,27 +1,212 @@
 """Project service for business logic."""
 
 from datetime import UTC, datetime
+from typing import Any, Literal
 from uuid import UUID
 
 from fastapi import HTTPException, status
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from echoroo.core.pagination import paginate
+from echoroo.models.dataset import Dataset
+from echoroo.models.enums import ProjectMemberRole, ProjectVisibility
 from echoroo.models.project import Project, ProjectMember
+from echoroo.models.user import User
 from echoroo.repositories.project import ProjectRepository
 from echoroo.repositories.user import UserRepository
 from echoroo.schemas.project import (
     ProjectCreateRequest,
-    ProjectListResponse,
     ProjectMemberAddRequest,
     ProjectMemberResponse,
     ProjectMemberUpdateRequest,
     ProjectOverviewResponse,
     ProjectOverviewSite,
     ProjectResponse,
+    ProjectSummary,
+    ProjectSummaryListResponse,
     ProjectUpdateRequest,
     RecordingCalendarEntry,
 )
 from echoroo.services.h3_utils import h3_to_center
+from echoroo.services.license_service import record_initial_license
+
+ProjectRoleLiteral = Literal["owner", "admin", "member", "viewer"]
+
+
+def scrub_owner_email_for_visibility(
+    response: ProjectResponse,
+    *,
+    project: Project,
+    current_user: User | None,
+) -> None:
+    """Enforce the Phase 9 owner-email exposure contract on ``response``.
+
+    Phase 9 polish round 2 致命 1 (2026-04-27): :class:`PublicOwnerResponse`
+    carries an optional ``email`` slot so the US4 AC2 mailto: hook can
+    populate it for the Restricted-detail surface, but the privacy
+    contract requires the field to be ``None`` everywhere else (FR-030).
+    The schema default is already ``None``, but ``model_validate`` runs
+    with ``from_attributes=True`` and would otherwise pull the
+    SQLAlchemy ``User.email`` value through automatically. We scrub here
+    so every code path that builds a :class:`ProjectResponse` must opt
+    in to the exposure rather than the other way round.
+
+    Exposure rule:
+
+        * Authenticated caller (``current_user is not None``) AND
+        * Project visibility is ``RESTRICTED``
+        → keep ``response.owner.email`` populated (the value lands here
+          via ``Project.owner.email``).
+
+    Every other combination (Guest, Public detail, Restricted but Guest)
+    collapses ``response.owner.email`` back to ``None``. The Authenticated
+    + Public branch is intentionally scrubbed too — a Public project owner
+    has no AC2 reason to surface their email; FR-030 keeps it private.
+    """
+    visibility = getattr(project, "visibility", None)
+    if current_user is None or visibility != ProjectVisibility.RESTRICTED:
+        response.owner.email = None
+
+
+_ROLE_ENUM_TO_LITERAL: dict[ProjectMemberRole, ProjectRoleLiteral] = {
+    ProjectMemberRole.ADMIN: "admin",
+    ProjectMemberRole.MEMBER: "member",
+    ProjectMemberRole.VIEWER: "viewer",
+}
+
+
+async def resolve_current_user_role(
+    db: AsyncSession,
+    *,
+    project: Project,
+    current_user: User | None,
+) -> ProjectRoleLiteral | None:
+    """Resolve the caller's effective project role for ``project``.
+
+    Phase 9 polish round 2 Major 2 (2026-04-27): The Web UI Restricted
+    "Request access" callout (``apps/web/.../projects/[id]/+page.svelte``)
+    must distinguish "Authenticated non-member" from "Authenticated
+    member" without probing the admin-only
+    ``GET /projects/{id}/members`` endpoint (which 403s for Members /
+    Viewers and would silently put every Member in the non-member
+    bucket). Returning the role directly on the detail response lets the
+    UI gate on a single field.
+
+    Decision tree:
+
+        * ``current_user is None``                       -> ``None``
+        * ``project.owner_id == current_user.id``        -> ``"owner"``
+        * Active membership row (``removed_at IS NULL``) -> mapped
+          :class:`ProjectMemberRole` literal.
+        * Otherwise                                       -> ``None``
+          (Authenticated non-member; the UI shows the mailto: callout).
+    """
+    if current_user is None:
+        return None
+    if project.owner_id == current_user.id:
+        return "owner"
+    result = await db.execute(
+        select(ProjectMember.role)
+        .where(
+            ProjectMember.project_id == project.id,
+            ProjectMember.user_id == current_user.id,
+            ProjectMember.removed_at.is_(None),
+        )
+        .limit(1)
+    )
+    role = result.scalar_one_or_none()
+    if role is None:
+        return None
+    return _ROLE_ENUM_TO_LITERAL.get(role)
+
+# ---------------------------------------------------------------------------
+# Phase 9 polish round 3 致命 1 (2026-04-27): shared :class:`ProjectSummary`
+# assembler used by both the programmatic ``GET /api/v1/projects`` surface
+# (this module's :class:`ProjectService.list_projects`) and the Web UI
+# ``GET /web-api/v1/projects/`` surface (``api/web_v1/projects/_core.py``).
+#
+# Contract: ``specs/006-permissions-redesign/contracts/projects.yaml:7``
+# declares the contract for **both** ``/api/v1`` and ``/web-api/v1`` so the
+# list endpoint must return :class:`ProjectSummary` rows on either prefix.
+# Centralising the assembly here keeps the two routers byte-identical and
+# prevents future drift (e.g. an extra leak field landing on one surface
+# but not the other).
+# ---------------------------------------------------------------------------
+
+
+async def build_project_summaries(
+    db: AsyncSession, projects: list[Project]
+) -> list[ProjectSummary]:
+    """Assemble contract-correct :class:`ProjectSummary` rows for ``projects``.
+
+    The caller is responsible for:
+
+    * Selecting the concrete ``Project`` rows visible to the principal
+      (visibility / membership / status predicates).
+    * Eager-loading ``Project.owner`` so the helper can derive the
+      privacy-safe ``owner_display_name`` without an N+1.
+
+    The helper itself only batches the ``dataset_count`` aggregation
+    (single grouped query keyed by ``project_id``) and assembles the
+    summary shape declared by ``contracts/projects.yaml:ProjectSummary``.
+
+    The ``species_preview`` slot is currently returned as ``[]`` for every
+    row — Phase 11 will wire the top-N species aggregator (a join against
+    ``detections`` + ``tags``); the slot is preserved here so consumers
+    can switch over without a schema migration.
+
+    Args:
+        db: Async database session used for the dataset-count batch query.
+        projects: Project rows already filtered by the caller's visibility
+            predicate. ``Project.owner`` MUST be eager-loaded.
+
+    Returns:
+        One :class:`ProjectSummary` per input project, in the same order.
+    """
+    project_ids = [p.id for p in projects]
+    dataset_counts: dict[Any, int] = {}
+    if project_ids:
+        result = await db.execute(
+            select(
+                Dataset.project_id,
+                func.count(Dataset.id).label("dataset_count"),
+            )
+            .where(Dataset.project_id.in_(project_ids))
+            .group_by(Dataset.project_id)
+        )
+        dataset_counts = {row.project_id: int(row.dataset_count) for row in result}
+
+    summaries: list[ProjectSummary] = []
+    for project in projects:
+        owner = project.owner
+        # Privacy-safe display string: prefer the explicit display_name,
+        # fall back to the email local-part so we never echo the full
+        # address on a Public listing surface (FR-030). Empty / whitespace
+        # only display_name falls through to the email branch.
+        display_name_raw = (owner.display_name or "").strip() if owner is not None else ""
+        if display_name_raw:
+            owner_display_name = display_name_raw
+        elif owner is not None and owner.email:
+            owner_display_name = owner.email.split("@", 1)[0]
+        else:
+            owner_display_name = ""
+
+        summaries.append(
+            ProjectSummary(
+                id=project.id,
+                name=project.name,
+                description=project.description,
+                visibility=project.visibility,
+                status=project.status,
+                license=project.license,
+                owner_display_name=owner_display_name,
+                dataset_count=dataset_counts.get(project.id, 0),
+                # Phase 11 backlog: top-N species across detections + tags.
+                species_preview=[],
+            )
+        )
+    return summaries
 
 
 class ProjectService:
@@ -39,8 +224,27 @@ class ProjectService:
 
     async def list_projects(
         self, user_id: UUID, page: int = 1, limit: int = 20
-    ) -> ProjectListResponse:
+    ) -> ProjectSummaryListResponse:
         """List all projects accessible by the current user.
+
+        Phase 9 polish round 3 致命 1 (2026-04-27): the response shape is
+        the contract-correct :class:`ProjectSummaryListResponse`
+        (``contracts/projects.yaml:7`` covers both ``/api/v1`` and
+        ``/web-api/v1``, and ``contracts/projects.yaml:375-383``
+        ``ProjectListResponse`` declares ``items: ProjectSummary[]``).
+        Returning the full :class:`ProjectResponse` (which includes
+        ``restricted_config`` + owner sub-object + timestamps) on the
+        programmatic surface was contract drift — :class:`ProjectSummary`
+        structurally omits every internal-state field so a Restricted
+        enumeration call cannot pivot from a row's metadata into anything
+        else (FR-018 / FR-019 / FR-030).
+
+        Phase 9 / T410 / FR-019: the visibility predicate already surfaces
+        Public + Restricted Active projects to the caller regardless of
+        membership; the repository handles the SQL union. With the response
+        now being :class:`ProjectSummary`, the previous "scrub
+        ``restricted_config`` to ``{}`` for outsiders" branch is unnecessary
+        — the field is absent by construction.
 
         Args:
             user_id: Current user's UUID
@@ -48,7 +252,7 @@ class ProjectService:
             limit: Items per page (max 100)
 
         Returns:
-            ProjectListResponse with paginated projects
+            :class:`ProjectSummaryListResponse` with paginated summaries.
         """
         # Validate pagination parameters
         pagination = paginate(page, limit, default_page_size=20, max_page_size=100)
@@ -57,11 +261,18 @@ class ProjectService:
             user_id, pagination.page, pagination.page_size
         )
 
-        return ProjectListResponse(
-            items=[ProjectResponse.model_validate(p) for p in projects],
+        # ``user_id`` is intentionally unused for the summary shape (the
+        # contract row has no role-conditional fields), but we keep the
+        # parameter so the service signature stays stable for callers that
+        # already wire it through (e.g. the v1 router) and so a future
+        # role-aware variant can land without changing the signature.
+
+        items = await build_project_summaries(self.project_repo.db, projects)
+
+        return ProjectSummaryListResponse(
+            items=items,
             total=total,
             page=pagination.page,
-            limit=pagination.page_size,
         )
 
     async def create_project(
@@ -69,7 +280,12 @@ class ProjectService:
     ) -> ProjectResponse:
         """Create a new project.
 
-        The user who creates the project becomes the owner.
+        The user who creates the project becomes the owner. T320 / FR-085:
+        the request schema marks ``license`` as required so a missing or
+        empty value 422s before reaching this service. T320 / FR-087: the
+        initial license selection is mirrored into
+        :class:`ProjectLicenseHistory` so the consumer-facing audit trail
+        starts at row 1 rather than row 2.
 
         Args:
             user_id: User creating the project
@@ -93,16 +309,75 @@ class ProjectService:
         project = Project(
             name=request.name,
             description=request.description,
-            target_taxa=request.target_taxa,
             visibility=request.visibility,
+            license=request.license,
+            restricted_config=request.restricted_config,
             owner_id=user_id,
         )
 
         created_project = await self.project_repo.create(project)
-        return ProjectResponse.model_validate(created_project)
+
+        # T320 (FR-085 + FR-087): record the initial license selection in
+        # the same transaction as the project insert so a rollback keeps
+        # the project + history in sync. The endpoint owns the final
+        # ``await db.commit()``; here we only stage the row.
+        await record_initial_license(
+            session=self.project_repo.db,
+            project_id=created_project.id,
+            license=created_project.license,
+            actor_user_id=user_id,
+        )
+
+        response = ProjectResponse.model_validate(created_project)
+        # Phase 9 polish round 2 致命 1 + Major 2 (2026-04-27): mutation
+        # endpoints also need the email scrub + role resolution so a
+        # Public project's create response cannot leak the owner email
+        # via ``from_attributes`` traversal of ``Project.owner.email``.
+        # The caller is the project creator -> always "owner" role.
+        scrub_owner_email_for_visibility(
+            response, project=created_project, current_user=user
+        )
+        response.current_user_role = "owner"
+        return response
 
     async def get_project(self, user_id: UUID, project_id: UUID) -> ProjectResponse:
         """Get project details.
+
+        Phase 9 polish round 3 Major 1 (2026-04-27):
+            The legacy ``has_project_access`` membership check was removed
+            from this method. Access enforcement is the responsibility of
+            the path operation's central :func:`gate_action` call (see
+            ``api/v1/projects.py::get_project`` and the canonical Action
+            catalog entry :data:`PROJECT_GET_ACTION`, which maps to
+            :data:`Permission.VIEW_PROJECT_METADATA` and grants Restricted
+            metadata reads to every Authenticated caller per FR-019). Re-
+            running ``has_project_access`` here was a legacy owner/member
+            gate that pre-dated the permission redesign, and it caused the
+            Bearer surface to 403 Authenticated non-members on Restricted
+            detail despite the matrix granting access. The Web UI surface
+            (``api/web_v1/projects/_core.py``) already routes through the
+            same gate without invoking this service helper, so removing
+            the check here brings the two surfaces back into parity.
+
+            ``service.get_project`` is now only called from the v1
+            programmatic surface (verified via grep), so collapsing the
+            access check into the path operation does not affect any
+            other caller (background tasks / Celery / etc. all build their
+            own queries). If a future caller needs an unguarded read,
+            they should query the repository directly; if they need a
+            guarded read, they should call ``gate_action`` first.
+
+        Phase 9 polish round 2 (2026-04-27):
+            * **致命 1** — owner email exposure on Restricted detail. The
+              schema default leaves ``owner.email`` as ``None`` and the
+              service explicitly populates it for Authenticated callers
+              on Restricted projects so the Web UI mailto: hook (US4 AC2)
+              works without leaking the address on Public surfaces.
+            * **Major 2** — ``current_user_role`` is resolved here from
+              the (project, user) pair so the Web UI can gate the
+              Restricted "Request access" callout on a single field
+              instead of probing the admin-only ``GET /members`` endpoint
+              (which 403s for Members / Viewers).
 
         Args:
             user_id: Current user's UUID
@@ -112,7 +387,8 @@ class ProjectService:
             Project details
 
         Raises:
-            HTTPException: If project not found or access denied
+            HTTPException: If project not found. Access enforcement lives
+                in the path operation's :func:`gate_action` call.
         """
         project = await self.project_repo.get_by_id(project_id)
         if not project:
@@ -121,15 +397,21 @@ class ProjectService:
                 detail="Project not found",
             )
 
-        # Check access (owner or member)
-        has_access = await self.project_repo.has_project_access(project_id, user_id)
-        if not has_access:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Access denied",
-            )
+        response = ProjectResponse.model_validate(project)
 
-        return ProjectResponse.model_validate(project)
+        # Resolve caller identity once so the email-scrub + role helpers
+        # can branch on the User row without re-querying. The handler's
+        # ``gate_action`` already short-circuited Anonymous callers and
+        # matrix-denied Authenticated callers, so a non-None lookup here
+        # always resolves an authorised principal.
+        current_user = await self.user_repo.get_by_id(user_id)
+        scrub_owner_email_for_visibility(
+            response, project=project, current_user=current_user
+        )
+        response.current_user_role = await resolve_current_user_role(
+            self.project_repo.db, project=project, current_user=current_user
+        )
+        return response
 
     async def update_project(
         self, user_id: UUID, project_id: UUID, request: ProjectUpdateRequest
@@ -169,13 +451,30 @@ class ProjectService:
             project.name = request.name
         if request.description is not None:
             project.description = request.description
-        if request.target_taxa is not None:
-            project.target_taxa = request.target_taxa
         if request.visibility is not None:
             project.visibility = request.visibility
+        if request.license is not None:
+            project.license = request.license
+        if request.restricted_config is not None:
+            project.restricted_config = request.restricted_config
+        if request.status is not None:
+            project.status = request.status
 
         updated_project = await self.project_repo.update(project)
-        return ProjectResponse.model_validate(updated_project)
+        response = ProjectResponse.model_validate(updated_project)
+        # Phase 9 polish round 2 致命 1 + Major 2: scrub owner.email +
+        # resolve caller role so the contract holds for mutation
+        # responses too. The caller already cleared the admin gate above
+        # (Owner or Admin); ``resolve_current_user_role`` returns one of
+        # those literals.
+        actor = await self.user_repo.get_by_id(user_id)
+        scrub_owner_email_for_visibility(
+            response, project=updated_project, current_user=actor
+        )
+        response.current_user_role = await resolve_current_user_role(
+            self.project_repo.db, project=updated_project, current_user=actor
+        )
+        return response
 
     async def delete_project(self, user_id: UUID, project_id: UUID) -> None:
         """Delete a project.
@@ -395,16 +694,16 @@ class ProjectService:
         sites: list[ProjectOverviewSite] = []
         for row in site_rows:
             m = row._mapping
-            h3_index: str = m["h3_index"]
+            h3_index_member: str = m["h3_index_member"]
             try:
-                lat, lng = h3_to_center(h3_index)
+                lat, lng = h3_to_center(h3_index_member)
             except Exception:
                 lat, lng = None, None
             sites.append(
                 ProjectOverviewSite(
                     id=m["id"],
                     name=m["name"],
-                    h3_index=h3_index,
+                    h3_index_member=h3_index_member,
                     latitude=lat,
                     longitude=lng,
                     dataset_count=int(m["dataset_count"]),

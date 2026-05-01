@@ -116,6 +116,13 @@ class SimilaritySearchService:
         vector_text: str = row.vector_text
         query_vector = _parse_vector_text(vector_text)
 
+        # Phase 9 polish round 2 Major 1: this is a within-project route
+        # (caller already passed ``check_project_access`` via the
+        # AuthorizedSearchServiceDep). Project members must keep seeing
+        # detections regardless of the non-member ``allow_detection_view``
+        # toggle, so we explicitly opt out of the Restricted-toggle SQL
+        # gate — FR-019 / FR-020 limit the toggle to outsider visibility,
+        # not member visibility.
         results = await self.search_by_vector(
             project_id=project_id,
             query_vector=query_vector,
@@ -124,6 +131,7 @@ class SimilaritySearchService:
             min_similarity=min_similarity,
             dataset_id=dataset_id,
             exclude_embedding_ids=[embedding_id],
+            respect_restricted_toggle=False,
         )
 
         return SimilaritySearchResponse(
@@ -141,10 +149,39 @@ class SimilaritySearchService:
         min_similarity: float = 0.5,
         dataset_id: UUID | None = None,
         exclude_embedding_ids: list[UUID] | None = None,
+        respect_restricted_toggle: bool = True,
     ) -> list[SimilarityResult]:
         """Find similar embeddings using a raw floating-point vector.
 
         Uses pgvector cosine distance: similarity = 1 - (vector <=> query).
+
+        Phase 9 / T412 (FR-017 / FR-025 / FR-025a / FR-026): when
+        ``respect_restricted_toggle`` is ``True``, the SQL candidate fetch
+        joins ``projects`` and excludes Restricted projects whose
+        ``allow_detection_view`` toggle is OFF — so a Restricted project
+        that flips ``allow_detection_view`` ``ON → OFF`` immediately stops
+        returning detection rows on the next query (sub-1-second leak
+        prevention, FR-025a step 1). Public projects always pass; a
+        Restricted project that has toggle ON also passes. This SQL-side
+        filter is the canonical truth source for *cross-project*
+        SEARCH_CROSS_PROJECT lookups; the per-call SearchGate post-filter
+        (:func:`apply_visibility_filter`) layered on top is defence-in-depth
+        (FR-025 single ``SearchGate`` entrypoint).
+
+        **Default-safe (Phase 9 polish round 2 Major 1)**: the default is
+        now ``True``, so any new caller automatically inherits the
+        Restricted-toggle gate. Within-project member-only routes that
+        already validate membership upstream (``check_project_access``)
+        and need to surface detections regardless of the non-member
+        toggle MUST pass ``respect_restricted_toggle=False`` explicitly —
+        see the existing in-project callers (``search_by_embedding_id``,
+        ``search_by_audio_file``, ``batch_search`` and
+        ``workers.search_tasks``) which all opt out by name. Cross-
+        project callers (e.g. the SearchGate pgvector bridge in
+        :class:`echoroo.services.search_gate.PgvectorSearchAdapter`) keep
+        the default and therefore get the SQL filter for free — adding a
+        new cross-project caller cannot accidentally regress to
+        leak-on-default behaviour.
 
         Args:
             project_id: Project UUID for access scoping
@@ -154,6 +191,16 @@ class SimilaritySearchService:
             min_similarity: Minimum cosine similarity threshold (0.0-1.0)
             dataset_id: Optional dataset filter
             exclude_embedding_ids: Optional embedding UUIDs to exclude from results
+            respect_restricted_toggle: When True (default, Phase 9 polish
+                round 2 Major 1), filter out Restricted projects with
+                ``allow_detection_view=false`` at the SQL layer so the
+                Phase 9 / FR-025a immediate exclusion guarantee holds
+                even before the SearchGate post-filter runs. In-project
+                member-only callers that have already authorised the
+                principal via ``check_project_access`` MUST pass
+                ``False`` explicitly so the same project's members keep
+                seeing detections under a Restricted-toggle-OFF project
+                (FR-019 / FR-020 — the toggle is a non-member contract).
 
         Returns:
             List of SimilarityResult ordered by descending similarity
@@ -186,6 +233,27 @@ class SimilaritySearchService:
             params["exclude_ids"] = exc_strs
             extra_where.append("e.id != ALL(:exclude_ids::uuid[])")
 
+        # Phase 9 / T412 (FR-025 / FR-025a step 1) — Restricted toggle
+        # SQL gate. The clause says: a candidate row passes iff its
+        # project is Public, OR Restricted with the
+        # ``allow_detection_view`` JSONB key strictly equal to ``true``.
+        # ``->`` (not ``->>``) preserves the JSONB type so we compare
+        # against the JSONB boolean ``true`` literal — strings, ints
+        # and missing keys all reject. Membership bypass for the
+        # current caller's own project is intentionally NOT encoded
+        # here because the same code path serves cross-project search
+        # (where the principal is by definition not a member); the
+        # SearchGate post-filter layered on top handles the
+        # member-bypass rule per project.
+        cross_project_join = ""
+        if respect_restricted_toggle:
+            cross_project_join = "JOIN projects p ON p.id = d.project_id"
+            extra_where.append(
+                "(p.visibility = 'public' "
+                "OR (p.visibility = 'restricted' "
+                "AND (p.restricted_config -> 'allow_detection_view') = 'true'::jsonb))"
+            )
+
         extra_sql = ""
         if extra_where:
             extra_sql = " AND " + " AND ".join(extra_where)
@@ -204,6 +272,7 @@ class SimilaritySearchService:
             FROM embeddings e
             JOIN recordings r ON e.recording_id = r.id
             JOIN datasets d   ON r.dataset_id   = d.id
+            {cross_project_join}
             WHERE d.project_id = :project_id
               AND e.model_name  = :model_name
               AND 1 - (e.vector <=> CAST(:query_vector AS vector)) >= :min_similarity
@@ -310,6 +379,10 @@ class SimilaritySearchService:
             len(query_embedding),
         )
 
+        # Phase 9 polish round 2 Major 1: in-project member route — opt
+        # out of the Restricted-toggle SQL gate so members keep seeing
+        # detections regardless of ``allow_detection_view`` (FR-019 /
+        # FR-020).
         results = await self.search_by_vector(
             project_id=project_id,
             query_vector=query_embedding,
@@ -317,6 +390,7 @@ class SimilaritySearchService:
             limit=limit,
             min_similarity=min_similarity,
             dataset_id=dataset_id,
+            respect_restricted_toggle=False,
         )
 
         return SimilaritySearchResponse(
@@ -768,7 +842,7 @@ class SimilaritySearchService:
                 "date": row.date,
                 "hour": int(row.hour),
                 "avg_similarity": float(row.avg_similarity),
-                "count": int(row.count),
+                "count": int(row._mapping["count"]),
             }
             for row in rows
         ]
@@ -1010,6 +1084,13 @@ class SimilaritySearchService:
                         limit=request.limit_per_species * 3,
                         min_similarity=request.min_similarity,
                         dataset_id=dataset_id,
+                        # Phase 9 polish round 2 Major 1: batch search is
+                        # an in-project member route — opt out of the
+                        # Restricted-toggle SQL gate so members keep
+                        # seeing detections regardless of the non-member
+                        # ``allow_detection_view`` toggle (FR-019 /
+                        # FR-020).
+                        respect_restricted_toggle=False,
                     )
                     for qv in query_vectors
                 ]

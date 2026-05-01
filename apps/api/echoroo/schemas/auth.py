@@ -82,15 +82,17 @@ class EmailVerifyRequest(BaseModel):
 
 
 class UserResponse(BaseModel):
-    """User response schema."""
+    """User response schema.
+
+    Fields reflect the permissions-redesign User model (006-permissions-redesign).
+    Legacy fields ``organization``, ``is_active``, ``is_superuser``, and
+    ``is_verified`` are not present on the new User model and are omitted here.
+    They are replaced with ``deleted_at`` (soft-delete) semantics.
+    """
 
     id: UUID
     email: str
     display_name: str | None
-    organization: str | None
-    is_active: bool
-    is_superuser: bool
-    is_verified: bool
     created_at: datetime
     last_login_at: datetime | None
 

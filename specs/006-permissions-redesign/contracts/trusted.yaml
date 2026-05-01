@@ -1,0 +1,122 @@
+openapi: 3.1.0
+info:
+  title: Echoroo Trusted User API
+  version: "1.0.0"
+  description: >
+    Trusted User（Authenticated への ephemeral capability overlay）の発行 / accept / revoke / 延長 / granted_permissions 変更。
+    spec FR-041〜046 + TRUSTED_ALLOWED_PERMISSIONS allowlist（FR-012）。
+
+servers:
+  - url: https://echoroo.app/web-api/v1
+    description: First-party session API のみ（Trusted 招待は Web UI 限定）
+
+security:
+  - sessionCookie: []
+    csrfToken: []
+
+paths:
+  /projects/{id}/trusted-users:
+    get:
+      summary: Trusted User 一覧（Owner / Admin のみ）
+      operationId: listTrustedUsers
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - name: status
+          in: query
+          schema: { type: string, enum: [active, expired, revoked] }
+      responses:
+        "200":
+          description: 一覧
+
+    post:
+      summary: Trusted User 招待発行（Owner のみ、FR-050 / FR-111 MANAGE_TRUSTED）
+      operationId: inviteTrustedUser
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, granted_permissions, duration_seconds]
+              additionalProperties: false
+              properties:
+                email:
+                  type: string
+                  format: email
+                granted_permissions:
+                  type: array
+                  items:
+                    type: string
+                    enum:
+                      - view_media
+                      - view_detection
+                      - view_precise_location
+                      - download
+                      - export
+                      - search_within_project
+                      - vote
+                      - comment
+                  description: TRUSTED_ALLOWED_PERMISSIONS のサブセット
+                duration_seconds:
+                  type: integer
+                  minimum: 1
+                  maximum: 31536000
+                  description: デフォルト 7776000（90 日）、上限 31536000（1 年）
+      responses:
+        "202":
+          description: 招待メール送信、ProjectInvitation(kind=trusted) 作成
+        "422":
+          description: |
+            - ERR_INVALID_TRUSTED_PERMISSION (allowlist 外)
+            - ERR_TRUSTED_TARGET_INVALID (Viewer/Member/Admin/Owner 対象)
+            - ERR_SELF_TRUSTED_INVALID
+
+  /projects/{id}/trusted-users/{trustedUserId}:
+    patch:
+      summary: Trusted 延長 / granted_permissions 変更（Owner のみ、FR-046）
+      operationId: updateTrustedUser
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: trustedUserId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                expires_at:
+                  type: string
+                  format: date-time
+                  description: 延長（granted_at + 1 年 上限）
+                granted_permissions:
+                  type: array
+                  items: { type: string }
+                  description: 変更、allowlist 再検証
+      responses:
+        "200":
+          description: 更新完了、次リクエストから反映（JWT に焼かない、FR-044）
+
+    delete:
+      summary: Trusted revoke（Owner のみ）
+      operationId: revokeTrustedUser
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: trustedUserId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "204":
+          description: revoked 状態に遷移、監査ログ記録
+
+components:
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: session_id
+    csrfToken:
+      type: apiKey
+      in: header
+      name: X-CSRF-Token

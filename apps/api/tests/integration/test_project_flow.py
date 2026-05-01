@@ -1,10 +1,35 @@
 """Integration tests for project lifecycle workflow.
 
 Tests the complete workflow of project creation, member management, and deletion.
+
+Phase 16 Batch 6e (2026-04-29) deprecated-surface skip
+=====================================================
+
+The lifecycle suite chains a project create against the legacy
+``/api/v1/auth/register`` + ``/api/v1/auth/login`` surfaces (used to
+provision viewer / member identities mid-flow). Both endpoints are
+501 Not Implemented stubs for the duration of the Phase 4 / T150a-d
+auth rewrite (see ``apps/api/echoroo/services/auth.py::_raise_phase4_stub``);
+the password-cookie flow has been replaced by the Phase 4 session +
+2FA stack but the legacy register/login JSON shape is intentionally
+absent. Skip both tests at module level — the project-CRUD parts are
+covered by ``tests/contract/test_projects.py`` and the auth flow is
+covered by ``tests/integration/test_auth_*.py``. Track the cleanup
+ticket in ``specs/006-permissions-redesign/tasks.md`` Batch 6f.
 """
 
 import pytest
 from httpx import AsyncClient
+
+pytestmark = pytest.mark.skip(
+    reason=(
+        "Lifecycle relies on deprecated /api/v1/auth/register + login "
+        "(501 stubs). Project-CRUD is covered by "
+        "tests/contract/test_projects.py and auth by "
+        "tests/integration/test_auth_*.py. "
+        "See specs/006-permissions-redesign/spec.md US3 / FR-130."
+    )
+)
 
 
 @pytest.mark.asyncio
@@ -30,23 +55,26 @@ class TestProjectLifecycle:
         9. Verify project is gone
         """
         # 1. Create a project
+        # Phase 16 Batch 6e (2026-04-29) downstream drift fix: Phase 7 / T320
+        # made ``license`` required and dropped ``"private"`` visibility
+        # (Public / Restricted only).
         create_response = await client.post(
             "/api/v1/projects",
             headers=auth_headers,
             json={
                 "name": "Research Project",
                 "description": "A comprehensive bird research project",
-                "target_taxa": "Passeriformes, Strigiformes, Piciformes",
-                "visibility": "private",
+                "visibility": "public",
+                "license": "CC-BY",
             },
         )
-        assert create_response.status_code == 201
+        assert create_response.status_code == 201, create_response.text
         project = create_response.json()
         project_id = project["id"]
 
         assert project["name"] == "Research Project"
         assert project["description"] == "A comprehensive bird research project"
-        assert project["visibility"] == "private"
+        assert project["visibility"] == "public"
         assert "owner" in project
         assert "created_at" in project
 
@@ -216,11 +244,18 @@ class TestProjectLifecycle:
         - Only owner can delete project
         """
         # Create a project
+        # Phase 16 Batch 6e (2026-04-29) downstream drift fix: Phase 7 / T320
+        # made ``license`` and ``visibility`` required.
         create_response = await client.post(
             "/api/v1/projects",
             headers=auth_headers,
-            json={"name": "Access Control Test Project"},
+            json={
+                "name": "Access Control Test Project",
+                "visibility": "public",
+                "license": "CC-BY",
+            },
         )
+        assert create_response.status_code == 201, create_response.text
         project_id = create_response.json()["id"]
 
         # Create viewer user

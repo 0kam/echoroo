@@ -133,13 +133,14 @@
         <div>
           <h1 class="text-2xl font-bold text-stone-900">{$siteQuery.data.name}</h1>
           <code class="mt-1 inline-block rounded bg-stone-100 px-2 py-0.5 font-mono text-xs text-stone-500">
-            {$siteQuery.data.h3_index}
+            {$siteQuery.data.h3_index_member}
           </code>
-          {#if $siteQuery.data.latitude !== null && $siteQuery.data.longitude !== null}
-            <p class="mt-1 text-sm text-stone-500">
-              {$siteQuery.data.latitude?.toFixed(6)}, {$siteQuery.data.longitude?.toFixed(6)}
-            </p>
-          {/if}
+          <!--
+            Permissions redesign Round 2: raw latitude/longitude are no
+            longer surfaced on `SiteDetailResponse` (FR-030).  The
+            `h3_index_member` shown above is the canonical location signal; any
+            map rendering derives the centre via `h3-js`.
+          -->
         </div>
         <div class="flex gap-2">
           <button
@@ -158,10 +159,10 @@
       </div>
 
       <!-- Location map -->
-      {#if $siteQuery.data.h3_index}
+      {#if $siteQuery.data.h3_index_member}
         <div class="rounded-lg border border-stone-200 bg-surface-card p-4">
           <h2 class="mb-3 text-sm font-semibold text-stone-700">{m.site_detail_location_heading()}</h2>
-          <H3MapPicker h3Index={$siteQuery.data.h3_index} readonly={true} />
+          <H3MapPicker h3Index={$siteQuery.data.h3_index_member} readonly={true} />
         </div>
       {/if}
 

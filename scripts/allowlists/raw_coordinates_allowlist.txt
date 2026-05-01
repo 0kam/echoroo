@@ -1,0 +1,29 @@
+# Allowlist for scripts/lint_no_raw_coordinates.py.
+#
+# Phase 2.11 P1-a: line-level fingerprint format. Each non-comment
+# line is ``<file>:<kind>-<name>:forbidden-coordinate-identifier``
+# where ``<kind>`` is ``field``, ``dict-key``, or ``yaml-key``.
+#
+# Phase 3 (US11 T1xx) must drive each entry to empty before final
+# cleanup. Adding a new entry MUST be justified in the accompanying
+# pull request and cross-referenced in admin.yaml.
+#
+# Inline comments use TWO SPACES + ``#``. Lines beginning with ``#``
+# are full-line comments. See scripts/allowlists/README.md.
+
+# Phase 2.11 P1-a baseline 2026-04-25 (legacy schema / service modules
+# carrying raw lat/lng/coordinates fields predate the H3 redesign).
+# Each entry inherits the previous Phase 2.10 #7 cleanup target.
+apps/api/echoroo/schemas/annotation.py:field-coordinates:forbidden-coordinate-identifier  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/schemas/project.py:field-latitude:forbidden-coordinate-identifier  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/schemas/project.py:field-longitude:forbidden-coordinate-identifier  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/schemas/site.py:field-latitude:forbidden-coordinate-identifier  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/schemas/site.py:field-longitude:forbidden-coordinate-identifier  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/schemas/xeno_canto.py:field-latitude:forbidden-coordinate-identifier  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/schemas/xeno_canto.py:field-longitude:forbidden-coordinate-identifier  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/services/annotation.py:dict-key-coordinates:forbidden-coordinate-identifier  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/services/annotation_export.py:field-coordinates:forbidden-coordinate-identifier  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/services/export.py:dict-key-coordinates:forbidden-coordinate-identifier  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/services/export.py:field-coordinates:forbidden-coordinate-identifier  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/services/export.py:field-lat:forbidden-coordinate-identifier  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/services/export.py:field-lng:forbidden-coordinate-identifier  # legacy: Phase 3 US11 T1xx
