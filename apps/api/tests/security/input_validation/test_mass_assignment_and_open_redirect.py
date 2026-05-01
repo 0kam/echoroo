@@ -203,15 +203,6 @@ def test_admin_schema_with_extra_forbid_rejects_unknown_fields() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    strict=False,
-    reason=(
-        "When run after other HTTP tests that trigger _write_platform_audit, "
-        "the AsyncSessionLocal connection leaks across function-scoped event "
-        "loops causing 'Future attached to a different loop' on this request. "
-        "Runs correctly in isolation. Known test infrastructure limitation (T979b)."
-    ),
-)
 async def test_login_endpoint_does_not_expose_next_redirect_param(
     client: Any,
 ) -> None:
@@ -241,16 +232,6 @@ async def test_login_endpoint_does_not_expose_next_redirect_param(
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    strict=False,
-    reason=(
-        "This is the second HTTP test in the file. The previous request's "
-        "_write_platform_audit creates an AsyncSessionLocal connection that "
-        "leaks across function-scoped event loops, causing 'Future attached to "
-        "a different loop' on the second request. Runs correctly in isolation. "
-        "Known test infrastructure limitation — same as T979b/T979a. "
-    ),
-)
 async def test_login_endpoint_javascript_scheme_in_next_param(
     client: Any,
 ) -> None:
@@ -267,13 +248,6 @@ async def test_login_endpoint_javascript_scheme_in_next_param(
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    strict=False,
-    reason=(
-        "Third HTTP test — same AsyncSessionLocal event loop leak as above. "
-        "Runs correctly in isolation. Known test infrastructure limitation. "
-    ),
-)
 async def test_login_endpoint_protocol_relative_url_in_next_param(
     client: Any,
 ) -> None:
@@ -294,14 +268,6 @@ async def test_login_endpoint_protocol_relative_url_in_next_param(
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "No ``_is_safe_redirect_url`` helper exists in the current codebase. "
-        "If ``?next=`` redirect support is added in the future, a same-origin "
-        "validator MUST be implemented and this xfail removed (T979b)."
-    ),
-)
 def test_safe_redirect_url_helper_rejects_external_host() -> None:
     """A same-origin redirect validator must reject external host names.
 
