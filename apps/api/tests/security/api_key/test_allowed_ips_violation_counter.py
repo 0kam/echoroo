@@ -409,6 +409,86 @@ def test_select_client_ip_rejects_ipv4_mapped_ipv6_in_xff() -> None:
     )
 
 
+def test_normalize_xff_hop_rejects_malformed_inputs() -> None:
+    """Phase 17 follow-up B: pin the fail-closed behaviour of
+    :func:`_normalize_xff_hop` against a wider set of malformed XFF hop
+    strings.
+
+    The helper canonicalises only well-formed hops (bare IPv4, bare IPv6,
+    bracketed IPv6, optional ``:port``). Any ambiguous or syntactically
+    broken input MUST be returned **verbatim** so the downstream
+    allowlist comparison fails closed (the verbatim string cannot be
+    parsed as an IP and ``is_ip_in_allowlist`` returns ``False``,
+    matching the ``_is_bare_ip`` filter inside ``select_client_ip``).
+
+    The cases below extend the Round 3 coverage (scope-id IPv6 +
+    IPv4-mapped IPv6) with additional adversarial / proxy-misbehaviour
+    shapes that have surfaced in production XFF chains:
+
+    1. trailing junk after the port    (``198.51.100.7:443abc``)
+    2. multiple ``%`` zone suffixes    (``fe80::1%eth0%vlan``)
+    3. empty bracket forms             (``[]`` / ``[]:443``)
+    4. IPv4 with non-digit characters  (``192.168.0.x``)
+    5. unclosed bracket                (``[2001:db8::1``)
+    6. extra characters after IPv6 port (``[2001:db8::1]:443extra``)
+    7. negative port                   (``198.51.100.7:-1``)
+    8. whitespace inside an IPv4 hop   (``198. 51.100.7:443``)
+
+    A 9th case pins the *current* behaviour for an out-of-range port
+    (``198.51.100.7:99999``): the implementation only checks
+    ``str.isdigit()`` and does not range-check ports, so the host is
+    extracted. The assertion documents that the host stripping is
+    intentional (the port is irrelevant to the allowlist comparison)
+    even though the value would not be a valid TCP port. We pin
+    rather than fix because tightening the parser to the 0..65535
+    range here would require rev-locking the spec; out of scope for
+    this follow-up.
+    """
+    from echoroo.middleware.api_key_ip_enforcement import _normalize_xff_hop
+
+    # 1. trailing junk after the port: "443abc" is not all digits.
+    assert _normalize_xff_hop("198.51.100.7:443abc") == "198.51.100.7:443abc"
+
+    # 2. multiple %scope suffixes — any "%" forces fail-closed.
+    assert _normalize_xff_hop("fe80::1%eth0%vlan") == "fe80::1%eth0%vlan"
+
+    # 3. empty bracket forms — IPv6Address("") raises, returns verbatim.
+    assert _normalize_xff_hop("[]") == "[]"
+    assert _normalize_xff_hop("[]:443") == "[]:443"
+
+    # 4. IPv4 with letters — no colon, no bracket → verbatim passthrough.
+    #    Falls through to the trailing ``return candidate`` branch,
+    #    where the verbatim string is then rejected by ``_is_bare_ip``
+    #    in ``select_client_ip`` because ``ip_address("192.168.0.x")``
+    #    raises.
+    assert _normalize_xff_hop("192.168.0.x") == "192.168.0.x"
+
+    # 5. unclosed bracket — find("]") returns -1 → verbatim.
+    assert _normalize_xff_hop("[2001:db8::1") == "[2001:db8::1"
+
+    # 6. extra characters after IPv6 port — port[1:] = "443extra" is not
+    #    all digits.
+    assert (
+        _normalize_xff_hop("[2001:db8::1]:443extra")
+        == "[2001:db8::1]:443extra"
+    )
+
+    # 7. negative port — "-1" is not isdigit (the leading '-' fails the
+    #    digit check), so the value is returned verbatim.
+    assert _normalize_xff_hop("198.51.100.7:-1") == "198.51.100.7:-1"
+
+    # 8. whitespace inside an IPv4 host — IPv4Address("198. 51.100.7")
+    #    raises, returns verbatim.
+    assert _normalize_xff_hop("198. 51.100.7:443") == "198. 51.100.7:443"
+
+    # 9. out-of-range port — pinned behaviour: ``isdigit`` succeeds, host
+    #    is stripped. This is intentional (port irrelevant to allowlist)
+    #    but documented as a known non-validation seam. If tightening is
+    #    desired, change the parser to ``0 <= int(port) <= 65535`` and
+    #    update this assertion accordingly.
+    assert _normalize_xff_hop("198.51.100.7:99999") == "198.51.100.7"
+
+
 def test_select_client_ip_falls_back_to_peer_when_no_xff() -> None:
     """A trusted peer with no XFF header → use the peer itself."""
     from echoroo.middleware.api_key_ip_enforcement import select_client_ip
@@ -782,6 +862,7 @@ __all__ = [
     "test_ip_violation_creates_audit_log_entry",
     "test_ip_violation_increments_counter",
     "test_new_api_key_allowed_ip_cidrs_defaults_to_none",
+    "test_normalize_xff_hop_rejects_malformed_inputs",
     "test_request_from_non_allowlisted_ip_returns_403",
     "test_select_client_ip_falls_back_to_peer_when_no_xff",
     "test_select_client_ip_ignores_xff_from_untrusted_peer",

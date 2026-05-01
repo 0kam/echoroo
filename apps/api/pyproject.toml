@@ -175,6 +175,16 @@ markers = [
     # ``pytest -m requires_runbook`` against the Docker Compose dev stack
     # documented in quickstart §3.
     "requires_runbook: marks runbook tests that require a live infra stack (CI default: skipped via '-m \"not requires_runbook\"', opt-in locally with '-m requires_runbook')",
+    # Phase 17 follow-up: the ``security`` marker tags every test physically
+    # located under ``tests/security/**``. The CI ``security-tests`` job runs
+    # this set as a separate pipeline (``pytest -m "security and not
+    # performance"``) so the security suite gates on its own job. Auto-tagging
+    # is performed by ``tests/security/conftest.py`` — individual files do not
+    # need to declare ``pytestmark = pytest.mark.security`` (and indeed several
+    # existing files already chain ``pytest.mark.asyncio`` / xfail markers
+    # that would conflict with a manual override). Hard-gate promotion is
+    # tracked separately and intentionally not enabled by this PR.
+    "security: marks security-suite tests under tests/security/** (auto-tagged by tests/security/conftest.py; CI runs this set as a separate hard-gate-target job)",
 ]
 
 [tool.coverage.run]
