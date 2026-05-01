@@ -149,18 +149,32 @@ def _normalize_xff_hop(raw: str) -> str:
     if not candidate:
         return candidate
 
+    # Reject zone-identifier IPv6 (RFC 6874 ``%scope``) — these are
+    # link-local-only, must never appear in a routed XFF chain, and
+    # ipaddress.IPv6Address accepts them so a downstream CIDR check
+    # could otherwise be tricked into matching unintended addresses.
+    if "%" in candidate:
+        return candidate
+
     # Bracketed IPv6: "[addr]" or "[addr]:port".
     if candidate.startswith("["):
         closing = candidate.find("]")
         if closing == -1:
             return candidate
         inner = candidate[1:closing]
+        if "%" in inner:
+            return candidate
         # Only accept when the host inside the brackets actually parses
         # as an IPv6 literal — otherwise we're looking at a malformed
         # value and should leave it for the fail-closed allowlist check.
         try:
-            ipaddress.IPv6Address(inner)
+            parsed = ipaddress.IPv6Address(inner)
         except (ValueError, TypeError):
+            return candidate
+        # IPv4-mapped IPv6 (``::ffff:a.b.c.d``) is rejected so that an
+        # operator cannot accidentally bypass an IPv4 allowlist by
+        # listing the v4-mapped form in proxy chain headers.
+        if parsed.ipv4_mapped is not None:
             return candidate
         suffix = candidate[closing + 1 :]
         if suffix == "" or (suffix.startswith(":") and suffix[1:].isdigit()):
@@ -175,8 +189,10 @@ def _normalize_xff_hop(raw: str) -> str:
         # raw address and let the IPv6 parser decide.
         if candidate.count(":") > 1:
             try:
-                ipaddress.IPv6Address(candidate)
+                parsed = ipaddress.IPv6Address(candidate)
             except (ValueError, TypeError):
+                return candidate
+            if parsed.ipv4_mapped is not None:
                 return candidate
             return candidate
         # Single colon → IPv4:port shape. Validate the prefix is IPv4.
@@ -273,10 +289,29 @@ def select_client_ip(
             for hop in forwarded_for.split(",")
             if hop.strip()
         ]
-        # Drop empty entries that survived normalisation (defence in
-        # depth — _normalize_xff_hop preserves non-IP shapes verbatim,
-        # but a stray comma can still produce an empty string).
-        hops = [hop for hop in hops if hop]
+        # Phase 17 Codex Round 3 Minor: drop entries that did not
+        # canonicalise to a bare IP literal — scope-id IPv6, IPv4-mapped
+        # IPv6, junk strings — instead of letting them fall through as
+        # the chain caller. Combined with ``_normalize_xff_hop`` returning
+        # the input verbatim on rejection, this is the fail-closed seam.
+        def _is_bare_ip(value: str) -> bool:
+            # ``ipaddress.ip_address`` accepts scope-id IPv6 (RFC 6874
+            # ``%scope``) — reject those eagerly so a verbatim XFF entry
+            # like ``fe80::1%eth0`` cannot resurface as the caller IP.
+            if "%" in value:
+                return False
+            try:
+                parsed = ipaddress.ip_address(value)
+            except (ValueError, TypeError):
+                return False
+            # IPv4-mapped IPv6 is also rejected at the chain level so
+            # that an attacker cannot launder an IPv4 address past an
+            # IPv4-only allowlist by submitting ``::ffff:a.b.c.d``.
+            if isinstance(parsed, ipaddress.IPv6Address) and parsed.ipv4_mapped is not None:
+                return False
+            return True
+
+        hops = [hop for hop in hops if hop and _is_bare_ip(hop)]
         if hops:
             # Walk from the right end, dropping trusted-proxy hops.
             i = len(hops) - 1

@@ -362,6 +362,53 @@ def test_select_client_ip_strips_ports_in_chain() -> None:
     )
 
 
+def test_select_client_ip_rejects_zone_id_ipv6_in_xff() -> None:
+    """Phase 17 Codex Round 3: scope-id IPv6 (RFC 6874 ``%scope``) MUST NOT
+    be canonicalised. Otherwise the downstream CIDR check could match an
+    unintended address (link-local-only addresses with zone identifiers
+    must never appear in a routed XFF chain).
+    """
+    from echoroo.middleware.api_key_ip_enforcement import (
+        _normalize_xff_hop,
+        select_client_ip,
+    )
+
+    # Bare and bracketed scope-id forms are returned verbatim, so the
+    # later allowlist match fails closed.
+    assert _normalize_xff_hop("fe80::1%eth0") == "fe80::1%eth0"
+    assert (
+        _normalize_xff_hop("[2001:4860:4860::8888%eth0]:443")
+        == "[2001:4860:4860::8888%eth0]:443"
+    )
+
+    # End-to-end: a trusted peer presenting a scope-id XFF must not be
+    # honoured — the canonicalised value cannot be parsed as a routable IP
+    # so select_client_ip falls back to the trusted peer itself.
+    assert (
+        select_client_ip(
+            forwarded_for="fe80::1%eth0",
+            remote_addr="10.0.0.5",
+            trusted_proxy_cidrs=["10.0.0.0/24"],
+        )
+        == "10.0.0.5"
+    )
+
+
+def test_select_client_ip_rejects_ipv4_mapped_ipv6_in_xff() -> None:
+    """Phase 17 Codex Round 3: IPv4-mapped IPv6 (``::ffff:a.b.c.d``) MUST
+    NOT be canonicalised. An operator who lists v4-mapped form in a CIDR
+    cannot use that to backdoor an IPv4 allowlist via the XFF parser.
+    """
+    from echoroo.middleware.api_key_ip_enforcement import _normalize_xff_hop
+
+    assert _normalize_xff_hop("::ffff:198.51.100.7") == "::ffff:198.51.100.7"
+    assert _normalize_xff_hop("[::ffff:198.51.100.7]") == "[::ffff:198.51.100.7]"
+    assert (
+        _normalize_xff_hop("[::ffff:198.51.100.7]:443")
+        == "[::ffff:198.51.100.7]:443"
+    )
+
+
 def test_select_client_ip_falls_back_to_peer_when_no_xff() -> None:
     """A trusted peer with no XFF header → use the peer itself."""
     from echoroo.middleware.api_key_ip_enforcement import select_client_ip
@@ -739,6 +786,8 @@ __all__ = [
     "test_select_client_ip_falls_back_to_peer_when_no_xff",
     "test_select_client_ip_ignores_xff_from_untrusted_peer",
     "test_select_client_ip_ignores_xff_when_no_trusted_proxy_configured",
+    "test_select_client_ip_rejects_ipv4_mapped_ipv6_in_xff",
+    "test_select_client_ip_rejects_zone_id_ipv6_in_xff",
     "test_select_client_ip_strips_bracketed_ipv6_port_from_xff",
     "test_select_client_ip_strips_ipv4_port_from_xff",
     "test_select_client_ip_strips_ports_in_chain",
