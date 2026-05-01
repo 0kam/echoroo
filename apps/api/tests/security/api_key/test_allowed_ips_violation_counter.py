@@ -481,12 +481,27 @@ def test_normalize_xff_hop_rejects_malformed_inputs() -> None:
     #    raises, returns verbatim.
     assert _normalize_xff_hop("198. 51.100.7:443") == "198. 51.100.7:443"
 
-    # 9. out-of-range port — pinned behaviour: ``isdigit`` succeeds, host
-    #    is stripped. This is intentional (port irrelevant to allowlist)
-    #    but documented as a known non-validation seam. If tightening is
-    #    desired, change the parser to ``0 <= int(port) <= 65535`` and
-    #    update this assertion accordingly.
+
+def test_normalize_xff_hop_known_behaviour_out_of_range_port() -> None:
+    """Known non-rejection seam: port is parsed via ``str.isdigit`` only,
+    so out-of-range values (>= 65536) currently STRIP to the host instead
+    of failing closed.
+
+    This is **not** a security gap — the port is irrelevant to a CIDR
+    allowlist comparison and the host portion still has to parse as a
+    valid IPv4 — but it is technically not "fail-closed for malformed
+    input" the way the cases in
+    :func:`test_normalize_xff_hop_rejects_malformed_inputs` are. The
+    test pins the documented behaviour; if a future revision tightens
+    the parser to ``0 <= int(port) <= 65535`` (per Codex Round 4
+    suggestion), update this assertion to match.
+    """
+    from echoroo.middleware.api_key_ip_enforcement import _normalize_xff_hop
+
+    # ``99999`` is digit-only → parser strips port → host returned bare.
     assert _normalize_xff_hop("198.51.100.7:99999") == "198.51.100.7"
+    # Bracketed IPv6 with a digit-only port also passes the same check.
+    assert _normalize_xff_hop("[2001:db8::1]:70000") == "2001:db8::1"
 
 
 def test_select_client_ip_falls_back_to_peer_when_no_xff() -> None:
@@ -862,6 +877,7 @@ __all__ = [
     "test_ip_violation_creates_audit_log_entry",
     "test_ip_violation_increments_counter",
     "test_new_api_key_allowed_ip_cidrs_defaults_to_none",
+    "test_normalize_xff_hop_known_behaviour_out_of_range_port",
     "test_normalize_xff_hop_rejects_malformed_inputs",
     "test_request_from_non_allowlisted_ip_returns_403",
     "test_select_client_ip_falls_back_to_peer_when_no_xff",
