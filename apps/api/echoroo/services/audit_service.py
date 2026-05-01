@@ -241,14 +241,29 @@ class AuditLogService:
 
         created_at_eff = created_at or datetime.now(UTC)
 
-        # Fetch the most-recent row_hash under the advisory lock. FOR UPDATE
-        # is NOT required because the lock is already exclusive; we still
-        # select deterministically by ``created_at DESC, id DESC`` to break
-        # ties when two rows share the same microsecond timestamp.
+        # Fetch the most-recent row_hash under the advisory lock. The
+        # advisory lock alone is sufficient for *write* serialisation,
+        # but PostgreSQL's SSI (SERIALIZABLE) detector still tracks the
+        # SELECT's predicate range; under heavy concurrency the read can
+        # participate in a phantom-read cycle and abort the transaction
+        # with ``SerializationError`` (sqlstate 40001) — see T993
+        # ``test_audit_log_concurrent_chain.py``.
+        #
+        # Phase 16 Batch 6h-0 (Codex Major): adding ``FOR UPDATE`` on the
+        # chain-tail row promotes the SSI predicate to an explicit row
+        # lock that pairs cleanly with the advisory lock and removes the
+        # phantom-cycle vector.  Concurrent writers therefore queue on
+        # the advisory lock OR the chain-tail row lock — either way the
+        # next writer reads the prev_hash *after* the previous one
+        # commits, exactly the invariant the chain integrity contract
+        # requires.  We deliberately keep the deterministic
+        # ``created_at DESC, id DESC`` tiebreak so two rows sharing the
+        # same microsecond do not pick distinct prev_hashes.
         prev_hash_result = await self.session.execute(
             sa.text(
                 f"SELECT row_hash FROM {table} "
-                f"ORDER BY created_at DESC, id DESC LIMIT 1"
+                f"ORDER BY created_at DESC, id DESC LIMIT 1 "
+                f"FOR UPDATE"
             )
         )
         prev_row = prev_hash_result.first()

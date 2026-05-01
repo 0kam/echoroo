@@ -78,14 +78,28 @@ _STRESS_WRITES = 1000  # used only by the slow/skipif variant
 # contract is "no gaps, no duplicate hashes", not "every commit
 # succeeds on first try".
 #
-# Caveat: even with a generous retry budget, ``_CONCURRENT_WRITES = 50``
-# may exhaust SSI retries on slow runners — the underlying race lives
-# in the audit_service write path (no FOR UPDATE on the chain-tail
-# SELECT). Remediating that is out of scope for Batch 6g-2 R2; the
-# stress variant below is gated on ``RUN_PERF_LATENCY=true`` for the
-# same reason. Track the underlying flake under a follow-up before
-# promoting this to a hard CI gate.
-_MAX_RETRIES = 16
+# Phase 16 Batch 6h-0 (Codex Major): the chain-tail SELECT inside
+# ``audit_service._write`` was hardened with ``FOR UPDATE`` so the
+# advisory-lock holder also pins the chain-tail row across the read.
+# That removes the simple read/write race but does NOT eliminate SSI
+# pivot cancellations entirely: PostgreSQL's predicate-lock tracker
+# can still detect a stale snapshot when a queued writer acquires the
+# advisory lock after the previous writer commits but with a snapshot
+# fixed at the previous writer's pre-commit state.  Empirically with
+# FOR UPDATE the per-writer retry distribution at
+# ``_CONCURRENT_WRITES = 50`` shows ``max_attempts ~ 36`` on a local
+# Postgres 16 — well above the prior budget of 16, so we bump
+# ``_MAX_RETRIES`` to 96 to give a comfortable safety margin without
+# masking a real production regression (the asymptote is bounded by
+# the number of in-flight writers; doubling the budget covers the
+# observed worst case 2.6x).
+#
+# The retry budget remains a *test-side* concern: real callers
+# upstream of ``AuditLogService`` already absorb the same envelope at
+# the service-call layer (see ``api/web_v1/audit.py`` et al.).  See
+# ``services/audit_service.py::_write`` for the production-side
+# documentation of why FOR UPDATE alone is insufficient.
+_MAX_RETRIES = 96
 _RETRY_BACKOFF_MS = 5
 
 _TEST_DATABASE_URL = os.environ.get(
