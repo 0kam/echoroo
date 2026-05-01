@@ -1,0 +1,283 @@
+# Phase 17 Backlog (xfail / warn-only / deferred items)
+
+**Branch**: `006-permissions-redesign`
+**Created**: 2026-05-01 (Phase 16 Batch 6h-4, T999)
+**Owner**: Phase 17 driver
+
+This document aggregates every `xfail` / `warn-only` / Phase 17 deferred item
+introduced during Phase 16 Batches 6f / 6g / 6h. It is the single canonical
+list reviewed at Phase 17 kickoff. Each ticket records:
+
+- **Task ID** — links back to `tasks.md` for the originating Phase 16 entry.
+- **Threat** — security / coverage / mutation / runbook / docs gap.
+- **Expected behavior** — what the test will assert when the gap closes.
+- **Release condition** — concrete checklist that must all be true to remove
+  the `xfail` / warn-only marker.
+
+When closing a ticket, **also remove the `@pytest.mark.xfail(strict=True)` /
+`PHASE17_PENDING` entry** so the gate flips to a hard fail going forward.
+
+---
+
+## A. Security `xfail` (Phase 16 Batch 6f origin)
+
+These were filed in Phase 16 Batch 6f as TDD-red specifications. The test
+already exists in `apps/api/tests/security/**` and is marked
+`xfail(strict=True)` with a forward-reference docstring.
+
+### A-1. CMK deletion window guard
+- **Task**: T977
+- **File**: `apps/api/tests/security/key_rotation/test_cmk_deletion_window_guard.py`
+- **xfail count**: 4
+- **Threat**: Operator deleting a customer master key (CMK) inside the 30-day
+  cooling window destroys data permanently (OWASP A02 Cryptographic Failures,
+  A08 Software/Data Integrity).
+- **Expected behavior**: `echoroo.core.kms_ops.schedule_cmk_deletion()` rejects
+  any deletion request with a window < 30 days, emits a runbook-level audit
+  event, and records the operator + reason.
+- **Release condition**:
+  - [ ] `echoroo/core/kms_ops.py` implements `schedule_cmk_deletion()` with a
+        `min_window_days=30` enforcement path.
+  - [ ] All four `xfail` markers in the test file removed; tests PASS.
+  - [ ] Runbook §"CMK rotation" updated with the 30-day pre-flight check.
+
+### A-2. PII hash key dual-write rotation
+- **Task**: T975
+- **File**: `apps/api/tests/security/key_rotation/test_pii_hash_key_rotation_dual_write.py`
+- **xfail count**: 4
+- **Threat**: A v1→v2 keyed-HMAC rotation that does not dual-write loses prior
+  audit / invitation lookup capability. Without the dual-write window, support
+  workflows that rely on email-hash lookup silently 404 (FR-091b, OWASP A09).
+- **Expected behavior**: 90-day dual-write window where both v1 and v2 hashes
+  are written; lookup falls back v2→v1 with metric instrumentation.
+- **Release condition**:
+  - [ ] `echoroo/core/audit.py` (and equivalent invitation hash helpers)
+        implement dual-write + dual-read with a configurable rotation window.
+  - [ ] Background drain job that catches up rows still on v1 only.
+  - [ ] All four `xfail` markers removed; tests PASS.
+
+### A-3. API key allowed_ips enforcement middleware
+- **Task**: T979d
+- **File**: `apps/api/tests/security/api_key/test_allowed_ips_violation_counter.py`
+- **xfail count**: 4
+- **Threat**: API key allowed_ips is currently advisory only — enforcement
+  middleware not wired (FR-072). An attacker that exfiltrates a key can use it
+  from any IP until manual revoke (OWASP A01 Broken Access Control, A04).
+- **Expected behavior**: middleware rejects requests whose `X-Forwarded-For` /
+  `RemoteAddr` does not match the key's `allowed_ips` CIDR list. A dedicated
+  counter (`ip_violation_count`) increments separately from the scope-violation
+  counter; 3 strikes triggers auto-revoke + audit + notification.
+- **Release condition**:
+  - [ ] `echoroo/middleware/auth.py` (or sibling) enforces `allowed_ips`
+        before `api_key_verification`.
+  - [ ] Counter persisted to `api_keys.ip_violation_count` (already on the
+        schema).
+  - [ ] All four `xfail` markers removed; tests PASS.
+
+### A-4. API key 180-day rotation scope degrade
+- **Task**: T978
+- **File**: `apps/api/tests/security/api_key/test_rotation_180d_scope_degrade.py`
+- **xfail count**: 2
+- **Threat**: After 180 days an unrotated API key keeps full scope; FR-083
+  recommends scope degrade at 180d / hard-revoke at 270d.
+- **Expected behavior**: 180d → all scopes drop to read-only; 270d → key is
+  revoked; both events emit audit + email to key owner.
+- **Release condition**:
+  - [ ] `workers/api_key_age_check.py` (or equivalent Celery beat task) emits
+        the degrade / revoke events.
+  - [ ] Both `xfail` markers removed; tests PASS.
+
+### A-5. Streaming endpoint permission re-check (per-chunk guard)
+- **Task**: T973
+- **File**: `apps/api/tests/security/race_conditions/test_streaming_permission_change.py`
+- **xfail count**: 1
+- **Threat**: A long-running CSV / audio stream started before a permission
+  revoke continues serving until the stream closes (security H-6).
+- **Expected behavior**: Each chunk boundary re-checks the principal's
+  permission; a revoke detected mid-stream truncates with a 403 trailer.
+- **Release condition**:
+  - [ ] Streaming export endpoints implement per-chunk re-check (Phase 17
+        infra task).
+  - [ ] `xfail` removed; test PASS.
+
+### A-6. Password reset / invitation enumeration rate-limit stubs
+- **Task**: T979a
+- **File**: `apps/api/tests/security/rate_limiting/test_password_reset_and_invitation_enumeration.py`
+- **xfail count**: 5
+- **Threat**: Without uniform-response + rate-limit, password reset and
+  invitation accept become user-enumeration oracles (OWASP A07).
+- **Expected behavior**: Identical 202 response regardless of email existence;
+  per-IP + per-email-hash bucketed rate limit; audit row for every attempt.
+- **Release condition**:
+  - [ ] `services/password_reset_service.py` + `services/invitation_service.py`
+        return uniform 202; rate-limit middleware applies bucketed limits.
+  - [ ] `xfail` markers removed; tests PASS.
+
+### A-7. Mass-assignment + open-redirect helper gaps
+- **Task**: T979b
+- **File**: `apps/api/tests/security/input_validation/test_mass_assignment_and_open_redirect.py`
+- **xfail count**: 4
+- **Threat**: A `role` / `is_superuser` / `scopes` mass-assignment slip
+  silently elevates accounts. Open-redirect on `next=` enables phishing chains.
+- **Expected behavior**: Every Pydantic request schema rejects extra fields
+  (`Extra.forbid`); `next=` / `redirect_url=` parameters validated against an
+  allowlist; both events audited.
+- **Release condition**:
+  - [ ] Helpers (`_validate_redirect_target` / `_assert_no_extra`) extracted
+        and applied across schemas.
+  - [ ] All four `xfail` markers removed; tests PASS.
+
+### A-8. DEK rewrap + KMS isolation
+- **Task**: T979e
+- **File**: `apps/api/tests/security/crypto/test_dek_rewrap_and_kms_isolation.py`
+- **xfail count**: 1 (+ 1 skip)
+- **Threat**: Direct KMS calls outside `core/kms.py` bypass the alias-isolation
+  guard; key material rewrap path may leak DEK to logs (FR-091b, OWASP A02 / A08).
+- **Expected behavior**: Static lint + runtime guard ensures only `core/kms.py`
+  invokes the boto3 KMS client; DEK rewrap operates on opaque ciphertext
+  only.
+- **Release condition**:
+  - [ ] `scripts/lint_kms_isolation.py` runs in strict mode and passes.
+  - [ ] `xfail` + `skip` removed; tests PASS.
+
+### A-9. Supply-chain CI step (lockfile + audit)
+- **Task**: T979f
+- **File**: `apps/api/tests/security/supply_chain/test_dependency_lock_and_audit.py`
+- **xfail count**: 1
+- **Threat**: Without `pip-audit` / `osv-scanner` on every PR, vulnerable
+  dependencies land silently (OWASP A06 Vulnerable Components, A08).
+- **Expected behavior**: `uv.lock` / `package-lock.json` integrity-pinned; CI
+  runs `pip-audit` against the lockfile; failure is a blocking gate.
+- **Release condition**:
+  - [ ] `.github/workflows/ci.yml` adds a `supply-chain` job invoking
+        `pip-audit --require-hashes`.
+  - [ ] `xfail` removed; test PASS.
+
+### A-10. Audio SSRF guard
+- **Task**: T979g
+- **File**: `apps/api/tests/security/ssrf/test_external_url_rejection.py`
+- **xfail count**: 1
+- **Threat**: Future audio-fetch-from-URL flows (xeno-canto, GBIF media)
+  could be exploited for SSRF (OWASP A10).
+- **Expected behavior**: Any URL-input endpoint passes through a static
+  allowlist; localhost / RFC1918 / link-local addresses rejected; DNS rebinding
+  defeated by post-resolve check.
+- **Release condition**:
+  - [ ] `core/url_allowlist.py` helper + middleware applied at every URL-input
+        endpoint.
+  - [ ] `xfail` removed; test PASS.
+
+---
+
+## B. Pre-existing Phase 1-15 `xfail`
+
+### B-1. Superuser response-filter raw forbidden
+- **File**: `apps/api/tests/security/authorization/test_superuser_response_filter_raw_forbidden.py`
+- **xfail count**: indicated in module docstring ("not yet implemented in Phase 15")
+- **Threat**: Superusers currently bypass the response filter and may receive
+  raw lat/lng/coordinate keys (FR-112a, SC-016).
+- **Expected behavior**: Even superuser principals are subject to
+  `ResponseFilter`; explicit raw access is a separate Path-Operation switch.
+- **Release condition**:
+  - [ ] `core/response_filter.py` removes the superuser short-circuit.
+  - [ ] `xfail` removed; tests PASS.
+
+### B-2. Upload EXIF + S3 metadata strip
+- **File**: `apps/api/tests/security/authorization/test_upload_exif_and_s3_metadata_strip.py`
+- **xfail count**: indicated where current implementation has gaps.
+- **Threat**: EXIF GPS / S3 user-metadata coordinates leak (FR-028a).
+- **Expected behavior**: Upload pipeline strips EXIF GPS tags and S3
+  user-defined metadata containing coordinate keys before persisting.
+- **Release condition**:
+  - [ ] EXIF strip + S3 metadata sanitizer wired pre-upload.
+  - [ ] `xfail` markers removed; tests PASS.
+
+### B-3. Search-index ready toggle (T981b residual)
+- **File**: `apps/api/tests/security/search_leak/test_search_index_ready_on_toggle_on.py`
+- **xfail status**: NONE remaining as of Batch 6g-2 R2; listed here for
+  awareness only — the file appeared in the 6f xfail grep but the actual
+  markers were removed when the fixture trigger landed.
+
+---
+
+## C. Coverage `PHASE17_PENDING` (Batch 6h-2 origin)
+
+The `scripts/check_coverage_threshold.py` script ships with a
+`PHASE17_PENDING` frozenset of ~90 modules whose statement coverage is below
+the 95% / 85% threshold. They are **warn-only** rather than hard-fail.
+
+- **Task**: T996
+- **Threat**: Coverage gaps mean regressions land without a failing test
+  (PR-005, SC-013).
+- **Expected behavior**: Each pending module reaches its tier threshold
+  (permission-critical → 95%, all other → 85%).
+- **Release condition (per module)**:
+  - [ ] Dedicated test file or integration suite added.
+  - [ ] Module removed from `PHASE17_PENDING` in
+        `scripts/check_coverage_threshold.py`.
+  - [ ] CI green at hard-fail mode.
+
+The full list of ~90 modules is enumerated inline in the script under
+`PHASE17_PENDING: frozenset[str]`. Phase 17 should triage by directory
+(API routers → integration suite, services → service-level fixture suite, ML →
+GPU-backed fixture decision).
+
+---
+
+## D. Mutation-testing `--warn-only` allowlist (Batch 6h-1 origin)
+
+- **Task**: T995
+- **File**: `apps/api/mutmut.toml` (`paths_to_mutate` lists 11 modules)
+- **Threat**: Surviving mutants in permission-critical modules indicate
+  weak test assertions (PR-004, SC-012).
+- **Expected behavior**: Each of the 11 modules reaches **≥80% mutation score**.
+- **Release condition**:
+  - [ ] Each surviving mutant analysed; new test added or mutant proven equivalent.
+  - [ ] `scripts/check_mutation_score.py --threshold 80` exits 0 against the
+        full module list without `--warn-only`.
+
+---
+
+## E. Runbook `requires_runbook` marker (Batch 6h-3 origin)
+
+- **Task**: T998
+- **File**: `apps/api/tests/runbook/test_quickstart_phase3_smoke.py` (the
+  single `requires_runbook` test inside)
+- **Threat**: Quickstart §3 bootstrap (`wipe_database` / `init_superuser` /
+  `initial_iucn_sync` / `seed_moe_rdb`) end-to-end flow is not exercised in CI;
+  silent regression risk (FR-113, FR-114).
+- **Expected behavior**: A live-infra E2E that boots a temporary Compose
+  stack, runs the four scripts in order, and asserts the resulting DB state.
+- **Release condition**:
+  - [ ] CI job (Phase 17 infra task) provisions the live infra stack.
+  - [ ] `requires_runbook` marker removed or promoted to hard gate by adding
+        a dedicated CI job that runs `pytest -m requires_runbook`.
+
+---
+
+## F. Traceability orphan (Batch 6h-4, this batch)
+
+- **Task**: T999
+- **Symptom**: `scripts/check_traceability.py` reports 1 informational orphan
+  (`FR-011a`) — present in `requirements-traceability.md` but no longer in
+  `spec.md` Rev.3.2.
+- **Threat**: None (informational); orphans do not fail the gate.
+- **Expected behavior**: When the orphan ID is genuinely retired, its row is
+  removed from `requirements-traceability.md`. When it is renamed, both the
+  spec and trace are updated together.
+- **Release condition**:
+  - [ ] Decide whether `FR-011a` is retired or renamed.
+  - [ ] Update `requirements-traceability.md` accordingly; orphan count → 0.
+
+---
+
+## Maintenance
+
+- When introducing a new `xfail` / warn-only / deferred item, **add a ticket
+  here at the same time**.
+- When closing a ticket, **delete the section** rather than crossing it out;
+  the git history is the audit trail.
+- The CI gate `requirements-traceability` (T999) does NOT enforce this
+  document's completeness — it only enforces spec ↔ traceability sync. This
+  backlog is reviewed at Phase 17 kickoff and as part of every release
+  retrospective.
