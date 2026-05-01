@@ -183,6 +183,12 @@ def create_app() -> FastAPI:
             # opens a fresh session per request so the audit write can
             # upgrade to SERIALIZABLE isolation cleanly.
             ip_enforcer=DbIpEnforcer(AsyncSessionLocal),
+            # Phase 17 A-3 Codex Major 1: trusted reverse-proxy CIDRs
+            # control which socket peers are allowed to inject XFF
+            # headers. Empty by default → XFF never trusted; set
+            # ``ECHOROO_TRUSTED_PROXY_CIDRS=`` to a CIDR list when
+            # deploying behind a reverse proxy (nginx, ALB, Cloudflare).
+            trusted_proxy_cidrs=tuple(settings.TRUSTED_PROXY_CIDRS),
             programmatic_prefix="/api/v1",
             session_cookie_name=settings.web_session_cookie_name,
             public_path_allowlist=auth_router_allowlist,

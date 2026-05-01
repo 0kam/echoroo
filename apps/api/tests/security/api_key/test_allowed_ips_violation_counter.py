@@ -188,6 +188,114 @@ def test_ip_in_cidr_stdlib_logic() -> None:
     assert ipaddress.ip_address("192.168.1.1") not in network
 
 
+def test_select_client_ip_ignores_xff_when_no_trusted_proxy_configured() -> None:
+    """Phase 17 A-3 Codex Major 1: XFF MUST be ignored when no trusted
+    proxy is configured.
+
+    An attacker who can reach the API directly (no reverse proxy in
+    front, or a misconfigured proxy that does not strip incoming XFF)
+    could otherwise spoof an allowlisted source IP by sending
+    ``X-Forwarded-For: 10.0.0.55``. The default-empty
+    ``trusted_proxy_cidrs`` list MUST cause the helper to return the
+    socket peer regardless of any XFF value.
+    """
+    from echoroo.middleware.api_key_ip_enforcement import select_client_ip
+
+    # No trusted-proxy config → XFF spoof rejected, peer wins.
+    assert (
+        select_client_ip(
+            forwarded_for="10.0.0.55",
+            remote_addr="203.0.113.99",
+            trusted_proxy_cidrs=[],
+        )
+        == "203.0.113.99"
+    )
+    # ``None`` is the legacy / default; must behave identically.
+    assert (
+        select_client_ip(
+            forwarded_for="10.0.0.55",
+            remote_addr="203.0.113.99",
+            trusted_proxy_cidrs=None,
+        )
+        == "203.0.113.99"
+    )
+
+
+def test_select_client_ip_ignores_xff_from_untrusted_peer() -> None:
+    """Untrusted socket peers MUST have their XFF ignored even when a
+    trusted-proxy list is configured.
+
+    A trusted-proxy CIDR list narrows *who* may speak XFF; a peer
+    outside that list is still considered hostile and its XFF header
+    is dropped.
+    """
+    from echoroo.middleware.api_key_ip_enforcement import select_client_ip
+
+    # Trusted proxies live in 10.0.0.0/24, attacker comes from 203.x.
+    assert (
+        select_client_ip(
+            forwarded_for="10.0.0.55",
+            remote_addr="203.0.113.99",
+            trusted_proxy_cidrs=["10.0.0.0/24"],
+        )
+        == "203.0.113.99"
+    )
+
+
+def test_select_client_ip_uses_xff_from_trusted_peer() -> None:
+    """A trusted-proxy peer MAY forward the original caller's IP.
+
+    Single-hop case: the proxy at 10.0.0.5 (in the trusted CIDR)
+    forwards ``X-Forwarded-For: 198.51.100.7`` and we return the
+    forwarded address.
+    """
+    from echoroo.middleware.api_key_ip_enforcement import select_client_ip
+
+    assert (
+        select_client_ip(
+            forwarded_for="198.51.100.7",
+            remote_addr="10.0.0.5",
+            trusted_proxy_cidrs=["10.0.0.0/24"],
+        )
+        == "198.51.100.7"
+    )
+
+
+def test_select_client_ip_strips_trusted_chain_right_to_left() -> None:
+    """Multi-hop chains MUST strip trusted proxies from the right edge.
+
+    For a chain ``client, edge_proxy, internal_proxy`` the rightmost
+    untrusted entry is the original caller. Everything to its right
+    is a trusted proxy hop and gets dropped.
+    """
+    from echoroo.middleware.api_key_ip_enforcement import select_client_ip
+
+    # Two trusted hops on the right; first untrusted from the right is
+    # ``198.51.100.7``.
+    assert (
+        select_client_ip(
+            forwarded_for="198.51.100.7, 10.0.0.5, 10.0.0.6",
+            remote_addr="10.0.0.6",
+            trusted_proxy_cidrs=["10.0.0.0/24"],
+        )
+        == "198.51.100.7"
+    )
+
+
+def test_select_client_ip_falls_back_to_peer_when_no_xff() -> None:
+    """A trusted peer with no XFF header → use the peer itself."""
+    from echoroo.middleware.api_key_ip_enforcement import select_client_ip
+
+    assert (
+        select_client_ip(
+            forwarded_for=None,
+            remote_addr="10.0.0.5",
+            trusted_proxy_cidrs=["10.0.0.0/24"],
+        )
+        == "10.0.0.5"
+    )
+
+
 def test_empty_allowed_ip_cidrs_means_no_restriction() -> None:
     """An empty ``allowed_ip_cidrs`` list MUST be interpreted as 'no restriction'.
 
@@ -548,6 +656,11 @@ __all__ = [
     "test_ip_violation_increments_counter",
     "test_new_api_key_allowed_ip_cidrs_defaults_to_none",
     "test_request_from_non_allowlisted_ip_returns_403",
+    "test_select_client_ip_falls_back_to_peer_when_no_xff",
+    "test_select_client_ip_ignores_xff_from_untrusted_peer",
+    "test_select_client_ip_ignores_xff_when_no_trusted_proxy_configured",
+    "test_select_client_ip_strips_trusted_chain_right_to_left",
+    "test_select_client_ip_uses_xff_from_trusted_peer",
     "test_three_ip_violations_auto_revokes_key",
     "test_verifier_returns_record_regardless_of_allowed_ip_cidrs",
 ]

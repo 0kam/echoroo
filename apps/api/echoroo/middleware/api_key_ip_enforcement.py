@@ -115,27 +115,90 @@ def is_ip_in_allowlist(client_ip: str, allowed_cidrs: list[str] | None) -> bool:
     return False
 
 
+def _ip_in_any_cidr(ip_str: str, cidrs: list[str]) -> bool:
+    """Return ``True`` when ``ip_str`` is contained in at least one CIDR.
+
+    Malformed entries are silently skipped (not fail-open: the caller
+    decides what to do when *no* CIDR matches). An empty / unparseable
+    ``ip_str`` short-circuits to ``False`` so a missing socket peer is
+    never treated as a trusted proxy.
+    """
+    if not ip_str:
+        return False
+    try:
+        ip = ipaddress.ip_address(ip_str)
+    except (ValueError, TypeError):
+        return False
+    for cidr in cidrs:
+        try:
+            network = ipaddress.ip_network(cidr, strict=False)
+        except (ValueError, TypeError):
+            continue
+        if ip in network:
+            return True
+    return False
+
+
 def select_client_ip(
     *,
     forwarded_for: str | None,
     remote_addr: str | None,
+    trusted_proxy_cidrs: list[str] | None = None,
 ) -> str:
     """Pick the canonical caller IP from the Starlette request shape.
 
-    Reverse-proxy header ``X-Forwarded-For`` wins when present (the first
-    comma-separated entry is the original caller per RFC 7239 / common
-    practice); otherwise we fall back to the direct socket address.
-    Returns an empty string when neither source resolves — the caller
-    should treat that as "unknown" and proceed with the allowlist check
-    in fail-closed mode (the empty IP never matches a CIDR).
+    Phase 17 A-3 Codex Major 1 fix: ``X-Forwarded-For`` is only honoured
+    when the socket peer (``remote_addr``) is itself a trusted reverse
+    proxy. Without this guard an attacker reaching the API directly
+    (or via a misconfigured proxy that does not strip incoming XFF
+    headers) could bypass the per-key ``allowed_ip_cidrs`` allowlist by
+    sending ``X-Forwarded-For: 10.0.0.55``.
+
+    Algorithm:
+
+    * If ``trusted_proxy_cidrs`` is empty → XFF is **never** trusted.
+      Always return the socket peer (``remote_addr``).
+    * If the socket peer is NOT in ``trusted_proxy_cidrs`` → XFF is
+      ignored and the peer is returned.
+    * If the socket peer IS in ``trusted_proxy_cidrs`` → walk the XFF
+      list right-to-left, stripping trailing entries that are themselves
+      trusted proxies. The first untrusted entry encountered is the
+      original caller. If the entire chain is trusted, the leftmost
+      entry is returned (best-effort: a chain composed exclusively of
+      proxy hops still surfaces the most-upstream value).
+
+    Returns an empty string when neither XFF nor the socket peer
+    resolve to a value — the caller treats that as "unknown" and the
+    allowlist check fails closed.
     """
+    cidrs = list(trusted_proxy_cidrs or [])
+    peer = (remote_addr or "").strip()
+
+    # Without a trusted-proxy configuration we MUST ignore XFF entirely.
+    if not cidrs:
+        return peer
+
+    # Socket peer is not a trusted proxy → ignore any XFF header.
+    if not _ip_in_any_cidr(peer, cidrs):
+        return peer
+
+    # Peer is trusted. Honour XFF, stripping trusted hops right-to-left.
     if forwarded_for:
-        first = forwarded_for.split(",", 1)[0].strip()
-        if first:
-            return first
-    if remote_addr:
-        return remote_addr.strip()
-    return ""
+        hops = [hop.strip() for hop in forwarded_for.split(",") if hop.strip()]
+        if hops:
+            # Walk from the right end, dropping trusted-proxy hops.
+            i = len(hops) - 1
+            while i >= 0 and _ip_in_any_cidr(hops[i], cidrs):
+                i -= 1
+            if i >= 0:
+                # First untrusted entry from the right edge.
+                return hops[i]
+            # Whole chain trusted — fall back to leftmost (closest to
+            # original caller per RFC 7239 convention).
+            return hops[0]
+
+    # No XFF on a trusted-proxy request → use the peer.
+    return peer
 
 
 async def enforce_api_key_ip(

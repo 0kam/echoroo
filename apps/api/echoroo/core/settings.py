@@ -76,6 +76,26 @@ class Settings(BaseSettings):
     ARGON2_TIME_COST: int = 2
     ARGON2_PARALLELISM: int = 1
 
+    # Trusted reverse-proxy CIDRs (Phase 17 A-3 Codex Major 1).
+    #
+    # Only ``X-Forwarded-For`` headers received from a socket peer that
+    # falls inside one of these CIDRs are trusted. Untrusted peers have
+    # their XFF ignored entirely so that an attacker who can reach the
+    # API directly cannot spoof an allowlisted source IP by setting
+    # ``X-Forwarded-For: 10.0.0.55``. An empty list (the default) means
+    # XFF is NEVER trusted — the socket peer is always used as the
+    # caller IP. Operators running behind a real reverse proxy (nginx,
+    # ALB, Cloudflare) MUST set this to the proxy CIDRs.
+    TRUSTED_PROXY_CIDRS: Annotated[list[str], NoDecode] = Field(
+        default=[],
+        validation_alias="ECHOROO_TRUSTED_PROXY_CIDRS",
+        description=(
+            "Comma-separated CIDR list of trusted reverse-proxy peers. "
+            "X-Forwarded-For is only honoured when the socket peer matches "
+            "one of these CIDRs."
+        ),
+    )
+
     # Rate Limiting
     RATE_LIMIT_LOGIN_ATTEMPTS: int = 5
     RATE_LIMIT_LOGIN_WINDOW_SECONDS: int = 60
@@ -180,6 +200,19 @@ class Settings(BaseSettings):
         """Accept ECHOROO_WEBAUTHN_ORIGINS as a comma-separated list."""
         if isinstance(value, str):
             return [origin.strip() for origin in value.split(",") if origin.strip()]
+        return value
+
+    @field_validator("TRUSTED_PROXY_CIDRS", mode="before")
+    @classmethod
+    def parse_trusted_proxy_cidrs(cls, value: Any) -> Any:
+        """Accept ECHOROO_TRUSTED_PROXY_CIDRS as a comma-separated list.
+
+        Empty/whitespace-only entries are filtered out; the env var may
+        therefore be set to ``""`` to mean "no trusted proxies" without
+        producing a single empty-string CIDR.
+        """
+        if isinstance(value, str):
+            return [cidr.strip() for cidr in value.split(",") if cidr.strip()]
         return value
 
     @model_validator(mode="after")

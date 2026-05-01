@@ -273,6 +273,14 @@ class AuthRouterConfig:
 
     api_key_verifier: ApiKeyVerifier | None = None
     session_verifier: SessionVerifier | None = None
+    # Phase 17 A-3 Codex Major 1: trusted reverse-proxy CIDRs. The
+    # middleware only honours ``X-Forwarded-For`` when the socket peer
+    # falls in one of these CIDRs — empty (the default) means XFF is
+    # never trusted. See :func:`select_client_ip` for the right-strip
+    # walk. This belongs to the auth router rather than the IP
+    # enforcer because the same caller-IP resolution logic is needed
+    # whether or not a CIDR allowlist is configured for the key.
+    trusted_proxy_cidrs: tuple[str, ...] = ()
     # Phase 17 A-3: optional per-request CIDR allowlist enforcer. When
     # ``None`` the middleware skips IP enforcement entirely (legacy
     # behaviour). The production wiring in :mod:`echoroo.main` injects a
@@ -506,7 +514,9 @@ class AuthRouterMiddleware(BaseHTTPMiddleware):
         # middleware just translates the boolean outcome into a 403.
         enforcer = self.config.ip_enforcer
         if enforcer is not None:
-            client_ip = _resolve_client_ip(request)
+            client_ip = _resolve_client_ip(
+                request, trusted_proxy_cidrs=self.config.trusted_proxy_cidrs
+            )
             request_id = (
                 request.headers.get("X-Request-Id")
                 or request.headers.get("X-Correlation-Id")
@@ -591,26 +601,37 @@ class AuthRouterMiddleware(BaseHTTPMiddleware):
         return None
 
 
-def _resolve_client_ip(request: Request) -> str:
+def _resolve_client_ip(
+    request: Request,
+    *,
+    trusted_proxy_cidrs: tuple[str, ...] | list[str] | None = None,
+) -> str:
     """Pick the canonical caller IP from a Starlette request.
 
-    Mirrors :func:`echoroo.middleware.api_key_ip_enforcement.select_client_ip`
-    but accepts the live :class:`Request` shape so the auth router does
-    not need to import the helper module purely for plumbing.
+    Phase 17 A-3 Codex Major 1: defers to
+    :func:`echoroo.middleware.api_key_ip_enforcement.select_client_ip`
+    so the trusted-proxy logic is shared between the auth-router shell
+    and direct unit tests of the helper. ``X-Forwarded-For`` is only
+    honoured when the socket peer (``request.client.host``) is itself
+    in ``trusted_proxy_cidrs``; otherwise we use the peer directly.
+    This blocks the spoof bypass where an attacker reaches the API
+    without going through the proxy and forges
+    ``X-Forwarded-For: <allowlisted IP>``.
 
-    Reverse-proxy header ``X-Forwarded-For`` wins when present (the
-    first comma-separated entry is the original caller); otherwise we
-    fall back to the direct socket address. Empty string when neither
-    source resolves.
+    Returns an empty string when no source resolves — the IP enforcer
+    treats that as "unknown" and fails closed against any non-empty
+    allowlist.
     """
+    from echoroo.middleware.api_key_ip_enforcement import select_client_ip
+
     forwarded = request.headers.get("X-Forwarded-For")
-    if forwarded:
-        first = forwarded.split(",", 1)[0].strip()
-        if first:
-            return first
-    if request.client is not None and request.client.host:
-        return request.client.host
-    return ""
+    peer = request.client.host if request.client is not None else None
+    cidrs = list(trusted_proxy_cidrs) if trusted_proxy_cidrs else []
+    return select_client_ip(
+        forwarded_for=forwarded,
+        remote_addr=peer,
+        trusted_proxy_cidrs=cidrs,
+    )
 
 
 def _auth_failure(status: int, code: str, message: str) -> JSONResponse:
