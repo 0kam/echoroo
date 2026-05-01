@@ -1152,9 +1152,13 @@ async def _download_audio_url(url: str) -> str | None:
 
     SSRF guard: ``url`` is user-controlled (``SourceConfig.source_url``),
     so it is validated against :func:`echoroo.core.url_allowlist
-    .validate_audio_url` before any network round-trip. The allowlist
-    blocks loopback / link-local / RFC1918 destinations and rejects
-    hosts not on the static external-service list (OWASP A10).
+    .validate_audio_url` before any network round-trip, and the actual
+    HTTP client uses an IP-pinned transport
+    (:class:`echoroo.core.url_allowlist.PinnedIPAsyncTransport`) so that
+    the connect target cannot be flipped between validation and connect
+    by a DNS-rebinding attacker (OWASP A10 — closes the TOCTOU window).
+    Redirects are disabled; if the upstream returns a 30x, the caller
+    must re-validate the new ``Location`` and rebuild the pinned client.
 
     Args:
         url: Public URL of the audio file to download
@@ -1167,16 +1171,31 @@ async def _download_audio_url(url: str) -> str | None:
 
     import httpx
 
-    from echoroo.core.url_allowlist import SSRFGuardError, validate_audio_url
+    from echoroo.core.url_allowlist import (
+        SSRFGuardError,
+        build_pinned_async_client,
+    )
 
-    # SSRF allowlist guard — must run BEFORE any DNS / HTTP I/O.
+    # SSRF allowlist guard + IP pin — must run BEFORE any DNS / HTTP I/O.
+    # ``build_pinned_async_client`` runs the static + post-resolve checks
+    # internally and returns a transport that only ever connects to the
+    # pinned public IP for the duration of this request, defeating the
+    # validate→connect TOCTOU shape of DNS rebinding.
     try:
-        validate_audio_url(url)
+        client, pinned_ip = build_pinned_async_client(
+            url,
+            timeout=_URL_DOWNLOAD_TIMEOUT,
+            follow_redirects=False,
+        )
     except SSRFGuardError as exc:
         logger.warning(
             "Refusing to fetch user-supplied audio URL %r: %s", url, exc
         )
         return None
+
+    logger.debug(
+        "Audio download pinned to IP %s for URL '%s'", pinned_ip, url
+    )
 
     # Determine a reasonable file suffix from the URL path
     url_path = url.split("?")[0]  # strip query string before inspecting extension
@@ -1187,7 +1206,7 @@ async def _download_audio_url(url: str) -> str | None:
 
     tmp_path: str | None = None
     try:
-        async with httpx.AsyncClient(timeout=_URL_DOWNLOAD_TIMEOUT) as client, client.stream("GET", url) as resp:
+        async with client, client.stream("GET", url) as resp:
             resp.raise_for_status()
 
             with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp_file:
