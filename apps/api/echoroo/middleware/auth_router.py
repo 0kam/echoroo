@@ -162,12 +162,20 @@ class ApiKeyRecord:
     visibility. When ``project_id`` is set, every gate call MUST verify
     that ``gate_action(project_id=...)`` matches; mismatches return 403
     ``api_key_project_scope_mismatch``.
+
+    Phase 17 A-3: ``allowed_ip_cidrs`` now flows through so the outer
+    IP enforcement middleware (:mod:`echoroo.middleware.api_key_ip_enforcement`)
+    can compare the caller's IP against the persisted CIDR allowlist
+    without re-loading the row. ``None`` and ``[]`` both mean "no
+    restriction" (allow all source IPs); a non-empty list narrows the
+    set to those CIDRs.
     """
 
     api_key_id: UUID
     user_id: UUID
     granted_permissions: tuple[str, ...]
     project_id: UUID | None = None
+    allowed_ip_cidrs: tuple[str, ...] | None = None
 
 
 class ApiKeyVerifier(Protocol):
@@ -220,6 +228,32 @@ def constant_time_eq(a: str, b: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
+class IpEnforcer(Protocol):
+    """Per-request IP allowlist enforcement plug-in (Phase 17 A-3).
+
+    Implementations inspect the caller's source IP against the persisted
+    ``allowed_ip_cidrs`` list, increment ``ip_violation_count`` on
+    mismatch, and auto-revoke the key after the third violation
+    (FR-077, FR-081). The :class:`AuthRouterMiddleware` invokes the
+    enforcer **after** the API-key verifier resolves the row but
+    **before** the principal is attached to ``request.state`` so a
+    rejected request never reaches the downstream handler.
+
+    Returns ``True`` to allow the request, ``False`` to reject with 403.
+    """
+
+    async def enforce(
+        self,
+        *,
+        api_key_id: UUID,
+        user_id: UUID,
+        allowed_cidrs: tuple[str, ...] | None,
+        client_ip: str,
+        request_id: str,
+        user_agent: str,
+    ) -> bool: ...
+
+
 @dataclass
 class AuthRouterConfig:
     """Configuration for :class:`AuthRouterMiddleware`.
@@ -239,6 +273,12 @@ class AuthRouterConfig:
 
     api_key_verifier: ApiKeyVerifier | None = None
     session_verifier: SessionVerifier | None = None
+    # Phase 17 A-3: optional per-request CIDR allowlist enforcer. When
+    # ``None`` the middleware skips IP enforcement entirely (legacy
+    # behaviour). The production wiring in :mod:`echoroo.main` injects a
+    # :class:`DbIpEnforcer` so the canonical FR-077 / FR-081 contract is
+    # always active in deployed environments.
+    ip_enforcer: IpEnforcer | None = None
     programmatic_prefix: str = PROGRAMMATIC_PREFIX
     session_prefix: str = SESSION_PREFIX
     session_cookie_name: str = DEFAULT_SESSION_COOKIE
@@ -455,6 +495,39 @@ class AuthRouterMiddleware(BaseHTTPMiddleware):
         if record is None:
             return _auth_failure(401, "auth_invalid", "API key invalid or revoked")
 
+        # Phase 17 A-3 (FR-077, FR-081): when a CIDR allowlist is
+        # configured AND an IP enforcer is wired, gate the request on
+        # source IP before issuing a Principal. Mismatches:
+        #   * Increment ``api_keys.ip_violation_count`` (a counter
+        #     independent from ``scope_violation_count_10min``).
+        #   * After the third violation auto-revoke the key.
+        #   * Append a ``platform_audit_log`` row.
+        # All three side-effects are owned by the enforcer; the
+        # middleware just translates the boolean outcome into a 403.
+        enforcer = self.config.ip_enforcer
+        if enforcer is not None:
+            client_ip = _resolve_client_ip(request)
+            request_id = (
+                request.headers.get("X-Request-Id")
+                or request.headers.get("X-Correlation-Id")
+                or ""
+            )
+            user_agent = request.headers.get("User-Agent", "")
+            allowed = await enforcer.enforce(
+                api_key_id=record.api_key_id,
+                user_id=record.user_id,
+                allowed_cidrs=record.allowed_ip_cidrs,
+                client_ip=client_ip,
+                request_id=request_id,
+                user_agent=user_agent,
+            )
+            if not allowed:
+                return _auth_failure(
+                    403,
+                    "err_ip_not_allowed",
+                    "Source IP not in API key allowlist",
+                )
+
         return Principal.for_api_key(
             user_id=record.user_id,
             api_key_id=record.api_key_id,
@@ -518,6 +591,28 @@ class AuthRouterMiddleware(BaseHTTPMiddleware):
         return None
 
 
+def _resolve_client_ip(request: Request) -> str:
+    """Pick the canonical caller IP from a Starlette request.
+
+    Mirrors :func:`echoroo.middleware.api_key_ip_enforcement.select_client_ip`
+    but accepts the live :class:`Request` shape so the auth router does
+    not need to import the helper module purely for plumbing.
+
+    Reverse-proxy header ``X-Forwarded-For`` wins when present (the
+    first comma-separated entry is the original caller); otherwise we
+    fall back to the direct socket address. Empty string when neither
+    source resolves.
+    """
+    forwarded = request.headers.get("X-Forwarded-For")
+    if forwarded:
+        first = forwarded.split(",", 1)[0].strip()
+        if first:
+            return first
+    if request.client is not None and request.client.host:
+        return request.client.host
+    return ""
+
+
 def _auth_failure(status: int, code: str, message: str) -> JSONResponse:
     headers: dict[str, str] = {}
     if status == 401:
@@ -536,6 +631,7 @@ __all__ = [
     "AuthRouterMiddleware",
     "DEFAULT_ACCESS_COOKIE",
     "DEFAULT_SESSION_COOKIE",
+    "IpEnforcer",
     "PROGRAMMATIC_PREFIX",
     "Principal",
     "SESSION_PREFIX",

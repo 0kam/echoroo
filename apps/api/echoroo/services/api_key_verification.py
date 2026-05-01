@@ -213,6 +213,15 @@ class DbApiKeyVerifier(ApiKeyVerifier):
                 )
 
             granted: list[str] = list(row.granted_permissions or [])
+            # Phase 17 A-3: thread ``allowed_ip_cidrs`` through so the
+            # outer IP enforcement middleware can compare the caller
+            # IP against the persisted CIDR list without re-loading
+            # the row. ``None`` is preserved verbatim — the helper
+            # treats both ``None`` and ``[]`` as "no restriction".
+            raw_cidrs = getattr(row, "allowed_ip_cidrs", None)
+            cidrs_tuple: tuple[str, ...] | None = (
+                tuple(raw_cidrs) if raw_cidrs is not None else None
+            )
             return ApiKeyRecord(
                 api_key_id=row.id,
                 user_id=row.user_id,
@@ -222,6 +231,7 @@ class DbApiKeyVerifier(ApiKeyVerifier):
                 # enforce ``api_key_project_scope_mismatch`` on
                 # cross-project calls.
                 project_id=row.project_id,
+                allowed_ip_cidrs=cidrs_tuple,
             )
 
     # -- internals --------------------------------------------------------
