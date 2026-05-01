@@ -1302,16 +1302,22 @@ def upgrade() -> None:  # noqa: PLR0915 — baseline migration, long by nature
         )
     ).scalar()
     if role_exists:
+        # asyncpg cannot execute multiple statements in a single prepared
+        # statement (Phase 15 R2 same fix in 0012). Split into individual
+        # op.execute() calls so the migration runs under both psycopg2 and
+        # asyncpg drivers.
         op.execute(
-            """
-            REVOKE UPDATE, DELETE ON project_audit_log FROM echoroo_app;
-            REVOKE UPDATE, DELETE ON platform_audit_log FROM echoroo_app;
-            REVOKE UPDATE, DELETE ON project_license_history FROM echoroo_app;
-            GRANT INSERT ON project_audit_log TO echoroo_app;
-            GRANT INSERT ON platform_audit_log TO echoroo_app;
-            GRANT INSERT ON project_license_history TO echoroo_app;
-            """
+            "REVOKE UPDATE, DELETE ON project_audit_log FROM echoroo_app"
         )
+        op.execute(
+            "REVOKE UPDATE, DELETE ON platform_audit_log FROM echoroo_app"
+        )
+        op.execute(
+            "REVOKE UPDATE, DELETE ON project_license_history FROM echoroo_app"
+        )
+        op.execute("GRANT INSERT ON project_audit_log TO echoroo_app")
+        op.execute("GRANT INSERT ON platform_audit_log TO echoroo_app")
+        op.execute("GRANT INSERT ON project_license_history TO echoroo_app")
 
     # ------------------------------------------------------------------ #
     # T020g — Genesis rows (prev_hash = '0'*64, row_hash placeholder = '0'*64)
