@@ -469,3 +469,48 @@ jobs:
         if: always()
         working-directory: apps/api
         run: python ../../scripts/check_coverage_threshold.py coverage.json
+
+  # ---------------------------------------------------------------------------
+  # T998 (Phase 16 Batch 6h-3): runbook smoke test gate.
+  #
+  # Validates that the four quickstart §3 bootstrap scripts (wipe_database,
+  # init_superuser, initial_iucn_sync, seed_moe_rdb) keep working as
+  # operator-facing CLIs:
+  #
+  #   * ``--help`` exits 0 and prints the documented usage banner.
+  #   * Running without ``--confirm`` (or required positional args) refuses
+  #     non-zero so destructive defaults can never silently regress.
+  #   * The argparse argument schema is pinned so a refactor that changes
+  #     flag names lights this gate up.
+  #
+  # The job runs the smoke subset only — ``-m "not requires_runbook"`` skips
+  # the live-infra integration tests that need a Docker Compose dev stack
+  # with PostgreSQL / Redis / LocalStack / KMS aliases provisioned. Operators
+  # opt in locally via ``pytest -m requires_runbook`` per quickstart §3.
+  # ---------------------------------------------------------------------------
+  runbook-smoke-tests:
+    name: Runbook smoke tests (T998, quickstart §3)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv + Python 3.11
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.11"
+          enable-cache: true
+          cache-dependency-glob: "apps/api/uv.lock"
+          pyproject-file: "apps/api/pyproject.toml"
+
+      - name: Install backend dependencies
+        working-directory: apps/api
+        run: uv sync --all-extras --dev
+
+      # Smoke subset only — see job comment above for marker rationale.
+      # ``--no-cov`` disables coverage measurement for this fast gate so the
+      # job runs under a few seconds even on a cold runner. Coverage of the
+      # operational scripts is intentionally excluded from the T996 gate
+      # (see pyproject.toml ``[tool.coverage.run] omit``).
+      - name: Run runbook smoke tests
+        working-directory: apps/api
+        run: uv run pytest tests/runbook/ -m "not requires_runbook" --no-cov -q

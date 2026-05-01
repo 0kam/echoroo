@@ -167,6 +167,14 @@ markers = [
     # ``RUN_PERF_LATENCY=true`` for an additional opt-in. Run locally with
     # ``pytest -m performance`` to exercise them.
     "performance: marks tests that measure latency / p95 budgets (CI default: skipped via '-m \"not performance\"', opt-in locally with '-m performance')",
+    # Phase 16 Batch 6h-3 (T998): the ``requires_runbook`` marker gates tests
+    # that actually invoke the bootstrap scripts against a live database / S3
+    # / KMS / IUCN API. CI runs the smoke subset (``-m "not requires_runbook"``)
+    # which only validates ``--help`` exit codes and CLI argument regressions
+    # without touching infrastructure. Operators can opt-in locally via
+    # ``pytest -m requires_runbook`` against the Docker Compose dev stack
+    # documented in quickstart §3.
+    "requires_runbook: marks runbook tests that require a live infra stack (CI default: skipped via '-m \"not requires_runbook\"', opt-in locally with '-m requires_runbook')",
 ]
 
 [tool.coverage.run]
