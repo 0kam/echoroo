@@ -6,8 +6,10 @@ from the frontend. All endpoints are scoped to a project_id for access control.
 
 from __future__ import annotations
 
+import ipaddress
 import logging
 import os
+import socket
 import urllib.parse
 from collections.abc import AsyncIterator
 from uuid import UUID
@@ -31,6 +33,114 @@ XENO_CANTO_MAX_PER_PAGE = 100
 
 # Maximum allowed audio file size in bytes (50 MB)
 AUDIO_SIZE_LIMIT_BYTES = 50 * 1024 * 1024
+
+# SSRF guard: hosts allowed for the sonogram proxy.  Only Xeno-canto.
+_SONOGRAM_ALLOWED_HOSTS: frozenset[str] = frozenset({"xeno-canto.org"})
+
+# SSRF guard: maximum number of HTTP redirects to follow before giving up.
+_SONOGRAM_MAX_REDIRECTS: int = 3
+
+
+def _validate_sonogram_url(url: str) -> None:
+    """Validate a sonogram proxy target URL against the SSRF allowlist.
+
+    Stronger replacement for the previous ``url.startswith("https://xeno-canto.org/")``
+    string check — that prefix test is preserved here in spirit through the
+    combined scheme + host allowlist check below.
+
+    Enforces:
+      * https scheme only
+      * host matches an entry in ``_SONOGRAM_ALLOWED_HOSTS``
+      * if the host happens to be a literal IP, it is not private/loopback/
+        link-local/reserved (defence-in-depth — Xeno-canto always resolves
+        to public IPs, so a literal-IP variant is treated as a tampering
+        attempt)
+      * resolved DNS A/AAAA records do not point at private/loopback/
+        link-local/reserved address space (defence-in-depth against DNS
+        rebinding-style abuse from a compromised allowed host)
+
+    Raises:
+        HTTPException(400) if the URL fails any check.
+    """
+    try:
+        parsed = urllib.parse.urlparse(url)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid sonogram URL",
+        ) from exc
+
+    if parsed.scheme != "https":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only https sonogram URLs are allowed",
+        )
+
+    host = (parsed.hostname or "").lower()
+    if not host:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Sonogram URL is missing a host",
+        )
+
+    if host not in _SONOGRAM_ALLOWED_HOSTS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only https://xeno-canto.org/ URLs are allowed",
+        )
+
+    # If the host parses as a literal IP, reject private/loopback ranges.
+    try:
+        literal_ip = ipaddress.ip_address(host)
+    except ValueError:
+        literal_ip = None
+    if literal_ip is not None and (
+        literal_ip.is_private
+        or literal_ip.is_loopback
+        or literal_ip.is_link_local
+        or literal_ip.is_reserved
+        or literal_ip.is_multicast
+        or literal_ip.is_unspecified
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Sonogram URL resolves to a non-public address",
+        )
+
+    # Resolve DNS and check every returned record.  A single private IP
+    # is enough to reject — pinning the resolved IP into the request is
+    # left to the upstream allowlist module (Major 2 fix); here we only
+    # need to ensure the response is not re-routed at the OS resolver
+    # toward an internal host.
+    try:
+        addr_info = socket.getaddrinfo(host, None)
+    except socket.gaierror as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Sonogram host could not be resolved",
+        ) from exc
+
+    for family, _socktype, _proto, _canon, sockaddr in addr_info:
+        if family in (socket.AF_INET, socket.AF_INET6):
+            ip_str = sockaddr[0]
+        else:
+            continue
+        try:
+            ip_obj = ipaddress.ip_address(ip_str)
+        except ValueError:
+            continue
+        if (
+            ip_obj.is_private
+            or ip_obj.is_loopback
+            or ip_obj.is_link_local
+            or ip_obj.is_reserved
+            or ip_obj.is_multicast
+            or ip_obj.is_unspecified
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Sonogram host resolves to a non-public address",
+            )
 
 router = APIRouter(prefix="/projects/{project_id}/xeno-canto", tags=["xeno-canto"])
 
@@ -292,36 +402,71 @@ async def proxy_sonogram(
         504: Request to Xeno-canto timed out
     """
 
-    if not url.startswith("https://xeno-canto.org/"):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Only https://xeno-canto.org/ URLs are allowed",
-        )
+    # Initial allowlist + private-IP guard on the user-supplied URL.
+    # `_validate_sonogram_url` raises HTTPException(400) on rejection.
+    _validate_sonogram_url(url)
 
-    # Defence in depth: re-validate via the SSRF allowlist so that DNS
-    # rebinding against ``xeno-canto.org`` cannot pivot to internal IPs
-    # (OWASP A10). The startswith check above is necessary but not
-    # sufficient — only the post-resolve check defeats rebinding.
-    from echoroo.core.url_allowlist import SSRFGuardError, validate_audio_url
-
-    try:
-        validate_audio_url(url)
-    except SSRFGuardError as exc:
-        logger.warning("Xeno-canto sonogram proxy SSRF guard rejected url=%r: %s", url, exc)
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="URL failed SSRF allowlist validation",
-        ) from exc
-
+    # Manual redirect loop — `follow_redirects=False` prevents httpx from
+    # silently chasing a `Location` header into a private network.  Each
+    # hop is re-validated through `_validate_sonogram_url`, capping the
+    # chain at `_SONOGRAM_MAX_REDIRECTS` to bound resource use.
+    current_url = url
+    resp: httpx.Response | None = None
     try:
         async with httpx.AsyncClient(
             timeout=10.0,
-            follow_redirects=True,
+            follow_redirects=False,
         ) as client:
-            resp = await client.get(
-                url,
-                headers={"User-Agent": "Echoroo/2.0 (https://echoroo.app)"},
-            )
+            for hop in range(_SONOGRAM_MAX_REDIRECTS + 1):
+                resp = await client.get(
+                    current_url,
+                    headers={"User-Agent": "Echoroo/2.0 (https://echoroo.app)"},
+                )
+                # Redirect: validate the new target before following.
+                if resp.status_code in (301, 302, 303, 307, 308):
+                    if hop >= _SONOGRAM_MAX_REDIRECTS:
+                        logger.warning(
+                            "Xeno-canto sonogram proxy: max redirect depth "
+                            "exceeded for url=%r",
+                            url,
+                        )
+                        raise HTTPException(
+                            status_code=status.HTTP_502_BAD_GATEWAY,
+                            detail="Sonogram redirect chain too long",
+                        )
+                    location = resp.headers.get("location")
+                    if not location:
+                        logger.warning(
+                            "Xeno-canto sonogram proxy: %d response without "
+                            "Location header for url=%r",
+                            resp.status_code,
+                            url,
+                        )
+                        raise HTTPException(
+                            status_code=status.HTTP_502_BAD_GATEWAY,
+                            detail="Sonogram redirect missing Location",
+                        )
+                    next_url = urllib.parse.urljoin(current_url, location)
+                    # Re-validate every hop — defence against open redirect
+                    # on the allowed host pointing at a private IP.
+                    try:
+                        _validate_sonogram_url(next_url)
+                    except HTTPException as exc:
+                        logger.warning(
+                            "Xeno-canto sonogram proxy: redirect rejected "
+                            "url=%r -> %r reason=%s",
+                            current_url,
+                            next_url,
+                            exc.detail,
+                        )
+                        raise HTTPException(
+                            status_code=status.HTTP_502_BAD_GATEWAY,
+                            detail="Sonogram redirect target is not allowed",
+                        ) from exc
+                    current_url = next_url
+                    continue
+                # Non-redirect: leave the loop and process the response.
+                break
     except httpx.TimeoutException as exc:
         logger.warning("Xeno-canto sonogram proxy timed out for url=%r", url)
         raise HTTPException(
@@ -335,10 +480,11 @@ async def proxy_sonogram(
             detail="Xeno-canto is unreachable",
         ) from exc
 
-    if resp.status_code != 200:
+    if resp is None or resp.status_code != 200:
+        upstream_status = resp.status_code if resp is not None else 0
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Xeno-canto returned HTTP {resp.status_code} for sonogram",
+            detail=f"Xeno-canto returned HTTP {upstream_status} for sonogram",
         )
 
     content_type = resp.headers.get("content-type", "image/png")
