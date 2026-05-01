@@ -14,8 +14,14 @@ Detection strategy (research §18-A):
     * Accept a guard if EITHER:
         - the function's Depends() keyword defaults include
           ``Depends(check_action(...))`` OR ``Depends(require_permission(...))``
-        - OR its body references ``is_allowed(...)`` or ``check_project_access(...)``
-          at any depth.
+        - OR its body references any of the canonical guard helpers at
+          any depth: ``is_allowed(...)``, ``check_project_access(...)``,
+          ``gate_action(...)`` (Phase 11+ canonical surface),
+          ``_require_authenticated_superuser(...)`` (Phase 12 admin
+          router convention), ``_require_authenticated(...)`` (Phase 14
+          self-scoped DSR endpoints), or the invitation-token helpers
+          ``accept_invitation(...)`` /
+          ``decline_invitation_by_recipient(...)`` (Phase 6).
     * Allowlist unauthenticated endpoints (auth.py register / login / etc.).
 
 Exit codes:
@@ -43,10 +49,43 @@ HTTP_METHODS: frozenset[str] = frozenset(
 
 GUARD_CALLABLE_NAMES: frozenset[str] = frozenset(
     {
+        # Original Phase 2 / Phase 3 surface — kept for backwards
+        # compatibility and for early-Phase routers that have not yet
+        # been migrated to ``gate_action``.
         "check_action",
         "require_permission",
         "is_allowed",
         "check_project_access",
+        # Phase 11+ canonical surface. ``gate_action`` is the helper
+        # introduced in Phase 11 (US6 taxon-driven auto-obscure) and is
+        # now the dominant pattern across v1 / web_v1 routers; it
+        # internally calls ``is_allowed`` after loading + locking the
+        # project row.
+        "gate_action",
+        # Phase 12 admin-router convention (R1 C1): every superuser-only
+        # endpoint runs ``_require_authenticated_superuser`` first to
+        # stamp the caller's superuser status, then ``gate_action`` to
+        # gate the specific Action. Some admin endpoints (notably the
+        # platform-scope ``superuser_only`` actions) intentionally skip
+        # the second call because the helper itself IS the gate (the
+        # Action allowlist branch trusts the stamped superuser bit).
+        "_require_authenticated_superuser",
+        # Phase 14 GDPR / DSR self-scoped endpoints (FR-105 / FR-109).
+        # The DSR export and delete handlers operate ONLY on the
+        # caller's own first-party data, so the permission concept
+        # collapses to "the caller is authenticated"; ``gate_action``
+        # has no project_id to gate on. ``_require_authenticated`` is
+        # the dsr.py helper that raises 401 if there is no current
+        # user.
+        "_require_authenticated",
+        # Phase 6 invitation token surface — ``accept_invitation`` and
+        # ``decline_invitation_by_recipient`` perform the recipient
+        # email-hash check inside ``invitation_service``; the token is
+        # the authenticator and the email-hash equality test is the
+        # gate. The path operation therefore satisfies FR-008 by
+        # delegating to one of these helpers.
+        "accept_invitation",
+        "decline_invitation_by_recipient",
     }
 )
 
