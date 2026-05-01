@@ -25,6 +25,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import pytest
+
 # ---------------------------------------------------------------------------
 # Repository root helpers
 #
@@ -146,10 +148,10 @@ def test_hardcoded_external_urls_are_in_approved_allowlist() -> None:
 def test_download_audio_url_has_ssrf_allowlist_guard() -> None:
     """``_download_audio_url`` must validate the URL against an allowlist before fetching.
 
-    ``SourceConfig.source_url`` is user-supplied and is passed verbatim to
-    ``httpx.AsyncClient.stream()``. Without a guard, an authenticated user
-    could force the backend to issue GET requests to internal services
-    (SSRF — OWASP A10).
+    ``SourceConfig.source_url`` is user-supplied.  Phase 17 (T979g) added
+    ``build_pinned_async_client`` which runs a static allowlist check + DNS
+    private-IP block before any network I/O (SSRF guard — OWASP A10).
+    This test verifies the guard patterns are present in the function body.
     """
     search_py = _ECHOROO_SRC / "services" / "search.py"
     assert search_py.is_file(), f"search.py not found at {search_py}"
@@ -192,25 +194,53 @@ def test_download_audio_url_has_ssrf_allowlist_guard() -> None:
 
 
 def test_xeno_canto_proxy_has_domain_allowlist_check() -> None:
-    """The xeno-canto sonogram proxy must reject non-xeno-canto URLs.
+    """The xeno-canto sonogram proxy must reject non-xeno-canto URLs via parsed validation.
 
     The ``/api/v1/xeno-canto/sonogram`` endpoint accepts a ``url`` query
     parameter from the caller. Without a domain check, it acts as an open
     proxy (SSRF / CORS bypass).
-    """
-    xc_file = _ECHOROO_SRC / "api" / "v1" / "xeno_canto.py"
-    assert xc_file.is_file(), f"xeno_canto.py not found at {xc_file}"
-    text = xc_file.read_text(encoding="utf-8")
 
-    # Verify the allowlist guard is present
-    assert "xeno-canto.org" in text, (
-        "No xeno-canto.org allowlist check found in xeno_canto.py"
+    This test calls ``_validate_sonogram_url`` directly with adversarial inputs
+    rather than doing a source-text ``startswith`` grep, so it exercises the
+    actual parsed-URL validation rather than incidental text matching.
+    """
+    import socket
+    from unittest.mock import patch
+
+    from fastapi import HTTPException
+
+    from echoroo.api.v1.xeno_canto import _validate_sonogram_url  # type: ignore[attr-defined]
+
+    # --- Happy path: a legitimate xeno-canto URL must not raise ---
+    # Patch DNS so the test runs without internet access.
+    # Note: 203.0.113.x / 198.51.100.x documentation ranges are marked
+    # is_private by Python ipaddress; use a genuinely routable public IP.
+    with patch(
+        "echoroo.api.v1.xeno_canto.socket.getaddrinfo",
+        return_value=[(socket.AF_INET, socket.SOCK_STREAM, 0, "", ("8.8.8.5", 0))],
+    ):
+        # Should complete without raising
+        _validate_sonogram_url("https://xeno-canto.org/sounds/spectrogram/1234.png")
+
+    # --- Rejection: non-xeno-canto domain must raise HTTPException(400) ---
+    with pytest.raises(HTTPException) as exc_info:
+        _validate_sonogram_url("https://evil.example.com/steal?xeno-canto.org=bypass")
+    assert exc_info.value.status_code == 400, (
+        "_validate_sonogram_url should return HTTP 400 for non-xeno-canto URLs"
     )
-    # Verify it rejects non-matching URLs (raises HTTP 400/422)
-    guard_present = "startswith" in text and "xeno-canto.org" in text
-    assert guard_present, (
-        "xeno_canto.py should use ``url.startswith('https://xeno-canto.org/')`` "
-        "to reject URLs that don't originate from the approved domain."
+
+    # --- Rejection: subdomain spoofing must raise HTTPException(400) ---
+    with pytest.raises(HTTPException) as exc_info2:
+        _validate_sonogram_url("https://xeno-canto.org.attacker.com/img.png")
+    assert exc_info2.value.status_code == 400, (
+        "_validate_sonogram_url should reject subdomain-spoofing attempts"
+    )
+
+    # --- Rejection: http (not https) must raise HTTPException(400) ---
+    with pytest.raises(HTTPException) as exc_info3:
+        _validate_sonogram_url("http://xeno-canto.org/sounds/spectrogram/1.png")
+    assert exc_info3.value.status_code == 400, (
+        "_validate_sonogram_url should reject http:// (non-TLS) scheme"
     )
 
 
@@ -245,3 +275,8 @@ __all__ = [
     "test_source_config_source_url_is_plain_str_field",
     "test_xeno_canto_proxy_has_domain_allowlist_check",
 ]
+
+# Note: DNS-rebinding and PinnedIPAsyncTransport unit tests are in
+# dedicated files:
+#   tests/security/ssrf/test_pinned_ip_async_transport.py
+#   tests/security/ssrf/test_pinned_ip_rebinding.py
