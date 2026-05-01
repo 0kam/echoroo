@@ -32,12 +32,10 @@ from collections.abc import Iterable
 from typing import Any
 from uuid import uuid4
 
-import httpx
 import pytest
 from fastapi import HTTPException
 
 from echoroo.api.v1 import xeno_canto as xc_module
-
 
 # ---------------------------------------------------------------------------
 # DNS + httpx stubs
@@ -84,7 +82,7 @@ class _ScriptedClient:
         self._script = list(script)
         self.calls: list[str] = []
 
-    async def __aenter__(self) -> "_ScriptedClient":
+    async def __aenter__(self) -> _ScriptedClient:
         return self
 
     async def __aexit__(self, *_exc: object) -> None:
@@ -353,8 +351,173 @@ def test_sonogram_proxy_source_disables_httpx_redirects() -> None:
     )
 
 
+# ---------------------------------------------------------------------------
+# Section 4: pinned IP transport (Codex Round 2 Major 1)
+#
+# Without IP pinning the post-DNS validation in ``_validate_sonogram_url``
+# is racy: ``httpx`` re-resolves the hostname when it opens the connection,
+# so a DNS rebinding attacker can flip the answer between validation and
+# connect. The fix is to feed the validated public IP to
+# :class:`PinnedIPAsyncTransport`, which rewrites the connect target to an
+# IP literal (httpcore skips DNS entirely). These tests verify the
+# transport is wired in, the pinned IP propagates, and a rebinding scenario
+# would still connect to the validated IP because the transport refuses to
+# re-resolve.
+# ---------------------------------------------------------------------------
+
+
+def test_validate_sonogram_url_returns_pinned_ip(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``_validate_sonogram_url`` MUST return ``(host, public_ip)`` so the
+    caller can pin the actual TCP connect target."""
+    monkeypatch.setattr(socket, "getaddrinfo", _public_addr_info)
+    host, pinned_ip = xc_module._validate_sonogram_url(
+        "https://xeno-canto.org/foo.png"
+    )
+    assert host == "xeno-canto.org"
+    # Matches the public IPv4 the stubbed getaddrinfo returned.
+    assert pinned_ip == "8.8.8.8"
+
+
+@pytest.mark.asyncio
+async def test_proxy_sonogram_builds_pinned_transport_per_hop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The proxy MUST instantiate ``PinnedIPAsyncTransport`` for each request,
+    pinned to the IP returned by ``_validate_sonogram_url``.
+
+    This is what closes the DNS-rebinding TOCTOU window: between the post-
+    validation check and the connect, ``httpx`` would otherwise call
+    ``getaddrinfo`` a second time, and an attacker-controlled authoritative
+    DNS server could flip the answer to a private IP. Pinning the connect
+    target to the validated public IP makes the second resolve never happen.
+    """
+    monkeypatch.setattr(socket, "getaddrinfo", _public_addr_info)
+    _patch_httpx(
+        monkeypatch,
+        [
+            _StubResponse(
+                200,
+                content=b"PNG",
+                headers={"content-type": "image/png"},
+            )
+        ],
+    )
+
+    captured: list[dict[str, Any]] = []
+    real_init = xc_module.PinnedIPAsyncTransport.__init__
+
+    def _spy_init(
+        self: xc_module.PinnedIPAsyncTransport,
+        *args: object,
+        **kwargs: object,
+    ) -> None:
+        captured.append(dict(kwargs))
+        real_init(self, *args, **kwargs)
+
+    monkeypatch.setattr(
+        xc_module.PinnedIPAsyncTransport, "__init__", _spy_init
+    )
+
+    await xc_module.proxy_sonogram(
+        project_id=uuid4(),
+        url="https://xeno-canto.org/foo.png",
+    )
+
+    assert len(captured) == 1, (
+        f"expected exactly one PinnedIPAsyncTransport for a single-hop fetch, "
+        f"got {len(captured)}"
+    )
+    assert captured[0]["pinned_host"] == "xeno-canto.org"
+    assert captured[0]["pinned_ip"] == "8.8.8.8"
+    # Restrict to the sonogram allowlist so a renegotiated transport
+    # cannot accidentally accept the broader audio host set.
+    assert captured[0]["allowed_hosts"] == xc_module._SONOGRAM_ALLOWED_HOSTS
+
+
+@pytest.mark.asyncio
+async def test_proxy_sonogram_pins_fresh_ip_after_redirect(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """After a redirect the proxy MUST rebuild the pinned transport with a
+    freshly resolved IP — pinning a stale IP across hops would still allow
+    a redirect into a private network if the authoritative DNS flipped
+    between the original validation and the redirect target's resolution.
+    """
+    # Two getaddrinfo calls: first returns 8.8.8.8, second returns 1.1.1.1.
+    # Both are public, so validation passes both hops; the captured pins
+    # below MUST reflect the per-hop result.
+    call_state = {"n": 0}
+
+    def _alternating_addr_info(
+        host: str, port: int | None = None
+    ) -> list[tuple[Any, ...]]:
+        call_state["n"] += 1
+        if call_state["n"] == 1:
+            return [(socket.AF_INET, socket.SOCK_STREAM, 0, "", ("8.8.8.8", 0))]
+        return [(socket.AF_INET, socket.SOCK_STREAM, 0, "", ("1.1.1.1", 0))]
+
+    monkeypatch.setattr(socket, "getaddrinfo", _alternating_addr_info)
+    _patch_httpx(
+        monkeypatch,
+        [
+            _StubResponse(302, headers={"location": "/bar.png"}),
+            _StubResponse(
+                200,
+                content=b"PNG",
+                headers={"content-type": "image/png"},
+            ),
+        ],
+    )
+
+    captured_pins: list[str] = []
+    real_init = xc_module.PinnedIPAsyncTransport.__init__
+
+    def _spy_init(
+        self: xc_module.PinnedIPAsyncTransport,
+        *args: object,
+        **kwargs: object,
+    ) -> None:
+        captured_pins.append(str(kwargs["pinned_ip"]))
+        real_init(self, *args, **kwargs)
+
+    monkeypatch.setattr(
+        xc_module.PinnedIPAsyncTransport, "__init__", _spy_init
+    )
+
+    await xc_module.proxy_sonogram(
+        project_id=uuid4(),
+        url="https://xeno-canto.org/foo.png",
+    )
+
+    # First hop pinned to the original validation IP, second hop to the
+    # redirect target's freshly-resolved IP. Stale pinning would surface
+    # ["8.8.8.8", "8.8.8.8"]; correct pinning surfaces both values.
+    assert captured_pins == ["8.8.8.8", "1.1.1.1"], (
+        f"per-hop pinning produces a fresh IP per redirect, got {captured_pins}"
+    )
+
+
+def test_sonogram_proxy_source_uses_pinned_transport() -> None:
+    """Static guard: production code MUST construct ``PinnedIPAsyncTransport``
+    so the actual TCP connect skips DNS resolution.
+    """
+    import inspect
+
+    src = inspect.getsource(xc_module.proxy_sonogram)
+    assert "PinnedIPAsyncTransport" in src, (
+        "proxy_sonogram must build a PinnedIPAsyncTransport per hop so the "
+        "connect target is the validated public IP literal — without this "
+        "httpx re-resolves the hostname at connect time and a DNS rebinding "
+        "attacker can flip the answer between validation and connect."
+    )
+
+
 __all__ = [
+    "test_proxy_sonogram_builds_pinned_transport_per_hop",
     "test_proxy_sonogram_follows_legitimate_intrahost_redirect",
+    "test_proxy_sonogram_pins_fresh_ip_after_redirect",
     "test_proxy_sonogram_rejects_excessive_redirect_depth",
     "test_proxy_sonogram_rejects_redirect_to_aws_metadata",
     "test_proxy_sonogram_rejects_redirect_to_private_ip_host",
@@ -362,9 +525,11 @@ __all__ = [
     "test_proxy_sonogram_rejects_redirect_without_location_header",
     "test_proxy_sonogram_uses_follow_redirects_false",
     "test_sonogram_proxy_source_disables_httpx_redirects",
+    "test_sonogram_proxy_source_uses_pinned_transport",
     "test_validate_sonogram_url_accepts_public_xc",
     "test_validate_sonogram_url_rejects_dns_pointing_at_private_ip",
     "test_validate_sonogram_url_rejects_literal_loopback_ip",
     "test_validate_sonogram_url_rejects_non_https",
     "test_validate_sonogram_url_rejects_off_allowlist_host",
+    "test_validate_sonogram_url_returns_pinned_ip",
 ]

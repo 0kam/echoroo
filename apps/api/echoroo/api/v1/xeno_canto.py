@@ -20,6 +20,7 @@ from fastapi.responses import Response, StreamingResponse
 
 from echoroo.core.database import DbSession
 from echoroo.core.permissions import check_project_access
+from echoroo.core.url_allowlist import PinnedIPAsyncTransport
 from echoroo.middleware.auth import CurrentUser
 from echoroo.schemas.xeno_canto import XenoCantoRecording, XenoCantoSearchResponse
 
@@ -41,7 +42,7 @@ _SONOGRAM_ALLOWED_HOSTS: frozenset[str] = frozenset({"xeno-canto.org"})
 _SONOGRAM_MAX_REDIRECTS: int = 3
 
 
-def _validate_sonogram_url(url: str) -> None:
+def _validate_sonogram_url(url: str) -> tuple[str, str]:
     """Validate a sonogram proxy target URL against the SSRF allowlist.
 
     Stronger replacement for the previous ``url.startswith("https://xeno-canto.org/")``
@@ -58,6 +59,15 @@ def _validate_sonogram_url(url: str) -> None:
       * resolved DNS A/AAAA records do not point at private/loopback/
         link-local/reserved address space (defence-in-depth against DNS
         rebinding-style abuse from a compromised allowed host)
+
+    Returns:
+        ``(host, pinned_ip)`` — the validated lower-case hostname and the
+        single public IP literal the caller MUST connect to via
+        :class:`PinnedIPAsyncTransport`. Pinning the connect target to
+        this IP defeats the DNS rebinding TOCTOU window between
+        validation and the actual TCP connect (``httpx`` would otherwise
+        re-resolve the hostname when opening the connection). IPv4 is
+        preferred when available; otherwise the first public IPv6 wins.
 
     Raises:
         HTTPException(400) if the URL fails any check.
@@ -108,10 +118,13 @@ def _validate_sonogram_url(url: str) -> None:
         )
 
     # Resolve DNS and check every returned record.  A single private IP
-    # is enough to reject — pinning the resolved IP into the request is
-    # left to the upstream allowlist module (Major 2 fix); here we only
-    # need to ensure the response is not re-routed at the OS resolver
-    # toward an internal host.
+    # is enough to reject — and we pick the first public IPv4 (or IPv6)
+    # to pin the actual TCP connect target via PinnedIPAsyncTransport.
+    # Pinning is what closes the DNS-rebinding TOCTOU: between the post-
+    # validation check below and the connect httpx would otherwise call
+    # getaddrinfo a SECOND time, and an attacker-controlled authoritative
+    # DNS server could flip the answer to a private IP. By passing the
+    # IP literal to httpcore the connect skips DNS entirely.
     try:
         addr_info = socket.getaddrinfo(host, None)
     except socket.gaierror as exc:
@@ -120,6 +133,7 @@ def _validate_sonogram_url(url: str) -> None:
             detail="Sonogram host could not be resolved",
         ) from exc
 
+    public_ips: list[ipaddress.IPv4Address | ipaddress.IPv6Address] = []
     for family, _socktype, _proto, _canon, sockaddr in addr_info:
         if family in (socket.AF_INET, socket.AF_INET6):
             ip_str = sockaddr[0]
@@ -141,6 +155,21 @@ def _validate_sonogram_url(url: str) -> None:
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Sonogram host resolves to a non-public address",
             )
+        public_ips.append(ip_obj)
+
+    if not public_ips:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Sonogram host produced no usable addresses",
+        )
+
+    # Prefer IPv4 (more universally reachable, simpler URL rewriting);
+    # fall back to IPv6 only if no IPv4 was returned.
+    ipv4 = next(
+        (a for a in public_ips if isinstance(a, ipaddress.IPv4Address)), None
+    )
+    pinned = ipv4 if ipv4 is not None else public_ips[0]
+    return host, str(pinned)
 
 router = APIRouter(prefix="/projects/{project_id}/xeno-canto", tags=["xeno-canto"])
 
@@ -403,70 +432,87 @@ async def proxy_sonogram(
     """
 
     # Initial allowlist + private-IP guard on the user-supplied URL.
-    # `_validate_sonogram_url` raises HTTPException(400) on rejection.
-    _validate_sonogram_url(url)
+    # `_validate_sonogram_url` raises HTTPException(400) on rejection
+    # AND returns the pinned IP literal that the actual TCP connect must
+    # target — the IP-pinning transport (built per hop below) defeats the
+    # DNS rebinding TOCTOU window between validation and connect.
+    pinned_host, pinned_ip = _validate_sonogram_url(url)
 
     # Manual redirect loop — `follow_redirects=False` prevents httpx from
     # silently chasing a `Location` header into a private network.  Each
     # hop is re-validated through `_validate_sonogram_url`, capping the
-    # chain at `_SONOGRAM_MAX_REDIRECTS` to bound resource use.
+    # chain at `_SONOGRAM_MAX_REDIRECTS` to bound resource use. Each hop
+    # also rebuilds the pinned transport with a fresh IP (the redirect
+    # target's hostname could legitimately resolve to a different public
+    # IP than the original host's), so the connect still skips DNS.
     current_url = url
+    current_pinned_host = pinned_host
+    current_pinned_ip = pinned_ip
     resp: httpx.Response | None = None
     try:
-        async with httpx.AsyncClient(
-            timeout=10.0,
-            follow_redirects=False,
-        ) as client:
-            for hop in range(_SONOGRAM_MAX_REDIRECTS + 1):
+        for hop in range(_SONOGRAM_MAX_REDIRECTS + 1):
+            transport = PinnedIPAsyncTransport(
+                pinned_host=current_pinned_host,
+                pinned_ip=current_pinned_ip,
+                allowed_hosts=_SONOGRAM_ALLOWED_HOSTS,
+            )
+            async with httpx.AsyncClient(
+                transport=transport,
+                timeout=10.0,
+                follow_redirects=False,
+            ) as client:
                 resp = await client.get(
                     current_url,
                     headers={"User-Agent": "Echoroo/2.0 (https://echoroo.app)"},
                 )
-                # Redirect: validate the new target before following.
-                if resp.status_code in (301, 302, 303, 307, 308):
-                    if hop >= _SONOGRAM_MAX_REDIRECTS:
-                        logger.warning(
-                            "Xeno-canto sonogram proxy: max redirect depth "
-                            "exceeded for url=%r",
-                            url,
-                        )
-                        raise HTTPException(
-                            status_code=status.HTTP_502_BAD_GATEWAY,
-                            detail="Sonogram redirect chain too long",
-                        )
-                    location = resp.headers.get("location")
-                    if not location:
-                        logger.warning(
-                            "Xeno-canto sonogram proxy: %d response without "
-                            "Location header for url=%r",
-                            resp.status_code,
-                            url,
-                        )
-                        raise HTTPException(
-                            status_code=status.HTTP_502_BAD_GATEWAY,
-                            detail="Sonogram redirect missing Location",
-                        )
-                    next_url = urllib.parse.urljoin(current_url, location)
-                    # Re-validate every hop — defence against open redirect
-                    # on the allowed host pointing at a private IP.
-                    try:
-                        _validate_sonogram_url(next_url)
-                    except HTTPException as exc:
-                        logger.warning(
-                            "Xeno-canto sonogram proxy: redirect rejected "
-                            "url=%r -> %r reason=%s",
-                            current_url,
-                            next_url,
-                            exc.detail,
-                        )
-                        raise HTTPException(
-                            status_code=status.HTTP_502_BAD_GATEWAY,
-                            detail="Sonogram redirect target is not allowed",
-                        ) from exc
-                    current_url = next_url
-                    continue
-                # Non-redirect: leave the loop and process the response.
-                break
+            # Redirect: validate the new target before following.
+            if resp.status_code in (301, 302, 303, 307, 308):
+                if hop >= _SONOGRAM_MAX_REDIRECTS:
+                    logger.warning(
+                        "Xeno-canto sonogram proxy: max redirect depth "
+                        "exceeded for url=%r",
+                        url,
+                    )
+                    raise HTTPException(
+                        status_code=status.HTTP_502_BAD_GATEWAY,
+                        detail="Sonogram redirect chain too long",
+                    )
+                location = resp.headers.get("location")
+                if not location:
+                    logger.warning(
+                        "Xeno-canto sonogram proxy: %d response without "
+                        "Location header for url=%r",
+                        resp.status_code,
+                        url,
+                    )
+                    raise HTTPException(
+                        status_code=status.HTTP_502_BAD_GATEWAY,
+                        detail="Sonogram redirect missing Location",
+                    )
+                next_url = urllib.parse.urljoin(current_url, location)
+                # Re-validate every hop — defence against open redirect
+                # on the allowed host pointing at a private IP. The
+                # returned pin is what the NEXT iteration connects to.
+                try:
+                    next_host, next_ip = _validate_sonogram_url(next_url)
+                except HTTPException as exc:
+                    logger.warning(
+                        "Xeno-canto sonogram proxy: redirect rejected "
+                        "url=%r -> %r reason=%s",
+                        current_url,
+                        next_url,
+                        exc.detail,
+                    )
+                    raise HTTPException(
+                        status_code=status.HTTP_502_BAD_GATEWAY,
+                        detail="Sonogram redirect target is not allowed",
+                    ) from exc
+                current_url = next_url
+                current_pinned_host = next_host
+                current_pinned_ip = next_ip
+                continue
+            # Non-redirect: leave the loop and process the response.
+            break
     except httpx.TimeoutException as exc:
         logger.warning("Xeno-canto sonogram proxy timed out for url=%r", url)
         raise HTTPException(

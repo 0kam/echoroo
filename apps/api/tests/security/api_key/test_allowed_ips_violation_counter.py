@@ -282,6 +282,86 @@ def test_select_client_ip_strips_trusted_chain_right_to_left() -> None:
     )
 
 
+def test_select_client_ip_strips_ipv4_port_from_xff() -> None:
+    """Phase 17 Codex Round 2 Minor 1: ``IPv4:port`` XFF hops MUST be normalised.
+
+    Some reverse proxies emit the upstream caller's port alongside the
+    address (``198.51.100.7:443``). Without normalisation the bare
+    string is fed to the CIDR allowlist check, fails closed, and the
+    request is misclassified — a regression rather than a spoof bypass,
+    but it produces false 403s under proxies that emit ports.
+    """
+    from echoroo.middleware.api_key_ip_enforcement import select_client_ip
+
+    # IPv4:port from a trusted proxy peer is normalised to a bare IPv4.
+    assert (
+        select_client_ip(
+            forwarded_for="198.51.100.7:443",
+            remote_addr="10.0.0.5",
+            trusted_proxy_cidrs=["10.0.0.0/24"],
+        )
+        == "198.51.100.7"
+    )
+    # The peer itself may also arrive with a port suffix (some ASGI
+    # bridges expose ``host:port`` from ``request.client.host``).
+    assert (
+        select_client_ip(
+            forwarded_for=None,
+            remote_addr="10.0.0.5:51234",
+            trusted_proxy_cidrs=["10.0.0.0/24"],
+        )
+        == "10.0.0.5"
+    )
+
+
+def test_select_client_ip_strips_bracketed_ipv6_port_from_xff() -> None:
+    """Bracketed IPv6 with port (``[2001:db8::1]:443``) MUST be normalised.
+
+    RFC 3986 / 7239 require bracketing IPv6 literals when a port is
+    appended; the helper strips both the brackets and the trailing
+    ``:port`` so the downstream allowlist sees a canonical IPv6 address.
+    """
+    from echoroo.middleware.api_key_ip_enforcement import select_client_ip
+
+    # Single trusted IPv6 hop with a port appended.
+    assert (
+        select_client_ip(
+            forwarded_for="[2001:db8::1]:443",
+            remote_addr="10.0.0.5",
+            trusted_proxy_cidrs=["10.0.0.0/24"],
+        )
+        == "2001:db8::1"
+    )
+    # Bracketed IPv6 with no port also resolves to the bare address.
+    assert (
+        select_client_ip(
+            forwarded_for="[2001:db8::1]",
+            remote_addr="10.0.0.5",
+            trusted_proxy_cidrs=["10.0.0.0/24"],
+        )
+        == "2001:db8::1"
+    )
+
+
+def test_select_client_ip_strips_ports_in_chain() -> None:
+    """Mixed chains with port-bearing trusted hops MUST canonicalise correctly.
+
+    ``198.51.100.7, 10.0.0.5:443, 10.0.0.6:443`` from a trusted-proxy
+    peer should drop the two trusted hops on the right (after stripping
+    their ports) and surface the original public caller.
+    """
+    from echoroo.middleware.api_key_ip_enforcement import select_client_ip
+
+    assert (
+        select_client_ip(
+            forwarded_for="198.51.100.7, 10.0.0.5:443, 10.0.0.6:443",
+            remote_addr="10.0.0.6:443",
+            trusted_proxy_cidrs=["10.0.0.0/24"],
+        )
+        == "198.51.100.7"
+    )
+
+
 def test_select_client_ip_falls_back_to_peer_when_no_xff() -> None:
     """A trusted peer with no XFF header → use the peer itself."""
     from echoroo.middleware.api_key_ip_enforcement import select_client_ip
@@ -659,6 +739,9 @@ __all__ = [
     "test_select_client_ip_falls_back_to_peer_when_no_xff",
     "test_select_client_ip_ignores_xff_from_untrusted_peer",
     "test_select_client_ip_ignores_xff_when_no_trusted_proxy_configured",
+    "test_select_client_ip_strips_bracketed_ipv6_port_from_xff",
+    "test_select_client_ip_strips_ipv4_port_from_xff",
+    "test_select_client_ip_strips_ports_in_chain",
     "test_select_client_ip_strips_trusted_chain_right_to_left",
     "test_select_client_ip_uses_xff_from_trusted_peer",
     "test_three_ip_violations_auto_revokes_key",

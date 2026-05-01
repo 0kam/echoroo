@@ -115,6 +115,83 @@ def is_ip_in_allowlist(client_ip: str, allowed_cidrs: list[str] | None) -> bool:
     return False
 
 
+def _normalize_xff_hop(raw: str) -> str:
+    """Strip optional port suffixes from an ``X-Forwarded-For`` hop value.
+
+    Phase 17 Codex Round 2 Minor 1 fix: some reverse proxies emit the
+    upstream caller's port alongside the IP (e.g. ``198.51.100.7:443``
+    or ``[2001:db8::1]:443``), and the per-hop comparison previously
+    handed those raw strings to :func:`is_ip_in_allowlist`, which
+    fail-closed against any non-bare IP. That caused legitimate XFF
+    chains to be misclassified as "untrusted" — a regression rather than
+    a spoof bypass, but it produced false 403s when proxies were
+    upgraded to a port-emitting build.
+
+    Accepted shapes (canonicalised to a bare IP literal):
+
+    * ``"198.51.100.7"``       -> ``"198.51.100.7"``
+    * ``"198.51.100.7:443"``   -> ``"198.51.100.7"``
+    * ``"2001:db8::1"``        -> ``"2001:db8::1"``
+    * ``"[2001:db8::1]"``      -> ``"2001:db8::1"``
+    * ``"[2001:db8::1]:443"``  -> ``"2001:db8::1"``
+
+    Ambiguous forms are rejected by returning the input unchanged so the
+    downstream allowlist check fails closed: a bare ``2001:db8::1:443``
+    cannot be unambiguously split into IPv6 host vs. port without
+    out-of-band knowledge (the trailing ``:443`` could be a final group
+    of an IPv6 address) — RFC 7239 / RFC 3986 require bracketed form for
+    IPv6+port for exactly this reason.
+
+    Returns the canonical IP literal on success or the *trimmed* input
+    when no port suffix is detected. Empty inputs are returned as-is.
+    """
+    candidate = raw.strip()
+    if not candidate:
+        return candidate
+
+    # Bracketed IPv6: "[addr]" or "[addr]:port".
+    if candidate.startswith("["):
+        closing = candidate.find("]")
+        if closing == -1:
+            return candidate
+        inner = candidate[1:closing]
+        # Only accept when the host inside the brackets actually parses
+        # as an IPv6 literal — otherwise we're looking at a malformed
+        # value and should leave it for the fail-closed allowlist check.
+        try:
+            ipaddress.IPv6Address(inner)
+        except (ValueError, TypeError):
+            return candidate
+        suffix = candidate[closing + 1 :]
+        if suffix == "" or (suffix.startswith(":") and suffix[1:].isdigit()):
+            return inner
+        return candidate
+
+    # Bare value: IPv4 (with optional ":port") or unbracketed IPv6.
+    if ":" in candidate:
+        # IPv6 literals are required by RFC 3986 to be bracketed when a
+        # port follows — so a bare value with multiple colons is the
+        # unbracketed IPv6 case (no port we can split). Treat it as a
+        # raw address and let the IPv6 parser decide.
+        if candidate.count(":") > 1:
+            try:
+                ipaddress.IPv6Address(candidate)
+            except (ValueError, TypeError):
+                return candidate
+            return candidate
+        # Single colon → IPv4:port shape. Validate the prefix is IPv4.
+        host, _, port = candidate.partition(":")
+        try:
+            ipaddress.IPv4Address(host)
+        except (ValueError, TypeError):
+            return candidate
+        if port.isdigit():
+            return host
+        return candidate
+
+    return candidate
+
+
 def _ip_in_any_cidr(ip_str: str, cidrs: list[str]) -> bool:
     """Return ``True`` when ``ip_str`` is contained in at least one CIDR.
 
@@ -172,7 +249,11 @@ def select_client_ip(
     allowlist check fails closed.
     """
     cidrs = list(trusted_proxy_cidrs or [])
-    peer = (remote_addr or "").strip()
+    # Phase 17 Codex Round 2 Minor 1 fix: socket peers from some
+    # ASGI/WSGI bridges or reverse proxies arrive carrying a port
+    # suffix (``198.51.100.7:443``). Normalise eagerly so the CIDR
+    # membership check below sees a bare IP literal.
+    peer = _normalize_xff_hop(remote_addr or "")
 
     # Without a trusted-proxy configuration we MUST ignore XFF entirely.
     if not cidrs:
@@ -184,7 +265,18 @@ def select_client_ip(
 
     # Peer is trusted. Honour XFF, stripping trusted hops right-to-left.
     if forwarded_for:
-        hops = [hop.strip() for hop in forwarded_for.split(",") if hop.strip()]
+        # Phase 17 Codex Round 2 Minor 1: normalise each hop so port-
+        # bearing entries (``198.51.100.7:443``, ``[2001:db8::1]:443``)
+        # are stripped to a bare IP before the allowlist comparison.
+        hops = [
+            _normalize_xff_hop(hop)
+            for hop in forwarded_for.split(",")
+            if hop.strip()
+        ]
+        # Drop empty entries that survived normalisation (defence in
+        # depth — _normalize_xff_hop preserves non-IP shapes verbatim,
+        # but a stray comma can still produce an empty string).
+        hops = [hop for hop in hops if hop]
         if hops:
             # Walk from the right end, dropping trusted-proxy hops.
             i = len(hops) - 1
