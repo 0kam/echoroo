@@ -267,19 +267,37 @@ jobs:
           fi
 
   # ---------------------------------------------------------------------------
-  # Mutation testing - warn-mode during Phase 2, promoted to blocking in T995.
-  # Only run on the main branch or when a PR carries the `run-mutation-testing`
-  # label to keep default PR latency low. The mutation score threshold is
-  # enforced by `mutmut` config; warn-mode is implemented via
-  # continue-on-error.
+  # ---------------------------------------------------------------------------
+  # T995 (Phase 16 Batch 6h-1): Mutation testing — HARD GATE.
+  #
+  # Promoted from warn-only (continue-on-error: true) to blocking
+  # (continue-on-error removed) by T995. The 80% threshold is enforced
+  # by scripts/check_mutation_score.py against all 11 target modules
+  # listed in apps/api/mutmut.toml.
+  #
+  # Scope (11 modules):
+  #   Required:  core/permissions.py, core/actions.py,
+  #              services/superuser_service.py, services/api_key_verification.py
+  #   Additional: middleware/auth.py, middleware/auth_router.py,
+  #               services/webauthn_service.py, workers/dormancy_check.py
+  #   Existing:  core/response_filter.py, core/audit.py, core/kms.py
+  #
+  # Run trigger: main branch or `run-mutation-testing` PR label.
+  # Mutation runs are long (minutes to hours for 11 modules); keeping the
+  # label-gate prevents default PR latency from blowing up.
+  #
+  # Phase 17 note: modules that cannot reach 80% in this phase are tracked
+  # in scripts/check_mutation_score.py --warn-only invocations during local
+  # development. CI enforces the full 80% gate here.
   # ---------------------------------------------------------------------------
   mutation-testing:
-    name: Mutation testing (warn mode)
+    name: Mutation testing (hard gate, T995, >= 80%)
     if: >-
       github.ref == 'refs/heads/main' ||
       contains(github.event.pull_request.labels.*.name, 'run-mutation-testing')
     runs-on: ubuntu-latest
-    continue-on-error: true
+    # T995: continue-on-error REMOVED — this is now a hard-fail gate.
+    # A job failure means one or more modules have mutation score < 80%.
     steps:
       - uses: actions/checkout@v4
 
@@ -295,19 +313,39 @@ jobs:
         working-directory: apps/api
         run: uv sync --all-extras --dev
 
-      # mutmut is scoped to the 4 permission-critical modules by
-      # `apps/api/mutmut.toml` (see T047). Phase 2 reports only; T995 flips
-      # this to a hard gate (>= 80% mutation score).
-      - name: Run mutmut (warn mode)
-        continue-on-error: true
+      # Run mutmut against all 11 modules defined in mutmut.toml.
+      # Exit code 0 = all mutants killed or no mutants; 1 = survivors
+      # exist (expected when coverage is < 100%). The score check step
+      # below is the authoritative gate — mutmut itself is allowed to
+      # exit non-zero here.
+      - name: Run mutmut (11 modules, hard gate)
         working-directory: apps/api
-        run: uv run mutmut run
+        run: uv run mutmut run || true
 
+      # Collect results for the score check and for CI artifact upload.
       - name: Collect mutmut results
         if: always()
-        continue-on-error: true
         working-directory: apps/api
-        run: uv run mutmut results
+        run: uv run mutmut results 2>&1 | tee /tmp/mutmut_results.txt || true
+
+      # Enforce >= 80% threshold per module.
+      # scripts/check_mutation_score.py parses `mutmut results` output and
+      # exits 1 if any module is below 80%. This is the gate step.
+      - name: Enforce 80% mutation score threshold
+        if: always()
+        working-directory: apps/api
+        run: python ../../scripts/check_mutation_score.py --threshold 80
+
+      # Upload mutmut cache as an artifact for debugging surviving mutants.
+      - name: Upload mutmut results artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mutmut-results
+          path: |
+            apps/api/.mutmut-cache
+            /tmp/mutmut_results.txt
+          retention-days: 7
 
   # ---------------------------------------------------------------------------
   # Dedicated security pytest job - always blocking.

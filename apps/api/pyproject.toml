@@ -189,6 +189,45 @@ exclude_lines = [
     "@(abc\\.)?abstractmethod",
 ]
 
+[tool.mutmut]
+# T995 (Phase 16 Batch 6h-1): 11-module mutation testing gate (PR-004, SC-012).
+#
+# Required modules:
+#   core/permissions.py, core/actions.py,
+#   services/superuser_service.py, services/api_key_verification.py
+#
+# Additional modules (Phase 16 Codex extension):
+#   middleware/auth.py, middleware/auth_router.py,
+#   services/webauthn_service.py, workers/dormancy_check.py
+#
+# Existing (maintained from Phase 2):
+#   core/response_filter.py, core/audit.py, core/kms.py
+#
+# Target score: >= 80% (spec PR-004, SC-012). Enforced by CI hard gate.
+# See also: apps/api/mutmut.toml (documentation reference, not read by mutmut 3.x).
+paths_to_mutate = [
+    "echoroo/core/permissions.py",
+    "echoroo/core/actions.py",
+    "echoroo/core/response_filter.py",
+    "echoroo/core/audit.py",
+    "echoroo/core/kms.py",
+    "echoroo/services/superuser_service.py",
+    "echoroo/services/api_key_verification.py",
+    "echoroo/middleware/auth.py",
+    "echoroo/middleware/auth_router.py",
+    "echoroo/services/webauthn_service.py",
+    "echoroo/workers/dormancy_check.py",
+]
+tests_dir = ["tests/unit/", "tests/security/"]
+# Runner: use python -m pytest for portability across uv and CI venvs.
+# --no-cov avoids coverage overhead per mutant.
+# --override-ini=addopts= clears project-level addopts.
+pytest_add_cli_args = [
+    "-x",
+    "--no-cov",
+    "--override-ini=addopts=",
+]
+
 [dependency-groups]
 dev = [
     "fakeredis>=2.23",
