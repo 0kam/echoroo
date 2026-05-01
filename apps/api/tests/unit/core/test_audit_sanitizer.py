@@ -493,3 +493,40 @@ def test_key_marker_uses_explicit_hash_fn_override() -> None:
     marker_default = next(k for k in out_default if k.startswith("__redacted_key_"))
     marker_override = next(k for k in out_override if k.startswith("__redacted_key_"))
     assert marker_default != marker_override
+
+
+# ---------------------------------------------------------------------------
+# T996 (Phase 16 Batch 6h-2): supplemental coverage tests for audit.py.
+# Targets missing lines: 212-213 (_try_url_decode except path),
+# 423 (AuditLogSanitizer._sanitize_detail None path),
+# 436 (AuditLogSanitizer._sanitize_optional non-dict raise path).
+# ---------------------------------------------------------------------------
+
+def test_try_url_decode_exception_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Cover lines 212-213: _try_url_decode returns None when urllib raises."""
+    import echoroo.core.audit as _audit_mod
+
+    def _raise(s: str, *args: object, **kwargs: object) -> str:  # noqa: ARG001
+        raise RuntimeError("simulated urllib failure")
+
+    monkeypatch.setattr("urllib.parse.unquote", _raise)
+    # _try_url_decode is module-private; access via the module reference.
+    result = _audit_mod._try_url_decode("test%40example.com")
+    assert result is None
+
+
+def test_audit_log_sanitizer_detail_none() -> None:
+    """Cover line 423: AuditLogSanitizer._sanitize_detail with value=None returns {}."""
+    obj = AuditLogSanitizer(detail=None)  # type: ignore[arg-type]  # triggers line 423
+    assert obj.detail == {}
+
+
+def test_audit_log_sanitizer_optional_non_dict_raises() -> None:
+    """Cover line 436: _sanitize_optional raises ValueError when before/after is non-dict."""
+    from pydantic import ValidationError as _PydanticValidationError
+
+    with pytest.raises(_PydanticValidationError):
+        AuditLogSanitizer(
+            detail={},
+            before="not-a-dict-string",  # triggers line 436 raise ValueError
+        )

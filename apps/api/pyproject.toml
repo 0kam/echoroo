@@ -170,14 +170,22 @@ markers = [
 ]
 
 [tool.coverage.run]
+# T996 (Phase 16 Batch 6h-2): branch coverage enabled for accurate permission
+# module measurement (PR-005, SC-013).
 source = ["echoroo"]
+branch = true
 omit = [
     "*/tests/*",
     "*/__init__.py",
     "*/migrations/*",
+    "echoroo/__main__.py",
+    "echoroo/scripts/*",
 ]
 
 [tool.coverage.report]
+# T996: show_missing enabled so CI logs highlight uncovered lines.
+show_missing = true
+skip_covered = false
 exclude_lines = [
     "pragma: no cover",
     "def __repr__",

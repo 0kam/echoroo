@@ -394,9 +394,30 @@ jobs:
   # ``continue-on-error`` mode. Promote to a hard gate once Phase 16
   # implementation reports green locally.
   # ---------------------------------------------------------------------------
+  # Phase 16 Batch 6g-2 R2 (Codex Minor 3): default backend pytest job that
+  # explicitly **deselects** the ``performance`` and ``slow`` markers. The
+  # ``performance`` tests measure latency / p95 budgets and are environment-
+  # sensitive (GitHub-hosted runners flap), and ``slow`` tests cost too much
+  # to run on every push. Both are opt-in only — run locally via
+  # ``pytest -m performance`` with ``RUN_PERF_LATENCY=true`` for the latency
+  # gate.
+  #
+  # T996 (Phase 16 Batch 6h-2): coverage gate added. pytest-cov produces
+  # coverage.json; scripts/check_coverage_threshold.py enforces:
+  #   - permission-critical modules: >= 95%
+  #   - all other echoroo modules:   >= 85%
+  # The coverage gate runs AFTER the test step (always, even on test failure)
+  # so that coverage data is always emitted as a CI artifact. The gate step
+  # itself is hard-fail (no continue-on-error) once coverage reports are
+  # stable; see the continue-on-error note on the job level.
+  # ---------------------------------------------------------------------------
   backend-tests:
     name: backend-tests (default; performance + slow deselected)
     runs-on: ubuntu-latest
+    # T996 note: job-level continue-on-error remains true while test suite
+    # stabilises on GitHub-hosted runners (some legacy fixtures still need the
+    # postgres testcontainer). Promote to false (hard gate) once Phase 16
+    # reports green on CI. The per-step coverage gate inherits this setting.
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
@@ -413,8 +434,38 @@ jobs:
         working-directory: apps/api
         run: uv sync --all-extras --dev
 
-      - name: Run pytest -m "not performance and not slow"
+      # T996: emit coverage.json + XML + term-missing alongside the standard
+      # test run. The coverage reports are uploaded as artifacts even on
+      # failure so that the threshold script can still run.
+      - name: Run pytest with coverage (-m "not performance and not slow")
         working-directory: apps/api
         # The marker description in pyproject.toml documents this default
         # skip; do not change one without the other.
-        run: uv run pytest -m "not performance and not slow" --maxfail=1 -q
+        run: |
+          uv run pytest \
+            -m "not performance and not slow" \
+            --maxfail=1 -q \
+            --cov=echoroo \
+            --cov-report=json \
+            --cov-report=xml \
+            --cov-report=term-missing
+
+      # Upload coverage reports as CI artifact for inspection / trend tracking.
+      - name: Upload coverage reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-reports
+          path: |
+            apps/api/coverage.json
+            apps/api/coverage.xml
+          retention-days: 14
+
+      # T996: enforce per-module thresholds.
+      #   permission modules: 95%   other modules: 85%
+      # Exit 1 if any module is below its threshold.
+      # The script also prints the full per-module table for CI log visibility.
+      - name: Enforce coverage thresholds (T996, 95%/85%)
+        if: always()
+        working-directory: apps/api
+        run: python ../../scripts/check_coverage_threshold.py coverage.json
