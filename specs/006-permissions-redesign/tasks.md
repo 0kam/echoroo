@@ -393,13 +393,22 @@ description: "Task list for 006-permissions-redesign (revised after /speckit.ana
 
 ## Phase 16: 最終統合・セキュリティテスト・パフォーマンス
 
-> **Phase 16 CLOSED** (2026-05-01, Batch 6h-4 / T999). All Phase 16 tasks
-> below are checked off. Cumulative metrics:
+> **Phase 16 CLOSED** (2026-05-01, Batch 6h-4 / T999, R2 patch 2026-05-02).
+> All Phase 16 tasks below are checked off **except T997 (Phase 17 deferred
+> for full E2E suite green confirmation, see §16.5)**. Cumulative metrics:
 >
 > - **Files**: ~44 added (17 in 6f + 18 in 6g + 9 in 6h)
 > - **Tests**: ~641 cumulative (310 baseline + ~139 6f + ~119 6g + ~73 6h)
-> - **CI hard gates added**: 4 (mutation-testing T995, backend-tests coverage
->   T996, runbook-smoke-tests T998, requirements-traceability T999)
+> - **CI gates added**: 4 (mutation-testing T995, backend-tests coverage
+>   T996, runbook-smoke-tests T998, requirements-traceability T999).
+>   **T998 + T999 are hard gates today**; **T995 (mutation) + T996
+>   (coverage) ship in Phase 16 as warn-ratchet** (per-step threshold
+>   scripts run, but the enclosing `mutation-testing` and `backend-tests`
+>   jobs are gated by PR label / `continue-on-error: true` respectively).
+>   **Phase 17 promotes both to hard gates** by removing
+>   `continue-on-error` on `backend-tests` and broadening the
+>   `mutation-testing` trigger to every push (see PHASE17_BACKLOG.md §C
+>   and §D for the residuals that block hard-gate promotion).
 > - **Production code wired**: step-up token service + middleware (Batch 6g-3),
 >   CORS wildcard guard (Batch 6f-4)
 > - **Phase 17 backlog**: see
@@ -456,15 +465,16 @@ description: "Task list for 006-permissions-redesign (revised after /speckit.ana
 
 ### 16.4 Mutation testing
 
-- [X] **T995** [CR] mutmut の CI gate を **fail モードに昇格**、対象モジュール mutation score 80% 以上 (PR-004、SC-012)。Batch 6h-1 で 11 module 化:
+- [X] **T995** [CR] mutmut の CI gate を **Phase 17 で fail モードへ昇格 (Phase 16 では warn-ratchet baseline)**、対象モジュール mutation score 80% 以上 (PR-004、SC-012)。Batch 6h-1 で 11 module 化:
   - 必須: `core/permissions.py`, `core/actions.py`, `services/superuser_service.py`, `services/api_key_verification.py`
   - 追加: `middleware/auth.py`, `middleware/auth_router.py`, `services/webauthn_service.py`, `workers/dormancy_check.py`
   - 既存維持: `core/response_filter.py`, `core/audit.py`, `core/kms.py`
   - 80% 未達 module は Phase 17 backlog D で warn-only 管理
+  - **CI status**: `mutation-testing` job は **PR label `run-mutation-testing` または `workflow_dispatch` または main push** でのみ起動 (mutmut の所要時間が長いため)。job 自体は `continue-on-error` 無しの blocking 設定だが、実質的に PR 毎の hard gate にはなっていない。Phase 17 で push 毎に強制する（Phase 17 backlog D）。`scripts/check_mutation_score.py --threshold 80` 単体は本 Phase 16 から hard fail で動作。
 
 ### 16.5 カバレッジ / Frontend
 
-- [X] **T996** [CR] pytest-cov で権限系 95% / その他 85% カバレッジ強制 (PR-005、SC-013) — Batch 6h-2 で `scripts/check_coverage_threshold.py` + CI hard gate、~90 module は `PHASE17_PENDING` warn-only (Phase 17 backlog C)
+- [X] **T996** [CR] pytest-cov で権限系 95% / その他 85% カバレッジ強制 (PR-005、SC-013) — Batch 6h-2 で `scripts/check_coverage_threshold.py` 配置（権限系 0 hard-fail / 188 warn-only baseline）。**Phase 16 では warn-ratchet**: enclosing `backend-tests` job が `continue-on-error: true` のままなので CI red にはならず、step が報告するのは threshold script の出力のみ。**Phase 17 で hard gate へ昇格**（`backend-tests` job の `continue-on-error: true` を削除、Phase 17 backlog C）。~90 module は `PHASE17_PENDING` warn-only 管理 (Phase 17 backlog C)。
 - [ ] **T997** [CR] Frontend E2E full suite gate 化（各 US Phase で配置された Playwright を full suite として 1 回 green 確認、T133/T174/T221/T311/T324/T404/T414/T533/T652/T705/T842 含む）(PR-003) — frontend full suite green 確認は Phase 17 一括実行
 - [X] **T997b** [P] [CR] `apps/web/tests/e2e/admin-superusers.spec.ts` (Phase 15 admin UI、Phase 16 Codex 追補) — Batch 6g-4 で 15 E2E + WebAuthn mock fixture
 

@@ -267,13 +267,29 @@ jobs:
           fi
 
   # ---------------------------------------------------------------------------
-  # ---------------------------------------------------------------------------
-  # T995 (Phase 16 Batch 6h-1): Mutation testing — HARD GATE.
+  # T995 (Phase 16 Batch 6h-1, R2 patch 2026-05-02): Mutation testing.
   #
-  # Promoted from warn-only (continue-on-error: true) to blocking
-  # (continue-on-error removed) by T995. The 80% threshold is enforced
-  # by scripts/check_mutation_score.py against all 11 target modules
-  # listed in apps/api/mutmut.toml.
+  # **Phase 16 status: warn-ratchet, NOT a per-PR hard gate.**
+  #   - The job itself is `continue-on-error: false`, so when it runs, a
+  #     surviving-mutant ratio < 80% in any of the 11 modules turns the run red.
+  #   - However the job only RUNS when one of three conditions holds, so a
+  #     default PR build does not exercise it:
+  #       a) main branch push (post-merge gate),
+  #       b) the `run-mutation-testing` PR label is attached, OR
+  #       c) the workflow is dispatched manually from the Actions UI
+  #          (`workflow_dispatch`).
+  #     Mutation runs are long (minutes to hours for 11 modules); keeping the
+  #     label / dispatch gate prevents default PR latency from blowing up.
+  #
+  # **Phase 17 promotion plan**: broaden the `if:` guard to every push so the
+  # gate fires on every PR. Modules unable to reach 80% are tracked in
+  # `PHASE17_BACKLOG.md` §D; once each is closed (or proven equivalent), the
+  # `if:` guard is removed and this becomes a true per-PR hard gate.
+  #
+  # **Operator note**: BEFORE merging to `main`, manually trigger this job
+  # via the `workflow_dispatch` UI (or attach `run-mutation-testing` to the
+  # PR) so the post-merge gate is not the first time it runs against the
+  # candidate.
   #
   # Scope (11 modules):
   #   Required:  core/permissions.py, core/actions.py,
@@ -281,23 +297,20 @@ jobs:
   #   Additional: middleware/auth.py, middleware/auth_router.py,
   #               services/webauthn_service.py, workers/dormancy_check.py
   #   Existing:  core/response_filter.py, core/audit.py, core/kms.py
-  #
-  # Run trigger: main branch or `run-mutation-testing` PR label.
-  # Mutation runs are long (minutes to hours for 11 modules); keeping the
-  # label-gate prevents default PR latency from blowing up.
-  #
-  # Phase 17 note: modules that cannot reach 80% in this phase are tracked
-  # in scripts/check_mutation_score.py --warn-only invocations during local
-  # development. CI enforces the full 80% gate here.
   # ---------------------------------------------------------------------------
   mutation-testing:
-    name: Mutation testing (hard gate, T995, >= 80%)
+    name: Mutation testing (warn-ratchet in Phase 16, T995, >= 80%)
+    # Phase 16 R2: include `workflow_dispatch` so operators can trigger the
+    # job manually from the Actions UI ahead of a main merge. Phase 17 will
+    # remove this gating entirely and run on every push.
     if: >-
+      github.event_name == 'workflow_dispatch' ||
       github.ref == 'refs/heads/main' ||
       contains(github.event.pull_request.labels.*.name, 'run-mutation-testing')
     runs-on: ubuntu-latest
-    # T995: continue-on-error REMOVED — this is now a hard-fail gate.
-    # A job failure means one or more modules have mutation score < 80%.
+    # Phase 16: continue-on-error stays REMOVED so when the job runs, a
+    # surviving-mutant ratio < 80% in any module turns the run red. Phase 17
+    # broadens the `if:` guard so the gate fires on every push.
     steps:
       - uses: actions/checkout@v4
 
@@ -402,22 +415,39 @@ jobs:
   # ``pytest -m performance`` with ``RUN_PERF_LATENCY=true`` for the latency
   # gate.
   #
-  # T996 (Phase 16 Batch 6h-2): coverage gate added. pytest-cov produces
-  # coverage.json; scripts/check_coverage_threshold.py enforces:
-  #   - permission-critical modules: >= 95%
-  #   - all other echoroo modules:   >= 85%
-  # The coverage gate runs AFTER the test step (always, even on test failure)
-  # so that coverage data is always emitted as a CI artifact. The gate step
-  # itself is hard-fail (no continue-on-error) once coverage reports are
-  # stable; see the continue-on-error note on the job level.
+  # T996 (Phase 16 Batch 6h-2, R2 patch 2026-05-02): coverage gate.
+  #
+  # **Phase 16 status: warn-ratchet, NOT a hard gate.**
+  #   - pytest-cov produces coverage.json; scripts/check_coverage_threshold.py
+  #     enforces:
+  #       - permission-critical modules: >= 95%
+  #       - all other echoroo modules:   >= 85%
+  #   - The threshold script step is hard-fail (no step-level
+  #     `continue-on-error`), but the **enclosing `backend-tests` job is
+  #     `continue-on-error: true`**, which means a threshold failure
+  #     surfaces as a yellow-warn in the PR check summary instead of a red
+  #     blocking gate. Phase 16 keeps this warn-ratchet posture because:
+  #       a) the suite still has pre-existing failures / errors (33F + 94E)
+  #          tracked in PHASE17_BACKLOG.md that are unrelated to the
+  #          permissions redesign,
+  #       b) GitHub-hosted runners flap on some legacy fixtures requiring
+  #          the postgres testcontainer.
+  #
+  # **Phase 17 promotion plan**: remove the job-level `continue-on-error:
+  # true` line once the pre-existing failures listed in PHASE17_BACKLOG.md
+  # are resolved. At that point both the test step and the coverage gate
+  # become hard fails on every PR.
   # ---------------------------------------------------------------------------
   backend-tests:
-    name: backend-tests (default; performance + slow deselected)
+    name: backend-tests (warn-ratchet; performance + slow deselected)
     runs-on: ubuntu-latest
-    # T996 note: job-level continue-on-error remains true while test suite
-    # stabilises on GitHub-hosted runners (some legacy fixtures still need the
-    # postgres testcontainer). Promote to false (hard gate) once Phase 16
-    # reports green on CI. The per-step coverage gate inherits this setting.
+    # Phase 16 R2: job-level continue-on-error remains true (warn-ratchet).
+    # The per-step coverage gate (T996) and pytest step are still allowed
+    # to run hard-fail at the step level, but the enclosing job will not
+    # turn the PR check red while pre-existing failures and runner flap
+    # are being burnt down. Phase 17 deletes this line — see
+    # PHASE17_BACKLOG.md §C and the comment block above for the closure
+    # condition.
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4

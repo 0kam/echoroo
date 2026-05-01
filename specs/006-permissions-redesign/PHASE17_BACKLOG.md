@@ -200,22 +200,38 @@ already exists in `apps/api/tests/security/**` and is marked
 
 ---
 
-## C. Coverage `PHASE17_PENDING` (Batch 6h-2 origin)
+## C. Coverage `PHASE17_PENDING` + `backend-tests` warn-ratchet (Batch 6h-2 origin)
 
 The `scripts/check_coverage_threshold.py` script ships with a
 `PHASE17_PENDING` frozenset of ~90 modules whose statement coverage is below
 the 95% / 85% threshold. They are **warn-only** rather than hard-fail.
 
+In addition, the enclosing `backend-tests` CI job in
+`.github/workflows/ci.yml` runs with **`continue-on-error: true`** in
+Phase 16, so a coverage gate failure (or a pre-existing test failure) only
+surfaces as a yellow-warn in the PR check summary. The Phase 16 close
+report calls this **warn-ratchet** posture.
+
 - **Task**: T996
 - **Threat**: Coverage gaps mean regressions land without a failing test
-  (PR-005, SC-013).
+  (PR-005, SC-013). The job-level `continue-on-error: true` further means
+  a regression that drops a permission-critical module below 95% does
+  not block the PR until Phase 17 promotes the gate.
 - **Expected behavior**: Each pending module reaches its tier threshold
-  (permission-critical → 95%, all other → 85%).
+  (permission-critical → 95%, all other → 85%); the `backend-tests` job
+  itself becomes a hard fail on every push.
 - **Release condition (per module)**:
   - [ ] Dedicated test file or integration suite added.
   - [ ] Module removed from `PHASE17_PENDING` in
         `scripts/check_coverage_threshold.py`.
   - [ ] CI green at hard-fail mode.
+- **Release condition (job-level promotion)**:
+  - [ ] Pre-existing test failures (33F + 94E baseline as of 2026-05-01)
+        burnt down or quarantined into a dedicated `slow` / xfail suite.
+  - [ ] Postgres testcontainer fixture stabilised on GitHub-hosted runners
+        (or migrated to a service container).
+  - [ ] `continue-on-error: true` deleted from the `backend-tests` job in
+        `.github/workflows/ci.yml`.
 
 The full list of ~90 modules is enumerated inline in the script under
 `PHASE17_PENDING: frozenset[str]`. Phase 17 should triage by directory
@@ -224,17 +240,39 @@ GPU-backed fixture decision).
 
 ---
 
-## D. Mutation-testing `--warn-only` allowlist (Batch 6h-1 origin)
+## D. Mutation-testing `--warn-only` allowlist + `mutation-testing` job
+       trigger gate (Batch 6h-1 origin)
+
+The `mutation-testing` CI job currently only runs when one of three
+conditions holds:
+  a) main branch push,
+  b) the `run-mutation-testing` PR label is attached, OR
+  c) the workflow is dispatched manually from the Actions UI.
+That makes it a **warn-ratchet** in Phase 16: when the job runs it is a
+hard-fail (`continue-on-error` is not set), but a default PR build does
+not exercise it.
 
 - **Task**: T995
-- **File**: `apps/api/mutmut.toml` (`paths_to_mutate` lists 11 modules)
+- **File**: `apps/api/mutmut.toml` (`paths_to_mutate` lists 11 modules) +
+  `.github/workflows/ci.yml` (`mutation-testing` job `if:` guard).
 - **Threat**: Surviving mutants in permission-critical modules indicate
-  weak test assertions (PR-004, SC-012).
-- **Expected behavior**: Each of the 11 modules reaches **≥80% mutation score**.
-- **Release condition**:
-  - [ ] Each surviving mutant analysed; new test added or mutant proven equivalent.
-  - [ ] `scripts/check_mutation_score.py --threshold 80` exits 0 against the
-        full module list without `--warn-only`.
+  weak test assertions (PR-004, SC-012). The trigger gate further means
+  a PR can land that introduces a regression in mutation score without
+  CI ever exercising mutmut against the candidate.
+- **Expected behavior**: Each of the 11 modules reaches **≥80% mutation
+  score**, and the `mutation-testing` job runs on every push.
+- **Release condition (per module)**:
+  - [ ] Each surviving mutant analysed; new test added or mutant proven
+        equivalent.
+  - [ ] `scripts/check_mutation_score.py --threshold 80` exits 0 against
+        the full module list without `--warn-only`.
+- **Release condition (job-level promotion)**:
+  - [ ] `if:` guard on the `mutation-testing` job loosened to fire on
+        every push (delete the conditional). Operators continue to
+        retain `workflow_dispatch` for manual runs.
+  - [ ] Mutmut runtime profiled and confirmed acceptable for default PR
+        latency; otherwise split into "fast" (≤2 modules per PR) +
+        "full" (post-merge nightly) jobs.
 
 ---
 
