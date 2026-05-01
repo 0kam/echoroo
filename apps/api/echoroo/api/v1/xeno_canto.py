@@ -298,6 +298,21 @@ async def proxy_sonogram(
             detail="Only https://xeno-canto.org/ URLs are allowed",
         )
 
+    # Defence in depth: re-validate via the SSRF allowlist so that DNS
+    # rebinding against ``xeno-canto.org`` cannot pivot to internal IPs
+    # (OWASP A10). The startswith check above is necessary but not
+    # sufficient — only the post-resolve check defeats rebinding.
+    from echoroo.core.url_allowlist import SSRFGuardError, validate_audio_url
+
+    try:
+        validate_audio_url(url)
+    except SSRFGuardError as exc:
+        logger.warning("Xeno-canto sonogram proxy SSRF guard rejected url=%r: %s", url, exc)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="URL failed SSRF allowlist validation",
+        ) from exc
+
     try:
         async with httpx.AsyncClient(
             timeout=10.0,

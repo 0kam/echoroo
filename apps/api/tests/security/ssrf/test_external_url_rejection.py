@@ -25,8 +25,6 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-import pytest
-
 # ---------------------------------------------------------------------------
 # Repository root helpers
 #
@@ -145,16 +143,6 @@ def test_hardcoded_external_urls_are_in_approved_allowlist() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "echoroo/services/search.py::_download_audio_url accepts "
-        "``source_url`` (user-controlled) without an SSRF allowlist validator. "
-        "Phase 17 (T979g follow-up) must add a domain allowlist / private-IP "
-        "block before `_download_audio_url` is called. "
-        "Remove this xfail once the guard is in place."
-    ),
-)
 def test_download_audio_url_has_ssrf_allowlist_guard() -> None:
     """``_download_audio_url`` must validate the URL against an allowlist before fetching.
 

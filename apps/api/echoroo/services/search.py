@@ -1150,6 +1150,12 @@ async def _download_audio_url(url: str) -> str | None:
     Streams the response to avoid loading large files entirely into memory.
     Enforces a 10 MB size limit and a 30-second download timeout.
 
+    SSRF guard: ``url`` is user-controlled (``SourceConfig.source_url``),
+    so it is validated against :func:`echoroo.core.url_allowlist
+    .validate_audio_url` before any network round-trip. The allowlist
+    blocks loopback / link-local / RFC1918 destinations and rejects
+    hosts not on the static external-service list (OWASP A10).
+
     Args:
         url: Public URL of the audio file to download
 
@@ -1160,6 +1166,17 @@ async def _download_audio_url(url: str) -> str | None:
     import os
 
     import httpx
+
+    from echoroo.core.url_allowlist import SSRFGuardError, validate_audio_url
+
+    # SSRF allowlist guard — must run BEFORE any DNS / HTTP I/O.
+    try:
+        validate_audio_url(url)
+    except SSRFGuardError as exc:
+        logger.warning(
+            "Refusing to fetch user-supplied audio URL %r: %s", url, exc
+        )
+        return None
 
     # Determine a reasonable file suffix from the URL path
     url_path = url.split("?")[0]  # strip query string before inspecting extension
