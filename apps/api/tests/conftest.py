@@ -164,6 +164,38 @@ async def setup_test_database(engine: AsyncEngine) -> None:
         )
         project_audit_log_exists = bool(project_audit_log_exists_result.scalar())
 
+        # Phase 16 Batch 6g-2 R2 (Codex Minor 1): the early-return previously
+        # only confirmed audit-log *tables* existed — but if a prior test
+        # process aborted between CREATE TABLE and CREATE TRIGGER, the
+        # ``platform_audit_log_immutable`` / ``project_audit_log_immutable``
+        # triggers (and the ``ck_project_audit_log_project_id_required``
+        # check constraint) could be missing. Skipping the re-attach path
+        # in that state would let the T993/T993a tests DELETE rows that
+        # production code can never delete, masking real append-only
+        # contract regressions. Probe the triggers + constraint here so
+        # the schema-up-to-date predicate is genuinely complete.
+        platform_trigger_exists_result = await conn.execute(
+            sa.text(
+                "SELECT EXISTS (SELECT 1 FROM pg_trigger"
+                " WHERE tgname = 'platform_audit_log_immutable')"
+            )
+        )
+        platform_trigger_exists = bool(platform_trigger_exists_result.scalar())
+
+        project_trigger_exists_result = await conn.execute(
+            sa.text(
+                "SELECT EXISTS (SELECT 1 FROM pg_trigger"
+                " WHERE tgname = 'project_audit_log_immutable')"
+            )
+        )
+        project_trigger_exists = bool(project_trigger_exists_result.scalar())
+
+        # The check constraint may be permanently dropped by ``cleanup_test_data``
+        # (project_id null-out path) — we only require it on a *fresh* DB.
+        # If the table exists but the trigger is missing, we fall through
+        # to the full setup; the constraint absence alone does not force a
+        # re-attach.
+
     if (
         core_exists
         and search_exists
@@ -173,6 +205,8 @@ async def setup_test_database(engine: AsyncEngine) -> None:
         and approval_requests_exists
         and platform_audit_log_exists
         and project_audit_log_exists
+        and platform_trigger_exists
+        and project_trigger_exists
     ):
         # Schema is fully up to date — nothing to do.
         return

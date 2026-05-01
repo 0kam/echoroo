@@ -30,6 +30,14 @@ mechanism (which lives in the service layer).
 Additionally:
 * After rollback the chain must not have leaked a partial row.
 * Idempotent retries must not produce duplicate ``row_hash`` values.
+
+Append-only contract
+--------------------
+``platform_audit_log`` is append-only: the ``forbid_audit_log_mutation``
+trigger blocks UPDATE/DELETE, and ACL revokes the same on the
+``echoroo_app`` role. Test rows are therefore **never deleted** between
+runs — every test embeds a fresh ``uuid.uuid4()`` in the ``action``
+string so the SELECT scope cannot collide with a previous run's rows.
 """
 
 from __future__ import annotations
@@ -59,6 +67,13 @@ async def _read_row_by_action(
     session_factory: async_sessionmaker,  # type: ignore[type-arg]
     action: str,
 ) -> list[dict]:
+    """Return all platform_audit_log rows whose ``action`` exactly matches.
+
+    Each test embeds a fresh ``uuid.uuid4()`` in its action string, so
+    matching by exact action gives perfect per-test isolation without
+    needing to DELETE rows (which is forbidden — the audit log is
+    append-only via ``forbid_audit_log_mutation``).
+    """
     async with session_factory() as session:
         result = await session.execute(
             sa.text(
@@ -72,19 +87,6 @@ async def _read_row_by_action(
             {"id": row[0], "row_hash": row[1], "prev_hash": row[2], "action": row[3]}
             for row in result.fetchall()
         ]
-
-
-async def _delete_rows_by_action(
-    session_factory: async_sessionmaker,  # type: ignore[type-arg]
-    action_prefix: str,
-) -> None:
-    async with session_factory() as session:
-        await session.execute(
-            sa.text("DELETE FROM platform_audit_log WHERE action LIKE :prefix").bindparams(
-                prefix=action_prefix + "%"
-            )
-        )
-        await session.commit()
 
 
 # ---------------------------------------------------------------------------
@@ -139,7 +141,8 @@ async def test_audit_row_survives_main_tx_rollback(db_session: AsyncSession) -> 
             f"for action={action!r}"
         )
     finally:
-        await _delete_rows_by_action(session_factory, "t993a.audit_before_rollback.")
+        # Append-only: cannot DELETE the row we just inserted. The unique
+        # uuid embedded in ``action`` keeps later runs isolated.
         await engine.dispose()
 
 
@@ -174,7 +177,8 @@ async def test_audit_no_partial_row_after_rollback(db_session: AsyncSession) -> 
             f"found {len(rows)} rows for action={action!r}"
         )
     finally:
-        await _delete_rows_by_action(session_factory, "t993a.rollback_audit_session.")
+        # Append-only: nothing to clean up (rollback already discarded the
+        # row, and even on a failed assertion we cannot DELETE).
         await engine.dispose()
 
 
@@ -231,7 +235,7 @@ async def test_audit_idempotent_retry_no_duplicate_row_hash(db_session: AsyncSes
             f"got identical hash {h1!r}"
         )
     finally:
-        await _delete_rows_by_action(session_factory, action_prefix)
+        # Append-only: cannot DELETE; per-action UUIDs keep later runs isolated.
         await engine.dispose()
 
 
@@ -302,5 +306,5 @@ async def test_audit_chain_unbroken_after_failed_business_tx(db_session: AsyncSe
         assert len(rows_b[0]["row_hash"]) == 64
         assert len(rows_a[0]["row_hash"]) == 64
     finally:
-        await _delete_rows_by_action(session_factory, "t993a.")
+        # Append-only: cannot DELETE; per-action UUIDs keep later runs isolated.
         await engine.dispose()

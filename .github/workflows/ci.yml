@@ -335,4 +335,48 @@ jobs:
 
       - name: Run pytest -m security
         working-directory: apps/api
-        run: uv run pytest -m security --maxfail=1 -q
+        # Codex Minor 3 (Phase 16 6g-2 R2): explicitly deselect the
+        # ``performance`` marker. The ``security`` selector already implies
+        # "not performance" because no test carries both markers, but the
+        # redundant deselect documents the intent and protects against
+        # accidental cross-tagging.
+        run: uv run pytest -m "security and not performance" --maxfail=1 -q
+
+  # ---------------------------------------------------------------------------
+  # Phase 16 Batch 6g-2 R2 (Codex Minor 3): default backend pytest job that
+  # explicitly **deselects** the ``performance`` and ``slow`` markers. The
+  # ``performance`` tests measure latency / p95 budgets and are environment-
+  # sensitive (GitHub-hosted runners flap), and ``slow`` tests cost too much
+  # to run on every push. Both are opt-in only — run locally via
+  # ``pytest -m performance`` with ``RUN_PERF_LATENCY=true`` for the latency
+  # gate.
+  #
+  # This job is informational while the test suite stabilises (some legacy
+  # fixtures still need the postgres testcontainer), so it runs in
+  # ``continue-on-error`` mode. Promote to a hard gate once Phase 16
+  # implementation reports green locally.
+  # ---------------------------------------------------------------------------
+  backend-tests:
+    name: backend-tests (default; performance + slow deselected)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv + Python 3.11
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.11"
+          enable-cache: true
+          cache-dependency-glob: "apps/api/uv.lock"
+          pyproject-file: "apps/api/pyproject.toml"
+
+      - name: Install backend dependencies
+        working-directory: apps/api
+        run: uv sync --all-extras --dev
+
+      - name: Run pytest -m "not performance and not slow"
+        working-directory: apps/api
+        # The marker description in pyproject.toml documents this default
+        # skip; do not change one without the other.
+        run: uv run pytest -m "not performance and not slow" --maxfail=1 -q

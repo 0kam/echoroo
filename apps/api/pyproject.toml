@@ -159,7 +159,14 @@ markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "integration: marks integration tests (deselect with '-m \"not integration\"')",
     "requires_postgres: marks tests that require a real PostgreSQL container (testcontainers)",
-    "performance: marks tests that measure latency / p95 budgets (deselect with '-m \"not performance\"')",
+    # Phase 16 Batch 6g-2 R2 (Codex Minor 3): the ``performance`` marker is
+    # **opt-in only** — CI deselects these tests via ``pytest -m "not
+    # performance"`` (see ``.github/workflows/ci.yml`` ``backend-tests`` job)
+    # because latency assertions are environment-sensitive and would flap on
+    # GitHub-hosted runners. Latency assertions also gate on
+    # ``RUN_PERF_LATENCY=true`` for an additional opt-in. Run locally with
+    # ``pytest -m performance`` to exercise them.
+    "performance: marks tests that measure latency / p95 budgets (CI default: skipped via '-m \"not performance\"', opt-in locally with '-m performance')",
 ]
 
 [tool.coverage.run]
