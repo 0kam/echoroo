@@ -190,18 +190,6 @@ class TestViewerForbidden:
             f"Expected 403 for Viewer on POST /annotations/votes, got {response.status_code}"
         )
 
-    @pytest.mark.skip(
-        reason=(
-            "Annotation comments router is intentionally unregistered "
-            "in the current FastAPI app factory — see "
-            "apps/api/echoroo/api/v1/annotation_comments.py docstring "
-            "'router is not registered with the FastAPI app factory "
-            "yet'. The route 404s before any permission gate runs. "
-            "Re-enable once the comment surface is wired in (Phase 3 "
-            "follow-up T125 / FR-008a). Track the cleanup ticket in "
-            "specs/006-permissions-redesign/tasks.md Batch 6f."
-        )
-    )
     async def test_create_comment_is_403(
         self,
         client: AsyncClient,
@@ -209,11 +197,18 @@ class TestViewerForbidden:
         viewer_member: ProjectMember,
         test_project: Project,
     ) -> None:
-        """POST /projects/{id}/annotations/{id}/comments (COMMENT) → 403 for Viewer."""
+        """POST /projects/{id}/annotations/{id}/comments (COMMENT) → 403 for Viewer.
+
+        The annotation comments router was wired into the v1 app
+        factory as part of the Phase 17 contract drift cleanup, so the
+        permission gate now runs and a Viewer-role caller MUST be
+        rejected with 403 before the body validation. The body field
+        is ``body`` per :class:`AnnotationCommentCreate`.
+        """
         response = await client.post(
             f"/api/v1/projects/{test_project.id}/annotations/{_FAKE_UUID}/comments",
             headers=viewer_headers,
-            json={"text": "A comment"},
+            json={"body": "A comment"},
         )
         assert response.status_code == 403, (
             f"Expected 403 for Viewer on POST /annotations/comments, got {response.status_code}"

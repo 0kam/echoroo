@@ -4,6 +4,7 @@ from fastapi import APIRouter
 
 from echoroo.api.v1 import (
     admin,
+    annotation_comments,
     annotation_projects,
     annotation_tasks,
     annotation_votes,
@@ -63,6 +64,13 @@ api_router.include_router(search_module.router)
 # Generic annotation vote endpoints (must be before search annotations_router
 # to avoid route conflicts on /projects/{project_id}/annotations/{id}/votes)
 api_router.include_router(annotation_votes.router)
+# Phase 17 follow-up — register annotation comments router that
+# echoroo/api/v1/annotation_comments.py declared in Phase 3 but never
+# wired into the app factory (its module docstring still flagged this
+# as a follow-up). Without this line contracts/detections.yaml's
+# /projects/{id}/annotations/{annotationId}/comments path drifts from
+# the live OpenAPI surface (Codex Round X follow-up #4).
+api_router.include_router(annotation_comments.router)
 # Search annotation creation router
 api_router.include_router(search_module.annotations_router)
 # Custom model router
