@@ -576,6 +576,76 @@ class SuperuserIpAllowlistResponse(BaseModel):
     )
 
 
+# =============================================================================
+# Phase 17 follow-up — admin 2FA reset stub (FR-072)
+# =============================================================================
+
+
+class ResetTwoFactorRequest(BaseModel):
+    """Body for ``POST /admin/users/{userId}/reset-2fa`` (stub).
+
+    Phase 17 follow-up — Codex Round X: stub schema for the
+    superuser-driven 2FA reset flow described in admin.yaml. Full
+    implementation (4-factor verification + 24h delay job + 72h
+    cooldown + ``skip_delay`` M-of-N approval) is tracked in
+    ``PHASE17_BACKLOG.md`` item A-11. The current handler returns
+    HTTP 501 Not Implemented so the path appears in the OpenAPI
+    surface (closing the contract drift surfaced by
+    ``test_admin_paths_exist``) but cannot be invoked end-to-end
+    against production data.
+
+    The schema is pinned now so subsequent contract diffs catch any
+    accidental shape changes; downstream callers must therefore send
+    a syntactically valid body even though the handler short-circuits
+    to 501. The ``confirmed_factors`` list is intentionally typed as
+    ``list[str]`` (not an enum) until the real verification service
+    lands — the spec calls out four factor names
+    (``registered_email_match`` / ``current_password`` /
+    ``last_login_time`` / ``last_api_key_prefix``) but the
+    enumeration belongs to the implementation PR, not the stub.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    support_ticket_id: str = Field(
+        ...,
+        min_length=1,
+        max_length=200,
+        description=(
+            "Operator-supplied support ticket reference (e.g. Zendesk id). "
+            "Stored verbatim in audit detail when the full flow lands."
+        ),
+    )
+    confirmed_factors: list[str] = Field(
+        ...,
+        description=(
+            "Factor names the support operator has independently verified. "
+            "Spec FR-072 enumerates four (``registered_email_match``, "
+            "``current_password``, ``last_login_time``, "
+            "``last_api_key_prefix``); the strict enum check lands with "
+            "the full implementation (PHASE17_BACKLOG.md A-11)."
+        ),
+    )
+    reason: str = Field(
+        ...,
+        min_length=1,
+        max_length=2_000,
+        description=(
+            "Free-form explanation recorded on the platform audit log "
+            "row when the full flow lands."
+        ),
+    )
+    skip_delay: bool = Field(
+        default=False,
+        description=(
+            "When ``true``, bypass the 24 h delay window. Spec FR-072 "
+            "requires an M-of-N approval ticket (two co-signing "
+            "superusers) before the delay can be skipped; the stub "
+            "rejects every request with 501 regardless of this flag."
+        ),
+    )
+
+
 class IucnForceResyncResponse(BaseModel):
     """Body for ``POST /admin/iucn/force-resync`` (FR-036).
 
