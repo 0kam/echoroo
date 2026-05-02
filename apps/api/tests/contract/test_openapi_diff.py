@@ -66,9 +66,41 @@ _SCHEME_ALIASES: dict[str, str] = {
 # ---------------------------------------------------------------------------
 
 
+# Phase 17 follow-up — Codex priority fix.
+# Contracts under specs/006-permissions-redesign/contracts/*.yaml describe the
+# v1 surface using prefix-less paths (e.g. ``/projects/{id}``). The live
+# FastAPI schema mounts those operations under ``/api/v1`` (Bearer surface)
+# and/or ``/web-api/v1`` (Cookie surface). Without stripping the mount prefix
+# every contract path "missed" the live OpenAPI dictionary and the diff
+# harness reported regression-style failures that were really test-side
+# normalisation drift. Listed longest-first so the longer prefix matches
+# before its substring.
+_API_MOUNT_PREFIXES: tuple[str, ...] = ("/web-api/v1", "/api/v1")
+
+
+def _strip_api_mount_prefix(path: str) -> str:
+    """Remove the FastAPI mount prefix so a contract path matches a live path.
+
+    Returns ``"/"`` when the entire path was the prefix (defensive — the
+    live schema does not currently expose bare-prefix routes).
+    """
+    for prefix in _API_MOUNT_PREFIXES:
+        if path == prefix:
+            return "/"
+        if path.startswith(prefix + "/"):
+            return path[len(prefix) :]
+    return path
+
+
 def _normalise_path(path: str) -> str:
-    """Replace all ``{…}`` segments with ``{*}`` for template-agnostic comparison."""
-    return re.sub(r"\{[^}]+\}", "{*}", path)
+    """Strip the FastAPI mount prefix and replace ``{…}`` segments with ``{*}``.
+
+    The contract YAMLs describe path templates relative to the v1 surface
+    (e.g. ``/projects/{id}``); the live OpenAPI carries the full mounted
+    template (``/api/v1/projects/{id}``). Stripping the prefix here lets a
+    single ``_normalise_path()`` produce a key that both sides agree on.
+    """
+    return re.sub(r"\{[^}]+\}", "{*}", _strip_api_mount_prefix(path))
 
 
 def _security_list_to_canonical(security: list[dict[str, list[str]]]) -> frozenset[str]:
@@ -122,9 +154,29 @@ def live_schema() -> dict[str, Any]:
 
 @pytest.fixture(scope="module")
 def live_paths_normalised(live_schema: dict[str, Any]) -> dict[str, dict[str, Any]]:
-    """Return live paths keyed by normalised template."""
+    """Return live paths keyed by normalised template.
+
+    The same prefix-less template can be served by both the Bearer surface
+    (``/api/v1/...``) and the Cookie surface (``/web-api/v1/...``). After
+    prefix stripping both collapse onto the same key, so we shallow-merge
+    the path-item dicts on collision: the first surface wins for any
+    given HTTP method, but both surfaces' methods coexist in the merged
+    record so downstream tests (response codes, request body presence,
+    security schemes) still see whichever method the contract declares.
+    """
     raw: dict[str, Any] = live_schema.get("paths", {})
-    return {_normalise_path(k): v for k, v in raw.items()}
+    merged: dict[str, dict[str, Any]] = {}
+    for original_path, path_item in raw.items():
+        norm = _normalise_path(original_path)
+        if not isinstance(path_item, dict):
+            merged[norm] = path_item
+            continue
+        if norm not in merged:
+            merged[norm] = dict(path_item)
+            continue
+        for method, op in path_item.items():
+            merged[norm].setdefault(method, op)
+    return merged
 
 
 # ---------------------------------------------------------------------------
