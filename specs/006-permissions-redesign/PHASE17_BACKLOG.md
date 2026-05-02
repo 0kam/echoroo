@@ -161,7 +161,7 @@ already exists in `apps/api/tests/security/**` and is marked
         cooldown; covered by service-level tests.
   - [ ] M-of-N approval integration uses the existing
         `SuperuserApprovalRequest` engine (no new approval tables).
-  - [ ] Stub-only test in `tests/api/web_v1/test_admin_reset_2fa_stub.py`
+  - [ ] Stub-only test in `tests/integration/api/web_v1/test_admin_reset_2fa_stub.py`
         is replaced with a full integration suite covering 200 / 401 /
         403 / 409 / 422 and the M-of-N approval path.
 

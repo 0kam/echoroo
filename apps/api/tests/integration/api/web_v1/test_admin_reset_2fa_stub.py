@@ -158,6 +158,53 @@ async def admin_client_factory(  # type: ignore[no-untyped-def]
     return _factory
 
 
+@pytest.fixture
+async def admin_client_factory_no_step_up(  # type: ignore[no-untyped-def]
+    admin_app: FastAPI,
+    db_session: AsyncSession,
+):
+    """Phase 17 Codex Round X Major fix: variant of admin_client_factory
+    that omits the X-Step-Up-Token header so the step-up dependency on
+    destructive admin routes can be exercised without bypassing it.
+
+    Used to pin the contract that the reset-2fa stub still requires a
+    valid step-up token even though the handler is a 501 stub.
+    """
+    transport = ASGITransport(app=admin_app)
+    captured_session = db_session
+
+    def _override_user(user: User | None) -> None:
+        async def _override() -> User | None:
+            if user is None:
+                return None
+            from sqlalchemy import text as _sa_text
+
+            probe = await captured_session.execute(
+                _sa_text(
+                    "SELECT id FROM superusers "
+                    "WHERE user_id = :uid AND revoked_at IS NULL LIMIT 1"
+                ),
+                {"uid": user.id},
+            )
+            row = probe.scalar_one_or_none()
+            user.is_superuser = row is not None  # type: ignore[attr-defined]
+            user._superuser_id = row  # type: ignore[attr-defined]
+            return user
+
+        admin_app.dependency_overrides[get_current_user_optional] = _override
+
+    async def _factory(user: User | None) -> AsyncClient:
+        _override_user(user)
+        return AsyncClient(
+            transport=transport,
+            base_url="http://testserver",
+            # No X-Step-Up-Token header — the step-up dependency must
+            # reject the request before it reaches the stub handler.
+        )
+
+    return _factory
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -311,3 +358,64 @@ async def test_reset_two_factor_skip_delay_still_returns_501(
             json=payload,
         )
     assert response.status_code == 501, response.text
+
+
+@pytest.mark.asyncio
+async def test_reset_two_factor_extra_field_returns_422(
+    db_session: AsyncSession,
+    admin_client_factory,  # type: ignore[no-untyped-def]
+) -> None:
+    """Phase 17 Codex Round X Minor: ``extra='forbid'`` MUST reject mass-
+    assignment attempts on the stub schema. Without this guard a future
+    implementer could quietly add a field server-side and the schema
+    would silently accept the leftover spelling, violating the
+    pin-the-contract intent of the stub.
+    """
+    su_user = await _create_user(
+        db_session, email="reset2fa_stub_su_extra@example.com"
+    )
+    await _create_superuser(db_session, user=su_user)
+    target_id = uuid4()
+
+    payload = _valid_payload()
+    # Inject an unexpected field — the schema rejects extra keys, so the
+    # request never reaches the handler and the response carries the
+    # standard 422 validation error.
+    payload["force_grant_admin"] = True
+
+    async with await admin_client_factory(su_user) as client:
+        response = await client.post(
+            f"/web-api/v1/admin/users/{target_id}/reset-2fa",
+            json=payload,
+        )
+    assert response.status_code == 422, response.text
+
+
+@pytest.mark.asyncio
+async def test_reset_two_factor_without_step_up_token_returns_403(
+    db_session: AsyncSession,
+    admin_client_factory_no_step_up,  # type: ignore[no-untyped-def]
+) -> None:
+    """Phase 17 Codex Round X Major fix: the destructive admin gate MUST
+    require a valid step-up token even though the handler is a 501 stub.
+
+    A superuser session alone, without the WebAuthn-derived step-up
+    token, must NOT reach the stub — otherwise the contract drift
+    flagged by admin.yaml (``security: superuserSession + csrfToken +
+    stepUpToken``) is invisible until the future full implementation
+    lands.
+    """
+    su_user = await _create_user(
+        db_session, email="reset2fa_stub_su_no_stepup@example.com"
+    )
+    await _create_superuser(db_session, user=su_user)
+    target_id = uuid4()
+
+    async with await admin_client_factory_no_step_up(su_user) as client:
+        response = await client.post(
+            f"/web-api/v1/admin/users/{target_id}/reset-2fa",
+            json=_valid_payload(),
+        )
+    # The step-up gate emits 403; this pins the gate's presence on the
+    # stub route specifically.
+    assert response.status_code in (401, 403), response.text

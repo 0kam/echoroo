@@ -1823,6 +1823,12 @@ async def update_ip_allowlist(
         "``specs/006-permissions-redesign/PHASE17_BACKLOG.md`` item A-11."
     ),
     operation_id="reset2FA",
+    # Phase 17 Codex Round X Major fix: gate the destructive admin
+    # surface with the step-up token even though the handler is still
+    # a 501 stub. Without this dependency a superuser could reach the
+    # 501 path without re-authenticating, drifting from the
+    # admin.yaml contract (superuserSession + csrfToken + stepUpToken).
+    dependencies=[Depends(require_step_up_token(SCOPE_ADMIN_DESTRUCTIVE))],
 )
 async def reset_two_factor(
     user_id: UUID,  # noqa: ARG001 — pinned for contract surface; consumed by future impl
