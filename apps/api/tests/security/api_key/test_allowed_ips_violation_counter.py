@@ -1,29 +1,35 @@
-"""FR-077 / FR-081: API key allowed_ip_cidrs enforcement + violation counter (T979d).
+"""FR-077 / FR-081: API key allowed_ip_cidrs enforcement + violation counter.
 
 The ``api_keys.allowed_ip_cidrs`` column stores an optional CIDR allowlist.
-When set, requests from IPs outside the allowlist MUST be rejected (403) and
-the violation MUST be recorded (audit log entry + ``ip_violation_count``
-increment).
+When set, requests from IPs outside the allowlist MUST be rejected (403)
+and the violation MUST be recorded (audit log entry +
+``ip_violation_count`` increment).
 
 Spec references:
 - FR-077: ``/api/v1/*`` requires API key; optional ``allowed_ips``.
 - FR-081: ``allowed_ips`` violation 3 times → automatic revoke (separate counter).
 - Spec line ~898: "allowed_ips 違反別カウンタ" (separate violation counter).
 
-**Current implementation status:**
-The ``DbApiKeyVerifier.verify()`` (Phase 15 T155b) resolves the API key and
-returns an ``ApiKeyRecord`` carrying ``allowed_ip_cidrs`` on the ORM row — but
-the actual IP-vs-CIDR comparison and counter increment are documented as the
-responsibility of an "outer IP enforcement middleware" (see the module docstring
-of ``api_key_verification.py`` line 30). That outer middleware is **NOT
-implemented** in the current phase.
+**Implementation status (Phase 17 A-3, T979d follow-up):**
 
-Consequently:
-- Tests that verify the *model* layer (column existence, default value, CIDR
-  schema validation) run as normal passing tests.
-- Tests that require the outer middleware to enforce the CIDR restriction
-  (reject 403, increment counter, auto-revoke at 3 violations) are marked
-  ``xfail(strict=True)`` to document the TDD-red state.
+The enforcement helper :mod:`echoroo.middleware.api_key_ip_enforcement`
+provides :func:`enforce_api_key_ip`, which:
+
+1. Compares the caller IP against ``api_keys.allowed_ip_cidrs``.
+2. On mismatch atomically increments ``ip_violation_count`` (a counter
+   independent from ``scope_violation_count_10min``).
+3. Auto-revokes the key on the third violation (sets ``revoked_at`` +
+   ``revoked_reason='ip_violation_auto_revoke'``).
+4. Best-effort writes a ``platform_audit_log`` row describing the event.
+
+The :class:`AuthRouterMiddleware` invokes the helper through the
+:class:`IpEnforcer` plug-in **after** :class:`DbApiKeyVerifier` resolves
+the row but **before** the principal is attached to ``request.state`` so
+a rejected request never reaches the downstream handler.
+
+These tests exercise the helper directly against the test PostgreSQL
+instance — the HTTP shell is covered by the auth-router unit tests and
+the integration suite under ``tests/contract/``.
 """
 
 from __future__ import annotations
@@ -31,10 +37,78 @@ from __future__ import annotations
 import ipaddress
 from datetime import UTC, datetime, timedelta
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch  # noqa: F401
-from uuid import uuid4
+from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import UUID, uuid4
 
 import pytest
+import sqlalchemy as sa
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+async def _create_test_user(db_session: Any) -> UUID:
+    """Insert a minimal test user row and return its ``id``.
+
+    The ``api_keys.user_id`` foreign-key requires a real ``users`` row;
+    we use raw SQL so the test does not need the ORM password hashing
+    helpers (the password value here is never verified — it just has to
+    satisfy the NOT NULL constraint).
+    """
+    user_id = uuid4()
+    await db_session.execute(
+        sa.text(
+            "INSERT INTO users "
+            "(id, email, password_hash, security_stamp, created_at, updated_at) "
+            "VALUES (:id, :email, :pw, :ss, NOW(), NOW())"
+        ),
+        {
+            "id": user_id,
+            "email": f"ip-enforce-{user_id}@test.local",
+            "pw": "$argon2id$v=19$m=65536,t=3,p=1$" + ("a" * 22) + "$" + ("b" * 43),
+            "ss": "ss-" + uuid4().hex,
+        },
+    )
+    await db_session.commit()
+    return user_id
+
+
+async def _create_test_api_key(
+    db_session: Any,
+    *,
+    user_id: UUID,
+    allowed_ip_cidrs: list[str] | None,
+    granted_permissions: list[str] | None = None,
+) -> UUID:
+    """Insert a minimal ``api_keys`` row and return its ``id``."""
+    key_id = uuid4()
+    now = datetime.now(UTC)
+    await db_session.execute(
+        sa.text(
+            "INSERT INTO api_keys "
+            "(id, user_id, prefix, hashed_secret, granted_permissions, "
+            " allowed_ip_cidrs, expires_at, created_at, updated_at, "
+            " scope_violation_count_10min, ip_violation_count) "
+            "VALUES (:id, :uid, :prefix, :hash, CAST(:gp AS JSONB), "
+            "        :cidrs, :exp, :now, :now, 0, 0)"
+        ),
+        {
+            "id": key_id,
+            "uid": user_id,
+            "prefix": f"echoroo_{uuid4().hex[:8]}",
+            "hash": "f" * 64,
+            "gp": '["recordings:read"]'
+            if granted_permissions is None
+            else __import__("json").dumps(granted_permissions),
+            "cidrs": allowed_ip_cidrs,
+            "exp": now + timedelta(days=180),
+            "now": now,
+        },
+    )
+    await db_session.commit()
+    return key_id
+
 
 # ---------------------------------------------------------------------------
 # Model-layer tests (passing)
@@ -104,8 +178,9 @@ def test_admin_schema_validates_cidr_strings() -> None:
 def test_ip_in_cidr_stdlib_logic() -> None:
     """Python stdlib ``ipaddress`` can determine if an IP falls within a CIDR.
 
-    This test documents the pure-Python logic that an enforcement middleware
-    MUST use to compare the caller's IP against ``allowed_ip_cidrs``.
+    This test documents the pure-Python logic that the enforcement
+    middleware uses to compare the caller's IP against
+    ``allowed_ip_cidrs``.
     """
     network = ipaddress.ip_network("10.0.0.0/24", strict=False)
     assert ipaddress.ip_address("10.0.0.100") in network
@@ -113,137 +188,529 @@ def test_ip_in_cidr_stdlib_logic() -> None:
     assert ipaddress.ip_address("192.168.1.1") not in network
 
 
+def test_select_client_ip_ignores_xff_when_no_trusted_proxy_configured() -> None:
+    """Phase 17 A-3 Codex Major 1: XFF MUST be ignored when no trusted
+    proxy is configured.
+
+    An attacker who can reach the API directly (no reverse proxy in
+    front, or a misconfigured proxy that does not strip incoming XFF)
+    could otherwise spoof an allowlisted source IP by sending
+    ``X-Forwarded-For: 10.0.0.55``. The default-empty
+    ``trusted_proxy_cidrs`` list MUST cause the helper to return the
+    socket peer regardless of any XFF value.
+    """
+    from echoroo.middleware.api_key_ip_enforcement import select_client_ip
+
+    # No trusted-proxy config → XFF spoof rejected, peer wins.
+    assert (
+        select_client_ip(
+            forwarded_for="10.0.0.55",
+            remote_addr="203.0.113.99",
+            trusted_proxy_cidrs=[],
+        )
+        == "203.0.113.99"
+    )
+    # ``None`` is the legacy / default; must behave identically.
+    assert (
+        select_client_ip(
+            forwarded_for="10.0.0.55",
+            remote_addr="203.0.113.99",
+            trusted_proxy_cidrs=None,
+        )
+        == "203.0.113.99"
+    )
+
+
+def test_select_client_ip_ignores_xff_from_untrusted_peer() -> None:
+    """Untrusted socket peers MUST have their XFF ignored even when a
+    trusted-proxy list is configured.
+
+    A trusted-proxy CIDR list narrows *who* may speak XFF; a peer
+    outside that list is still considered hostile and its XFF header
+    is dropped.
+    """
+    from echoroo.middleware.api_key_ip_enforcement import select_client_ip
+
+    # Trusted proxies live in 10.0.0.0/24, attacker comes from 203.x.
+    assert (
+        select_client_ip(
+            forwarded_for="10.0.0.55",
+            remote_addr="203.0.113.99",
+            trusted_proxy_cidrs=["10.0.0.0/24"],
+        )
+        == "203.0.113.99"
+    )
+
+
+def test_select_client_ip_uses_xff_from_trusted_peer() -> None:
+    """A trusted-proxy peer MAY forward the original caller's IP.
+
+    Single-hop case: the proxy at 10.0.0.5 (in the trusted CIDR)
+    forwards ``X-Forwarded-For: 198.51.100.7`` and we return the
+    forwarded address.
+    """
+    from echoroo.middleware.api_key_ip_enforcement import select_client_ip
+
+    assert (
+        select_client_ip(
+            forwarded_for="198.51.100.7",
+            remote_addr="10.0.0.5",
+            trusted_proxy_cidrs=["10.0.0.0/24"],
+        )
+        == "198.51.100.7"
+    )
+
+
+def test_select_client_ip_strips_trusted_chain_right_to_left() -> None:
+    """Multi-hop chains MUST strip trusted proxies from the right edge.
+
+    For a chain ``client, edge_proxy, internal_proxy`` the rightmost
+    untrusted entry is the original caller. Everything to its right
+    is a trusted proxy hop and gets dropped.
+    """
+    from echoroo.middleware.api_key_ip_enforcement import select_client_ip
+
+    # Two trusted hops on the right; first untrusted from the right is
+    # ``198.51.100.7``.
+    assert (
+        select_client_ip(
+            forwarded_for="198.51.100.7, 10.0.0.5, 10.0.0.6",
+            remote_addr="10.0.0.6",
+            trusted_proxy_cidrs=["10.0.0.0/24"],
+        )
+        == "198.51.100.7"
+    )
+
+
+def test_select_client_ip_strips_ipv4_port_from_xff() -> None:
+    """Phase 17 Codex Round 2 Minor 1: ``IPv4:port`` XFF hops MUST be normalised.
+
+    Some reverse proxies emit the upstream caller's port alongside the
+    address (``198.51.100.7:443``). Without normalisation the bare
+    string is fed to the CIDR allowlist check, fails closed, and the
+    request is misclassified — a regression rather than a spoof bypass,
+    but it produces false 403s under proxies that emit ports.
+    """
+    from echoroo.middleware.api_key_ip_enforcement import select_client_ip
+
+    # IPv4:port from a trusted proxy peer is normalised to a bare IPv4.
+    assert (
+        select_client_ip(
+            forwarded_for="198.51.100.7:443",
+            remote_addr="10.0.0.5",
+            trusted_proxy_cidrs=["10.0.0.0/24"],
+        )
+        == "198.51.100.7"
+    )
+    # The peer itself may also arrive with a port suffix (some ASGI
+    # bridges expose ``host:port`` from ``request.client.host``).
+    assert (
+        select_client_ip(
+            forwarded_for=None,
+            remote_addr="10.0.0.5:51234",
+            trusted_proxy_cidrs=["10.0.0.0/24"],
+        )
+        == "10.0.0.5"
+    )
+
+
+def test_select_client_ip_strips_bracketed_ipv6_port_from_xff() -> None:
+    """Bracketed IPv6 with port (``[2001:db8::1]:443``) MUST be normalised.
+
+    RFC 3986 / 7239 require bracketing IPv6 literals when a port is
+    appended; the helper strips both the brackets and the trailing
+    ``:port`` so the downstream allowlist sees a canonical IPv6 address.
+    """
+    from echoroo.middleware.api_key_ip_enforcement import select_client_ip
+
+    # Single trusted IPv6 hop with a port appended.
+    assert (
+        select_client_ip(
+            forwarded_for="[2001:db8::1]:443",
+            remote_addr="10.0.0.5",
+            trusted_proxy_cidrs=["10.0.0.0/24"],
+        )
+        == "2001:db8::1"
+    )
+    # Bracketed IPv6 with no port also resolves to the bare address.
+    assert (
+        select_client_ip(
+            forwarded_for="[2001:db8::1]",
+            remote_addr="10.0.0.5",
+            trusted_proxy_cidrs=["10.0.0.0/24"],
+        )
+        == "2001:db8::1"
+    )
+
+
+def test_select_client_ip_strips_ports_in_chain() -> None:
+    """Mixed chains with port-bearing trusted hops MUST canonicalise correctly.
+
+    ``198.51.100.7, 10.0.0.5:443, 10.0.0.6:443`` from a trusted-proxy
+    peer should drop the two trusted hops on the right (after stripping
+    their ports) and surface the original public caller.
+    """
+    from echoroo.middleware.api_key_ip_enforcement import select_client_ip
+
+    assert (
+        select_client_ip(
+            forwarded_for="198.51.100.7, 10.0.0.5:443, 10.0.0.6:443",
+            remote_addr="10.0.0.6:443",
+            trusted_proxy_cidrs=["10.0.0.0/24"],
+        )
+        == "198.51.100.7"
+    )
+
+
+def test_select_client_ip_rejects_zone_id_ipv6_in_xff() -> None:
+    """Phase 17 Codex Round 3: scope-id IPv6 (RFC 6874 ``%scope``) MUST NOT
+    be canonicalised. Otherwise the downstream CIDR check could match an
+    unintended address (link-local-only addresses with zone identifiers
+    must never appear in a routed XFF chain).
+    """
+    from echoroo.middleware.api_key_ip_enforcement import (
+        _normalize_xff_hop,
+        select_client_ip,
+    )
+
+    # Bare and bracketed scope-id forms are returned verbatim, so the
+    # later allowlist match fails closed.
+    assert _normalize_xff_hop("fe80::1%eth0") == "fe80::1%eth0"
+    assert (
+        _normalize_xff_hop("[2001:4860:4860::8888%eth0]:443")
+        == "[2001:4860:4860::8888%eth0]:443"
+    )
+
+    # End-to-end: a trusted peer presenting a scope-id XFF must not be
+    # honoured — the canonicalised value cannot be parsed as a routable IP
+    # so select_client_ip falls back to the trusted peer itself.
+    assert (
+        select_client_ip(
+            forwarded_for="fe80::1%eth0",
+            remote_addr="10.0.0.5",
+            trusted_proxy_cidrs=["10.0.0.0/24"],
+        )
+        == "10.0.0.5"
+    )
+
+
+def test_select_client_ip_rejects_ipv4_mapped_ipv6_in_xff() -> None:
+    """Phase 17 Codex Round 3: IPv4-mapped IPv6 (``::ffff:a.b.c.d``) MUST
+    NOT be canonicalised. An operator who lists v4-mapped form in a CIDR
+    cannot use that to backdoor an IPv4 allowlist via the XFF parser.
+    """
+    from echoroo.middleware.api_key_ip_enforcement import _normalize_xff_hop
+
+    assert _normalize_xff_hop("::ffff:198.51.100.7") == "::ffff:198.51.100.7"
+    assert _normalize_xff_hop("[::ffff:198.51.100.7]") == "[::ffff:198.51.100.7]"
+    assert (
+        _normalize_xff_hop("[::ffff:198.51.100.7]:443")
+        == "[::ffff:198.51.100.7]:443"
+    )
+
+
+def test_select_client_ip_falls_back_to_peer_when_no_xff() -> None:
+    """A trusted peer with no XFF header → use the peer itself."""
+    from echoroo.middleware.api_key_ip_enforcement import select_client_ip
+
+    assert (
+        select_client_ip(
+            forwarded_for=None,
+            remote_addr="10.0.0.5",
+            trusted_proxy_cidrs=["10.0.0.0/24"],
+        )
+        == "10.0.0.5"
+    )
+
+
 def test_empty_allowed_ip_cidrs_means_no_restriction() -> None:
     """An empty ``allowed_ip_cidrs`` list MUST be interpreted as 'no restriction'.
 
     This is the semantic contract: ``None`` and ``[]`` both mean "all IPs
-    allowed". An enforcement middleware MUST NOT block traffic when
+    allowed". The enforcement helper MUST NOT block traffic when
     ``allowed_ip_cidrs`` is empty.
     """
-    # Document the expected semantics: both None and [] → allow-all.
-    for cidrs in [None, []]:
-        if cidrs is None:
-            restricted = False
-        else:
-            # Empty list → no CIDR to check → allow-all.
-            restricted = any(
-                ipaddress.ip_address("1.2.3.4") in ipaddress.ip_network(c, strict=False)
-                for c in cidrs
-            )
-        assert not restricted, (
-            f"allowed_ip_cidrs={cidrs!r} should mean no restriction"
-        )
+    from echoroo.middleware.api_key_ip_enforcement import is_ip_in_allowlist
+
+    # Both shapes are treated as "allow all".
+    assert is_ip_in_allowlist("1.2.3.4", None) is True
+    assert is_ip_in_allowlist("1.2.3.4", []) is True
+    # A real allowlist that does NOT contain the IP rejects.
+    assert is_ip_in_allowlist("1.2.3.4", ["10.0.0.0/24"]) is False
+    assert is_ip_in_allowlist("10.0.0.5", ["10.0.0.0/24"]) is True
 
 
 # ---------------------------------------------------------------------------
-# Enforcement middleware tests (xfail — middleware not yet implemented)
+# Enforcement helper tests (Phase 17 A-3 — middleware now implemented)
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "The outer IP-enforcement middleware that inspects "
-        "ApiKey.allowed_ip_cidrs and rejects requests from non-allowlisted "
-        "IPs with HTTP 403 is NOT implemented in the current phase. "
-        "DbApiKeyVerifier.verify() returns the ApiKeyRecord with the CIDR "
-        "list but does not perform IP comparison itself (see module docstring "
-        "of api_key_verification.py). Implement the middleware in a future task."
-    ),
-)
 @pytest.mark.asyncio
 async def test_request_from_non_allowlisted_ip_returns_403(
     db_session: Any,
 ) -> None:
-    """A request whose source IP is NOT in ``allowed_ip_cidrs`` MUST be rejected
-    with HTTP 403.
+    """A request whose source IP is NOT in ``allowed_ip_cidrs`` MUST be rejected.
 
-    The enforcement middleware should:
-    1. Resolve the API key via ``DbApiKeyVerifier.verify()``.
-    2. Load the ``allowed_ip_cidrs`` from the row.
-    3. Compare the client IP against each CIDR.
-    4. If no CIDR matches → HTTP 403 with ``err_ip_not_allowed``.
+    Direct unit test of the helper: the auth-router middleware translates
+    the boolean outcome into ``HTTP 403 err_ip_not_allowed`` (verified in
+    the auth-router unit suite). Here we pin the helper contract: a
+    mismatched IP returns ``allowed=False`` AND the row's
+    ``ip_violation_count`` is incremented in the same call.
     """
-    # This test cannot pass until the enforcement middleware exists.
-    # Placeholder assertion that forces xfail.
-    raise AssertionError(
-        "IP enforcement middleware not implemented — "
-        "request from 192.168.1.1 to a key restricted to 10.0.0.0/24 "
-        "should return 403"
+    from echoroo.middleware.api_key_ip_enforcement import enforce_api_key_ip
+
+    user_id = await _create_test_user(db_session)
+    api_key_id = await _create_test_api_key(
+        db_session, user_id=user_id, allowed_ip_cidrs=["10.0.0.0/24"]
     )
 
+    # Caller IP is OUTSIDE the allowlist.
+    result = await enforce_api_key_ip(
+        db_session,
+        api_key_id=api_key_id,
+        user_id=user_id,
+        allowed_cidrs=["10.0.0.0/24"],
+        client_ip="192.168.1.1",
+        request_id="req-test-403",
+        user_agent="pytest",
+    )
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "ip_violation_count increment on allowlist violation is NOT implemented. "
-        "The ApiKey.ip_violation_count column exists but no middleware increments "
-        "it when a request comes from an unlisted IP. FR-081 specifies auto-revoke "
-        "at 3 violations. Implement counter logic in a future task."
-    ),
-)
+    assert result.allowed is False, (
+        "192.168.1.1 should be rejected by allowlist 10.0.0.0/24"
+    )
+    assert result.violation_count == 1, (
+        f"first violation must yield count=1, got {result.violation_count}"
+    )
+
+    # Row state matches the result.
+    row = (
+        await db_session.execute(
+            sa.text(
+                "SELECT ip_violation_count, revoked_at "
+                "FROM api_keys WHERE id = :id"
+            ),
+            {"id": api_key_id},
+        )
+    ).first()
+    assert row is not None
+    assert row[0] == 1
+    assert row[1] is None  # not yet revoked at the first violation
+
+
 @pytest.mark.asyncio
 async def test_ip_violation_increments_counter(
     db_session: Any,
 ) -> None:
     """Each IP-allowlist violation MUST increment ``api_keys.ip_violation_count``.
 
-    After the enforcement middleware is implemented, a request from a
-    non-allowlisted IP should atomically increment the counter column so the
-    auto-revoke trigger (FR-081: 3 violations → revoke) has reliable data.
+    Two consecutive violations from the same offending IP must yield
+    counts ``1`` then ``2`` — the counter is monotonically increasing
+    per violation. Allow-listed calls in between MUST NOT advance the
+    counter (separate-counter contract: the IP counter is decoupled
+    from the scope counter).
     """
-    raise AssertionError(
-        "ip_violation_count increment not implemented — "
-        "after 3 violations the key should be auto-revoked per FR-081"
+    from echoroo.middleware.api_key_ip_enforcement import enforce_api_key_ip
+
+    user_id = await _create_test_user(db_session)
+    api_key_id = await _create_test_api_key(
+        db_session, user_id=user_id, allowed_ip_cidrs=["10.0.0.0/24"]
     )
 
+    # First violation.
+    r1 = await enforce_api_key_ip(
+        db_session,
+        api_key_id=api_key_id,
+        user_id=user_id,
+        allowed_cidrs=["10.0.0.0/24"],
+        client_ip="203.0.113.5",
+    )
+    assert r1.allowed is False
+    assert r1.violation_count == 1
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Auto-revoke at 3 IP violations (FR-081) is NOT implemented. "
-        "ip_violation_count column exists but no enforcement logic triggers "
-        "revocation when the count reaches 3. Implement auto-revoke in future task."
-    ),
-)
+    # Allow-listed call between violations: MUST NOT advance the counter.
+    r_ok = await enforce_api_key_ip(
+        db_session,
+        api_key_id=api_key_id,
+        user_id=user_id,
+        allowed_cidrs=["10.0.0.0/24"],
+        client_ip="10.0.0.55",
+    )
+    assert r_ok.allowed is True
+    assert r_ok.violation_count == 0  # untouched
+
+    # Second violation.
+    r2 = await enforce_api_key_ip(
+        db_session,
+        api_key_id=api_key_id,
+        user_id=user_id,
+        allowed_cidrs=["10.0.0.0/24"],
+        client_ip="203.0.113.5",
+    )
+    assert r2.allowed is False
+    assert r2.violation_count == 2, (
+        "counter must increment to 2 on the second violation"
+    )
+
+    row = (
+        await db_session.execute(
+            sa.text(
+                "SELECT ip_violation_count, revoked_at "
+                "FROM api_keys WHERE id = :id"
+            ),
+            {"id": api_key_id},
+        )
+    ).first()
+    assert row is not None
+    assert row[0] == 2
+    assert row[1] is None  # still not revoked at 2 violations
+
+
 @pytest.mark.asyncio
 async def test_three_ip_violations_auto_revokes_key(
     db_session: Any,
 ) -> None:
     """After 3 IP-allowlist violations the API key MUST be auto-revoked (FR-081).
 
-    ``revoked_at`` should be set and subsequent requests — even from the
-    allowlisted IP — should return 401 (key revoked).
+    ``revoked_at`` is set on the third violation, ``revoked_reason`` is
+    ``ip_violation_auto_revoke``, and ``ip_violation_count`` is ``3``.
     """
-    raise AssertionError(
-        "Auto-revoke after 3 IP violations not implemented (FR-081)"
+    from echoroo.middleware.api_key_ip_enforcement import (
+        REVOKED_REASON_IP_VIOLATION,
+        enforce_api_key_ip,
     )
 
+    user_id = await _create_test_user(db_session)
+    api_key_id = await _create_test_api_key(
+        db_session, user_id=user_id, allowed_ip_cidrs=["10.0.0.0/24"]
+    )
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Audit log entry on IP violation is NOT implemented. "
-        "The outer enforcement middleware should write an audit log row "
-        "when it rejects a request due to IP-allowlist mismatch. "
-        "Implement audit logging in the enforcement middleware."
-    ),
-)
+    for i in range(1, 4):
+        result = await enforce_api_key_ip(
+            db_session,
+            api_key_id=api_key_id,
+            user_id=user_id,
+            allowed_cidrs=["10.0.0.0/24"],
+            client_ip="198.51.100.7",
+            request_id=f"req-{i}",
+        )
+        assert result.allowed is False
+        assert result.violation_count == i
+        assert result.revoked is (i >= 3)
+
+    # Final state: revoked_at populated, reason set, count == 3.
+    row = (
+        await db_session.execute(
+            sa.text(
+                "SELECT ip_violation_count, revoked_at, revoked_reason "
+                "FROM api_keys WHERE id = :id"
+            ),
+            {"id": api_key_id},
+        )
+    ).first()
+    assert row is not None
+    assert row[0] == 3
+    assert row[1] is not None, "revoked_at must be set on the 3rd violation"
+    assert row[2] == REVOKED_REASON_IP_VIOLATION
+
+
 @pytest.mark.asyncio
 async def test_ip_violation_creates_audit_log_entry(
     db_session: Any,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """An IP-allowlist violation MUST produce an audit log entry.
+    """An IP-allowlist violation MUST produce a ``platform_audit_log`` entry.
 
-    The audit record should include:
-    - ``action``: ``api_key.ip_violation`` or similar.
-    - ``actor_id``: the user owning the key.
-    - ``resource_id``: the ``api_key_id``.
-    - ``detail``: the source IP and the allowlist.
+    The audit row carries:
+    - ``action = 'api_key.ip_violation'`` (or ``'api_key.auto_revoke_ip_violation'``
+      on the revoking call).
+    - ``actor_user_id_hash`` derived from the key owner.
+    - ``detail`` containing ``api_key_id``, ``client_ip``, the
+      ``allowed_cidrs`` snapshot, the new ``violation_count``, and the
+      ``auto_revoked`` flag.
+
+    KMS is stubbed so the test stays hermetic — the chain-hash and PII
+    hash become deterministic constants. The test asserts the row exists
+    and carries the expected ``action``.
     """
-    raise AssertionError(
-        "Audit log entry on IP violation not implemented"
+    from echoroo.middleware.api_key_ip_enforcement import (
+        AUDIT_ACTION_IP_VIOLATION,
+        enforce_api_key_ip,
     )
+    from echoroo.services import audit_service
+
+    # Stub KMS — deterministic 64-char hex outputs satisfy the column
+    # widths and let the chain insert succeed without a real CMK.
+    monkeypatch.setattr(
+        audit_service, "compute_pii_hash", lambda _v: "a" * 64, raising=True
+    )
+    monkeypatch.setattr(
+        audit_service,
+        "compute_audit_chain_hash",
+        lambda _p, _c: "b" * 64,
+        raising=True,
+    )
+
+    user_id = await _create_test_user(db_session)
+    api_key_id = await _create_test_api_key(
+        db_session, user_id=user_id, allowed_ip_cidrs=["10.0.0.0/24"]
+    )
+
+    # Snapshot the audit table size BEFORE the enforced call so the
+    # assertion below targets the row this test inserted, not a residual
+    # from a previous test in the same DB.
+    before_count = (
+        await db_session.execute(
+            sa.text(
+                "SELECT COUNT(*) FROM platform_audit_log "
+                "WHERE action = :a"
+            ),
+            {"a": AUDIT_ACTION_IP_VIOLATION},
+        )
+    ).scalar()
+
+    result = await enforce_api_key_ip(
+        db_session,
+        api_key_id=api_key_id,
+        user_id=user_id,
+        allowed_cidrs=["10.0.0.0/24"],
+        client_ip="203.0.113.42",
+        request_id="req-audit-1",
+        user_agent="pytest-audit",
+    )
+    assert result.allowed is False
+
+    after_count = (
+        await db_session.execute(
+            sa.text(
+                "SELECT COUNT(*) FROM platform_audit_log "
+                "WHERE action = :a"
+            ),
+            {"a": AUDIT_ACTION_IP_VIOLATION},
+        )
+    ).scalar()
+    assert (after_count or 0) == (before_count or 0) + 1, (
+        "exactly one platform_audit_log row should be appended for the "
+        f"violation (before={before_count}, after={after_count})"
+    )
+
+    # Inspect the most-recent row's detail payload.
+    detail_row = (
+        await db_session.execute(
+            sa.text(
+                "SELECT detail FROM platform_audit_log "
+                "WHERE action = :a "
+                "ORDER BY created_at DESC LIMIT 1"
+            ),
+            {"a": AUDIT_ACTION_IP_VIOLATION},
+        )
+    ).first()
+    assert detail_row is not None
+    detail = detail_row[0]
+    # JSONB → dict via asyncpg
+    assert detail.get("api_key_id") == str(api_key_id)
+    assert detail.get("client_ip") == "203.0.113.42"
+    assert detail.get("violation_count") == 1
+    assert detail.get("auto_revoked") is False
 
 
 # ---------------------------------------------------------------------------
@@ -256,9 +723,9 @@ async def test_verifier_returns_record_regardless_of_allowed_ip_cidrs() -> None:
     """``DbApiKeyVerifier.verify()`` returns ``ApiKeyRecord`` regardless of
     ``allowed_ip_cidrs`` — IP enforcement is the outer middleware's job.
 
-    This test pins the existing (phase 15) contract: the verifier does NOT
-    perform IP checking; the CIDR list is carried on the ORM row for the
-    middleware to inspect.
+    This pins the Phase 15 contract: the verifier does NOT perform IP
+    checking; it simply threads the CIDR list through the returned
+    record so the auth-router's :class:`IpEnforcer` can consume it.
     """
     from echoroo.services.api_key_verification import (
         DbApiKeyVerifier,
@@ -301,6 +768,9 @@ async def test_verifier_returns_record_regardless_of_allowed_ip_cidrs() -> None:
         "DbApiKeyVerifier.verify() should return ApiKeyRecord regardless of "
         "allowed_ip_cidrs — IP enforcement is the outer middleware's job"
     )
+    # Phase 17 A-3: the CIDR list flows through the record so the
+    # downstream IpEnforcer does not have to re-load the row.
+    assert record.allowed_ip_cidrs == ("10.0.0.0/24",)
 
 
 __all__ = [
@@ -313,6 +783,16 @@ __all__ = [
     "test_ip_violation_increments_counter",
     "test_new_api_key_allowed_ip_cidrs_defaults_to_none",
     "test_request_from_non_allowlisted_ip_returns_403",
+    "test_select_client_ip_falls_back_to_peer_when_no_xff",
+    "test_select_client_ip_ignores_xff_from_untrusted_peer",
+    "test_select_client_ip_ignores_xff_when_no_trusted_proxy_configured",
+    "test_select_client_ip_rejects_ipv4_mapped_ipv6_in_xff",
+    "test_select_client_ip_rejects_zone_id_ipv6_in_xff",
+    "test_select_client_ip_strips_bracketed_ipv6_port_from_xff",
+    "test_select_client_ip_strips_ipv4_port_from_xff",
+    "test_select_client_ip_strips_ports_in_chain",
+    "test_select_client_ip_strips_trusted_chain_right_to_left",
+    "test_select_client_ip_uses_xff_from_trusted_peer",
     "test_three_ip_violations_auto_revokes_key",
     "test_verifier_returns_record_regardless_of_allowed_ip_cidrs",
 ]

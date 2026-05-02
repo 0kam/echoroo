@@ -56,24 +56,6 @@ already exists in `apps/api/tests/security/**` and is marked
   - [ ] Background drain job that catches up rows still on v1 only.
   - [ ] All four `xfail` markers removed; tests PASS.
 
-### A-3. API key allowed_ips enforcement middleware
-- **Task**: T979d
-- **File**: `apps/api/tests/security/api_key/test_allowed_ips_violation_counter.py`
-- **xfail count**: 4
-- **Threat**: API key allowed_ips is currently advisory only — enforcement
-  middleware not wired (FR-072). An attacker that exfiltrates a key can use it
-  from any IP until manual revoke (OWASP A01 Broken Access Control, A04).
-- **Expected behavior**: middleware rejects requests whose `X-Forwarded-For` /
-  `RemoteAddr` does not match the key's `allowed_ips` CIDR list. A dedicated
-  counter (`ip_violation_count`) increments separately from the scope-violation
-  counter; 3 strikes triggers auto-revoke + audit + notification.
-- **Release condition**:
-  - [ ] `echoroo/middleware/auth.py` (or sibling) enforces `allowed_ips`
-        before `api_key_verification`.
-  - [ ] Counter persisted to `api_keys.ip_violation_count` (already on the
-        schema).
-  - [ ] All four `xfail` markers removed; tests PASS.
-
 ### A-4. API key 180-day rotation scope degrade
 - **Task**: T978
 - **File**: `apps/api/tests/security/api_key/test_rotation_180d_scope_degrade.py`
@@ -113,20 +95,6 @@ already exists in `apps/api/tests/security/**` and is marked
         return uniform 202; rate-limit middleware applies bucketed limits.
   - [ ] `xfail` markers removed; tests PASS.
 
-### A-7. Mass-assignment + open-redirect helper gaps
-- **Task**: T979b
-- **File**: `apps/api/tests/security/input_validation/test_mass_assignment_and_open_redirect.py`
-- **xfail count**: 4
-- **Threat**: A `role` / `is_superuser` / `scopes` mass-assignment slip
-  silently elevates accounts. Open-redirect on `next=` enables phishing chains.
-- **Expected behavior**: Every Pydantic request schema rejects extra fields
-  (`Extra.forbid`); `next=` / `redirect_url=` parameters validated against an
-  allowlist; both events audited.
-- **Release condition**:
-  - [ ] Helpers (`_validate_redirect_target` / `_assert_no_extra`) extracted
-        and applied across schemas.
-  - [ ] All four `xfail` markers removed; tests PASS.
-
 ### A-8. DEK rewrap + KMS isolation
 - **Task**: T979e
 - **File**: `apps/api/tests/security/crypto/test_dek_rewrap_and_kms_isolation.py`
@@ -151,20 +119,6 @@ already exists in `apps/api/tests/security/**` and is marked
 - **Release condition**:
   - [ ] `.github/workflows/ci.yml` adds a `supply-chain` job invoking
         `pip-audit --require-hashes`.
-  - [ ] `xfail` removed; test PASS.
-
-### A-10. Audio SSRF guard
-- **Task**: T979g
-- **File**: `apps/api/tests/security/ssrf/test_external_url_rejection.py`
-- **xfail count**: 1
-- **Threat**: Future audio-fetch-from-URL flows (xeno-canto, GBIF media)
-  could be exploited for SSRF (OWASP A10).
-- **Expected behavior**: Any URL-input endpoint passes through a static
-  allowlist; localhost / RFC1918 / link-local addresses rejected; DNS rebinding
-  defeated by post-resolve check.
-- **Release condition**:
-  - [ ] `core/url_allowlist.py` helper + middleware applied at every URL-input
-        endpoint.
   - [ ] `xfail` removed; test PASS.
 
 ---

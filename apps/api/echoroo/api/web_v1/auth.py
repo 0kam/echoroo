@@ -32,6 +32,7 @@ from webauthn.helpers import options_to_json_dict
 from echoroo.core.auth import RefreshTokenRecord, SqlTokenStore, issue_access_token
 from echoroo.core.database import AsyncSessionLocal, DbSession
 from echoroo.core.kms import compute_pii_hash
+from echoroo.core.redirect_validator import is_safe_redirect_url
 from echoroo.core.redis import get_redis_connection
 from echoroo.core.security import hash_password, verify_password
 from echoroo.core.settings import get_settings
@@ -165,6 +166,31 @@ def _user_agent(request: Request) -> str:
 
 def _has_control_chars(value: str) -> bool:
     return has_control_chars(value)
+
+
+def _is_safe_redirect_url(target: str | None) -> bool:
+    """Return ``True`` when ``target`` is a safe same-origin redirect.
+
+    Phase 17 A-7 (T979b) — same-origin guard for ``?next=`` / ``redirect_url=``
+    parameters across login, password reset, invitation, and OAuth callback
+    flows. Delegates to :func:`echoroo.core.redirect_validator.is_safe_redirect_url`
+    so the policy is consistent across every endpoint that consumes a
+    user-supplied redirect target.
+
+    Same-origin policy: only relative URLs starting with a single ``/`` are
+    accepted by default. Absolute URLs, protocol-relative URLs
+    (``//evil.com``), backslash-prefixed paths, and dangerous schemes
+    (``javascript:``, ``data:`` …) are rejected.
+
+    Args:
+        target: Raw redirect target (``next=...`` query parameter value).
+
+    Returns:
+        ``True`` when the target may be honoured as a 3xx ``Location`` header,
+        ``False`` when it must be rejected and the caller should either
+        ignore the parameter or fall back to a safe default.
+    """
+    return is_safe_redirect_url(target)
 
 
 def _normalize_email(raw_email: str) -> str:
@@ -1092,6 +1118,27 @@ async def login(
     request: Request,
     db: DbSession,
 ) -> LoginResponse:
+    # Phase 17 A-7 (T979b): if a ``?next=`` query parameter is present and
+    # *not* a safe same-origin target, write a platform audit row and
+    # silently drop the value. The login endpoint never honours ``next=`` —
+    # the response is a JSON ``LoginResponse`` body, never a 3xx redirect —
+    # but auditing the rejection makes phishing attempts observable in the
+    # security log so anomaly detection can flag campaigns that probe the
+    # endpoint with attacker-controlled hosts.
+    raw_next = request.query_params.get("next")
+    if raw_next and not _is_safe_redirect_url(raw_next):
+        await _write_platform_audit(
+            actor_user_id=None,
+            action="auth.open_redirect_rejected",
+            request=request,
+            detail={
+                "endpoint": "auth.login",
+                # Truncate to 512 chars so a hostile crawler can't bloat the
+                # audit log via giant ``next=`` payloads.
+                "rejected_next": raw_next[:512],
+            },
+        )
+
     email = _normalize_email(payload.email)
     repo = UserRepository(db)
     try:

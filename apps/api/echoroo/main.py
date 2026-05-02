@@ -20,6 +20,7 @@ from echoroo.core.exceptions import (
 )
 from echoroo.core.redis import close_redis_connection, get_redis_connection
 from echoroo.core.settings import get_settings
+from echoroo.middleware.api_key_ip_enforcement import DbIpEnforcer
 from echoroo.middleware.auth_router import AuthRouterConfig, AuthRouterMiddleware
 from echoroo.middleware.csrf import CsrfConfig, CsrfMiddleware
 from echoroo.middleware.logging import RequestLoggingMiddleware
@@ -176,6 +177,18 @@ def create_app() -> FastAPI:
         config=AuthRouterConfig(
             api_key_verifier=DbApiKeyVerifier(AsyncSessionLocal),
             session_verifier=JwtSessionVerifier(AsyncSessionLocal),
+            # Phase 17 A-3 (FR-077, FR-081): enforce per-key
+            # ``allowed_ip_cidrs`` against the caller's source IP and
+            # auto-revoke after the third violation. ``DbIpEnforcer``
+            # opens a fresh session per request so the audit write can
+            # upgrade to SERIALIZABLE isolation cleanly.
+            ip_enforcer=DbIpEnforcer(AsyncSessionLocal),
+            # Phase 17 A-3 Codex Major 1: trusted reverse-proxy CIDRs
+            # control which socket peers are allowed to inject XFF
+            # headers. Empty by default → XFF never trusted; set
+            # ``ECHOROO_TRUSTED_PROXY_CIDRS=`` to a CIDR list when
+            # deploying behind a reverse proxy (nginx, ALB, Cloudflare).
+            trusted_proxy_cidrs=tuple(settings.TRUSTED_PROXY_CIDRS),
             programmatic_prefix="/api/v1",
             session_cookie_name=settings.web_session_cookie_name,
             public_path_allowlist=auth_router_allowlist,
