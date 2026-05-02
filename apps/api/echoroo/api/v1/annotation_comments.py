@@ -14,8 +14,9 @@ Action wiring:
 FR-040 source determination follows the same algorithm as
 :func:`echoroo.api.v1.annotation_votes._determine_vote_source`.
 
-The router is **not** registered with the FastAPI app factory yet. That step
-lives in a follow-up Phase 3 task per the implementation plan.
+Registered with :data:`echoroo.api.v1.api_router` as part of the Phase 17
+contract drift cleanup so the path declared in
+``contracts/detections.yaml`` matches the live OpenAPI surface.
 """
 
 from __future__ import annotations
