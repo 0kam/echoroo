@@ -103,6 +103,51 @@ def _normalise_path(path: str) -> str:
     return re.sub(r"\{[^}]+\}", "{*}", _strip_api_mount_prefix(path))
 
 
+# Phase 17 follow-up — Codex 推奨パターン.
+# Some contracts (admin.yaml) describe paths *relative to* a sub-router that
+# live OpenAPI mounts under /api/v1/{sub}/... or /web-api/v1/{sub}/.... The
+# table maps contract name → list of sub-router prefix candidates that the
+# resolver tries when the bare normalised path is not found.
+#
+# Add more entries here as additional contracts surface the same mismatch
+# (Codex Round X). An empty / missing entry means "no sub-router — try the
+# bare path only".
+_SUBROUTER_PREFIXES: dict[str, tuple[str, ...]] = {
+    "admin": ("/admin",),
+}
+
+
+def _live_item_for_contract_path(
+    contract_name: str,
+    contract_path: str,
+    live_paths: dict[str, dict[str, Any]],
+) -> dict[str, Any] | None:
+    """Locate the live path-item that corresponds to ``contract_path`` from
+    contract ``contract_name``.
+
+    Strategy:
+        1. Try the bare normalised path (no sub-router prefix). This covers
+           every contract whose paths already include the top-level resource
+           segment (projects, auth, account, detections, audit).
+        2. Iterate any sub-router prefix candidates registered for this
+           contract in :data:`_SUBROUTER_PREFIXES` and try each prepended
+           form. This covers contracts (admin) that describe paths relative
+           to a sub-router mount.
+        3. Return ``None`` when no candidate matches — callers translate
+           that into a ``missing`` entry in their assertion.
+    """
+    bare = _normalise_path(contract_path)
+    direct = live_paths.get(bare)
+    if direct is not None:
+        return direct
+    for prefix in _SUBROUTER_PREFIXES.get(contract_name, ()):
+        candidate = _normalise_path(prefix + contract_path)
+        hit = live_paths.get(candidate)
+        if hit is not None:
+            return hit
+    return None
+
+
 def _security_list_to_canonical(security: list[dict[str, list[str]]]) -> frozenset[str]:
     """Convert an OpenAPI security requirement list to a canonical frozenset of scheme names."""
     canonical: set[str] = set()
@@ -263,8 +308,7 @@ def _assert_paths_present(
     """Assert all paths in *contract* appear in *live_paths* after normalisation."""
     missing: list[str] = []
     for contract_path in (contract.get("paths") or {}):
-        norm = _normalise_path(contract_path)
-        if norm not in live_paths:
+        if _live_item_for_contract_path(name, contract_path, live_paths) is None:
             missing.append(contract_path)
     assert not missing, (
         f"Contract '{name}': {len(missing)} path(s) not found in live OpenAPI:\n"
@@ -323,8 +367,7 @@ def _assert_methods_present(
     for contract_path, path_item in (contract.get("paths") or {}).items():
         if not isinstance(path_item, dict):
             continue
-        norm = _normalise_path(contract_path)
-        live_item = live_paths.get(norm, {})
+        live_item = _live_item_for_contract_path(name, contract_path, live_paths) or {}
         for method in _HTTP_METHODS:
             if method in path_item and method not in live_item:
                 missing.append(f"{method.upper()} {contract_path}")
@@ -371,8 +414,7 @@ def _assert_response_codes_present(
     for contract_path, path_item in (contract.get("paths") or {}).items():
         if not isinstance(path_item, dict):
             continue
-        norm = _normalise_path(contract_path)
-        live_item = live_paths.get(norm) or {}
+        live_item = _live_item_for_contract_path(name, contract_path, live_paths) or {}
         for method, op in path_item.items():
             if method not in _HTTP_METHODS or not isinstance(op, dict):
                 continue
@@ -407,12 +449,13 @@ def _assert_request_body_presence(
     live_paths: dict[str, dict[str, Any]],
 ) -> None:
     missing: list[str] = []
-    for _cname, contract in all_contracts.items():
+    for cname, contract in all_contracts.items():
         for contract_path, path_item in (contract.get("paths") or {}).items():
             if not isinstance(path_item, dict):
                 continue
-            norm = _normalise_path(contract_path)
-            live_item = live_paths.get(norm) or {}
+            live_item = (
+                _live_item_for_contract_path(cname, contract_path, live_paths) or {}
+            )
             for method, op in path_item.items():
                 if method not in _HTTP_METHODS or not isinstance(op, dict):
                     continue
@@ -502,3 +545,63 @@ class TestContractSecuritySchemePresence:
             f"{len(missing)} operations lack security declaration:\n"
             + "\n".join(f"  {m}" for m in missing[:20])
         )
+
+
+# ---------------------------------------------------------------------------
+# T980-7 (Phase 17 follow-up): unit tests for the contract → live path resolver
+# ---------------------------------------------------------------------------
+
+
+class TestLiveItemResolver:
+    """Pure unit tests for ``_live_item_for_contract_path``.
+
+    These tests do not depend on the live FastAPI schema — they exercise the
+    resolver against a hand-crafted ``live_paths`` dict so the prefix-table
+    behaviour is locked in regardless of router registration changes.
+    """
+
+    def test_admin_subrouter_prefix_resolves(self) -> None:
+        """admin contract paths (prefix-less) hit /admin/<path> in live schema."""
+        live_paths: dict[str, dict[str, Any]] = {
+            "/admin/projects/{*}/archive": {"post": {"responses": {"204": {}}}},
+        }
+        item = _live_item_for_contract_path(
+            "admin", "/projects/{id}/archive", live_paths
+        )
+        assert item is not None, (
+            "Expected admin resolver to find /admin/projects/{*}/archive "
+            "for contract path /projects/{id}/archive"
+        )
+        assert "post" in item
+
+    def test_non_admin_contract_uses_bare_path(self) -> None:
+        """projects contract resolves directly without sub-router prefix.
+
+        Regression guard: if a future change accidentally registers a
+        ``/projects`` sub-router prefix for the projects contract this test
+        will start matching the wrong live entry.
+        """
+        live_paths: dict[str, dict[str, Any]] = {
+            "/projects/{*}": {"get": {"responses": {"200": {}}}},
+            # A spurious /admin-mounted shadow that must NOT be picked up
+            # for contract_name="projects".
+            "/admin/projects/{*}": {"get": {"responses": {"403": {}}}},
+        }
+        item = _live_item_for_contract_path("projects", "/projects/{id}", live_paths)
+        assert item is not None
+        # Confirm we hit the bare entry, not the /admin shadow.
+        assert "200" in item["get"]["responses"], (
+            "Resolver must hit the bare /projects/{*} entry for the projects "
+            "contract, not the /admin-prefixed shadow"
+        )
+
+    def test_returns_none_when_no_match(self) -> None:
+        """Resolver returns None when neither bare nor prefixed path is present."""
+        live_paths: dict[str, dict[str, Any]] = {
+            "/projects/{*}": {"get": {}},
+        }
+        # admin contract path with no /admin entry in live_paths
+        item = _live_item_for_contract_path(
+            "admin", "/users/{userId}/reset-2fa", live_paths
+        )
+        assert item is None
