@@ -121,6 +121,50 @@ already exists in `apps/api/tests/security/**` and is marked
         `pip-audit --require-hashes`.
   - [ ] `xfail` removed; test PASS.
 
+### A-11. 2FA reset full implementation (admin / superuser support)
+- **Task**: T979h
+- **File**: `apps/api/echoroo/api/web_v1/admin.py` (route exists as 501 stub —
+  see `reset_two_factor`), new
+  `apps/api/echoroo/services/two_factor_reset_service.py`, new Celery beat
+  task in `apps/api/echoroo/tasks/security/`, and matching audit /
+  notification plumbing.
+- **Stub PR**: `020-admin-reset-2fa-route` (Phase 17 follow-up) registers
+  the path with body schema + superuser gate but returns
+  ``HTTP 501 Not Implemented`` so the OpenAPI surface satisfies
+  `test_admin_paths_exist` without shipping unfinished security logic.
+- **Threat**: 2FA-locked users currently rely on manual DB intervention
+  for recovery, breaking the FR-072 commitment to a documented support
+  workflow and creating an off-the-books DB-write path that bypasses
+  audit (OWASP A04 Insecure Design, A09 Logging & Monitoring Failures).
+- **Expected behavior**:
+  - `POST /admin/users/{userId}/reset-2fa` validates the four required
+    factors (`registered_email_match`, `current_password`,
+    `last_login_time`, `last_api_key_prefix`) against the operator's
+    typed-in evidence; partial matches are rejected with `409`.
+  - Default flow: enqueue a Celery beat task `two_factor_reset_dispatch`
+    that fires after a 24 h delay window, double-checks that the user
+    has not unlocked themselves in the meantime, and only then clears
+    `users.two_factor_*` columns / revokes outstanding sessions.
+  - 72 h cooldown state machine prevents a second reset request for the
+    same user until the prior reset settles or expires.
+  - `skip_delay=true` opens a `SuperuserApprovalRequest` with action
+    `two_factor_reset.skip_delay`, requires two co-signing superusers,
+    and on quorum dispatches the reset immediately (FR-072 / FR-111).
+  - Every state transition writes a `platform_audit_log` row and emails
+    both the affected user and the requesting superuser.
+- **Release condition**:
+  - [ ] Replace the 501 stub with the real handler delegating to
+        `two_factor_reset_service`.
+  - [ ] Celery beat task `two_factor_reset_dispatch` ships with retries
+        and DLQ wiring.
+  - [ ] State-machine columns (or dedicated table) for the 72 h
+        cooldown; covered by service-level tests.
+  - [ ] M-of-N approval integration uses the existing
+        `SuperuserApprovalRequest` engine (no new approval tables).
+  - [ ] Stub-only test in `tests/integration/api/web_v1/test_admin_reset_2fa_stub.py`
+        is replaced with a full integration suite covering 200 / 401 /
+        403 / 409 / 422 and the M-of-N approval path.
+
 ---
 
 ## B. Pre-existing Phase 1-15 `xfail`

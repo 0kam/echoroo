@@ -107,6 +107,7 @@ paths:
       security:
         - superuserSession: []
           csrfToken: []
+          stepUpToken: []
       parameters:
         - { name: userId, in: path, required: true, schema: { type: string, format: uuid } }
       requestBody:

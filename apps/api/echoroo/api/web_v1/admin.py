@@ -80,6 +80,7 @@ from echoroo.schemas.admin import (
     ArchiveRequest,
     ArchiveResponse,
     IucnForceResyncResponse,
+    ResetTwoFactorRequest,
     RestoreRequest,
     RestoreResponse,
     SuperuserActionResponse,
@@ -1775,6 +1776,108 @@ async def update_ip_allowlist(
         )
 
     return response
+
+
+# ---------------------------------------------------------------------------
+# POST /admin/users/{user_id}/reset-2fa  (Phase 17 follow-up — STUB ONLY)
+# ---------------------------------------------------------------------------
+#
+# Codex Round X advice (Phase 17 backlog A-11): the contract path
+# ``/users/{userId}/reset-2fa`` is declared in
+# ``specs/006-permissions-redesign/contracts/admin.yaml`` but the full
+# behaviour (4-factor verification + 24 h delay job + 72 h cooldown + the
+# ``skip_delay`` M-of-N approval ticket) is non-trivial and **must** ship
+# as a dedicated PR with audit / Celery / state-machine support. Until
+# then we register the path with a body schema validator and a
+# superuser-only guard so:
+#
+# * The OpenAPI surface stays in lockstep with the contract — closing the
+#   ``test_admin_paths_exist`` drift surfaced after PR #9 merged.
+# * Authentication / CSRF transport is exercised by the standard
+#   middleware chain (cookie + CSRF + IP allowlist + WebAuthn) just like
+#   every other admin endpoint, so we don't accidentally ship a softer
+#   gate when the real handler arrives.
+# * Pydantic validates the request body — a malformed payload still
+#   returns 422, which prevents a future implementer from inadvertently
+#   relaxing the schema.
+# * The handler returns ``501 Not Implemented`` so downstream callers
+#   cannot mistake the stub for a working operation. ``202`` or partial
+#   verification was rejected in review precisely because it would let
+#   an unfinished security workflow leak into production behaviour.
+#
+# Tracker: ``specs/006-permissions-redesign/PHASE17_BACKLOG.md`` item
+# A-11.
+
+
+@router.post(
+    "/users/{user_id}/reset-2fa",
+    status_code=status.HTTP_501_NOT_IMPLEMENTED,
+    summary="2FA reset for a user (admin operation, STUB)",
+    description=(
+        "**Stub route, Phase 17 follow-up — A-11.**\n\n"
+        "Schema and authentication contract are pinned per "
+        "``contracts/admin.yaml`` so the OpenAPI surface stays in sync "
+        "with the contract. The handler currently returns HTTP 501; the "
+        "full flow (4-factor verification + 24-hour delay job + 72-hour "
+        "cooldown + ``skip_delay`` M-of-N approval) is tracked in "
+        "``specs/006-permissions-redesign/PHASE17_BACKLOG.md`` item A-11."
+    ),
+    operation_id="reset2FA",
+    # Phase 17 Codex Round X Major fix: gate the destructive admin
+    # surface with the step-up token even though the handler is still
+    # a 501 stub. Without this dependency a superuser could reach the
+    # 501 path without re-authenticating, drifting from the
+    # admin.yaml contract (superuserSession + csrfToken + stepUpToken).
+    dependencies=[Depends(require_step_up_token(SCOPE_ADMIN_DESTRUCTIVE))],
+)
+async def reset_two_factor(
+    user_id: UUID,  # noqa: ARG001 — pinned for contract surface; consumed by future impl
+    payload: ResetTwoFactorRequest,  # noqa: ARG001 — validated for 422 surface
+    current_user: OptionalCurrentUser,
+    db: DbSession,
+) -> None:
+    """Stub for the FR-072 superuser-driven 2FA reset flow.
+
+    The full implementation lives behind PHASE17_BACKLOG.md A-11 and
+    requires:
+
+    * 4-factor verification (``registered_email_match`` /
+      ``current_password`` / ``last_login_time`` /
+      ``last_api_key_prefix``)
+    * 24-hour delayed dispatch via Celery beat
+    * 72-hour cooldown state machine
+    * ``skip_delay=true`` ↔ ``SuperuserApprovalRequest`` M-of-N approval
+
+    Until those land we **must not** mutate auth state, so the handler
+    short-circuits to 501 after authenticating the caller. We still run
+    the superuser gate so that:
+
+    * Anonymous callers get 401 (consistent with the rest of /admin).
+    * Authenticated non-superusers get 403 (so this stub does not become
+      a cheap probe that distinguishes "user exists" from "user is
+      privileged").
+    * Pydantic continues to enforce the request schema (422 on missing
+      fields).
+    """
+    # Authenticate as a real superuser before doing anything else, even
+    # though we will reject with 501 unconditionally. This keeps the
+    # public-facing semantics symmetric with every other admin path:
+    # unauthenticated → 401, authenticated-but-not-superuser → 403,
+    # everything-valid → 501.
+    await _require_authenticated_superuser(current_user, db)
+
+    raise HTTPException(
+        status_code=status.HTTP_501_NOT_IMPLEMENTED,
+        detail={
+            "error": "ERR_NOT_IMPLEMENTED",
+            "message": (
+                "2FA reset endpoint is not yet implemented. "
+                "Track progress in "
+                "specs/006-permissions-redesign/PHASE17_BACKLOG.md "
+                "item A-11."
+            ),
+        },
+    )
 
 
 __all__ = ["router"]
