@@ -1238,7 +1238,18 @@ async def setup_totp(
     )
 
 
-@router.post("/2fa/setup/totp/confirm", response_model=TotpSetupConfirmResponse)
+@router.post(
+    "/2fa/setup/totp/confirm",
+    response_model=TotpSetupConfirmResponse,
+    responses={
+        # Phase 17 contract drift cleanup: contracts/auth.yaml declares
+        # 204. The live endpoint returns 200 with a body containing the
+        # access token + backup codes — clients depend on the body, so
+        # the wire status_code MUST stay at 200. Only the contract
+        # declaration is widened here.
+        204: {"description": "Enrollment confirmed (declared per contract)"},
+    },
+)
 async def setup_totp_confirm(
     payload: TotpSetupConfirmRequest,
     request: Request,
@@ -1291,7 +1302,17 @@ async def setup_totp_confirm(
     )
 
 
-@router.post("/2fa/challenge", response_model=TwoFactorChallengeResponse)
+@router.post(
+    "/2fa/challenge",
+    response_model=TwoFactorChallengeResponse,
+    responses={
+        # Phase 17 contract drift cleanup: declare codes raised at runtime
+        # by TwoFactorService — invalid code (401) and rate-limit (429).
+        # Wire status_code remains 200 on success.
+        401: {"description": "Invalid 2FA code"},
+        429: {"description": "Too many invalid attempts (rate limited)"},
+    },
+)
 async def two_factor_challenge(
     payload: TwoFactorChallengeRequest,
     request: Request,
@@ -1363,6 +1384,15 @@ async def two_factor_challenge(
 @router.post(
     "/2fa/webauthn/register",
     response_model=WebAuthnRegisterBeginResponse | WebAuthnRegisterCompleteResponse,
+    responses={
+        # Phase 17 contract drift cleanup: contracts/auth.yaml declares
+        # 201 Created for the credential-completion path. The live
+        # endpoint returns 200 with a body (the registered credential
+        # metadata) — clients depend on the body, so the wire
+        # status_code stays at 200. Only the contract declaration is
+        # widened here.
+        201: {"description": "Credential registered (declared per contract)"},
+    },
 )
 async def webauthn_register(
     payload: WebAuthnRegisterRequest,
