@@ -100,16 +100,6 @@ def _create_symmetric_cmk(kms_client: Any, alias: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "No application-level CMK deletion guard exists yet. "
-        "The 30-day minimum window is a runbook policy (advisory) — "
-        "promoting it to a code-level enforcement is a future task (T977). "
-        "Remove this xfail when ``echoroo.core.kms_ops.schedule_cmk_deletion`` "
-        "or equivalent is implemented with window validation."
-    ),
-)
 def test_cmk_deletion_7_day_window_rejected_by_guard() -> None:
     """The guard MUST reject ``PendingWindowInDays=7`` (AWS minimum, below policy).
 
@@ -129,7 +119,12 @@ def test_cmk_deletion_7_day_window_rejected_by_guard() -> None:
         key_id = _create_symmetric_cmk(kms, "alias/echoroo-t977-test-7day")
 
         with pytest.raises((ValueError, Exception)) as exc_info:
-            guard(key_id=key_id, pending_window_in_days=7)
+            guard(
+                key_id=key_id,
+                pending_window_in_days=7,
+                operator="t977-test@example.com",
+                reason="T977 test — 7-day window rejection boundary",
+            )
 
         assert "30" in str(exc_info.value) or "minimum" in str(exc_info.value).lower(), (
             f"Guard should mention the 30-day minimum in its error message, "
@@ -142,13 +137,6 @@ def test_cmk_deletion_7_day_window_rejected_by_guard() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "No application-level CMK deletion guard exists yet. "
-        "Remove this xfail when the guard is implemented (T977)."
-    ),
-)
 def test_cmk_deletion_30_day_window_accepted_by_guard() -> None:
     """The guard MUST accept ``PendingWindowInDays=30`` (policy minimum).
 
@@ -163,7 +151,12 @@ def test_cmk_deletion_30_day_window_accepted_by_guard() -> None:
         key_id = _create_symmetric_cmk(kms, "alias/echoroo-t977-test-30day")
 
         # Should not raise — 30 days is exactly the policy minimum.
-        result = guard(key_id=key_id, pending_window_in_days=30)
+        result = guard(
+            key_id=key_id,
+            pending_window_in_days=30,
+            operator="t977-test@example.com",
+            reason="T977 test — 30-day window acceptance boundary",
+        )
         # Result may be None or a boto3 response dict; both are acceptable.
         assert result is None or isinstance(result, dict), (
             f"Unexpected return from guard: {result!r}"
@@ -175,13 +168,6 @@ def test_cmk_deletion_30_day_window_accepted_by_guard() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "No application-level CMK deletion guard exists yet. "
-        "Remove this xfail when the guard is implemented (T977)."
-    ),
-)
 def test_cmk_deletion_29_day_window_rejected_by_guard() -> None:
     """The guard MUST reject ``PendingWindowInDays=29`` (one below the boundary).
 
@@ -197,7 +183,12 @@ def test_cmk_deletion_29_day_window_rejected_by_guard() -> None:
         key_id = _create_symmetric_cmk(kms, "alias/echoroo-t977-test-29day")
 
         with pytest.raises((ValueError, Exception)):
-            guard(key_id=key_id, pending_window_in_days=29)
+            guard(
+                key_id=key_id,
+                pending_window_in_days=29,
+                operator="t977-test@example.com",
+                reason="T977 test — 29-day off-by-one boundary",
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -205,22 +196,16 @@ def test_cmk_deletion_29_day_window_rejected_by_guard() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "No application-level CMK deletion guard exists yet. "
-        "Remove this xfail when the guard is implemented (T977)."
-    ),
-)
 def test_cmk_deletion_above_30_day_window_accepted_by_guard() -> None:
-    """The guard MUST accept any ``PendingWindowInDays >= 30``.
+    """The guard MUST accept ``PendingWindowInDays == 30`` (the AWS maximum).
 
-    Values strictly above 30 are also valid — they give operators even more
-    time to cancel an accidental deletion. The guard must not impose an
-    artificial upper bound below the AWS maximum (30 days).
-
-    Note: AWS KMS caps ``PendingWindowInDays`` at 30; moto may cap earlier.
-    We test with 30 here to stay within the AWS-allowed range.
+    AWS KMS caps ``PendingWindowInDays`` at 30 for symmetric CMKs and the
+    Echoroo runbook also pins the value to 30 (the longest cooling window
+    the AWS API allows). The Codex Round 2 review flagged that values >30
+    are not strictly accepted — AWS returns ``ValidationException`` — so
+    this boundary check sticks to 30 day exactly. ``schedule_cmk_deletion``
+    rejects ``> 30`` eagerly with ``CMKDeletionWindowError`` (covered by
+    ``test_cmk_deletion_31_day_window_rejected_by_guard``).
     """
     guard = _get_guard_fn()
     assert guard is not None, "CMK deletion guard function not found"
@@ -229,9 +214,98 @@ def test_cmk_deletion_above_30_day_window_accepted_by_guard() -> None:
         kms = boto3.client("kms", region_name=AWS_REGION)
         key_id = _create_symmetric_cmk(kms, "alias/echoroo-t977-test-above30")
 
-        # 30 is the AWS maximum; use it to test the ">=" boundary.
-        result = guard(key_id=key_id, pending_window_in_days=30)
+        # 30 is the AWS maximum; the guard must accept it.
+        result = guard(
+            key_id=key_id,
+            pending_window_in_days=30,
+            operator="t977-test@example.com",
+            reason="T977 test — 30-day AWS maximum accepted",
+        )
         assert result is None or isinstance(result, dict)
+
+
+def test_cmk_deletion_31_day_window_rejected_by_guard() -> None:
+    """The guard MUST reject ``PendingWindowInDays > 30``.
+
+    Phase 17 Codex Round 2 Minor: AWS KMS caps ``PendingWindowInDays`` at
+    30 for symmetric CMKs. Without an upper-bound guard the helper would
+    reach the AWS API and surface a late ``ValidationException`` that
+    looks like an unrelated infrastructure failure to the runbook. The
+    guard rejects it eagerly with the same ``CMKDeletionWindowError``
+    family the lower-bound check uses, so callers and audit pipelines
+    see one consistent failure mode.
+    """
+    guard = _get_guard_fn()
+    assert guard is not None, "CMK deletion guard function not found"
+
+    with mock_aws():
+        kms = boto3.client("kms", region_name=AWS_REGION)
+        key_id = _create_symmetric_cmk(kms, "alias/echoroo-t977-test-31day")
+
+        with pytest.raises((ValueError, Exception)) as exc_info:
+            guard(
+                key_id=key_id,
+                pending_window_in_days=31,
+                operator="t977-test@example.com",
+                reason="T977 test — 31-day rejected (above AWS maximum)",
+            )
+
+        assert "30" in str(exc_info.value) or "maximum" in str(exc_info.value).lower(), (
+            f"Guard should mention the 30-day maximum in its error message, "
+            f"got: {exc_info.value}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# T977-4b (Codex Round 2 Minor): operator / reason MUST be non-empty
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "missing_field, kwargs",
+    [
+        ("operator (None)", {"operator": None, "reason": "valid"}),
+        ("operator (empty)", {"operator": "", "reason": "valid"}),
+        ("operator (whitespace)", {"operator": "   ", "reason": "valid"}),
+        ("reason (None)", {"operator": "valid@example.com", "reason": None}),
+        ("reason (empty)", {"operator": "valid@example.com", "reason": ""}),
+        ("reason (whitespace)", {"operator": "valid@example.com", "reason": "\t\n"}),
+    ],
+)
+def test_cmk_deletion_rejects_empty_operator_or_reason(
+    missing_field: str, kwargs: dict[str, str | None]
+) -> None:
+    """Phase 17 A-1 R2 Codex Minor: operator / reason MUST be non-empty.
+
+    The runbook (``docs/runbook/cmk_rotation.md``) requires both fields
+    for audit traceability — the helper must reject ``None``, empty
+    strings, and whitespace-only strings up-front with the same
+    ``CMKDeletionWindowError`` family the boundary check raises so
+    operators see one consistent failure mode.
+    """
+    guard = _get_guard_fn()
+    assert guard is not None, "CMK deletion guard function not found"
+
+    with mock_aws():
+        kms = boto3.client("kms", region_name=AWS_REGION)
+        # Use a unique alias per parametrise case so moto's in-process
+        # state is not contaminated by repeat aliases.
+        slug = (
+            missing_field.replace(" ", "-")
+            .replace("(", "")
+            .replace(")", "")
+            .lower()
+        )
+        key_id = _create_symmetric_cmk(kms, f"alias/echoroo-t977-test-{slug}")
+
+        with pytest.raises((ValueError, Exception)) as exc_info:
+            guard(key_id=key_id, pending_window_in_days=30, **kwargs)
+
+    msg = str(exc_info.value).lower()
+    assert "non-empty" in msg or "operator" in msg or "reason" in msg, (
+        f"Guard rejection for {missing_field!r} should mention the missing "
+        f"field, got: {exc_info.value}"
+    )
 
 
 # ---------------------------------------------------------------------------

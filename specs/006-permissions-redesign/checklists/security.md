@@ -140,7 +140,7 @@
 - [ ] 招待 HMAC: 90 日周期、14 日 grace、k_old/k_new 並行
 - [ ] 監査 chain_key: 年次 + 切替で genesis 記録
 - [ ] PII hash key: 不変（漏洩時 v2 dual-write 90 日手順）
-- [ ] CMK deletion window 30 日最低（Terraform lint 強制）
+- [x] CMK deletion window 30 日最低（code-level enforcement: `echoroo.core.kms_ops.schedule_cmk_deletion`, runbook: `docs/runbook/cmk_rotation.md`）
 - [ ] CMK 削除は superuser 2 名 M-of-N 承認
 
 ## ネガティブセキュリティテスト（PR-007、75+ シナリオ）
