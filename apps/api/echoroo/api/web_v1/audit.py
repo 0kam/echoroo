@@ -32,9 +32,10 @@ data without a tracking record, we surface a transient error so the
 operator can investigate. Reads are idempotent so the client retries
 trivially; the meta-audit row is written once on success.
 
-**Routing**: the router is defined here but NOT registered with the
-FastAPI app. Phase 3 (T070+) owns ``main.py`` wiring, at which point the
-``/web-api/v1`` prefix + CSRF middleware is added.
+**Routing**: registered with :data:`echoroo.api.web_v1.web_v1_router`
+under the ``/web-api/v1`` prefix as part of the Phase 17 contract
+drift cleanup, so the three audit paths declared in
+``contracts/audit.yaml`` match the live OpenAPI surface.
 """
 
 from __future__ import annotations
