@@ -82,19 +82,6 @@ already exists in `apps/api/tests/security/**` and is marked
         infra task).
   - [ ] `xfail` removed; test PASS.
 
-### A-6. Password reset / invitation enumeration rate-limit stubs
-- **Task**: T979a
-- **File**: `apps/api/tests/security/rate_limiting/test_password_reset_and_invitation_enumeration.py`
-- **xfail count**: 5
-- **Threat**: Without uniform-response + rate-limit, password reset and
-  invitation accept become user-enumeration oracles (OWASP A07).
-- **Expected behavior**: Identical 202 response regardless of email existence;
-  per-IP + per-email-hash bucketed rate limit; audit row for every attempt.
-- **Release condition**:
-  - [ ] `services/password_reset_service.py` + `services/invitation_service.py`
-        return uniform 202; rate-limit middleware applies bucketed limits.
-  - [ ] `xfail` markers removed; tests PASS.
-
 ### A-8. DEK rewrap + KMS isolation
 - **Task**: T979e
 - **File**: `apps/api/tests/security/crypto/test_dek_rewrap_and_kms_isolation.py`

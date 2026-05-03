@@ -55,15 +55,6 @@ HMAC_SECRET = "t979a-enumeration-test-secret-32!!"
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    strict=False,
-    reason=(
-        "echoroo.services.auth.AuthService.request_password_reset is a "
-        "Phase-4 stub (raises HTTPException 501). The service-layer "
-        "anti-enumeration contract cannot be verified until the stub is "
-        "replaced with the real implementation (T979a / T150)."
-    ),
-)
 async def test_password_reset_returns_success_for_existing_user() -> None:
     """``request_password_reset`` completes without error for an existing user.
 
@@ -91,15 +82,6 @@ async def test_password_reset_returns_success_for_existing_user() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    strict=False,
-    reason=(
-        "echoroo.services.auth.AuthService.request_password_reset is a "
-        "Phase-4 stub (raises HTTPException 501). The service-layer "
-        "anti-enumeration contract cannot be verified until the stub is "
-        "replaced with the real implementation (T979a / T150)."
-    ),
-)
 async def test_password_reset_returns_success_for_nonexistent_user() -> None:
     """``request_password_reset`` must succeed even when user is NOT found.
 
@@ -128,15 +110,6 @@ async def test_password_reset_returns_success_for_nonexistent_user() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    strict=False,
-    reason=(
-        "When run after other HTTP tests that write audit logs (_write_platform_audit), "
-        "the AsyncSessionLocal DB connection leaks across function-scoped event loops "
-        "causing 'Future attached to a different loop' on this request. "
-        "Runs correctly in isolation. Known test infrastructure limitation (T979a)."
-    ),
-)
 async def test_password_reset_endpoint_returns_204_for_existing_email(
     client: Any,
 ) -> None:
@@ -149,6 +122,16 @@ async def test_password_reset_endpoint_returns_204_for_existing_email(
     endpoint, the in-memory rate limiter may return 429 instead of 204.
     Both are acceptable outcomes for this anti-enumeration test.
     """
+    # Phase 17 A-6: dispose the production AsyncSessionLocal engine pool
+    # before sending the request. Earlier security-suite tests that mutate
+    # the platform_audit_log keep an asyncpg connection alive on a now-
+    # closed function-scoped event loop; without disposal, the request
+    # surfaces ``Future attached to a different loop``. Disposing the
+    # engine forces a fresh pool on the active loop.
+    from echoroo.core.database import engine as _prod_engine
+
+    await _prod_engine.dispose()
+
     response = await client.post(
         "/web-api/v1/auth/password-reset/request",
         json={"email": "existing-t979a-unique1@example.com"},
@@ -164,18 +147,6 @@ async def test_password_reset_endpoint_returns_204_for_existing_email(
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    strict=False,
-    reason=(
-        "This test makes a second HTTP request after test_password_reset_endpoint_"
-        "returns_204_for_existing_email in the same pytest session. The first "
-        "request triggers _write_platform_audit which creates a new AsyncSessionLocal "
-        "connection. When the event loop closes between tests (asyncio_default_fixture_"
-        "loop_scope='function'), the second request hits a 'Future attached to a "
-        "different loop' error in Starlette/asyncpg middleware. This is a known "
-        "test infrastructure limitation — runs correctly in isolation. (T979a)"
-    ),
-)
 async def test_password_reset_endpoint_returns_204_for_nonexistent_email(
     client: Any,
 ) -> None:
@@ -184,6 +155,19 @@ async def test_password_reset_endpoint_returns_204_for_nonexistent_email(
     The endpoint MUST return the same 204 status code for non-existent emails
     as for existing ones — leaking a 404 would enable account enumeration.
     """
+    # Phase 17 A-6: dispose the production AsyncSessionLocal engine pool
+    # before sending the request. The previous test (existing-email path)
+    # writes a ``platform_audit_log`` row through ``_write_platform_audit``
+    # which keeps the asyncpg connection alive on the function-scoped
+    # event loop. When pytest-asyncio swaps the event loop between
+    # function-scoped tests, the leftover connection becomes attached to
+    # a closed loop, surfacing as ``Future attached to a different loop``
+    # on the second request. Disposing the engine forces a fresh pool on
+    # the new loop and removes the cross-test bleed.
+    from echoroo.core.database import engine as _prod_engine
+
+    await _prod_engine.dispose()
+
     response = await client.post(
         "/web-api/v1/auth/password-reset/request",
         json={"email": "definitely-does-not-exist-xyzabc123@nowhere.invalid"},
@@ -199,17 +183,6 @@ async def test_password_reset_endpoint_returns_204_for_nonexistent_email(
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    strict=False,
-    reason=(
-        "This test makes two HTTP requests in the same event-loop scope. "
-        "The first request's _write_platform_audit call creates an AsyncSessionLocal "
-        "connection; when the Starlette middleware tries to use it for the second "
-        "request, the asyncio event loop has been replaced between function-scoped "
-        "fixtures, causing 'Future attached to a different loop' in asyncpg. "
-        "The anti-enumeration property is verified individually. (T979a)"
-    ),
-)
 async def test_password_reset_both_emails_same_status_code(
     client: Any,
 ) -> None:
@@ -219,6 +192,13 @@ async def test_password_reset_both_emails_same_status_code(
     an attacker sending both requests in sequence cannot distinguish the
     responses by status code.
     """
+    # Phase 17 A-6: same engine.dispose() guard as the previous test —
+    # required to bypass the AsyncSessionLocal cross-loop bleed when this
+    # test runs alongside the other HTTP test cases in the same session.
+    from echoroo.core.database import engine as _prod_engine
+
+    await _prod_engine.dispose()
+
     existing_response = await client.post(
         "/web-api/v1/auth/password-reset/request",
         json={"email": "existing-t979a-unique2@example.com"},
