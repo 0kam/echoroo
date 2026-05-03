@@ -112,6 +112,10 @@ def _request_id(request: Request) -> str:
         "different tokens under the same key return 409, and any cache "
         "fault surfaces as 503."
     ),
+    responses={
+        403: {"description": "Caller email does not match invitation hash (FR-054)"},
+        410: {"description": "Invitation expired or revoked"},
+    },
 )
 async def accept_project_invitation(
     project_id: UUID,
@@ -266,6 +270,10 @@ async def accept_project_invitation(
         "mitigation. Owner / Admin revocation lives on a separate "
         "endpoint (future FR)."
     ),
+    responses={
+        404: {"description": "Invitation not found / cross-account (FR-055 enumeration mitigation)"},
+        410: {"description": "Invitation already accepted / expired / revoked"},
+    },
 )
 async def decline_project_invitation(
     project_id: UUID,

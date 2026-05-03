@@ -172,6 +172,9 @@ async def create_project(
     response_model=ProjectResponse,
     summary="Get project",
     description="Get project details (requires access)",
+    responses={
+        404: {"description": "Project not found"},
+    },
 )
 async def get_project(
     project_id: UUID,
@@ -216,6 +219,9 @@ async def get_project(
     response_model=ProjectResponse,
     summary="Update project",
     description="Update project settings (admin only)",
+    responses={
+        403: {"description": "Permission denied"},
+    },
 )
 async def update_project(
     project_id: UUID,
@@ -648,6 +654,13 @@ async def list_project_members(
     status_code=status.HTTP_201_CREATED,
     summary="Add project member",
     description="Invite user to project (admin only)",
+    responses={
+        # Phase 17 contract drift — declare 202 alongside the 201 wire status
+        # for parity with ``contracts/projects.yaml`` ``inviteMember`` (FR-055
+        # async invite-mail variant). The runtime wire status remains 201
+        # (synchronous member create) — clients are not affected.
+        202: {"description": "Invitation email queued (FR-055 async path)"},
+    },
 )
 async def add_project_member(
     project_id: UUID,
