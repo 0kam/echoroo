@@ -25,22 +25,6 @@ These were filed in Phase 16 Batch 6f as TDD-red specifications. The test
 already exists in `apps/api/tests/security/**` and is marked
 `xfail(strict=True)` with a forward-reference docstring.
 
-### A-1. CMK deletion window guard
-- **Task**: T977
-- **File**: `apps/api/tests/security/key_rotation/test_cmk_deletion_window_guard.py`
-- **xfail count**: 4
-- **Threat**: Operator deleting a customer master key (CMK) inside the 30-day
-  cooling window destroys data permanently (OWASP A02 Cryptographic Failures,
-  A08 Software/Data Integrity).
-- **Expected behavior**: `echoroo.core.kms_ops.schedule_cmk_deletion()` rejects
-  any deletion request with a window < 30 days, emits a runbook-level audit
-  event, and records the operator + reason.
-- **Release condition**:
-  - [ ] `echoroo/core/kms_ops.py` implements `schedule_cmk_deletion()` with a
-        `min_window_days=30` enforcement path.
-  - [ ] All four `xfail` markers in the test file removed; tests PASS.
-  - [ ] Runbook §"CMK rotation" updated with the 30-day pre-flight check.
-
 ### A-2. PII hash key dual-write rotation
 - **Task**: T975
 - **File**: `apps/api/tests/security/key_rotation/test_pii_hash_key_rotation_dual_write.py`

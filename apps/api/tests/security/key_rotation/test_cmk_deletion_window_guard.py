@@ -100,16 +100,6 @@ def _create_symmetric_cmk(kms_client: Any, alias: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "No application-level CMK deletion guard exists yet. "
-        "The 30-day minimum window is a runbook policy (advisory) — "
-        "promoting it to a code-level enforcement is a future task (T977). "
-        "Remove this xfail when ``echoroo.core.kms_ops.schedule_cmk_deletion`` "
-        "or equivalent is implemented with window validation."
-    ),
-)
 def test_cmk_deletion_7_day_window_rejected_by_guard() -> None:
     """The guard MUST reject ``PendingWindowInDays=7`` (AWS minimum, below policy).
 
@@ -142,13 +132,6 @@ def test_cmk_deletion_7_day_window_rejected_by_guard() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "No application-level CMK deletion guard exists yet. "
-        "Remove this xfail when the guard is implemented (T977)."
-    ),
-)
 def test_cmk_deletion_30_day_window_accepted_by_guard() -> None:
     """The guard MUST accept ``PendingWindowInDays=30`` (policy minimum).
 
@@ -175,13 +158,6 @@ def test_cmk_deletion_30_day_window_accepted_by_guard() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "No application-level CMK deletion guard exists yet. "
-        "Remove this xfail when the guard is implemented (T977)."
-    ),
-)
 def test_cmk_deletion_29_day_window_rejected_by_guard() -> None:
     """The guard MUST reject ``PendingWindowInDays=29`` (one below the boundary).
 
@@ -205,13 +181,6 @@ def test_cmk_deletion_29_day_window_rejected_by_guard() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "No application-level CMK deletion guard exists yet. "
-        "Remove this xfail when the guard is implemented (T977)."
-    ),
-)
 def test_cmk_deletion_above_30_day_window_accepted_by_guard() -> None:
     """The guard MUST accept any ``PendingWindowInDays >= 30``.
 
