@@ -18,8 +18,6 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-import boto3
-
 logger = logging.getLogger(__name__)
 
 MIN_DELETION_WINDOW_DAYS = 30
@@ -44,7 +42,6 @@ def schedule_cmk_deletion(
     operator: str | None = None,
     reason: str | None = None,
     kms_client: Any | None = None,
-    region_name: str = "us-east-1",
 ) -> dict[str, Any]:
     """Schedule a CMK for deletion after enforcing the runbook minimum window.
 
@@ -56,8 +53,11 @@ def schedule_cmk_deletion(
             in the audit event.
         reason: Free-form justification (ticket / change-request URL),
             recorded in the audit event.
-        kms_client: Optional pre-built boto3 KMS client (for tests).
-        region_name: AWS region used when ``kms_client`` is not supplied.
+        kms_client: Optional pre-built boto3 KMS client (for tests). The
+            production path delegates to :func:`echoroo.core.kms._client`
+            so the ``lint_kms_isolation`` strict gate (which enforces
+            that ``boto3.client('kms', ...)`` is only invoked from
+            ``core/kms.py``) stays green.
 
     Raises:
         CMKDeletionWindowError: ``pending_window_in_days < 30``. The
@@ -87,7 +87,13 @@ def schedule_cmk_deletion(
             f"day runbook minimum (Echoroo §CMK rotation policy)."
         )
     if kms_client is None:
-        kms_client = boto3.client("kms", region_name=region_name)
+        # KMS isolation strict gate (T100f) requires that the boto3 KMS
+        # client is constructed only inside ``core/kms.py``. We reuse
+        # the singleton accessor there so this helper can be linted
+        # cleanly without a second allowlist entry.
+        from echoroo.core.kms import _client as _core_kms_client
+
+        kms_client = _core_kms_client()
     response: dict[str, Any] = kms_client.schedule_key_deletion(
         KeyId=key_id,
         PendingWindowInDays=pending_window_in_days,
