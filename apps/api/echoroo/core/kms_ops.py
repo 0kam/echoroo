@@ -24,6 +24,12 @@ MIN_DELETION_WINDOW_DAYS = 30
 """Minimum cooling window the runbook accepts. Below this the helper
 raises ``CMKDeletionWindowError`` before reaching the AWS API."""
 
+MAX_DELETION_WINDOW_DAYS = 30
+"""Maximum cooling window the AWS KMS API accepts for symmetric CMKs.
+Values above this would be rejected by AWS with ``ValidationException``;
+the guard rejects them eagerly with a clearer error so operators are
+not surprised by a late AWS-side failure that pollutes audit logs."""
+
 
 class CMKDeletionWindowError(ValueError):
     """Raised when a CMK deletion request specifies a window below the
@@ -67,6 +73,23 @@ def schedule_cmk_deletion(
     Returns:
         The AWS ``schedule_key_deletion`` response dict.
     """
+    # Codex Round 2 Minor: runbook requires a non-empty operator and
+    # reason for every CMK deletion request so the audit row is
+    # actionable. Reject up-front with the same exception hierarchy
+    # the boundary check uses, so callers that retry on
+    # CMKDeletionWindowError surface this misuse uniformly.
+    if not operator or not str(operator).strip():
+        raise CMKDeletionWindowError(
+            "CMK deletion rejected: operator must be a non-empty SSO "
+            "identity (Echoroo §CMK rotation policy requires audit "
+            "traceability of every key deletion)."
+        )
+    if not reason or not str(reason).strip():
+        raise CMKDeletionWindowError(
+            "CMK deletion rejected: reason must be a non-empty "
+            "ticket / change-request reference (Echoroo §CMK rotation "
+            "policy requires audit traceability of every key deletion)."
+        )
     if pending_window_in_days < MIN_DELETION_WINDOW_DAYS:
         # Audit / runbook-level event so the rejected attempt is visible
         # to the security team. Use a structured logger so the standard
@@ -85,6 +108,27 @@ def schedule_cmk_deletion(
             f"CMK deletion rejected: pending_window_in_days="
             f"{pending_window_in_days} is below the {MIN_DELETION_WINDOW_DAYS}-"
             f"day runbook minimum (Echoroo §CMK rotation policy)."
+        )
+    # Codex Round 2 Minor: AWS KMS rejects PendingWindowInDays > 30
+    # with ValidationException. Reject eagerly so the audit log shows
+    # the operator's mistake clearly instead of an AWS-side failure
+    # that the runbook would have to attribute back to this helper.
+    if pending_window_in_days > MAX_DELETION_WINDOW_DAYS:
+        logger.warning(
+            "cmk_deletion.rejected",
+            extra={
+                "key_id": key_id,
+                "pending_window_in_days": pending_window_in_days,
+                "maximum": MAX_DELETION_WINDOW_DAYS,
+                "operator": operator,
+                "reason": reason,
+            },
+        )
+        raise CMKDeletionWindowError(
+            f"CMK deletion rejected: pending_window_in_days="
+            f"{pending_window_in_days} exceeds the AWS KMS maximum of "
+            f"{MAX_DELETION_WINDOW_DAYS} days; the API would reject this "
+            f"value with ValidationException."
         )
     if kms_client is None:
         # KMS isolation strict gate (T100f) requires that the boto3 KMS

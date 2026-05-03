@@ -37,10 +37,17 @@ Before scheduling any CMK deletion:
    `kms_client.schedule_key_deletion(...)` call). The helper enforces
    the runbook minimum and emits a structured audit log entry.
 2. The helper raises `CMKDeletionWindowError` (a subclass of
-   `ValueError`) if `pending_window_in_days < 30`. The AWS API is NOT
-   called in that case — no state is mutated.
-3. Provide `operator=` (your SSO identity) and `reason=` (ticket or
-   change-request URL) for audit traceability.
+   `ValueError`) if `pending_window_in_days` is outside the
+   AWS-allowed AND runbook-allowed range. The runbook + AWS pin the
+   value at exactly **30 days** (AWS rejects > 30 with
+   `ValidationException`; the runbook rejects < 30 to preserve the
+   recovery window). The AWS API is NOT called in either rejection
+   case — no state is mutated.
+3. Provide `operator=` (your SSO identity, **MUST be non-empty**) and
+   `reason=` (ticket or change-request URL, **MUST be non-empty**) so
+   every deletion attempt leaves an actionable audit trail.
+   `CMKDeletionWindowError` is raised eagerly if either argument is
+   missing or whitespace-only.
 4. Confirm M-of-N approval (2 superusers) before invoking the helper —
    this is a procedural gate above the code-level guard.
 5. After the AWS API call returns, monitor CloudTrail for the
