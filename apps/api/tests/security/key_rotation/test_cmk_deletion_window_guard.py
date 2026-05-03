@@ -257,6 +257,58 @@ def test_cmk_deletion_31_day_window_rejected_by_guard() -> None:
 
 
 # ---------------------------------------------------------------------------
+# T977-4b (Codex Round 2 Minor): operator / reason MUST be non-empty
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "missing_field, kwargs",
+    [
+        ("operator (None)", {"operator": None, "reason": "valid"}),
+        ("operator (empty)", {"operator": "", "reason": "valid"}),
+        ("operator (whitespace)", {"operator": "   ", "reason": "valid"}),
+        ("reason (None)", {"operator": "valid@example.com", "reason": None}),
+        ("reason (empty)", {"operator": "valid@example.com", "reason": ""}),
+        ("reason (whitespace)", {"operator": "valid@example.com", "reason": "\t\n"}),
+    ],
+)
+def test_cmk_deletion_rejects_empty_operator_or_reason(
+    missing_field: str, kwargs: dict[str, str | None]
+) -> None:
+    """Phase 17 A-1 R2 Codex Minor: operator / reason MUST be non-empty.
+
+    The runbook (``docs/runbook/cmk_rotation.md``) requires both fields
+    for audit traceability — the helper must reject ``None``, empty
+    strings, and whitespace-only strings up-front with the same
+    ``CMKDeletionWindowError`` family the boundary check raises so
+    operators see one consistent failure mode.
+    """
+    guard = _get_guard_fn()
+    assert guard is not None, "CMK deletion guard function not found"
+
+    with mock_aws():
+        kms = boto3.client("kms", region_name=AWS_REGION)
+        # Use a unique alias per parametrise case so moto's in-process
+        # state is not contaminated by repeat aliases.
+        slug = (
+            missing_field.replace(" ", "-")
+            .replace("(", "")
+            .replace(")", "")
+            .lower()
+        )
+        key_id = _create_symmetric_cmk(kms, f"alias/echoroo-t977-test-{slug}")
+
+        with pytest.raises((ValueError, Exception)) as exc_info:
+            guard(key_id=key_id, pending_window_in_days=30, **kwargs)
+
+    msg = str(exc_info.value).lower()
+    assert "non-empty" in msg or "operator" in msg or "reason" in msg, (
+        f"Guard rejection for {missing_field!r} should mention the missing "
+        f"field, got: {exc_info.value}"
+    )
+
+
+# ---------------------------------------------------------------------------
 # T977-5: moto baseline — AWS allows 7..30, documents the gap between
 #          AWS policy and Echoroo runbook policy
 # ---------------------------------------------------------------------------
