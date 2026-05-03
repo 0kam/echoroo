@@ -69,6 +69,16 @@ async def register(
     response_model=TokenResponse,
     summary="User login",
     description="Authenticate user and return access token (refresh token in HttpOnly cookie)",
+    responses={
+        # Phase 17 contract drift cleanup: declarations only — the legacy
+        # v1 ``AuthService.login()`` is a Phase 4 stub that always raises
+        # HTTP 501, so neither 401 (Invalid credentials) nor 423 (Account
+        # locked) is currently reachable on this surface. They are pinned
+        # here to keep contracts/auth.yaml in sync with the live OpenAPI
+        # so contract clients see the planned post-Phase-4 shape.
+        401: {"description": "Invalid credentials"},
+        423: {"description": "Account locked (too many failed attempts)"},
+    },
 )
 async def login(
     request: LoginRequest,
@@ -119,6 +129,14 @@ async def login(
     response_model=LogoutResponse,
     summary="User logout",
     description="Invalidate current session and clear refresh token cookie",
+    responses={
+        # Phase 17 contract drift cleanup: contracts/auth.yaml declares
+        # 204 No Content for logout. The legacy /api/v1 surface still
+        # returns 200 with a LogoutResponse body for backward compat;
+        # only the contract declaration is widened here. Wire behaviour
+        # is unchanged.
+        204: {"description": "Logout successful (no content)"},
+    },
 )
 async def logout(
     response: Response,
@@ -158,6 +176,11 @@ async def logout(
     response_model=TokenResponse,
     summary="Refresh access token",
     description="Get new access token using refresh token from cookie",
+    responses={
+        # Phase 17 contract drift cleanup: 401 is raised at runtime when
+        # the refresh cookie is missing/invalid; declaration was absent.
+        401: {"description": "Invalid or expired refresh token"},
+    },
 )
 async def refresh(
     response: Response,
@@ -208,6 +231,13 @@ async def refresh(
     status_code=status.HTTP_200_OK,
     summary="Request password reset",
     description="Send password reset email (always returns success for security)",
+    responses={
+        # Phase 17 contract drift cleanup: contracts/auth.yaml declares
+        # 204 No Content. The legacy /api/v1 surface still returns 200
+        # with a JSON body for backward compat; only the contract
+        # declaration is widened. Wire behaviour is unchanged.
+        204: {"description": "Reset request accepted (no content)"},
+    },
 )
 async def request_password_reset(
     request: PasswordResetRequest,
@@ -237,6 +267,13 @@ async def request_password_reset(
     status_code=status.HTTP_200_OK,
     summary="Confirm password reset",
     description="Reset password using token from email",
+    responses={
+        # Phase 17 contract drift cleanup: contracts/auth.yaml declares
+        # 204 No Content. The legacy /api/v1 surface still returns 200
+        # with a JSON body for backward compat; only the contract
+        # declaration is widened. Wire behaviour is unchanged.
+        204: {"description": "Reset confirmed (no content)"},
+    },
 )
 async def confirm_password_reset(
     request: PasswordResetConfirm,
