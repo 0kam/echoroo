@@ -135,6 +135,10 @@ class TransferOwnershipResponse(BaseModel):
         "same key + target return ``replayed=true``, replays with a "
         "different target return 409 ``ERR_CONFLICT``."
     ),
+    responses={
+        400: {"description": "Invalid transfer target (ERR_INVALID_TRANSFER_TARGET)"},
+        409: {"description": "Idempotency-key replay with mismatched target (ERR_CONFLICT)"},
+    },
 )
 async def transfer_project_ownership(
     project_id: UUID,
