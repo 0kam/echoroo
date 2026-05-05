@@ -153,18 +153,6 @@ def test_pii_hash_single_key_deterministic(
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "FR-091b dual-write not implemented. "
-        "compute_pii_hash only accepts a single key alias (AWS_KMS_CMK_PII_HASH_ALIAS). "
-        "There is no compute_pii_hash_dual() or pii_hash_version concept in the "
-        "current kms module or audit service. "
-        "Implement dual-write support: accept optional v2 alias, return both hashes, "
-        "and store in actor_user_id_hash (v1) + actor_user_id_hash_v2 (new column) "
-        "or a pii_hash_version tagged tuple. Track as follow-up task."
-    ),
-)
 def test_dual_write_rotation_start_v1_hash_matches_existing(
     kms_env_pii_rotation: dict[str, str],
     monkeypatch: pytest.MonkeyPatch,
@@ -200,14 +188,6 @@ def test_dual_write_rotation_start_v1_hash_matches_existing(
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "FR-091b dual-write not implemented. "
-        "compute_pii_hash_dual() does not exist. "
-        "Implement and track as follow-up task."
-    ),
-)
 def test_dual_write_rotation_start_v2_hash_differs_from_v1(
     kms_env_pii_rotation: dict[str, str],
     monkeypatch: pytest.MonkeyPatch,
@@ -237,19 +217,6 @@ def test_dual_write_rotation_start_v2_hash_differs_from_v1(
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "FR-091b dual-write not implemented. "
-        "v2-only mode (post-90-day backfill) does not exist. "
-        "The pii_hash_version column does not exist on the audit log tables, "
-        "and there is no mechanism to distinguish single-key v1 vs v2-only "
-        "output. "
-        "Implement an is_pii_rotation_complete() flag or KMS alias lifecycle "
-        "check that switches to v2-only once AWS_KMS_CMK_PII_HASH_ALIAS is "
-        "unset / points at v2. Track as follow-up task."
-    ),
-)
 def test_post_backfill_v2_only_mode(
     kms_env_pii_rotation: dict[str, str],
     monkeypatch: pytest.MonkeyPatch,
@@ -269,14 +236,19 @@ def test_post_backfill_v2_only_mode(
     """
     from echoroo.core import kms
 
-    # Simulate post-backfill: v1 alias retired, v2 is now the primary.
+    # Simulate post-backfill: operator has retired the v1 alias by
+    # re-pointing AWS_KMS_CMK_PII_HASH_ALIAS at the v2 CMK and
+    # unsetting AWS_KMS_CMK_PII_HASH_ALIAS_V2. The
+    # ``ECHOROO_PII_HASH_ROTATION_COMPLETE`` flag is the explicit
+    # operator signal that "we are now generation 2"; without it the
+    # module cannot distinguish post-rotation from a fresh single-key
+    # deployment that happens to use a different alias name.
     monkeypatch.setenv("AWS_KMS_CMK_PII_HASH_ALIAS", PII_HASH_V2_ALIAS)
     monkeypatch.delenv("AWS_KMS_CMK_PII_HASH_ALIAS_V2", raising=False)
+    monkeypatch.setenv("ECHOROO_PII_HASH_ROTATION_COMPLETE", "true")
     importlib.reload(kms)
 
-    # In v2-only mode, the kms module must expose a function to query
-    # the active pii hash version. This function does not yet exist.
-    active_version = kms.get_pii_hash_version()  # type: ignore[attr-defined]  # not yet impl
+    active_version = kms.get_pii_hash_version()
     assert active_version == 2, (
         "After retiring v1 alias, pii hash version must be 2 "
         "(v2-only mode active)"
@@ -288,15 +260,6 @@ def test_post_backfill_v2_only_mode(
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "FR-091b lookup helper not implemented. "
-        "There is no verify_pii_hash() or match_pii_hash(value, stored_hash) "
-        "function that tries v1 first then v2. "
-        "Implement and track as follow-up task."
-    ),
-)
 def test_pre_rotation_row_searchable_via_v1_during_dual_write(
     kms_env_pii_rotation: dict[str, str],
     monkeypatch: pytest.MonkeyPatch,
@@ -323,4 +286,136 @@ def test_pre_rotation_row_searchable_via_v1_during_dual_write(
     match = kms.verify_pii_hash(value, stored_v1_hash)  # type: ignore[attr-defined]
     assert match is True, (
         "Pre-rotation v1 hash must remain searchable during dual-write window"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Round 2 regression tests (Phase 17 backlog A-2)
+# ---------------------------------------------------------------------------
+
+
+def test_compute_dual_consistent_with_get_version(
+    kms_env_pii_rotation: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Round 2 R1-C2: ``compute_pii_hash_dual`` agrees with the version flag.
+
+    The single source of truth for "are we in rotation?" is
+    :func:`get_pii_hash_version`. Whenever it reports 2, the dual helper
+    MUST emit a ``v2`` component — even in the post-rotation state where
+    the v2 alias is unset and the v1 alias has been re-pointed at the
+    rotated CMK. Otherwise writers would stamp ``pii_hash_version = 2``
+    while leaving the ``*_v2`` columns NULL, and bulk lookups using the
+    designed ``WHERE *_v2 = ? OR legacy = ?`` predicate would silently
+    miss the post-rotation row family.
+    """
+    from echoroo.core import kms
+
+    # Pre-rotation: version 1, no v2 component.
+    pre = kms.compute_pii_hash_dual("subject@example.com")
+    assert kms.get_pii_hash_version() == 1
+    assert "v2" not in pre
+
+    # Rotation in progress (v2 alias set).
+    monkeypatch.setenv("AWS_KMS_CMK_PII_HASH_ALIAS_V2", PII_HASH_V2_ALIAS)
+    importlib.reload(kms)
+    mid = kms.compute_pii_hash_dual("subject@example.com")
+    assert kms.get_pii_hash_version() == 2
+    assert "v2" in mid
+    assert mid["v1"] != mid["v2"]
+
+    # Post-rotation: v2 alias unset, v1 alias re-pointed, COMPLETE flag set.
+    monkeypatch.setenv("AWS_KMS_CMK_PII_HASH_ALIAS", PII_HASH_V2_ALIAS)
+    monkeypatch.delenv("AWS_KMS_CMK_PII_HASH_ALIAS_V2", raising=False)
+    monkeypatch.setenv("ECHOROO_PII_HASH_ROTATION_COMPLETE", "true")
+    importlib.reload(kms)
+    post = kms.compute_pii_hash_dual("subject@example.com")
+    assert kms.get_pii_hash_version() == 2
+    assert "v2" in post, (
+        "post-rotation must still expose a v2 component so writers and "
+        "the version metadata column never disagree"
+    )
+    # In the post-rotation collapsed-key mode v1 and v2 are byte-identical
+    # (both computed under the now-canonical alias).
+    assert post["v1"] == post["v2"]
+
+
+def test_invitation_v2_only_when_rotation_active(
+    kms_env_pii_rotation: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Round 2 R1-C1: single-key invitations leave ``email_hash_v2`` NULL.
+
+    The daily backfill worker selects on ``email_hash_v2 IS NULL``. If
+    the writer stuffed the v1 hash into the v2 column when rotation was
+    inactive, the row would never be picked up once the v2 alias was
+    actually flipped on, and the rotation would never complete. This
+    test exercises ``hash_email_dual`` to confirm the writer's branch
+    behaviour.
+    """
+    # NOTE: ``invitation_service`` is intentionally NOT reloaded — doing
+    # so creates a fresh ``InvitationInfraUnavailableError`` class object
+    # which would break any sibling test that captured the original
+    # symbol via ``from ... import ...`` (test pollution observed in
+    # Round 2 development). ``hash_email_dual`` defers its KMS import
+    # to the function body so a kms reload alone is sufficient to pick
+    # up the new env var.
+    from echoroo.core import kms
+    from echoroo.services import invitation_service
+
+    importlib.reload(kms)
+
+    # Pre-rotation — single key, no v2 component.
+    pre = invitation_service.hash_email_dual("alice@example.com")
+    assert "v2" not in pre, (
+        "pre-rotation hash_email_dual must NOT emit a v2 component; "
+        "the writer relies on its absence to leave email_hash_v2 NULL "
+        "so the daily backfill task can find the row later"
+    )
+
+    # Activate rotation and re-confirm the writer's contract.
+    monkeypatch.setenv("AWS_KMS_CMK_PII_HASH_ALIAS_V2", PII_HASH_V2_ALIAS)
+    importlib.reload(kms)
+    mid = invitation_service.hash_email_dual("alice@example.com")
+    assert "v2" in mid, "rotation-active hash_email_dual must emit v2"
+    assert mid["v1"] != mid["v2"]
+
+
+def test_audit_lookup_or_clause_filter_is_used() -> None:
+    """Round 2 R1-I1: audit page helper SQL contains the v1 OR v2 predicate.
+
+    The runtime SQL is constructed by :func:`_project_audit_page` and
+    :func:`_platform_audit_page` from filter fragments that are joined
+    with `` AND ``. Asserting on a normalised view of the helper source
+    protects against a regression where the OR clause is accidentally
+    collapsed back to a single-column equality (which would silently
+    exclude post-rotation rows from any actor-filtered query).
+    """
+    import inspect
+    import re
+
+    from echoroo.api.web_v1 import audit as audit_module
+
+    def _normalise(text: str) -> str:
+        # Collapse adjacent Python string-literal joints so we can match
+        # the logical SQL fragment regardless of how the multi-line
+        # literal was reformatted by ruff / black. ``"foo " "bar"`` in
+        # the source reads as ``foo " "bar`` after whitespace collapse;
+        # stripping the inter-literal ``" "`` recovers ``foo bar``.
+        text = re.sub(r"\s+", " ", text)
+        text = re.sub(r'"\s*"', "", text)
+        return text
+
+    proj_src = _normalise(inspect.getsource(audit_module._project_audit_page))
+    plat_src = _normalise(inspect.getsource(audit_module._platform_audit_page))
+
+    or_clause = (
+        "(actor_user_id_hash = :actor_hash "
+        "OR actor_user_id_hash_v2 = :actor_hash)"
+    )
+    assert or_clause in proj_src, (
+        "_project_audit_page must filter actor with the v1 OR v2 predicate"
+    )
+    assert or_clause in plat_src, (
+        "_platform_audit_page must filter actor with the v1 OR v2 predicate"
     )

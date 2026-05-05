@@ -43,7 +43,11 @@ Environment variables (canonical names — see .env.example §"006"):
     AWS_ENDPOINT_URL_KMS                    AWS SDK-standard alias for the above.
     AWS_KMS_REGION                          AWS region for all CMKs.
     AWS_KMS_CMK_2FA_ALIAS                   TOTP DEK wrapping CMK alias.
-    AWS_KMS_CMK_PII_HASH_ALIAS              PII hashing CMK alias.
+    AWS_KMS_CMK_PII_HASH_ALIAS              PII hashing CMK alias (v1).
+    AWS_KMS_CMK_PII_HASH_ALIAS_V2           Optional v2 PII hashing CMK
+                                             alias used during a dual-write
+                                             rotation window (FR-091b).
+                                             Unset → single-key mode.
     AWS_KMS_CMK_AUDIT_CHAIN_ALIAS           Audit chain-hash CMK alias.
     AWS_KMS_CMK_INVITATION_HMAC_ALIAS_NEW   Current invitation signing CMK.
     AWS_KMS_CMK_INVITATION_HMAC_ALIAS_OLD   Previous invitation CMK (grace
@@ -160,6 +164,18 @@ def _pii_hash_alias() -> str:
     return _alias("AWS_KMS_CMK_PII_HASH_ALIAS", _DEFAULT_PII_HASH_ALIAS)
 
 
+def _pii_hash_alias_v2() -> str | None:
+    """Return the v2 PII hash alias when rotation is active, else ``None``.
+
+    The v2 alias is opt-in (FR-091b): operators set
+    ``AWS_KMS_CMK_PII_HASH_ALIAS_V2`` only during a rotation window. An
+    unset env var → single-key mode → ``compute_pii_hash_dual`` returns
+    only the v1 component and ``verify_pii_hash`` skips the v2 path.
+    """
+    value = os.environ.get("AWS_KMS_CMK_PII_HASH_ALIAS_V2")
+    return value or None
+
+
 def _audit_chain_alias() -> str:
     return _alias("AWS_KMS_CMK_AUDIT_CHAIN_ALIAS", _DEFAULT_AUDIT_CHAIN_ALIAS)
 
@@ -253,15 +269,212 @@ def compute_pii_hash(value: str) -> str:
     Returns:
         64-character lowercase hex string representing the 32-byte MAC.
     """
+    return _compute_pii_hash_with_alias(value, _pii_hash_alias())
+
+
+# ---------------------------------------------------------------------------
+# Phase 17 backlog A-2 — PII hash key rotation (FR-091b)
+#
+# ``compute_pii_hash_dual`` and ``verify_pii_hash`` implement the
+# dual-write + dual-read contract that lets a CMK rotation roll forward
+# without downtime:
+#
+#   * Pre-rotation (single-key mode):
+#       AWS_KMS_CMK_PII_HASH_ALIAS_V2 unset.
+#       ``compute_pii_hash_dual(value)`` → ``{"v1": <hex>}``.
+#       ``verify_pii_hash`` matches the single-key v1 only.
+#       ``get_pii_hash_version`` → 1.
+#
+#   * Rotation in progress (dual-write):
+#       Operators set AWS_KMS_CMK_PII_HASH_ALIAS_V2 alongside the
+#       existing AWS_KMS_CMK_PII_HASH_ALIAS. Every new write computes
+#       BOTH hashes; the audit / invitation tables persist the v2
+#       hash in a sibling ``*_v2`` column. Lookups try the v2 hash
+#       first (matching freshly-written rows) then fall back to the
+#       v1 hash (matching pre-rotation rows). The daily backfill
+#       worker fills v2 for rows that have plaintext available.
+#       ``get_pii_hash_version`` → 2.
+#
+#   * Post-rotation (v2 only):
+#       Operators retire v1 by re-pointing
+#       AWS_KMS_CMK_PII_HASH_ALIAS at the v2 CMK and unsetting
+#       AWS_KMS_CMK_PII_HASH_ALIAS_V2. Code re-enters single-key
+#       mode, this time keyed by what was previously v2.
+#
+# The v1 component of ``compute_pii_hash_dual`` MUST be byte-identical
+# to ``compute_pii_hash`` (test T975-2). Sharing the implementation by
+# delegating ensures that invariant cannot drift.
+# ---------------------------------------------------------------------------
+
+
+def _compute_pii_hash_with_alias(value: str, alias: str) -> str:
+    """Compute the keyed HMAC against the given alias (internal helper).
+
+    Centralised so :func:`compute_pii_hash` and the dual-write helpers
+    share the exact same byte-level construction (UTF-8 encoding,
+    ``HMAC_SHA_256`` algorithm, lowercase hex output).
+    """
     message = value.encode("utf-8")
     resp = _client().generate_mac(
         Message=message,
-        KeyId=_resolve_key_id(_pii_hash_alias()),
+        KeyId=_resolve_key_id(alias),
         MacAlgorithm=_MAC_ALGORITHM,
     )
     mac = resp["Mac"]
     assert isinstance(mac, bytes)
     return mac.hex()
+
+
+def compute_pii_hash_dual(value: str) -> dict[str, str]:
+    """Return the keyed HMAC under v1 and (when rotation is active) v2.
+
+    The shape of the returned dict is driven by
+    :func:`get_pii_hash_version` so writers and the version metadata
+    column can never disagree (Phase 17 backlog A-2 Round 2 / R1-C2):
+
+      * ``get_pii_hash_version() == 1`` (pre-rotation, single-key mode):
+        return ``{"v1": <hex>}``. Writers MUST persist
+        ``pii_hash_version = NULL`` (or 1) and leave the ``*_v2``
+        sibling columns NULL.
+
+      * ``get_pii_hash_version() == 2`` and v2 alias **set** (rotation
+        in progress / dual-write window): return
+        ``{"v1": <hex>, "v2": <hex>}`` computed against the two
+        distinct CMKs. Writers MUST populate both columns and stamp
+        ``pii_hash_version = 2``.
+
+      * ``get_pii_hash_version() == 2`` and v2 alias **unset**
+        (post-rotation: operator re-pointed
+        ``AWS_KMS_CMK_PII_HASH_ALIAS`` at the v2 CMK and flipped
+        ``ECHOROO_PII_HASH_ROTATION_COMPLETE``): return
+        ``{"v1": <hex>, "v2": <hex>}`` where v1 == v2 byte-identically
+        (both computed under the now-canonical alias). The redundant
+        write keeps the storage shape stable across the rotation
+        boundary and lets bulk lookups use ``WHERE *_v2 = ? OR
+        legacy = ?`` without special-casing the post-rotation row
+        family.
+
+    Callers persisting to a sibling ``*_v2`` column MUST therefore
+    guard with ``"v2" in result`` rather than relying on a sentinel
+    value — writing ``None`` into the v2 column when the version
+    metadata column says 2 would defeat the dual-read contract.
+
+    The v1 component is byte-identical to :func:`compute_pii_hash` so
+    historical-row lookups keyed on v1 continue to match.
+    """
+    v1 = _compute_pii_hash_with_alias(value, _pii_hash_alias())
+    if get_pii_hash_version() == 1:
+        # Single-key / pre-rotation. v2 column intentionally not populated.
+        return {"v1": v1}
+    v2_alias = _pii_hash_alias_v2()
+    if v2_alias is None:
+        # Post-rotation: v2 alias unset but the operator has flipped the
+        # COMPLETE flag, so AWS_KMS_CMK_PII_HASH_ALIAS now points at the
+        # rotated CMK. Reusing the v1 hash for v2 keeps writer + reader
+        # logic uniform and lets every WHERE *_v2 = ? query continue to
+        # match without a separate post-rotation branch.
+        return {"v1": v1, "v2": v1}
+    v2 = _compute_pii_hash_with_alias(value, v2_alias)
+    return {"v1": v1, "v2": v2}
+
+
+def verify_pii_hash(value: str, stored_hash: str) -> bool:
+    """Return True iff ``stored_hash`` matches ``value`` under v1 OR v2.
+
+    Verification order is v2 → v1 because:
+      * Steady-state post-rotation rows (and freshly-written
+        dual-write rows) match v2 first, so the common path is one
+        KMS round-trip.
+      * Pre-rotation historical rows fall back to v1.
+
+    The :func:`hmac.compare_digest` constant-time comparator is used so
+    a timing oracle cannot distinguish "wrong value" from "v1 row that
+    happens to share a v2 prefix". Both KMS calls happen unconditionally
+    when rotation is active to keep the timing side-channel flat for
+    callers that do leak match/no-match.
+
+    Failure semantics (Phase 17 backlog A-2 Round 2 / R1-I2):
+      A KMS error on the v2 path is **fail-open by design** (FR-091b
+      prioritises read availability during rotation), but it is NOT
+      silent: every v2 unavailability is logged at WARNING level with
+      the alias and exception class so operators can reconcile the
+      KMS audit log against the application log. The v1 path uses the
+      same observability shim. Returning ``True`` purely on a v1 match
+      while v2 was unavailable is therefore explicit, not accidental.
+    """
+    import hmac as _hmac
+    import logging
+
+    logger = logging.getLogger(__name__)
+
+    if not isinstance(stored_hash, str) or len(stored_hash) != 64:
+        return False
+
+    v2_alias = _pii_hash_alias_v2()
+    matched_v2 = False
+    matched_v1 = False
+
+    if v2_alias is not None:
+        try:
+            candidate_v2 = _compute_pii_hash_with_alias(value, v2_alias)
+        except Exception as exc:  # noqa: BLE001 — KMS error → fall back to v1 only
+            # FR-091b fail-open by design: rotation must not break read
+            # availability. Surface the failure in observability so
+            # operators can spot the boundary case.
+            logger.warning(
+                "verify_pii_hash: v2 KMS unavailable; falling back to v1 "
+                "(alias=%s exc=%s)",
+                v2_alias,
+                exc.__class__.__name__,
+            )
+            candidate_v2 = ""
+        if candidate_v2 and _hmac.compare_digest(candidate_v2, stored_hash):
+            matched_v2 = True
+
+    try:
+        candidate_v1 = _compute_pii_hash_with_alias(value, _pii_hash_alias())
+    except Exception as exc:  # noqa: BLE001 — KMS error → no v1 match possible
+        logger.warning(
+            "verify_pii_hash: v1 KMS unavailable; v1 match not attempted "
+            "(alias=%s exc=%s)",
+            _pii_hash_alias(),
+            exc.__class__.__name__,
+        )
+        candidate_v1 = ""
+    if candidate_v1 and _hmac.compare_digest(candidate_v1, stored_hash):
+        matched_v1 = True
+
+    return matched_v2 or matched_v1
+
+
+def get_pii_hash_version() -> int:
+    """Return the active PII hash CMK version (1 or 2).
+
+    The version is derived from operator-controlled environment:
+
+      * ``AWS_KMS_CMK_PII_HASH_ALIAS_V2`` set
+            → rotation in progress (dual-write) → 2
+      * ``ECHOROO_PII_HASH_ROTATION_COMPLETE=true``
+            → operator has retired the v1 alias and pointed
+              ``AWS_KMS_CMK_PII_HASH_ALIAS`` at the v2 CMK → 2
+      * neither set
+            → single-key (pre-rotation) mode → 1
+
+    The two upgrade signals are intentionally orthogonal: a deployment
+    is "in progress" while v2 alias is present, and "completed" once
+    the operator flips ``ECHOROO_PII_HASH_ROTATION_COMPLETE`` and
+    unsets the v2 alias. Both end-states agree that the canonical
+    hash carries generation 2.
+    """
+    if _pii_hash_alias_v2() is not None:
+        return 2
+    if os.environ.get("ECHOROO_PII_HASH_ROTATION_COMPLETE", "").lower() in (
+        "true",
+        "1",
+        "yes",
+    ):
+        return 2
+    return 1
 
 
 # ---------------------------------------------------------------------------
@@ -375,8 +588,11 @@ def compute_audit_chain_hash(prev_hash: str, canonical_row: bytes) -> str:
 __all__ = [
     "compute_audit_chain_hash",
     "compute_pii_hash",
+    "compute_pii_hash_dual",
+    "get_pii_hash_version",
     "sign_invitation_hmac",
     "unwrap_dek",
     "verify_invitation_hmac",
+    "verify_pii_hash",
     "wrap_dek",
 ]

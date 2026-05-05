@@ -191,7 +191,23 @@ async def _project_audit_page(
         filters.append("action = :action")
         params["action"] = action
     if actor_user_id_hash is not None:
-        filters.append("actor_user_id_hash = :actor_hash")
+        # Phase 17 backlog A-2 Round 2 R1-I1: rotation-aware lookup.
+        # Rows written under v1 carry the hash on ``actor_user_id_hash``
+        # only; rows written during dual-write also populate
+        # ``actor_user_id_hash_v2``. We OR both columns so a caller
+        # passing an arbitrary hash hits the right index regardless of
+        # which generation persisted the row.
+        #
+        # ``actor_user_id_hash`` is opaque to the API surface (callers
+        # paste a 64-char hex, not a plaintext user id), so we cannot
+        # recompute the v1/v2 pair from a plaintext input here. Instead
+        # we treat the supplied hash as either generation and let the
+        # partial index ``ix_*_actor_v2`` cover the v2 leg via a
+        # bitmap-OR plan.
+        filters.append(
+            "(actor_user_id_hash = :actor_hash "
+            "OR actor_user_id_hash_v2 = :actor_hash)"
+        )
         params["actor_hash"] = actor_user_id_hash
     if before is not None:
         filters.append("created_at < :before")
@@ -237,7 +253,11 @@ async def _platform_audit_page(
         filters.append("action = :action")
         params["action"] = action
     if actor_user_id_hash is not None:
-        filters.append("actor_user_id_hash = :actor_hash")
+        # Round 2 R1-I1 — see the project-page helper for rationale.
+        filters.append(
+            "(actor_user_id_hash = :actor_hash "
+            "OR actor_user_id_hash_v2 = :actor_hash)"
+        )
         params["actor_hash"] = actor_user_id_hash
     if request_id is not None:
         filters.append("request_id = :request_id")
