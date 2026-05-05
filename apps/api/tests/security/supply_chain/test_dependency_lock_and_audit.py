@@ -11,7 +11,8 @@ D. ``uv.lock`` is valid TOML and contains at least one ``[[package]]`` block.
 E. ``package-lock.json`` uses ``lockfileVersion: 3`` (npm 7+, integrity hashes
    present on all entries).
 F. The CI workflow file (``ci.yml``) defines a dependency-audit step.
-   Currently missing from the workflow → marked xfail (Phase 17 adds it).
+   Implemented in Phase 17 backlog A-9 (T979f) — runs live as a hard-fail
+   assertion (no xfail).
 
 Shim: OFF — all checks are static file/content inspection; no HTTP transport.
 """
@@ -218,25 +219,37 @@ def test_critical_deps_have_upper_bound_pin() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Section D (xfail): CI workflow has a pip-audit or osv-scanner step
+# Section D (live): CI workflow has a pip-audit or osv-scanner step
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "No pip-audit / osv-scanner step is present in .github/workflows/ci.yml. "
-        "Phase 17 (T990 advisory-check gate) will add it. "
-        "Remove this xfail once the step is committed. (T979f)"
-    ),
-)
 def test_ci_workflow_has_advisory_check_step() -> None:
     """CI workflow must include a pip-audit or osv-scanner step (OWASP A06).
 
     Automated advisory scanning catches known CVEs in transitive dependencies
     before they reach production. The absence of such a step means
     vulnerabilities may go undetected until exploited.
+
+    Phase 17 backlog A-9 (T979f) closed this gap by adding the
+    `supply-chain` job to `.github/workflows/ci.yml`. Round 3
+    (2026-05-04) split the gate into two hard-fail steps:
+      1. ``uv sync --locked`` — verifies the wheel hash chain recorded
+         in ``apps/api/uv.lock`` (dependency-substitution defence).
+      2. ``pip-audit --disable-pip --strict`` — advisory CVE check
+         against the OSV / PyPI advisory DB.
+    Both steps must exit 0 for the job to pass. The xfail marker has
+    been removed: this is now a hard-fail live assertion.
+
+    Note: ``.github/workflows`` is not mounted into the backend Docker
+    container, so this test is skipped when run inside Docker
+    (CI_WORKFLOW path is ``/nonexistent/...``). On the host checkout and
+    in CI, the live assertion runs.
     """
+    if not CI_WORKFLOW.parent.is_dir():
+        pytest.skip(
+            ".github/workflows is not available in this environment "
+            f"(looked at {CI_WORKFLOW}). Run from the host checkout or in CI."
+        )
     assert CI_WORKFLOW.is_file(), f"ci.yml not found at {CI_WORKFLOW}"
     content = CI_WORKFLOW.read_text(encoding="utf-8")
     audit_patterns = [

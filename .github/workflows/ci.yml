@@ -170,6 +170,105 @@ jobs:
           echo "openapi.json: no raw coordinate keys found"
 
   # ---------------------------------------------------------------------------
+  # Phase 17 backlog A-9 (T979f) — supply-chain hybrid gate.
+  #
+  # This job enforces TWO independent guarantees against `apps/api/uv.lock`,
+  # both required by FR-091b (Vulnerable & Outdated Components, Software &
+  # Data Integrity Failures — OWASP A06 / A08):
+  #
+  #   1. **Wheel hash chain verification (dependency-substitution defence).**
+  #      ``uv sync --locked`` installs from `uv.lock` and verifies the
+  #      recorded wheel hashes against the downloaded artifacts. Any
+  #      tampering with the lockfile (e.g. an attacker substituting a
+  #      malicious wheel hash) fails this step and blocks merge. This is the
+  #      *actual* `--require-hashes` equivalent for the spec — see Round 3
+  #      empirical proof: ``pip-audit --disable-pip --require-hashes`` does
+  #      NOT validate wheel hashes (the flag is parsed but becomes a no-op
+  #      once the internal pip resolver is disabled).
+  #
+  #   2. **CVE advisory check (known-vulnerability defence).**
+  #      ``pip-audit --disable-pip`` consults the OSV / PyPI advisory DB for
+  #      known CVEs in the exported lockfile dependencies. ``--disable-pip``
+  #      skips the internal virtual-env install (which fails on multi-version
+  #      markers like ``backports-strenum`` / ``ai-edge-litert``).
+  #
+  # Both steps run hard-fail (no `continue-on-error` at job or step level),
+  # so either a hash mismatch OR a CVE detection blocks merge.
+  #
+  # Design notes:
+  # - `pip-audit` is invoked via `uvx` (an ephemeral, version-pinned install)
+  #   so it never pollutes `pyproject.toml` or `uv.lock`.
+  # - `--no-emit-project` excludes the local `echoroo` package from the
+  #   exported requirements; pip-audit cannot resolve VCS / path
+  #   distributions and the local source is not a published advisory target.
+  # - When a CVE is detected we either bump the affected dependency in
+  #   `uv.lock` or add a documented `--ignore-vuln <GHSA-id>` entry with a
+  #   follow-up ticket.
+  #
+  # No untrusted GitHub event inputs (issue/PR titles, commit messages,
+  # head_ref, etc.) are interpolated into any `run:` block, so the workflow
+  # is not exposed to script-injection via PR metadata.
+  # ---------------------------------------------------------------------------
+  supply-chain:
+    name: Supply-chain hybrid gate (uv hash chain + pip-audit, T979f)
+    runs-on: ubuntu-latest
+    # Codex Round-3 review note: 10 min was tight on cold-cache runs because
+    # ``uv sync --all-extras --dev`` pulls TensorFlow / Torch / CUDA wheels.
+    # Bumped to 15 min for headroom; warm-cache runs still finish under 5 min.
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv + Python 3.11
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.11"
+          enable-cache: true
+          cache-dependency-glob: "apps/api/uv.lock"
+          pyproject-file: "apps/api/pyproject.toml"
+
+      - name: Verify uv.lock hash chain (dependency substitution defence)
+        working-directory: apps/api
+        # Round 3 (2026-05-04): ``uv sync --locked`` installs from uv.lock
+        # and verifies wheel hashes against the recorded manifest. Any
+        # tampering with the lockfile (substitute hash for malicious wheel)
+        # fails this step and blocks merge. This is the *actual*
+        # ``--require-hashes`` equivalent for spec FR-091b — pip-audit
+        # ``--disable-pip`` below is advisory-only and does NOT validate
+        # wheel hashes (proven empirically in Round 3 review).
+        run: |
+          uv sync --locked --all-extras --dev
+          echo "uv.lock hash chain verified ($(wc -l < uv.lock) lines)"
+
+      - name: Export uv.lock to hashed requirements.txt
+        working-directory: apps/api
+        run: |
+          uv export --format requirements.txt --locked --no-emit-project \
+            -o requirements.lock.txt
+          echo "Exported $(wc -l < requirements.lock.txt) lines from uv.lock"
+
+      - name: Run pip-audit (CVE advisory check, advisory-only)
+        working-directory: apps/api
+        # Round 3 (2026-05-04): pip-audit consults the OSV / PyPI advisory
+        # DB for known CVEs in the exported lockfile dependencies.
+        # ``--disable-pip`` skips the internal virtual-env install (which
+        # would fail on multi-version markers like ``backports-strenum`` /
+        # ``ai-edge-litert``). Note: with ``--disable-pip`` the
+        # ``--require-hashes`` flag becomes a no-op — wheel hash
+        # verification is handled by the ``uv sync --locked`` step ABOVE,
+        # which actually blocks merge on hash tampering. The flag has been
+        # removed here to avoid suggesting it provides a guarantee it does
+        # not.
+        run: |
+          uvx pip-audit==2.10.0 \
+            --disable-pip \
+            --strict \
+            --progress-spinner off \
+            -r requirements.lock.txt
+
+  # ---------------------------------------------------------------------------
   # T100f: STRICT gate — every Phase-2 lint with --fail-on-violation +
   # the endpoint-coverage reflection test. This is the merge-gate that
   # signals Phase 3+ work may begin.

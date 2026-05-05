@@ -41,7 +41,11 @@ dependencies = [
     "pyotp>=2.9.0,<3.0",
     # webauthn: scheduled for use in T146 WebAuthnService
     "webauthn>=2.5.0,<3.0",
-    "cryptography>=44.0,<46.0",
+    # Phase 17 A-9 (2026-05-04): widened to <47.0 so the security fix
+    # 46.0.7 (CVE-2026-26007 / CVE-2026-34073 / CVE-2026-39892) is
+    # reachable. The next major (47.x) is still excluded so an
+    # accidental breaking-change pickup remains gated.
+    "cryptography>=44.0,<47.0",
 ]
 
 [project.optional-dependencies]

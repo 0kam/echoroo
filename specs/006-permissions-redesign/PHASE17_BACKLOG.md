@@ -51,19 +51,6 @@ already exists in `apps/api/tests/security/**` and is marked
   - [ ] `scripts/lint_kms_isolation.py` runs in strict mode and passes.
   - [ ] `xfail` + `skip` removed; tests PASS.
 
-### A-9. Supply-chain CI step (lockfile + audit)
-- **Task**: T979f
-- **File**: `apps/api/tests/security/supply_chain/test_dependency_lock_and_audit.py`
-- **xfail count**: 1
-- **Threat**: Without `pip-audit` / `osv-scanner` on every PR, vulnerable
-  dependencies land silently (OWASP A06 Vulnerable Components, A08).
-- **Expected behavior**: `uv.lock` / `package-lock.json` integrity-pinned; CI
-  runs `pip-audit` against the lockfile; failure is a blocking gate.
-- **Release condition**:
-  - [ ] `.github/workflows/ci.yml` adds a `supply-chain` job invoking
-        `pip-audit --require-hashes`.
-  - [ ] `xfail` removed; test PASS.
-
 ### A-12. 2FA reset confirmation token: dedicated HMAC key + key rotation (kid)
 - **Origin**: A-11 close (PR `027-a11-two-factor-reset-full-impl`) review
   Round 1-9 carry-over. Codex flagged the confirmation token signing key
