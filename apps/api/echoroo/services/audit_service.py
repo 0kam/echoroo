@@ -46,20 +46,21 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from echoroo.core.audit import AuditLogSanitizer
 from echoroo.core.kms import (
     compute_audit_chain_hash,
-    compute_pii_hash,  # re-exported for tests that monkeypatch this module
+    compute_pii_hash,
     compute_pii_hash_dual,
     get_pii_hash_version,
 )
 
-# ``compute_pii_hash`` is intentionally re-exported above (used by
-# tests that monkeypatch the symbol on this module). The runtime
-# writer below uses ``compute_pii_hash_dual`` instead — but a number
-# of pre-existing tests stub the single-key helper to keep their
-# fixtures simple. Removing the import would break them silently
-# (raising=True would still pass; the patch just wouldn't catch
-# runtime calls). Keep the import; flake8 will flag it as unused
-# without this hint:
-_ = compute_pii_hash
+# ``compute_pii_hash`` and ``compute_pii_hash_dual`` are imported as
+# module-level names so existing security tests can ``monkeypatch.setattr``
+# either symbol on this module to keep KMS out of the test path
+# (CI does not provision a real KMS endpoint). The runtime ``_write``
+# below honours that contract by routing through ``compute_pii_hash``
+# in single-key mode (the common case) and only escalating to
+# ``compute_pii_hash_dual`` when rotation is active. The v1 component
+# of ``compute_pii_hash_dual`` is byte-identical to ``compute_pii_hash``
+# (see ``echoroo.core.kms``), so this split preserves chain-hash
+# determinism while keeping pre-existing single-key stubs effective.
 
 logger = logging.getLogger(__name__)
 
@@ -257,19 +258,30 @@ class AuditLogService:
         # validation is unaffected (ROTATIONAL changes to v2 columns
         # are intentionally NOT chained — they are derivative).
         actor_value = str(actor_user_id) if actor_user_id is not None else ""
-        actor_hash_dual = (
-            compute_pii_hash_dual(actor_value)
-            if actor_value
-            else {"v1": _GENESIS_PREV_HASH}
-        )
-        ip_hash_dual = (
-            compute_pii_hash_dual(ip) if ip else {"v1": _GENESIS_PREV_HASH}
-        )
-        ua_hash_dual = (
-            compute_pii_hash_dual(user_agent)
-            if user_agent
-            else {"v1": _GENESIS_PREV_HASH}
-        )
+
+        # Choose the hashing path based on rotation state. In single-key
+        # mode (the default + the entire pre-rotation production window)
+        # we route through ``compute_pii_hash`` so that the long tail of
+        # security tests which monkeypatch ``audit_service.compute_pii_hash``
+        # to keep KMS out of CI continue to intercept the runtime call.
+        # When rotation is active we *must* use ``compute_pii_hash_dual``
+        # to obtain the v2 sibling — its v1 component is byte-identical
+        # to ``compute_pii_hash`` (see ``echoroo.core.kms``) so the chain
+        # hash is unaffected.
+        pii_hash_version = get_pii_hash_version()
+
+        def _hash_dual(value: str) -> dict[str, str]:
+            if not value:
+                return {"v1": _GENESIS_PREV_HASH}
+            if pii_hash_version == 1:
+                # Single-key mode — go through the module-level
+                # ``compute_pii_hash`` so existing stubs apply.
+                return {"v1": compute_pii_hash(value)}
+            return compute_pii_hash_dual(value)
+
+        actor_hash_dual = _hash_dual(actor_value)
+        ip_hash_dual = _hash_dual(ip)
+        ua_hash_dual = _hash_dual(user_agent)
 
         actor_hash = actor_hash_dual["v1"]
         ip_hash = ip_hash_dual["v1"]
@@ -277,7 +289,6 @@ class AuditLogService:
         actor_hash_v2 = actor_hash_dual.get("v2")
         ip_hash_v2 = ip_hash_dual.get("v2")
         ua_hash_v2 = ua_hash_dual.get("v2")
-        pii_hash_version = get_pii_hash_version()
 
         created_at_eff = created_at or datetime.now(UTC)
 
