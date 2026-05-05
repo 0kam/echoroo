@@ -68,8 +68,10 @@ from typing import Any
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from echoroo.core.settings import get_settings
 from echoroo.middleware.auth_router import ApiKeyRecord, ApiKeyVerifier
 from echoroo.models.api_key import ApiKey
+from echoroo.services.api_key_lifecycle import effective_permissions_for_age
 
 logger = logging.getLogger(__name__)
 
@@ -197,6 +199,39 @@ class DbApiKeyVerifier(ApiKeyVerifier):
             if expires_at <= now:
                 return None
 
+            # Phase 17 A-4 — lazy safety net for the age-based scope
+            # policy (FR-083). The daily sweep in
+            # :mod:`echoroo.workers.api_key_age_check` is the eager
+            # path; this re-evaluation guarantees correctness on the
+            # very next request even if the beat task lags by a tick.
+            #
+            # ``effective_permissions_for_age`` returns ``None`` when
+            # the key is older than ``API_KEY_REVOKE_DAYS`` (default
+            # 270) — the verifier propagates the ``None`` so the
+            # middleware emits the same 401 it would for an unknown
+            # prefix (no telemetry leak between "revoked" and "expired
+            # by age").
+            #
+            # Round 2 Fix R1-I1: The age-based revoke check MUST run
+            # BEFORE ``_maybe_bump_last_used`` so a 270-day-old key is
+            # treated as "did not authenticate" — its ``last_used_at``
+            # MUST NOT be advanced. Bumping the timestamp for a key the
+            # verifier ultimately rejects creates forensic drift with
+            # the "270-day keys do not authenticate" model in FR-083.
+            granted: list[str] = list(row.granted_permissions or [])
+            settings = get_settings()
+            effective = effective_permissions_for_age(
+                granted=tuple(granted),
+                created_at=row.created_at,
+                revoked_at=None,  # already short-circuited above
+                now=now,
+                degrade_days=settings.API_KEY_SCOPE_DEGRADE_DAYS,
+                revoke_days=settings.API_KEY_REVOKE_DAYS,
+            )
+            if effective is None:
+                return None
+            granted = list(effective)
+
             # Best-effort debounced last_used_at update. Failure here
             # MUST NOT block the verification — forensic loss of one
             # timestamp is preferable to refusing a valid key.
@@ -211,8 +246,6 @@ class DbApiKeyVerifier(ApiKeyVerifier):
                     row.id,
                     exc_info=True,
                 )
-
-            granted: list[str] = list(row.granted_permissions or [])
             # Phase 17 A-3: thread ``allowed_ip_cidrs`` through so the
             # outer IP enforcement middleware can compare the caller
             # IP against the persisted CIDR list without re-loading
