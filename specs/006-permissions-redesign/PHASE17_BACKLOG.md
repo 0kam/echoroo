@@ -25,19 +25,6 @@ These were filed in Phase 16 Batch 6f as TDD-red specifications. The test
 already exists in `apps/api/tests/security/**` and is marked
 `xfail(strict=True)` with a forward-reference docstring.
 
-### A-4. API key 180-day rotation scope degrade
-- **Task**: T978
-- **File**: `apps/api/tests/security/api_key/test_rotation_180d_scope_degrade.py`
-- **xfail count**: 2
-- **Threat**: After 180 days an unrotated API key keeps full scope; FR-083
-  recommends scope degrade at 180d / hard-revoke at 270d.
-- **Expected behavior**: 180d → all scopes drop to read-only; 270d → key is
-  revoked; both events emit audit + email to key owner.
-- **Release condition**:
-  - [ ] `workers/api_key_age_check.py` (or equivalent Celery beat task) emits
-        the degrade / revoke events.
-  - [ ] Both `xfail` markers removed; tests PASS.
-
 ### A-5. Streaming endpoint permission re-check (per-chunk guard)
 - **Task**: T973
 - **File**: `apps/api/tests/security/race_conditions/test_streaming_permission_change.py`

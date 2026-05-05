@@ -232,6 +232,30 @@ class Settings(BaseSettings):
         ),
     )
 
+    # Phase 17 backlog A-4 — API key age-based scope degradation
+    # (FR-083). Both knobs are consumed by:
+    #   * :mod:`echoroo.workers.api_key_age_check` (daily sweep at
+    #     01:15 UTC).
+    #   * :class:`echoroo.services.api_key_verification.DbApiKeyVerifier`
+    #     (lazy safety-net re-evaluation per request).
+    # Keeping them as settings (not hard-coded constants) lets ops dial
+    # the curve down for staging / load-test deployments without code
+    # changes; production never overrides the spec defaults.
+    API_KEY_SCOPE_DEGRADE_DAYS: int = Field(
+        default=180,
+        description=(
+            "Age in days at which an API key's write scopes are stripped "
+            "(FR-083). Read scopes survive until ``API_KEY_REVOKE_DAYS``."
+        ),
+    )
+    API_KEY_REVOKE_DAYS: int = Field(
+        default=270,
+        description=(
+            "Age in days at which an API key is fully revoked (FR-083). "
+            "Defaults to 180 + 90 grace per the spec."
+        ),
+    )
+
     @field_validator("webauthn_origins", mode="before")
     @classmethod
     def parse_webauthn_origins(cls, value: Any) -> Any:

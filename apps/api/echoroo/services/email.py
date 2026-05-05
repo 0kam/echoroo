@@ -316,6 +316,141 @@ async def send_2fa_reset_dispatched(
         raise
 
 
+async def send_api_key_scope_degrade_email(
+    *,
+    to: str,
+    api_key_prefix: str,
+    created_at_iso: str,
+    degraded_at_iso: str,
+    grace_days_until_revoke: int,
+) -> None:
+    """Notify a user that their API key has lost write scope (FR-083 / A-4).
+
+    The 180-day mark strips every write permission from the key. The
+    user keeps read access for the remainder of the grace window
+    (default 90 days). Failure to deliver re-raises so the caller's
+    audit path runs — same convention as the 2FA reset emails.
+    """
+    recipient_hash = _safe_recipient_hash(to)
+    if not settings.RESEND_API_KEY:
+        logger.warning(
+            "api_key scope_degrade email skipped — RESEND_API_KEY not configured "
+            "(recipient_hash=%s, prefix=%s)",
+            recipient_hash,
+            api_key_prefix,
+        )
+        return
+
+    safe_prefix = _sanitise_email_field(api_key_prefix, field_name="api_key_prefix")
+    safe_created = _sanitise_email_field(created_at_iso, field_name="created_at_iso")
+    safe_degraded = _sanitise_email_field(degraded_at_iso, field_name="degraded_at_iso")
+    safe_grace = _sanitise_email_field(
+        str(int(grace_days_until_revoke)), field_name="grace_days_until_revoke"
+    )
+
+    try:
+        resend.Emails.send(
+            {
+                "from": settings.EMAIL_FROM,
+                "to": to,
+                "subject": "Your Echoroo API key now read-only (180-day rotation)",
+                "html": f"""
+                    <h2>API key write access removed</h2>
+                    <p>The Echoroo API key with prefix
+                    <code>{html.escape(safe_prefix)}</code> (created
+                    <strong>{html.escape(safe_created)}</strong>) reached
+                    180 days of age on
+                    <strong>{html.escape(safe_degraded)}</strong>.</p>
+                    <p>To protect your account against credential stuffing
+                    on long-lived secrets, write-shaped permissions
+                    (upload, vote, manage, etc.) have been removed. Read
+                    permissions are still active.</p>
+                    <p>The key will be fully revoked in
+                    <strong>{html.escape(safe_grace)} days</strong>.
+                    Please rotate it from
+                    <a href="https://echoroo.app/settings/api-keys">your
+                    settings page</a> at your earliest convenience.</p>
+                """,
+            }
+        )
+        logger.info(
+            "api_key scope_degrade email sent (recipient_hash=%s, prefix=%s)",
+            recipient_hash,
+            safe_prefix,
+        )
+    except Exception:
+        logger.exception(
+            "api_key scope_degrade email delivery failed "
+            "(recipient_hash=%s, prefix=%s)",
+            recipient_hash,
+            safe_prefix,
+        )
+        raise
+
+
+async def send_api_key_revoke_email(
+    *,
+    to: str,
+    api_key_prefix: str,
+    created_at_iso: str,
+    revoked_at_iso: str,
+) -> None:
+    """Notify a user that their API key has been auto-revoked (FR-083 / A-4).
+
+    Sent at the 270-day mark. The key is now unusable — any subsequent
+    request returns 401. Failure to deliver re-raises so the caller's
+    audit path runs.
+    """
+    recipient_hash = _safe_recipient_hash(to)
+    if not settings.RESEND_API_KEY:
+        logger.warning(
+            "api_key revoke email skipped — RESEND_API_KEY not configured "
+            "(recipient_hash=%s, prefix=%s)",
+            recipient_hash,
+            api_key_prefix,
+        )
+        return
+
+    safe_prefix = _sanitise_email_field(api_key_prefix, field_name="api_key_prefix")
+    safe_created = _sanitise_email_field(created_at_iso, field_name="created_at_iso")
+    safe_revoked = _sanitise_email_field(revoked_at_iso, field_name="revoked_at_iso")
+
+    try:
+        resend.Emails.send(
+            {
+                "from": settings.EMAIL_FROM,
+                "to": to,
+                "subject": "Your Echoroo API key has been revoked (270-day cap)",
+                "html": f"""
+                    <h2>API key revoked</h2>
+                    <p>The Echoroo API key with prefix
+                    <code>{html.escape(safe_prefix)}</code> (created
+                    <strong>{html.escape(safe_created)}</strong>) was
+                    automatically revoked at
+                    <strong>{html.escape(safe_revoked)}</strong> after
+                    reaching the 270-day age cap (FR-083).</p>
+                    <p>The key can no longer authenticate against the
+                    Echoroo API. Please mint a new key from
+                    <a href="https://echoroo.app/settings/api-keys">your
+                    settings page</a> and migrate any integrations.</p>
+                """,
+            }
+        )
+        logger.info(
+            "api_key revoke email sent (recipient_hash=%s, prefix=%s)",
+            recipient_hash,
+            safe_prefix,
+        )
+    except Exception:
+        logger.exception(
+            "api_key revoke email delivery failed "
+            "(recipient_hash=%s, prefix=%s)",
+            recipient_hash,
+            safe_prefix,
+        )
+        raise
+
+
 async def send_login_notification(
     *,
     to: str,

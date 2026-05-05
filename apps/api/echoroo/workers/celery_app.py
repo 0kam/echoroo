@@ -119,6 +119,11 @@ app.conf.include = [
     # window (audit rows are not back-fillable; they fall back to the
     # v1 search path inside ``verify_pii_hash``).
     "echoroo.workers.pii_hash_backfill",
+    # Phase 17 backlog A-4 — daily API key age sweep. Strips write
+    # scopes at 180d and revokes at 270d (FR-083). Coordinated with
+    # the verifier-side safety net in
+    # :mod:`echoroo.services.api_key_verification`.
+    "echoroo.workers.api_key_age_check",
 ]
 
 # Periodic tasks (beat schedule)
@@ -212,5 +217,15 @@ app.conf.beat_schedule = {
             "echoroo.workers.pii_hash_backfill.pii_hash_backfill_invitations"
         ),
         "schedule": crontab(hour=1, minute=0),
+    },
+    # Phase 17 backlog A-4 — daily API key age sweep (FR-083). Fires
+    # at 01:15 UTC, offset from the PII hash backfill at 01:00 so the
+    # two daily sweeps never contend on the same connections. The
+    # task body itself uses ``UPDATE ... RETURNING`` for revoke and
+    # ``SELECT FOR UPDATE SKIP LOCKED`` for degrade so multi-worker
+    # contention is wait-free.
+    "api-key-age-check-daily": {
+        "task": "echoroo.workers.api_key_age_check.api_key_age_check",
+        "schedule": crontab(hour=1, minute=15),
     },
 }

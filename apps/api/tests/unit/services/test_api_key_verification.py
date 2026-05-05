@@ -153,6 +153,7 @@ def _build_fake_row(
     last_used_at: datetime | None = None,
     granted_permissions: list[str] | None = None,
     project_id: object | None = None,
+    created_at: datetime | None = None,
 ) -> MagicMock:
     row = MagicMock()
     row.id = uuid4()
@@ -164,6 +165,11 @@ def _build_fake_row(
     row.granted_permissions = granted_permissions or []
     row.project_id = project_id
     row.prefix = "echoroo_abcdefgh"
+    # Phase 17 A-4: ``DbApiKeyVerifier`` now consults ``created_at`` for
+    # the lazy scope-degradation safety net. Default to "fresh" so the
+    # existing lifecycle tests (which only care about revoked / expired
+    # branches) keep their original semantics.
+    row.created_at = created_at or (datetime.now(UTC) - timedelta(days=1))
     return row
 
 

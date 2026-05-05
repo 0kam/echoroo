@@ -11,23 +11,16 @@ should have its write-scoped permissions stripped — only read-only permissions
 survive past the 180-day window. Past 270 days (180 + 90 grace) the key
 should be treated as having no effective permissions.
 
-**Current implementation status (Phase 15 T155b):**
-The ``DbApiKeyVerifier.verify()`` method in
-``echoroo/services/api_key_verification.py`` performs:
-  1. Wire-format parse.
-  2. DB lookup by prefix.
-  3. Constant-time secret hash compare.
-  4. ``revoked_at IS NULL`` and ``expires_at > now()`` checks.
-  5. Best-effort ``last_used_at`` debounce update.
+**Current implementation status (Phase 17 backlog A-4):**
+Implemented. ``DbApiKeyVerifier.verify()`` now applies the lazy
+safety-net path via :func:`echoroo.services.api_key_lifecycle.
+effective_permissions_for_age`, and the daily eager sweep lives in
+:mod:`echoroo.workers.api_key_age_check` (01:15 UTC). Both paths share
+the canonical write-scope catalogue
+:data:`echoroo.services.api_key_lifecycle.API_KEY_WRITE_PERMISSIONS`.
 
-The 180-day scope-degradation logic (stripping write permissions when
-``now - created_at > 180 days``) is **NOT implemented** in the current
-Phase 15 verifier — the ``granted_permissions`` field is returned verbatim
-regardless of the key's age.
-
-These tests are marked ``xfail(strict=True)`` to document the TDD-red state
-and will be converted to passing once the scope-degradation middleware or
-verifier enhancement is implemented in a future task.
+The xfail markers were lifted as part of the A-4 ship; the assertions
+below now run as live regression coverage.
 
 Tests that exercise the *model* layer (attribute presence, counter columns)
 and verifier correctness (non-degradation for fresh keys) run as normal
@@ -157,15 +150,6 @@ async def test_fresh_key_returns_full_scope() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "FR-083 scope-degradation at 180 days is not yet implemented in "
-        "DbApiKeyVerifier (Phase 15 T155b). The verifier returns "
-        "granted_permissions verbatim regardless of key age. "
-        "Implement scope-degradation logic in a future task."
-    ),
-)
 @pytest.mark.asyncio
 async def test_180d_old_key_loses_write_scope() -> None:
     """A key created 181 days ago MUST have write permissions stripped.
@@ -224,14 +208,6 @@ async def test_180d_old_key_loses_write_scope() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "FR-083 full-scope revocation at 270 days (180 + 90 grace) is not "
-        "implemented. The verifier currently returns all granted_permissions "
-        "regardless of age. Implement grace-period logic in a future task."
-    ),
-)
 @pytest.mark.asyncio
 async def test_270d_old_key_returns_no_permissions_or_none() -> None:
     """A key created 270+ days ago MUST return None or empty permissions.
@@ -339,9 +315,117 @@ def test_new_api_key_ip_violation_count_is_zero() -> None:
     )
 
 
+# ---------------------------------------------------------------------------
+# 7. Round 2 Fix R1-I1 — last_used_at MUST NOT be bumped for a key that
+#    the verifier ultimately rejects via the age-based revoke branch.
+#
+#    Before the fix, ``_maybe_bump_last_used`` ran BEFORE
+#    ``effective_permissions_for_age``, so a 270-day-old key would have
+#    its ``last_used_at`` advanced even though ``verify()`` returned
+#    ``None``. That created forensic drift with the FR-083 model that
+#    "270-day keys do not authenticate".
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_age_revoked_key_does_not_bump_last_used_at() -> None:
+    """A 271-day-old key MUST be rejected (verify → None) AND its
+    ``last_used_at`` MUST stay untouched (no UPDATE issued).
+
+    Round 2 Fix R1-I1 regression net.
+    """
+    from echoroo.services.api_key_verification import (
+        DbApiKeyVerifier,
+        hash_api_key_secret,
+    )
+
+    raw_secret = "agedrejectsecret"
+    hashed = hash_api_key_secret(raw_secret)
+    now = datetime.now(UTC)
+    created_271_days_ago = now - timedelta(days=271)
+
+    row = _build_fake_api_key_row(
+        created_at=created_271_days_ago,
+        granted_permissions=list(_FULL_PERMISSIONS),
+    )
+    row.hashed_secret = hashed
+    row.expires_at = now + timedelta(days=459)
+    row.last_used_at = None  # never used → bump WOULD be attempted if reached
+
+    verifier = DbApiKeyVerifier(session_factory=MagicMock())
+    mock_session = AsyncMock()
+    mock_cm = AsyncMock()
+    mock_cm.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_cm.__aexit__ = AsyncMock(return_value=False)
+    verifier._session_factory = MagicMock(return_value=mock_cm)
+
+    bump_spy = AsyncMock()
+    raw_key = f"echoroo_testpref_{raw_secret}"
+    with patch.object(
+        verifier, "_load_by_prefix", new=AsyncMock(return_value=row)
+    ), patch.object(verifier, "_maybe_bump_last_used", new=bump_spy):
+        record = await verifier.verify(raw_key)
+
+    # Verifier MUST reject the aged key.
+    assert record is None, "270+ day old key MUST not authenticate"
+
+    # CRITICAL: the bump MUST NOT have been called for an
+    # ultimately-rejected key. Calling it would advance ``last_used_at``
+    # on a key the verifier treats as "did not authenticate", breaking
+    # the FR-083 forensic model.
+    bump_spy.assert_not_called()
+
+    # And the session MUST NOT have been told to commit a stray UPDATE.
+    mock_session.commit.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_age_degraded_key_still_bumps_last_used_at() -> None:
+    """A 181-day-old key authenticates (read-only) → ``last_used_at``
+    bump MAY proceed. This pins the converse of Fix R1-I1: degradation
+    is NOT a rejection, so the forensic timestamp should still advance.
+    """
+    from echoroo.services.api_key_verification import (
+        DbApiKeyVerifier,
+        hash_api_key_secret,
+    )
+
+    raw_secret = "agedreadonlysecret"
+    hashed = hash_api_key_secret(raw_secret)
+    now = datetime.now(UTC)
+    created_181_days_ago = now - timedelta(days=181)
+
+    row = _build_fake_api_key_row(
+        created_at=created_181_days_ago,
+        granted_permissions=list(_FULL_PERMISSIONS),
+    )
+    row.hashed_secret = hashed
+    row.expires_at = now + timedelta(days=549)
+    row.last_used_at = None
+
+    verifier = DbApiKeyVerifier(session_factory=MagicMock())
+    mock_session = AsyncMock()
+    mock_cm = AsyncMock()
+    mock_cm.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_cm.__aexit__ = AsyncMock(return_value=False)
+    verifier._session_factory = MagicMock(return_value=mock_cm)
+
+    bump_spy = AsyncMock()
+    raw_key = f"echoroo_testpref_{raw_secret}"
+    with patch.object(
+        verifier, "_load_by_prefix", new=AsyncMock(return_value=row)
+    ), patch.object(verifier, "_maybe_bump_last_used", new=bump_spy):
+        record = await verifier.verify(raw_key)
+
+    assert record is not None, "181-day-old key MUST still authenticate"
+    bump_spy.assert_called_once()
+
+
 __all__ = [
     "test_180d_old_key_loses_write_scope",
     "test_270d_old_key_returns_no_permissions_or_none",
+    "test_age_degraded_key_still_bumps_last_used_at",
+    "test_age_revoked_key_does_not_bump_last_used_at",
     "test_api_key_model_has_required_scope_degradation_fields",
     "test_fresh_key_returns_full_scope",
     "test_new_api_key_ip_violation_count_is_zero",
