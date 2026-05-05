@@ -74,6 +74,8 @@ _CSRF_EXEMPT_PATHS: frozenset[str] = frozenset(
         "/web-api/v1/auth/reset-password",
         "/web-api/v1/auth/password-reset/request",
         "/web-api/v1/auth/password-reset/confirm",
+        "/web-api/v1/auth/confirm-identity-for-2fa-reset",
+        "/web-api/v1/auth/confirm-identity-for-2fa-reset/redeem",
     }
 )
 

@@ -190,6 +190,32 @@ async def setup_test_database(engine: AsyncEngine) -> None:
         )
         project_trigger_exists = bool(project_trigger_exists_result.scalar())
 
+        # Phase 17 A-11: ``two_factor_reset_requests`` and companions are
+        # created by Alembic 0014 and via ORM Base.metadata. Probe them
+        # so an existing test DB that pre-dates A-11 gets the CREATE TABLE
+        # block run on the next ``setup_test_database`` call.
+        two_factor_reset_exists_result = await conn.execute(
+            sa.text(
+                "SELECT EXISTS (SELECT 1 FROM information_schema.tables"
+                " WHERE table_name = 'two_factor_reset_requests')"
+            )
+        )
+        two_factor_reset_exists = bool(two_factor_reset_exists_result.scalar())
+
+        # Round-2 Fix-2: probe the new ``dispatching_started_at`` column
+        # added by alembic 0015 so an existing test DB with the A-11
+        # tables but pre-0015 still gets the column added below.
+        two_factor_reset_dispatching_col_exists = False
+        if two_factor_reset_exists:
+            col_result = await conn.execute(
+                sa.text(
+                    "SELECT EXISTS (SELECT 1 FROM information_schema.columns"
+                    " WHERE table_name = 'two_factor_reset_requests'"
+                    " AND column_name = 'dispatching_started_at')"
+                )
+            )
+            two_factor_reset_dispatching_col_exists = bool(col_result.scalar())
+
         # The check constraint may be permanently dropped by ``cleanup_test_data``
         # (project_id null-out path) — we only require it on a *fresh* DB.
         # If the table exists but the trigger is missing, we fall through
@@ -207,9 +233,30 @@ async def setup_test_database(engine: AsyncEngine) -> None:
         and project_audit_log_exists
         and platform_trigger_exists
         and project_trigger_exists
+        and two_factor_reset_exists
+        and two_factor_reset_dispatching_col_exists
     ):
         # Schema is fully up to date — nothing to do.
         return
+
+    # Round-2 Fix-2: idempotent column add for legacy test DBs.
+    if two_factor_reset_exists and not two_factor_reset_dispatching_col_exists:
+        async with engine.begin() as conn:
+            await conn.execute(
+                sa.text(
+                    "ALTER TABLE two_factor_reset_requests "
+                    "ADD COLUMN IF NOT EXISTS dispatching_started_at "
+                    "TIMESTAMP WITH TIME ZONE NULL"
+                )
+            )
+            await conn.execute(
+                sa.text(
+                    "CREATE INDEX IF NOT EXISTS "
+                    "ix_two_factor_reset_requests_dispatching_started "
+                    "ON two_factor_reset_requests (dispatching_started_at) "
+                    "WHERE status = 'dispatching'"
+                )
+            )
 
     if not core_exists:
         # Fresh database — build using the raw-SQL path below.
@@ -666,6 +713,11 @@ async def cleanup_test_data(session: AsyncSession) -> None:
     # Instead we drop every row and rely on tests to recreate any settings
     # they need via the admin service / repository helpers.
     await session.execute(sa.text(_safe_delete("system_settings")))
+    # Phase 17 A-11: 2FA reset workflow tables reference users and
+    # superuser_approval_requests. Clear them before those parents.
+    await session.execute(sa.text(_safe_delete("two_factor_reset_requests")))
+    await session.execute(sa.text(_safe_delete("two_factor_reset_magic_links")))
+    await session.execute(sa.text(_safe_delete("two_factor_confirmation_tokens")))
     # Phase 15 NO-GO: M-of-N approval requests have FKs into superusers
     # (requested_by_id) so they must be deleted BEFORE the parent rows
     # below. The table is created in setup_test_database when missing.

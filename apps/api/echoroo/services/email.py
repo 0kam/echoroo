@@ -193,6 +193,129 @@ async def send_password_reset_email(to: str, token: str) -> None:
         # Don't raise exception - always return success for security
 
 
+def _two_factor_reset_magic_link_url(token: str) -> str:
+    return (
+        f"{settings.web_app_base_url.rstrip('/')}"
+        f"/two-factor-reset/confirm?token={token}"
+    )
+
+
+async def send_2fa_reset_magic_link(to: str, token: str) -> None:
+    """Send the support-initiated 2FA reset magic-link email (FR-072 / A-11).
+
+    Phase 17 backlog A-11: a support agent invokes
+    ``POST /web-api/v1/auth/confirm-identity-for-2fa-reset`` to start
+    the workflow. The endpoint returns 202 unconditionally (enumeration
+    defence, mirrors A-6) and — for known accounts — drops a magic
+    link into the user's inbox. Clicking the link redeems the token
+    and yields a short-lived confirmation token the support agent then
+    pastes into the admin reset form.
+
+    The token itself is never logged. Failure to deliver does NOT
+    raise — the audit row written by the caller carries the failure
+    signal (FR-101 + FR-105 alignment with the password-reset path).
+    """
+    recipient_hash = _safe_recipient_hash(to)
+    if not settings.RESEND_API_KEY:
+        logger.warning(
+            "2fa reset magic link skipped — RESEND_API_KEY not configured "
+            "(recipient_hash=%s)",
+            recipient_hash,
+        )
+        return
+
+    magic_url = _two_factor_reset_magic_link_url(token)
+    try:
+        resend.Emails.send(
+            {
+                "from": settings.EMAIL_FROM,
+                "to": to,
+                "subject": "Confirm your identity for an Echoroo 2FA reset",
+                "html": f"""
+                    <h2>2FA reset request</h2>
+                    <p>An Echoroo support agent has started a request to reset
+                    the two-factor authentication on your account.</p>
+                    <p>If you asked support for help, click the link below to
+                    confirm your identity. The link expires in 30 minutes and
+                    can only be used once.</p>
+                    <p><a href="{magic_url}">Confirm identity for 2FA reset</a></p>
+                    <p>If you did <strong>not</strong> contact support, you can
+                    safely ignore this email — no change will be made unless
+                    the link is clicked.</p>
+                """,
+            }
+        )
+        logger.info(
+            "2fa reset magic link sent (recipient_hash=%s)",
+            recipient_hash,
+        )
+    except Exception:
+        # Round-2 Fix-1: re-raise so the caller can write the
+        # ``two_factor_reset.email_notification_failed`` audit row.
+        # Previously this ``except`` swallowed the exception, leaving
+        # the audit path unreachable. The HTTP handler still translates
+        # the failure into 202 Accepted (enumeration defence) AFTER the
+        # audit row is committed, so the user-facing posture does not
+        # change.
+        logger.exception(
+            "2fa reset magic link delivery failed (recipient_hash=%s)",
+            recipient_hash,
+        )
+        raise
+
+
+async def send_2fa_reset_dispatched(
+    to: str,
+    *,
+    dispatched_at_iso: str,
+) -> None:
+    """Notify the user that their 2FA reset has been applied (FR-072 / A-11)."""
+    recipient_hash = _safe_recipient_hash(to)
+    if not settings.RESEND_API_KEY:
+        logger.warning(
+            "2fa reset applied notification skipped — RESEND_API_KEY not configured "
+            "(recipient_hash=%s)",
+            recipient_hash,
+        )
+        return
+    safe_when = _sanitise_email_field(dispatched_at_iso, field_name="dispatched_at_iso")
+    try:
+        resend.Emails.send(
+            {
+                "from": settings.EMAIL_FROM,
+                "to": to,
+                "subject": "Your Echoroo 2FA has been reset",
+                "html": f"""
+                    <h2>Two-factor authentication reset</h2>
+                    <p>The two-factor authentication on your Echoroo account
+                    was cleared at <strong>{html.escape(safe_when)}</strong>.</p>
+                    <p>The next time you sign in, Echoroo will guide you
+                    through enrolling a new authenticator. For 72 hours your
+                    password cannot be reset — this is a security cool-down
+                    that protects against follow-up attacks.</p>
+                    <p>If you did not request this, please contact support
+                    immediately and rotate your password from a trusted
+                    device.</p>
+                """,
+            }
+        )
+        logger.info(
+            "2fa reset applied notification sent (recipient_hash=%s)",
+            recipient_hash,
+        )
+    except Exception:
+        # Round-2 Fix-1: re-raise so the dispatch poller can write the
+        # ``two_factor_reset.email_notification_failed`` audit row with
+        # ``stage="applied_notification"``. The poller already wraps
+        # this call in a defensive try/except so the request row stays
+        # in ``applied`` even when the notification mail fails.
+        logger.exception(
+            "2fa reset applied notification delivery failed (recipient_hash=%s)",
+            recipient_hash,
+        )
+        raise
+
+
 async def send_login_notification(
     *,
     to: str,

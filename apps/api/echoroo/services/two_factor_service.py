@@ -103,6 +103,29 @@ class TwoFactorEnrollmentArtifacts:
     provisioning_uri: str
 
 
+@dataclass(frozen=True)
+class TwoFactorResetAuditEnvelope:
+    """Audit row description returned by ``reset_user_two_factor(commit=False)``.
+
+    Round-6 Fix R5-Blocker. The caller is responsible for handing this
+    envelope to a post-commit audit hook so the
+    ``two_factor.reset_completed`` row only lands after the surrounding
+    transaction (which carries the destructive user-state mutation +
+    the terminal request-row CAS) successfully commits. Writing the
+    audit inline used a fresh session and committed *before* the outer
+    ``db.commit()`` — if that outer commit then failed (or audit failed
+    inline), dashboards would either show a phantom ``reset_completed``
+    event for a rolled-back domain mutation OR (worse) show a
+    ``failed`` request row alongside a wiped user 2FA state with no
+    ``reset_completed`` row at all.
+    """
+
+    actor_id: UUID
+    target_user_id: UUID
+    action: str
+    detail: dict[str, Any]
+
+
 class _RedisRateLimiter(Protocol):
     async def incr(self, name: str) -> int: ...
 
@@ -389,8 +412,55 @@ class TwoFactorService:
         )
         return True
 
-    async def reset_user_two_factor(self, user: User, *, actor_id: UUID, reason: str) -> None:
-        """Admin-driven 2FA reset primitive."""
+    async def reset_user_two_factor(
+        self,
+        user: User,
+        *,
+        actor_id: UUID,
+        reason: str,
+        commit: bool = True,
+    ) -> TwoFactorResetAuditEnvelope | None:
+        """Admin-driven 2FA reset primitive.
+
+        Round-5 Fix R4-Blocker (A-11 lease race): when ``commit=False``
+        the caller owns the surrounding transaction and is responsible
+        for the final ``await session.commit()``. This lets the dispatch
+        poller hold the ``two_factor_reset_requests`` row lock through
+        the destructive user mutation AND the terminal CAS flip in a
+        single transaction, closing the race window where a concurrent
+        reclaim sweep could clear the lease between this call and the
+        terminal UPDATE.
+
+        Round-6 Fix R5-Blocker (audit-induced inconsistency): when
+        ``commit=False``, the caller owns the audit too — we DO NOT
+        write the ``two_factor.reset_completed`` audit row from inside
+        this method. Instead we return a
+        :class:`TwoFactorResetAuditEnvelope` with the action label and
+        detail dict the caller MUST hand to its post-commit audit hook.
+
+        Why: the previous implementation wrote the audit from a fresh
+        session here BEFORE the caller's outer commit. If that fresh
+        session raised (audit chain misconfig, advisory-lock contention,
+        SERIALIZABLE retry exhaustion), the exception bubbled up to the
+        caller's ``except`` arm — which then ran a "failed" CAS UPDATE
+        on the same outer session. Autoflush inside that UPDATE would
+        persist the user dirty mutation we just staged, then
+        ``_terminal_cas_update`` would commit. Net result: row status =
+        ``failed`` while the user's 2FA was actually wiped and the
+        ``reset_completed`` audit was never written — a silent
+        inconsistency that on-call cannot reconstruct.
+
+        The audit envelope return contract keeps the audit visible to
+        the caller's post-commit hook (FR-088 soft-alert posture) and
+        ensures it lands AFTER the user mutation + terminal CAS commit
+        succeeds, never before.
+
+        When ``commit=True`` (the historical default and the contract
+        used by every non-dispatch-poller caller — admin tooling,
+        single-tenant reset flows, unit tests) the behaviour is
+        unchanged: this method writes the audit row in a fresh session
+        and returns ``None``. Existing tests pass without modification.
+        """
         user.two_factor_secret_encrypted = None
         user.two_factor_secret_dek_version = None
         user.two_factor_backup_codes_hashed = None
@@ -400,12 +470,33 @@ class TwoFactorService:
         self.db.add(user)
         await self._clear_totp_failures(user.id)
         await self._clear_backup_failures(user.id)
-        await self.db.commit()
-        await self._record_audit_event(
+        if commit:
+            await self.db.commit()
+            await self._record_audit_event(
+                actor_id=actor_id,
+                target_user=user,
+                action="two_factor.reset_completed",
+                detail={
+                    "target_user_id": str(user.id),
+                    "reason": reason,
+                    "cooldown_hours": 72,
+                },
+            )
+            return None
+        # commit=False: caller (currently only the dispatch poller's
+        # ``_apply_one``) owns BOTH the outer commit AND the audit
+        # write so that audit failure can never poison the user
+        # mutation that has not yet been committed.
+        await self.db.flush()
+        return TwoFactorResetAuditEnvelope(
             actor_id=actor_id,
-            target_user=user,
+            target_user_id=user.id,
             action="two_factor.reset_completed",
-            detail={"target_user_id": str(user.id), "reason": reason, "cooldown_hours": 72},
+            detail={
+                "target_user_id": str(user.id),
+                "reason": reason,
+                "cooldown_hours": 72,
+            },
         )
 
     @staticmethod
@@ -501,5 +592,6 @@ __all__ = [
     "TwoFactorLockedError",
     "TwoFactorNotEnabledError",
     "TwoFactorRateLimitedError",
+    "TwoFactorResetAuditEnvelope",
     "TwoFactorService",
 ]
