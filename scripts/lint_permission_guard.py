@@ -97,6 +97,11 @@ ALLOWLIST_FILES: frozenset[str] = frozenset(
         # Phase 3 will split out the session-creation endpoints; until then,
         # the whole auth.py module is exempt (research §18-A).
         "auth.py",
+        # A-11: anonymous magic-link flow for admin 2FA reset confirmation.
+        # The two endpoints in this module are intentionally unauthenticated
+        # (email enumeration defence) and follow the same pre-session pattern
+        # as the password-reset endpoints in auth.py.
+        "auth_confirm_identity.py",
         "setup.py",
     }
 )

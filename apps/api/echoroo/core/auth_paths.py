@@ -83,6 +83,8 @@ PUBLIC_AUTH_PATHS: Final[tuple[str, ...]] = (
     "/web-api/v1/auth/reset-password",
     "/web-api/v1/auth/password-reset/request",
     "/web-api/v1/auth/password-reset/confirm",
+    "/web-api/v1/auth/confirm-identity-for-2fa-reset",
+    "/web-api/v1/auth/confirm-identity-for-2fa-reset/redeem",
     "/web-api/v1/auth/logout",
 )
 
