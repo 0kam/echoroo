@@ -25,21 +25,6 @@ These were filed in Phase 16 Batch 6f as TDD-red specifications. The test
 already exists in `apps/api/tests/security/**` and is marked
 `xfail(strict=True)` with a forward-reference docstring.
 
-### A-2. PII hash key dual-write rotation
-- **Task**: T975
-- **File**: `apps/api/tests/security/key_rotation/test_pii_hash_key_rotation_dual_write.py`
-- **xfail count**: 4
-- **Threat**: A v1→v2 keyed-HMAC rotation that does not dual-write loses prior
-  audit / invitation lookup capability. Without the dual-write window, support
-  workflows that rely on email-hash lookup silently 404 (FR-091b, OWASP A09).
-- **Expected behavior**: 90-day dual-write window where both v1 and v2 hashes
-  are written; lookup falls back v2→v1 with metric instrumentation.
-- **Release condition**:
-  - [ ] `echoroo/core/audit.py` (and equivalent invitation hash helpers)
-        implement dual-write + dual-read with a configurable rotation window.
-  - [ ] Background drain job that catches up rows still on v1 only.
-  - [ ] All four `xfail` markers removed; tests PASS.
-
 ### A-4. API key 180-day rotation scope degrade
 - **Task**: T978
 - **File**: `apps/api/tests/security/api_key/test_rotation_180d_scope_degrade.py`

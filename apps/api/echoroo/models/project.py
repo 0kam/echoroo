@@ -388,6 +388,37 @@ class ProjectInvitation(UUIDMixin, TimestampMixin, Base):
             "(FR-055 enumeration mitigation)."
         ),
     )
+    # Phase 17 backlog A-2 (FR-091b) — KMS-backed sibling hash that
+    # supports CMK rotation without re-writing historical rows.
+    #
+    # Round 2 R1-C1: ``email_hash_v2`` is *strictly* a v2-mode column.
+    # It is NULL whenever the row was inserted while
+    # :func:`echoroo.core.kms.get_pii_hash_version` returned ``1``
+    # (i.e. pre-rotation single-key deployment OR a row inserted before
+    # Alembic 0016). The daily ``pii_hash_backfill_invitations`` task
+    # selects on ``email_hash_v2 IS NULL AND email IS NOT NULL`` and
+    # fills both this column and ``pii_hash_version`` once an operator
+    # flips the v2 alias on. Writers must therefore NEVER stuff the
+    # v1 hash into this column as a placeholder — doing so hides the
+    # row from the backfill sweep and the rotation never completes.
+    email_hash_v2: Mapped[str | None] = mapped_column(
+        String(64),
+        nullable=True,
+        doc=(
+            "KMS-keyed v2 hash (FR-091b). NULL until rotation begins or "
+            "the daily backfill worker fills it. Lookups try this column "
+            "first, then fall back to the legacy ``email_hash``."
+        ),
+    )
+    pii_hash_version: Mapped[int | None] = mapped_column(
+        Integer,
+        nullable=True,
+        doc=(
+            "PII hash CMK generation. NULL = single-key / pre-rotation "
+            "row. 2 = row was hashed while rotation was active and the "
+            "v2 column was populated synchronously (FR-091b)."
+        ),
+    )
     role: Mapped[ProjectMemberRole | None] = mapped_column(
         Enum(
             ProjectMemberRole,

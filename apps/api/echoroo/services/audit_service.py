@@ -44,7 +44,22 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from echoroo.core.audit import AuditLogSanitizer
-from echoroo.core.kms import compute_audit_chain_hash, compute_pii_hash
+from echoroo.core.kms import (
+    compute_audit_chain_hash,
+    compute_pii_hash,  # re-exported for tests that monkeypatch this module
+    compute_pii_hash_dual,
+    get_pii_hash_version,
+)
+
+# ``compute_pii_hash`` is intentionally re-exported above (used by
+# tests that monkeypatch the symbol on this module). The runtime
+# writer below uses ``compute_pii_hash_dual`` instead — but a number
+# of pre-existing tests stub the single-key helper to keep their
+# fixtures simple. Removing the import would break them silently
+# (raising=True would still pass; the patch just wouldn't catch
+# runtime calls). Keep the import; flake8 will flag it as unused
+# without this hint:
+_ = compute_pii_hash
 
 logger = logging.getLogger(__name__)
 
@@ -234,10 +249,35 @@ class AuditLogService:
         # FR-091 keyed PII hashing. The actor_user_id exception (spec
         # FR-091a §c) permits raw ``user_id`` in ``detail.before.owner_id``
         # etc., but the ``actor_user_id_hash`` column is always hashed.
+        #
+        # Phase 17 backlog A-2 (FR-091b): when rotation is active we
+        # ALSO compute v2 hashes and persist them in the sibling
+        # ``*_v2`` columns + a ``pii_hash_version`` discriminator. The
+        # v1 hashes remain the chain-hash input so historical chain
+        # validation is unaffected (ROTATIONAL changes to v2 columns
+        # are intentionally NOT chained — they are derivative).
         actor_value = str(actor_user_id) if actor_user_id is not None else ""
-        actor_hash = compute_pii_hash(actor_value) if actor_value else _GENESIS_PREV_HASH
-        ip_hash = compute_pii_hash(ip) if ip else _GENESIS_PREV_HASH
-        ua_hash = compute_pii_hash(user_agent) if user_agent else _GENESIS_PREV_HASH
+        actor_hash_dual = (
+            compute_pii_hash_dual(actor_value)
+            if actor_value
+            else {"v1": _GENESIS_PREV_HASH}
+        )
+        ip_hash_dual = (
+            compute_pii_hash_dual(ip) if ip else {"v1": _GENESIS_PREV_HASH}
+        )
+        ua_hash_dual = (
+            compute_pii_hash_dual(user_agent)
+            if user_agent
+            else {"v1": _GENESIS_PREV_HASH}
+        )
+
+        actor_hash = actor_hash_dual["v1"]
+        ip_hash = ip_hash_dual["v1"]
+        ua_hash = ua_hash_dual["v1"]
+        actor_hash_v2 = actor_hash_dual.get("v2")
+        ip_hash_v2 = ip_hash_dual.get("v2")
+        ua_hash_v2 = ua_hash_dual.get("v2")
+        pii_hash_version = get_pii_hash_version()
 
         created_at_eff = created_at or datetime.now(UTC)
 
@@ -286,18 +326,28 @@ class AuditLogService:
         # Insert. We use a bound parameter dialect-agnostic statement so
         # the writer works against both PostgreSQL (prod) and SQLite (a
         # subset of the unit tests that stub the chain calls).
+        # When rotation is active (``pii_hash_version == 2``) the v2
+        # sibling columns are populated; in single-key mode they remain
+        # NULL and ``pii_hash_version`` is also NULL so a downstream
+        # consistency check can distinguish "rotation never started"
+        # from "rotation in progress, this row not yet backfilled".
+        store_v2 = pii_hash_version == 2
         if table == "project_audit_log":
             insert_sql = sa.text(
                 """
                 INSERT INTO project_audit_log
                   (created_at, actor_user_id_hash, project_id, action,
                    detail, request_id, ip_hash, user_agent_hash,
-                   before, after, prev_hash, row_hash)
+                   before, after, prev_hash, row_hash,
+                   actor_user_id_hash_v2, ip_hash_v2, user_agent_hash_v2,
+                   pii_hash_version)
                 VALUES
                   (:created_at, :actor_hash, :project_id, :action,
                    CAST(:detail AS JSONB), :request_id, :ip_hash, :ua_hash,
                    CAST(:before AS JSONB), CAST(:after AS JSONB),
-                   :prev_hash, :row_hash)
+                   :prev_hash, :row_hash,
+                   :actor_hash_v2, :ip_hash_v2, :ua_hash_v2,
+                   :pii_hash_version)
                 RETURNING id
                 """
             )
@@ -314,6 +364,10 @@ class AuditLogService:
                 "after": _canonical_json(sanitized.after) if sanitized.after is not None else None,
                 "prev_hash": prev_hash,
                 "row_hash": row_hash,
+                "actor_hash_v2": actor_hash_v2 if store_v2 else None,
+                "ip_hash_v2": ip_hash_v2 if store_v2 else None,
+                "ua_hash_v2": ua_hash_v2 if store_v2 else None,
+                "pii_hash_version": pii_hash_version if store_v2 else None,
             }
         else:
             insert_sql = sa.text(
@@ -321,12 +375,16 @@ class AuditLogService:
                 INSERT INTO platform_audit_log
                   (created_at, actor_user_id_hash, action,
                    detail, request_id, ip_hash, user_agent_hash,
-                   before, after, prev_hash, row_hash)
+                   before, after, prev_hash, row_hash,
+                   actor_user_id_hash_v2, ip_hash_v2, user_agent_hash_v2,
+                   pii_hash_version)
                 VALUES
                   (:created_at, :actor_hash, :action,
                    CAST(:detail AS JSONB), :request_id, :ip_hash, :ua_hash,
                    CAST(:before AS JSONB), CAST(:after AS JSONB),
-                   :prev_hash, :row_hash)
+                   :prev_hash, :row_hash,
+                   :actor_hash_v2, :ip_hash_v2, :ua_hash_v2,
+                   :pii_hash_version)
                 RETURNING id
                 """
             )
@@ -342,6 +400,10 @@ class AuditLogService:
                 "after": _canonical_json(sanitized.after) if sanitized.after is not None else None,
                 "prev_hash": prev_hash,
                 "row_hash": row_hash,
+                "actor_hash_v2": actor_hash_v2 if store_v2 else None,
+                "ip_hash_v2": ip_hash_v2 if store_v2 else None,
+                "ua_hash_v2": ua_hash_v2 if store_v2 else None,
+                "pii_hash_version": pii_hash_version if store_v2 else None,
             }
 
         result = await self.session.execute(insert_sql, params)

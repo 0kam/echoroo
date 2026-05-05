@@ -43,9 +43,25 @@ class _FakeResult:
 
 
 def _stub_kms(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Replace the KMS-dependent helpers with deterministic stubs."""
+    """Replace the KMS-dependent helpers with deterministic stubs.
+
+    Phase 17 backlog A-2 (FR-091b): the writer routes through
+    ``compute_pii_hash_dual`` and queries ``get_pii_hash_version``.
+    Single-key mode is the default, so we stub the dual function to
+    return only ``v1`` and the version helper to return 1 — that
+    matches the pre-rotation behaviour this test was written for.
+    """
     monkeypatch.setattr(
         audit_service, "compute_pii_hash", lambda _v: "a" * 64, raising=True
+    )
+    monkeypatch.setattr(
+        audit_service,
+        "compute_pii_hash_dual",
+        lambda _v: {"v1": "a" * 64},
+        raising=True,
+    )
+    monkeypatch.setattr(
+        audit_service, "get_pii_hash_version", lambda: 1, raising=True
     )
     monkeypatch.setattr(
         audit_service, "compute_audit_chain_hash", lambda _p, _c: "b" * 64, raising=True

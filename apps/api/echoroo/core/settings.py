@@ -194,6 +194,44 @@ class Settings(BaseSettings):
     CELERY_BROKER_URL: str = "redis://localhost:6379/0"
     CELERY_RESULT_BACKEND: str = "redis://localhost:6379/1"
 
+    # Phase 17 backlog A-2 — PII hash CMK rotation (FR-091b dual-write).
+    #
+    # ``AWS_KMS_CMK_PII_HASH_ALIAS_V2`` is opt-in: when unset the system
+    # runs in single-key mode against ``AWS_KMS_CMK_PII_HASH_ALIAS`` and
+    # behaves identically to pre-rotation deployments. When set, every
+    # new audit row + invitation row is hashed under BOTH v1 and v2;
+    # historical rows remain searchable via the v1 fallback path in
+    # :func:`echoroo.core.kms.verify_pii_hash`. Operators set this env
+    # var at the moment they want rotation to begin and unset it (along
+    # with re-pointing ``AWS_KMS_CMK_PII_HASH_ALIAS`` at the v2 CMK)
+    # once the backfill has caught up. There is intentionally no
+    # production-secret guard here: the variable is *operationally*
+    # transient, not a baseline requirement.
+    AWS_KMS_CMK_PII_HASH_ALIAS_V2: str | None = Field(
+        default=None,
+        description=(
+            "Optional v2 PII hash CMK alias. Setting this enables dual-write "
+            "rotation per FR-091b; leave unset for single-key deployments."
+        ),
+    )
+
+    # Informational: the FR-091b rotation contract pegs the dual-write
+    # window at 90 days. No code path consumes this setting today —
+    # the daily backfill worker is unconditional, and the eventual
+    # "rotation stale" dashboard signal will compute its threshold
+    # from this knob (Phase 17 backlog A-2 Round 2 R1-M1). Keeping
+    # the value here documents the operational contract in one place
+    # and leaves the env var wired for the dashboard task that lands
+    # in a follow-up.
+    PII_HASH_ROTATION_GRACE_DAYS: int = Field(
+        default=90,
+        description=(
+            "Informational. Documents the FR-091b 90-day rotation window. "
+            "Reserved for the upcoming staleness-dashboard signal; not "
+            "consumed by the runtime today."
+        ),
+    )
+
     @field_validator("webauthn_origins", mode="before")
     @classmethod
     def parse_webauthn_origins(cls, value: Any) -> Any:

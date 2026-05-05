@@ -313,6 +313,16 @@ def hash_token(raw_token_b64u: str) -> str:
     return hashlib.sha256(raw_token_b64u.encode("ascii")).hexdigest()
 
 
+def _canonical_email(email: str) -> str:
+    """Return the FR-054 / FR-055 canonical form of ``email``.
+
+    Centralised so the legacy Python-HMAC path
+    (:func:`hash_email`) and the KMS-backed path
+    (:func:`hash_email_dual`) can never disagree on canonicalisation.
+    """
+    return unicodedata.normalize("NFKC", email).strip().casefold()
+
+
 def hash_email(email: str, *, hmac_secret: str) -> str:
     """Return the canonical ``email_hash`` value.
 
@@ -320,9 +330,88 @@ def hash_email(email: str, *, hmac_secret: str) -> str:
     cannot derive emails by precomputing rainbow tables. The ``email``
     is NFKC + casefolded first so two visually-identical addresses
     collide (FR-054 / FR-055).
+
+    Legacy path (Phase 17 backlog A-2): this helper computes the
+    historical ``web_session_secret`` Python-HMAC value persisted in
+    the ``email_hash`` column. New rows ALSO populate
+    ``email_hash_v2`` via :func:`hash_email_dual`; lookups try the
+    KMS-backed v2/v1 path first and fall back to this helper for
+    pre-A-2 rows. The signature is intentionally preserved so older
+    tests that pass ``hmac_secret=...`` keep working.
     """
-    canonical = unicodedata.normalize("NFKC", email).strip().casefold().encode("utf-8")
+    canonical = _canonical_email(email).encode("utf-8")
     return hmac.new(hmac_secret.encode("utf-8"), canonical, hashlib.sha256).hexdigest()
+
+
+def _email_matches_invitation(
+    current_user_email: str,
+    invitation: ProjectInvitation,
+    *,
+    hmac_secret: str,
+) -> bool:
+    """Email match against an invitation row (FR-054).
+
+    Phase 17 backlog A-2 (FR-091b): rows created after migration 0016
+    carry a KMS-keyed ``email_hash_v2`` alongside the legacy
+    ``email_hash``. We evaluate BOTH paths unconditionally and OR the
+    results so the function's runtime profile does not leak which
+    branch produced the match (Round 2 R1-I3).
+
+      * KMS path — :func:`echoroo.core.kms.verify_pii_hash` (which
+        itself tries v2 then v1 of the rotated CMK). Skipped only
+        when ``email_hash_v2`` is NULL (pre-A-2 row); KMS errors are
+        swallowed to keep availability over a marginal observability
+        win, and the warning log there records the unavailability.
+      * Legacy path — Python HMAC against ``email_hash``. Always
+        evaluated so the wallclock cost is independent of whether
+        the v2 sibling exists.
+
+    Both per-path comparisons use :func:`hmac.compare_digest`. The
+    OR-combine is a plain Python ``or`` — given that both operands
+    have already been computed, the short-circuit only saves an
+    integer test, not a KMS round-trip, so the timing channel here
+    is bounded by the small constant-time compare itself.
+    """
+    # Local import to avoid a heavy KMS module load at service import.
+    from echoroo.core.kms import verify_pii_hash
+
+    canonical = _canonical_email(current_user_email)
+
+    matched_kms = False
+    if invitation.email_hash_v2:
+        try:
+            matched_kms = verify_pii_hash(canonical, invitation.email_hash_v2)
+        except Exception:  # noqa: BLE001 — KMS unavailable → legacy fallback
+            logger.warning(
+                "verify_pii_hash failed; relying on legacy hash compare",
+                exc_info=True,
+            )
+            matched_kms = False
+
+    expected_legacy = hash_email(current_user_email, hmac_secret=hmac_secret)
+    matched_legacy = hmac.compare_digest(expected_legacy, invitation.email_hash)
+
+    return matched_kms or matched_legacy
+
+
+def hash_email_dual(email: str) -> dict[str, str]:
+    """Return KMS-backed dual-write hashes for ``email`` (FR-091b).
+
+    Single-key mode → ``{"v1": <hex>}``. Rotation in progress →
+    ``{"v1": <hex>, "v2": <hex>}``. The canonicalisation matches
+    :func:`hash_email` byte-for-byte so the two paths are
+    interchangeable for the purposes of the FR-054 email-match
+    check (modulo the underlying key, of course).
+
+    The KMS round-trip happens here rather than at column-fill time
+    so the writer in :func:`create_invitation` can emit a single
+    paired set of inserts.
+    """
+    # Local import — avoids a circular import at module load time
+    # (``echoroo.core.kms`` is otherwise import-light).
+    from echoroo.core.kms import compute_pii_hash_dual
+
+    return compute_pii_hash_dual(_canonical_email(email))
 
 
 def _ensure_utc(value: datetime) -> datetime:
@@ -636,6 +725,27 @@ async def create_invitation(
         hmac_secret=hmac_secret,
     )
     email_hash_value = hash_email(email, hmac_secret=hmac_secret)
+    # Phase 17 backlog A-2 (FR-091b): emit the KMS dual-write hash
+    # into the ``email_hash_v2`` sibling so future lookups can match
+    # under v1 OR v2 of the rotated PII CMK without needing the
+    # legacy ``web_session_secret`` to remain stable.
+    #
+    # Round 2 R1-C1: ``email_hash_v2`` is a TRUE v2 column. We only
+    # populate it when the dual-write helper actually produced a v2
+    # component (i.e. rotation has started and ``get_pii_hash_version``
+    # → 2). In single-key mode we leave it NULL so the daily
+    # backfill worker (``pii_hash_backfill.py``) — which selects on
+    # ``email_hash_v2 IS NULL`` — can pick the row up the moment an
+    # operator flips the v2 alias on. Writing the v1 value here would
+    # otherwise hide single-key-period invitations from the backfill
+    # forever.
+    email_hash_kms = hash_email_dual(email)
+    if "v2" in email_hash_kms:
+        email_hash_v2_value: str | None = email_hash_kms["v2"]
+        pii_hash_version_value: int | None = 2
+    else:
+        email_hash_v2_value = None
+        pii_hash_version_value = None
 
     # 4. Insert (caller-owned TX). The (project_id, email_hash) WHERE
     # status='pending' partial unique index is the FR-049 guard; collisions
@@ -645,6 +755,8 @@ async def create_invitation(
         kind=kind,
         email=email,
         email_hash=email_hash_value,
+        email_hash_v2=email_hash_v2_value,
+        pii_hash_version=pii_hash_version_value,
         role=role if kind is ProjectInvitationKind.MEMBER else None,
         granted_permissions=granted_perms_db,
         trusted_duration_seconds=duration_db,
@@ -885,8 +997,11 @@ async def accept_invitation(
     # *URL*; this step authenticates the *recipient* against the URL.
     # Performed before the status check so an attacker holding a stolen
     # accepted-token never learns the invitation status.
-    expected_hash = hash_email(current_user_email, hmac_secret=hmac_secret)
-    if not hmac.compare_digest(expected_hash, invitation.email_hash):
+    if not _email_matches_invitation(
+        current_user_email,
+        invitation,
+        hmac_secret=hmac_secret,
+    ):
         raise InvitationEmailMismatchError(
             "current user's email does not match the invitation",
         )
@@ -1111,8 +1226,11 @@ async def decline_invitation_by_recipient(
     if project_id_scope is not None and invitation.project_id != project_id_scope:
         raise InvitationTokenInvalidError("invitation not found")
 
-    expected_hash = hash_email(current_user_email, hmac_secret=hmac_secret)
-    if not hmac.compare_digest(expected_hash, invitation.email_hash):
+    if not _email_matches_invitation(
+        current_user_email,
+        invitation,
+        hmac_secret=hmac_secret,
+    ):
         raise InvitationEmailMismatchError(
             "current user's email does not match the invitation",
         )
@@ -1400,6 +1518,7 @@ __all__ = [
     "create_invitation",
     "decline_invitation_by_recipient",
     "hash_email",
+    "hash_email_dual",
     "hash_token",
     "sign_invitation_token",
     "trigger_post_commit_side_effects",

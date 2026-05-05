@@ -216,6 +216,29 @@ async def setup_test_database(engine: AsyncEngine) -> None:
             )
             two_factor_reset_dispatching_col_exists = bool(col_result.scalar())
 
+        # Phase 17 backlog A-2 (FR-091b): probe the dual-write columns
+        # added by alembic 0016. ``Base.metadata.create_all`` runs with
+        # ``checkfirst=True`` so it never alters an existing table —
+        # we therefore add the columns idempotently below if missing.
+        invitation_v2_col_exists_result = await conn.execute(
+            sa.text(
+                "SELECT EXISTS (SELECT 1 FROM information_schema.columns"
+                " WHERE table_name = 'project_invitations'"
+                " AND column_name = 'email_hash_v2')"
+            )
+        )
+        invitation_v2_col_exists = bool(
+            invitation_v2_col_exists_result.scalar()
+        )
+        audit_v2_col_exists_result = await conn.execute(
+            sa.text(
+                "SELECT EXISTS (SELECT 1 FROM information_schema.columns"
+                " WHERE table_name = 'platform_audit_log'"
+                " AND column_name = 'actor_user_id_hash_v2')"
+            )
+        )
+        audit_v2_col_exists = bool(audit_v2_col_exists_result.scalar())
+
         # The check constraint may be permanently dropped by ``cleanup_test_data``
         # (project_id null-out path) — we only require it on a *fresh* DB.
         # If the table exists but the trigger is missing, we fall through
@@ -235,6 +258,8 @@ async def setup_test_database(engine: AsyncEngine) -> None:
         and project_trigger_exists
         and two_factor_reset_exists
         and two_factor_reset_dispatching_col_exists
+        and invitation_v2_col_exists
+        and audit_v2_col_exists
     ):
         # Schema is fully up to date — nothing to do.
         return
@@ -257,6 +282,47 @@ async def setup_test_database(engine: AsyncEngine) -> None:
                     "WHERE status = 'dispatching'"
                 )
             )
+
+    # Phase 17 backlog A-2 (FR-091b): idempotent column add for legacy
+    # test DBs that pre-date Alembic 0016. The columns are nullable so
+    # the add is safe on existing rows. Partial indexes mirror the
+    # production migration so any "rotation in progress" filter in
+    # tests benefits from the same query plan as live PostgreSQL.
+    if not invitation_v2_col_exists or not audit_v2_col_exists:
+        async with engine.begin() as conn:
+            await conn.execute(
+                sa.text(
+                    "ALTER TABLE project_invitations "
+                    "ADD COLUMN IF NOT EXISTS email_hash_v2 VARCHAR(64) NULL, "
+                    "ADD COLUMN IF NOT EXISTS pii_hash_version INTEGER NULL"
+                )
+            )
+            await conn.execute(
+                sa.text(
+                    "CREATE INDEX IF NOT EXISTS "
+                    "ix_project_invitations_email_hash_v2 "
+                    "ON project_invitations (email_hash_v2) "
+                    "WHERE email_hash_v2 IS NOT NULL"
+                )
+            )
+            for table in ("platform_audit_log", "project_audit_log"):
+                await conn.execute(
+                    sa.text(
+                        f"ALTER TABLE {table} "
+                        f"ADD COLUMN IF NOT EXISTS actor_user_id_hash_v2 VARCHAR(64) NULL, "
+                        f"ADD COLUMN IF NOT EXISTS ip_hash_v2 VARCHAR(64) NULL, "
+                        f"ADD COLUMN IF NOT EXISTS user_agent_hash_v2 VARCHAR(64) NULL, "
+                        f"ADD COLUMN IF NOT EXISTS pii_hash_version INTEGER NULL"
+                    )
+                )
+                await conn.execute(
+                    sa.text(
+                        f"CREATE INDEX IF NOT EXISTS "
+                        f"ix_{table}_actor_v2 "
+                        f"ON {table} (actor_user_id_hash_v2) "
+                        f"WHERE actor_user_id_hash_v2 IS NOT NULL"
+                    )
+                )
 
     if not core_exists:
         # Fresh database — build using the raw-SQL path below.

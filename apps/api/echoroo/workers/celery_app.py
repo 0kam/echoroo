@@ -114,6 +114,11 @@ app.conf.include = [
     # 5 minutes and either clears the user's 2FA state or marks the
     # request ``cancelled`` / ``failed``.
     "echoroo.workers.two_factor_tasks",
+    # Phase 17 backlog A-2 — daily PII hash dual-write backfill. Fills
+    # ``email_hash_v2`` on invitation rows that pre-date a rotation
+    # window (audit rows are not back-fillable; they fall back to the
+    # v1 search path inside ``verify_pii_hash``).
+    "echoroo.workers.pii_hash_backfill",
 ]
 
 # Periodic tasks (beat schedule)
@@ -196,5 +201,16 @@ app.conf.beat_schedule = {
     "two-factor-reset-dispatch-5min": {
         "task": "echoroo.workers.two_factor_tasks.dispatch_due_two_factor_resets",
         "schedule": 300.0,
+    },
+    # Phase 17 backlog A-2 — daily PII hash dual-write backfill (FR-091b).
+    # Fires at 01:00 UTC, ahead of the GBIF (02:00) and GDPR null-out
+    # (02:30 / 02:45) sweeps so plaintext rows are still available for
+    # rehashing under the v2 CMK. Single-key deployments (no v2 alias)
+    # short-circuit the task body to a no-op fast path.
+    "pii-hash-backfill-daily": {
+        "task": (
+            "echoroo.workers.pii_hash_backfill.pii_hash_backfill_invitations"
+        ),
+        "schedule": crontab(hour=1, minute=0),
     },
 }
