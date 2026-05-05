@@ -582,27 +582,25 @@ class SuperuserIpAllowlistResponse(BaseModel):
 
 
 class ResetTwoFactorRequest(BaseModel):
-    """Body for ``POST /admin/users/{userId}/reset-2fa`` (stub).
+    """Body for ``POST /admin/users/{userId}/reset-2fa`` (Phase 17 A-11).
 
-    Phase 17 follow-up — Codex Round X: stub schema for the
-    superuser-driven 2FA reset flow described in admin.yaml. Full
-    implementation (4-factor verification + 24h delay job + 72h
-    cooldown + ``skip_delay`` M-of-N approval) is tracked in
-    ``PHASE17_BACKLOG.md`` item A-11. The current handler returns
-    HTTP 501 Not Implemented so the path appears in the OpenAPI
-    surface (closing the contract drift surfaced by
-    ``test_admin_paths_exist``) but cannot be invoked end-to-end
-    against production data.
+    The 4-factor identity proof (FR-072) is performed out-of-band via
+    ``POST /web-api/v1/auth/confirm-identity-for-2fa-reset`` — the user
+    receives a magic link by email, redeems it, and the redeem
+    endpoint mints a short-lived ``confirmation_token`` (5 min TTL)
+    that the support agent pastes into this body. The token binds the
+    target ``user_id`` + a one-time-use nonce + an HMAC signature so
+    forging or reusing it is rejected with 409.
 
-    The schema is pinned now so subsequent contract diffs catch any
-    accidental shape changes; downstream callers must therefore send
-    a syntactically valid body even though the handler short-circuits
-    to 501. The ``confirmed_factors`` list is intentionally typed as
-    ``list[str]`` (not an enum) until the real verification service
-    lands — the spec calls out four factor names
-    (``registered_email_match`` / ``current_password`` /
-    ``last_login_time`` / ``last_api_key_prefix``) but the
-    enumeration belongs to the implementation PR, not the stub.
+    Defaults:
+
+    * ``skip_delay=False`` → row enters ``pending_delay`` and the
+      Celery beat poller dispatches after the 24h delay.
+    * ``skip_delay=True`` → opens an M-of-N
+      :class:`~echoroo.models.superuser_approval_request.SuperuserApprovalRequest`
+      with action ``two_factor_reset.skip_delay``; quorum (two
+      co-signing superusers) flips the row to ``approved`` with
+      ``dispatch_at = now()``.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -612,18 +610,9 @@ class ResetTwoFactorRequest(BaseModel):
         min_length=1,
         max_length=200,
         description=(
-            "Operator-supplied support ticket reference (e.g. Zendesk id). "
-            "Stored verbatim in audit detail when the full flow lands."
-        ),
-    )
-    confirmed_factors: list[str] = Field(
-        ...,
-        description=(
-            "Factor names the support operator has independently verified. "
-            "Spec FR-072 enumerates four (``registered_email_match``, "
-            "``current_password``, ``last_login_time``, "
-            "``last_api_key_prefix``); the strict enum check lands with "
-            "the full implementation (PHASE17_BACKLOG.md A-11)."
+            "Operator-supplied support ticket reference (e.g. Zendesk "
+            "id). Stored verbatim on the ``two_factor_reset_requests`` "
+            "row and echoed (truncated) in the audit detail."
         ),
     )
     reason: str = Field(
@@ -631,17 +620,29 @@ class ResetTwoFactorRequest(BaseModel):
         min_length=1,
         max_length=2_000,
         description=(
-            "Free-form explanation recorded on the platform audit log "
-            "row when the full flow lands."
+            "Free-form explanation recorded on the request row and "
+            "(truncated to 200 chars) on the platform audit log entry."
         ),
     )
     skip_delay: bool = Field(
         default=False,
         description=(
-            "When ``true``, bypass the 24 h delay window. Spec FR-072 "
-            "requires an M-of-N approval ticket (two co-signing "
-            "superusers) before the delay can be skipped; the stub "
-            "rejects every request with 501 regardless of this flag."
+            "When ``true``, open an M-of-N approval ticket "
+            "(``two_factor_reset.skip_delay``) instead of waiting 24 h "
+            "for the dispatch poller. Quorum (two co-signing "
+            "superusers) immediately flips the row to ``approved``."
+        ),
+    )
+    confirmation_token: str = Field(
+        ...,
+        min_length=1,
+        max_length=512,
+        description=(
+            "Short-lived HMAC token returned by "
+            "``POST /web-api/v1/auth/confirm-identity-for-2fa-reset/redeem`` "
+            "after the user redeems the emailed magic link. Bound to "
+            "the target ``user_id`` and consumed exactly once. "
+            "Mismatched / expired / replayed tokens yield HTTP 409."
         ),
     )
 

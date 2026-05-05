@@ -147,6 +147,11 @@ _LAST_SUPERUSER_LOCK_KEY: Final[int] = (
 ACTION_SUPERUSER_ADD: str = "superuser.add"
 ACTION_SUPERUSER_REVOKE: str = "superuser.revoke"
 ACTION_BACKUP_CODE_RESET: str = "backup_code_reset"
+# Phase 17 backlog A-11: 2FA reset skip-delay quorum. The corresponding
+# ``two_factor_reset_requests`` row is flipped from ``pending_approval``
+# to ``approved`` (with ``dispatch_at = now()``) inside
+# :func:`approve_request` once two co-signers approve.
+ACTION_TWO_FACTOR_RESET_SKIP_DELAY: str = "two_factor_reset.skip_delay"
 
 # Platform audit action labels (FR-089).
 _AUDIT_ACTION_ADD_REQUESTED: str = "superuser.add.requested"
@@ -812,6 +817,38 @@ async def approve_request(
             now=now,
         )
         return applied
+    if request.action == ACTION_TWO_FACTOR_RESET_SKIP_DELAY:
+        # Phase 17 A-11 hook: flip the linked
+        # ``two_factor_reset_requests`` row to ``approved`` so the
+        # beat poller picks it up on the next tick. The detail JSONB
+        # carries the request id (set by
+        # ``two_factor_reset_service.create_request``). Failure here
+        # rolls back the approval (FR-111 continuity guarantee — the
+        # quorum and the dispatch state must agree).
+        from echoroo.services import two_factor_reset_service  # avoid cycle
+        await two_factor_reset_service.mark_approved_after_quorum(
+            session,
+            approval_request_id=request.id,
+            now=now,
+        )
+        return SuperuserActionOutcome(
+            action=_AUDIT_ACTION_APPROVED,
+            actor_user_id=actor_user_id,
+            detail={
+                "approval_request_id": str(request.id),
+                "approver_superuser_id": str(approver_superuser_id),
+                "approvals_count": len(approvals),
+                "min_approvals": MIN_APPROVALS,
+                "action": request.action,
+                "dispatched": True,
+            },
+            created_at=now,
+            request_id=request_id,
+            ip=ip,
+            user_agent=user_agent,
+            status="applied",
+            approval_request_id=request.id,
+        )
 
     # Generic dispatch — the caller's orchestrator owns the side-effect
     # for actions outside this module's domain (e.g. backup_code_reset,
@@ -880,6 +917,56 @@ async def reject_request(
     request.executed_at = now
     await session.flush()
 
+    # Round-2 Fix-5: cancel the linked domain row when the rejected
+    # ticket belongs to the A-11 admin 2FA reset flow. Without this
+    # hook the ``two_factor_reset_requests`` row would sit in
+    # ``pending_approval`` forever, blocking new requests via the
+    # partial unique index ``ux_two_factor_reset_requests_active_user``.
+    #
+    # Round-3 Fix R2-3: ``mark_cancelled_after_rejection`` no longer
+    # writes the ``two_factor_reset.cancelled`` audit row inline
+    # (which used a fresh session and committed BEFORE the outer
+    # ``db.commit()``, leading to phantom audit rows when the outer
+    # commit failed). Instead it returns the audit envelope, which we
+    # attach to ``extra_audit`` so :func:`trigger_post_commit_audit`
+    # writes it AFTER the outer TX commits successfully.
+    extra_audit_outcomes: list[SuperuserActionOutcome] = []
+    if request.action == ACTION_TWO_FACTOR_RESET_SKIP_DELAY:
+        from echoroo.services import two_factor_reset_service  # avoid cycle
+        cancel_payload = await two_factor_reset_service.mark_cancelled_after_rejection(
+            session,
+            approval_request_id=request.id,
+            rejector_superuser_id=rejector_superuser_id,
+            reason=reason,
+            now=now,
+        )
+        if cancel_payload is not None:
+            extra_audit_outcomes.append(
+                SuperuserActionOutcome(
+                    action=two_factor_reset_service.AUDIT_ACTION_CANCELLED,
+                    actor_user_id=cancel_payload.rejector_superuser_id,
+                    detail={
+                        "request_id": str(cancel_payload.request_id),
+                        "target_user_id": str(cancel_payload.target_user_id),
+                        "reason": "approval_rejected",
+                        "approval_request_id": str(
+                            cancel_payload.approval_request_id
+                        ),
+                        "rejector_superuser_id": str(
+                            cancel_payload.rejector_superuser_id
+                        ),
+                        "rejected_reason_excerpt": (
+                            cancel_payload.rejected_reason_excerpt
+                        ),
+                    },
+                    created_at=now,
+                    request_id=request_id,
+                    ip=ip,
+                    user_agent=user_agent,
+                    status="applied",
+                )
+            )
+
     return SuperuserActionOutcome(
         action=_AUDIT_ACTION_REJECTED,
         actor_user_id=actor_user_id,
@@ -895,6 +982,7 @@ async def reject_request(
         user_agent=user_agent,
         status="rejected",
         approval_request_id=request.id,
+        extra_audit=tuple(extra_audit_outcomes),
     )
 
 
@@ -1331,6 +1419,7 @@ __all__ = [
     "ACTION_BACKUP_CODE_RESET",
     "ACTION_SUPERUSER_ADD",
     "ACTION_SUPERUSER_REVOKE",
+    "ACTION_TWO_FACTOR_RESET_SKIP_DELAY",
     "AlreadySuperuserError",
     "ApprovalRequestNotFoundError",
     "ApprovalRequestStateError",

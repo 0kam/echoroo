@@ -1811,73 +1811,218 @@ async def update_ip_allowlist(
 
 @router.post(
     "/users/{user_id}/reset-2fa",
-    status_code=status.HTTP_501_NOT_IMPLEMENTED,
-    summary="2FA reset for a user (admin operation, STUB)",
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="2FA reset for a user (admin operation, FR-072)",
     description=(
-        "**Stub route, Phase 17 follow-up — A-11.**\n\n"
-        "Schema and authentication contract are pinned per "
-        "``contracts/admin.yaml`` so the OpenAPI surface stays in sync "
-        "with the contract. The handler currently returns HTTP 501; the "
-        "full flow (4-factor verification + 24-hour delay job + 72-hour "
-        "cooldown + ``skip_delay`` M-of-N approval) is tracked in "
-        "``specs/006-permissions-redesign/PHASE17_BACKLOG.md`` item A-11."
+        "Phase 17 backlog A-11. Open a 2FA reset request bound to "
+        "``user_id``. The 4-factor identity proof is performed via "
+        "``POST /web-api/v1/auth/confirm-identity-for-2fa-reset`` — "
+        "the operator pastes the resulting ``confirmation_token`` "
+        "into this body. Default flow (``skip_delay=false``) creates "
+        "a row in ``pending_delay`` and the Celery beat poller "
+        "dispatches after 24 h. ``skip_delay=true`` opens an M-of-N "
+        "``SuperuserApprovalRequest`` (action "
+        "``two_factor_reset.skip_delay``); quorum (two co-signers) "
+        "flips the row to ``approved`` for immediate dispatch."
     ),
     operation_id="reset2FA",
-    # Phase 17 Codex Round X Major fix: gate the destructive admin
-    # surface with the step-up token even though the handler is still
-    # a 501 stub. Without this dependency a superuser could reach the
-    # 501 path without re-authenticating, drifting from the
-    # admin.yaml contract (superuserSession + csrfToken + stepUpToken).
     dependencies=[Depends(require_step_up_token(SCOPE_ADMIN_DESTRUCTIVE))],
 )
 async def reset_two_factor(
-    user_id: UUID,  # noqa: ARG001 — pinned for contract surface; consumed by future impl
-    payload: ResetTwoFactorRequest,  # noqa: ARG001 — validated for 422 surface
+    user_id: UUID,
+    payload: ResetTwoFactorRequest,
     current_user: OptionalCurrentUser,
+    request: Request,
     db: DbSession,
-) -> None:
-    """Stub for the FR-072 superuser-driven 2FA reset flow.
-
-    The full implementation lives behind PHASE17_BACKLOG.md A-11 and
-    requires:
-
-    * 4-factor verification (``registered_email_match`` /
-      ``current_password`` / ``last_login_time`` /
-      ``last_api_key_prefix``)
-    * 24-hour delayed dispatch via Celery beat
-    * 72-hour cooldown state machine
-    * ``skip_delay=true`` ↔ ``SuperuserApprovalRequest`` M-of-N approval
-
-    Until those land we **must not** mutate auth state, so the handler
-    short-circuits to 501 after authenticating the caller. We still run
-    the superuser gate so that:
-
-    * Anonymous callers get 401 (consistent with the rest of /admin).
-    * Authenticated non-superusers get 403 (so this stub does not become
-      a cheap probe that distinguishes "user exists" from "user is
-      privileged").
-    * Pydantic continues to enforce the request schema (422 on missing
-      fields).
-    """
-    # Authenticate as a real superuser before doing anything else, even
-    # though we will reject with 501 unconditionally. This keeps the
-    # public-facing semantics symmetric with every other admin path:
-    # unauthenticated → 401, authenticated-but-not-superuser → 403,
-    # everything-valid → 501.
+) -> dict[str, str | None]:
+    """Open a Phase 17 A-11 admin 2FA reset request."""
+    # 1. Auth + superuser gate.
     await _require_authenticated_superuser(current_user, db)
+    superuser_id = _require_superuser_id(current_user)
 
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail={
-            "error": "ERR_NOT_IMPLEMENTED",
-            "message": (
-                "2FA reset endpoint is not yet implemented. "
-                "Track progress in "
-                "specs/006-permissions-redesign/PHASE17_BACKLOG.md "
-                "item A-11."
-            ),
-        },
+    # 2. Resolve target user. 404 keeps parity with the rest of /admin.
+    target = await db.get(User, user_id)
+    if target is None or target.deleted_at is not None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"error": "ERR_USER_NOT_FOUND", "message": "User not found."},
+        )
+
+    # 3. Open the request. The service performs:
+    #   - confirmation token consume (HMAC + nonce one-time-use)
+    #   - active-request guard (partial unique index pre-check)
+    #   - row insert (+ M-of-N ticket if skip_delay=True)
+    from echoroo.services import two_factor_reset_service
+    from echoroo.services.two_factor_confirmation_token import (
+        ConfirmationTokenAlreadyConsumedError,
+        ConfirmationTokenError,
+        ConfirmationTokenExpiredError,
+        ConfirmationTokenInvalidError,
+        ConfirmationTokenUserMismatchError,
     )
+
+    try:
+        outcome = await two_factor_reset_service.create_request(
+            db,
+            target_user=target,
+            requested_by_superuser_id=superuser_id,
+            confirmation_token=payload.confirmation_token,
+            support_ticket_id=payload.support_ticket_id,
+            reason=payload.reason,
+            skip_delay=payload.skip_delay,
+            request_id=_request_id(request),
+            ip=_client_ip(request),
+            user_agent=_user_agent(request),
+        )
+        await db.commit()
+    except ConfirmationTokenAlreadyConsumedError as exc:
+        # Round-2 Fix-4: emit a dedicated audit row so a leaked-token
+        # replay is visible in ``platform_audit_log`` separately from
+        # the generic invalid-token path. The HTTP response stays 409
+        # (same surface as a fresh-but-malformed token) so the operator
+        # cannot use the API to distinguish "never existed" from
+        # "already used".
+        #
+        # Capture identity-bearing fields BEFORE ``db.rollback()`` so
+        # the resulting session-state expiry does not force a fresh
+        # SELECT on ``current_user.id`` from a closed greenlet — which
+        # would surface as a confusing ``MissingGreenlet`` instead of
+        # the intended 409.
+        replay_actor_id = current_user.id if current_user else superuser_id
+        replay_target_id = str(user_id)
+        replay_operator_id = str(superuser_id)
+        replay_ticket_id = payload.support_ticket_id
+        replay_ip = _client_ip(request)
+        replay_ip_hash = hashlib.sha256(replay_ip.encode()).hexdigest()
+        replay_request_id = _request_id(request)
+        replay_user_agent = _user_agent(request)
+        await db.rollback()
+        await two_factor_reset_service._write_platform_audit(  # noqa: SLF001
+            actor_user_id=replay_actor_id,
+            action=two_factor_reset_service.AUDIT_ACTION_CONFIRMATION_TOKEN_REPLAY,
+            detail={
+                "target_user_id": replay_target_id,
+                "operator_id": replay_operator_id,
+                "support_ticket_id": replay_ticket_id,
+                "ip_hash": replay_ip_hash,
+            },
+            request_id=replay_request_id,
+            ip=replay_ip,
+            user_agent=replay_user_agent,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "error": "ERR_INVALID_CONFIRMATION_TOKEN",
+                "message": (
+                    "Confirmation token is invalid, expired, or already "
+                    "consumed. Re-issue via "
+                    "/auth/confirm-identity-for-2fa-reset."
+                ),
+            },
+        ) from exc
+    except (
+        ConfirmationTokenInvalidError,
+        ConfirmationTokenExpiredError,
+        ConfirmationTokenUserMismatchError,
+    ) as exc:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "error": "ERR_INVALID_CONFIRMATION_TOKEN",
+                "message": (
+                    "Confirmation token is invalid, expired, or already "
+                    "consumed. Re-issue via "
+                    "/auth/confirm-identity-for-2fa-reset."
+                ),
+            },
+        ) from exc
+    except two_factor_reset_service.ActiveResetRequestExistsError as exc:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "error": "ERR_ACTIVE_RESET_REQUEST",
+                "message": (
+                    "An in-flight 2FA reset request already exists for "
+                    "this user. Cancel or wait for the existing request "
+                    "before opening a new one."
+                ),
+            },
+        ) from exc
+    except IntegrityError as exc:
+        # Round-2 Fix-3: race window between the SELECT pre-check inside
+        # ``create_request`` and the INSERT — two concurrent operators
+        # can both pass the pre-check, then one wins the partial unique
+        # index ``ux_two_factor_reset_requests_active_user`` and the
+        # other surfaces here. Translate to the same 409 the explicit
+        # ``ActiveResetRequestExistsError`` path already returns so the
+        # caller sees a deterministic envelope.
+        # Round-3 Fix R2-4: the constraint name comes from the service
+        # module's ``ACTIVE_REQUEST_UNIQUE_CONSTRAINT`` Final so a
+        # future index rename only has to touch one place.
+        await db.rollback()
+        constraint = getattr(getattr(exc, "orig", None), "diag", None)
+        constraint_name = (
+            getattr(constraint, "constraint_name", "") if constraint else ""
+        )
+        message = str(getattr(exc, "orig", exc) or exc)
+        if (
+            two_factor_reset_service.ACTIVE_REQUEST_UNIQUE_CONSTRAINT
+            in (constraint_name or "")
+            or two_factor_reset_service.ACTIVE_REQUEST_UNIQUE_CONSTRAINT in message
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "error": "ERR_ACTIVE_RESET_REQUEST",
+                    "message": (
+                        "An in-flight 2FA reset request already exists for "
+                        "this user. Cancel or wait for the existing request "
+                        "before opening a new one."
+                    ),
+                },
+            ) from exc
+        raise
+    except ConfirmationTokenError as exc:
+        # Catch-all guard against future subclasses.
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "error": "ERR_INVALID_CONFIRMATION_TOKEN",
+                "message": "Confirmation token failed verification.",
+            },
+        ) from exc
+
+    # 4. Audit row(s). Service helper writes the requested + token_verified pair.
+    await two_factor_reset_service.trigger_create_request_audit(
+        outcome=outcome,
+        actor_user_id=current_user.id if current_user else superuser_id,
+        target_user_id=user_id,
+        support_ticket_id=payload.support_ticket_id,
+        reason=payload.reason,
+        skip_delay=payload.skip_delay,
+        confirmation_token_nonce=outcome.confirmation_token_nonce,
+        request_id=_request_id(request),
+        ip=_client_ip(request),
+        user_agent=_user_agent(request),
+    )
+
+    return {
+        "request_id": str(outcome.request_id),
+        "status": outcome.status,
+        "dispatch_at": (
+            outcome.dispatch_at.isoformat() if outcome.dispatch_at else None
+        ),
+        "expires_at": outcome.expires_at.isoformat(),
+        "approval_request_id": (
+            str(outcome.approval_request_id)
+            if outcome.approval_request_id
+            else None
+        ),
+    }
 
 
 __all__ = ["router"]

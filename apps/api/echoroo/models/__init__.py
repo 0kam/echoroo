@@ -88,6 +88,11 @@ from echoroo.models.tag import Tag
 from echoroo.models.taxon import Taxon
 from echoroo.models.taxon_sensitivity import TaxonSensitivity
 from echoroo.models.taxon_vernacular_name import TaxonVernacularName
+from echoroo.models.two_factor_reset_request import (
+    TwoFactorConfirmationToken,
+    TwoFactorResetMagicLink,
+    TwoFactorResetRequest,
+)
 from echoroo.models.upload import UploadFile, UploadSession
 from echoroo.models.user import User
 from echoroo.models.user_login_notification_seen import UserLoginNotificationSeen
@@ -115,6 +120,9 @@ __all__ = [
     "Superuser",
     "SuperuserApprovalRequest",
     "SystemSetting",
+    "TwoFactorConfirmationToken",
+    "TwoFactorResetMagicLink",
+    "TwoFactorResetRequest",
     "User",
     "UserLoginNotificationSeen",
     # Annotation models (existing)

@@ -109,6 +109,11 @@ app.conf.include = [
     # idempotent and stateless across runs (FR-106 / FR-108).
     "echoroo.workers.invitation_email_null",
     "echoroo.workers.trusted_email_null",
+    # Phase 17 backlog A-11 — dispatch poller for the admin 2FA reset
+    # state machine. Picks up rows where ``dispatch_at <= now()`` every
+    # 5 minutes and either clears the user's 2FA state or marks the
+    # request ``cancelled`` / ``failed``.
+    "echoroo.workers.two_factor_tasks",
 ]
 
 # Periodic tasks (beat schedule)
@@ -182,5 +187,14 @@ app.conf.beat_schedule = {
     "trusted-email-null-daily": {
         "task": "echoroo.workers.trusted_email_null.sweep_trusted_emails",
         "schedule": crontab(hour=2, minute=45),
+    },
+    # Phase 17 backlog A-11 — admin 2FA reset dispatch poller. 5 min
+    # cadence keeps the worst-case dispatch latency comparable to the
+    # 24h delay we already promise (FR-072). The task body uses
+    # ``SELECT ... FOR UPDATE SKIP LOCKED`` so multi-worker contention
+    # is wait-free.
+    "two-factor-reset-dispatch-5min": {
+        "task": "echoroo.workers.two_factor_tasks.dispatch_due_two_factor_resets",
+        "schedule": 300.0,
     },
 }
