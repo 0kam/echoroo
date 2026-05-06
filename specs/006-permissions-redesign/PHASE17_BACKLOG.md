@@ -66,22 +66,6 @@ already exists in `apps/api/tests/security/**` and is marked
   - [ ] `scripts/lint_kms_isolation.py` runs in strict mode and passes.
   - [ ] `xfail` + `skip` removed; tests PASS.
 
-### A-12. 2FA reset confirmation token: dedicated HMAC key + key rotation (kid)
-- **Origin**: A-11 close (PR `027-a11-two-factor-reset-full-impl`) review
-  Round 1-9 carry-over. Codex flagged the confirmation token signing key
-  is reused from `settings.web_session_secret` rather than a dedicated
-  per-purpose key.
-- **Threat**: Compromise of the shared session secret would also forge
-  admin-reset confirmation tokens. The 5 min TTL bounds the blast
-  radius, but the design requirement of key rotation / `kid` versioning
-  is unmet. (OWASP A02 Cryptographic Failures.)
-- **Release condition**:
-  - [ ] Introduce dedicated `TWO_FACTOR_RESET_CONFIRMATION_HMAC_KEY` in
-        `core/settings.py` with strong-secret guard for production.
-  - [ ] Embed `kid` claim in the HMAC envelope and accept previous
-        `kid` during a defined rotation grace.
-  - [ ] Rotation runbook entry + key-rotation operational test.
-
 ### A-13. Operator free-form fields: PII / email plaintext detector
 - **Origin**: A-11 close review Round 1-9 carry-over. The operator
   `reason` and `support_ticket_id` fields accept arbitrary strings; an
