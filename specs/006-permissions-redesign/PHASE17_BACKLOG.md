@@ -53,19 +53,6 @@ already exists in `apps/api/tests/security/**` and is marked
         `Response` paths are documented as pre-start only.
   - [x] `xfail` removed from `test_streaming_permission_change.py`; tests PASS.
 
-### A-8. DEK rewrap + KMS isolation
-- **Task**: T979e
-- **File**: `apps/api/tests/security/crypto/test_dek_rewrap_and_kms_isolation.py`
-- **xfail count**: 1 (+ 1 skip)
-- **Threat**: Direct KMS calls outside `core/kms.py` bypass the alias-isolation
-  guard; key material rewrap path may leak DEK to logs (FR-091b, OWASP A02 / A08).
-- **Expected behavior**: Static lint + runtime guard ensures only `core/kms.py`
-  invokes the boto3 KMS client; DEK rewrap operates on opaque ciphertext
-  only.
-- **Release condition**:
-  - [ ] `scripts/lint_kms_isolation.py` runs in strict mode and passes.
-  - [ ] `xfail` + `skip` removed; tests PASS.
-
 ### A-13. Operator free-form fields: PII / email plaintext detector — DONE (2026-05-04)
 - **Origin**: A-11 close review Round 1-9 carry-over. The operator
   `reason` and `support_ticket_id` fields accept arbitrary strings; an

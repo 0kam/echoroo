@@ -206,7 +206,7 @@ def _invitation_alias_old() -> str | None:
 # ---------------------------------------------------------------------------
 
 
-def wrap_dek(plaintext: bytes) -> bytes:
+def wrap_dek(plaintext: bytes, *, alias: str | None = None) -> bytes:
     """Wrap a TOTP data encryption key with the TOTP CMK.
 
     Returns the opaque KMS ciphertext blob. Callers store this blob
@@ -215,12 +215,18 @@ def wrap_dek(plaintext: bytes) -> bytes:
 
     Args:
         plaintext: Raw DEK bytes (typically 32 bytes for AES-256-GCM).
+        alias: Optional CMK alias override. Defaults to the env-resolved
+            current TOTP DEK alias (``AWS_KMS_CMK_2FA_ALIAS`` /
+            ``AWS_KMS_CMK_2FA_DEK_ALIAS_NEW``). Service-layer callers
+            should pass the alias resolved from
+            :data:`Settings.two_factor_dek_cmk_alias_new` so behaviour
+            tracks the rotation contract; tests may use the default.
 
     Returns:
         AWS KMS ciphertext blob, opaque bytes.
     """
     resp = _client().encrypt(
-        KeyId=_totp_dek_alias(),
+        KeyId=alias or _totp_dek_alias(),
         Plaintext=plaintext,
     )
     ciphertext = resp["CiphertextBlob"]
@@ -228,11 +234,17 @@ def wrap_dek(plaintext: bytes) -> bytes:
     return ciphertext
 
 
-def unwrap_dek(wrapped: bytes) -> bytes:
+def unwrap_dek(wrapped: bytes, *, alias: str | None = None) -> bytes:
     """Decrypt a previously wrapped DEK.
 
     Args:
         wrapped: Opaque KMS ciphertext blob returned by :func:`wrap_dek`.
+        alias: Optional CMK alias override. When ``None`` defaults to the
+            env-resolved current TOTP DEK alias. The 2FA service routes
+            here with the alias chosen by
+            ``_resolve_dek_alias_for_version`` so historical DEKs (still
+            stamped with the previous version) decrypt under the
+            ``..._OLD`` alias during a rotation grace window.
 
     Returns:
         The original plaintext DEK bytes.
@@ -244,11 +256,53 @@ def unwrap_dek(wrapped: bytes) -> bytes:
     """
     resp = _client().decrypt(
         CiphertextBlob=wrapped,
-        KeyId=_totp_dek_alias(),
+        KeyId=alias or _totp_dek_alias(),
     )
     plaintext = resp["Plaintext"]
     assert isinstance(plaintext, bytes)
     return plaintext
+
+
+def rewrap_dek(
+    wrapped: bytes,
+    *,
+    destination_key_id: str,
+    source_key_id: str | None = None,
+) -> bytes:
+    """Re-encrypt a DEK ciphertext under a different CMK.
+
+    Calls AWS KMS ``ReEncrypt`` so the plaintext DEK is decrypted and
+    re-encrypted entirely inside KMS — it never leaves the service. This
+    is the critical FR-091b property that lets operators rotate the TOTP
+    CMK without exposing any DEK plaintext to the application or to
+    network peers.
+
+    Args:
+        wrapped: Opaque KMS ciphertext blob produced by an earlier
+            :func:`wrap_dek` (or a previous :func:`rewrap_dek`).
+        destination_key_id: The CMK key id (or alias) to encrypt under.
+            Operators typically resolve the alias via :func:`_resolve_key_id`
+            once at startup and reuse the resolved key id across the
+            rewrap batch to amortise the ``DescribeKey`` round-trip.
+        source_key_id: Optional source CMK key id / alias. When ``None``
+            (the default) KMS reads the source key from the ciphertext
+            metadata. Pass an explicit value only when the ciphertext is
+            ambiguous (e.g. cross-region replicas).
+
+    Returns:
+        New opaque KMS ciphertext blob, decryptable under
+        ``destination_key_id``.
+    """
+    kwargs: dict[str, Any] = {
+        "CiphertextBlob": wrapped,
+        "DestinationKeyId": destination_key_id,
+    }
+    if source_key_id is not None:
+        kwargs["SourceKeyId"] = source_key_id
+    resp = _client().re_encrypt(**kwargs)
+    ciphertext = resp["CiphertextBlob"]
+    assert isinstance(ciphertext, bytes)
+    return ciphertext
 
 
 # ---------------------------------------------------------------------------
@@ -590,6 +644,7 @@ __all__ = [
     "compute_pii_hash",
     "compute_pii_hash_dual",
     "get_pii_hash_version",
+    "rewrap_dek",
     "sign_invitation_hmac",
     "unwrap_dek",
     "verify_invitation_hmac",

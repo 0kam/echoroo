@@ -34,13 +34,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from echoroo.core import kms
 from echoroo.core.database import AsyncSessionLocal
 from echoroo.core.redis import get_redis_connection
+from echoroo.core.settings import Settings, get_settings
 from echoroo.models.user import User
 from echoroo.services.audit_service import AuditLogService
 
 ISSUER_NAME = "Echoroo"
 TOTP_SECRET_LENGTH = 32
 TOTP_VALID_WINDOW = 1
-TOTP_DEK_VERSION = 1  # TODO: read current 2FA DEK rotation version from settings.
 AES_GCM_NONCE_BYTES = 12
 AES_256_KEY_BYTES = 32
 WRAPPED_DEK_LEN_BYTES = 4
@@ -167,11 +167,49 @@ def _totp(secret: str) -> pyotp.TOTP:
     return pyotp.TOTP(secret, digits=6, interval=30)
 
 
+def _current_dek_version() -> int:
+    """Return the DEK version stamped onto newly encrypted TOTP secrets.
+
+    Reads :data:`Settings.two_factor_dek_kid_new` so a CMK rotation can
+    flip the version (and the matching alias) via env vars only — no
+    source change required.
+    """
+    return int(get_settings().two_factor_dek_kid_new)
+
+
+def _resolve_dek_alias_for_version(version: int, settings: Settings) -> str | None:
+    """Map a stored DEK version → CMK alias (env-driven A-12 pattern).
+
+    Returns ``None`` when the version is not configured, signalling that
+    the operator must run ``scripts/rewrap_dek.py`` before serving any
+    request that would touch a record carrying that version.
+    """
+    if version == settings.two_factor_dek_kid_new:
+        return settings.two_factor_dek_cmk_alias_new
+    if (
+        settings.two_factor_dek_kid_old is not None
+        and version == settings.two_factor_dek_kid_old
+        and settings.two_factor_dek_cmk_alias_old is not None
+    ):
+        return settings.two_factor_dek_cmk_alias_old
+    return None
+
+
 def _encrypt_totp_secret(secret: str) -> bytes:
+    """Envelope-encrypt a TOTP base32 secret under the current CMK.
+
+    The DEK is wrapped under :data:`Settings.two_factor_dek_cmk_alias_new`
+    so the surrounding caller can stamp the matching
+    :func:`_current_dek_version` onto ``users.two_factor_secret_dek_version``
+    without referencing a hard-coded constant.
+    """
+    settings = get_settings()
     dek = bytearray(os.urandom(AES_256_KEY_BYTES))
     try:
         nonce = os.urandom(AES_GCM_NONCE_BYTES)
-        wrapped_dek = kms.wrap_dek(bytes(dek))
+        wrapped_dek = kms.wrap_dek(
+            bytes(dek), alias=settings.two_factor_dek_cmk_alias_new
+        )
         ciphertext = AESGCM(bytes(dek)).encrypt(nonce, secret.encode("utf-8"), None)
         return (
             struct.pack("<I", len(wrapped_dek))
@@ -184,9 +222,16 @@ def _encrypt_totp_secret(secret: str) -> bytes:
         del dek
 
 
-def _decrypt_totp_secret(payload: bytes) -> str:
-    # TODO Phase 6 T080: read users.two_factor_secret_dek_version and route to
-    # the correct historical KMS key alias when CMK rotation is implemented.
+def _decrypt_totp_secret(payload: bytes, *, dek_version: int | None = None) -> str:
+    """Envelope-decrypt a TOTP secret with DEK-version aware CMK routing.
+
+    ``dek_version`` selects the CMK alias via
+    :func:`_resolve_dek_alias_for_version`. When ``None`` (the historical
+    test fixture default) the current ``kid_new`` is assumed — production
+    callers MUST always pass ``user.two_factor_secret_dek_version``
+    explicitly so a record stamped with the previous version is routed to
+    the ``..._OLD`` alias during the rotation grace window.
+    """
     if len(payload) < WRAPPED_DEK_LEN_BYTES + AES_GCM_NONCE_BYTES:
         raise TwoFactorError("encrypted TOTP secret payload is malformed")
 
@@ -197,11 +242,21 @@ def _decrypt_totp_secret(payload: bytes) -> str:
     if wrapped_len <= 0 or len(payload) <= nonce_end:
         raise TwoFactorError("encrypted TOTP secret payload is malformed")
 
+    settings = get_settings()
+    effective_version = dek_version if dek_version is not None else settings.two_factor_dek_kid_new
+    alias = _resolve_dek_alias_for_version(effective_version, settings)
+    if alias is None:
+        raise TwoFactorError(
+            f"DEK version {effective_version} is not configured for "
+            "decryption — operator must run scripts/rewrap_dek.py before "
+            "removing the prior CMK alias from settings"
+        )
+
     wrapped_dek = payload[wrapped_start:wrapped_end]
     nonce = payload[wrapped_end:nonce_end]
     ciphertext = payload[nonce_end:]
 
-    dek = bytearray(kms.unwrap_dek(wrapped_dek))
+    dek = bytearray(kms.unwrap_dek(wrapped_dek, alias=alias))
     try:
         plaintext = AESGCM(bytes(dek)).decrypt(nonce, ciphertext, None)
         return plaintext.decode("utf-8")
@@ -274,8 +329,9 @@ class TwoFactorService:
         backup_codes = [_generate_backup_code() for _ in range(BACKUP_CODE_COUNT)]
         hashed_codes = [_hash_backup_code(code) for code in backup_codes]
 
+        current_version = _current_dek_version()
         user.two_factor_secret_encrypted = _encrypt_totp_secret(secret)
-        user.two_factor_secret_dek_version = TOTP_DEK_VERSION
+        user.two_factor_secret_dek_version = current_version
         user.two_factor_backup_codes_hashed = hashed_codes
         user.two_factor_enabled = True
         self.rotate_security_stamp(user)
@@ -293,7 +349,7 @@ class TwoFactorService:
             actor_id=user.id,
             target_user=user,
             action="two_factor.enroll_confirmed",
-            detail={"backup_code_count": len(backup_codes), "dek_version": TOTP_DEK_VERSION},
+            detail={"backup_code_count": len(backup_codes), "dek_version": current_version},
         )
         return backup_codes
 
@@ -303,7 +359,10 @@ class TwoFactorService:
             raise TwoFactorNotEnabledError("two-factor authentication is not enabled")
 
         await self._raise_if_totp_locked(user.id)
-        secret = _decrypt_totp_secret(user.two_factor_secret_encrypted)
+        secret = _decrypt_totp_secret(
+            user.two_factor_secret_encrypted,
+            dek_version=user.two_factor_secret_dek_version,
+        )
         if _totp(secret).verify(_normalize_totp_code(code), valid_window=TOTP_VALID_WINDOW):
             await self._clear_totp_failures(user.id)
             return True

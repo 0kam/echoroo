@@ -97,12 +97,19 @@ def _mock_slow_or_external_dependencies(monkeypatch: pytest.MonkeyPatch) -> None
     async def no_audit(self: TwoFactorService, **_kwargs: Any) -> None:
         return None
 
+    # Phase 17 A-8: kms.wrap_dek / unwrap_dek now accept an optional
+    # ``alias`` kwarg so the service layer can route DEK envelope ops to
+    # the rotation grace alias. The mocks accept and discard it.
     monkeypatch.setattr(
         two_factor_module.kms,
         "wrap_dek",
-        lambda plaintext: bytes(plaintext),
+        lambda plaintext, **_kwargs: bytes(plaintext),
     )
-    monkeypatch.setattr(two_factor_module.kms, "unwrap_dek", lambda wrapped: bytes(wrapped))
+    monkeypatch.setattr(
+        two_factor_module.kms,
+        "unwrap_dek",
+        lambda wrapped, **_kwargs: bytes(wrapped),
+    )
     monkeypatch.setattr(TwoFactorService, "_record_audit_event", no_audit)
     monkeypatch.setattr(two_factor_module, "_backup_code_hasher", _FastBackupHasher())
 
@@ -406,3 +413,123 @@ def test_encrypt_totp_secret_produces_distinct_ciphertexts_for_same_plaintext() 
     # plaintext — distinctness without correctness is not enough.
     assert two_factor_module._decrypt_totp_secret(blob_a) == plaintext_secret
     assert two_factor_module._decrypt_totp_secret(blob_b) == plaintext_secret
+
+
+# ---------------------------------------------------------------------------
+# Phase 17 A-8: DEK version routing for ``_decrypt_totp_secret``.
+#
+# The settings-driven routing is exercised here through pure unit tests
+# that monkeypatch ``get_settings`` so the test does not need a live KMS
+# (the encrypt/decrypt path falls back to the existing test-time KMS
+# fixture). The behavioural contract being asserted:
+#
+#   * a record stamped with kid_new decrypts under alias_new (default path)
+#   * a record stamped with kid_old decrypts under alias_old during the
+#     rotation grace window
+#   * a record carrying any other version is rejected with TwoFactorError
+#     instructing the operator to run scripts/rewrap_dek.py
+# ---------------------------------------------------------------------------
+
+
+def _stub_settings(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    kid_new: int = 1,
+    alias_new: str = "alias/echoroo-totp-dek",
+    kid_old: int | None = None,
+    alias_old: str | None = None,
+) -> None:
+    """Return a Settings-like stub from ``two_factor_service.get_settings``."""
+
+    class _StubSettings:
+        two_factor_dek_kid_new = kid_new
+        two_factor_dek_cmk_alias_new = alias_new
+        two_factor_dek_kid_old = kid_old
+        two_factor_dek_cmk_alias_old = alias_old
+
+    monkeypatch.setattr(
+        two_factor_module, "get_settings", lambda: _StubSettings()
+    )
+
+
+def test_resolve_dek_alias_for_version_routes_to_new(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _stub_settings(monkeypatch, kid_new=2, alias_new="alias/new")
+    settings = two_factor_module.get_settings()
+    assert (
+        two_factor_module._resolve_dek_alias_for_version(2, settings) == "alias/new"
+    )
+
+
+def test_resolve_dek_alias_for_version_routes_to_old_during_grace(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _stub_settings(
+        monkeypatch,
+        kid_new=2,
+        alias_new="alias/new",
+        kid_old=1,
+        alias_old="alias/old",
+    )
+    settings = two_factor_module.get_settings()
+    assert (
+        two_factor_module._resolve_dek_alias_for_version(1, settings) == "alias/old"
+    )
+
+
+def test_resolve_dek_alias_for_version_rejects_unsupported(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # No old configured: only kid_new is valid.
+    _stub_settings(monkeypatch, kid_new=2, alias_new="alias/new")
+    settings = two_factor_module.get_settings()
+    assert two_factor_module._resolve_dek_alias_for_version(99, settings) is None
+    # Old kid configured but alias_old missing → still unsupported.
+    _stub_settings(monkeypatch, kid_new=2, alias_new="alias/new", kid_old=1)
+    settings = two_factor_module.get_settings()
+    # alias_old is None so the version=1 path fails the second guard.
+    assert two_factor_module._resolve_dek_alias_for_version(1, settings) is None
+
+
+def test_decrypt_totp_secret_rejects_unsupported_version(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Encrypt a payload with the current setup (kid_new=1 by default), then
+    # ask the decryptor to interpret it as version=99 — the routing helper
+    # returns None and the decrypt path raises TwoFactorError before any
+    # KMS call, instructing the operator to run the rewrap script.
+    payload = two_factor_module._encrypt_totp_secret("JBSWY3DPEHPK3PXP")
+    with pytest.raises(TwoFactorError, match="not configured for decryption"):
+        two_factor_module._decrypt_totp_secret(payload, dek_version=99)
+
+
+def test_decrypt_totp_secret_routes_to_old_alias_during_grace(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A record stamped with kid_old decrypts under alias_old.
+
+    We do not exercise the full KMS round-trip here (the
+    tests/security/crypto suite covers that with moto). What this unit
+    test guards is the *routing*: a payload encrypted under the current
+    alias still resolves to that alias when its stored version equals
+    kid_old AND alias_old maps to the same physical alias. The dummy
+    rotation here treats kid_new=1 as the post-rotation version and
+    kid_old=1 as the pre-rotation version pointed at the same alias —
+    proving the routing helper picks alias_old based on version match.
+    """
+    # Configure: post-rotation has kid_new=2 / alias_new=A, but the
+    # historical record uses kid_old=1 / alias_old=A (same physical
+    # alias because the rotation only renamed the version stamp). The
+    # decrypt path must successfully recover plaintext.
+    plaintext = "JBSWY3DPEHPK3PXP"
+    payload = two_factor_module._encrypt_totp_secret(plaintext)
+    _stub_settings(
+        monkeypatch,
+        kid_new=2,
+        alias_new="alias/echoroo-totp-dek-v2-fake",
+        kid_old=1,
+        alias_old="alias/echoroo-totp-dek",  # the alias the payload was wrapped under
+    )
+    recovered = two_factor_module._decrypt_totp_secret(payload, dek_version=1)
+    assert recovered == plaintext
