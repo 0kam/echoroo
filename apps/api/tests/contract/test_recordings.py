@@ -390,8 +390,15 @@ class TestRecordingAudioEndpoints:
         # Note: May return 404 if audio file doesn't exist in test environment
         assert response.status_code in [200, 404]
         if response.status_code == 200:
-            assert "Accept-Ranges" in response.headers
-            assert "Content-Length" in response.headers
+            # Phase 17 backlog A-5 Round 2 R1-C1: the full-file guarded
+            # stream path uses Transfer-Encoding: chunked and DOES NOT
+            # advertise Content-Length / Accept-Ranges so a mid-stream
+            # permission revoke cannot leave the client waiting for
+            # bytes that will never arrive. Range responses (206) on
+            # the same endpoint still carry both headers — see
+            # ``test_stream_audio_range_response_has_content_length``.
+            assert "Content-Length" not in response.headers
+            assert "Accept-Ranges" not in response.headers
 
     async def test_stream_audio_not_found(
         self,

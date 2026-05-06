@@ -25,18 +25,33 @@ These were filed in Phase 16 Batch 6f as TDD-red specifications. The test
 already exists in `apps/api/tests/security/**` and is marked
 `xfail(strict=True)` with a forward-reference docstring.
 
-### A-5. Streaming endpoint permission re-check (per-chunk guard)
+### A-5. Streaming endpoint permission re-check (Hybrid Contract)
 - **Task**: T973
 - **File**: `apps/api/tests/security/race_conditions/test_streaming_permission_change.py`
-- **xfail count**: 1
+- **xfail count**: 1 (closed in this PR)
 - **Threat**: A long-running CSV / audio stream started before a permission
   revoke continues serving until the stream closes (security H-6).
-- **Expected behavior**: Each chunk boundary re-checks the principal's
-  permission; a revoke detected mid-stream truncates with a 403 trailer.
+- **Hybrid Contract** (Phase 17 A-5):
+  - **pre-start revoke**: protected stream endpoints run the normal permission
+    gate before creating a `StreamingResponse` and return HTTP 403 when denied.
+  - **post-start revoke**: status / headers are already on the wire and CANNOT
+    be changed. Guarded streams re-check at documented guard boundaries; a
+    revoke detected after response start MUST stop yielding protected data,
+    write `stream.permission_revoked_mid_stream` audit telemetry, and
+    terminate the stream. CSV streams MAY append the sentinel
+    `\r\n--PERMISSION-REVOKED--\r\n` so a human/audit reader detects truncation;
+    binary audio streams terminate without a sentinel (would corrupt media).
+  - **Range responses** are explicitly pre-start guarded only; not covered
+    by mid-stream re-check (single-shot `Response`).
 - **Release condition**:
-  - [ ] Streaming export endpoints implement per-chunk re-check (Phase 17
-        infra task).
-  - [ ] `xfail` removed; test PASS.
+  - [x] CSV export (`detection_export.export_csv` + `api/v1/search/sessions.py`
+        export path) uses row-by-row streaming guard at configured boundaries.
+  - [x] `export_csv(..., search_session_id=...) -> str` signature preserved
+        for back-compat with existing `tests/security/search_leak/test_export_csv_no_lat_lng.py:375` etc.
+  - [x] Audio full-file streaming paths (`_iter_ogg` / `_iter_file`) are
+        guarded at `AUDIO_RECHECK_INTERVAL=8` chunks. Range and generated clip
+        `Response` paths are documented as pre-start only.
+  - [x] `xfail` removed from `test_streaming_permission_change.py`; tests PASS.
 
 ### A-8. DEK rewrap + KMS isolation
 - **Task**: T979e

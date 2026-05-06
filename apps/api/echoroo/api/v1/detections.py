@@ -484,15 +484,25 @@ async def export_csv(
         db=db,
     )
     service = DetectionExportService(db)
-    csv_content = await service.export_csv(
+    # Phase 17 backlog A-5 (Hybrid Contract): switch from buffered
+    # ``export_csv() -> str`` + ``io.BytesIO`` wrapper to row-by-row
+    # streaming so :func:`recheck_action_permission` can fire every
+    # ``CSV_RECHECK_INTERVAL`` rows. Pre-start gating remains via
+    # ``gate_action`` above; mid-stream revoke truncates the body and
+    # appends ``SENTINEL_BYTES``.
+    body_iterator = service.export_csv_stream(
         project_id=project_id,
+        action=DETECTION_EXPORT_CSV_ACTION,
+        current_user=current_user,
+        request=request,
+        stream_type="csv_export",
         status=status,
         tag_id=tag_id,
         dataset_id=dataset_id,
         detection_run_id=detection_run_id,
     )
     return StreamingResponse(
-        io.BytesIO(csv_content.encode("utf-8")),
+        body_iterator,
         media_type="text/csv",
         headers={"Content-Disposition": "attachment; filename=detections.csv"},
     )

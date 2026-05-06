@@ -17,7 +17,10 @@ T130-T134.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Generator
+from collections.abc import (  # noqa: F401 — Generator kept for non-guarded paths
+    AsyncIterator,
+    Generator,
+)
 from datetime import datetime
 from typing import Annotated
 from uuid import UUID
@@ -36,6 +39,12 @@ from echoroo.core.database import DbSession
 from echoroo.core.permissions import Permission, gate_action
 from echoroo.core.response_filter import apply_response_filter
 from echoroo.core.settings import get_settings
+from echoroo.core.stream_guard import (
+    AUDIO_RECHECK_INTERVAL,
+    PermissionRevokedMidStream,
+    audit_stream_revoked,
+    recheck_action_permission,
+)
 from echoroo.middleware.auth import API_TOKEN_PREFIX, CurrentUser, _stamp_superuser_status
 from echoroo.models.user import User
 from echoroo.schemas.recording import (
@@ -586,6 +595,16 @@ async def stream_audio(
     Restricted projects gate raw audio access independently from detection
     metadata via ``restricted_config.allow_media`` (FR-016).
 
+    **Phase 17 backlog A-5 — Hybrid Contract:** the full-file streaming
+    paths (``_iter_ogg_guarded`` / ``_iter_file_guarded``) re-evaluate
+    the gate every :data:`AUDIO_RECHECK_INTERVAL` 65 KiB chunks. A
+    detected mid-stream revoke writes ``stream.permission_revoked_mid_stream``
+    audit telemetry and terminates the stream WITHOUT yielding a
+    sentinel (audio containers cannot tolerate arbitrary bytes). HTTP
+    Range responses (single-shot ``Response``) are explicitly **pre-start
+    only** — once the slice is computed the response is single-shot and
+    cannot be retroactively truncated.
+
     **Phase 5 (T202, FR-016, security H-8) — species-name leak guarantee:**
     This endpoint streams the raw bytes through FastAPI; it does NOT generate
     a presigned S3 URL on the response. Even if a future maintainer wires the
@@ -689,20 +708,66 @@ async def stream_audio(
             ogg_size = compressed_path.stat().st_size
 
             if range is None:
-                # No Range header: stream the full compressed file
-                def _iter_ogg() -> Generator[bytes, None, None]:
+                # No Range header: stream the full compressed file.
+                #
+                # Phase 17 backlog A-5 (Hybrid Contract): the full-file
+                # streaming path re-checks the permission gate every
+                # ``AUDIO_RECHECK_INTERVAL`` 65 KiB chunks. On a detected
+                # mid-stream revoke we audit + return WITHOUT yielding a
+                # sentinel (binary audio cannot tolerate arbitrary
+                # bytes). Range responses (below) are pre-start guarded
+                # only — see endpoint docstring.
+                async def _iter_ogg_guarded() -> AsyncIterator[bytes]:
+                    chunk_count = 0
+                    user_id = getattr(current_user, "id", None)
+                    request_id = getattr(getattr(request, "state", None), "request_id", "") or ""
+                    client_obj = getattr(request, "client", None)
+                    ip = getattr(client_obj, "host", "") or ""
+                    try:
+                        user_agent = request.headers.get("user-agent", "") or ""
+                    except Exception:  # noqa: BLE001
+                        user_agent = ""
                     with open(compressed_path, "rb") as f:
                         while chunk := f.read(65536):
+                            chunk_count += 1
+                            if chunk_count > 1 and chunk_count % AUDIO_RECHECK_INTERVAL == 0:
+                                try:
+                                    await recheck_action_permission(
+                                        db=db,
+                                        action=RECORDING_MEDIA_ACTION,
+                                        project_id=project_id,
+                                        current_user=current_user,
+                                        request=request,
+                                    )
+                                except PermissionRevokedMidStream as exc:
+                                    await audit_stream_revoked(
+                                        project_id=project_id,
+                                        user_id=user_id,
+                                        stream_type="audio_ogg",
+                                        request_id=request_id,
+                                        ip=ip,
+                                        user_agent=user_agent,
+                                        reason=str(exc),
+                                    )
+                                    return
                             yield chunk
 
+                # Phase 17 backlog A-5 Round 2 R1-C1 fix: do NOT advertise
+                # ``Content-Length`` for the guarded full-file stream. A
+                # mid-stream revoke aborts the generator early — sending the
+                # original file size as ``Content-Length`` would leave HTTP
+                # clients/proxies waiting for bytes that will never arrive
+                # (incomplete-body errors, partial-download retry loops).
+                # Starlette emits ``Transfer-Encoding: chunked`` when the
+                # header is absent, so a closed connection unambiguously
+                # signals the end of the response. ``Accept-Ranges`` is also
+                # dropped here because chunked transfer cannot honour byte
+                # ranges; the Range path below is preserved (single-shot
+                # ``Response`` with both headers, see HTTP 206 branch).
                 return StreamingResponse(
-                    _iter_ogg(),
+                    _iter_ogg_guarded(),
                     status_code=status.HTTP_200_OK,
                     media_type="audio/ogg",
-                    headers={
-                        "Accept-Ranges": "bytes",
-                        "Content-Length": str(ogg_size),
-                    },
                 )
 
             # Range request: serve the requested byte slice of the OGG file
@@ -734,19 +799,53 @@ async def stream_audio(
         file_size = local_file_path.stat().st_size
 
         if range is None:
-            def _iter_file() -> Generator[bytes, None, None]:
+            # Phase 17 backlog A-5 (Hybrid Contract): full-file WAV
+            # streaming path. Same per-chunk guard cadence as the OGG
+            # path; binary container so no sentinel on revoke.
+            async def _iter_file_guarded() -> AsyncIterator[bytes]:
+                chunk_count = 0
+                user_id = getattr(current_user, "id", None)
+                request_id = getattr(getattr(request, "state", None), "request_id", "") or ""
+                client_obj = getattr(request, "client", None)
+                ip = getattr(client_obj, "host", "") or ""
+                try:
+                    user_agent = request.headers.get("user-agent", "") or ""
+                except Exception:  # noqa: BLE001
+                    user_agent = ""
                 with open(local_file_path, "rb") as f:
                     while chunk := f.read(65536):
+                        chunk_count += 1
+                        if chunk_count > 1 and chunk_count % AUDIO_RECHECK_INTERVAL == 0:
+                            try:
+                                await recheck_action_permission(
+                                    db=db,
+                                    action=RECORDING_MEDIA_ACTION,
+                                    project_id=project_id,
+                                    current_user=current_user,
+                                    request=request,
+                                )
+                            except PermissionRevokedMidStream as exc:
+                                await audit_stream_revoked(
+                                    project_id=project_id,
+                                    user_id=user_id,
+                                    stream_type="audio_wav",
+                                    request_id=request_id,
+                                    ip=ip,
+                                    user_agent=user_agent,
+                                    reason=str(exc),
+                                )
+                                return
                         yield chunk
 
+            # Phase 17 backlog A-5 Round 2 R1-C1 fix (see OGG branch
+            # above): no ``Content-Length`` / ``Accept-Ranges`` on the
+            # guarded full-file WAV stream. Mid-stream revoke aborts the
+            # generator early; chunked transfer + connection close is the
+            # only consistent termination signal.
             return StreamingResponse(
-                _iter_file(),
+                _iter_file_guarded(),
                 status_code=status.HTTP_200_OK,
                 media_type="audio/wav",
-                headers={
-                    "Accept-Ranges": "bytes",
-                    "Content-Length": str(file_size),
-                },
             )
 
         range_value = range.replace("bytes=", "")

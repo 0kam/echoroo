@@ -299,48 +299,38 @@ async def test_csv_export_returns_403_when_revoked_before_request(
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Per-chunk permission re-validation not implemented. "
-        "export_csv in echoroo/api/v1/detections.py buffers the entire CSV "
-        "into io.BytesIO before returning StreamingResponse — there is no "
-        "streaming loop in which to inject a per-chunk permission check. "
-        "A true mid-stream revocation (permission change between gate_action "
-        "pass and response delivery) cannot be detected with the current "
-        "buffered implementation. "
-        "To fix: refactor export_csv to an async generator with "
-        "check_permission_each_chunk() called before yielding each row. "
-        "Track as follow-up task."
-    ),
-)
 @pytest.mark.asyncio
 async def test_csv_stream_aborts_when_permission_revoked_mid_stream(
-    unshimmed_rbac_client: AsyncClient,
+    client: AsyncClient,
     db_session: AsyncSession,
 ) -> None:
-    """H-6 contract: mid-stream revocation MUST abort the stream with 403.
+    """H-6 Hybrid Contract: mid-stream revoke MUST truncate the body.
 
-    The test simulates the window where:
-      1. Member starts a CSV export (gate_action passes — member row exists).
-      2. *After* gate_action passes but *before* stream bytes are delivered,
-         the member's role is demoted to VIEWER (no EXPORT permission).
-      3. The endpoint must detect this mid-stream and abort with 403.
+    Phase 17 backlog A-5 established the **Hybrid Contract**: once the
+    response status line + headers are committed (i.e. the first chunk
+    has been yielded) the HTTP status CANNOT change to 403. The stream
+    must therefore:
 
-    With the current buffered implementation the gate_action call completes
-    synchronously BEFORE the response is created; the demotion is done
-    in-test after the request and cannot be intercepted in the stream.
-    This test uses monkeypatching to inject the revocation between the
-    gate_action pass and the StreamingResponse creation, demonstrating that
-    no guard exists there.
+      1. stop yielding protected rows,
+      2. yield the documented sentinel ``\\r\\n--PERMISSION-REVOKED--\\r\\n``
+         so audit consumers detect truncation, and
+      3. terminate.
 
-    Expected outcome once implemented: 403 response with empty body.
-    Current outcome: 200 (buffered CSV delivered regardless of post-gate
-    revocation) — hence xfail.
+    This test stubs ``DetectionExportService.export_csv_stream`` with a
+    deterministic generator that yields a single CSV header chunk, then
+    the documented sentinel and stops — exactly the byte sequence the
+    real generator emits when its mid-stream guard catches a
+    :class:`PermissionRevokedMidStream`. The contract under test is
+    that the *transport* preserves the sentinel and does NOT swap the
+    status to 4xx after the response committed.
+
+    Uses the shim-active ``client`` fixture (Batch 6c) — the transport
+    contract is what is being tested, not authentication. The
+    fine-grained unit coverage (recheck/audit/sentinel) lives in
+    ``tests/security/test_stream_guard.py``.
     """
-    import sqlalchemy as sa
-
-    from echoroo.api.v1 import detections as det_module
+    from echoroo.core import stream_guard
+    from echoroo.services import detection_export as export_module
 
     owner = await _make_user(db_session, email=f"t973_mid_o_{uuid.uuid4().hex[:6]}@example.com")
     member = await _make_user(db_session, email=f"t973_mid_m_{uuid.uuid4().hex[:6]}@example.com")
@@ -348,47 +338,34 @@ async def test_csv_stream_aborts_when_permission_revoked_mid_stream(
     await _add_member(
         db_session, project=project, user=member, role=ProjectMemberRole.MEMBER
     )
-    raw_key = await _seed_api_key(db_session, user=member, project=project)
     await db_session.commit()
 
-    # Capture the original gate_action to inject a revocation between gate
-    # pass and StreamingResponse creation.
-    original_gate_action = det_module.gate_action
+    original_stream = export_module.DetectionExportService.export_csv_stream
 
-    async def _gate_then_revoke(*args: Any, **kwargs: Any) -> Any:
-        """Run gate_action then immediately revoke membership."""
-        result = await original_gate_action(*args, **kwargs)
-        # Simulate mid-stream revocation: demote member to VIEWER.
-        engine = create_async_engine(TEST_DATABASE_URL, echo=False, poolclass=NullPool)
-        factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-        try:
-            async with factory() as revoke_session:
-                await revoke_session.execute(
-                    sa.update(ProjectMember)
-                    .where(
-                        (ProjectMember.project_id == project.id)
-                        & (ProjectMember.user_id == member.id)
-                    )
-                    .values(role=ProjectMemberRole.VIEWER)
-                )
-                await revoke_session.commit()
-        finally:
-            await engine.dispose()
-        return result
+    async def _truncated_stream(self: Any, *args: Any, **kwargs: Any) -> Any:  # noqa: ARG001
+        # Async-generator function: ``async def`` body containing
+        # ``yield`` statements. Calling it returns an async iterator
+        # exactly like the production ``export_csv_stream``.
+        yield b"observationID\r\n"
+        yield stream_guard.SENTINEL_BYTES
 
-    det_module.gate_action = _gate_then_revoke  # type: ignore[assignment]
-
+    export_module.DetectionExportService.export_csv_stream = _truncated_stream  # type: ignore[method-assign]
     try:
-        response = await unshimmed_rbac_client.get(
+        token = _make_bearer_token(member.id)
+        response = await client.get(
             f"/api/v1/projects/{project.id}/detections/export/csv",
-            headers={"Authorization": f"Bearer {raw_key}"},
+            headers={"Authorization": f"Bearer {token}"},
         )
-        # This assertion will fail until per-chunk guard is implemented.
-        assert response.status_code == 403, (
-            f"Mid-stream permission revocation MUST abort the stream with 403 "
-            f"(H-6 contract), but the current buffered implementation returned "
-            f"{response.status_code}. "
-            "Implement per-chunk permission re-validation to fix this."
+        # Hybrid Contract: status was already committed before the
+        # revoke fires, so it stays 200. The guarantee is body-level
+        # truncation + sentinel.
+        assert response.status_code == 200, (
+            f"Hybrid Contract expects 200 on post-start revoke (status "
+            f"already committed), got {response.status_code}: {response.text!r}"
+        )
+        assert response.content.endswith(stream_guard.SENTINEL_BYTES), (
+            "Mid-stream revoke MUST append SENTINEL_BYTES so audit "
+            f"consumers detect truncation; got body tail: {response.content[-64:]!r}"
         )
     finally:
-        det_module.gate_action = original_gate_action  # type: ignore[assignment]
+        export_module.DetectionExportService.export_csv_stream = original_stream  # type: ignore[method-assign]

@@ -27,15 +27,24 @@ from __future__ import annotations
 import csv
 import io
 import json
+import logging
 import zipfile
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
-from typing import TypedDict
+from typing import TYPE_CHECKING, Any, TypedDict
 from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from echoroo.core.stream_guard import (
+    CSV_RECHECK_INTERVAL,
+    SENTINEL_BYTES,
+    PermissionRevokedMidStream,
+    audit_stream_revoked,
+    recheck_action_permission,
+)
 from echoroo.models.confirmed_region import ConfirmedRegion
 from echoroo.models.dataset import Dataset
 from echoroo.models.enums import DetectionSource, DetectionStatus, ProjectVisibility
@@ -45,6 +54,13 @@ from echoroo.models.recording_annotation import (
     RecordingAnnotation as Annotation,  # Phase 14+ deferred (was rich-shape Annotation)
 )
 from echoroo.models.site import Site
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from fastapi import Request
+
+    from echoroo.core.permissions import Action
+
+logger = logging.getLogger(__name__)
 
 
 class _AnnotationEntry(TypedDict):
@@ -228,6 +244,112 @@ class DetectionExportService:
         """Build the FR-087 ``license_history`` reference URL for the export."""
         return f"/api/v1/projects/{project_id}/license-history"
 
+    def _build_csv_row(
+        self,
+        ann: Annotation,
+        *,
+        project: Project | None,
+        license_value: str,
+        license_history_url: str,
+        recording_h3_map: dict[UUID, int],
+    ) -> dict[str, str]:
+        """Render a single CamtrapDP+FR-086 row dict for ``ann``.
+
+        Extracted so the buffered :meth:`export_csv` and the streaming
+        :meth:`export_csv_stream` (Phase 17 A-5 Hybrid Contract) share
+        EXACTLY the same row shape.
+        """
+        recording = ann.recording
+        dataset_name = recording.dataset.name if recording and recording.dataset else ""
+        recording_uuid = str(recording.id) if recording else ""
+        recording_datetime = recording.datetime if recording else None
+
+        event_start = _format_event_datetime(recording_datetime, ann.start_time)
+        event_end = _format_event_datetime(recording_datetime, ann.end_time)
+
+        machine_sources = {
+            DetectionSource.BIRDNET,
+            DetectionSource.PERCH,
+            DetectionSource.PERCH_SEARCH,
+            DetectionSource.SIMILARITY_SEARCH,
+        }
+        if ann.source in machine_sources:
+            classification_method = "machine"
+            if ann.detection_run:
+                classified_by = ann.detection_run.model_name
+                if ann.detection_run.model_version:
+                    classified_by = (
+                        f"{ann.detection_run.model_name} {ann.detection_run.model_version}"
+                    )
+            else:
+                classified_by = ann.source.value
+        else:
+            classification_method = "human"
+            if ann.reviewed_by:
+                classified_by = ann.reviewed_by.display_name or ann.reviewed_by.email
+            else:
+                classified_by = ""
+
+        if ann.reviewed_at is not None:
+            classification_timestamp = ann.reviewed_at.strftime("%Y-%m-%dT%H:%M:%SZ")
+        elif ann.created_at is not None:
+            classification_timestamp = ann.created_at.strftime("%Y-%m-%dT%H:%M:%SZ")
+        else:
+            classification_timestamp = ""
+
+        site_res = (
+            recording_h3_map.get(ann.recording_id, _DEFAULT_MEMBER_H3_RESOLUTION)
+            if ann.recording_id is not None
+            else _DEFAULT_MEMBER_H3_RESOLUTION
+        )
+        location_generalization, withheld_reason = (
+            self._compute_export_location_generalization(
+                project=project,
+                site_resolution=site_res,
+            )
+        )
+
+        return {
+            "observationID": str(ann.id),
+            "deploymentID": dataset_name,
+            "mediaID": recording_uuid,
+            "eventID": str(ann.id),
+            "eventStart": event_start,
+            "eventEnd": event_end,
+            "observationLevel": "media",
+            "observationType": "audio",
+            "deviceSetupType": "",
+            "scientificName": ann.tag.name if ann.tag else "",
+            "count": "",
+            "lifeStage": "",
+            "sex": "",
+            "behavior": "",
+            "individualID": "",
+            "individualPositionRadius": "",
+            "individualPositionAngle": "",
+            "individualSpeed": "",
+            "bboxX": "",
+            "bboxY": "",
+            "bboxWidth": "",
+            "bboxHeight": "",
+            "frequencyLow": f"{ann.freq_low:.1f}" if ann.freq_low is not None else "",
+            "frequencyHigh": f"{ann.freq_high:.1f}" if ann.freq_high is not None else "",
+            "classificationMethod": classification_method,
+            "classifiedBy": classified_by,
+            "classificationTimestamp": classification_timestamp,
+            "classificationProbability": (
+                f"{ann.confidence:.4f}" if ann.confidence is not None else ""
+            ),
+            "classificationConfirmation": "",
+            "observationTags": "",
+            "observationComments": "",
+            # FR-086 trailing extensions
+            "license": license_value,
+            "license_history_url": license_history_url,
+            "location_generalization": str(location_generalization),
+            "withheld_reason": withheld_reason if withheld_reason is not None else "",
+        }
+
     async def export_csv(
         self,
         project_id: UUID,
@@ -239,31 +361,11 @@ class DetectionExportService:
     ) -> str:
         """Export detections as a CamtrapDP observations.csv formatted string.
 
-        Produces a 31-column CSV conforming to the CamtrapDP standard for
-        bioacoustic observations. Each annotation becomes one row.
-
-        Column mapping:
-        - observationID: annotation UUID
-        - deploymentID: dataset name
-        - mediaID: recording UUID
-        - eventID: annotation UUID (same as observationID for audio detections)
-        - eventStart/eventEnd: absolute ISO 8601 datetime (recording start + offset)
-        - classificationMethod: "machine" for ML detections, "human" for manual
-        - classifiedBy: model name for machine, user email for human
-        - classificationTimestamp: annotation creation timestamp
-        - scientificName: tag name
-        - observationComments: empty (no free-text notes in this model)
-
-        Args:
-            project_id: Project UUID to filter annotations by
-            status: Optional detection status filter
-            tag_id: Optional tag UUID filter
-            dataset_id: Optional dataset UUID filter
-            detection_run_id: Optional detection run UUID filter
-            search_session_id: Optional search session UUID filter
-
-        Returns:
-            CSV content as a string in CamtrapDP format
+        Buffered legacy form preserved for back-compat with existing
+        callers (notably ``tests/security/search_leak/test_export_csv_no_lat_lng.py``
+        which depends on ``export_csv() -> str``). New router code should
+        prefer :meth:`export_csv_stream` so the Phase 17 A-5 mid-stream
+        permission re-check can fire.
         """
         annotations = await self._fetch_annotations_for_export(
             project_id=project_id,
@@ -274,13 +376,12 @@ class DetectionExportService:
             search_session_id=search_session_id,
         )
 
-        # FR-086 metadata loaded once per export — emitted on every row so the
-        # consumer can detect license / generalisation drift without joining
-        # a second resource. Non-existent project still yields headers via
-        # ``writer.writeheader()`` below.
+        # FR-086 metadata loaded once per export.
         project = await self._load_project(project_id)
         license_value = (
-            project.license.value if project is not None and project.license is not None else ""
+            project.license.value
+            if project is not None and project.license is not None
+            else ""
         )
         license_history_url = self._build_license_history_url(project_id)
         recording_h3_map = await self._build_recording_h3_resolution_map(annotations)
@@ -288,98 +389,127 @@ class DetectionExportService:
         output = io.StringIO()
         writer = csv.DictWriter(output, fieldnames=_CAMTRAPDP_COLUMNS)
         writer.writeheader()
-
         for ann in annotations:
-            recording = ann.recording
-            dataset_name = recording.dataset.name if recording and recording.dataset else ""
-            recording_uuid = str(recording.id) if recording else ""
-            recording_datetime = recording.datetime if recording else None
-
-            event_start = _format_event_datetime(recording_datetime, ann.start_time)
-            event_end = _format_event_datetime(recording_datetime, ann.end_time)
-
-            # Determine classification method and classified_by
-            machine_sources = {
-                DetectionSource.BIRDNET,
-                DetectionSource.PERCH,
-                DetectionSource.PERCH_SEARCH,
-                DetectionSource.SIMILARITY_SEARCH,
-            }
-            if ann.source in machine_sources:
-                classification_method = "machine"
-                if ann.detection_run:
-                    classified_by = ann.detection_run.model_name
-                    if ann.detection_run.model_version:
-                        classified_by = f"{ann.detection_run.model_name} {ann.detection_run.model_version}"
-                else:
-                    classified_by = ann.source.value
-            else:
-                classification_method = "human"
-                if ann.reviewed_by:
-                    classified_by = ann.reviewed_by.display_name or ann.reviewed_by.email
-                else:
-                    classified_by = ""
-
-            # Use reviewed_at for human annotations, created_at for machine
-            if ann.reviewed_at is not None:
-                classification_timestamp = ann.reviewed_at.strftime("%Y-%m-%dT%H:%M:%SZ")
-            elif ann.created_at is not None:
-                classification_timestamp = ann.created_at.strftime("%Y-%m-%dT%H:%M:%SZ")
-            else:
-                classification_timestamp = ""
-
-            site_res = recording_h3_map.get(
-                ann.recording_id, _DEFAULT_MEMBER_H3_RESOLUTION,
-            ) if ann.recording_id is not None else _DEFAULT_MEMBER_H3_RESOLUTION
-            location_generalization, withheld_reason = (
-                self._compute_export_location_generalization(
+            writer.writerow(
+                self._build_csv_row(
+                    ann,
                     project=project,
-                    site_resolution=site_res,
+                    license_value=license_value,
+                    license_history_url=license_history_url,
+                    recording_h3_map=recording_h3_map,
                 )
             )
-
-            writer.writerow({
-                "observationID": str(ann.id),
-                "deploymentID": dataset_name,
-                "mediaID": recording_uuid,
-                "eventID": str(ann.id),
-                "eventStart": event_start,
-                "eventEnd": event_end,
-                "observationLevel": "media",
-                "observationType": "audio",
-                "deviceSetupType": "",
-                "scientificName": ann.tag.name if ann.tag else "",
-                "count": "",
-                "lifeStage": "",
-                "sex": "",
-                "behavior": "",
-                "individualID": "",
-                "individualPositionRadius": "",
-                "individualPositionAngle": "",
-                "individualSpeed": "",
-                "bboxX": "",
-                "bboxY": "",
-                "bboxWidth": "",
-                "bboxHeight": "",
-                "frequencyLow": f"{ann.freq_low:.1f}" if ann.freq_low is not None else "",
-                "frequencyHigh": f"{ann.freq_high:.1f}" if ann.freq_high is not None else "",
-                "classificationMethod": classification_method,
-                "classifiedBy": classified_by,
-                "classificationTimestamp": classification_timestamp,
-                "classificationProbability": (
-                    f"{ann.confidence:.4f}" if ann.confidence is not None else ""
-                ),
-                "classificationConfirmation": "",
-                "observationTags": "",
-                "observationComments": "",
-                # FR-086 trailing extensions
-                "license": license_value,
-                "license_history_url": license_history_url,
-                "location_generalization": str(location_generalization),
-                "withheld_reason": withheld_reason if withheld_reason is not None else "",
-            })
-
         return output.getvalue()
+
+    async def export_csv_stream(
+        self,
+        project_id: UUID,
+        *,
+        action: Action,
+        current_user: Any,
+        request: Request,
+        stream_type: str = "csv_export",
+        status: DetectionStatus | None = None,
+        tag_id: UUID | None = None,
+        dataset_id: UUID | None = None,
+        detection_run_id: UUID | None = None,
+        search_session_id: UUID | None = None,
+    ) -> AsyncIterator[bytes]:
+        """Stream the CamtrapDP CSV row-by-row with a mid-stream permission guard.
+
+        Phase 17 backlog A-5 Hybrid Contract:
+
+        * The header row is yielded immediately so the response status and
+          ``Content-Disposition`` headers commit before the first re-check.
+        * Every :data:`CSV_RECHECK_INTERVAL` rows the generator calls
+          :func:`recheck_action_permission` against the request-scoped
+          session. PostgreSQL READ COMMITTED guarantees the new SELECT
+          observes any sibling-request revoke that has committed.
+        * On detection of a mid-stream revoke the generator catches
+          :class:`PermissionRevokedMidStream`, writes
+          ``stream.permission_revoked_mid_stream`` via a fresh audit
+          session (M-2 fix — the streaming session is no longer safe for
+          the SERIALIZABLE audit write), yields :data:`SENTINEL_BYTES`
+          so audit consumers can detect truncation, and returns.
+
+        The exception is NEVER propagated past the generator — Starlette
+        cannot turn a generator-time exception into an HTTP 4xx because
+        the response status was already committed when the header row
+        was yielded.
+
+        NOTE: pre-start gating remains the caller's responsibility via
+        :func:`gate_action`. If the request is denied at gate-time, the
+        endpoint returns 403 BEFORE any chunk is yielded.
+        """
+        annotations = await self._fetch_annotations_for_export(
+            project_id=project_id,
+            status=status,
+            tag_id=tag_id,
+            dataset_id=dataset_id,
+            detection_run_id=detection_run_id,
+            search_session_id=search_session_id,
+        )
+        project = await self._load_project(project_id)
+        license_value = (
+            project.license.value
+            if project is not None and project.license is not None
+            else ""
+        )
+        license_history_url = self._build_license_history_url(project_id)
+        recording_h3_map = await self._build_recording_h3_resolution_map(annotations)
+
+        user_id = getattr(current_user, "id", None)
+        request_id = getattr(getattr(request, "state", None), "request_id", "") or ""
+        client = getattr(request, "client", None)
+        ip = getattr(client, "host", "") or ""
+        user_agent = ""
+        try:
+            user_agent = request.headers.get("user-agent", "") or ""
+        except Exception:  # noqa: BLE001 — defensive against test stubs
+            user_agent = ""
+
+        # ----- emit header row (commits the response) ---------------------
+        header_buf = io.StringIO()
+        header_writer = csv.DictWriter(header_buf, fieldnames=_CAMTRAPDP_COLUMNS)
+        header_writer.writeheader()
+        yield header_buf.getvalue().encode("utf-8")
+
+        # ----- emit rows + periodic re-check ------------------------------
+        for index, ann in enumerate(annotations):
+            if index > 0 and index % CSV_RECHECK_INTERVAL == 0:
+                try:
+                    await recheck_action_permission(
+                        db=self.db,
+                        action=action,
+                        project_id=project_id,
+                        current_user=current_user,
+                        request=request,
+                    )
+                except PermissionRevokedMidStream as exc:
+                    await audit_stream_revoked(
+                        project_id=project_id,
+                        user_id=user_id,
+                        stream_type=stream_type,
+                        request_id=request_id,
+                        ip=ip,
+                        user_agent=user_agent,
+                        reason=str(exc),
+                    )
+                    yield SENTINEL_BYTES
+                    return
+
+            row_buf = io.StringIO()
+            row_writer = csv.DictWriter(row_buf, fieldnames=_CAMTRAPDP_COLUMNS)
+            row_writer.writerow(
+                self._build_csv_row(
+                    ann,
+                    project=project,
+                    license_value=license_value,
+                    license_history_url=license_history_url,
+                    recording_h3_map=recording_h3_map,
+                )
+            )
+            yield row_buf.getvalue().encode("utf-8")
 
     async def export_ml_dataset(
         self,
