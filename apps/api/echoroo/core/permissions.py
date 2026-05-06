@@ -1033,6 +1033,207 @@ class _ScopedPrincipal:
         )
 
 
+class PermissionDecision:
+    """Outcome of :func:`decide_action_permission`.
+
+    Phase 17 backlog A-5 Round 2 R1-I1: split the decision logic shared
+    by :func:`gate_action` (HTTP-time, raises ``HTTPException``) and
+    :func:`echoroo.core.stream_guard.recheck_action_permission`
+    (mid-stream, raises ``PermissionRevokedMidStream``) into a single
+    public helper. Both callers MUST consult the same source of truth so
+    drift is structurally impossible — when a future Phase adds another
+    condition to the gate, both code paths pick it up automatically.
+
+    Attributes:
+        allowed: Final allow / deny decision after the entire algorithm.
+        project: The :class:`Project` row that was loaded (or ``None`` if
+            the project no longer exists; used by the mid-stream guard
+            to terminate with the dedicated ``project_missing`` reason).
+        reason: When ``allowed=False``, a stable machine-readable code
+            (``project_missing`` / ``api_key_project_scope_mismatch`` /
+            ``api_key_revoked`` / ``action_denied``). Empty string on
+            allow. The HTTP gate maps this to a ``detail`` message; the
+            mid-stream guard maps it to ``PermissionRevokedMidStream``.
+    """
+
+    __slots__ = ("allowed", "project", "reason")
+
+    def __init__(
+        self,
+        *,
+        allowed: bool,
+        project: Project | None,
+        reason: str,
+    ) -> None:
+        self.allowed = allowed
+        self.project = project
+        self.reason = reason
+
+
+async def decide_action_permission(
+    *,
+    db: AsyncSession,
+    action: Action,
+    project_id: UUID,
+    current_user: Any,
+    request: Request,
+    refresh_api_key_scopes: bool = False,
+) -> PermissionDecision:
+    """Compute the gate decision for ``action`` on ``project_id``.
+
+    This is the single source of truth shared by :func:`gate_action`
+    (HTTP-time entry) and
+    :func:`echoroo.core.stream_guard.recheck_action_permission`
+    (post-start mid-stream re-evaluation).
+
+    Steps (kept identical to the previous in-line implementation in
+    :func:`gate_action`):
+
+      1. API-key project-binding scope check.
+      2. ``Project`` row load (with ``populate_existing=True`` when
+         re-checking mid-stream so the identity-map cache does not hide
+         a sibling-session UPDATE).
+      3. Membership role resolve (non-owners) → per-call
+         :class:`_ScopedPrincipal` wrapper.
+      4. Trusted overlay re-fetch (only for Authenticated non-member,
+         non-superuser principals — FR-041).
+      5. API-key scope translation. When ``refresh_api_key_scopes=True``
+         the ``ApiKey`` row is re-loaded from the DB so a sibling-session
+         revoke or scope shrink is observed (used by the mid-stream
+         guard). When ``False`` (HTTP-time path) the scopes already
+         stamped on ``current_user._api_key_scopes`` by the auth
+         middleware are used — re-loading every request would be a
+         wasted SELECT.
+      6. :func:`is_allowed` over the refreshed inputs.
+
+    Returns:
+        A :class:`PermissionDecision`. The caller decides the failure
+        mode (``HTTPException`` vs ``PermissionRevokedMidStream``).
+    """
+    # --- Step 1: API-key project-binding scope ------------------------------
+    # Phase 15 R3 NO-GO new-Major: enforce per-key project binding BEFORE
+    # any DB lookup so a mismatched key cannot probe the existence of
+    # arbitrary projects (FR-079 / FR-099 anti-enumeration).
+    bound_project_id = getattr(current_user, "_api_key_project_id", None)
+    if bound_project_id is not None and bound_project_id != project_id:
+        return PermissionDecision(
+            allowed=False,
+            project=None,
+            reason="api_key_project_scope_mismatch",
+        )
+
+    # --- Step 2: load project (mid-stream path bypasses identity-map) -------
+    project: Project | None
+    if refresh_api_key_scopes:
+        # Mid-stream re-check: bypass the request-scoped identity map so
+        # a sibling-session UPDATE / DELETE is observed.
+        result = await db.execute(
+            sa_select(Project)
+            .where(Project.id == project_id)
+            .execution_options(populate_existing=True)
+        )
+        project = result.scalar_one_or_none()
+        if project is None:
+            return PermissionDecision(
+                allowed=False,
+                project=None,
+                reason="project_missing",
+            )
+    else:
+        # HTTP-time path: keep the legacy 404 contract via load_project_or_404.
+        project = await load_project_or_404(db, project_id)
+
+    # --- Step 3: membership role + ScopedPrincipal wrap ---------------------
+    principal: Any = current_user
+    trusted_capabilities: frozenset[Permission] = frozenset()
+    membership_role: ProjectMemberRole | None = None
+
+    is_owner = (
+        current_user is not None
+        and getattr(current_user, "id", None) is not None
+        and getattr(project, "owner_id", None) == current_user.id
+    )
+    if (
+        current_user is not None
+        and getattr(current_user, "id", None) is not None
+        and not is_owner
+    ):
+        membership_role = await _resolve_project_member_role(
+            db, project_id=project_id, user_id=current_user.id
+        )
+        if membership_role is not None:
+            principal = _ScopedPrincipal(current_user, membership_role)
+
+    # --- Step 4: trusted overlay (Authenticated non-member non-superuser) ---
+    if (
+        current_user is not None
+        and getattr(current_user, "id", None) is not None
+        and not is_owner
+        and membership_role is None
+        and not _is_superuser(current_user)
+    ):
+        # Local import to avoid a circular import at module load time
+        # (trusted_service imports from echoroo.core.permissions).
+        from echoroo.services.trusted_service import (
+            get_active_trusted_capabilities,
+        )
+
+        trusted_capabilities = await get_active_trusted_capabilities(
+            db, user_id=current_user.id, project_id=project_id
+        )
+
+    # --- Step 5: API-key scopes (fresh DB load for mid-stream path) ---------
+    api_key_granted: frozenset[Permission] | None = None
+    if refresh_api_key_scopes:
+        # Local import to avoid a circular import at module load time
+        # (stream_guard imports from echoroo.core.permissions).
+        from echoroo.core.stream_guard import _refresh_api_key_scopes
+
+        revoked, refreshed_api_scopes = await _refresh_api_key_scopes(
+            db, current_user=current_user
+        )
+        if revoked:
+            return PermissionDecision(
+                allowed=False,
+                project=project,
+                reason="api_key_revoked",
+            )
+        api_key_granted = refreshed_api_scopes
+    else:
+        # Phase 15 NO-GO Major 1: read the scopes stamped on the user
+        # at auth time. Unknown scope names are silently dropped
+        # (forward-compatible with newly added permissions on older
+        # clients) — the safe default is "deny".
+        raw_scopes = getattr(current_user, "_api_key_scopes", None)
+        if raw_scopes is not None:
+            translated: set[Permission] = set()
+            for scope in raw_scopes:
+                try:
+                    translated.add(
+                        scope if isinstance(scope, Permission) else Permission(scope)
+                    )
+                except ValueError:
+                    continue
+            api_key_granted = frozenset(translated)
+
+    # --- Step 6: is_allowed ------------------------------------------------
+    allowed, _ = is_allowed(
+        action=action,
+        user=principal,
+        project=project,
+        request=request,
+        trusted_capabilities=trusted_capabilities,
+        api_key_granted_permissions=api_key_granted,
+    )
+    if not allowed:
+        return PermissionDecision(
+            allowed=False,
+            project=project,
+            reason="action_denied",
+        )
+    return PermissionDecision(allowed=True, project=project, reason="")
+
+
 async def gate_action(
     *,
     action: Action,
@@ -1059,119 +1260,44 @@ async def gate_action(
     the role onto sibling-project ``gate_action`` / ``is_allowed`` calls
     later in the same request. The wrapper is per-call, so cross-project
     leakage is structurally impossible.
+
+    Phase 17 backlog A-5 Round 2 R1-I1: the entire decision algorithm
+    now lives in :func:`decide_action_permission`. ``gate_action`` is
+    the HTTP adaptor — it translates the deny reason to an
+    ``HTTPException`` so existing routers keep their contract. The
+    mid-stream guard
+    (:func:`echoroo.core.stream_guard.recheck_action_permission`) calls
+    the same helper and translates the same deny reason to
+    ``PermissionRevokedMidStream``.
     """
-    # Phase 15 R3 NO-GO new-Major: enforce per-key project binding BEFORE
-    # any DB lookup so a mismatched key cannot probe the existence of
-    # arbitrary projects (FR-079 / FR-099 anti-enumeration). When the
-    # caller authenticated with an API key bound to a specific project
-    # (``api_keys.project_id IS NOT NULL``), the bound id MUST match
-    # the gate's ``project_id`` argument. Mismatched calls raise 403
-    # ``api_key_project_scope_mismatch`` regardless of the user's
-    # underlying access — the scope is defence in depth on top of the
-    # Matrix gate. Keys with ``project_id IS NULL`` (i.e. user-scope
-    # keys) skip this branch and fall through to the Matrix.
-    bound_project_id = getattr(current_user, "_api_key_project_id", None)
-    if bound_project_id is not None and bound_project_id != project_id:
-        raise HTTPException(
-            status.HTTP_403_FORBIDDEN,
-            detail="api_key_project_scope_mismatch",
-        )
-
-    project = await load_project_or_404(db, project_id)
-
-    principal: Any = current_user
-    trusted_capabilities: frozenset[Permission] = frozenset()
-    membership_role: ProjectMemberRole | None = None
-
-    # Resolve membership role for non-owners and wrap it onto a per-call
-    # principal view so the role only flows into THIS gate's
-    # ``is_allowed`` call. Owners short-circuit (``project.owner_id ==
-    # user.id`` is read inside ``resolve_role``), and unauthenticated
-    # callers fall through with ``current_user = None``.
-    is_owner = (
-        current_user is not None
-        and getattr(current_user, "id", None) is not None
-        and getattr(project, "owner_id", None) == current_user.id
-    )
-    if (
-        current_user is not None
-        and getattr(current_user, "id", None) is not None
-        and not is_owner
-    ):
-        membership_role = await _resolve_project_member_role(
-            db, project_id=project_id, user_id=current_user.id
-        )
-        if membership_role is not None:
-            principal = _ScopedPrincipal(current_user, membership_role)
-
-    # Phase 10 Batch 2 Round 2 fix (致命 2): the production HTTP gate
-    # MUST consult :func:`get_active_trusted_capabilities` so that the
-    # Trusted overlay accepted by US5 actually unlocks API access on
-    # the next request. Owners / Admins do not need an overlay, and
-    # Guests cannot have one (FR-041 — overlay attaches only to
-    # Authenticated principals). For everyone else, we union the
-    # request-scope DB read into the ``trusted_capabilities`` argument
-    # of :func:`is_allowed`. The service helper already intersects the
-    # rows with :data:`TRUSTED_ALLOWED_PERMISSIONS` (FR-014 safety net)
-    # so the gate cannot be tricked by a tampered ``granted_permissions``
-    # array.
-    #
-    # Phase 10 Batch 2 Round 3 fix (Minor 1): skip the overlay lookup
-    # for ANY active project member (Owner / Admin / Member / Viewer)
-    # — FR-041 attaches Trusted overlays only to Authenticated callers
-    # WITHOUT a membership row, so an extra ``SELECT`` against
-    # ``project_trusted_users`` for member requests is wasted work and
-    # an N+1 regression on hot list/detail paths. The gate still runs
-    # the lookup for Authenticated non-members and falls through with
-    # the empty frozenset for Guests (``current_user is None``).
-    if (
-        current_user is not None
-        and getattr(current_user, "id", None) is not None
-        and not is_owner
-        and membership_role is None
-        and not _is_superuser(current_user)
-    ):
-        # Local import to avoid a circular import at module load time
-        # (trusted_service imports from echoroo.core.permissions).
-        from echoroo.services.trusted_service import (
-            get_active_trusted_capabilities,
-        )
-
-        trusted_capabilities = await get_active_trusted_capabilities(
-            db, user_id=current_user.id, project_id=project_id
-        )
-
-    # Phase 15 NO-GO Major 1: when the caller authenticated with an API
-    # key, ``echoroo.middleware.auth._stamp_api_key_scopes`` has already
-    # stamped ``user._api_key_scopes`` (a tuple of permission strings).
-    # We translate it into the :data:`Permission` frozenset that
-    # :func:`is_allowed` intersects with the matrix bundle. Unknown
-    # scope names are silently dropped (forward-compatible with newly
-    # added permissions on older clients) — the safe default is "deny".
-    api_key_granted: frozenset[Permission] | None = None
-    raw_scopes = getattr(current_user, "_api_key_scopes", None)
-    if raw_scopes is not None:
-        translated: set[Permission] = set()
-        for scope in raw_scopes:
-            try:
-                translated.add(
-                    scope if isinstance(scope, Permission) else Permission(scope)
-                )
-            except ValueError:
-                continue
-        api_key_granted = frozenset(translated)
-
-    allowed, _ = is_allowed(
+    decision = await decide_action_permission(
+        db=db,
         action=action,
-        user=principal,
-        project=project,
+        project_id=project_id,
+        current_user=current_user,
         request=request,
-        trusted_capabilities=trusted_capabilities,
-        api_key_granted_permissions=api_key_granted,
+        refresh_api_key_scopes=False,
     )
-    if not allowed:
+    if not decision.allowed:
+        if decision.reason == "api_key_project_scope_mismatch":
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN,
+                detail="api_key_project_scope_mismatch",
+            )
+        # ``project_missing`` is unreachable here because
+        # ``decide_action_permission`` calls ``load_project_or_404``
+        # for the HTTP-time path which already raises 404. Defence in
+        # depth: surface a 404 if it ever does come through.
+        if decision.reason == "project_missing":
+            raise HTTPException(
+                status.HTTP_404_NOT_FOUND,
+                detail="project not found",
+            )
         raise HTTPException(status.HTTP_403_FORBIDDEN, detail="action denied")
-    return project
+    # ``decision.project`` is guaranteed non-None on the success path
+    # because ``load_project_or_404`` would otherwise have raised 404.
+    assert decision.project is not None
+    return decision.project
 
 
 async def check_project_access(
@@ -1210,6 +1336,7 @@ __all__ = [
     "H3_RES_7",
     "H3_RES_9",
     "Permission",
+    "PermissionDecision",
     "ProjectVisibility",
     "ROLE_PERMISSIONS",
     "SUPERUSER_PROJECT_SCOPE_ALLOWLIST",
@@ -1223,6 +1350,7 @@ __all__ = [
     "check_project_access",
     "compute_effective_permissions",
     "compute_effective_resolution",
+    "decide_action_permission",
     "gate_action",
     "is_allowed",
     "load_project_or_404",

@@ -1087,14 +1087,26 @@ async def export_search_session_recordings_csv(
 async def export_search_session_csv(
     project_id: UUID,
     session_id: UUID,
+    request: Request,
+    current_user: CurrentUser,
     db: DbSession,
     session_service: AuthorizedSearchSessionServiceDep,
 ) -> StreamingResponse:
     """Export search session annotations as CSV.
 
+    Phase 17 backlog A-5 (Hybrid Contract): the underlying export
+    pipeline now streams row-by-row and re-checks the EXPORT permission
+    every ``CSV_RECHECK_INTERVAL`` rows. Pre-start gating is performed
+    via :func:`gate_action` (was implicitly via
+    ``AuthorizedSearchSessionServiceDep`` → ``check_project_access``;
+    we keep that for the session lookup and add the explicit Action
+    gate so the mid-stream guard has a canonical Action to re-evaluate).
+
     Args:
         project_id: Project UUID (path parameter)
         session_id: Session UUID (path parameter)
+        request: FastAPI request (used by the streaming guard).
+        current_user: Authenticated caller (used by the streaming guard).
         db: Database session
         session_service: Authorized search session service
 
@@ -1105,20 +1117,47 @@ async def export_search_session_csv(
         403: Access denied to project
         404: Session not found
     """
-    session = await session_service.get_session(session_id, project_id)
-    if not session:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Search session not found")
-
+    # Local import — DETECTION_EXPORT_CSV_ACTION lives in echoroo.core.actions
+    # which depends on routers; lazy to avoid a top-level cycle.
+    from echoroo.core.actions import DETECTION_EXPORT_CSV_ACTION
+    from echoroo.core.permissions import gate_action
     from echoroo.services.detection_export import DetectionExportService
 
+    await gate_action(
+        action=DETECTION_EXPORT_CSV_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
+    session = await session_service.get_session(session_id, project_id)
+    if not session:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Search session not found"
+        )
+
     export_service = DetectionExportService(db)
-    csv_content = await export_service.export_csv(project_id, search_session_id=session_id)
+    body_iterator = export_service.export_csv_stream(
+        project_id=project_id,
+        action=DETECTION_EXPORT_CSV_ACTION,
+        current_user=current_user,
+        request=request,
+        stream_type="csv_export_search_session",
+        search_session_id=session_id,
+    )
 
     date_str = datetime.now(UTC).strftime("%Y%m%d")
-    safe_name = (session.name or str(session_id)).replace('"', '_').replace('\n', '_').replace('\r', '_').replace(' ', '_').replace('/', '-')
+    safe_name = (
+        (session.name or str(session_id))
+        .replace('"', "_")
+        .replace("\n", "_")
+        .replace("\r", "_")
+        .replace(" ", "_")
+        .replace("/", "-")
+    )
     filename = f"search_session_{safe_name}_{date_str}.csv"
     return StreamingResponse(
-        iter([csv_content]),
+        body_iterator,
         media_type="text/csv",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
