@@ -296,6 +296,35 @@ def _scan_string(value: str) -> bool:
     )
 
 
+def contains_pii(value: str) -> bool:
+    """Public detector — return True if ``value`` contains any PII pattern.
+
+    Phase 17 backlog A-13: this thin wrapper exposes the same regex
+    catalogue used by :class:`AuditLogSanitizer` so the API-boundary
+    operator-input validator (:mod:`echoroo.core.operator_pii_detector`)
+    enforces the FR-091a contract identically. Sanitiser (audit) and
+    detector (validator) responsibilities stay separated, but the
+    underlying pattern set is owned by this module.
+
+    The full sanitiser pipeline (NFKC normalisation, URL-decode and
+    base64-decode bypass detection, UUID allowlist) is reused so an
+    operator cannot smuggle PII past the validator with the same
+    encoding tricks the audit sanitiser already defends against.
+
+    Args:
+        value: Free-form string to scan. Non-strings and empty strings
+            return ``False`` rather than raising so this can be called
+            unconditionally on user input that may be missing.
+
+    Returns:
+        True iff any PII regex matches the value (or any of its
+        decoded variants).
+    """
+    if not isinstance(value, str) or not value:
+        return False
+    return _scan_string(value)
+
+
 # ---------------------------------------------------------------------------
 # T050b — recursive replacement
 # ---------------------------------------------------------------------------
@@ -441,5 +470,6 @@ __all__ = [
     "HASH_VERSION",
     "AuditLogSanitizer",
     "HashFn",
+    "contains_pii",
     "sanitize_value",
 ]
