@@ -7,6 +7,10 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from echoroo.core.operator_pii_detector import (
+    OperatorReasonText,
+    OperatorSupportTicketId,
+)
 from echoroo.models.enums import ProjectMemberRole
 from echoroo.schemas.auth import UserResponse
 
@@ -109,19 +113,16 @@ class TaxonOverrideRejectRequest(BaseModel):
     and copied into the platform audit log so the rejecting superuser leaves a
     durable explanation alongside the ``superuser_approval_requests`` ticket
     closure.
+
+    Phase 17 backlog A-13: ``reason`` uses :data:`OperatorReasonText` which
+    enforces the FR-091a PII reject gate (HTTP 422 on email / phone / NID /
+    credit-card / token input) so that the persisted ``rejected_reason`` and
+    the audit ``reason_excerpt`` cannot leak PII into business tables.
     """
 
     model_config = ConfigDict(extra="forbid")
 
-    reason: str = Field(
-        ...,
-        min_length=1,
-        max_length=2_000,
-        description=(
-            "Why the looser override was rejected. Stored verbatim on the "
-            "override row (FR-034) and embedded into the audit detail."
-        ),
-    )
+    reason: OperatorReasonText
 
 
 class TaxonOverrideResponse(BaseModel):
@@ -180,20 +181,18 @@ class ArchiveRequest(BaseModel):
     explanation. The endpoint flips the project to ``ProjectStatus.ARCHIVED``
     and stamps ``archived_since``; subsequent state-changing actions are
     blocked by Step 1 of :func:`echoroo.core.permissions.is_allowed`.
+
+    Phase 17 backlog A-13: ``reason`` uses :data:`OperatorReasonText` so the
+    FR-091a PII reject gate runs at the API boundary. ``project_audit_log``
+    is NOT routed through :class:`AuditLogSanitizer` (only
+    ``platform_audit_log`` is), and the reason is also copied into outbox
+    payloads via the archive event — boundary rejection prevents PII from
+    landing in any of those sinks.
     """
 
     model_config = ConfigDict(extra="forbid")
 
-    reason: str = Field(
-        ...,
-        min_length=1,
-        max_length=2_000,
-        description=(
-            "Why the project is being archived (operator-supplied). Stored "
-            "verbatim in audit detail (project + platform tables, FR-088 / "
-            "FR-089)."
-        ),
-    )
+    reason: OperatorReasonText
 
 
 class ArchiveResponse(BaseModel):
@@ -472,34 +471,33 @@ class SuperuserApprovalRequestListResponse(BaseModel):
 
 
 class SuperuserRejectRequest(BaseModel):
-    """Body for ``POST /admin/superusers/approval-requests/{id}/reject``."""
+    """Body for ``POST /admin/superusers/approval-requests/{id}/reject``.
+
+    Phase 17 backlog A-13: ``reason`` uses :data:`OperatorReasonText`. The
+    rejection reason is appended to ``superuser_approval_requests.approvals``
+    JSONB (a business table, not the audit log) so the FR-091a PII reject
+    gate at the API boundary is the only safeguard against PII landing in
+    that JSONB array.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
-    reason: str = Field(
-        ...,
-        min_length=1,
-        max_length=2_000,
-        description=(
-            "Why the ticket is being rejected. Stored on the approvals "
-            "JSONB array and embedded into the audit detail (FR-111)."
-        ),
-    )
+    reason: OperatorReasonText
 
 
 class SuperuserBreakGlassEnterRequest(BaseModel):
-    """Body for ``POST /admin/superusers/break-glass/enter``."""
+    """Body for ``POST /admin/superusers/break-glass/enter``.
+
+    Phase 17 backlog A-13: ``reason`` uses :data:`OperatorReasonText`. The
+    reason is persisted on ``superuser_break_glass.reason`` (business
+    table) and surfaced verbatim by ``GET /admin/superusers/break-glass/
+    status``, so PII rejection at the API boundary protects both the
+    persisted column and the read-back response.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
-    reason: str = Field(
-        ...,
-        min_length=1,
-        max_length=2_000,
-        description=(
-            "Why the break-glass window is being opened (operator-supplied)."
-        ),
-    )
+    reason: OperatorReasonText
 
 
 class SuperuserBreakGlassStatusResponse(BaseModel):
@@ -601,29 +599,19 @@ class ResetTwoFactorRequest(BaseModel):
       with action ``two_factor_reset.skip_delay``; quorum (two
       co-signing superusers) flips the row to ``approved`` with
       ``dispatch_at = now()``.
+
+    Phase 17 backlog A-13: both ``support_ticket_id`` and ``reason`` use
+    the operator-PII Annotated types so the FR-091a reject gate runs at
+    the API boundary. The values are persisted verbatim on
+    ``two_factor_reset_requests`` (a business table — NOT routed through
+    :class:`AuditLogSanitizer`), so boundary rejection is the only
+    safeguard against PII landing in that row.
     """
 
     model_config = ConfigDict(extra="forbid")
 
-    support_ticket_id: str = Field(
-        ...,
-        min_length=1,
-        max_length=200,
-        description=(
-            "Operator-supplied support ticket reference (e.g. Zendesk "
-            "id). Stored verbatim on the ``two_factor_reset_requests`` "
-            "row and echoed (truncated) in the audit detail."
-        ),
-    )
-    reason: str = Field(
-        ...,
-        min_length=1,
-        max_length=2_000,
-        description=(
-            "Free-form explanation recorded on the request row and "
-            "(truncated to 200 chars) on the platform audit log entry."
-        ),
-    )
+    support_ticket_id: OperatorSupportTicketId
+    reason: OperatorReasonText
     skip_delay: bool = Field(
         default=False,
         description=(

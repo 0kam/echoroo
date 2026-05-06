@@ -66,19 +66,36 @@ already exists in `apps/api/tests/security/**` and is marked
   - [ ] `scripts/lint_kms_isolation.py` runs in strict mode and passes.
   - [ ] `xfail` + `skip` removed; tests PASS.
 
-### A-13. Operator free-form fields: PII / email plaintext detector
+### A-13. Operator free-form fields: PII / email plaintext detector — DONE (2026-05-04)
 - **Origin**: A-11 close review Round 1-9 carry-over. The operator
   `reason` and `support_ticket_id` fields accept arbitrary strings; an
   operator may paste a target user's email or other PII, which then
-  reaches `platform_audit_log.detail.reason_excerpt` in plaintext.
-- **Threat**: PII leakage into long-retained audit rows breaches the
-  PII-hash contract (FR-091a) for incidental operator-supplied content.
+  reaches `platform_audit_log.detail.reason_excerpt` in plaintext (and,
+  more critically, also lands in business tables and outbox payloads
+  that are NOT routed through `AuditLogSanitizer`).
+- **Threat**: PII leakage into long-retained audit rows AND business
+  tables / outbox payloads breaches the PII-hash contract (FR-091a)
+  for incidental operator-supplied content.
+- **Resolution (P1 — API-boundary 422 reject)**:
+  - `echoroo/core/operator_pii_detector.py` exposes reusable Pydantic
+    `Annotated` types (`OperatorReasonText`, `OperatorSupportTicketId`)
+    that reject PII via `AfterValidator` at the API boundary.
+  - `echoroo/core/audit.py` now exports `contains_pii()` so detector +
+    sanitizer share a single regex catalogue (FR-091a contract).
+  - 5 admin schemas updated: `ResetTwoFactorRequest`,
+    `TaxonOverrideRejectRequest`, `ArchiveRequest`,
+    `SuperuserRejectRequest`, `SuperuserBreakGlassEnterRequest`.
+  - 33 unit tests + 5 API-boundary integration tests confirm reject +
+    no-side-effect behavior. `tests/contract/test_openapi_diff.py`
+    21/21 pass — the change is wire-compatible.
 - **Release condition**:
-  - [ ] Lightweight detector that flags plausible email addresses /
-        phone numbers / national IDs in operator free-form fields and
-        either rejects the request (P1) or auto-redacts before audit
-        write (P2).
-  - [ ] Admin UI helper text discouraging PII paste-in.
+  - [x] Detector that rejects plausible email addresses / phone numbers
+        / national IDs / credit cards / API tokens in operator
+        free-form fields with HTTP 422 (P1 strategy chosen — business
+        tables and outbox sinks rule out P2 redact-on-audit).
+  - [ ] Admin UI helper text discouraging PII paste-in *(deferred to
+        a frontend-only follow-up; the schema `description` already
+        documents the constraint and the 422 message is educational)*.
 
 ---
 

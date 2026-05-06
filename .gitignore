@@ -33,3 +33,7 @@ apps/api/.ruff_cache/
 config/redis/tls/*.crt
 config/redis/tls/*.key
 !config/redis/tls/.gitkeep
+
+# Python bytecode caches (Codex A-13 Round 2 follow-up)
+__pycache__/
+*.pyc
