@@ -256,6 +256,67 @@ class Settings(BaseSettings):
         ),
     )
 
+    # Phase 17 backlog A-12 — dedicated HMAC for 2FA reset confirmation tokens.
+    #
+    # Decoupled from ``web_session_secret`` so a leak / compromise of the
+    # generic session signing key does NOT also forge admin-reset
+    # confirmation tokens (FR-091b / OWASP A02 Cryptographic Failures).
+    # Tokens are signed with a ``kid`` claim ("v1" today) so future
+    # rotation can ship a "v2" key alongside the previous one for a brief
+    # grace window. See
+    # ``docs/runbook/two_factor_confirmation_key_rotation.md`` for the
+    # operational procedure.
+    two_factor_reset_confirmation_hmac_key: str = Field(
+        default="dev-two-factor-confirmation-hmac-change-in-production",
+        validation_alias="TWO_FACTOR_RESET_CONFIRMATION_HMAC_KEY",
+        description=(
+            "HMAC-SHA256 signing key for two-factor reset confirmation tokens "
+            "(FR-091b / OWASP A02). Decoupled from web_session_secret so a "
+            "compromise of session signing does NOT also forge admin reset "
+            "tokens. Required >= 32 chars in production / staging."
+        ),
+    )
+    two_factor_reset_confirmation_hmac_key_old: str | None = Field(
+        default=None,
+        validation_alias="TWO_FACTOR_RESET_CONFIRMATION_HMAC_KEY_OLD",
+        description=(
+            "Optional previous HMAC key during the post-rotation grace "
+            "window (default 24h, bounded by the 5 min token TTL). "
+            "Operators set this when rotating the new key, then unset "
+            "it after all in-flight tokens have expired. See "
+            "docs/runbook/two_factor_confirmation_key_rotation.md."
+        ),
+    )
+    # Phase 17 A-12 Round 2: kid identifiers are env-driven so a rotation
+    # only needs env var changes — no source-code bump. The verifier
+    # resolves the wire ``k`` claim against these two values:
+    #
+    #   * ``..._KID_NEW`` → maps to ``..._HMAC_KEY`` (always required)
+    #   * ``..._KID_OLD`` → maps to ``..._HMAC_KEY_OLD`` (only valid when
+    #     BOTH the kid AND the key are set; closing the grace window
+    #     means unsetting both)
+    #
+    # See docs/runbook/two_factor_confirmation_key_rotation.md for the
+    # operational rotation procedure (env-only, no source change).
+    two_factor_reset_confirmation_hmac_kid_new: str = Field(
+        default="v1",
+        validation_alias="TWO_FACTOR_RESET_CONFIRMATION_HMAC_KID_NEW",
+        description=(
+            "Kid string embedded in newly issued 2FA confirmation tokens. "
+            "Bump on rotation (v1 -> v2 -> ...). The _OLD pair must use "
+            "the prior _NEW value during the grace window."
+        ),
+    )
+    two_factor_reset_confirmation_hmac_kid_old: str | None = Field(
+        default=None,
+        validation_alias="TWO_FACTOR_RESET_CONFIRMATION_HMAC_KID_OLD",
+        description=(
+            "Kid string accepted from previously issued tokens during the "
+            "rotation grace window. None when no rotation is in progress. "
+            "MUST be paired with TWO_FACTOR_RESET_CONFIRMATION_HMAC_KEY_OLD."
+        ),
+    )
+
     @field_validator("webauthn_origins", mode="before")
     @classmethod
     def parse_webauthn_origins(cls, value: Any) -> Any:
@@ -299,6 +360,39 @@ class Settings(BaseSettings):
             if self.S3_SECRET_KEY == "echoroo-dev":
                 raise ValueError(
                     "S3_SECRET_KEY must be set to a secure value in production/staging"
+                )
+            # Phase 17 A-12: dedicated 2FA reset confirmation HMAC key.
+            weak_defaults_2fa = {
+                "dev-two-factor-confirmation-hmac-change-in-production",
+            }
+            if (
+                self.two_factor_reset_confirmation_hmac_key in weak_defaults_2fa
+                or len(self.two_factor_reset_confirmation_hmac_key) < 32
+            ):
+                raise ValueError(
+                    "two_factor_reset_confirmation_hmac_key must be a strong "
+                    "secret (min 32 chars) in production/staging — see "
+                    "docs/runbook/two_factor_confirmation_key_rotation.md"
+                )
+            # Phase 17 A-12 Round 2 (Codex C2): the ``_OLD`` companion is
+            # optional but, when set, becomes a live signing key the
+            # verifier will accept during the grace window. If an operator
+            # leaves a weak default in the ``_OLD`` slot during rotation
+            # the attacker can forge tokens under that key — so guard it
+            # to the same strength bar as ``_NEW``. An empty string is
+            # treated as "unset" (Pydantic str | None semantics) so it
+            # does not trip the guard.
+            old_key = self.two_factor_reset_confirmation_hmac_key_old
+            if (
+                old_key is not None
+                and old_key != ""
+                and (old_key in weak_defaults_2fa or len(old_key) < 32)
+            ):
+                raise ValueError(
+                    "two_factor_reset_confirmation_hmac_key_old, when "
+                    "set during a rotation grace window, must be a "
+                    "strong secret (min 32 chars) in production/staging "
+                    "— see docs/runbook/two_factor_confirmation_key_rotation.md"
                 )
         return self
 

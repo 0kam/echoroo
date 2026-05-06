@@ -29,18 +29,37 @@ The combination gives us forensic auditability (the nonce is the
 ``confirmation_token_nonce`` recorded on
 ``two_factor_reset_requests``) AND tamper resistance (the HMAC binds
 the nonce to the issuing user / purpose / expires_at and is signed by
-``settings.web_session_secret``).
+``settings.two_factor_reset_confirmation_hmac_key``).
 
 Token wire format
 =================
 ``base64url(payload).hex_signature`` where ``payload`` is the
 URL-safe-base64 of the canonical JSON:
 
-    {"u": <user_id>, "p": <purpose>, "n": <nonce>, "x": <expires_unix>}
+    {"u": <user_id>, "p": <purpose>, "n": <nonce>,
+     "x": <expires_unix>, "k": <kid>}
 
 The signature is HMAC-SHA256 over ``payload`` (the base64 segment, not
-the canonical JSON) using ``settings.web_session_secret``. Hex encoding
-keeps it compact and avoids '+'/'/' padding.
+the canonical JSON) using the key resolved from the ``k`` (kid) claim.
+Hex encoding keeps it compact and avoids '+'/'/' padding.
+
+Key rotation (Phase 17 backlog A-12 / FR-091b / OWASP A02)
+==========================================================
+The signing key is dedicated — separate from ``web_session_secret`` —
+so a session-secret leak does NOT also forge admin-reset confirmation
+tokens. The kid claim is **env-driven** (Round 2): both the kid string
+embedded in newly issued tokens AND the kid accepted from previously
+issued tokens during a rotation grace window are configured via
+environment variables (``TWO_FACTOR_RESET_CONFIRMATION_HMAC_KID_NEW``
+and ``TWO_FACTOR_RESET_CONFIRMATION_HMAC_KID_OLD``). This lets an
+operator complete a rotation by changing env vars only — no source
+bump required.
+
+During a rotation, both ``_NEW`` and ``_OLD`` env pairs are set; the
+verifier tries the current pair first then the legacy pair. Tokens
+missing the ``k`` claim are rejected outright — no implicit fallback to
+a default key (the 5 min TTL keeps the rolling-deploy blast radius
+bounded). See ``docs/runbook/two_factor_confirmation_key_rotation.md``.
 """
 
 from __future__ import annotations
@@ -77,7 +96,6 @@ PURPOSE_ADMIN_RESET_2FA = "admin_reset_2fa"
 #: column without truncation.
 _NONCE_BYTES = 32
 
-
 class ConfirmationTokenError(Exception):
     """Base error for confirmation-token operations."""
 
@@ -108,8 +126,56 @@ class ConfirmationTokenPayload:
     expires_at: datetime
 
 
-def _signing_key() -> bytes:
-    return get_settings().web_session_secret.encode("utf-8")
+def _current_kid() -> str:
+    """Return the kid string to embed in newly issued tokens.
+
+    Read from ``settings.two_factor_reset_confirmation_hmac_kid_new`` so
+    a rotation only requires env var changes (no source-code bump).
+    """
+    return get_settings().two_factor_reset_confirmation_hmac_kid_new
+
+
+def _signing_key_for(kid: str) -> bytes | None:
+    """Resolve the HMAC signing key for ``kid``; return ``None`` if unknown.
+
+    The mapping is **fully env-driven** (Phase 17 A-12 Round 2) — the
+    operator never has to touch source code to rotate. Resolution order:
+
+      1. ``kid == settings.two_factor_reset_confirmation_hmac_kid_new``
+         → ``settings.two_factor_reset_confirmation_hmac_key`` (the
+         currently-issuing key; always configured and backed by a
+         strong-secret guard in production / staging).
+
+      2. ``kid == settings.two_factor_reset_confirmation_hmac_kid_old``
+         → ``settings.two_factor_reset_confirmation_hmac_key_old`` —
+         only when BOTH the legacy kid env AND the legacy key env are
+         set (i.e. an active rotation grace window). Either one missing
+         or empty closes the grace window and the verifier rejects.
+
+      3. Otherwise → ``None`` (caller MUST reject the token).
+
+    Rotation procedure (env only):
+
+    * Start state: ``_KID_NEW="v1"``, ``_HMAC_KEY=secret_a``,
+      ``_KID_OLD`` unset, ``_HMAC_KEY_OLD`` unset.
+    * Step into rotation: ``_KID_NEW="v2"``, ``_HMAC_KEY=secret_b``,
+      ``_KID_OLD="v1"``, ``_HMAC_KEY_OLD=secret_a``. New tokens carry
+      ``k="v2"``; in-flight ``k="v1"`` tokens still verify via the
+      legacy slot. Restart workers.
+    * Close grace: unset ``_KID_OLD`` and ``_HMAC_KEY_OLD``. Restart
+      workers. ``k="v1"`` tokens now reject as unknown.
+    """
+    settings = get_settings()
+    new_kid = settings.two_factor_reset_confirmation_hmac_kid_new
+    if kid == new_kid:
+        return settings.two_factor_reset_confirmation_hmac_key.encode("utf-8")
+    old_kid = settings.two_factor_reset_confirmation_hmac_kid_old
+    old_key = settings.two_factor_reset_confirmation_hmac_key_old
+    if old_kid and old_key and kid == old_kid:
+        return old_key.encode("utf-8")
+    # Unknown kid — either malformed/forged OR the operator has closed
+    # the rotation grace window. Both cases fail closed.
+    return None
 
 
 def _b64url_encode(raw: bytes) -> str:
@@ -121,8 +187,20 @@ def _b64url_decode(encoded: str) -> bytes:
     return base64.urlsafe_b64decode(padded.encode("ascii"))
 
 
-def _sign(payload_segment: str) -> str:
-    mac = hmac.new(_signing_key(), payload_segment.encode("ascii"), hashlib.sha256)
+def _sign(payload_segment: str, *, kid: str) -> str:
+    """Sign ``payload_segment`` with the key bound to ``kid``.
+
+    Raises :class:`ConfirmationTokenInvalidError` when ``kid`` cannot be
+    resolved to a configured key — this is the single fail-closed entry
+    point for unknown / grace-expired key identifiers on the *signing*
+    side. Verification has its own explicit reject path.
+    """
+    key = _signing_key_for(kid)
+    if key is None:
+        raise ConfirmationTokenInvalidError(
+            f"unknown or unconfigured confirmation token kid: {kid!r}"
+        )
+    mac = hmac.new(key, payload_segment.encode("ascii"), hashlib.sha256)
     return mac.hexdigest()
 
 
@@ -132,12 +210,14 @@ def _serialize_payload(
     purpose: str,
     nonce: str,
     expires_at: datetime,
+    kid: str,
 ) -> str:
     canonical: dict[str, Any] = {
         "u": str(user_id),
         "p": purpose,
         "n": nonce,
         "x": int(expires_at.timestamp()),
+        "k": kid,
     }
     raw = json.dumps(canonical, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return _b64url_encode(raw)
@@ -189,13 +269,15 @@ async def issue_confirmation_token(
         )
     )
 
+    issuing_kid = _current_kid()
     payload_segment = _serialize_payload(
         user_id=user_id,
         purpose=purpose,
         nonce=nonce,
         expires_at=expires_at,
+        kid=issuing_kid,
     )
-    signature = _sign(payload_segment)
+    signature = _sign(payload_segment, kid=issuing_kid)
     token = f"{payload_segment}.{signature}"
     return token, ConfirmationTokenPayload(
         user_id=user_id,
@@ -237,10 +319,11 @@ async def consume_confirmation_token(
     if not payload_segment or not signature_segment:
         raise ConfirmationTokenInvalidError("token segments are empty")
 
-    expected_signature = _sign(payload_segment)
-    if not hmac.compare_digest(expected_signature, signature_segment.lower()):
-        raise ConfirmationTokenInvalidError("token signature mismatch")
-
+    # Parse the payload BEFORE signature verification so we can resolve
+    # the kid → key. We treat structural / claim errors as
+    # ``ConfirmationTokenInvalidError`` regardless of which key would
+    # have signed them, because a malformed envelope cannot be a valid
+    # token under ANY key.
     decoded = _parse_payload(payload_segment)
     try:
         token_user_id = UUID(str(decoded["u"]))
@@ -249,6 +332,28 @@ async def consume_confirmation_token(
         expires_unix = int(decoded["x"])
     except (KeyError, TypeError, ValueError) as exc:
         raise ConfirmationTokenInvalidError("token claims are malformed") from exc
+
+    # Phase 17 A-12: ``k`` (kid) is REQUIRED. Tokens minted before the
+    # rotation contract landed do not exist in production (5 min TTL),
+    # so there is no legacy unsigned-kid path to support. Rejecting
+    # outright keeps the verifier simple and prevents an attacker from
+    # downgrading to an implicit default key.
+    raw_kid = decoded.get("k")
+    if not isinstance(raw_kid, str) or not raw_kid:
+        raise ConfirmationTokenInvalidError("token is missing kid claim")
+    signing_key = _signing_key_for(raw_kid)
+    if signing_key is None:
+        # Either the kid is unknown to this build OR it points at the
+        # legacy slot but the operator has unset the ``_OLD`` env var
+        # (grace window closed). Both cases fail closed.
+        raise ConfirmationTokenInvalidError(
+            f"token kid {raw_kid!r} is unknown or no longer accepted"
+        )
+    expected_signature = hmac.new(
+        signing_key, payload_segment.encode("ascii"), hashlib.sha256
+    ).hexdigest()
+    if not hmac.compare_digest(expected_signature, signature_segment.lower()):
+        raise ConfirmationTokenInvalidError("token signature mismatch")
 
     if purpose != expected_purpose:
         raise ConfirmationTokenInvalidError(
