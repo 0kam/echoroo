@@ -131,12 +131,12 @@ def _patch_kms_and_audit(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         two_factor_module.kms,
         "wrap_dek",
-        lambda plaintext: bytes(plaintext),
+        lambda plaintext, **_kwargs: bytes(plaintext),
     )
     monkeypatch.setattr(
         two_factor_module.kms,
         "unwrap_dek",
-        lambda wrapped: bytes(wrapped),
+        lambda wrapped, **_kwargs: bytes(wrapped),
     )
     monkeypatch.setattr(TwoFactorService, "_record_audit_event", no_audit)
     monkeypatch.setattr(two_factor_module, "_backup_code_hasher", _FastBackupHasher())

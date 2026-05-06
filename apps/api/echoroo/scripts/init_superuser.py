@@ -305,7 +305,10 @@ async def _bootstrap_initial_superuser(
        post-commit hook used by every other superuser engine path.
     """
     # Lazy import to keep the CLI startup fast for ``--help``.
-    from echoroo.services.two_factor_service import _encrypt_totp_secret  # noqa: PLC0415
+    from echoroo.services.two_factor_service import (  # noqa: PLC0415
+        _current_dek_version,
+        _encrypt_totp_secret,
+    )
 
     secret = pyotp.random_base32(length=TOTP_SECRET_LENGTH)
     provisioning_uri = pyotp.TOTP(secret).provisioning_uri(
@@ -313,6 +316,7 @@ async def _bootstrap_initial_superuser(
         issuer_name=ISSUER_NAME,
     )
     encrypted_secret = _encrypt_totp_secret(secret)
+    encrypted_secret_dek_version = _current_dek_version()
 
     bootstrap_token = _generate_bootstrap_token()
     bootstrap_token_expires = datetime.now(UTC) + BOOTSTRAP_TOKEN_TTL
@@ -327,7 +331,7 @@ async def _bootstrap_initial_superuser(
             display_name=display_name,
             two_factor_enabled=True,
             two_factor_secret_encrypted=encrypted_secret,
-            two_factor_secret_dek_version=1,
+            two_factor_secret_dek_version=encrypted_secret_dek_version,
             two_factor_backup_codes_hashed=None,
             security_stamp=_security_stamp(),
         )

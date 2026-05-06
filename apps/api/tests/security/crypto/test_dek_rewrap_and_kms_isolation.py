@@ -154,21 +154,50 @@ def test_kms_isolation_no_direct_boto3_kms_outside_wrapper() -> None:
     # levels up) and the container layout (/app/tests/security/crypto → 3
     # levels up to /app). IndexError is caught when we reach the filesystem
     # root before finding the scripts directory.
+    #
+    # Phase 17 A-8: respect ``REPO_ROOT`` env if set so CI / containers
+    # that mount the test tree without a sibling ``scripts/`` directory
+    # can still resolve the lint script (the security-tests CI job sets
+    # REPO_ROOT=${{ github.workspace }}).
+    import os as _os
+
     this_file = Path(__file__).resolve()
     lint_script: Path | None = None
     repo_root = this_file.parent
-    for n in range(1, 10):
-        try:
-            candidate_root = this_file.parents[n]
-        except IndexError:
-            break
-        candidate = candidate_root / "scripts" / "lint_kms_isolation.py"
-        if candidate.exists():
-            repo_root = candidate_root
-            lint_script = candidate
-            break
-    if lint_script is None or not lint_script.exists():
-        pytest.skip("lint_kms_isolation.py not found in any ancestor directory — skipping")
+
+    env_root = _os.environ.get("REPO_ROOT")
+    if env_root:
+        # Codex Round 1 R1-M1: when REPO_ROOT is explicitly set (CI /
+        # container), a missing lint script is a hard failure — never a
+        # silent skip. If the operator wired REPO_ROOT they expect the
+        # security gate to actually run; falling through to skip would
+        # bypass FR-091b enforcement in CI.
+        repo_root = Path(env_root)
+        candidate = repo_root / "scripts" / "lint_kms_isolation.py"
+        assert candidate.exists(), (
+            f"lint_kms_isolation.py not found at {candidate}. "
+            "REPO_ROOT is set but the script is missing — CI must mount "
+            "the repository scripts/ directory so this security gate can run."
+        )
+        lint_script = candidate
+    else:
+        # Local fallback: ancestor search, skip if nothing found so the
+        # test remains usable from arbitrary worktrees that lack scripts/.
+        for n in range(1, 10):
+            try:
+                candidate_root = this_file.parents[n]
+            except IndexError:
+                break
+            candidate = candidate_root / "scripts" / "lint_kms_isolation.py"
+            if candidate.exists():
+                repo_root = candidate_root
+                lint_script = candidate
+                break
+        if lint_script is None or not lint_script.exists():
+            pytest.skip(
+                "lint_kms_isolation.py not found in any ancestor directory "
+                "and REPO_ROOT is not set — skipping (set REPO_ROOT to enforce)."
+            )
 
     # Find the echoroo source root — may be at apps/api/echoroo (host) or
     # echoroo (container where /app is the api root).
@@ -281,30 +310,155 @@ def test_dek_unwrap_tampered_ciphertext_raises(
 
 
 # ---------------------------------------------------------------------------
+# Section B': DEK rewrap roundtrip (Phase 17 A-8)
+# ---------------------------------------------------------------------------
+
+
+_DESTINATION_DEK_ALIAS = "alias/echoroo-t979e-totp-dek-v2"
+
+
+def test_dek_rewrap_roundtrip_with_new_cmk(
+    monkeypatch: pytest.MonkeyPatch,
+    kms_env_t979e: dict[str, str],
+) -> None:
+    """``rewrap_dek`` produces ciphertext decryptable under the new CMK.
+
+    Provisions a SECOND symmetric CMK on the moto KMS, calls
+    :func:`kms.rewrap_dek` with that destination, then re-points the
+    TOTP alias env var at the new CMK and asserts that
+    :func:`kms.unwrap_dek` recovers the original plaintext. This proves
+    the FR-091b property that the plaintext DEK survives rewrap
+    intact even though it is never exposed to the application.
+    """
+    from echoroo.core import kms
+
+    # Provision a destination CMK via the boto3 client moto already
+    # exposes through the fixture's ``mock_aws()`` context.
+    boto_kms = boto3.client("kms", region_name=AWS_REGION)
+    dest_id = _create_enc_key(boto_kms, _DESTINATION_DEK_ALIAS)
+
+    plaintext = b"\x77" * 32
+    wrapped_old = kms.wrap_dek(plaintext)
+    wrapped_new = kms.rewrap_dek(wrapped_old, destination_key_id=dest_id)
+
+    assert wrapped_new != wrapped_old, (
+        "rewrap_dek returned the input ciphertext unchanged — re-encrypt "
+        "did not occur"
+    )
+
+    # Re-point the TOTP alias env var at the destination CMK and reset
+    # the cached client / alias resolution so unwrap routes to the
+    # destination key.
+    monkeypatch.setenv("AWS_KMS_CMK_2FA_ALIAS", _DESTINATION_DEK_ALIAS)
+    kms._reset_client_cache()
+
+    recovered = kms.unwrap_dek(wrapped_new)
+    assert recovered == plaintext, (
+        "rewrap_dek roundtrip failed: unwrap under destination CMK did "
+        "not return the original plaintext"
+    )
+
+
+def test_dek_rewrap_with_explicit_source_key_id(
+    kms_env_t979e: dict[str, str],
+) -> None:
+    """``rewrap_dek`` honours an explicit ``source_key_id`` hint.
+
+    AWS KMS ``ReEncrypt`` accepts an optional ``SourceKeyId`` parameter;
+    moto resolves it against the ciphertext metadata. Passing the
+    source CMK explicitly must produce the same plaintext as omitting
+    it (the auto-resolve path).
+    """
+    from echoroo.core import kms
+
+    boto_kms = boto3.client("kms", region_name=AWS_REGION)
+    dest_alias = "alias/echoroo-t979e-totp-dek-v3"
+    dest_id = _create_enc_key(boto_kms, dest_alias)
+
+    plaintext = b"\x33" * 32
+    wrapped_old = kms.wrap_dek(plaintext)
+
+    wrapped_new = kms.rewrap_dek(
+        wrapped_old,
+        destination_key_id=dest_id,
+        source_key_id=kms_env_t979e["totp_id"],
+    )
+    # Decrypt with the destination CMK directly through the boto3 client
+    # to avoid coupling this assertion to env-var alias routing.
+    resp = boto_kms.decrypt(CiphertextBlob=wrapped_new, KeyId=dest_id)
+    assert resp["Plaintext"] == plaintext
+
+
+def test_dek_rewrap_does_not_expose_plaintext_in_response(
+    kms_env_t979e: dict[str, str],
+) -> None:
+    """``rewrap_dek`` returns ONLY the new ciphertext blob.
+
+    The whole point of ``kms:ReEncrypt`` is that the plaintext stays
+    inside KMS. Asserting the return value is opaque ciphertext (and
+    not a tuple / dict containing ``Plaintext``) documents the contract
+    enforced by ``echoroo.core.kms.rewrap_dek``.
+    """
+    from echoroo.core import kms
+
+    boto_kms = boto3.client("kms", region_name=AWS_REGION)
+    dest_id = _create_enc_key(boto_kms, "alias/echoroo-t979e-totp-dek-v4")
+
+    plaintext = b"\xAB" * 32
+    wrapped_old = kms.wrap_dek(plaintext)
+    out = kms.rewrap_dek(wrapped_old, destination_key_id=dest_id)
+
+    assert isinstance(out, bytes), "rewrap_dek must return raw bytes"
+    # The plaintext must not be byte-substring of the returned ciphertext —
+    # this is statistically near-impossible for an authenticated
+    # encryption blob, but documents the no-leakage invariant.
+    assert plaintext not in out, (
+        "rewrap_dek leaked plaintext-looking bytes into the ciphertext "
+        "blob — KMS contract violated"
+    )
+
+
+# ---------------------------------------------------------------------------
 # Section C: DEK rewrap script
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "scripts/rewrap_dek.py does not exist yet. "
-        "The DEK rewrap runbook script is a future artefact (T979e). "
-        "Remove this xfail when the script is created."
-    ),
-)
 def test_dek_rewrap_script_exists() -> None:
-    """``scripts/rewrap_dek.py`` must exist as a runbook artefact.
+    """``scripts/rewrap_dek.py`` exists as a runbook artefact (Phase 17 A-8).
 
     The rewrap script is needed to re-encrypt all stored TOTP DEKs after a
     CMK rotation. Without it, operators cannot complete a CMK rotation
-    without downtime. This xfail is the TDD red phase (FR-091b).
+    without downtime. The script is the runtime companion to
+    ``docs/runbook/dek_rewrap.md`` and uses the new
+    :func:`echoroo.core.kms.rewrap_dek` wrapper (which calls
+    ``kms:ReEncrypt`` so the plaintext DEK never leaves KMS).
     """
-    repo_root = Path(__file__).parents[5]
-    rewrap_script = repo_root / "scripts" / "rewrap_dek.py"
-    assert rewrap_script.exists(), (
-        f"rewrap_dek.py not found at {rewrap_script}. "
-        "Create the script as part of the CMK rotation runbook."
+    # Search upward from the test file for the repo root containing
+    # ``scripts/rewrap_dek.py``. Both host (apps/api/tests/...) and
+    # container (/app/tests/...) layouts are supported; an explicit
+    # ``REPO_ROOT`` env var overrides the search for CI runners that
+    # mount the test tree without sibling ``scripts/`` directory.
+    import os as _os
+
+    env_root = _os.environ.get("REPO_ROOT")
+    if env_root:
+        candidates = [Path(env_root) / "scripts" / "rewrap_dek.py"]
+    else:
+        this_file = Path(__file__).resolve()
+        candidates = []
+        for n in range(1, 10):
+            try:
+                root = this_file.parents[n]
+            except IndexError:
+                break
+            candidates.append(root / "scripts" / "rewrap_dek.py")
+
+    found = next((p for p in candidates if p.exists()), None)
+    assert found is not None, (
+        "rewrap_dek.py not found in any ancestor scripts/ directory "
+        f"(searched: {[str(p) for p in candidates]}). "
+        "Create the script as part of the CMK rotation runbook or set "
+        "REPO_ROOT to point at the repository root."
     )
 
 
