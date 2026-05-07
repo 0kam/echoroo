@@ -632,7 +632,27 @@ jobs:
         # "not performance" because no test carries both markers, but the
         # redundant deselect documents the intent and protects against
         # accidental cross-tagging.
-        run: uv run pytest -m "security and not performance" --maxfail=1 -q
+        #
+        # Phase 17 PR-C0: ``--maxfail=20`` (raised from 1) so the failure
+        # distribution is observable when investigating CI flake. ``-rA``
+        # prints a short summary of every failure at the end of the run so
+        # the pattern is visible without scrolling. ``--junitxml`` emits a
+        # machine-readable failure report that PR-C0 uploads as an artifact.
+        run: |
+          uv run pytest \
+            -m "security and not performance" \
+            --maxfail=20 -q -rA \
+            --junitxml=junit-security.xml
+
+      # Phase 17 PR-C0: surface the security suite's junit report so failure
+      # patterns can be inspected without re-running the suite locally.
+      - name: Upload security-tests reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-tests-reports
+          path: apps/api/junit-security.xml
+          retention-days: 14
 
   # ---------------------------------------------------------------------------
   # Phase 16 Batch 6g-2 R2 (Codex Minor 3): default backend pytest job that
@@ -774,6 +794,14 @@ jobs:
       # T996: emit coverage.json + XML + term-missing alongside the standard
       # test run. The coverage reports are uploaded as artifacts even on
       # failure so that the threshold script can still run.
+      #
+      # Phase 17 PR-C0: ``--maxfail=20`` (raised from 1) so the failure
+      # distribution is observable while burning down the 33F+94E baseline
+      # tracked in PHASE17_BACKLOG.md §C. With ``--maxfail=1`` a single
+      # early-failing test (e.g. vector extension flake) hides the rest of
+      # the failure pattern, making it impossible to triage. ``-rA`` prints
+      # a short summary of every failure at the end of the run.
+      # ``--junitxml`` emits a machine-readable report uploaded below.
       - name: Run pytest with coverage (-m "not performance and not slow")
         working-directory: apps/api
         # The marker description in pyproject.toml documents this default
@@ -781,14 +809,16 @@ jobs:
         run: |
           uv run pytest \
             -m "not performance and not slow" \
-            --maxfail=1 -q \
+            --maxfail=20 -q -rA \
+            --junitxml=junit-backend.xml \
             --cov=echoroo \
             --cov-report=json \
             --cov-report=xml \
             --cov-report=term-missing
 
-      # Upload coverage reports as CI artifact for inspection / trend tracking.
-      - name: Upload coverage reports
+      # Upload coverage + junit reports as CI artifact for inspection /
+      # trend tracking. Phase 17 PR-C0 added junit-backend.xml.
+      - name: Upload coverage + test reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -796,6 +826,7 @@ jobs:
           path: |
             apps/api/coverage.json
             apps/api/coverage.xml
+            apps/api/junit-backend.xml
           retention-days: 14
 
       # T996: enforce per-module thresholds.
