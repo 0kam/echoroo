@@ -140,7 +140,9 @@ async def test_helper_raises_for_project_table_too(
 # ---------------------------------------------------------------------------
 
 
-def _build_audit_app(meta_write: AsyncMock) -> TestClient:
+def _build_audit_app(
+    meta_write: AsyncMock, monkeypatch: pytest.MonkeyPatch
+) -> TestClient:
     """Construct a FastAPI app that wires only the audit router with mocks.
 
     The fixture overrides:
@@ -157,6 +159,13 @@ def _build_audit_app(meta_write: AsyncMock) -> TestClient:
     Because the audit endpoints depend on FastAPI ``Depends`` for the
     ORM session and the current user, we override those with fakes via
     the ``app.dependency_overrides`` map.
+
+    All module-level patches go through ``monkeypatch.setattr`` so they
+    are automatically restored at test teardown — without this, e.g.
+    ``audit_api._project_audit_page`` would leak its stub into other
+    tests that introspect the helper via ``inspect.getsource`` (see
+    ``tests/security/key_rotation/test_pii_hash_key_rotation_dual_write.py``
+    ::``test_audit_lookup_or_clause_filter_is_used``).
     """
     from echoroo.core.database import get_db
     from echoroo.middleware.auth import (
@@ -174,14 +183,18 @@ def _build_audit_app(meta_write: AsyncMock) -> TestClient:
     async def _stub_platform_page(*_args: Any, **_kwargs: Any):
         return fake_rows, fake_total
 
-    audit_api._project_audit_page = _stub_project_page  # type: ignore[assignment]
-    audit_api._platform_audit_page = _stub_platform_page  # type: ignore[assignment]
+    monkeypatch.setattr(audit_api, "_project_audit_page", _stub_project_page)
+    monkeypatch.setattr(audit_api, "_platform_audit_page", _stub_platform_page)
 
     # --- Stub: bypass permission gate ---
-    audit_api.is_allowed = lambda **_kwargs: (True, "stubbed")  # type: ignore[assignment]
+    monkeypatch.setattr(
+        audit_api, "is_allowed", lambda **_kwargs: (True, "stubbed")
+    )
 
     # --- Stub: meta-write helper ---
-    audit_api._write_meta_audit_in_fresh_session = meta_write  # type: ignore[assignment]
+    monkeypatch.setattr(
+        audit_api, "_write_meta_audit_in_fresh_session", meta_write
+    )
 
     # --- Stub: project loader (only used by the project endpoint) ---
     async def _stub_load_project(_db: Any, project_id: Any) -> Any:
@@ -195,7 +208,7 @@ def _build_audit_app(meta_write: AsyncMock) -> TestClient:
             owner_id=uuid4(),
         )
 
-    audit_api._load_project = _stub_load_project  # type: ignore[assignment]
+    monkeypatch.setattr(audit_api, "_load_project", _stub_load_project)
 
     # --- App ---
     app = FastAPI()
@@ -221,7 +234,9 @@ def _build_audit_app(meta_write: AsyncMock) -> TestClient:
     return TestClient(app, raise_server_exceptions=False)
 
 
-def test_platform_endpoint_returns_503_when_meta_write_fails() -> None:
+def test_platform_endpoint_returns_503_when_meta_write_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Endpoint: /admin/audit-log returns 503 + does NOT return rows."""
     boom = MetaAuditWriteError(
         action="platform.audit_log.read",
@@ -230,50 +245,31 @@ def test_platform_endpoint_returns_503_when_meta_write_fails() -> None:
     )
     meta_write = AsyncMock(side_effect=boom)
 
-    # Save originals so we can restore them.
-    saved = {
-        "page": audit_api._platform_audit_page,
-        "perm": audit_api.is_allowed,
-        "meta": audit_api._write_meta_audit_in_fresh_session,
-    }
-    try:
-        client = _build_audit_app(meta_write)
-        resp = client.get("/admin/audit-log")
-        assert resp.status_code == 503
-        body = resp.json()
-        # Body should advertise the fail-closed error code.
-        detail = body.get("detail", body)
-        assert detail.get("error_code") == "META_AUDIT_WRITE_FAILED"
-        # And critically: the page rows must NOT be present in the body.
-        assert "items" not in detail
-        # The meta-write was attempted exactly once.
-        assert meta_write.await_count == 1
-    finally:
-        audit_api._platform_audit_page = saved["page"]  # type: ignore[assignment]
-        audit_api.is_allowed = saved["perm"]  # type: ignore[assignment]
-        audit_api._write_meta_audit_in_fresh_session = saved["meta"]  # type: ignore[assignment]
+    client = _build_audit_app(meta_write, monkeypatch)
+    resp = client.get("/admin/audit-log")
+    assert resp.status_code == 503
+    body = resp.json()
+    # Body should advertise the fail-closed error code.
+    detail = body.get("detail", body)
+    assert detail.get("error_code") == "META_AUDIT_WRITE_FAILED"
+    # And critically: the page rows must NOT be present in the body.
+    assert "items" not in detail
+    # The meta-write was attempted exactly once.
+    assert meta_write.await_count == 1
 
 
-def test_platform_endpoint_returns_200_when_meta_write_succeeds() -> None:
+def test_platform_endpoint_returns_200_when_meta_write_succeeds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Sanity: when the meta-write succeeds the endpoint returns the page."""
     meta_write = AsyncMock(return_value=None)
-    saved = {
-        "page": audit_api._platform_audit_page,
-        "perm": audit_api.is_allowed,
-        "meta": audit_api._write_meta_audit_in_fresh_session,
-    }
-    try:
-        client = _build_audit_app(meta_write)
-        resp = client.get("/admin/audit-log")
-        assert resp.status_code == 200
-        body = resp.json()
-        assert body.get("items") == []
-        assert body.get("total") == 0
-        assert meta_write.await_count == 1
-    finally:
-        audit_api._platform_audit_page = saved["page"]  # type: ignore[assignment]
-        audit_api.is_allowed = saved["perm"]  # type: ignore[assignment]
-        audit_api._write_meta_audit_in_fresh_session = saved["meta"]  # type: ignore[assignment]
+    client = _build_audit_app(meta_write, monkeypatch)
+    resp = client.get("/admin/audit-log")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body.get("items") == []
+    assert body.get("total") == 0
+    assert meta_write.await_count == 1
 
 
 # ---------------------------------------------------------------------------
