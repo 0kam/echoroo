@@ -191,6 +191,34 @@ async def web_client(
 
     app.dependency_overrides[get_db] = override_get_db
 
+    # PR-C7 (Phase 17 §C, 2026-05-07): override AudioService so the
+    # ``recordings`` router does not try to mkdir ``/data/s3_audio_cache``
+    # (Settings default), which fails on CI runners with PermissionError
+    # on ``/data``. Mirrors the equivalent override in the main
+    # ``client`` fixture (tests/conftest.py).
+    import tempfile as _tempfile
+    from pathlib import Path as _Path
+
+    from echoroo.core.settings import get_settings as _get_settings
+    from echoroo.services.audio.service import AudioService as _AudioService
+
+    _settings = _get_settings()
+    _audio_cache_tmp_root = (
+        _Path(_tempfile.gettempdir()) / "echoroo-test-s3-audio-cache"
+    )
+    _audio_cache_tmp_root.mkdir(parents=True, exist_ok=True)
+
+    def override_get_audio_service() -> _AudioService:
+        return _AudioService(
+            _settings.AUDIO_ROOT,
+            _settings.AUDIO_CACHE_DIR,
+            s3_audio_cache_dir=str(_audio_cache_tmp_root),
+        )
+
+    app.dependency_overrides[recordings_module.get_audio_service] = (
+        override_get_audio_service
+    )
+
     async def _noop_rate_limiter(
         self: object,  # noqa: ARG001
         request: Request,  # noqa: ARG001
