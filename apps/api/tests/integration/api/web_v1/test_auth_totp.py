@@ -37,7 +37,7 @@ class _FastBackupHasher:
 def pg_container() -> Iterator[object]:
     if PostgresContainer is None:
         pytest.skip("testcontainers not installed")
-    container = PostgresContainer("postgres:16-alpine")
+    container = PostgresContainer("pgvector/pgvector:pg16")
     try:
         container.start()
     except Exception as exc:  # noqa: BLE001 - container runtime availability varies

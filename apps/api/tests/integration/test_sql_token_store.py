@@ -48,7 +48,7 @@ def pg_container() -> Iterator[object]:
     """Spin up a throwaway PostgreSQL 16 container for SqlTokenStore tests."""
     if PostgresContainer is None:
         pytest.skip("testcontainers not installed")
-    container = PostgresContainer("postgres:16-alpine")
+    container = PostgresContainer("pgvector/pgvector:pg16")
     container.start()
     try:
         yield container
