@@ -561,6 +561,41 @@ jobs:
             GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO echoroo_app;
           "
 
+      # Phase 17 §C-D diagnostic preflight: run the exact pytest command
+      # that mutmut uses for `run_stats` so any collection / conftest /
+      # config error surfaces with stdout/stderr instead of being
+      # swallowed by mutmut's BadTestExecutionCommandsException.
+      # `|| true` keeps the step yellow; the captured exit code is the
+      # interesting datum.
+      - name: Diagnostic - run mutmut baseline pytest manually
+        if: always()
+        working-directory: apps/api
+        run: |
+          set +e
+          uv run python -m pytest \
+            --rootdir=. \
+            --tb=native \
+            -x -q \
+            --no-cov \
+            --override-ini=addopts= \
+            tests/unit/ tests/security/ \
+            --collect-only \
+            > /tmp/mutmut_pytest_preflight.log 2>&1
+          rc=$?
+          echo "Preflight pytest --collect-only exit code: $rc"
+          tail -200 /tmp/mutmut_pytest_preflight.log
+          # Always exit 0 so the next step still sees the artifact;
+          # mutmut itself is the authoritative gate.
+          exit 0
+
+      - name: Upload preflight pytest log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mutmut-pytest-preflight
+          path: /tmp/mutmut_pytest_preflight.log
+          retention-days: 7
+
       # Run mutmut against all 11 modules defined in mutmut.toml.
       # Exit code 0 = all mutants killed or no mutants; 1 = survivors
       # exist (expected when coverage is < 100%). The score check step
