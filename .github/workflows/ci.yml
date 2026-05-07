@@ -562,30 +562,38 @@ jobs:
           "
 
       # Phase 17 §C-D diagnostic preflight: run the exact pytest command
-      # that mutmut uses for `run_stats` so any collection / conftest /
-      # config error surfaces with stdout/stderr instead of being
-      # swallowed by mutmut's BadTestExecutionCommandsException.
-      # `|| true` keeps the step yellow; the captured exit code is the
-      # interesting datum.
+      # that mutmut uses for `run_stats`. First with --collect-only to
+      # confirm collection, then a real (no-collect-only) run with the
+      # security/unit suites to see if some baseline test fails or the
+      # in-process pytest crashes. `|| true` everywhere; the artifact is
+      # the interesting datum.
       - name: Diagnostic - run mutmut baseline pytest manually
         if: always()
         working-directory: apps/api
         run: |
           set +e
-          uv run python -m pytest \
-            --rootdir=. \
-            --tb=native \
-            -x -q \
-            --no-cov \
-            --override-ini=addopts= \
-            tests/unit/ tests/security/ \
-            --collect-only \
-            > /tmp/mutmut_pytest_preflight.log 2>&1
-          rc=$?
-          echo "Preflight pytest --collect-only exit code: $rc"
-          tail -200 /tmp/mutmut_pytest_preflight.log
-          # Always exit 0 so the next step still sees the artifact;
-          # mutmut itself is the authoritative gate.
+          {
+            echo "=== preflight 1: --collect-only ==="
+            uv run python -m pytest \
+              --rootdir=. --tb=native -x -q --no-cov \
+              --override-ini=addopts= \
+              tests/unit/ tests/security/ \
+              --collect-only
+            collect_rc=$?
+            echo "collect-only exit: $collect_rc"
+
+            echo ""
+            echo "=== preflight 2: actual mutmut baseline (first 5 failures) ==="
+            uv run python -m pytest \
+              --rootdir=. --tb=native -q --no-cov \
+              --override-ini=addopts= \
+              tests/unit/ tests/security/ \
+              --maxfail=5 -rA
+            run_rc=$?
+            echo "actual-run exit: $run_rc"
+          } > /tmp/mutmut_pytest_preflight.log 2>&1
+          tail -250 /tmp/mutmut_pytest_preflight.log
+          # Always exit 0; mutmut itself is the authoritative gate.
           exit 0
 
       - name: Upload preflight pytest log
