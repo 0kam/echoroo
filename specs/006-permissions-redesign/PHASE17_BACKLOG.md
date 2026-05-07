@@ -164,6 +164,40 @@ already exists in `apps/api/tests/security/**` and is marked
   awareness only — the file appeared in the 6f xfail grep but the actual
   markers were removed when the fixture trigger landed.
 
+### B-PR-D. Concurrent revokes advisory-lock test (deferred deterministic rewrite)
+- **Origin**: Phase 17 §C burn-down (PR-D, 2026-05-07).
+- **Test**: `apps/api/tests/security/race_conditions/test_superuser_last_protection.py::test_concurrent_revokes_advisory_lock_serialises`
+- **Status**: marked `@pytest.mark.xfail(strict=False, reason=...)`.
+- **Production safety verified**:
+  - alembic migration `0013_superuser_last_protection_advisory_lock.py:67-122`
+    wraps the BEFORE-UPDATE branch in `pg_advisory_xact_lock(_LOCK_KEY)`,
+    re-reads `SELECT COUNT(*) FROM superusers WHERE revoked_at IS NULL`
+    INSIDE the lock, and raises when `COUNT(*) - 1 < 1`. Two concurrent
+    revokes against distinct rows MUST serialise: the first commits
+    (1 active remains), the second sees `active_after = 0` and raises.
+  - Single-transaction guard scenarios (`test_two_concurrent_admin_*`
+    style, in the same file) exercise the deterministic path and pass
+    strictly.
+  - The trigger uses no statement snapshot — the COUNT is computed
+    under the advisory lock after T1's UPDATE has committed and
+    released its own lock. This is the canonical pattern for
+    serialising "decrement to threshold" guards.
+- **Why the test flakes**: `asyncio.gather()` on a single event loop on
+  a resource-constrained runner can land both tasks in the same tick.
+  The second connection never *waits* on the advisory lock — it
+  executes after the first commits, and at that point its own UPDATE
+  pre-image shows the not-yet-revoked sibling, so it computes
+  `active_after = 1` and proceeds. The final state is 0 active
+  superusers, and the assertion fails. This is a property of the test
+  harness, not the production trigger.
+- **Release condition (deferred)**:
+  - [ ] Re-implement the test with two real OS threads
+        (`asyncio.to_thread` + `threading.Barrier` to align the BEGIN
+        statements before either UPDATE issues), or with two separate
+        Python subprocesses, so the second connection genuinely blocks
+        on `pg_advisory_xact_lock`.
+  - [ ] Promote the marker back to `strict=True` (or remove it).
+
 ---
 
 ## C. Coverage `PHASE17_PENDING` + `backend-tests` warn-ratchet (Batch 6h-2 origin)
