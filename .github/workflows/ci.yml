@@ -475,6 +475,49 @@ jobs:
     # Phase 16: continue-on-error stays REMOVED so when the job runs, a
     # surviving-mutant ratio < 80% in any module turns the run red. Phase 17
     # broadens the `if:` guard so the gate fires on every push.
+    env:
+      # mutmut.toml's runner is `python -m pytest tests/unit/ tests/security/`,
+      # and tests/security/ requires a real Postgres/Redis (the autouse moto
+      # fixture in tests/{integration,security}/conftest.py covers AWS only).
+      # Without these env vars the baseline pytest exits non-zero and mutmut
+      # reports every mutant as "not checked". This block mirrors the
+      # security-tests job env.
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/echoroo_ci
+      TEST_DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/echoroo_ci
+      REDIS_URL: redis://localhost:6379/0
+      JWT_SECRET_KEY: ci-test-secret
+      RESEND_API_KEY: re_ci_dummy
+      TURNSTILE_SECRET_KEY: 1x0000000000000000000000000000000AA
+      TURNSTILE_SITE_KEY: 1x00000000000000000000AA
+      ENVIRONMENT: development
+      REPO_ROOT: ${{ github.workspace }}
+      AWS_DEFAULT_REGION: us-east-1
+      AWS_ACCESS_KEY_ID: testing
+      AWS_SECRET_ACCESS_KEY: testing
+      AWS_KMS_REGION: us-east-1
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: echoroo_ci
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+      redis:
+        image: redis:7
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
     steps:
       - uses: actions/checkout@v4
 
@@ -489,6 +532,100 @@ jobs:
       - name: Install backend dependencies
         working-directory: apps/api
         run: uv sync --all-extras --dev
+
+      - name: Provision echoroo_app role
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h localhost -U postgres -d echoroo_ci -c "
+            DO \$\$ BEGIN
+              IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'echoroo_app') THEN
+                CREATE ROLE echoroo_app WITH LOGIN PASSWORD 'echoroo_app_test';
+              END IF;
+            END \$\$;
+            GRANT ALL PRIVILEGES ON DATABASE echoroo_ci TO echoroo_app;
+            GRANT ALL PRIVILEGES ON SCHEMA public TO echoroo_app;
+            GRANT echoroo_app TO postgres;
+          "
+
+      - name: Apply alembic migrations
+        working-directory: apps/api
+        run: uv run alembic upgrade head
+
+      - name: Re-grant on tables/sequences after migration
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h localhost -U postgres -d echoroo_ci -c "
+            GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO echoroo_app;
+            GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO echoroo_app;
+          "
+
+      # Phase 17 §C-D diagnostic preflight: run the exact pytest command
+      # that mutmut uses for `run_stats`. First with --collect-only to
+      # confirm collection, then a real (no-collect-only) run with the
+      # security/unit suites to see if some baseline test fails or the
+      # in-process pytest crashes. `|| true` everywhere; the artifact is
+      # the interesting datum.
+      - name: Diagnostic - run mutmut baseline pytest manually
+        if: always()
+        working-directory: apps/api
+        run: |
+          set +e
+          {
+            echo "=== preflight 1: --collect-only ==="
+            uv run python -m pytest \
+              --rootdir=. --tb=native -x -q --no-cov \
+              --override-ini=addopts= \
+              tests/unit/ tests/security/ \
+              --collect-only
+            collect_rc=$?
+            echo "collect-only exit: $collect_rc"
+
+            echo ""
+            echo "=== preflight 2: actual mutmut baseline (first 5 failures) ==="
+            uv run python -m pytest \
+              --rootdir=. --tb=native -q --no-cov \
+              --override-ini=addopts= \
+              tests/unit/ tests/security/ \
+              --maxfail=5 -rA
+            run_rc=$?
+            echo "actual-run exit: $run_rc"
+          } > /tmp/mutmut_pytest_preflight.log 2>&1
+          tail -250 /tmp/mutmut_pytest_preflight.log
+          # Always exit 0; mutmut itself is the authoritative gate.
+          exit 0
+
+      - name: Upload preflight pytest log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mutmut-pytest-preflight
+          path: /tmp/mutmut_pytest_preflight.log
+          retention-days: 7
+
+      # Phase 17 §C-D second diagnostic: confirm whether the mutmut
+      # baseline failure is specifically about mutmut's in-process
+      # `pytest.main()` invocation (vs the suite or args). Subprocess
+      # pytest exits 0 in the preflight; this step runs the same args
+      # via in-process `pytest.main()` to compare. If exit code != 0
+      # (and != 5), the failure is mutmut's embedded pytest path, not
+      # the suite.
+      - name: Diagnostic - in-process pytest.main() exit code
+        if: always()
+        working-directory: apps/api
+        run: |
+          set +e
+          uv run python -c "
+          import pytest
+          rc = pytest.main([
+              '--rootdir=.', '--tb=native', '-x', '-q',
+              '--no-cov', '--override-ini=addopts=',
+              'tests/unit/', 'tests/security/',
+          ])
+          print('IN_PROCESS_PYTEST_EXIT', int(rc))
+          " 2>&1 | tail -50
+          exit 0
 
       # Run mutmut against all 11 modules defined in mutmut.toml.
       # Exit code 0 = all mutants killed or no mutants; 1 = survivors
@@ -508,10 +645,13 @@ jobs:
       # Enforce >= 80% threshold per module.
       # scripts/check_mutation_score.py parses `mutmut results` output and
       # exits 1 if any module is below 80%. This is the gate step.
+      # Must run via `uv run` so the script's `sys.executable -m mutmut`
+      # subprocess resolves against apps/api/.venv (which has mutmut),
+      # not the workflow's root VIRTUAL_ENV.
       - name: Enforce 80% mutation score threshold
         if: always()
         working-directory: apps/api
-        run: python ../../scripts/check_mutation_score.py --threshold 80
+        run: uv run python ../../scripts/check_mutation_score.py --threshold 80
 
       # Upload mutmut cache as an artifact for debugging surviving mutants.
       - name: Upload mutmut results artifact

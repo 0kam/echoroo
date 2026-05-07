@@ -252,6 +252,54 @@ That makes it a **warn-ratchet** in Phase 16: when the job runs it is a
 hard-fail (`continue-on-error` is not set), but a default PR build does
 not exercise it.
 
+### D-0. mutmut 3.2 in-process pytest.main() blocker (NEW, 2026-05-07)
+
+**Discovered during PR #39 work.** The `mutation-testing` CI job had
+never produced a real mutation score in CI prior to PR #39 — the
+`run_stats` baseline was failing silently for two reasons that piled
+on top of each other:
+
+1. **Invocation bug**: gate step ran `python ...` instead of `uv run
+   python ...`, hitting the wrong venv (`No module named mutmut`).
+2. **Missing services**: the job had no postgres/redis services so
+   the security suite's DB fixtures could not connect.
+3. **Test pollution** (PR #42, 2026-05-07): a unit test was mutating
+   `audit_api._project_audit_page` directly without restore, leaking
+   into a security test that uses `inspect.getsource`.
+
+PR #39 fixed (1) + (2) + the workflow surface, and PR #42 fixed (3).
+After both landed, the diagnostic preflight in the mutation-testing
+job confirms the suite is healthy:
+
+```
+1113 passed, 27 skipped, 5 xfailed, 152 warnings in 319.77s
+actual-run exit: 0
+```
+
+But mutmut's in-process `pytest.main([...], plugins=[stats_collector])`
+still raises `BadTestExecutionCommandsException`. PR #39's second
+diagnostic step (`python -c "import pytest; pytest.main([...])"`)
+prints the in-process exit code. As of 2026-05-07 the failure is
+**isolated to mutmut's embedded pytest path**, not to our suite or
+runner args.
+
+**Suspect**: pytest's documented caveat that repeated/in-process
+`pytest.main()` invocations leave imports and global state in the
+process. Async-heavy / plugin-heavy suites are exactly where
+divergence is expected.
+
+**Release condition (NEW)**:
+- [ ] Identify the in-process pytest.main() exit code from PR #39's
+      diagnostic and confirm whether it is asyncio loop state, plugin
+      conflict, or something else.
+- [ ] Either upgrade mutmut (4.x) if upstream has fixed in-process
+      isolation, or fork mutmut to run baseline + each mutant in a
+      subprocess.
+- [ ] After in-process baseline returns 0/5, the original D-1 / D-2
+      release conditions below apply.
+
+### D-1. Per-module score ≥80%
+
 - **Task**: T995
 - **File**: `apps/api/mutmut.toml` (`paths_to_mutate` lists 11 modules) +
   `.github/workflows/ci.yml` (`mutation-testing` job `if:` guard).
@@ -262,11 +310,16 @@ not exercise it.
 - **Expected behavior**: Each of the 11 modules reaches **≥80% mutation
   score**, and the `mutation-testing` job runs on every push.
 - **Release condition (per module)**:
+  - [ ] D-0 resolved (in-process pytest.main() blocker).
   - [ ] Each surviving mutant analysed; new test added or mutant proven
         equivalent.
   - [ ] `scripts/check_mutation_score.py --threshold 80` exits 0 against
         the full module list without `--warn-only`.
-- **Release condition (job-level promotion)**:
+
+### D-2. Job-level every-push promotion
+
+- **Release condition**:
+  - [ ] D-1 resolved (real green score on main).
   - [ ] `if:` guard on the `mutation-testing` job loosened to fire on
         every push (delete the conditional). Operators continue to
         retain `workflow_dispatch` for manual runs.
