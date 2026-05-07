@@ -280,6 +280,12 @@ class UploadFileRepository(BaseRepository[UploadFile]):
             "bit_depth",
             "recording_id",
             "content_type",
+            # FR-028a: GPS-strip pipeline may rewrite the persisted bytes,
+            # which changes the file size and checksum. Allow worker code to
+            # update both so downstream verify_object_exists / hash checks
+            # operate on the sanitized payload.
+            "file_size",
+            "checksum_sha256",
         }
         values: dict[str, object] = {
             "status": status,
