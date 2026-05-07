@@ -604,6 +604,29 @@ jobs:
           path: /tmp/mutmut_pytest_preflight.log
           retention-days: 7
 
+      # Phase 17 §C-D second diagnostic: confirm whether the mutmut
+      # baseline failure is specifically about mutmut's in-process
+      # `pytest.main()` invocation (vs the suite or args). Subprocess
+      # pytest exits 0 in the preflight; this step runs the same args
+      # via in-process `pytest.main()` to compare. If exit code != 0
+      # (and != 5), the failure is mutmut's embedded pytest path, not
+      # the suite.
+      - name: Diagnostic - in-process pytest.main() exit code
+        if: always()
+        working-directory: apps/api
+        run: |
+          set +e
+          uv run python -c "
+          import pytest
+          rc = pytest.main([
+              '--rootdir=.', '--tb=native', '-x', '-q',
+              '--no-cov', '--override-ini=addopts=',
+              'tests/unit/', 'tests/security/',
+          ])
+          print('IN_PROCESS_PYTEST_EXIT', int(rc))
+          " 2>&1 | tail -50
+          exit 0
+
       # Run mutmut against all 11 modules defined in mutmut.toml.
       # Exit code 0 = all mutants killed or no mutants; 1 = survivors
       # exist (expected when coverage is < 100%). The score check step
