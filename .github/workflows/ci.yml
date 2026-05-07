@@ -557,6 +557,27 @@ jobs:
       # script is missing instead of silently skipping after a layout
       # change. The fallback upward search remains for local pytest runs.
       REPO_ROOT: ${{ github.workspace }}
+      # PR-C5 (Phase 17 §C, 2026-05-07): minimal AWS baseline.
+      # The autouse moto fixture in tests/{integration,security}/conftest.py
+      # is the primary KMS isolation mechanism. The job-level vars below
+      # cover only the cases the fixture cannot reach: dummy credentials
+      # and a pinned region so boto3 client construction in module-import
+      # / session-scoped fixtures does not raise NoCredentialsError before
+      # the autouse fixture has a chance to run. AWS_ENDPOINT_URL_KMS is
+      # intentionally unset so moto's default endpoint discovery can
+      # interpose its in-process fake; the fixture delenvs it as well.
+      AWS_DEFAULT_REGION: us-east-1
+      AWS_ACCESS_KEY_ID: testing
+      AWS_SECRET_ACCESS_KEY: testing
+      AWS_KMS_REGION: us-east-1
+      # Alias env vars are intentionally NOT pinned here. The autouse
+      # moto fixture in tests/{integration,security}/conftest.py always
+      # rewrites them to canonical values matching the freshly-provisioned
+      # CMKs. Pinning them at the job level would create a false sense of
+      # safety: any code path that bypasses the autouse fixture would
+      # still raise UnrecognizedClientException because no real CMK
+      # exists at the pinned alias, and we would lose the loud signal
+      # that the autouse fixture failed to load.
     services:
       postgres:
         image: pgvector/pgvector:pg16
@@ -723,6 +744,23 @@ jobs:
       TURNSTILE_SECRET_KEY: 1x0000000000000000000000000000000AA
       TURNSTILE_SITE_KEY: 1x00000000000000000000AA
       ENVIRONMENT: development
+      # PR-C5 (Phase 17 §C, 2026-05-07): minimal AWS baseline.
+      # See the security-tests env block above for the full rationale.
+      # The autouse moto fixture in tests/integration/conftest.py is the
+      # primary KMS isolation mechanism; these vars only cover the cases
+      # the fixture cannot reach (module-import / session-scoped paths).
+      AWS_DEFAULT_REGION: us-east-1
+      AWS_ACCESS_KEY_ID: testing
+      AWS_SECRET_ACCESS_KEY: testing
+      AWS_KMS_REGION: us-east-1
+      # Alias env vars are intentionally NOT pinned here. The autouse
+      # moto fixture in tests/{integration,security}/conftest.py always
+      # rewrites them to canonical values matching the freshly-provisioned
+      # CMKs. Pinning them at the job level would create a false sense of
+      # safety: any code path that bypasses the autouse fixture would
+      # still raise UnrecognizedClientException because no real CMK
+      # exists at the pinned alias, and we would lose the loud signal
+      # that the autouse fixture failed to load.
     services:
       postgres:
         image: pgvector/pgvector:pg16

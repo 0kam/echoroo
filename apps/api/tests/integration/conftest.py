@@ -1,5 +1,6 @@
 """Fixtures for integration tests."""
 
+from collections.abc import Iterator
 from pathlib import Path
 
 import numpy as np
@@ -16,6 +17,36 @@ from echoroo.models.enums import (
 from echoroo.models.project import Project, ProjectMember
 from echoroo.models.site import Site
 from echoroo.models.user import User
+from tests._kms_moto import provision_moto_kms
+
+# ---------------------------------------------------------------------------
+# PR-C5 (Phase 17 §C, 2026-05-07): autouse moto-backed KMS fixture.
+#
+# Prior to PR-C5 every integration test that hit ``compute_pii_hash`` (login,
+# password reset, invitation enumeration, ``confirm_identity``) routed boto3
+# straight at real AWS (or LocalStack via the dev-container endpoint env)
+# producing ``UnrecognizedClientException`` / ``NoCredentialsError``.
+# The autouse fixture below provisions a fresh moto KMS for every integration
+# test, mirroring :func:`tests.unit.core.test_kms.kms_env`.
+#
+# The fixture is autouse + function-scoped so test isolation is preserved
+# (each test gets fresh CMKs, no state leakage). Production code is
+# untouched — only the test environment is patched.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True, scope="function")
+def _integration_moto_kms(
+    monkeypatch: pytest.MonkeyPatch,
+) -> Iterator[dict[str, str]]:
+    """Provide a moto-backed KMS to every integration test.
+
+    The moto context manager + env wiring lives in
+    :func:`tests._kms_moto.provision_moto_kms`. See that module for the
+    rationale and the alias-to-keyid mapping returned via ``yield``.
+    """
+    with provision_moto_kms(monkeypatch) as ids:
+        yield ids
 
 # Phase 16 Batch 6e (2026-04-29) downstream drift fix: Phase 7 / T320
 # (FR-085) made ``license`` NOT NULL on ``projects``. Phase 11 added the
