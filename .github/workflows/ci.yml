@@ -508,10 +508,13 @@ jobs:
       # Enforce >= 80% threshold per module.
       # scripts/check_mutation_score.py parses `mutmut results` output and
       # exits 1 if any module is below 80%. This is the gate step.
+      # Must run via `uv run` so the script's `sys.executable -m mutmut`
+      # subprocess resolves against apps/api/.venv (which has mutmut),
+      # not the workflow's root VIRTUAL_ENV.
       - name: Enforce 80% mutation score threshold
         if: always()
         working-directory: apps/api
-        run: python ../../scripts/check_mutation_score.py --threshold 80
+        run: uv run python ../../scripts/check_mutation_score.py --threshold 80
 
       # Upload mutmut cache as an artifact for debugging surviving mutants.
       - name: Upload mutmut results artifact

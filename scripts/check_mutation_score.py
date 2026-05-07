@@ -2,7 +2,7 @@
 """Check mutmut mutation scores and enforce an 80% threshold (T995, PR-004, SC-012).
 
 Usage:
-    cd apps/api && python ../../scripts/check_mutation_score.py [--threshold N] [--warn-only]
+    cd apps/api && uv run python ../../scripts/check_mutation_score.py [--threshold N] [--warn-only]
 
 Exit codes:
     0  All modules at or above threshold (or --warn-only).
