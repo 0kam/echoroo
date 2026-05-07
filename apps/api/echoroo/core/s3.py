@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
+import hmac
+import logging
 from collections.abc import Iterator
 from datetime import datetime
 from typing import Any, NamedTuple
@@ -11,6 +14,8 @@ from botocore.config import Config
 from botocore.exceptions import ClientError
 
 from echoroo.core.settings import get_settings
+
+logger = logging.getLogger(__name__)
 
 
 class S3ObjectMeta(NamedTuple):
@@ -120,28 +125,91 @@ def verify_object_exists(
     object_key: str,
     expected_size: int | None = None,
     client: Any = None,
+    expected_sha256: str | None = None,
 ) -> dict[str, Any]:
-    """Verify an object exists in S3 and optionally check its size.
+    """Verify an object exists in S3 and optionally check its size and SHA-256.
+
+    When ``expected_sha256`` is provided, the object body is streamed and its
+    SHA-256 is recomputed for byte-level integrity verification. This guards
+    against TOCTOU replacement: a presigned PUT URL that is still within its
+    expiry window can be re-used to swap an object's contents while keeping
+    the same Content-Length, so a size check alone is insufficient (FR-028a /
+    upload sanitizer Round 2 hardening).
+
+    Args:
+        object_key: S3 object key.
+        expected_size: When provided, the actual ContentLength must match.
+        client: Optional S3 client (created on demand otherwise).
+        expected_sha256: When provided, the recomputed body SHA-256 must
+            match this lowercase hex digest. The body is streamed in 64 KiB
+            chunks; comparison uses ``hmac.compare_digest`` for constant-time
+            equality.
 
     Returns:
-        Dict with 'exists', 'size', 'etag', and 'size_match' keys
+        Dict with keys:
+          - ``exists`` (bool)
+          - ``size`` (int)
+          - ``etag`` (str, ETag without quotes)
+          - ``size_match`` (bool, True when size matches or no expected_size)
+          - ``sha256_match`` (bool | None, ``None`` when no expected_sha256
+            was supplied; ``True``/``False`` otherwise)
+          - ``actual_sha256`` (str | None, populated only when
+            expected_sha256 was supplied and the object exists)
     """
     settings = get_settings()
     client = client or get_s3_client()
     try:
         response = client.head_object(Bucket=settings.S3_BUCKET, Key=object_key)
-        actual_size = response["ContentLength"]
-        result: dict[str, Any] = {
-            "exists": True,
-            "size": actual_size,
-            "etag": response.get("ETag", "").strip('"'),
-            "size_match": expected_size is None or actual_size == expected_size,
-        }
-        return result
     except ClientError as e:
         if e.response["Error"]["Code"] == "404":
-            return {"exists": False, "size": 0, "etag": "", "size_match": False}
+            return {
+                "exists": False,
+                "size": 0,
+                "etag": "",
+                "size_match": False,
+                "sha256_match": None,
+                "actual_sha256": None,
+            }
         raise
+
+    actual_size = response["ContentLength"]
+    result: dict[str, Any] = {
+        "exists": True,
+        "size": actual_size,
+        "etag": response.get("ETag", "").strip('"'),
+        "size_match": expected_size is None or actual_size == expected_size,
+        "sha256_match": None,
+        "actual_sha256": None,
+    }
+
+    if expected_sha256 is not None:
+        try:
+            body = client.get_object(
+                Bucket=settings.S3_BUCKET, Key=object_key,
+            )["Body"]
+            hasher = hashlib.sha256()
+            while True:
+                chunk = body.read(65536)
+                if not chunk:
+                    break
+                hasher.update(chunk)
+            actual_hex = hasher.hexdigest()
+            result["actual_sha256"] = actual_hex
+            result["sha256_match"] = hmac.compare_digest(
+                actual_hex, expected_sha256,
+            )
+        except ClientError as exc:
+            # If the object disappeared between HEAD and GET, fail closed.
+            logger.warning(
+                "verify_object_exists: get_object failed for %s during "
+                "SHA-256 verification: %s",
+                object_key,
+                exc,
+            )
+            result["exists"] = False
+            result["sha256_match"] = False
+
+    return result
 
 
 def delete_object(object_key: str, client: Any = None) -> bool:

@@ -111,15 +111,52 @@ already exists in `apps/api/tests/security/**` and is marked
     export channel is needed in the future it should land as a fresh
     spec / ticket with its own threat model.
 
-### B-2. Upload EXIF + S3 metadata strip
+### B-2. Upload EXIF + S3 metadata strip — DONE (2026-05-07)
 - **File**: `apps/api/tests/security/authorization/test_upload_exif_and_s3_metadata_strip.py`
-- **xfail count**: indicated where current implementation has gaps.
-- **Threat**: EXIF GPS / S3 user-metadata coordinates leak (FR-028a).
+- **xfail count**: 0 (was 1; xfail removed and test now strict-passes).
+- **Threat**: EXIF GPS / S3 user-metadata coordinates leak (FR-028a + FR-028e).
 - **Expected behavior**: Upload pipeline strips EXIF GPS tags and S3
   user-defined metadata containing coordinate keys before persisting.
 - **Release condition**:
-  - [ ] EXIF strip + S3 metadata sanitizer wired pre-upload.
-  - [ ] `xfail` markers removed; tests PASS.
+  - [x] EXIF strip + S3 metadata sanitizer wired pre-upload.
+  - [x] `xfail` markers removed; tests PASS.
+- **Implementation summary**:
+  - `echoroo/services/upload.py::strip_audio_gps_metadata(stream)` — format
+    auto-detect (RIFF/WAVE chunk filter, FLAC/Ogg Vorbis/Ogg Opus Vorbis
+    comment delete via mutagen, MP3 ID3v2 GPS-prefixed TXXX/GEOB delete via
+    mutagen). Unknown formats pass through.
+  - `echoroo/workers/upload_tasks.py::_sanitize_uploaded_object_gps()` — runs
+    after ffprobe inside `_run_validate`: head_object → strip → put_object
+    using `sanitize_put_object_kwargs` (FR-028e); persists new
+    `file_size`/`checksum_sha256` via `UploadFileRepository.update_status`
+    (allowed-keys list extended).
+  - `echoroo/workers/audit_log_export.py` and
+    `echoroo/api/v1/search/batch.py`: every `s3_client.put_object(...)`
+    call now funnels through `sanitize_put_object_kwargs(...)` for
+    defense in depth.
+  - Tests: WAV (3 cases), FLAC, Ogg Vorbis, MP3 (ffmpeg-skippable),
+    unknown-format passthrough, worker helper integration (head/strip/put
+    + clean passthrough), and wiring guards on audit_log_export and
+    search/batch — 27 tests all pass (20 Round 1 + 7 Round 2).
+  - **Round 2 (Codex review)**: blockers + 3 high addressed.
+    - Fail-closed in `_sanitize_uploaded_object_gps`: head_object /
+      get_object / put_object failures now re-raise so the per-file
+      handler marks ``INVALID`` instead of letting unsanitized payloads
+      pass to ``VALID``.
+    - Import-time SHA-256 re-verification: `verify_object_exists`
+      gained an ``expected_sha256`` parameter that streams the body and
+      compares with ``hmac.compare_digest``. ``_run_import`` calls it
+      with the post-sanitize digest persisted by validation, closing
+      the TOCTOU window opened by long-lived presigned PUT URLs.
+    - Supported-format mutagen failures raise :class:`AudioGpsStripError`
+      (a new ``RuntimeError`` subclass) instead of passing through; the
+      validation worker catches it and marks the file ``INVALID``.
+    - WAV ``LIST/INFO`` sub-chunks remain out of scope; documented in
+      ``strip_audio_gps_metadata`` docstring.
+    - **Image upload EXIF strip is out of scope** for this audio-only
+      release blocker. Image-format EXIF (JPEG / WebP / TIFF) will be
+      addressed by a follow-up backlog item when image uploads are
+      implemented.
 
 ### B-3. Search-index ready toggle (T981b residual)
 - **File**: `apps/api/tests/security/search_leak/test_search_index_ready_on_toggle_on.py`

@@ -146,14 +146,23 @@ def _upload_with_object_lock(
     """
     client = get_s3_client()
     retain_until = now + _RETENTION_DELTA
-    client.put_object(
-        Bucket=bucket,
-        Key=key,
-        Body=body,
-        ContentType="application/x-ndjson",
-        ObjectLockMode="GOVERNANCE",
-        ObjectLockRetainUntilDate=retain_until,
+    # FR-028e: route every PutObject kwargs dict through the GPS-metadata
+    # sanitizer for defense in depth, even when the local caller never sets
+    # user-defined Metadata. This keeps the surface uniform so a later
+    # refactor adding Metadata cannot regress.
+    from echoroo.services.s3_upload_sanitizer import sanitize_put_object_kwargs
+
+    put_kwargs = sanitize_put_object_kwargs(
+        {
+            "Bucket": bucket,
+            "Key": key,
+            "Body": body,
+            "ContentType": "application/x-ndjson",
+            "ObjectLockMode": "GOVERNANCE",
+            "ObjectLockRetainUntilDate": retain_until,
+        }
     )
+    client.put_object(**put_kwargs)
     logger.info(
         "audit export uploaded bucket=%s key=%s bytes=%d retain_until=%s",
         bucket,

@@ -10,6 +10,7 @@ import asyncio
 import contextlib
 import hashlib
 import hmac
+import io
 import json
 import logging
 import os
@@ -28,6 +29,7 @@ from echoroo.core.s3 import (
     move_object,
     verify_object_exists,
 )
+from echoroo.core.settings import get_settings
 from echoroo.models.enums import (
     DatasetStatus,
     DatetimeParseStatus,
@@ -39,6 +41,8 @@ from echoroo.models.upload import UploadFile, UploadSession
 from echoroo.repositories.dataset import DatasetRepository
 from echoroo.repositories.recording import RecordingRepository
 from echoroo.repositories.upload import UploadFileRepository, UploadSessionRepository
+from echoroo.services.s3_upload_sanitizer import sanitize_put_object_kwargs
+from echoroo.services.upload import strip_audio_gps_metadata
 from echoroo.workers.celery_app import app
 from echoroo.workers.db_utils import get_worker_engine_and_session_factory
 
@@ -200,6 +204,99 @@ def _build_recording_s3_key(
     return f"recordings/{project_id}/{dataset_id}/{recording_id}{extension}"
 
 
+def _sanitize_uploaded_object_gps(
+    object_key: str,
+    local_path: str,
+    s3_client: Any,
+) -> tuple[bytes, str] | None:
+    """Strip GPS metadata from an uploaded S3 object in-place.
+
+    Reads the audio bytes from ``local_path`` (already downloaded for ffprobe),
+    applies ``strip_audio_gps_metadata``, then re-uploads the sanitized payload
+    to ``object_key`` with sanitized S3 user-metadata (FR-028a + FR-028e).
+
+    Failure semantics are **fail-closed**: any S3 error (head_object,
+    get_object, put_object) or sanitizer error raises an exception, which the
+    caller turns into per-file ``INVALID`` status. The previous Round 1
+    behaviour returned ``None`` on head_object failure, which let unsanitized
+    objects pass through to ``VALID`` — Round 2 closes that gap.
+
+    Returns:
+        Tuple of (new_payload_bytes, new_sha256_hex) when the object was
+        rewritten, or ``None`` when no change was needed (payload unchanged
+        AND S3 metadata clean of GPS keys). Raises on any hard S3 / sanitizer
+        failure so the caller can mark the file ``INVALID``.
+    """
+    settings = get_settings()
+    bucket = settings.S3_BUCKET
+
+    # 1. Pull current S3 user-metadata so we can preserve non-GPS keys.
+    # Fail-closed: any head_object failure aborts the sanitize so the file
+    # cannot be marked VALID without a sanitization pass.
+    try:
+        head = s3_client.head_object(Bucket=bucket, Key=object_key)
+    except Exception as exc:
+        logger.error(
+            "GPS sanitize: head_object failed for %s: %s; failing closed",
+            object_key,
+            exc,
+        )
+        raise
+    current_metadata: dict[str, str] = dict(head.get("Metadata") or {})
+    content_type: str | None = head.get("ContentType")
+
+    # 2. Strip GPS from the audio payload.
+    with open(local_path, "rb") as fp:
+        original_bytes = fp.read()
+    sanitized_stream = strip_audio_gps_metadata(io.BytesIO(original_bytes))
+    sanitized_bytes = sanitized_stream.read()
+
+    # 3. Determine whether anything actually needs to be re-uploaded.
+    metadata_dirty = any(
+        sanitize_put_object_kwargs({"Metadata": current_metadata})["Metadata"]
+        != current_metadata
+        for _ in (0,)  # single-shot eval
+    )
+    payload_dirty = sanitized_bytes != original_bytes
+    if not metadata_dirty and not payload_dirty:
+        return None
+
+    # 4. Build sanitized PutObject kwargs and re-upload.
+    put_kwargs: dict[str, Any] = {
+        "Bucket": bucket,
+        "Key": object_key,
+        "Body": sanitized_bytes,
+        "Metadata": current_metadata,
+    }
+    if content_type:
+        put_kwargs["ContentType"] = content_type
+    put_kwargs = sanitize_put_object_kwargs(put_kwargs)
+
+    try:
+        s3_client.put_object(**put_kwargs)
+    except Exception as exc:  # noqa: BLE001
+        logger.error(
+            "GPS sanitize: put_object rewrite failed for %s: %s",
+            object_key,
+            exc,
+        )
+        raise
+
+    new_sha = hashlib.sha256(sanitized_bytes).hexdigest()
+    logger.info(
+        "audio_gps_sanitize_persisted",
+        extra={
+            "event": "audio_gps_sanitize_persisted",
+            "object_key": object_key,
+            "original_size": len(original_bytes),
+            "new_size": len(sanitized_bytes),
+            "metadata_dirty": metadata_dirty,
+            "payload_dirty": payload_dirty,
+        },
+    )
+    return sanitized_bytes, new_sha
+
+
 # ---------------------------------------------------------------------------
 # Async implementations
 # ---------------------------------------------------------------------------
@@ -278,6 +375,9 @@ async def _run_validate(session_id: str) -> dict[str, Any]:
                 probe_data: dict[str, Any] | None = None
                 tmp_path: str | None = None
                 checksum_ok = True
+                # FR-028a: per-file sanitizer outputs (None when no rewrite).
+                sanitized_file_size: int | None = None
+                sanitized_checksum: str | None = None
                 try:
                     with tempfile.NamedTemporaryFile(suffix=file_ext, delete=False) as tmp:
                         tmp_path = tmp.name
@@ -331,6 +431,39 @@ async def _run_validate(session_id: str) -> dict[str, Any]:
 
                     if checksum_ok:
                         probe_data = _run_ffprobe(tmp_path)
+
+                        # FR-028a + FR-028e: strip GPS from audio bytes and
+                        # S3 user-metadata, then re-upload the sanitized
+                        # payload so persistent storage never carries raw
+                        # coordinates. Must run BEFORE the temp file is
+                        # deleted in the finally block.
+                        if probe_data is not None:
+                            try:
+                                sanitize_result = _sanitize_uploaded_object_gps(
+                                    file.object_key, tmp_path, s3,
+                                )
+                            except Exception as exc:  # noqa: BLE001
+                                logger.error(
+                                    "GPS sanitize failed for %s: %s",
+                                    file.original_filename,
+                                    exc,
+                                )
+                                await file_repo.update_status(
+                                    file.id,
+                                    UploadFileStatus.INVALID,
+                                    validation_error=(
+                                        f"GPS metadata strip failed: {exc}"
+                                    ),
+                                )
+                                await db.commit()
+                                invalid_count += 1
+                                checksum_ok = False
+                                probe_data = None
+                            else:
+                                if sanitize_result is not None:
+                                    new_bytes, new_sha = sanitize_result
+                                    sanitized_file_size = len(new_bytes)
+                                    sanitized_checksum = new_sha
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("Error downloading/validating file %s: %s", file.original_filename, exc)
                     await file_repo.update_status(
@@ -372,14 +505,24 @@ async def _run_validate(session_id: str) -> dict[str, Any]:
                     invalid_count += 1
                     continue
 
-                # Mark file as valid with extracted metadata
+                # Mark file as valid with extracted metadata. When the GPS
+                # sanitizer rewrote the object, propagate the new file size
+                # and checksum so downstream import-time TOCTOU checks
+                # operate on the sanitized payload.
+                update_kwargs: dict[str, Any] = {
+                    "duration": metadata["duration"],
+                    "samplerate": metadata["samplerate"],
+                    "channels": metadata["channels"],
+                    "bit_depth": metadata["bit_depth"],
+                }
+                if sanitized_file_size is not None:
+                    update_kwargs["file_size"] = sanitized_file_size
+                if sanitized_checksum is not None:
+                    update_kwargs["checksum_sha256"] = sanitized_checksum
                 await file_repo.update_status(
                     file.id,
                     UploadFileStatus.VALID,
-                    duration=metadata["duration"],
-                    samplerate=metadata["samplerate"],
-                    channels=metadata["channels"],
-                    bit_depth=metadata["bit_depth"],
+                    **update_kwargs,
                 )
                 await db.commit()
                 valid_count += 1
@@ -490,15 +633,58 @@ async def _run_import(
                 # Build destination S3 key
                 dest_key = _build_recording_s3_key(project_id, dataset_id, recording_id, file_ext)
 
-                # Re-verify S3 object existence and size before moving to guard
-                # against TOCTOU: another process may have removed or replaced the
-                # object between validation and import (H4).
-                obj_info = verify_object_exists(file.object_key, expected_size=file.file_size, client=s3)
+                # Re-verify S3 object existence, size, AND SHA-256 before
+                # moving. A presigned PUT URL that is still inside its
+                # expiry window can be re-used by an attacker to swap the
+                # object's body for unsanitized / different content while
+                # keeping the same Content-Length — size checks alone do
+                # not detect this. Recomputing the SHA-256 against the
+                # value persisted by the validation pass (which reflects
+                # the post-sanitize bytes when GPS was stripped) closes
+                # this TOCTOU window (H4 / Round 2 hardening).
+                obj_info = verify_object_exists(
+                    file.object_key,
+                    expected_size=file.file_size,
+                    client=s3,
+                    expected_sha256=file.checksum_sha256,
+                )
                 if not obj_info["exists"] or not obj_info["size_match"]:
                     logger.error(
                         "File %s missing or size changed before import, skipping",
                         file.object_key,
                     )
+                    await file_repo.update_status(
+                        file.id,
+                        UploadFileStatus.INVALID,
+                        validation_error="Object missing or size changed before import",
+                    )
+                    await db.commit()
+                    failed_count += 1
+                    continue
+                if (
+                    file.checksum_sha256 is not None
+                    and obj_info.get("sha256_match") is False
+                ):
+                    actual_hex = obj_info.get("actual_sha256") or "unknown"
+                    logger.error(
+                        "audio_import_checksum_mismatch",
+                        extra={
+                            "event": "audio_import_checksum_mismatch",
+                            "object_key": file.object_key,
+                            "expected_sha256_prefix": file.checksum_sha256[:16],
+                            "actual_sha256_prefix": actual_hex[:16],
+                        },
+                    )
+                    await file_repo.update_status(
+                        file.id,
+                        UploadFileStatus.INVALID,
+                        validation_error=(
+                            "Checksum mismatch detected at import: "
+                            f"expected {file.checksum_sha256[:16]}..., "
+                            f"got {actual_hex[:16]}..."
+                        ),
+                    )
+                    await db.commit()
                     failed_count += 1
                     continue
 

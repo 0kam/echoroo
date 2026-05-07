@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import io
+import logging
 import os
+import struct
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -18,6 +21,387 @@ from echoroo.repositories.dataset import DatasetRepository
 from echoroo.repositories.project import ProjectRepository
 from echoroo.repositories.upload import UploadFileRepository, UploadSessionRepository
 from echoroo.schemas.upload import UploadFilePresignedResponse, UploadFileRequest
+
+__all__ = [
+    "AudioGpsStripError",
+    "UploadService",
+    "strip_audio_gps_metadata",
+]
+
+logger = logging.getLogger(__name__)
+
+
+class AudioGpsStripError(RuntimeError):
+    """Raised when GPS sanitisation of a *supported* audio format fails.
+
+    Round 2 hardening (B-2): when the magic-byte detector identifies a
+    container we know how to sanitise (FLAC / OGG / MP3 via mutagen, or
+    RIFF/WAVE via in-house chunk filter), any subsequent failure
+    (mutagen load/strip/save error, bytestream corruption) is treated as
+    fail-closed. The worker catches this and marks the file ``INVALID``
+    rather than persisting a payload that may still carry GPS data.
+
+    Unknown / unsupported formats continue to fall through cleanly: the
+    upload pipeline rejects them at the magic-byte stage instead.
+    """
+
+
+# ---------------------------------------------------------------------------
+# FR-028a: stream-level GPS metadata stripper
+# ---------------------------------------------------------------------------
+#
+# This helper removes GPS / coordinate / location metadata from audio file
+# byte streams *before* they are persisted to long-term object storage. It
+# is the upload-side complement to ``s3_upload_sanitizer.sanitize_put_object_kwargs``
+# (FR-028e), which strips raw lat/lng entries from S3 user-defined metadata.
+#
+# Supported formats are detected from header magic bytes:
+#
+# * RIFF / WAVE  -> drop GPS-bearing chunks (e.g. ``GPS ``, case-insensitive
+#   match on the 4-byte chunk id), then rewrite the RIFF chunk size header.
+# * FLAC         -> mutagen Vorbis comments: drop GPS-/LOCATION-/GEO-/COORD-
+#   prefixed keys plus LATITUDE/LONGITUDE.
+# * Ogg Vorbis / Ogg Opus -> same Vorbis comment policy as FLAC.
+# * MP3 (ID3v2)  -> drop ``GEOB`` frames whose description hints at GPS,
+#   ``TXXX:*`` frames whose description matches GPS keys, and any frame
+#   whose key starts with ``GPS:``.
+#
+# Unknown / unsupported formats are returned unchanged. The upload pipeline
+# already rejects such files at the ``_detect_audio_format`` stage; the
+# defensive passthrough here avoids raising during best-effort cleanup.
+
+# Lowercased Vorbis-comment keys that must be removed outright.
+_VORBIS_GPS_EXACT_KEYS: frozenset[str] = frozenset(
+    {
+        "lat",
+        "latitude",
+        "lng",
+        "lon",
+        "longitude",
+        "gps",
+        "geo",
+        "coord",
+        "coords",
+        "location",
+    }
+)
+
+# Lowercased Vorbis-comment key prefixes that must be removed.
+_VORBIS_GPS_PREFIXES: tuple[str, ...] = (
+    "gps_",
+    "gps-",
+    "geo_",
+    "geo-",
+    "coord_",
+    "coord-",
+    "location_",
+    "location-",
+)
+
+
+def _is_vorbis_gps_key(key: str) -> bool:
+    """Return True if a Vorbis-comment key references GPS-derived metadata."""
+    lowered = key.strip().lower()
+    if lowered in _VORBIS_GPS_EXACT_KEYS:
+        return True
+    return any(lowered.startswith(prefix) for prefix in _VORBIS_GPS_PREFIXES)
+
+
+def _is_riff_gps_chunk_id(chunk_id: bytes) -> bool:
+    """Return True if a 4-byte RIFF chunk id is GPS-bearing.
+
+    The RIFF/WAVE specification reserves a ``GPS `` chunk for navigation
+    metadata; some recorders extend this with ``Gps `` / ``gps ``. We accept
+    case-insensitive matches of the 3-letter prefix as defense in depth.
+    """
+    if len(chunk_id) != 4:
+        return False
+    try:
+        decoded = chunk_id.decode("ascii", errors="strict")
+    except UnicodeDecodeError:
+        return False
+    return decoded.strip().lower() in {"gps", "geo", "loca", "coor"}
+
+
+def _strip_wav_gps_chunks(payload: bytes) -> bytes:
+    """Remove GPS-bearing chunks from a RIFF/WAVE byte stream."""
+    if len(payload) < 12 or payload[:4] != b"RIFF" or payload[8:12] != b"WAVE":
+        return payload
+
+    body_chunks: list[bytes] = []
+    cursor = 12
+    stripped = False
+    while cursor + 8 <= len(payload):
+        chunk_id = payload[cursor : cursor + 4]
+        (chunk_size,) = struct.unpack("<I", payload[cursor + 4 : cursor + 8])
+        # RIFF pads odd-length chunks to even byte boundary.
+        padded_size = chunk_size + (chunk_size % 2)
+        chunk_end = cursor + 8 + padded_size
+        if chunk_end > len(payload):
+            # Truncated stream: keep remaining bytes verbatim and break.
+            body_chunks.append(payload[cursor:])
+            cursor = len(payload)
+            break
+
+        if _is_riff_gps_chunk_id(chunk_id):
+            stripped = True
+            logger.info(
+                "audio_gps_chunk_stripped",
+                extra={
+                    "event": "audio_gps_chunk_stripped",
+                    "format": "wav",
+                    "chunk_id": chunk_id.decode("ascii", errors="replace"),
+                },
+            )
+        else:
+            body_chunks.append(payload[cursor:chunk_end])
+        cursor = chunk_end
+
+    if not stripped:
+        return payload
+
+    body = b"WAVE" + b"".join(body_chunks)
+    new_riff_size = len(body)
+    return b"RIFF" + struct.pack("<I", new_riff_size) + body
+
+
+def _strip_vorbis_comment_gps_keys(audio: Any) -> bool:
+    """Delete GPS-bearing Vorbis comments in-place. Return True if changed."""
+    if audio is None or not getattr(audio, "tags", None):
+        return False
+    keys_to_delete = [k for k in list(audio.tags.keys()) if _is_vorbis_gps_key(k)]
+    if not keys_to_delete:
+        return False
+    for key in keys_to_delete:
+        try:
+            del audio.tags[key]
+        except KeyError:
+            continue
+    logger.info(
+        "audio_gps_chunk_stripped",
+        extra={
+            "event": "audio_gps_chunk_stripped",
+            "format": getattr(audio, "__class__", type(audio)).__name__.lower(),
+            "keys": keys_to_delete,
+        },
+    )
+    return True
+
+
+def _strip_id3_gps_frames(audio: Any) -> bool:
+    """Delete GPS-bearing ID3v2 frames in-place. Return True if changed."""
+    if audio is None or not getattr(audio, "tags", None):
+        return False
+    frame_keys = list(audio.tags.keys())
+    keys_to_delete: list[str] = []
+    for key in frame_keys:
+        # ID3 frame keys look like ``TXXX:GPS Latitude`` or ``GEOB:gps``.
+        # We treat anything whose suffix (post-colon) matches our policy or
+        # whose prefix is a custom GPS-named frame as GPS-bearing.
+        lowered = key.lower()
+        if lowered.startswith("gps:") or lowered.startswith("geob:gps") \
+                or lowered.startswith("txxx:gps") or lowered.startswith("txxx:lat") \
+                or lowered.startswith("txxx:lng") or lowered.startswith("txxx:lon") \
+                or lowered.startswith("txxx:longitude") or lowered.startswith("txxx:latitude") \
+                or lowered.startswith("txxx:location") or lowered.startswith("txxx:geo") \
+                or lowered.startswith("txxx:coord"):
+            keys_to_delete.append(key)
+    if not keys_to_delete:
+        return False
+    for key in keys_to_delete:
+        try:
+            del audio.tags[key]
+        except KeyError:
+            continue
+    logger.info(
+        "audio_gps_chunk_stripped",
+        extra={
+            "event": "audio_gps_chunk_stripped",
+            "format": "mp3",
+            "keys": keys_to_delete,
+        },
+    )
+    return True
+
+
+def strip_audio_gps_metadata(stream: io.BytesIO) -> io.BytesIO:
+    """Strip GPS metadata from an in-memory audio byte stream.
+
+    The function detects the container format from header magic bytes and
+    removes any chunks/frames/tags that may carry coordinate data. The
+    stream's read position is reset before inspection; the returned stream
+    is positioned at offset zero.
+
+    Args:
+        stream: ``io.BytesIO`` containing the raw audio payload.
+
+    Returns:
+        A new ``io.BytesIO`` whose contents are the sanitized payload. When
+        the input format is unsupported or contains no GPS metadata, the
+        returned stream's bytes equal the input bytes.
+
+    Raises:
+        AudioGpsStripError: When the magic-byte detector identifies a
+            *supported* format (RIFF/WAVE, FLAC, OGG, MP3) but the
+            sanitiser fails to load, strip, or save the payload. This is
+            **fail-closed** behaviour — the caller (worker validation) is
+            expected to mark the file ``INVALID`` rather than persist a
+            payload that may still leak GPS data.
+
+    Notes:
+        * For *unsupported* formats (no magic match) the function returns
+          the input unchanged. The upload pipeline rejects such files at
+          the ``_detect_audio_format`` stage; this defensive passthrough
+          only triggers when a non-audio payload reaches the sanitiser.
+        * Format detection is best-effort and based on magic bytes only;
+          callers should pre-validate format upstream.
+        * **Scope (RIFF/WAVE)**: only the top-level chunk list is filtered
+          for GPS-bearing chunk ids (``GPS ``, ``GEO ``, ``LOCA``,
+          ``COOR``, plus their case variants). RIFF ``LIST/INFO`` sub-
+          chunks (``IART``, ``IGNR``, ``ICMT`` …) are not currently
+          inspected because they are not standard locations for GPS
+          coordinates; if that assumption changes, ``_strip_wav_gps_chunks``
+          must be extended to recurse into ``LIST`` containers.
+        * **Out of scope**: image-format EXIF (JPEG / WebP / TIFF). The
+          B-2 release blocker covers audio uploads only; image uploads
+          will be addressed by a follow-up backlog item.
+    """
+    import contextlib as _ctx
+
+    with _ctx.suppress(Exception):
+        stream.seek(0)
+    try:
+        payload = stream.read()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("strip_audio_gps_metadata: stream read failed: %s", exc)
+        return stream
+
+    sanitized = _strip_audio_gps_metadata_bytes(payload)
+    return io.BytesIO(sanitized)
+
+
+def _strip_audio_gps_metadata_bytes(payload: bytes) -> bytes:
+    """Internal worker: strip GPS metadata from a raw audio byte payload."""
+    if len(payload) < 4:
+        return payload
+
+    header4 = payload[:4]
+    header2 = payload[:2]
+
+    # WAV / RIFF
+    if header4 == b"RIFF":
+        return _strip_wav_gps_chunks(payload)
+
+    # FLAC
+    if header4 == b"fLaC":
+        return _strip_flac_gps(payload)
+
+    # Ogg (Vorbis or Opus)
+    if header4 == b"OggS":
+        return _strip_ogg_gps(payload)
+
+    # MP3: either ID3v2 header or MPEG sync
+    if header4[:3] == b"ID3" or header2 in (b"\xff\xfb", b"\xff\xf3", b"\xff\xf2"):
+        return _strip_mp3_gps(payload)
+
+    return payload
+
+
+def _roundtrip_with_mutagen(
+    payload: bytes,
+    suffix: str,
+    loader: Any,
+    stripper: Any,
+) -> bytes:
+    """Save mutagen-edited audio back to a byte payload via a temp file.
+
+    Round 2 hardening (B-2): every mutagen failure path raises
+    :class:`AudioGpsStripError` instead of returning the original payload.
+    The caller dispatches here only after a positive magic-byte match, so
+    a load/strip/save error means we cannot prove the persisted payload is
+    free of GPS metadata — fail-closed and reject the file.
+    """
+    import tempfile
+
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+        tmp.write(payload)
+        tmp.flush()
+        tmp_path = tmp.name
+    try:
+        try:
+            audio = loader(tmp_path)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "strip_audio_gps_metadata: mutagen load failed (%s): %s",
+                suffix,
+                exc,
+            )
+            raise AudioGpsStripError(
+                f"mutagen load failed for {suffix} payload: {exc}",
+            ) from exc
+        try:
+            changed = stripper(audio)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "strip_audio_gps_metadata: mutagen strip failed (%s): %s",
+                suffix,
+                exc,
+            )
+            raise AudioGpsStripError(
+                f"mutagen strip failed for {suffix} payload: {exc}",
+            ) from exc
+        if not changed:
+            return payload
+        try:
+            audio.save()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "strip_audio_gps_metadata: mutagen save failed (%s): %s",
+                suffix,
+                exc,
+            )
+            raise AudioGpsStripError(
+                f"mutagen save failed for {suffix} payload: {exc}",
+            ) from exc
+        with open(tmp_path, "rb") as fp:
+            return fp.read()
+    finally:
+        import contextlib as _ctx
+
+        with _ctx.suppress(OSError):
+            os.unlink(tmp_path)
+
+
+def _strip_flac_gps(payload: bytes) -> bytes:
+    from mutagen.flac import FLAC
+
+    return _roundtrip_with_mutagen(
+        payload, ".flac", FLAC, _strip_vorbis_comment_gps_keys,
+    )
+
+
+def _strip_ogg_gps(payload: bytes) -> bytes:
+    # Try Opus first (more specific magic bytes inside Ogg pages); fall back
+    # to Vorbis on failure.
+    from mutagen.oggopus import OggOpus
+    from mutagen.oggvorbis import OggVorbis
+
+    # Heuristic: Ogg Opus pages contain "OpusHead" near the start.
+    if b"OpusHead" in payload[:512]:
+        return _roundtrip_with_mutagen(
+            payload, ".opus", OggOpus, _strip_vorbis_comment_gps_keys,
+        )
+    return _roundtrip_with_mutagen(
+        payload, ".ogg", OggVorbis, _strip_vorbis_comment_gps_keys,
+    )
+
+
+def _strip_mp3_gps(payload: bytes) -> bytes:
+    from mutagen.mp3 import MP3
+
+    return _roundtrip_with_mutagen(
+        payload, ".mp3", MP3, _strip_id3_gps_frames,
+    )
 
 
 class UploadService:
