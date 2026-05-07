@@ -71,6 +71,13 @@ tests_dir = "tests/"
 # hard-coding. CI installs the venv via `uv sync --all-extras --dev`.
 runner = "python -m pytest -x --no-cov --override-ini=addopts= tests/unit/ tests/security/"
 
+# Phase 17 §C-D diagnostics: surface the underlying pytest error when
+# mutmut raises BadTestExecutionCommandsException during baseline
+# `run_stats`. Without this flag mutmut swallows the pytest exit code
+# and only prints "Failed to run pytest with args: [...]". Once mutation
+# scoring is verified end-to-end on main, this flag can be lowered.
+debug = true
+
 # Backup + cache locations (relative to CWD).
 backup = false
 cache_only = false
