@@ -2,6 +2,7 @@
 
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from typing import Any
 
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
@@ -58,8 +59,21 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:  # noqa: ARG001
     await close_redis_connection()
 
 
-def create_app() -> FastAPI:
+def create_app(*, session_factory: Any | None = None) -> FastAPI:
     """Create and configure FastAPI application.
+
+    Args:
+        session_factory: Optional async session factory used by the
+            middleware-level verifiers (:class:`DbApiKeyVerifier`,
+            :class:`JwtSessionVerifier`, :class:`DbIpEnforcer`). When
+            ``None`` (production default) the module-global
+            :data:`echoroo.core.database.AsyncSessionLocal` is used,
+            which is bound to the production engine. Tests inject their
+            own NullPool-backed factory so the middleware verifiers run
+            on the same event loop / engine as the test ``get_db``
+            override — without this, asyncpg surfaces a
+            ``RuntimeError: ... attached to a different loop`` whenever
+            a positive-path API-key request reaches the middleware.
 
     Returns:
         Configured FastAPI application instance
@@ -70,6 +84,9 @@ def create_app() -> FastAPI:
         uvicorn.run(app, host="0.0.0.0", port=8000)
         ```
     """
+    middleware_session_factory = (
+        session_factory if session_factory is not None else AsyncSessionLocal
+    )
     app = FastAPI(
         title=settings.APP_NAME,
         version=settings.APP_VERSION,
@@ -175,14 +192,14 @@ def create_app() -> FastAPI:
     app.add_middleware(
         AuthRouterMiddleware,
         config=AuthRouterConfig(
-            api_key_verifier=DbApiKeyVerifier(AsyncSessionLocal),
-            session_verifier=JwtSessionVerifier(AsyncSessionLocal),
+            api_key_verifier=DbApiKeyVerifier(middleware_session_factory),
+            session_verifier=JwtSessionVerifier(middleware_session_factory),
             # Phase 17 A-3 (FR-077, FR-081): enforce per-key
             # ``allowed_ip_cidrs`` against the caller's source IP and
             # auto-revoke after the third violation. ``DbIpEnforcer``
             # opens a fresh session per request so the audit write can
             # upgrade to SERIALIZABLE isolation cleanly.
-            ip_enforcer=DbIpEnforcer(AsyncSessionLocal),
+            ip_enforcer=DbIpEnforcer(middleware_session_factory),
             # Phase 17 A-3 Codex Major 1: trusted reverse-proxy CIDRs
             # control which socket peers are allowed to inject XFF
             # headers. Empty by default → XFF never trusted; set

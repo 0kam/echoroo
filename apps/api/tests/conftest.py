@@ -1,5 +1,6 @@
 """Pytest configuration and fixtures."""
 
+import importlib
 import os
 import tempfile
 from collections.abc import AsyncGenerator
@@ -940,8 +941,6 @@ async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
             project_id=None,
         )
 
-    app = create_app()
-
     engine = create_async_engine(
         TEST_DATABASE_URL,
         echo=False,
@@ -953,6 +952,98 @@ async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
         class_=AsyncSession,
         expire_on_commit=False,
     )
+
+    # PR-C event-loop fix: build the app with the test session factory so
+    # that the middleware-level :class:`DbApiKeyVerifier` /
+    # :class:`JwtSessionVerifier` / :class:`DbIpEnforcer` open sessions on
+    # the test engine (NullPool, current event loop) rather than the
+    # module-global production ``AsyncSessionLocal`` bound to a different
+    # loop. Without this, positive-path Bearer ``echoroo_*`` requests trip
+    # ``RuntimeError: ... attached to a different loop`` from asyncpg.
+    app = create_app(session_factory=session_maker)
+
+    # PR-C extension: a long tail of production services (``auth.py``,
+    # ``two_factor_service``, ``superuser_service``, ``invitation_service``,
+    # the audit writers in ``stream_guard``/``ownership_service``, etc.)
+    # call ``async with AsyncSessionLocal() as session:`` directly on the
+    # **module-global** production session-maker rather than going through
+    # ``Depends(get_db)``. Those direct callers therefore bypass the
+    # ``app.dependency_overrides[get_db]`` shim and reach for the
+    # production engine, which is bound to whatever event loop happened to
+    # initialise it first. When the next test runs on a fresh event loop,
+    # asyncpg trips ``RuntimeError: ... attached to a different loop``
+    # during ``pool_pre_ping``.
+    #
+    # We rebind the ``AsyncSessionLocal`` symbol in every module that
+    # captured a reference at import time so each direct caller transparently
+    # lands on the test engine for the duration of the fixture.
+    #
+    # PR-C Round 2 (Codex review): switched to ``pytest.MonkeyPatch`` for
+    # cleanup discipline and removed the broad ``except Exception`` so a
+    # missing/typo'd module fails loudly instead of silently degrading
+    # coverage. Constraints / known caveats:
+    #
+    #   * Concurrency: this rebind mutates **process-global** state and is
+    #     therefore safe ONLY when the test session runs sequentially
+    #     within a worker. ``pytest-xdist`` is acceptable because each
+    #     worker is a separate process; raw threaded test runners are NOT
+    #     supported here.
+    #   * This is interim debt: the long-term fix is to migrate every
+    #     ``async with AsyncSessionLocal() as session:`` direct caller to
+    #     ``Depends(get_db)`` (or an injected session factory), at which
+    #     point ``app.dependency_overrides[get_db]`` alone is sufficient
+    #     and this rebind block can be deleted.
+    #   * Refactor candidate: the modules listed below are the current
+    #     known set of direct ``AsyncSessionLocal`` callers. Adding a new
+    #     direct caller without registering it here will trip a
+    #     "different loop" RuntimeError; mypy + the explicit
+    #     ``hasattr`` check below catch most regressions, and module
+    #     import errors now propagate rather than being swallowed.
+    import echoroo.core.database as _db_mod
+
+    _direct_session_local_modules = (
+        "echoroo.api.web_v1.auth",
+        "echoroo.api.web_v1.audit",
+        "echoroo.api.web_v1.admin",
+        "echoroo.api.web_v1.auth_confirm_identity",
+        "echoroo.api.web_v1.projects._license",
+        "echoroo.services.user_deletion_service",
+        "echoroo.services.webauthn_service",
+        "echoroo.services.two_factor_service",
+        "echoroo.services.two_factor_reset_service",
+        "echoroo.services.trusted_service",
+        "echoroo.services.superuser_service",
+        "echoroo.services.superuser_approval_service",
+        "echoroo.services.invitation_service",
+        "echoroo.services.restricted_config_service",
+        "echoroo.services.ownership_service",
+        "echoroo.middleware.two_factor_enforcement",
+        "echoroo.core.stream_guard",
+    )
+
+    # ``pytest.MonkeyPatch()`` returns a fresh, manually-managed
+    # ``MonkeyPatch`` object whose ``undo()`` restores every recorded
+    # attribute in LIFO order — exactly the discipline the previous
+    # hand-rolled list+reversed loop maintained, but tied to pytest's
+    # canonical cleanup machinery rather than ad-hoc ``setattr`` calls.
+    _session_monkeypatch = pytest.MonkeyPatch()
+    _session_monkeypatch.setattr(
+        _db_mod, "AsyncSessionLocal", session_maker, raising=True
+    )
+    for _modname in _direct_session_local_modules:
+        # ``import_module`` is allowed to raise — a missing entry in this
+        # tuple means the production module was renamed/removed and the
+        # rebind list is stale. Fail loudly so the fixture maintainer
+        # notices, rather than silently leaking the production
+        # ``AsyncSessionLocal`` binding into the test session.
+        _mod = importlib.import_module(_modname)
+        # ``raising=True`` enforces the contract that every listed module
+        # MUST expose ``AsyncSessionLocal`` at import time; if a module
+        # legitimately stops needing the rebind it should be removed
+        # from ``_direct_session_local_modules`` rather than tolerated.
+        _session_monkeypatch.setattr(
+            _mod, "AsyncSessionLocal", session_maker, raising=True
+        )
 
     # Override get_db dependency
     async def override_get_db() -> AsyncGenerator[AsyncSession, None]:
@@ -1047,6 +1138,15 @@ async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
             TwoFactorEnforcementMiddleware.dispatch = (  # type: ignore[method-assign]
                 _original_two_factor_dispatch
             )
+            # PR-C Round 2: restore each module-level
+            # ``AsyncSessionLocal`` we rebound above so subsequent suites
+            # that build their own apps see the production binding
+            # again. ``MonkeyPatch.undo()`` walks its internal record in
+            # LIFO order, so the canonical ``echoroo.core.database``
+            # symbol — the first entry recorded — is restored last,
+            # matching the discipline expected by any inner
+            # ``importlib.reload``.
+            _session_monkeypatch.undo()
 
     app.dependency_overrides.clear()
     await engine.dispose()
