@@ -88,16 +88,28 @@ already exists in `apps/api/tests/security/**` and is marked
 
 ## B. Pre-existing Phase 1-15 `xfail`
 
-### B-1. Superuser response-filter raw forbidden
+### B-1. Superuser response-filter raw forbidden — DONE (2026-05-07)
 - **File**: `apps/api/tests/security/authorization/test_superuser_response_filter_raw_forbidden.py`
-- **xfail count**: indicated in module docstring ("not yet implemented in Phase 15")
-- **Threat**: Superusers currently bypass the response filter and may receive
-  raw lat/lng/coordinate keys (FR-112a, SC-016).
-- **Expected behavior**: Even superuser principals are subject to
-  `ResponseFilter`; explicit raw access is a separate Path-Operation switch.
-- **Release condition**:
-  - [ ] `core/response_filter.py` removes the superuser short-circuit.
-  - [ ] `xfail` removed; tests PASS.
+- **Resolution**: Already-satisfied + xfail cleanup.
+  - **Audit (2026-05-07)**: `core/response_filter.py:apply_response_filter`
+    calls `_scrub_raw_coordinates(obj)` unconditionally as the first step;
+    no superuser short-circuit exists. Every API caller
+    (`echoroo/api/web_v1/projects/_core.py`,
+    `echoroo/api/v1/{detections,sites}.py`, etc.) routes through
+    `apply_response_filter` regardless of `is_superuser`. The release-
+    blocker portion of B-1 was already met — likely closed implicitly by
+    Phase 15 / 16 hardening work.
+  - **xfail cleanup**: The remaining
+    `test_superuser_raw_export_endpoint_bypasses_coordinate_scrub`
+    placeholder asserted that a *new* `/admin/projects/{id}/raw-export`
+    endpoint should bypass the scrub for superuser callers. Per Codex
+    review, this is **not release-blocking**: the spec body (FR-112a)
+    directs operators who genuinely need raw lat/lng to a documented
+    DB-direct runbook rather than a new public API surface. The xfail
+    was deleted (rather than promoted) so the suite stops carrying a
+    placeholder for a feature that isn't planned. If a sanctioned raw
+    export channel is needed in the future it should land as a fresh
+    spec / ticket with its own threat model.
 
 ### B-2. Upload EXIF + S3 metadata strip
 - **File**: `apps/api/tests/security/authorization/test_upload_exif_and_s3_metadata_strip.py`

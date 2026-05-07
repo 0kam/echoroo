@@ -346,34 +346,24 @@ class TestPathFieldNotLeaked:
 
 
 # ---------------------------------------------------------------------------
-# Raw export bypass xfail — not yet implemented
+# Raw export bypass — deferred (B-1 cleanup, 2026-05-07)
+#
+# An earlier xfail placeholder asserted that a future
+# ``/admin/projects/{id}/raw-export`` endpoint should bypass the coordinate
+# scrub for superuser callers. After Codex review for B-1, that endpoint
+# was deemed NOT release-blocking: the spec body (FR-112a) directs operators
+# who genuinely need raw lat/lng for legal / forensics work to a documented
+# DB-direct runbook rather than a new public API surface. Adding a raw-emit
+# endpoint to satisfy the xfail would have introduced a new high-risk
+# surface without a real consumer, so the placeholder was removed and the
+# requirement is tracked as a future ticket if/when an authenticated raw
+# export channel is needed.
+#
+# The B-1 release-blocker portion ("response_filter must scrub raw fields
+# even for superuser callers") is already enforced unconditionally by
+# :func:`apply_response_filter` — every test in this module verifies that
+# behaviour for superuser principals.
 # ---------------------------------------------------------------------------
-
-
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Raw export endpoint (/admin/projects/{id}/raw-export) is not yet "
-        "implemented in Phase 15. This xfail records the TODO: when raw-export "
-        "lands, add a test that verifies superuser + project-scope allowlist "
-        "context bypasses the raw-coordinate scrub for that specific endpoint "
-        "(FR-112a SUPERUSER_PROJECT_SCOPE_ALLOWLIST)."
-    ),
-)
-def test_superuser_raw_export_endpoint_bypasses_coordinate_scrub() -> None:
-    """XFAIL placeholder: raw-export endpoint raw bypass verification.
-
-    Once /admin/projects/{id}/raw-export is implemented, this test should
-    be promoted to a real integration test that:
-    1. Authenticates as a Superuser session caller.
-    2. Calls the raw-export endpoint.
-    3. Asserts that latitude/longitude ARE present in the response (unlike
-       all other endpoints where they are stripped).
-    """
-    raise NotImplementedError(
-        "Raw export endpoint not yet implemented (Phase 15). "
-        "Implement in Batch 5 alongside the endpoint."
-    )
 
 
 # ---------------------------------------------------------------------------
