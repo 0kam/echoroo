@@ -533,14 +533,13 @@ jobs:
   security-tests:
     name: security-tests
     runs-on: ubuntu-latest
-    # Phase 16 Batch 6h-5: warn-ratchet — the security pytest suite still
-    # has DB / fixture surface that intermittently fails on the
-    # GitHub-hosted runner (postgres testcontainer flap, redis race in
-    # the rate-limit suite). The job is allowed to surface yellow while
-    # the underlying flake is burnt down. Phase 17 will remove this
-    # line and promote security-tests back to a hard gate. See
-    # PHASE17_BACKLOG.md §C.
-    continue-on-error: true
+    # Phase 17 §C closure (2026-05-07): the warn-ratchet `continue-on-error`
+    # marker has been removed after two consecutive 0-failure main runs
+    # (PR #36 advisory_lock xfail and PR #37 release-readiness checklist).
+    # Earlier runner-surface flakes (postgres testcontainer, redis race in
+    # rate-limit suite) were fixed by PR-C0/C2/C3/C5 (junit observability,
+    # pgvector image pinning, autouse moto KMS fixture, conftest tightening).
+    # See PHASE17_BACKLOG.md §C history.
     env:
       DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/echoroo_ci
       TEST_DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/echoroo_ci
