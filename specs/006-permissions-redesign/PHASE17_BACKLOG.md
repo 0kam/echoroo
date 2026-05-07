@@ -164,39 +164,39 @@ already exists in `apps/api/tests/security/**` and is marked
   awareness only — the file appeared in the 6f xfail grep but the actual
   markers were removed when the fixture trigger landed.
 
-### B-PR-D. Concurrent revokes advisory-lock test (deferred deterministic rewrite)
-- **Origin**: Phase 17 §C burn-down (PR-D, 2026-05-07).
-- **Test**: `apps/api/tests/security/race_conditions/test_superuser_last_protection.py::test_concurrent_revokes_advisory_lock_serialises`
-- **Status**: marked `@pytest.mark.xfail(strict=False, reason=...)`.
-- **Production safety verified**:
-  - alembic migration `0013_superuser_last_protection_advisory_lock.py:67-122`
-    wraps the BEFORE-UPDATE branch in `pg_advisory_xact_lock(_LOCK_KEY)`,
-    re-reads `SELECT COUNT(*) FROM superusers WHERE revoked_at IS NULL`
-    INSIDE the lock, and raises when `COUNT(*) - 1 < 1`. Two concurrent
-    revokes against distinct rows MUST serialise: the first commits
-    (1 active remains), the second sees `active_after = 0` and raises.
-  - Single-transaction guard scenarios (`test_two_concurrent_admin_*`
-    style, in the same file) exercise the deterministic path and pass
-    strictly.
-  - The trigger uses no statement snapshot — the COUNT is computed
-    under the advisory lock after T1's UPDATE has committed and
-    released its own lock. This is the canonical pattern for
-    serialising "decrement to threshold" guards.
-- **Why the test flakes**: `asyncio.gather()` on a single event loop on
-  a resource-constrained runner can land both tasks in the same tick.
-  The second connection never *waits* on the advisory lock — it
-  executes after the first commits, and at that point its own UPDATE
-  pre-image shows the not-yet-revoked sibling, so it computes
-  `active_after = 1` and proceeds. The final state is 0 active
-  superusers, and the assertion fails. This is a property of the test
-  harness, not the production trigger.
-- **Release condition (deferred)**:
-  - [ ] Re-implement the test with two real OS threads
-        (`asyncio.to_thread` + `threading.Barrier` to align the BEGIN
-        statements before either UPDATE issues), or with two separate
-        Python subprocesses, so the second connection genuinely blocks
-        on `pg_advisory_xact_lock`.
-  - [ ] Promote the marker back to `strict=True` (or remove it).
+### B-PR-D. Concurrent revokes advisory-lock test — CLOSED (2026-05-08)
+
+**CLOSED** — deterministic rewrite landed in
+`phase17/b-pr-d-deterministic-rewrite` (2026-05-08; Codex round 2).
+
+- `@pytest.mark.xfail(strict=False)` marker removed.
+- Test now uses a leader/follower OS-thread design with **`pg_locks`
+  polling** to assert the advisory lock is actually contended.  A third
+  synchronous probe connection waits up to 2 s for a row with
+  `locktype = 'advisory' AND granted = false AND objid = low32(_LOCK_KEY)`
+  while the leader is mid-hold.  If the advisory lock were removed from
+  the trigger, no waiter would ever appear and the test fails on
+  `Assertion 1: pg_locks never showed a waiter on the superuser
+  advisory lock` — i.e. the test fails on missing lock contention.
+  (Verified by temporarily replacing the trigger with a no-lock variant:
+  test fails as expected.)
+- Threads are non-daemon and each transaction sets
+  `lock_timeout = 5000ms` and `statement_timeout = 30000ms` so the
+  connection self-aborts rather than hanging.
+- Failure assertion checks `DBAPIError`, `pgcode == 'P0001'`
+  (psycopg2 `RaiseException`), and `'Cannot revoke'` substring on the
+  trigger's raise message — anything weaker would silently accept
+  non-trigger errors.
+- Also fixed a latent bug in the test: suffix `"t954_s7_a"` was
+  producing email `t954_t954_s7_a@example.com` (double prefix) which
+  never matched the post-condition `LIKE 't954_s7%'` filter. Changed
+  suffixes to `"s7_a"` / `"s7_b"` to produce correct emails.
+- Passes 5/5 runs deterministically. All 7 tests in the file pass.
+- [x] Re-implement with real OS threads + leader/follower timing.
+- [x] Add `pg_locks` waiter assertion so the test fails when
+      advisory-lock contention is not observed (including when the
+      advisory lock is removed from the trigger).
+- [x] Remove xfail marker (strict promotion).
 
 ---
 
