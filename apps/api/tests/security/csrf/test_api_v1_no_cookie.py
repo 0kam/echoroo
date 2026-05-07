@@ -106,8 +106,41 @@ async def unshimmed_client(db_session: AsyncSession) -> AsyncGenerator[AsyncClie
 
     # Build app WITHOUT monkeypatching _authenticate_api_key — the
     # production DbApiKeyVerifier is the subject under test.
-    app = create_app()
+    #
+    # PR-C event-loop fix: pass the test ``factory`` to ``create_app`` so
+    # the middleware verifier opens sessions on the test engine (NullPool,
+    # current event loop) rather than the module-global production
+    # ``AsyncSessionLocal``. Without this, the positive-path test
+    # (``test_api_v1_with_valid_api_key_returns_200``) trips
+    # ``RuntimeError: ... attached to a different loop`` from asyncpg.
+    app = create_app(session_factory=factory)
     app.dependency_overrides[get_db] = override_get_db
+
+    # PR-C: bypass the 2FA enforcement middleware. The seeded users are
+    # created with ``two_factor_enabled=False`` (default), but the
+    # production :class:`TwoFactorEnforcementMiddleware` (Phase 4 / Phase
+    # 15 T155b) blocks any authenticated ``/api/v1/*`` request from a user
+    # who has not enrolled in 2FA with a 403 ``2FA enrollment required``
+    # payload — even when the API key itself is valid. This fixture
+    # exercises the transport / verifier layer only, so we replace the
+    # middleware dispatch with a passthrough for the duration of the test.
+    # Production behaviour and dedicated 2FA enforcement suites
+    # (``test_two_factor_enforcement_real_chain.py``) are unaffected
+    # because they build their own apps.
+    from echoroo.middleware.two_factor_enforcement import (
+        TwoFactorEnforcementMiddleware,
+    )
+
+    _original_two_factor_dispatch = TwoFactorEnforcementMiddleware.dispatch
+
+    async def _patched_two_factor_dispatch(
+        self: TwoFactorEnforcementMiddleware,
+        request: Any,
+        call_next: Any,
+    ) -> Any:
+        return await call_next(request)
+
+    TwoFactorEnforcementMiddleware.dispatch = _patched_two_factor_dispatch  # type: ignore[method-assign]
 
     try:
         async with AsyncClient(
@@ -116,6 +149,9 @@ async def unshimmed_client(db_session: AsyncSession) -> AsyncGenerator[AsyncClie
         ) as http_client:
             yield http_client
     finally:
+        TwoFactorEnforcementMiddleware.dispatch = (  # type: ignore[method-assign]
+            _original_two_factor_dispatch
+        )
         app.dependency_overrides.clear()
         await engine.dispose()
 
