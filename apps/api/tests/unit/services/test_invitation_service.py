@@ -179,7 +179,19 @@ async def test_create_invitation_rejects_ttl_above_seven_days(
 @pytest.mark.asyncio
 async def test_create_invitation_outcome_does_not_expose_plain_token_at_top_level(
     fake_redis: _FakeRedis,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # Phase 17 §C PR-A: this unit test exercises the outcome surface
+    # only — the KMS-backed PII dual-write helper invoked transitively
+    # by ``create_invitation`` is incidental machinery here. Stubbing
+    # ``hash_email_dual`` to a deterministic single-key result keeps the
+    # test purely unit-scoped (no moto roundtrip, no AWS env wiring) and
+    # mirrors the explicit-stub culture of the rest of ``tests/unit/``.
+    monkeypatch.setattr(
+        invitation_service,
+        "hash_email_dual",
+        lambda _email: {"v1": "0" * 64},
+    )
     session = _FakeSession()
     outcome = await create_invitation(
         session,  # type: ignore[arg-type]
