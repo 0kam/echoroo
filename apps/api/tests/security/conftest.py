@@ -24,11 +24,63 @@ running cleanly for a few cycles, per Codex guidance.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
 
+from tests._kms_moto import provision_moto_kms
+
 _SECURITY_ROOT = Path(__file__).resolve().parent
+_KEY_ROTATION_ROOT = _SECURITY_ROOT / "key_rotation"
+
+
+# ---------------------------------------------------------------------------
+# PR-C5 (Phase 17 §C, 2026-05-07): autouse moto-backed KMS fixture.
+#
+# Mirror of the integration-suite fixture (see
+# :mod:`tests.integration.conftest`) — every security test that exercises
+# ``compute_pii_hash`` now runs against a fresh moto KMS instead of leaking
+# out to real AWS / LocalStack.
+#
+# ``tests/security/key_rotation/`` already provisions its own moto KMS via
+# explicit fixtures (``kms_env_pii_rotation`` etc.) with overlapping alias
+# names. Re-creating the same aliases from this autouse fixture would race
+# with those tests and produce ``AlreadyExistsException``. The fixture
+# therefore short-circuits for items located under ``key_rotation/``; the
+# companion ``_isolate_kms_endpoint`` autouse in
+# ``tests/security/key_rotation/conftest.py`` continues to remove endpoint
+# env vars for those tests.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True, scope="function")
+def _security_moto_kms(
+    request: pytest.FixtureRequest,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Iterator[dict[str, str] | None]:
+    """Provide a moto-backed KMS to every security test outside ``key_rotation/``.
+
+    ``key_rotation`` tests own their own moto provisioning to support
+    nuanced v1/v2 dual-write scenarios; this autouse fixture would
+    interfere with their CMK setup.
+    """
+    try:
+        item_path = Path(str(request.path)).resolve()
+    except (AttributeError, OSError, RuntimeError):
+        item_path = _SECURITY_ROOT  # safe default — runs the moto setup
+    try:
+        item_path.relative_to(_KEY_ROTATION_ROOT)
+    except ValueError:
+        # Item is NOT under key_rotation/ — provision moto KMS.
+        with provision_moto_kms(monkeypatch) as ids:
+            yield ids
+        return
+
+    # Item lives under key_rotation/ — let the explicit per-test fixtures
+    # provision moto themselves. We yield ``None`` to keep the fixture
+    # contract uniform.
+    yield None
 
 
 def pytest_collection_modifyitems(
