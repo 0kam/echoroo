@@ -475,6 +475,49 @@ jobs:
     # Phase 16: continue-on-error stays REMOVED so when the job runs, a
     # surviving-mutant ratio < 80% in any module turns the run red. Phase 17
     # broadens the `if:` guard so the gate fires on every push.
+    env:
+      # mutmut.toml's runner is `python -m pytest tests/unit/ tests/security/`,
+      # and tests/security/ requires a real Postgres/Redis (the autouse moto
+      # fixture in tests/{integration,security}/conftest.py covers AWS only).
+      # Without these env vars the baseline pytest exits non-zero and mutmut
+      # reports every mutant as "not checked". This block mirrors the
+      # security-tests job env.
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/echoroo_ci
+      TEST_DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/echoroo_ci
+      REDIS_URL: redis://localhost:6379/0
+      JWT_SECRET_KEY: ci-test-secret
+      RESEND_API_KEY: re_ci_dummy
+      TURNSTILE_SECRET_KEY: 1x0000000000000000000000000000000AA
+      TURNSTILE_SITE_KEY: 1x00000000000000000000AA
+      ENVIRONMENT: development
+      REPO_ROOT: ${{ github.workspace }}
+      AWS_DEFAULT_REGION: us-east-1
+      AWS_ACCESS_KEY_ID: testing
+      AWS_SECRET_ACCESS_KEY: testing
+      AWS_KMS_REGION: us-east-1
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: echoroo_ci
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+      redis:
+        image: redis:7
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
     steps:
       - uses: actions/checkout@v4
 
@@ -489,6 +532,34 @@ jobs:
       - name: Install backend dependencies
         working-directory: apps/api
         run: uv sync --all-extras --dev
+
+      - name: Provision echoroo_app role
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h localhost -U postgres -d echoroo_ci -c "
+            DO \$\$ BEGIN
+              IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'echoroo_app') THEN
+                CREATE ROLE echoroo_app WITH LOGIN PASSWORD 'echoroo_app_test';
+              END IF;
+            END \$\$;
+            GRANT ALL PRIVILEGES ON DATABASE echoroo_ci TO echoroo_app;
+            GRANT ALL PRIVILEGES ON SCHEMA public TO echoroo_app;
+            GRANT echoroo_app TO postgres;
+          "
+
+      - name: Apply alembic migrations
+        working-directory: apps/api
+        run: uv run alembic upgrade head
+
+      - name: Re-grant on tables/sequences after migration
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h localhost -U postgres -d echoroo_ci -c "
+            GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO echoroo_app;
+            GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO echoroo_app;
+          "
 
       # Run mutmut against all 11 modules defined in mutmut.toml.
       # Exit code 0 = all mutants killed or no mutants; 1 = survivors
