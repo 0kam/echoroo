@@ -188,6 +188,20 @@ async def _create_project(session: AsyncSession, *, owner_id: uuid.UUID) -> uuid
     permissions code does not touch in this test.
     """
     project_id = uuid.uuid4()
+    # ck_projects_restricted_config_shape (apps/api/echoroo/models/project.py)
+    # requires every Restricted project to carry the 8 toggle keys. Pass the
+    # canonical "all-locked-down" defaults so the row passes the constraint;
+    # taxon_override audit logic does not consume any of these toggles.
+    restricted_config = (
+        '{"allow_media_playback": false,'
+        ' "allow_detection_view": false,'
+        ' "mask_species_in_detection": false,'
+        ' "allow_download": false,'
+        ' "allow_export": false,'
+        ' "allow_voting_and_comments": false,'
+        ' "public_location_precision_h3_res": 2,'
+        ' "allow_precise_location_to_viewer": false}'
+    )
     await session.execute(
         sa.text(
             """
@@ -203,7 +217,7 @@ async def _create_project(session: AsyncSession, *, owner_id: uuid.UUID) -> uuid
             "name": _u("phase13-r3-audit"),
             "desc": "Phase 13 P1 R3 follow-up audit session contract",
             "owner_id": owner_id,
-            "cfg": "{}",
+            "cfg": restricted_config,
         },
     )
     return project_id
