@@ -194,7 +194,7 @@ async def _create_project(session: AsyncSession, *, owner_id: uuid.UUID) -> uuid
             INSERT INTO projects (id, name, description, visibility,
                                  license, owner_id, status,
                                  restricted_config, created_at, updated_at)
-            VALUES (:id, :name, :desc, 'restricted', 'cc_by', :owner_id,
+            VALUES (:id, :name, :desc, 'restricted', 'CC-BY', :owner_id,
                     'active', CAST(:cfg AS JSONB), NOW(), NOW())
             """
         ),
