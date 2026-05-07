@@ -80,7 +80,6 @@ Error:
 | Header | 値 | 根拠 |
 |---|---|---|
 | `X-Request-Id` | UUID v4 | audit log の `request_id` と一致 |
-| `X-User-Permission-Version` | 16 hex（SHA256 先頭） | FR-011a、TanStack Query invalidation |
 
 #### 条件付き
 

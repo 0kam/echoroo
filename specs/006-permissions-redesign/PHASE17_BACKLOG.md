@@ -293,19 +293,17 @@ not exercise it.
 
 ---
 
-## F. Traceability orphan (Batch 6h-4, this batch)
+## F. Traceability orphan (Batch 6h-4) — CLOSED
 
 - **Task**: T999
-- **Symptom**: `scripts/check_traceability.py` reports 1 informational orphan
-  (`FR-011a`) — present in `requirements-traceability.md` but no longer in
-  `spec.md` Rev.3.2.
-- **Threat**: None (informational); orphans do not fail the gate.
-- **Expected behavior**: When the orphan ID is genuinely retired, its row is
-  removed from `requirements-traceability.md`. When it is renamed, both the
-  spec and trace are updated together.
-- **Release condition**:
-  - [ ] Decide whether `FR-011a` is retired or renamed.
-  - [ ] Update `requirements-traceability.md` accordingly; orphan count → 0.
+- **Resolution (2026-05-07)**: `FR-011a` was retired. The cache-TTL /
+  `X-User-Permission-Version` header design captured in Rev.1 of the spec did
+  not survive into spec.md Rev.3.2 and was never implemented in the API or web
+  client. The corresponding rows have been removed from
+  `requirements-traceability.md` (line 50) and `contracts/README.md` (header
+  table). `plan.md` / `research.md` retain historical references in the
+  pre-Rev.3.2 design narrative; those documents are not amended after the
+  fact. Orphan count is now 0.
 
 ---
 

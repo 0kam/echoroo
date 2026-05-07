@@ -47,7 +47,6 @@ spec の各要件が plan 成果物のどこで具体化されているかを追
 | FR-009 | Permission enum 28 個 | D §1 Permission enum | ✅ |
 | FR-010 | ROLE_PERMISSIONS Canonical Matrix | spec §Canonical Matrix、P `core/permissions.py` | ✅ |
 | FR-011 | ResponseFilter 必須通過 + CI 静的解析 | R §18 Response Filter 経由検出 | ✅ |
-| FR-011a | role/permission キャッシュ TTL 30s + `X-User-Permission-Version` header | R §9、C README §共通レスポンスヘッダ | ✅ |
 | FR-012 | TRUSTED_ALLOWED_PERMISSIONS allowlist | spec §Permission 決定アルゴリズム、C trusted.yaml granted_permissions enum | ✅ |
 | FR-013 | 許可外は 422 | C trusted.yaml 422 response | ✅ |
 | FR-014 | active_trusted_capabilities で runtime 再フィルタ | D §3.8 project_trusted_users、CS authorization | ✅ |
