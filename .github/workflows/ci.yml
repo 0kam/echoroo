@@ -802,13 +802,22 @@ jobs:
       # the failure pattern, making it impossible to triage. ``-rA`` prints
       # a short summary of every failure at the end of the run.
       # ``--junitxml`` emits a machine-readable report uploaded below.
-      - name: Run pytest with coverage (-m "not performance and not slow")
+      #
+      # Phase 17 PR-C3: ``not requires_runbook`` was missing from this
+      # filter, causing tests/runbook/test_quickstart_phase3_smoke.py
+      # live-infra tests to run inside backend-tests (which does not
+      # provision the live KMS / S3 / IUCN stack) and AssertionError
+      # with "Unable to locate credentials". The dedicated
+      # ``runbook-smoke-tests`` job already runs these correctly with
+      # ``-m "not requires_runbook"``; pyproject.toml documents the
+      # contract.
+      - name: Run pytest with coverage (-m "not performance and not slow and not requires_runbook")
         working-directory: apps/api
         # The marker description in pyproject.toml documents this default
         # skip; do not change one without the other.
         run: |
           uv run pytest \
-            -m "not performance and not slow" \
+            -m "not performance and not slow and not requires_runbook" \
             --maxfail=20 -q -rA \
             --junitxml=junit-backend.xml \
             --cov=echoroo \

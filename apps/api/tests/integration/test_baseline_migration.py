@@ -160,7 +160,23 @@ def test_supporting_tables_created(upgraded_db: str) -> None:
 
 
 def test_alembic_version_stamped(upgraded_db: str) -> None:
-    """alembic_version row reflects the baseline revision (FR-114 point (b))."""
+    """alembic_version row reflects the script directory's head (FR-114 point (b)).
+
+    The expected stamp is resolved from ``alembic.ini`` rather than hard-coded
+    so the test does not rot every time a new migration lands. ``alembic
+    upgrade head`` must leave the ``alembic_version`` row pinned at the head
+    revision returned by ``ScriptDirectory``.
+    """
+
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
+
+    config = Config(str(ALEMBIC_INI))
+    script_dir = ScriptDirectory.from_config(config)
+    expected_head = script_dir.get_current_head()
+    assert expected_head is not None, (
+        "alembic.ini must define a head revision; check apps/api/alembic/versions/"
+    )
 
     engine = create_engine(upgraded_db)
     try:
@@ -168,7 +184,9 @@ def test_alembic_version_stamped(upgraded_db: str) -> None:
             version = conn.execute(
                 sa.text("SELECT version_num FROM alembic_version")
             ).scalar()
-        assert version == "0001", f"Unexpected alembic version: {version!r}"
+        assert version == expected_head, (
+            f"alembic_version {version!r} does not match script head {expected_head!r}"
+        )
     finally:
         engine.dispose()
 
