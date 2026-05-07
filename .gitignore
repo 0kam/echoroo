@@ -37,3 +37,7 @@ config/redis/tls/*.key
 # Python bytecode caches (Codex A-13 Round 2 follow-up)
 __pycache__/
 *.pyc
+
+# pytest-cov data file (Phase 17 §C close, 2026-05-07)
+.coverage
+.coverage.*
