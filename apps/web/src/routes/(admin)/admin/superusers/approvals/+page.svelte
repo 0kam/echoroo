@@ -392,6 +392,9 @@
             maxlength="2000"
             class="block w-full rounded-md border border-stone-300 bg-surface-card px-3 py-2 text-sm focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
           ></textarea>
+          <p class="mt-1 text-xs text-warning">
+            {m.admin_reason_pii_warning()}
+          </p>
         </div>
         {#if rejectError}
           <div

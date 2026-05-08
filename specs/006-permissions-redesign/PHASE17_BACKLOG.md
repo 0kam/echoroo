@@ -80,9 +80,18 @@ already exists in `apps/api/tests/security/**` and is marked
         / national IDs / credit cards / API tokens in operator
         free-form fields with HTTP 422 (P1 strategy chosen — business
         tables and outbox sinks rule out P2 redact-on-audit).
-  - [ ] Admin UI helper text discouraging PII paste-in *(deferred to
-        a frontend-only follow-up; the schema `description` already
-        documents the constraint and the 422 message is educational)*.
+  - [x] Admin UI helper text discouraging PII paste-in *(completed
+        2026-05-08; Paraglide key `admin_reason_pii_warning` added to
+        `en.json` / `ja.json`; helper rendered below the `reason`
+        textarea in:
+        - `apps/web/src/routes/(admin)/admin/superusers/break-glass/+page.svelte`
+          (covers `SuperuserBreakGlassEnterRequest`)
+        - `apps/web/src/routes/(admin)/admin/superusers/approvals/+page.svelte`
+          (covers `SuperuserRejectRequest`)
+        Remaining API-only schemas (`ResetTwoFactorRequest`,
+        `TaxonOverrideRejectRequest`, `ArchiveRequest`) have no Svelte
+        form — they are API-only callers; the 422 reject + schema
+        `description` is sufficient)*.
 
 ---
 

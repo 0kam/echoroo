@@ -483,6 +483,7 @@
   "admin_superusers_break_glass_warning_emergency_only": "Warning: break-glass is for emergencies only. Routine usage is forbidden by FR-111. Every action taken during the window is captured in the platform audit log.",
   "admin_superusers_break_glass_reason_label": "Reason (recorded to audit log, max 2000 chars)",
   "admin_superusers_break_glass_confirm_label": "I confirm this is an emergency and a replacement superuser will be added within 24 hours.",
+  "admin_reason_pii_warning": "Do not paste email addresses, phone numbers, national IDs, credit-card numbers, or API tokens. Reason fields are stored long-term in audit logs; requests containing PII will be rejected (HTTP 422).",
   "admin_superusers_break_glass_reason_required": "A reason is required.",
   "admin_superusers_break_glass_confirm_required": "Please confirm the emergency acknowledgement.",
   "admin_superusers_break_glass_enter_button": "Enter break-glass mode",
