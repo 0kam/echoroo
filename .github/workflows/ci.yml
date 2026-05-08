@@ -40,6 +40,11 @@ on:
   pull_request:
     branches: ["main"]
   workflow_dispatch:
+  schedule:
+    # Phase 17 §C-E (Option B): quarterly cron for runbook-live-infra-e2e.
+    # First day of Jan / Apr / Jul / Oct at 06:00 UTC.
+    - cron: "0 6 1 1,4,7,10 *"
+
 
 jobs:
   # ---------------------------------------------------------------------------
@@ -1086,3 +1091,268 @@ jobs:
       # the backend test suite.
       - name: Verify spec IDs are linked from traceability matrix
         run: python scripts/check_traceability.py
+
+  # ---------------------------------------------------------------------------
+  # Phase 17 §C-E: Runbook live-infra E2E (requires_runbook marker).
+  #
+  # This job runs the single ``requires_runbook``-gated test that exercises
+  # ``echoroo.scripts.check_wipe_guard`` against a live Postgres + S3
+  # (LocalStack) stack. The test is intentionally NOT a per-PR hard gate
+  # (Option B, quarterly cron + manual dispatch) because:
+  #
+  #   * The runbook smoke suite (``runbook-smoke-tests``) covers argparse
+  #     surface on every push with no infra.
+  #   * Live-infra provisioning (LocalStack ~30 s cold start) adds too much
+  #     latency to make it a per-PR default.
+  #   * The risk profile (silent drift of a one-off bootstrap CLI) suits a
+  #     quarterly health-check cadence rather than a per-PR gate.
+  #
+  # Trigger policy: ``workflow_dispatch`` OR ``schedule`` (quarterly cron,
+  # first day of Jan/Apr/Jul/Oct at 06:00 UTC). Never fires on push/PR.
+  #
+  # Services wired:
+  #   * pgvector/pgvector:pg16 — Postgres 16 with pgvector extension
+  #   * redis:7                — not required by check_wipe_guard, but
+  #                              provisioned so settings validation passes
+  #   * localstack/localstack  — S3 endpoint for check_wipe_guard's S3 check
+  #
+  # Exit-code contract: the test asserts ``returncode in (0, 10, 11, 12)`` —
+  # all three are legitimate "script ran end-to-end" outcomes. On a freshly
+  # migrated CI stack the typical code is 11 (alembic version != baseline
+  # "0001") or 12 (S3 genesis marker absent). rc=20 (infra unreachable)
+  # fails the job because it means the services wiring below is broken.
+  #
+  # On failure: a GitHub issue is auto-created via ``actions/github-script``
+  # with the run URL and last 50 lines of pytest output so the on-call
+  # operator has an actionable starting point without downloading artifacts.
+  #
+  # Security note: no untrusted event inputs are interpolated into ``run:``
+  # blocks. The RUN_URL and PYTEST_OUTPUT env vars are populated from
+  # ``github.server_url`` / ``github.run_id`` (workflow-internal, not
+  # attacker-controlled) and a captured log file respectively.
+  # ---------------------------------------------------------------------------
+  runbook-live-infra-e2e:
+    name: Runbook live-infra E2E (requires_runbook, Phase 17 §C-E)
+    # Only run on manual dispatch or the quarterly schedule; never on push/PR.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    # Hard fail when it runs — but it does not gate PRs (see trigger policy).
+    continue-on-error: false
+    permissions:
+      # Required for the auto-issue creation step (actions/github-script).
+      issues: write
+      contents: read
+    env:
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/echoroo_ci
+      TEST_DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/echoroo_ci
+      REDIS_URL: redis://localhost:6379/0
+      JWT_SECRET_KEY: ci-test-secret
+      RESEND_API_KEY: re_ci_dummy
+      TURNSTILE_SECRET_KEY: 1x0000000000000000000000000000000AA
+      TURNSTILE_SITE_KEY: 1x00000000000000000000AA
+      ENVIRONMENT: development
+      # LocalStack S3 endpoint — check_wipe_guard reads S3_PUBLIC_ENDPOINT_URL
+      # from app settings to locate the audit bucket genesis marker.
+      AWS_ENDPOINT_URL: http://localhost:4566
+      S3_PUBLIC_ENDPOINT_URL: http://localhost:4566
+      AWS_DEFAULT_REGION: us-east-1
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      # Bucket used by check_wipe_guard (AUDIT_LOG_BUCKET falls back to S3_BUCKET).
+      S3_BUCKET: echoroo-audit
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: echoroo_ci
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+      redis:
+        image: redis:7
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+      localstack:
+        image: localstack/localstack:latest
+        env:
+          SERVICES: s3
+          DEFAULT_REGION: us-east-1
+        options: >-
+          --health-cmd "curl -sf http://localhost:4566/_localstack/health | python3 -c \"import sys,json; d=json.load(sys.stdin); sys.exit(0 if d.get('services',{}).get('s3')=='available' else 1)\""
+          --health-interval 15s
+          --health-timeout 10s
+          --health-retries 8
+          --health-start-period 30s
+        ports:
+          - 4566:4566
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv + Python 3.11
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.11"
+          enable-cache: true
+          cache-dependency-glob: "apps/api/uv.lock"
+          pyproject-file: "apps/api/pyproject.toml"
+
+      - name: Install backend dependencies
+        working-directory: apps/api
+        run: uv sync --all-extras --dev
+
+      # Provision DB role required by alembic migrations (SC-022 trigger check).
+      - name: Provision echoroo_app role
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h localhost -U postgres -d echoroo_ci -c "
+            DO \$\$ BEGIN
+              IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'echoroo_app') THEN
+                CREATE ROLE echoroo_app WITH LOGIN PASSWORD 'echoroo_app_test';
+              END IF;
+            END \$\$;
+            GRANT ALL PRIVILEGES ON DATABASE echoroo_ci TO echoroo_app;
+            GRANT ALL PRIVILEGES ON SCHEMA public TO echoroo_app;
+            GRANT echoroo_app TO postgres;
+          "
+
+      - name: Apply alembic migrations
+        working-directory: apps/api
+        env:
+          DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/echoroo_ci
+        run: uv run alembic upgrade head
+
+      - name: Re-grant on tables/sequences after migration
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h localhost -U postgres -d echoroo_ci -c "
+            GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO echoroo_app;
+            GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO echoroo_app;
+          "
+
+      # Provision the S3 audit bucket in LocalStack so check_wipe_guard can
+      # reach it (the S3 head_object call returns 404 for missing marker,
+      # which is a legitimate non-crash exit code 12, not an infra failure).
+      - name: Provision S3 audit bucket in LocalStack
+        run: |
+          aws --endpoint-url http://localhost:4566 s3 mb s3://echoroo-audit \
+            --region us-east-1 || true
+          echo "S3 audit bucket provisioned"
+
+      # Run the live-infra test. Capture pytest output to a file so the
+      # failure auto-issue step can include the last 50 lines without
+      # shell interpolation of untrusted content.
+      # IMPORTANT: ``tee`` would otherwise mask pytest's exit code (the pipeline
+      # exit status defaults to ``tee``'s, which is ~always 0). We capture the
+      # real pytest return code via ``${PIPESTATUS[0]}`` and ``exit`` it
+      # explicitly so the step fails when pytest fails — that is what triggers
+      # the ``if: failure()`` auto-issue creation step below.
+      - name: Run pytest -m requires_runbook
+        id: pytest_run
+        working-directory: apps/api
+        run: |
+          set -o pipefail
+          uv run pytest \
+            -m requires_runbook \
+            tests/runbook/ \
+            --no-cov -q -rA \
+            --junitxml=junit-runbook-live.xml \
+            2>&1 | tee /tmp/pytest_runbook_live.log
+          pytest_rc=${PIPESTATUS[0]}
+          echo "exit_code=${pytest_rc}" >> "$GITHUB_OUTPUT"
+          exit "${pytest_rc}"
+
+      - name: Upload runbook live-infra test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: runbook-live-infra-reports
+          path: |
+            apps/api/junit-runbook-live.xml
+            /tmp/pytest_runbook_live.log
+          retention-days: 30
+
+      # Auto-create a GitHub issue on test failure so the on-call operator
+      # is alerted with a direct link and the last 50 lines of pytest output.
+      #
+      # Security: RUN_URL is constructed only from workflow-internal context
+      # variables (server_url + run_id), never from attacker-controlled inputs.
+      # PYTEST_TAIL is read from a local log file captured above; it contains
+      # only pytest output, not any GitHub event metadata.
+      - name: Auto-create GitHub issue on failure
+        if: failure()
+        uses: actions/github-script@v7
+        env:
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        with:
+          script: |
+            const fs = require('fs');
+            const runUrl = process.env.RUN_URL;
+            const today = new Date().toISOString().slice(0, 10);
+
+            let pytestTail = '';
+            try {
+              const log = fs.readFileSync('/tmp/pytest_runbook_live.log', 'utf8');
+              const lines = log.split('\n');
+              pytestTail = lines.slice(-50).join('\n');
+            } catch (e) {
+              pytestTail = '(log file not available)';
+            }
+
+            const title = `[Runbook E2E] Quickstart §3 smoke failed (${today})`;
+            const body = [
+              '## Runbook live-infra E2E failure',
+              '',
+              `**Run**: ${runUrl}`,
+              `**Date**: ${today}`,
+              '',
+              '### Last 50 lines of pytest output',
+              '```',
+              pytestTail,
+              '```',
+              '',
+              '### Next steps',
+              '1. Review the full log in the Actions run linked above.',
+              '2. Download the `runbook-live-infra-reports` artifact for the JUnit XML.',
+              '3. Check `apps/api/tests/runbook/test_quickstart_phase3_smoke.py` and',
+              '   `apps/api/echoroo/scripts/check_wipe_guard.py` for regression.',
+              '4. See `specs/006-permissions-redesign/PHASE17_BACKLOG.md §E` for context.',
+            ].join('\n');
+
+            // Labels ``runbook`` / ``ci-failure`` may not exist in the repo;
+            // ``issues.create`` then returns HTTP 422 and the alert is lost.
+            // Try with labels first; on any failure, retry without labels so
+            // the on-call operator still gets the alert.
+            const issueParams = {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: title,
+              body: body,
+            };
+            try {
+              await github.rest.issues.create({
+                ...issueParams,
+                labels: ['runbook', 'ci-failure'],
+              });
+            } catch (e) {
+              core.warning(
+                `Issue create with labels failed: ${e.message}. ` +
+                'Retrying without labels.',
+              );
+              await github.rest.issues.create(issueParams);
+            }

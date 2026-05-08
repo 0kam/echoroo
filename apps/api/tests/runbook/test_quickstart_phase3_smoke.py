@@ -216,15 +216,28 @@ def test_wipe_database_module_importable() -> None:
 # ---------------------------------------------------------------------------
 @pytest.mark.requires_runbook
 def test_check_wipe_guard_runs_against_live_stack() -> None:
-    """``check_wipe_guard`` should reach S3 / DB and return exit 0 or 1.
+    """``check_wipe_guard`` should reach S3 / DB without crashing.
 
-    Exit code semantics (from the script): 0 = clear for wipe, 1 = wipe
-    already executed (one of the three markers present). Either is a
-    legitimate "the script ran end-to-end" signal; what we forbid is a
-    crash (returncode > 1 from a Python traceback).
+    Exit code semantics (from ``echoroo.scripts.check_wipe_guard``):
+
+    * ``0``  — all three markers in expected pre-wipe state (wipe is safe).
+    * ``10`` — ``wipe_guard`` row exists (post-wipe state).
+    * ``11`` — alembic version is not the baseline ``"0001"``. On a
+      freshly migrated CI stack the head revision is well past 0001, so
+      this is the typical exit code here.
+    * ``12`` — S3 Object Lock genesis marker missing. Also legitimate on
+      a fresh CI stack where we provision the bucket but not the marker.
+    * ``20`` — infrastructure error (DB / S3 unreachable). Treated as a
+      test failure: it means the live-infra wiring (services block / env
+      vars) is broken, not a normal "fresh stack" outcome.
+
+    Anything else (e.g. unhandled traceback yielding rc=1 or rc>20) is a
+    regression in the script itself and must fail the gate.
     """
     result = _run_module("echoroo.scripts.check_wipe_guard", timeout=60.0)
-    assert result.returncode in (0, 1), (
-        f"check_wipe_guard crashed (rc={result.returncode}).\n"
+    assert result.returncode in (0, 10, 11, 12), (
+        f"check_wipe_guard exited with unexpected code rc={result.returncode}. "
+        "Expected one of 0/10/11/12 (script reached DB+S3 cleanly); rc=20 "
+        "means infra unreachable, any other code means a Python traceback.\n"
         f"stdout: {result.stdout}\nstderr: {result.stderr}"
     )
