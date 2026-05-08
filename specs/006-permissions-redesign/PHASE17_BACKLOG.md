@@ -238,6 +238,44 @@ The full list of ~90 modules is enumerated inline in the script under
 (API routers → integration suite, services → service-level fixture suite, ML →
 GPU-backed fixture decision).
 
+### §C residuals: three non-PHASE17_PENDING hard-fail modules — CLOSED (2026-05-08)
+
+These three modules were not in `PHASE17_PENDING` (i.e., they were hard-failing
+the coverage gate) but sat below 85% at Phase 17 close:
+
+| Module | Pre-uplift | Post-uplift |
+|--------|-----------|-------------|
+| `echoroo/core/redirect_validator.py` | 67.2% | 100% |
+| `echoroo/core/url_allowlist.py` | 82.9% | 100% |
+| `echoroo/api/web_v1/auth_confirm_identity.py` | 73.8% | 100% |
+
+Addressed by `phase17/c-coverage-uplift-3-modules` (2026-05-08):
+- `tests/unit/core/test_redirect_validator.py` — **31 pure unit tests**
+  covering all missing branches (None/non-string input, empty/whitespace,
+  CR/LF/NUL injection, backslash leading char, urlparse ValueError,
+  empty host, validate_redirect_target wrapper).
+- `tests/unit/core/test_url_allowlist_coverage.py` — **36 unit tests**
+  covering socket.gaierror, AF_INET6 branch, empty DNS results,
+  scheme-not-allowed, missing-host, IP-literal reject, DNS-failure
+  audit, is_allowed_audio_url False path, PinnedIPAsyncTransport
+  cross-host-redirect / disallowed-host / non-http scheme / URL
+  rewrite / private-pin refusal, DNS-resolved private IPv4/IPv6/IMDS
+  rejection, IPv6 bracketing, build_pinned_async_client wiring.
+- `tests/unit/api/test_auth_confirm_identity_unit.py` — **29 fully
+  mocked unit tests** (no DB/KMS/network) covering X-Forwarded-For,
+  rate-limit IP/email triggers + boundary checks (with literal-pinned
+  spec-drift assertions for `_REQUEST_IP_LIMIT == 10` and
+  `_REQUEST_EMAIL_LIMIT == 3`), non-string normalize_email,
+  deleted-user path (with `issue_magic_link` not-called assertion),
+  exception rollback, redeem success/failure, _sleep_for_minimum,
+  _write_audit inner body, and pinned `issue_magic_link` invocation
+  args + audit envelope on the success path.
+
+Test count total: **96 tests** across the three files.
+
+All three modules not in `PHASE17_PENDING` — no set modification required.
+Gate: `check_coverage_threshold.py` shows PASS at 100% for all three.
+
 ---
 
 ## D. Mutation-testing `--warn-only` allowlist + `mutation-testing` job
