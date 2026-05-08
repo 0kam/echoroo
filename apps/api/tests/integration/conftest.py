@@ -18,6 +18,19 @@ from echoroo.models.project import Project, ProjectMember
 from echoroo.models.site import Site
 from echoroo.models.user import User
 from tests._kms_moto import provision_moto_kms
+from tests.conftest import ensure_test_database_schema_sync
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _ensure_test_database_schema_for_integration() -> None:
+    """Session-scoped autouse fixture that ensures the test DB schema is current.
+
+    Phase 17 §D-0 follow-up (2026-05-08): moved out of root ``tests/conftest.py``
+    so ``tests/runbook/`` smoke tests (which have no Postgres available) no
+    longer crash at session start with ``OSError: Connect call failed``.
+    """
+    ensure_test_database_schema_sync()
+
 
 # ---------------------------------------------------------------------------
 # PR-C5 (Phase 17 §C, 2026-05-07): autouse moto-backed KMS fixture.

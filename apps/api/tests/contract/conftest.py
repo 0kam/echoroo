@@ -7,6 +7,18 @@ from echoroo.core.jwt import create_access_token
 from echoroo.models.enums import ProjectLicense, ProjectMemberRole, ProjectVisibility
 from echoroo.models.project import Project, ProjectMember
 from echoroo.models.user import User
+from tests.conftest import ensure_test_database_schema_sync
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _ensure_test_database_schema_for_contract() -> None:
+    """Session-scoped autouse fixture that ensures the test DB schema is current.
+
+    Phase 17 §D-0 follow-up (2026-05-08): moved out of root ``tests/conftest.py``
+    so ``tests/runbook/`` smoke tests (which have no Postgres available) no
+    longer crash at session start with ``OSError: Connect call failed``.
+    """
+    ensure_test_database_schema_sync()
 
 
 @pytest.fixture
