@@ -425,7 +425,7 @@ estimate: 2-4 hours.
 
 ---
 
-## E. Runbook `requires_runbook` marker (Batch 6h-3 origin)
+## E. Runbook `requires_runbook` marker (Batch 6h-3 origin) — CLOSED (Option B)
 
 - **Task**: T998
 - **File**: `apps/api/tests/runbook/test_quickstart_phase3_smoke.py` (the
@@ -436,9 +436,25 @@ estimate: 2-4 hours.
 - **Expected behavior**: A live-infra E2E that boots a temporary Compose
   stack, runs the four scripts in order, and asserts the resulting DB state.
 - **Release condition**:
-  - [ ] CI job (Phase 17 infra task) provisions the live infra stack.
-  - [ ] `requires_runbook` marker removed or promoted to hard gate by adding
-        a dedicated CI job that runs `pytest -m requires_runbook`.
+  - [x] CI job (Phase 17 infra task) provisions the live infra stack.
+        `runbook-live-infra-e2e` job in `.github/workflows/ci.yml` provisions
+        pgvector/pgvector:pg16 + redis:7 + localstack/localstack (S3 only,
+        `SERVICES: s3`). The S3 audit bucket is created via `aws s3 mb`
+        before pytest runs.
+  - [x] `requires_runbook` marker promoted to dedicated CI job that runs
+        `pytest -m requires_runbook tests/runbook/` on schedule + dispatch.
+        (NOTE: NOT a hard gate on every-push — Option B deliberate decision.)
+
+- **CLOSED** (2026-05-08): Phase 17 §C-E closed via **Option B** (manual
+  dispatch + quarterly cron). Hard-gate every-push promotion deferred until
+  launch-readiness review or first observed failure. The dedicated
+  `runbook-live-infra-e2e` CI job auto-creates a GitHub issue on failure.
+  Test assertion was corrected in the same change to
+  `returncode in (0, 10, 11, 12)` (the actual `check_wipe_guard` exit-code
+  contract — the prior `(0, 1)` pin was a pre-existing copy/paste defect
+  carried over from Batch 6h-3). rc=20 (infra unreachable) deliberately
+  remains a hard failure so the live-infra wiring of the gate stays a
+  load-bearing assertion.
 
 ---
 
