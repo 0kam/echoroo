@@ -38,6 +38,7 @@ from typing import Any
 from uuid import uuid4
 
 import pytest
+import pytest_asyncio
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -74,7 +75,7 @@ def test_view_audit_log_is_not_in_trusted_allowlist() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def t532_owner_id(db_session: AsyncSession) -> Any:
     from echoroo.models.user import User
 

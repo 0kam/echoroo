@@ -26,6 +26,7 @@ import uuid
 from typing import Any
 
 import pytest
+import pytest_asyncio
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -63,7 +64,7 @@ _RESTRICTED_CONFIG: dict[str, Any] = {
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def project_owner(db_session: AsyncSession) -> User:
     """Owner for Public and Restricted projects."""
     user = User(
@@ -78,7 +79,7 @@ async def project_owner(db_session: AsyncSession) -> User:
     return user
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def public_active_project(
     db_session: AsyncSession, project_owner: User
 ) -> Project:
@@ -98,7 +99,7 @@ async def public_active_project(
     return project
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def restricted_project(
     db_session: AsyncSession, project_owner: User
 ) -> Project:
@@ -118,7 +119,7 @@ async def restricted_project(
     return project
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def archived_public_project(
     db_session: AsyncSession, project_owner: User
 ) -> Project:
@@ -138,7 +139,7 @@ async def archived_public_project(
     return project
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def dormant_public_project(
     db_session: AsyncSession, project_owner: User
 ) -> Project:
@@ -158,7 +159,7 @@ async def dormant_public_project(
     return project
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def public_site(
     db_session: AsyncSession, public_active_project: Project
 ) -> Site:
@@ -174,7 +175,7 @@ async def public_site(
     return site
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def public_dataset(
     db_session: AsyncSession,
     public_active_project: Project,
@@ -196,7 +197,7 @@ async def public_dataset(
     return dataset
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def public_recording(
     db_session: AsyncSession, public_dataset: Dataset
 ) -> Recording:
@@ -827,7 +828,7 @@ class TestGuestArchivedDormantAudioStreamBlocked:
     here is therefore "not 200 / 206".
     """
 
-    @pytest.fixture
+    @pytest_asyncio.fixture
     async def archived_public_recording(
         self,
         db_session: AsyncSession,
@@ -1207,7 +1208,7 @@ class TestGuestPublicRecordingList:
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def public_site_high_precision(
     db_session: AsyncSession, public_active_project: Project
 ) -> Site:
@@ -1228,7 +1229,7 @@ async def public_site_high_precision(
     return site
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def public_dataset_high_precision(
     db_session: AsyncSession,
     public_active_project: Project,
@@ -1250,7 +1251,7 @@ async def public_dataset_high_precision(
     return dataset
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def public_recording_high_precision(
     db_session: AsyncSession,
     public_dataset_high_precision: Dataset,

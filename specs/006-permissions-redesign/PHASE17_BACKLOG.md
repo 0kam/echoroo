@@ -304,7 +304,7 @@ That makes it a **warn-ratchet** in Phase 16: when the job runs it is a
 hard-fail (`continue-on-error` is not set), but a default PR build does
 not exercise it.
 
-### D-0. mutmut 3.2 in-process pytest.main() blocker (NEW, 2026-05-07)
+### D-0. mutmut 3.5 in-process pytest.main() blocker (FIX ATTEMPTED 2026-05-08)
 
 **Discovered during PR #39 work.** The `mutation-testing` CI job had
 never produced a real mutation score in CI prior to PR #39 — the
@@ -329,32 +329,76 @@ actual-run exit: 0
 ```
 
 But mutmut's in-process `pytest.main([...], plugins=[stats_collector])`
-still raises `BadTestExecutionCommandsException`. PR #39's second
-diagnostic step (`python -c "import pytest; pytest.main([...])"`)
-prints the in-process exit code. As of 2026-05-07 the failure is
-**isolated to mutmut's embedded pytest path**, not to our suite or
-runner args.
+still raises `BadTestExecutionCommandsException`. The root cause is
+`pytest-asyncio` 1.3.0 with `asyncio_mode = "auto"` corrupting global
+`EventLoopPolicy` state on the **second** in-process invocation (the
+CI diagnostic preflight runs the first `pytest.main()`, then mutmut's
+`PytestRunner.run_stats()` runs the second — exit 4 / `USAGE_ERROR`).
 
-**Suspect**: pytest's documented caveat that repeated/in-process
-`pytest.main()` invocations leave imports and global state in the
-process. Async-heavy / plugin-heavy suites are exactly where
-divergence is expected.
+**Fix applied (2026-05-08, branch `phase17/d0-mutmut-asyncio-strict-fix`)**:
+- Added `"--override-ini=asyncio_mode=strict"` to `pytest_add_cli_args`
+  in `pyproject.toml [tool.mutmut]`.
+- Added `debug = true` to surface mutmut's suppressed pytest stderr.
+- Deleted dead config `apps/api/mutmut.toml` (mutmut 3.x reads only
+  from `pyproject.toml`; the file was documentation only and had caused
+  confusion).
+- Updated CI workflow comments to remove references to `mutmut.toml`.
 
-**Release condition (NEW)**:
-- [ ] Identify the in-process pytest.main() exit code from PR #39's
-      diagnostic and confirm whether it is asyncio loop state, plugin
-      conflict, or something else.
-- [ ] Either upgrade mutmut (4.x) if upstream has fixed in-process
-      isolation, or fork mutmut to run baseline + each mutant in a
-      subprocess.
+**Safety check (async tests)**: scanned all files under `tests/unit/` and
+`tests/security/` for `async def test_*` without `@pytest.mark.asyncio`.
+Result: **0 files** have undecorated async tests — every async test file
+already uses `pytestmark = pytest.mark.asyncio`, so strict mode is safe.
+
+**Safety check (async fixtures, Codex Round 1 follow-up 2026-05-08)**:
+strict mode also requires async **fixtures** to use
+`@pytest_asyncio.fixture` instead of `@pytest.fixture`. Initial scan
+found **68 plain `@pytest.fixture` decorators on async fixtures across
+16 files** under `tests/security/` (zero in `tests/unit/`). All 68 were
+converted to `@pytest_asyncio.fixture` and `import pytest_asyncio` was
+added where missing in the same fix branch. Re-scan confirms **0
+remaining**. `pytest-asyncio>=0.24.0` is already a declared dependency.
+
+**Local verification**: double in-process `pytest.main()` with
+`--override-ini=asyncio_mode=strict` against `tests/unit/core/` exits
+0 for both invocations (278 passed). Services (postgres/redis)
+unavailable locally, so the full security suite was not tested; CI
+will provide the authoritative gate.
+
+**Fallback (option B)**: if the CI `mutation-testing` job continues to
+fail with a different mutmut baseline error after the strict flip
+(e.g. a `BadTestExecutionCommandsException` rooted in a different
+in-process side effect, not `EventLoopPolicy` corruption), monkey-patch
+`mutmut.runner.PytestRunner.run_stats` (or equivalent) to spawn pytest
+in a subprocess instead of `pytest.main()` in-process. Stats
+collection moves from the in-process plugin to a temp-file-based
+collector via `MUTANT_UNDER_TEST=stats` env or similar. Effort
+estimate: 2-4 hours.
+
+**Release condition (UPDATED)**:
+- [x] Identify the in-process pytest.main() exit code: `pytest-asyncio`
+      EventLoopPolicy corruption on second in-process call (exit 4).
+- [x] Apply `asyncio_mode=strict` override + `debug=true` + remove dead
+      `mutmut.toml` (PR on branch `phase17/d0-mutmut-asyncio-strict-fix`).
+- [x] Convert 68 async fixtures (`tests/security/`, 16 files) from
+      plain `@pytest.fixture` to `@pytest_asyncio.fixture` for strict
+      compatibility (Codex Round 1 follow-up, same branch).
+- [x] AST guard `scripts/check_no_plain_pytest_fixture_on_async.py`
+      wired into CI (`no-plain-pytest-fixture-on-async` job) to prevent
+      future regressions (Codex Round 2 follow-up, same branch).
+- [ ] CI `mutation-testing` job confirms mutmut baseline passes (exit 0
+      from `run_stats`) and real mutation scores are produced.
+- [ ] If CI still fails with a different baseline error: apply option B
+      (subprocess-based `run_stats` monkey-patch — see fallback above).
 - [ ] After in-process baseline returns 0/5, the original D-1 / D-2
       release conditions below apply.
 
 ### D-1. Per-module score ≥80%
 
 - **Task**: T995
-- **File**: `apps/api/mutmut.toml` (`paths_to_mutate` lists 11 modules) +
-  `.github/workflows/ci.yml` (`mutation-testing` job `if:` guard).
+- **File**: `apps/api/pyproject.toml` `[tool.mutmut]` (`paths_to_mutate`
+  lists 11 modules) + `.github/workflows/ci.yml` (`mutation-testing` job
+  `if:` guard). Note: `apps/api/mutmut.toml` was dead config (mutmut 3.x
+  reads only from `pyproject.toml`) and has been deleted (D-0 fix PR).
 - **Threat**: Surviving mutants in permission-critical modules indicate
   weak test assertions (PR-004, SC-012). The trigger gate further means
   a PR can land that introduces a regression in mutation score without

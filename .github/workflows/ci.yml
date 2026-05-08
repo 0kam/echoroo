@@ -476,8 +476,9 @@ jobs:
     # surviving-mutant ratio < 80% in any module turns the run red. Phase 17
     # broadens the `if:` guard so the gate fires on every push.
     env:
-      # mutmut.toml's runner is `python -m pytest tests/unit/ tests/security/`,
-      # and tests/security/ requires a real Postgres/Redis (the autouse moto
+      # mutmut reads configuration from pyproject.toml [tool.mutmut] only
+      # (mutmut 3.x; apps/api/mutmut.toml was dead config and has been removed).
+      # tests/security/ requires a real Postgres/Redis (the autouse moto
       # fixture in tests/{integration,security}/conftest.py covers AWS only).
       # Without these env vars the baseline pytest exits non-zero and mutmut
       # reports every mutant as "not checked". This block mirrors the
@@ -627,7 +628,7 @@ jobs:
           " 2>&1 | tail -50
           exit 0
 
-      # Run mutmut against all 11 modules defined in mutmut.toml.
+      # Run mutmut against all 11 modules defined in pyproject.toml [tool.mutmut].
       # Exit code 0 = all mutants killed or no mutants; 1 = survivors
       # exist (expected when coverage is < 100%). The score check step
       # below is the authoritative gate — mutmut itself is allowed to
@@ -1054,6 +1055,45 @@ jobs:
       - name: Run runbook smoke tests
         working-directory: apps/api
         run: uv run pytest tests/runbook/ -m "not requires_runbook" --no-cov -q
+
+  # ---------------------------------------------------------------------------
+  # Phase 17 §D-0 follow-up (PR #47, 2026-05-08): AST guard preventing
+  # regressions where someone adds ``@pytest.fixture`` on an ``async def``
+  # fixture under apps/api/tests/{unit,security} or apps/api/conftest.py.
+  #
+  # mutmut's in-process ``pytest.main([...], plugins=[stats_collector])`` runs
+  # with ``--override-ini=asyncio_mode=strict`` (see pyproject.toml
+  # [tool.mutmut].pytest_add_cli_args). Strict mode requires async fixtures
+  # to use ``@pytest_asyncio.fixture``; a plain ``@pytest.fixture`` on an
+  # ``async def`` produces an async generator object that strict mode refuses
+  # to await, breaking mutmut's baseline (exit 4 / USAGE_ERROR) and any
+  # downstream test that consumes the fixture.
+  #
+  # PR #47 converted all 68 pre-existing offending fixtures across 16 files.
+  # This job is the static guard that prevents future regressions; without it
+  # the §D-0 fix can silently reverse the next time someone copies a synchronous
+  # fixture template into an async one.
+  #
+  # The job is intentionally cheap (a single stdlib-only AST pass) so it runs
+  # on every push without raising CI latency. Hard-fail (no continue-on-error):
+  # one regression and the gate goes red.
+  # ---------------------------------------------------------------------------
+  no-plain-pytest-fixture-on-async:
+    name: No plain @pytest.fixture on async fixtures (Phase 17 §D-0 guard)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # Stdlib-only script (ast / argparse / pathlib / sys); no dependency
+      # install required. Keeps the gate fast and isolated from the backend
+      # virtualenv.
+      - name: Verify async fixtures use @pytest_asyncio.fixture
+        run: python scripts/check_no_plain_pytest_fixture_on_async.py
 
   # ---------------------------------------------------------------------------
   # T999 (Phase 16 Batch 6h-4): requirements traceability gate.

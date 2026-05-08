@@ -48,6 +48,7 @@ from collections.abc import AsyncGenerator
 from typing import Any
 
 import pytest
+import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
@@ -81,7 +82,7 @@ def _make_bearer_token(user_id: Any) -> str:
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def unshimmed_rbac_client(
     db_session: AsyncSession,  # noqa: ARG001
 ) -> AsyncGenerator[AsyncClient, None]:

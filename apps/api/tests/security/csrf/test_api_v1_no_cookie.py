@@ -42,6 +42,7 @@ from collections.abc import AsyncGenerator
 from typing import Any
 
 import pytest
+import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
@@ -74,7 +75,7 @@ TEST_DATABASE_URL = os.environ.get(
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def unshimmed_client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient, None]:  # noqa: ARG001
     """Build the real app without the Batch 6c JWT shim.
 

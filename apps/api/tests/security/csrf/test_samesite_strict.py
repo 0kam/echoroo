@@ -30,6 +30,7 @@ from collections.abc import AsyncGenerator, AsyncIterator
 from typing import Any
 
 import pytest
+import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
@@ -44,7 +45,7 @@ TEST_DATABASE_URL = os.environ.get(
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def session_factory_t971() -> AsyncIterator[object]:
     """AsyncSession factory using the shared test DB (no testcontainers).
 
@@ -83,7 +84,7 @@ async def session_factory_t971() -> AsyncIterator[object]:
         await engine.dispose()
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def client_t971(
     monkeypatch: pytest.MonkeyPatch,
     session_factory_t971: object,

@@ -38,6 +38,7 @@ from __future__ import annotations
 #
 # TODO(Phase 14+ recording_annotations): drop this skip and re-validate.
 import pytest as _pytest_phase14_skip  # noqa: E402
+import pytest_asyncio
 
 pytestmark = _pytest_phase14_skip.mark.skip(
     reason=(
@@ -80,7 +81,7 @@ from echoroo.repositories.recording import RecordingRepository
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def owner_a(db_session: AsyncSession) -> User:
     """Owner of project A."""
     user = User(
@@ -95,7 +96,7 @@ async def owner_a(db_session: AsyncSession) -> User:
     return user
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def owner_b(db_session: AsyncSession) -> User:
     """Owner of project B."""
     user = User(
@@ -110,7 +111,7 @@ async def owner_b(db_session: AsyncSession) -> User:
     return user
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def member_a_user(db_session: AsyncSession) -> User:
     """A MEMBER of project A only (not a member of project B)."""
     user = User(
@@ -125,7 +126,7 @@ async def member_a_user(db_session: AsyncSession) -> User:
     return user
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def project_a(db_session: AsyncSession, owner_a: User) -> Project:
     """Project A — member_a_user is a MEMBER here."""
     project = Project(
@@ -151,7 +152,7 @@ async def project_a(db_session: AsyncSession, owner_a: User) -> Project:
     return project
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def project_b(db_session: AsyncSession, owner_b: User) -> Project:
     """Project B — member_a_user has NO membership here."""
     project = Project(
@@ -177,7 +178,7 @@ async def project_b(db_session: AsyncSession, owner_b: User) -> Project:
     return project
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def member_a_membership(
     db_session: AsyncSession,
     project_a: Project,
@@ -197,7 +198,7 @@ async def member_a_membership(
     return membership
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def site_b(db_session: AsyncSession, project_b: Project) -> Site:
     """A site belonging to project B."""
     site = Site(
@@ -211,7 +212,7 @@ async def site_b(db_session: AsyncSession, project_b: Project) -> Site:
     return site
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def dataset_b(
     db_session: AsyncSession,
     project_b: Project,
@@ -233,7 +234,7 @@ async def dataset_b(
     return dataset
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def recording_b(
     db_session: AsyncSession,
     dataset_b: Dataset,
@@ -253,7 +254,7 @@ async def recording_b(
     return recording
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def annotation_b(
     db_session: AsyncSession,
     recording_b: Recording,

@@ -256,7 +256,20 @@ pytest_add_cli_args = [
     "-x",
     "--no-cov",
     "--override-ini=addopts=",
+    # Phase 17 §D-0: prevent pytest-asyncio 1.3.0 from corrupting the global
+    # EventLoopPolicy on its second in-process invocation. Without this flag,
+    # mutmut's PytestRunner.run_stats() (second pytest.main() call after the
+    # CI diagnostic preflight) exits 4 (USAGE_ERROR) and mutmut raises
+    # BadTestExecutionCommandsException. strict mode is safe here because
+    # every async test file already declares `pytestmark = pytest.mark.asyncio`
+    # — there are no async tests that rely solely on auto-mode inference.
+    "--override-ini=asyncio_mode=strict",
 ]
+# Phase 17 §D-0: surface mutmut's suppressed pytest error (exit code + stderr)
+# in CI logs. Without this, mutmut silently swallows the exit code and only
+# prints "Failed to run pytest with args: [...]". Remove once end-to-end
+# mutation scoring is confirmed working in CI.
+debug = true
 
 [dependency-groups]
 dev = [

@@ -31,6 +31,7 @@ from uuid import UUID, uuid4
 
 import jwt
 import pytest
+import pytest_asyncio
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -80,7 +81,7 @@ async def _create_superuser(db: AsyncSession, *, user: User) -> Superuser:
     return row
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def admin_app(db_session: AsyncSession) -> FastAPI:
     app = FastAPI()
     app.include_router(admin_router, prefix="/web-api/v1")
@@ -92,14 +93,14 @@ async def admin_app(db_session: AsyncSession) -> FastAPI:
     return app
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def superuser_user(db_session: AsyncSession) -> User:
     user = await _create_user(db_session, email="t979z_su@example.com")
     await _create_superuser(db_session, user=user)
     return user
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def target_superuser(db_session: AsyncSession) -> Superuser:
     target_user = await _create_user(db_session, email="t979z_target@example.com")
     return await _create_superuser(db_session, user=target_user)
