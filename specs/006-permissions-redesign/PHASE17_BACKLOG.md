@@ -536,6 +536,15 @@ These fallbacks remain post-launch backlog; the current launch decision
 (per `project_006_phase17_residuals_2026-05-07.md`) is that the mutation
 gate is **not** a launch blocker.
 
+**D-1 follow-up progress (2026-05-08)**: `tests/conftest.py` root
+fixtures (`db_session`, `client`) converted from `@pytest.fixture` to
+`@pytest_asyncio.fixture` + added `import pytest_asyncio`; full suite
+1211 passed / 0 errors in both `asyncio_mode=strict` and
+`asyncio_mode=auto` (branch `phase17/d1-test-pollution-fix`). This
+addresses async-fixture warnings from the strict-mode rollout but is
+distinct from the test pollution polluter bisect that D-1 ultimately
+needs.
+
 ### D-1. Per-module score ≥80%
 
 - **Task**: T995
