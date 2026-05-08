@@ -217,7 +217,11 @@ PHASE17_PENDING: frozenset[str] = frozenset(
         "echoroo/services/user.py",
         "echoroo/services/user_deletion_service.py",
         "echoroo/services/vernacular.py",
+        "echoroo/services/two_factor_confirmation_token.py",
+        "echoroo/services/two_factor_reset_service.py",
         # Workers — require Celery/Redis/DB fixtures.
+        "echoroo/workers/api_key_age_check.py",
+        "echoroo/workers/celery_app.py",
         "echoroo/workers/annotation_sampling_tasks.py",
         "echoroo/workers/audit_log_export.py",
         "echoroo/workers/classifier_tasks.py",
@@ -240,6 +244,8 @@ PHASE17_PENDING: frozenset[str] = frozenset(
         "echoroo/workers/trusted_expiry_notifier.py",
         "echoroo/workers/trusted_long_lived_invalidation.py",
         "echoroo/workers/upload_tasks.py",
+        "echoroo/workers/pii_hash_backfill.py",
+        "echoroo/workers/two_factor_tasks.py",
         # Additional repository layer modules not in initial list.
         "echoroo/repositories/embedding.py",
         "echoroo/repositories/evaluation.py",

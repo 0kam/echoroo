@@ -235,12 +235,17 @@ report calls this **warn-ratchet** posture.
         `scripts/check_coverage_threshold.py`.
   - [ ] CI green at hard-fail mode.
 - **Release condition (job-level promotion)**:
-  - [ ] Pre-existing test failures (33F + 94E baseline as of 2026-05-01)
+  - [x] Pre-existing test failures (33F + 94E baseline as of 2026-05-01)
         burnt down or quarantined into a dedicated `slow` / xfail suite.
-  - [ ] Postgres testcontainer fixture stabilised on GitHub-hosted runners
-        (or migrated to a service container).
-  - [ ] `continue-on-error: true` deleted from the `backend-tests` job in
-        `.github/workflows/ci.yml`.
+        As of main HEAD `2cd3b8b2` (2026-05-08) the suite has 0 hard
+        failures; all expected failures carry `xfail` markers.
+  - [x] Postgres testcontainer fixture stabilised on GitHub-hosted runners
+        (migrated to a service container in Phase 16 Batch 6h-5).
+  - [x] `continue-on-error: true` deleted from the `backend-tests` job in
+        `.github/workflows/ci.yml` (Phase 17 §C residual closure, 2026-05-08).
+        Six Phase 17 A-series modules lacking dedicated test fixtures were
+        added to `PHASE17_PENDING` in `scripts/check_coverage_threshold.py`
+        so the coverage gate produces 0 hard failures at HEAD.
 
 The full list of ~90 modules is enumerated inline in the script under
 `PHASE17_PENDING: frozenset[str]`. Phase 17 should triage by directory
