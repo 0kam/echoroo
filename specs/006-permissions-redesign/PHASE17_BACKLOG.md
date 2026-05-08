@@ -374,23 +374,77 @@ collection moves from the in-process plugin to a temp-file-based
 collector via `MUTANT_UNDER_TEST=stats` env or similar. Effort
 estimate: 2-4 hours.
 
+**Round 2 status (2026-05-08, branch `phase17/d0-round2-marker-cleanup-or-subprocess`)**:
+PR #47 (Round 1) did NOT resolve the blocker — CI still exits 4 with the
+same `BadTestExecutionCommandsException` after `asyncio_mode=strict` +
+fixture conversions. The exact `UsageError` origin was not surfaced (debug
+output did not show a specific pytest error message). Root cause analysis
+identified that the `PytestRemovedIn9Warning` (async fixture via
+`@pytest.fixture` in strict mode) becomes a hard error in pytest 9.0.2 only
+inside the in-process `pytest.main()` call — but Round 1's conversion covered
+all 68 fixtures the AST guard found, so this should no longer be the trigger.
+
+**Option B applied (Round 2, 2026-05-08)**:
+`apps/api/scripts/run_mutmut.py` — a thin wrapper that monkey-patches
+`PytestRunner.run_stats` before delegating to the standard mutmut CLI.  The
+patch spawns `python -m pytest` in a **subprocess** with `MUTANT_UNDER_TEST=stats`
+and a temp-file stats-writer plugin (`_PLUGIN_SOURCE` embedded in the wrapper).
+The subprocess populates `mutmut._stats` normally via the trampoline; the
+stats-writer plugin writes `{tests_by_function, duration_by_test}` to a JSON
+temp file; the parent reads it and populates `mutmut.tests_by_mangled_function_name`
+/ `mutmut.duration_by_test`. CI `mutation-testing` job updated to invoke
+`uv run python scripts/run_mutmut.py run` instead of `uv run mutmut run`.
+
+Round 2 also suppresses the two remaining `PytestWarning` log-noise entries
+(sync tests in modules with `pytestmark = pytest.mark.asyncio`) by adding
+`@pytest.mark.filterwarnings("ignore::pytest.PytestWarning")` to:
+- `tests/unit/workers/test_dormancy_check.py::test_outbox_event_type_constant`
+- `tests/security/authentication/test_refresh_token_rotation.py::test_sql_token_store_production_methods_present`
+
 **Release condition (UPDATED)**:
 - [x] Identify the in-process pytest.main() exit code: `pytest-asyncio`
       EventLoopPolicy corruption on second in-process call (exit 4).
 - [x] Apply `asyncio_mode=strict` override + `debug=true` + remove dead
-      `mutmut.toml` (PR on branch `phase17/d0-mutmut-asyncio-strict-fix`).
+      `mutmut.toml` (PR on branch `phase17/d0-mutmut-asyncio-strict-fix`, PR #47).
 - [x] Convert 68 async fixtures (`tests/security/`, 16 files) from
       plain `@pytest.fixture` to `@pytest_asyncio.fixture` for strict
-      compatibility (Codex Round 1 follow-up, same branch).
+      compatibility (Codex Round 1 follow-up, same branch as PR #47).
 - [x] AST guard `scripts/check_no_plain_pytest_fixture_on_async.py`
       wired into CI (`no-plain-pytest-fixture-on-async` job) to prevent
-      future regressions (Codex Round 2 follow-up, same branch).
+      future regressions (Codex Round 2 follow-up, same branch as PR #47).
+- [x] Option B: subprocess-based `run_stats` monkey-patch applied in
+      `apps/api/scripts/run_mutmut.py` + CI updated (Round 2, branch
+      `phase17/d0-round2-marker-cleanup-or-subprocess`).
 - [ ] CI `mutation-testing` job confirms mutmut baseline passes (exit 0
       from `run_stats`) and real mutation scores are produced.
-- [ ] If CI still fails with a different baseline error: apply option B
-      (subprocess-based `run_stats` monkey-patch — see fallback above).
-- [ ] After in-process baseline returns 0/5, the original D-1 / D-2
-      release conditions below apply.
+- [ ] After baseline returns 0/5, the original D-1 / D-2 release
+      conditions below apply.
+
+**Fallback escalation ladder (if Option B itself fails in CI)**:
+
+If the subprocess monkey-patch in `apps/api/scripts/run_mutmut.py` does not
+cure the baseline (e.g. mutmut 3.5 still raises
+`BadTestExecutionCommandsException` because of a separate in-process call
+path beyond `run_stats`, or stats-file ingestion proves brittle), escalate
+through these options in order before declaring the gate permanently
+deferred:
+
+- **Option C — Full mutmut fork**: Vendor mutmut 3.5 into
+  `apps/api/vendor/mutmut/` and patch the `run_stats` / `run_forced_fail` /
+  `run_tests` code-paths directly to write stats to disk and never call
+  `pytest.main()` in-process.  More invasive than the monkey-patch but
+  removes the moving target if upstream mutmut releases interact poorly with
+  our patch.  Disadvantage: must track upstream security fixes manually.
+- **Option D — Migrate to a different mutation runner**: Switch the gate to
+  `cosmic-ray` (subprocess-by-design, persists to SQLite) or `mutpy`.
+  Disadvantages: loses mutmut's mutation operator coverage and requires
+  rewiring CI + `paths_to_mutate` config.  Benefit: removes the in-process
+  `pytest.main()` failure mode entirely and is the cleanest exit if Options
+  B/C both stall.
+
+These fallbacks remain post-launch backlog; the current launch decision
+(per `project_006_phase17_residuals_2026-05-07.md`) is that the mutation
+gate is **not** a launch blocker.
 
 ### D-1. Per-module score ≥80%
 

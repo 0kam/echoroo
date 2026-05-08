@@ -633,14 +633,17 @@ jobs:
           " 2>&1 | tail -50
           exit 0
 
-      # Run mutmut against all 11 modules defined in pyproject.toml [tool.mutmut].
+      # Phase 17 §D-0 Option B: run mutmut via the subprocess-stats wrapper.
+      # scripts/run_mutmut.py monkey-patches PytestRunner.run_stats to spawn
+      # pytest in a subprocess instead of calling pytest.main() in-process,
+      # avoiding the in-process USAGE_ERROR (exit 4) / BadTestExecutionCommandsException
+      # that blocked baseline stats collection (see PHASE17_BACKLOG §D-0).
       # Exit code 0 = all mutants killed or no mutants; 1 = survivors
       # exist (expected when coverage is < 100%). The score check step
-      # below is the authoritative gate — mutmut itself is allowed to
-      # exit non-zero here.
+      # below is the authoritative gate.
       - name: Run mutmut (11 modules, hard gate)
         working-directory: apps/api
-        run: uv run mutmut run || true
+        run: uv run python scripts/run_mutmut.py run || true
 
       # Collect results for the score check and for CI artifact upload.
       - name: Collect mutmut results

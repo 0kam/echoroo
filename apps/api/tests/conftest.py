@@ -9,6 +9,7 @@ from typing import Any
 from unittest.mock import patch
 
 import pytest
+import pytest_asyncio
 import sqlalchemy as sa
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.dialects.postgresql import UUID as PgUUID
@@ -805,7 +806,7 @@ async def cleanup_test_data(session: AsyncSession) -> None:
     await session.commit()
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def db_session() -> AsyncGenerator[AsyncSession, None]:
     """Create test database session.
 
@@ -837,7 +838,7 @@ async def db_session() -> AsyncGenerator[AsyncSession, None]:
     await engine.dispose()
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient, None]:  # noqa: ARG002
     """Create test HTTP client with database session override.
 
