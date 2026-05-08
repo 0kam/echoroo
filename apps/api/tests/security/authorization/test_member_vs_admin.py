@@ -18,6 +18,7 @@ correct assertion for Member on forbidden endpoints.
 from __future__ import annotations
 
 import pytest
+import pytest_asyncio
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -31,7 +32,7 @@ from echoroo.models.user import User
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def owner_user(db_session: AsyncSession) -> User:
     """Create the project owner."""
     user = User(
@@ -46,7 +47,7 @@ async def owner_user(db_session: AsyncSession) -> User:
     return user
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def member_user(db_session: AsyncSession) -> User:
     """Create a MEMBER-role user."""
     user = User(
@@ -61,7 +62,7 @@ async def member_user(db_session: AsyncSession) -> User:
     return user
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def admin_user(db_session: AsyncSession) -> User:
     """Create an ADMIN-role user."""
     user = User(
@@ -76,7 +77,7 @@ async def admin_user(db_session: AsyncSession) -> User:
     return user
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def invite_target_user(db_session: AsyncSession) -> User:
     """Create a user to be invited (for member invite tests)."""
     user = User(
@@ -91,7 +92,7 @@ async def invite_target_user(db_session: AsyncSession) -> User:
     return user
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def test_project(db_session: AsyncSession, owner_user: User) -> Project:
     """Create a RESTRICTED project owned by owner_user."""
     project = Project(
@@ -117,7 +118,7 @@ async def test_project(db_session: AsyncSession, owner_user: User) -> Project:
     return project
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def member_membership(
     db_session: AsyncSession,
     test_project: Project,
@@ -137,7 +138,7 @@ async def member_membership(
     return membership
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def admin_membership(
     db_session: AsyncSession,
     test_project: Project,

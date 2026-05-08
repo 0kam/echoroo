@@ -37,6 +37,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from echoroo.models.dataset import Dataset
@@ -65,7 +66,7 @@ _UNIT_VECTOR = [1.0] + [0.0] * (_EMBEDDING_DIM - 1)
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def t981b_owner(db_session: AsyncSession) -> User:
     user = User(
         email="t981b_owner@example.com",
@@ -98,7 +99,7 @@ def _restricted_config_on() -> dict[str, Any]:
     return cfg
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def t981b_project_off(
     db_session: AsyncSession, t981b_owner: User
 ) -> Project:
@@ -119,7 +120,7 @@ async def t981b_project_off(
     return project
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def t981b_embedding(
     db_session: AsyncSession,
     t981b_project_off: Project,

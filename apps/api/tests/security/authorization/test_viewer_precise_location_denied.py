@@ -40,6 +40,7 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
+import pytest_asyncio
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -222,7 +223,7 @@ def _viewer_restricted_config(*, allow_precise: bool) -> dict[str, object]:
     }
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def t405_owner(db_session: AsyncSession) -> User:
     user = User(
         email="t405owner@example.com",
@@ -236,7 +237,7 @@ async def t405_owner(db_session: AsyncSession) -> User:
     return user
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def t405_viewer(db_session: AsyncSession) -> User:
     user = User(
         email="t405viewer@example.com",

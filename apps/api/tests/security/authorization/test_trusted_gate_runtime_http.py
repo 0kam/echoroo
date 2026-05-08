@@ -46,6 +46,7 @@ from unittest.mock import patch as _patch
 from uuid import UUID, uuid4
 
 import pytest
+import pytest_asyncio
 import sqlalchemy as sa
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import (
@@ -86,7 +87,7 @@ def _bearer(user: User) -> dict[str, str]:
     return {"Authorization": f"Bearer {create_access_token({'sub': str(user.id)})}"}
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def web_client(
     db_session: AsyncSession,  # noqa: ARG001 — ensures the DB is initialised
 ) -> AsyncGenerator[AsyncClient, None]:

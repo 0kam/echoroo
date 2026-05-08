@@ -46,6 +46,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
+import pytest_asyncio
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
@@ -96,7 +97,7 @@ _UNIT_VECTOR = [1.0] + [0.0] * (_EMBEDDING_DIM - 1)
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def t413_owner(db_session: AsyncSession) -> User:
     """Owner of the Restricted project under test."""
     user = User(
@@ -120,7 +121,7 @@ def t413_owner_headers(t413_owner: User) -> dict[str, str]:
     }
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def t413_outsider(db_session: AsyncSession) -> User:
     """An authenticated user with no relationship to the Restricted project."""
     user = User(
@@ -156,7 +157,7 @@ def _restricted_config_on() -> dict[str, Any]:
     }
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def t413_restricted_project(
     db_session: AsyncSession, t413_owner: User
 ) -> Project:
@@ -176,7 +177,7 @@ async def t413_restricted_project(
     return project
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def t413_public_project(
     db_session: AsyncSession, t413_owner: User
 ) -> Project:
@@ -196,7 +197,7 @@ async def t413_public_project(
     return project
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def t413_restricted_embedding(
     db_session: AsyncSession,
     t413_restricted_project: Project,
@@ -251,7 +252,7 @@ async def t413_restricted_embedding(
     return embedding
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def t413_public_embedding(
     db_session: AsyncSession,
     t413_public_project: Project,

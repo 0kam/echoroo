@@ -18,6 +18,7 @@ directly (no normalization to Authenticated).
 from __future__ import annotations
 
 import pytest
+import pytest_asyncio
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -31,7 +32,7 @@ from echoroo.models.user import User
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def viewer_user(db_session: AsyncSession) -> User:
     """Create a user that will be a VIEWER on the test project."""
     user = User(
@@ -46,7 +47,7 @@ async def viewer_user(db_session: AsyncSession) -> User:
     return user
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def owner_user(db_session: AsyncSession) -> User:
     """Create the project owner user."""
     user = User(
@@ -61,7 +62,7 @@ async def owner_user(db_session: AsyncSession) -> User:
     return user
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def test_project(db_session: AsyncSession, owner_user: User) -> Project:
     """Create a RESTRICTED project owned by owner_user."""
     project = Project(
@@ -87,7 +88,7 @@ async def test_project(db_session: AsyncSession, owner_user: User) -> Project:
     return project
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def viewer_member(
     db_session: AsyncSession,
     test_project: Project,

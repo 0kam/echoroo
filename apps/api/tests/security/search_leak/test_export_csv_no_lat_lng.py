@@ -45,6 +45,7 @@ from __future__ import annotations
 #
 # TODO(Phase 14+ recording_annotations): drop this skip and re-validate.
 import pytest as _pytest_phase14_skip  # noqa: E402
+import pytest_asyncio
 
 pytestmark = _pytest_phase14_skip.mark.skip(
     reason=(
@@ -124,7 +125,7 @@ _RESTRICTED_CONFIG: dict[str, Any] = {
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def t312_owner(db_session: AsyncSession) -> User:
     user = User(
         email="t312owner@example.com",
@@ -138,7 +139,7 @@ async def t312_owner(db_session: AsyncSession) -> User:
     return user
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def t312_public_project(
     db_session: AsyncSession, t312_owner: User
 ) -> Project:
@@ -158,7 +159,7 @@ async def t312_public_project(
     return project
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def t312_restricted_project(
     db_session: AsyncSession, t312_owner: User
 ) -> Project:
@@ -178,7 +179,7 @@ async def t312_restricted_project(
     return project
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def t312_site_public(
     db_session: AsyncSession, t312_public_project: Project
 ) -> Site:
@@ -195,7 +196,7 @@ async def t312_site_public(
     return site
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def t312_site_restricted(
     db_session: AsyncSession, t312_restricted_project: Project
 ) -> Site:
@@ -211,7 +212,7 @@ async def t312_site_restricted(
     return site
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def t312_dataset_public(
     db_session: AsyncSession,
     t312_public_project: Project,
@@ -232,7 +233,7 @@ async def t312_dataset_public(
     return dataset
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def t312_dataset_restricted(
     db_session: AsyncSession,
     t312_restricted_project: Project,
@@ -253,7 +254,7 @@ async def t312_dataset_restricted(
     return dataset
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def t312_recording_public(
     db_session: AsyncSession, t312_dataset_public: Dataset
 ) -> Recording:
@@ -271,7 +272,7 @@ async def t312_recording_public(
     return rec
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def t312_recording_restricted(
     db_session: AsyncSession, t312_dataset_restricted: Dataset
 ) -> Recording:
@@ -289,7 +290,7 @@ async def t312_recording_restricted(
     return rec
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def t312_tag_public(
     db_session: AsyncSession, t312_public_project: Project
 ) -> Tag:
@@ -304,7 +305,7 @@ async def t312_tag_public(
     return tag
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def t312_tag_restricted(
     db_session: AsyncSession, t312_restricted_project: Project
 ) -> Tag:
@@ -319,7 +320,7 @@ async def t312_tag_restricted(
     return tag
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def t312_annotation_public(
     db_session: AsyncSession,
     t312_recording_public: Recording,
@@ -340,7 +341,7 @@ async def t312_annotation_public(
     return ann
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def t312_annotation_restricted(
     db_session: AsyncSession,
     t312_recording_restricted: Recording,
