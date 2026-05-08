@@ -304,7 +304,7 @@ That makes it a **warn-ratchet** in Phase 16: when the job runs it is a
 hard-fail (`continue-on-error` is not set), but a default PR build does
 not exercise it.
 
-### D-0. mutmut 3.5 in-process pytest.main() blocker (FIX ATTEMPTED 2026-05-08)
+### D-0. mutmut 3.5 in-process pytest.main() blocker — **FULLY CLOSED (PR #51, 2026-05-08)**
 
 **Discovered during PR #39 work.** The `mutation-testing` CI job had
 never produced a real mutation score in CI prior to PR #39 — the
@@ -466,26 +466,29 @@ Local verification (unit tests only — DB/Redis unavailable locally):
       (`_MutantsRedirectFinder` at `sys.meta_path[0]`).
 - [x] Stats collection works locally (87 functions, 1365 test associations
       against `tests/unit/core/test_permissions_matrix.py`).
-- [ ] **Test isolation issues in CI** (NEW, Round 5 finding 2026-05-08):
-      with stats collection now real, the wider mutmut subprocess test
-      selection exposes ~30 pre-existing pollution failures that the
-      ordinary `pytest` run never hits (the run is fine in isolation, the
-      bisected order matters):
-      - many `auth_invalid: API key invalid or revoked` failures, and
-      - `step_up_token_user_mismatch`.
-      These are NOT mutmut blockers — they are pre-existing test pollution
-      surfaced by mutmut's wider/different test selection inside the
-      stats subprocess.  Track + fix in a **separate follow-up PR** so
-      D-0 stays scoped to "make mutmut produce a real baseline score in
-      CI."  Likely culprits: a test that monkey-patches an auth helper
-      or step-up token store globally without restoring (similar to PR
-      #42 / `audit_api._project_audit_page` regression), or a session-
-      scoped fixture that mutates `Permission` enum membership / a token
-      family rotation.  Bisection plan: (a) run `tests/unit/` and
-      `tests/security/` in alphabetic vs reverse-alphabetic order under
-      `pytest -p no:randomly --instafail` to identify the polluter, (b)
-      `git bisect` against PR #42-style global-state monkey-patches, (c)
-      add per-test cleanup or `monkeypatch.setattr` discipline.
+- [x] **Test isolation issues RESOLVED** (Round 5 finding 2026-05-08, fixed
+      2026-05-09 in `phase17/d1-test-pollution-fix-v2`):
+      Root cause identified via pytest startup tracing: the `_MutantsRedirectFinder`
+      was installed in `pytest_configure`, which fires AFTER
+      `pytest_load_initial_conftests` has already loaded `tests/conftest.py`.
+      `conftest.py` imports `from echoroo.main import create_app` at module level,
+      which transitively imports `echoroo.middleware.auth_router` from the
+      **production path** before the redirect finder is active.  This caused a
+      class-identity split: `conftest.py`'s `client` fixture patched the *mutated*
+      `AuthRouterMiddleware` class (re-imported after eviction), while `create_app()`
+      inside the same fixture used the *production* class.  The patch therefore
+      never took effect → `auth_invalid` 401s for all JWT Bearer tests.
+      The same split affected `echoroo.middleware.auth` / `get_current_user_optional`
+      → `step_up_token_user_mismatch` (dependency override pointed at wrong function
+      object).  KMS NotFoundException from `provision_moto_kms` affected password
+      reset tests for the same reason (wrong module identity).
+      **Fix**: moved `_install_redirect_finder()` + `ensure_config_loaded()` to
+      `@pytest.hookimpl(tryfirst=True) def pytest_load_initial_conftests(...)` in
+      `_PLUGIN_SOURCE` (scripts/run_mutmut.py).  This hook fires BEFORE
+      `_set_initial_conftests` loads any conftest.py, so all echoroo module imports
+      resolve to the mutated trampoline versions from the very first load.
+      Verification: full `tests/unit/ tests/security/` run from `mutants/` dir
+      with `MUTANT_UNDER_TEST=stats` → **1211 passed, 0 failed** (was 36 failed).
 - [x] **Transitional `continue-on-error: true`** added to the
       `mutation-testing` job (PR #49, 2026-05-08) so that the test
       isolation surface area surfaced above does not block PR merges
@@ -496,11 +499,18 @@ Local verification (unit tests only — DB/Redis unavailable locally):
       deleted from the `mutation-testing` job in `.github/workflows/ci.yml`
       as part of the D-1 isolation cleanup PR (see D-1 release
       conditions).
-- [ ] After test isolation cleanup lands, re-attempt CI `mutation-testing`
-      baseline — confirm mutmut produces a real mutation score (exit 0
-      / non-zero score).
-- [ ] After baseline returns 0/5, the original D-1 / D-2 release
-      conditions below apply.
+- [x] After test isolation cleanup lands, re-attempt CI `mutation-testing`
+      baseline — confirmed mutmut produces real per-mutant verification
+      (CI run 25565962708, PR #51 HEAD `311159bd`, ~60 min wall-clock).
+      The remaining "score below 80%" results are real test gaps, not
+      infrastructure bugs.
+
+**§D-0 status: FULLY CLOSED (2026-05-08, PR #51 foundation merge).**
+The mutmut subprocess wrapper, meta_path redirect finder, per-mutant
+import fallback, and `pytest_load_initial_conftests(tryfirst=True)`
+finder install collectively let `mutmut run` and `mutmut results --all`
+operate end-to-end against this codebase.  The remaining D-1 work
+(per-module ≥80%) is application-test work, not infrastructure.
 
 **Status note (2026-05-08)**: D-1 (per-module ≥80%) and D-2 (every-push
 hard gate) both **block on the test isolation cleanup above**, not on
@@ -536,7 +546,7 @@ These fallbacks remain post-launch backlog; the current launch decision
 (per `project_006_phase17_residuals_2026-05-07.md`) is that the mutation
 gate is **not** a launch blocker.
 
-### D-1. Per-module score ≥80%
+### D-1. Per-module score ≥80% — **OPEN (foundation in place, multi-PR ramp pending)**
 
 - **Task**: T995
 - **File**: `apps/api/pyproject.toml` `[tool.mutmut]` (`paths_to_mutate`
@@ -549,16 +559,70 @@ gate is **not** a launch blocker.
   CI ever exercising mutmut against the candidate.
 - **Expected behavior**: Each of the 11 modules reaches **≥80% mutation
   score**, and the `mutation-testing` job runs on every push.
-- **Release condition (per module)**:
-  - [ ] D-0 resolved (in-process pytest.main() blocker).
-  - [ ] **Test isolation cleanup**: identify and fix the ~30 pollution
-        failures (`auth_invalid` / `step_up_token_user_mismatch`) that
-        only surface under mutmut's wider stats-subprocess test
-        selection (see D-0 Round 5 finding). Likely a global-state
-        monkey-patch missing a restore (PR #42 pattern).
-  - [ ] **Remove `continue-on-error: true`** from the `mutation-testing`
-        job in `.github/workflows/ci.yml` — restore the Phase 16 hard-gate
-        posture that PR #49 transitionally suspended.
+
+**Foundation status (PR #51, branch `phase17/d1-test-pollution-fix-v2`)**:
+
+  - [x] D-0 fully resolved (in-process pytest.main() blocker).
+  - [x] **Test isolation cleanup**: class-identity split in `_PLUGIN_SOURCE`
+        fixed by moving `_MutantsRedirectFinder` installation to
+        `pytest_load_initial_conftests(tryfirst=True)` — all 36 pollution
+        failures resolved, 1211/1211 tests pass from `mutants/` dir.
+  - [x] **`scripts/check_mutation_score.py` updated** (PR #51) to parse the
+        actual mutmut 3.5 per-mutant output format
+        (`module.x_func__mutmut_N: <status>`) and aggregate by top-level
+        module. Reads via `mutmut results --all` so killed mutants are
+        included in the denominator.
+
+**Per-module baseline (CI run 25565962708, PR #51 HEAD `311159bd`)**:
+
+mutmut runs end-to-end and produces real per-mutant verification. The
+baseline below is aggregated from the 1406 non-killed mutant lines in the CI
+log (CI's `mutmut results` step did not yet pass `--all`, so killed counts
+are missing; once the next run uses `--all` the table will include kills).
+Numbers below show "scorable mutants" (survived + suspicious) and "excluded"
+counts (timeout / no tests / not checked) per module:
+
+| Module | Scorable (S+Susp) | Excluded |
+|---|---|---|
+| `echoroo.core.audit` | 2 | timeout=1, no tests=1 |
+| `echoroo.core.kms` | 63 | timeout=2 |
+| `echoroo.core.permissions` | 40 | timeout=154, no tests=15 |
+| `echoroo.core.response_filter` | 4 | - |
+| `echoroo.middleware.auth` | 0 | timeout=5, no tests=18 |
+| `echoroo.middleware.auth_router` | 10 | timeout=17, no tests=14 |
+| `echoroo.services.api_key_verification` | 20 | - |
+| `echoroo.services.superuser_service` | 119 | no tests=520 |
+| `echoroo.services.webauthn_service` | 162 | no tests=40 |
+| `echoroo.workers.dormancy_check` | 101 | no tests=98 |
+| `echoroo.core.actions` | (unknown — no surviving mutants in this run) | - |
+
+**Open work — D-1 PR series (post-launch backlog)**:
+
+  - [ ] **Re-run mutation-testing with the score table parsed**: Confirm
+        `check_mutation_score.py --warn-only` prints the full per-module
+        score table (with real killed counts after the `--all` flag lands)
+        on the next CI run.
+  - [ ] **Per-module test additions**: For each module below 80%, either
+        add tests that kill the surviving mutants or document each
+        survivor as equivalent. Likely PR ordering by module size:
+        1. `echoroo.core.audit` (smallest, 2 scorable)
+        2. `echoroo.core.response_filter` (4 scorable)
+        3. `echoroo.middleware.auth` (0 scorable but 23 excluded — the
+           "no tests" entries indicate fixture coverage gaps that may
+           need to be addressed before mutmut even runs the mutants)
+        4. `echoroo.middleware.auth_router` (10 scorable)
+        5. `echoroo.services.api_key_verification` (20 scorable)
+        6. `echoroo.core.permissions` (40 scorable, 154 timeouts to
+           investigate first — timeouts may indicate infinite-loop
+           mutants that need a `# pragma: no mutate` or similar)
+        7. `echoroo.core.kms` (63 scorable)
+        8. `echoroo.services.superuser_service` (119 scorable)
+        9. `echoroo.workers.dormancy_check` (101 scorable, 98 "no tests")
+        10. `echoroo.services.webauthn_service` (162 scorable, largest)
+  - [ ] **Drop `continue-on-error: true`** from the `mutation-testing`
+        job in `.github/workflows/ci.yml` once
+        `scripts/check_mutation_score.py --threshold 80` (without
+        `--warn-only`) exits 0 across all 11 modules.
   - [ ] Each surviving mutant analysed; new test added or mutant proven
         equivalent.
   - [ ] `scripts/check_mutation_score.py --threshold 80` exits 0 against

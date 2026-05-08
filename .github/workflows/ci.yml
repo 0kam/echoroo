@@ -477,13 +477,15 @@ jobs:
       github.ref == 'refs/heads/main' ||
       contains(github.event.pull_request.labels.*.name, 'run-mutation-testing')
     runs-on: ubuntu-latest
-    # Phase 17 §D-0 transitional state (2026-05-08): the subprocess monkey-patch
-    # in scripts/run_mutmut.py resolves the BadTestExecutionCommandsException
-    # blocker (mutmut now actually runs in CI), but exposes pre-existing test
-    # pollution (~30 tests with auth_invalid / step_up_token_user_mismatch
-    # failures) that isolation cleanup must address before mutation-testing
-    # can be hard-gated. Restore `continue-on-error: false` after D-1 isolation
-    # cleanup PR lands.
+    # Phase 17 §D-0/D-1 transitional state (2026-05-08, post PR #51):
+    # - D-0 fully resolved: subprocess monkey-patch + meta_path finder + per-mutant
+    #   import fallback. mutmut now runs end-to-end in CI and produces real per-mutant
+    #   results (survived / killed / not checked).
+    # - D-1 NOT yet resolved: real per-module scores are below 80% (surviving mutants
+    #   indicate test gaps that need to be closed by adding tests or proving mutant
+    #   equivalence). This is a multi-PR effort tracked in PHASE17_BACKLOG.md §D-1.
+    # Restore `continue-on-error: false` after D-1 PR series achieves >=80% per
+    # module and `check_mutation_score.py` parses the score table successfully.
     continue-on-error: true
     env:
       # mutmut reads configuration from pyproject.toml [tool.mutmut] only
@@ -650,11 +652,14 @@ jobs:
         working-directory: apps/api
         run: uv run python scripts/run_mutmut.py run || true
 
-      # Collect results for the score check and for CI artifact upload.
+      # Collect results for CI artifact upload.  ``--all`` includes killed
+      # mutants (the default ``mutmut results`` omits them), which makes the
+      # artifact the authoritative per-mutant log and matches what
+      # ``check_mutation_score.py`` reads internally.
       - name: Collect mutmut results
         if: always()
         working-directory: apps/api
-        run: uv run mutmut results 2>&1 | tee /tmp/mutmut_results.txt || true
+        run: uv run mutmut results --all 2>&1 | tee /tmp/mutmut_results.txt || true
 
       # Enforce >= 80% threshold per module.
       # scripts/check_mutation_score.py parses `mutmut results` output and
