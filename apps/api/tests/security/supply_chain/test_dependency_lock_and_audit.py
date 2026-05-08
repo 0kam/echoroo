@@ -29,36 +29,99 @@ import pytest
 # ---------------------------------------------------------------------------
 # Repository root helpers
 #
-# The test runs in two different environments:
+# The test runs in three different environments:
 #   - Host (dev): .../echoroo/apps/api/tests/security/supply_chain/ → parents[5]
-#   - Docker (/app): /app/tests/security/supply_chain/ → parents[3]
-# We probe both and use whichever contains a recognisable layout.
+#     is the repo root (contains ``apps/`` and ``.github/``).
+#   - Docker (/app): /app/tests/security/supply_chain/ → parents[3] is /app
+#     which doubles as the api dir (no repo root above it).
+#   - mutmut (apps/api/mutants/tests/security/supply_chain/) → mutmut copies
+#     the source + tests trees AND ``pyproject.toml`` (which it rewrites
+#     during mutation runs) into ``apps/api/mutants/`` but does NOT copy
+#     ``uv.lock``.  The walk must therefore skip any ``mutants/`` directory
+#     and require BOTH ``uv.lock`` and ``pyproject.toml`` so that the api
+#     dir resolves to the real ``apps/api/`` one level above.
+#
+# We probe all depths from 0..len(parents) and identify the api dir by the
+# joint presence of ``uv.lock`` AND ``pyproject.toml`` — this is the most
+# reliable marker because mutmut's working copy contains only the latter.
+# Any directory whose basename is ``mutants`` is skipped as defence in
+# depth. The repo root, web dir and github dir are then derived from the
+# api dir's parent when available.
 # ---------------------------------------------------------------------------
 
 
 def _find_repo_root() -> tuple[Path, Path, Path, Path]:
-    """Return (repo_root, api_dir, web_dir, github_dir) for the current environment."""
+    """Return (repo_root, api_dir, web_dir, github_dir) for the current environment.
+
+    Resolution strategy: walk upward from this test file looking for a
+    directory that contains BOTH ``uv.lock`` AND ``pyproject.toml`` — that
+    is the api dir.  Requiring both markers is critical because mutmut
+    copies ``pyproject.toml`` (it rewrites it during mutation runs) into
+    its working directory ``apps/api/mutants/`` but does NOT copy
+    ``uv.lock``.  A walk that accepts either marker would stop at
+    ``mutants/`` and report a missing lockfile.
+
+    As a defence-in-depth, any directory whose basename is ``mutants`` is
+    skipped during the walk (covers nested mutmut layouts).
+
+    From the api dir, the repo root is the first ancestor containing
+    ``apps/`` or ``.github/``; fall back to the api dir itself when no
+    such ancestor exists (Docker /app, mutmut copies).
+    """
     this_file = Path(__file__).resolve()
 
-    # Try common parent depths and look for a marker file
-    for depth in (5, 4, 3, 2):
-        try:
-            candidate = this_file.parents[depth]
-        except IndexError:
+    api_dir: Path | None = None
+    for candidate in this_file.parents:
+        # Skip mutmut's working directory — it has pyproject.toml but no uv.lock.
+        if candidate.name == "mutants":
             continue
-        # Repo root should contain apps/ or .github/
-        if (candidate / "apps").is_dir() or (candidate / ".github").is_dir():
-            api_dir = candidate / "apps" / "api"
-            if not api_dir.is_dir():
-                # In Docker the api dir is /app itself
-                api_dir = candidate
-            web_dir = candidate / "apps" / "web"
-            github_dir = candidate / ".github" / "workflows"
-            return candidate, api_dir, web_dir, github_dir
+        if (candidate / "uv.lock").is_file() and (candidate / "pyproject.toml").is_file():
+            api_dir = candidate
+            break
 
-    # Final fallback: /app is the api dir, no repo root
-    api_dir = Path("/app")
-    return api_dir, api_dir, Path("/nonexistent/web"), Path("/nonexistent/.github/workflows")
+    # Fallback: accept a directory with only one marker (e.g. Docker /app
+    # which may not ship uv.lock, or a partial mutmut copy).  Still skip
+    # ``mutants/`` so the lockfile assertion can fail loudly with the
+    # correct path instead of silently pointing inside ``mutants/``.
+    if api_dir is None:
+        for candidate in this_file.parents:
+            if candidate.name == "mutants":
+                continue
+            if (candidate / "uv.lock").is_file() or (candidate / "pyproject.toml").is_file():
+                api_dir = candidate
+                break
+
+    if api_dir is None:
+        # Final fallback: /app is the api dir, no repo root
+        api_dir = Path("/app")
+        return (
+            api_dir,
+            api_dir,
+            Path("/nonexistent/web"),
+            Path("/nonexistent/.github/workflows"),
+        )
+
+    # Walk further up from api_dir looking for a repo root marker.
+    repo_root: Path | None = None
+    for candidate in [api_dir, *api_dir.parents]:
+        if candidate.name == "mutants":
+            continue
+        if (candidate / "apps").is_dir() or (candidate / ".github").is_dir():
+            repo_root = candidate
+            break
+
+    if repo_root is None:
+        # Docker /app or mutmut mutants/ — no repo root above the api dir.
+        return (
+            api_dir,
+            api_dir,
+            Path("/nonexistent/web"),
+            Path("/nonexistent/.github/workflows"),
+        )
+
+    web_dir = repo_root / "apps" / "web"
+    github_dir = repo_root / ".github" / "workflows"
+    return repo_root, api_dir, web_dir, github_dir
 
 
 _REPO_ROOT, _API_DIR, _WEB_DIR, _GITHUB_DIR = _find_repo_root()

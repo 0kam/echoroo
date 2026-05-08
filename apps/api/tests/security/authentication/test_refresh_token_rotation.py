@@ -352,6 +352,9 @@ async def test_atomic_consume_and_issue_returns_false_on_already_consumed(
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.filterwarnings(
+    "ignore::pytest.PytestWarning"
+)  # sync test in a module with pytestmark=asyncio — suppress strict-mode noise
 def test_sql_token_store_production_methods_present() -> None:
     """All TokenStore protocol methods are concrete (no NotImplementedError)."""
     import inspect

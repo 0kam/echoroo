@@ -9,6 +9,7 @@ from typing import Any
 from unittest.mock import patch
 
 import pytest
+import pytest_asyncio
 import sqlalchemy as sa
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.dialects.postgresql import UUID as PgUUID
@@ -217,6 +218,17 @@ async def setup_test_database(engine: AsyncEngine) -> None:
             )
             two_factor_reset_dispatching_col_exists = bool(col_result.scalar())
 
+        # Phase 2.11 P0-d (Alembic 0002): ``token_families`` has no ORM model
+        # and is not picked up by ``Base.metadata.create_all``. Probe it so
+        # existing test DBs that pre-date this migration get the table created.
+        token_families_exists_result = await conn.execute(
+            sa.text(
+                "SELECT EXISTS (SELECT 1 FROM information_schema.tables"
+                " WHERE table_name = 'token_families')"
+            )
+        )
+        token_families_exists = bool(token_families_exists_result.scalar())
+
         # Phase 17 backlog A-2 (FR-091b): probe the dual-write columns
         # added by alembic 0016. ``Base.metadata.create_all`` runs with
         # ``checkfirst=True`` so it never alters an existing table —
@@ -261,6 +273,7 @@ async def setup_test_database(engine: AsyncEngine) -> None:
         and two_factor_reset_dispatching_col_exists
         and invitation_v2_col_exists
         and audit_v2_col_exists
+        and token_families_exists
     ):
         # Schema is fully up to date — nothing to do.
         return
@@ -509,6 +522,71 @@ async def setup_test_database(engine: AsyncEngine) -> None:
                     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
                 )
                 """
+            )
+        )
+
+        # Phase 2.11 P0-d (Alembic 0002): ``token_families`` and
+        # ``refresh_tokens`` back SqlTokenStore. These tables have no ORM
+        # model so ``Base.metadata.create_all`` does not create them. Tests
+        # in tests/security/csrf/test_samesite_strict.py connect directly to
+        # TEST_DATABASE_URL and insert into these tables, so they must be
+        # present in the test DB schema.
+        await conn.execute(
+            sa.text(
+                """
+                CREATE TABLE IF NOT EXISTS token_families (
+                    family_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                    revoked_at TIMESTAMPTZ NULL
+                )
+                """
+            )
+        )
+        await conn.execute(
+            sa.text(
+                "CREATE INDEX IF NOT EXISTS ix_token_families_user_id "
+                "ON token_families (user_id)"
+            )
+        )
+        await conn.execute(
+            sa.text(
+                "CREATE INDEX IF NOT EXISTS ix_token_families_revoked_at "
+                "ON token_families (revoked_at)"
+            )
+        )
+        await conn.execute(
+            sa.text(
+                """
+                CREATE TABLE IF NOT EXISTS refresh_tokens (
+                    jti UUID PRIMARY KEY,
+                    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    family_id UUID NOT NULL REFERENCES token_families(family_id) ON DELETE CASCADE,
+                    issued_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                    consumed_at TIMESTAMPTZ NULL,
+                    revoked_at TIMESTAMPTZ NULL,
+                    expires_at TIMESTAMPTZ NOT NULL,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+                )
+                """
+            )
+        )
+        await conn.execute(
+            sa.text(
+                "CREATE INDEX IF NOT EXISTS ix_refresh_tokens_user_family "
+                "ON refresh_tokens (user_id, family_id)"
+            )
+        )
+        await conn.execute(
+            sa.text(
+                "CREATE INDEX IF NOT EXISTS ix_refresh_tokens_expires_at "
+                "ON refresh_tokens (expires_at)"
+            )
+        )
+        await conn.execute(
+            sa.text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS ix_refresh_tokens_family_jti "
+                "ON refresh_tokens (family_id, jti)"
             )
         )
 
@@ -798,6 +876,10 @@ async def cleanup_test_data(session: AsyncSession) -> None:
     await session.execute(sa.text(_safe_delete("password_reset_tokens")))
     await session.execute(sa.text(_safe_delete("user_login_notifications_seen")))
     await session.execute(sa.text(_safe_delete("login_attempts")))
+    # Phase 2.11 P0-d (Alembic 0002): refresh token family tables. Must be
+    # cleaned before users because of the FK(user_id → users.id ON DELETE CASCADE).
+    await session.execute(sa.text(_safe_delete("refresh_tokens")))
+    await session.execute(sa.text(_safe_delete("token_families")))
     # Clear licenses and recorders
     await session.execute(sa.text(_safe_delete("licenses")))
     await session.execute(sa.text(_safe_delete("recorders")))
@@ -805,7 +887,59 @@ async def cleanup_test_data(session: AsyncSession) -> None:
     await session.commit()
 
 
-@pytest.fixture
+def ensure_test_database_schema_sync() -> None:
+    """Synchronously ensure the test DB schema is current.
+
+    Runs ``setup_test_database`` exactly once. This guarantees that raw-SQL
+    tables that are not part of ``Base.metadata`` (e.g. ``token_families``,
+    ``refresh_tokens``, ``superuser_approval_requests``, ``project_audit_log``)
+    exist even for tests that do NOT use the ``db_session`` fixture (such as
+    ``test_samesite_strict.py`` which creates its own engine directly).
+
+    Implemented synchronously (creates and tears down its own event loop)
+    so the caller can wrap it in a session-scoped autouse pytest fixture
+    without tripping pytest-asyncio's ``ScopeMismatch`` error. A dedicated
+    event loop is created and destroyed without touching the main-thread
+    event loop policy, to avoid breaking tests that call
+    ``asyncio.get_event_loop()`` directly (e.g.
+    ``test_url_allowlist_coverage.py::test_build_pinned_async_client``).
+
+    Phase 17 §D-0 follow-up (2026-05-08): previously this ran as a session
+    autouse fixture in the *root* ``tests/conftest.py``, which forced every
+    test session — including ``tests/runbook/`` smoke tests that have no
+    Postgres available — to attempt a connection at session start and crash
+    with ``OSError: Multiple exceptions: [Errno 111] Connect call failed``.
+    The autouse hook was therefore moved out of the root conftest and into
+    per-directory conftests for the suites that genuinely need it
+    (``tests/security/``, ``tests/contract/``, ``tests/integration/``,
+    ``tests/unit/``, ``tests/performance/``, ``tests/workers/``). Runbook
+    smoke tests (which only exercise CLI ``--help`` / argparse stability)
+    no longer touch the DB at session setup.
+    """
+    import asyncio
+
+    async def _run() -> None:
+        engine = create_async_engine(
+            TEST_DATABASE_URL,
+            echo=False,
+            poolclass=NullPool,
+        )
+        try:
+            await setup_test_database(engine)
+        finally:
+            await engine.dispose()
+
+    # Create a brand-new event loop, run setup, then close it — without
+    # calling asyncio.set_event_loop so we don't disturb the main-thread
+    # event loop that pytest-asyncio or tests may rely on.
+    loop = asyncio.new_event_loop()
+    try:
+        loop.run_until_complete(_run())
+    finally:
+        loop.close()
+
+
+@pytest_asyncio.fixture
 async def db_session() -> AsyncGenerator[AsyncSession, None]:
     """Create test database session.
 
@@ -837,7 +971,7 @@ async def db_session() -> AsyncGenerator[AsyncSession, None]:
     await engine.dispose()
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient, None]:  # noqa: ARG002
     """Create test HTTP client with database session override.
 

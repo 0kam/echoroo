@@ -583,6 +583,9 @@ async def test_emit_followup_skips_stages_not_yet_due() -> None:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.filterwarnings(
+    "ignore::pytest.PytestWarning"
+)  # sync test in a module with pytestmark=asyncio — suppress strict-mode noise
 def test_outbox_event_type_constant() -> None:
     """OUTBOX_EVENT_DORMANCY must match the spec discriminator."""
     assert OUTBOX_EVENT_DORMANCY == "project.dormancy_notification", (

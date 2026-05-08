@@ -30,9 +30,22 @@ from pathlib import Path
 import pytest
 
 from tests._kms_moto import provision_moto_kms
+from tests.conftest import ensure_test_database_schema_sync
 
 _SECURITY_ROOT = Path(__file__).resolve().parent
 _KEY_ROTATION_ROOT = _SECURITY_ROOT / "key_rotation"
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _ensure_test_database_schema_for_security() -> None:
+    """Session-scoped autouse fixture that ensures the test DB schema is current.
+
+    Phase 17 §D-0 follow-up (2026-05-08): moved out of root ``tests/conftest.py``
+    so ``tests/runbook/`` smoke tests (which have no Postgres available) no
+    longer crash at session start with ``OSError: Connect call failed``.
+    Security tests own their own setup hook here.
+    """
+    ensure_test_database_schema_sync()
 
 
 # ---------------------------------------------------------------------------
