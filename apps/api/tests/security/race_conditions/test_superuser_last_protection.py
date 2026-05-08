@@ -78,6 +78,8 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import os
+import threading
+import time
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
@@ -86,10 +88,24 @@ import pytest
 import sqlalchemy as sa
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import (
-    async_sessionmaker,
     create_async_engine,
 )
 from sqlalchemy.pool import NullPool
+
+# Mirror of the migration's deterministic advisory-lock key
+# (alembic 0013).  Folded into 63-bit positive range so that PostgreSQL's
+# ``objid`` column (bigint, signed) round-trips without a sign flip.
+_LOCK_KEY: int = (
+    int.from_bytes(
+        hashlib.sha256(b"superuser_last_protection").digest()[:8], "big"
+    )
+    & 0x7FFFFFFFFFFFFFFF
+)
+# pg_locks.objid is a 32-bit value (lower 32 bits of the 64-bit advisory
+# key for ``pg_advisory_xact_lock(int8)``).  Compute the matching low half
+# so the waiter detection query can target the correct row.
+_LOCK_OBJID_LOW32: int = _LOCK_KEY & 0xFFFFFFFF
+_LOCK_OBJID_HIGH32: int = (_LOCK_KEY >> 32) & 0xFFFFFFFF
 
 
 # Use the same TEST_DATABASE_URL as the main conftest, but sourced directly
@@ -112,16 +128,6 @@ def _default_test_db_url() -> str:
 TEST_DATABASE_URL: str = _default_test_db_url()
 
 # ---------------------------------------------------------------------------
-# Shared advisory-lock key (must match migration 0013 / superuser_service)
-# ---------------------------------------------------------------------------
-_LOCK_KEY: int = (
-    int.from_bytes(
-        hashlib.sha256(b"superuser_last_protection").digest()[:8], "big"
-    )
-    & 0x7FFFFFFFFFFFFFFF
-)
-
-# ---------------------------------------------------------------------------
 # Skip guard: skip the whole module if trigger or echoroo_app role is absent
 # ---------------------------------------------------------------------------
 
@@ -130,6 +136,24 @@ pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 
 def _make_engine() -> Any:
     return create_async_engine(TEST_DATABASE_URL, poolclass=NullPool, echo=False)
+
+
+def _make_sync_engine() -> Any:
+    """Return a synchronous SQLAlchemy Engine backed by psycopg2.
+
+    Used by the OS-thread advisory-lock test (test_concurrent_revokes_advisory_lock_serialises)
+    so that each thread holds a genuine blocking DBAPI connection and the PostgreSQL
+    advisory lock is actually contended across two OS threads.
+
+    The async TEST_DATABASE_URL uses the ``postgresql+asyncpg://`` scheme; we swap
+    the driver to ``postgresql+psycopg2://`` which is synchronous and thread-safe.
+    """
+    sync_url = TEST_DATABASE_URL.replace(
+        "postgresql+asyncpg://", "postgresql+psycopg2://"
+    ).replace(
+        "postgresql://", "postgresql+psycopg2://"
+    )
+    return sa.create_engine(sync_url, poolclass=NullPool, echo=False)
 
 
 async def _trigger_exists(engine: Any) -> bool:
@@ -664,22 +688,6 @@ async def test_update_other_column_not_blocked() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=False,
-    reason=(
-        "PR-D (Phase 17 §C, 2026-05-07): asyncio.gather lands both tasks in "
-        "the same event-loop tick under runner contention, so the trigger's "
-        "advisory lock never sees true concurrency. Production correctness "
-        "is verified separately (alembic 0013 wraps the active-count probe "
-        "in pg_advisory_xact_lock, recomputes COUNT(*) under the lock, and "
-        "raises before COUNT(*)-1 < 1) — see PHASE17_BACKLOG.md §B-PR-D and "
-        "the surrounding scenarios in this file (test_two_concurrent_admin_*) "
-        "which cover the deterministic single-TX paths. Promoting back to a "
-        "strict pass requires moving the two TX bodies onto separate OS "
-        "threads (asyncio.to_thread + barrier) so the second connection "
-        "actually waits on the lock instead of running serially."
-    ),
-)
 async def test_concurrent_revokes_advisory_lock_serialises() -> None:
     """Concurrent 2-row → 0 revoke race as echoroo_app: advisory lock serialises.
 
@@ -690,18 +698,40 @@ async def test_concurrent_revokes_advisory_lock_serialises() -> None:
 
     Final active count must be 1.
 
-    Known flakiness (pre-existing, not a regression introduced in Phase 16):
-    Under high host contention the two asyncio tasks may execute sequentially
-    rather than concurrently (both gather tasks land in the same event-loop
-    tick while the DB is busy with prior test cleanup).  When that happens
-    both UPDATEs succeed without a trigger conflict and the post-condition
-    count ends up at 0, causing this assertion to fail.  The root cause is
-    the absence of real parallelism across two OS threads; the advisory-lock
-    mechanism itself is correct.  This will be addressed in Batch 6f-4 /
-    Phase 16 polish (isolation: dedicated thread pool per concurrent TX or
-    asyncio.to_thread wrapper).  Until then this test is an accepted 1F in
-    CI on resource-constrained runners.
+    Implementation: leader/follower design with explicit timing on two real
+    OS threads (each holding an independent synchronous psycopg2 connection).
+
+      1. Leader (thread A) BEGIN + SET ROLE + UPDATE.  This acquires the
+         advisory lock inside the trigger and runs the trigger body.  Leader
+         then does NOT commit immediately — it sets ``leader_holds`` so the
+         follower may proceed and waits for ``follower_started`` before
+         entering a fixed hold window.
+      2. Follower (thread B) waits on ``leader_holds`` then BEGIN + SET ROLE
+         + signals ``follower_started`` + UPDATE.  This UPDATE MUST block on
+         ``pg_advisory_xact_lock`` because the leader still holds the lock.
+      3. After ``follower_started`` is observed, the leader sleeps for the
+         full ``_LEADER_HOLD_SECS`` window (≥ probe polling window + slack)
+         to give the follower time to actually enter ``pg_advisory_xact_lock``
+         and the probe time to observe the waiter, even if the OS preempts
+         the follower thread between ``set()`` and ``conn.execute(...)``.
+      4. While the leader is mid-hold, a third synchronous probe connection
+         polls ``pg_locks`` to verify a session is genuinely waiting on the
+         advisory lock with ``granted = false`` and ``objid = low32(_LOCK_KEY)``.
+         If no waiter is observed within the probe polling window, the test
+         fails — this is the assertion that proves the lock is genuinely
+         contended.  If the lock were removed from the trigger, no waiter
+         would ever appear and the test fails.
+      5. Leader commits → follower unblocks → follower's trigger sees
+         ``COUNT(*) - 1 = 0`` and raises ``P0001 Cannot revoke …``.
+      6. Final state: 1 active superuser, follower raised the trigger error.
+
+    Phase 17 §C PR-D Codex round 2 (2026-05-08): replaced the symmetric
+    Barrier design (which could not distinguish "advisory lock contention"
+    from "OS scheduler serialisation") with this leader/follower + pg_locks
+    waiter assertion so the test fails when advisory-lock contention is not
+    observed (including when the advisory lock is removed from the trigger).
     """
+    # Use the async engine only for setup/teardown and pre-flight checks.
     engine = _make_engine()
     try:
         if not await _trigger_exists(engine):
@@ -722,72 +752,224 @@ async def test_concurrent_revokes_advisory_lock_serialises() -> None:
         sid_a: UUID
         sid_b: UUID
 
-        # Seed two active superusers.
+        # Seed two active superusers (async setup transaction, postgres role).
+        # Suffixes are "s7_a" / "s7_b" (no leading "t954_") so that _insert_user
+        # produces emails "t954_s7_a@example.com" / "t954_s7_b@example.com" which
+        # (a) are cleaned up by _cleanup_t954_rows (pattern: t954_%) and (b) are
+        # matched by the post-condition query (pattern: t954_s7%@example.com).
         async with engine.begin() as conn:
             await _cleanup_t954_rows(conn)
             await conn.execute(
                 sa.text("UPDATE superusers SET revoked_at = now() WHERE revoked_at IS NULL")
             )
-            uid_a = await _insert_user(conn, suffix="t954_s7_a")
-            uid_b = await _insert_user(conn, suffix="t954_s7_b")
+            uid_a = await _insert_user(conn, suffix="s7_a")
+            uid_b = await _insert_user(conn, suffix="s7_b")
             sid_a = await _insert_superuser(conn, user_id=uid_a)
             sid_b = await _insert_superuser(conn, user_id=uid_b)
 
-        engine_a = _make_engine()
-        engine_b = _make_engine()
-        factory_a = async_sessionmaker(engine_a, expire_on_commit=False)
-        factory_b = async_sessionmaker(engine_b, expire_on_commit=False)
+        # Coordination primitives for leader/follower timing.
+        leader_holds = threading.Event()  # leader has the advisory lock
+        follower_started = threading.Event()  # follower entered UPDATE (about to block)
+        thread_results: list[Exception | None] = [None, None]
+        # Probe polling window for pg_locks waiter observation.
+        _PROBE_POLL_SECS = 2.0
+        # Hold window: leader keeps the lock (transaction open) for this many
+        # seconds AFTER follower signals ``follower_started``.  MUST exceed the
+        # probe polling window (2.0s) plus slack so that even if the OS
+        # preempts the follower thread between ``follower_started.set()`` and
+        # ``conn.execute(...)`` actually entering ``pg_advisory_xact_lock``,
+        # the probe still has time to observe the waiter row in pg_locks.
+        # 2.5s = 2.0s probe window + 0.5s slack for slow CI runners.
+        _LEADER_HOLD_SECS = 2.5
+        # Max time the leader will wait for ``follower_started`` to be set.
+        # Independent of the hold window — purely a join-timeout for the case
+        # where the follower thread fails to start at all.
+        _FOLLOWER_WAIT_SECS = 10.0
 
-        results: list[Exception | None] = []
+        def _set_safety_timeouts(conn: Any) -> None:
+            """Apply per-transaction lock_timeout and statement_timeout.
 
-        async def _revoke_as_app(factory: Any, sid: UUID) -> Exception | None:
-            """Attempt to revoke the given row as echoroo_app."""
+            5s lock_timeout / 30s statement_timeout protects against indefinite
+            hangs if the test logic is wrong or the DB is misconfigured.  The
+            connection self-aborts rather than hanging the whole test forever.
+            """
+            conn.execute(sa.text("SET LOCAL lock_timeout = '5000ms'"))
+            conn.execute(sa.text("SET LOCAL statement_timeout = '30000ms'"))
+
+        def _leader(sid: UUID) -> None:
+            """Acquire advisory lock via UPDATE, signal, hold, then commit."""
+            sync_engine = _make_sync_engine()
             try:
-                async with factory() as s:
-                    await s.execute(sa.text("SET ROLE echoroo_app"))
-                    await s.execute(
+                with sync_engine.begin() as conn:
+                    _set_safety_timeouts(conn)
+                    conn.execute(sa.text("SET ROLE echoroo_app"))
+                    # This UPDATE acquires pg_advisory_xact_lock(_LOCK_KEY)
+                    # inside the trigger.  Lock is held until COMMIT (xact lock).
+                    conn.execute(
                         sa.text(
                             "UPDATE superusers SET revoked_at = now() WHERE id = :sid"
                         ),
                         {"sid": str(sid)},
                     )
-                    await s.commit()
-                return None
+                    leader_holds.set()
+                    # Wait until follower has signalled it is about to issue
+                    # its UPDATE.  The wait timeout is a generous join-style
+                    # guard (not the hold duration).
+                    follower_started.wait(timeout=_FOLLOWER_WAIT_SECS)
+                    # Hold the advisory lock for the FULL probe-polling window
+                    # plus slack AFTER follower_started.  This is required
+                    # because follower_started.set() runs BEFORE conn.execute
+                    # actually enters pg_advisory_xact_lock — if the OS
+                    # preempts the follower thread between those two calls,
+                    # the leader committing too early would race the probe and
+                    # cause spurious failures on slow CI runners.
+                    time.sleep(_LEADER_HOLD_SECS)
+                # Commit releases the advisory lock; follower unblocks.
             except Exception as exc:  # noqa: BLE001
-                return exc
+                thread_results[0] = exc
+            finally:
+                sync_engine.dispose()
 
+        def _follower(sid: UUID) -> None:
+            """Wait for leader, then attempt the conflicting UPDATE."""
+            sync_engine = _make_sync_engine()
+            try:
+                # Don't even start the transaction until leader holds the lock.
+                if not leader_holds.wait(timeout=10):
+                    raise RuntimeError(
+                        "Leader did not signal lock acquisition within 10s"
+                    )
+                with sync_engine.begin() as conn:
+                    _set_safety_timeouts(conn)
+                    conn.execute(sa.text("SET ROLE echoroo_app"))
+                    follower_started.set()
+                    # This UPDATE blocks on pg_advisory_xact_lock until leader
+                    # commits.  After unblock, trigger sees ``COUNT(*) - 1 = 0``
+                    # and raises P0001 "Cannot revoke last superuser …".
+                    conn.execute(
+                        sa.text(
+                            "UPDATE superusers SET revoked_at = now() WHERE id = :sid"
+                        ),
+                        {"sid": str(sid)},
+                    )
+            except Exception as exc:  # noqa: BLE001
+                thread_results[1] = exc
+                # Even on failure, signal so leader does not wait the full timeout.
+                follower_started.set()
+            finally:
+                sync_engine.dispose()
+
+        # Non-daemon threads: if join times out we still surface a failure rather
+        # than letting the interpreter exit while connections leak.  Per-conn
+        # statement_timeout (30s) is the secondary safety net.
+        t_leader = threading.Thread(
+            target=_leader, args=(sid_a,), daemon=False, name="t954-pr-d-leader"
+        )
+        t_follower = threading.Thread(
+            target=_follower, args=(sid_b,), daemon=False, name="t954-pr-d-follower"
+        )
+        t_leader.start()
+        t_follower.start()
+
+        # While leader is holding, poll pg_locks from a third sync connection to
+        # confirm the follower is waiting on the advisory lock.  If we never see
+        # a waiter, the advisory lock has been removed/disabled and the test fails.
+        # Use a fresh sync engine in autocommit so the probe does not interfere
+        # with locking semantics.
+        probe_engine = _make_sync_engine()
+        waiter_observed = False
         try:
-            r1, r2 = await asyncio.gather(
-                _revoke_as_app(factory_a, sid_a),
-                _revoke_as_app(factory_b, sid_b),
+            # Wait until leader signals it holds the lock.
+            assert leader_holds.wait(timeout=10), (
+                "Leader did not acquire advisory lock within 10s"
             )
-            results = [r1, r2]
+            # Wait until follower has at least started its transaction so the
+            # pg_locks waiter row will be present.
+            follower_started.wait(timeout=5)
+            deadline = time.monotonic() + _PROBE_POLL_SECS
+            with probe_engine.connect() as probe:
+                # Need autocommit-ish behaviour for the probe — we just SELECT.
+                while time.monotonic() < deadline:
+                    # objsubid = 1 marks the int8 (single-key) variant of the
+                    # advisory lock — distinguishes from int4+int4 form.
+                    row = probe.execute(
+                        sa.text(
+                            """
+                            SELECT 1
+                            FROM pg_locks
+                            WHERE locktype = 'advisory'
+                              AND granted = false
+                              AND objid = :objid_low
+                              AND classid = :objid_high
+                              AND objsubid = 1
+                            LIMIT 1
+                            """
+                        ),
+                        {
+                            "objid_low": _LOCK_OBJID_LOW32,
+                            "objid_high": _LOCK_OBJID_HIGH32,
+                        },
+                    ).scalar()
+                    if row is not None:
+                        waiter_observed = True
+                        break
+                    time.sleep(0.05)
         finally:
-            await engine_a.dispose()
-            await engine_b.dispose()
+            probe_engine.dispose()
 
-        successes = [r for r in results if r is None]
-        failures = [r for r in results if r is not None]
+        await asyncio.to_thread(t_leader.join, 30)
+        await asyncio.to_thread(t_follower.join, 30)
 
-        # Exactly one TX must succeed, the other must be blocked by the trigger.
-        assert len(successes) == 1, (
-            f"Expected exactly 1 successful revoke, got {len(successes)}. "
-            f"Results: {results!r}"
-        )
-        assert len(failures) == 1, (
-            f"Expected exactly 1 trigger-blocked failure, got {len(failures)}. "
-            f"Results: {results!r}"
-        )
-        # The failure must be a trigger RaiseError.
-        failed_exc = failures[0]
-        assert isinstance(failed_exc, DBAPIError), (
-            f"Expected DBAPIError (asyncpg.RaiseError), got {type(failed_exc)}: {failed_exc}"
-        )
-        assert "RaiseError" in type(failed_exc.orig).__name__ or "Cannot revoke" in str(
-            failed_exc
-        ), f"Unexpected error: {failed_exc}"
+        if t_leader.is_alive() or t_follower.is_alive():
+            pytest.fail(
+                "Advisory-lock test threads did not complete within 30 s "
+                "(connections rely on lock_timeout/statement_timeout for safety)"
+            )
 
-        # Post-condition: exactly 1 active superuser remains (of the t954 race pair).
+        # === Assertion 1: advisory lock was genuinely contended. ===
+        # If this fails, the trigger's pg_advisory_xact_lock has been removed
+        # or the follower somehow committed without ever waiting — both would
+        # mean the serialisation guarantee no longer holds.
+        assert waiter_observed, (
+            "pg_locks never showed a waiter on the superuser advisory lock "
+            f"(objid={_LOCK_OBJID_LOW32}, classid={_LOCK_OBJID_HIGH32}). "
+            "This means the follower transaction was not blocked by the "
+            "advisory lock — the trigger's pg_advisory_xact_lock is missing "
+            "or ineffective and the SC-022 race protection is broken."
+        )
+
+        leader_exc = thread_results[0]
+        follower_exc = thread_results[1]
+
+        # === Assertion 2: leader succeeded, follower raised. ===
+        assert leader_exc is None, (
+            f"Leader (first revoke) should have succeeded, but raised: {leader_exc!r}"
+        )
+        assert follower_exc is not None, (
+            "Follower (second revoke) should have been blocked by the trigger "
+            "after the advisory lock was released, but it succeeded — final "
+            "active count would be 0."
+        )
+
+        # === Assertion 3: follower failure is the trigger's P0001 RaiseException. ===
+        assert isinstance(follower_exc, DBAPIError), (
+            f"Expected DBAPIError from trigger, got {type(follower_exc).__name__}: "
+            f"{follower_exc!r}"
+        )
+        # psycopg2.errors.RaiseException carries pgcode 'P0001' on the .orig.
+        orig = getattr(follower_exc, "orig", None)
+        pgcode = getattr(orig, "pgcode", None)
+        assert pgcode == "P0001", (
+            f"Expected SQLSTATE P0001 (RaiseException) from trigger, "
+            f"got pgcode={pgcode!r}: {follower_exc!r}"
+        )
+        msg = str(orig) if orig is not None else str(follower_exc)
+        assert "Cannot revoke" in msg, (
+            f"Expected trigger message 'Cannot revoke last superuser …' in "
+            f"failure, got: {msg!r}"
+        )
+
+        # === Assertion 4: post-condition: exactly 1 active superuser remains. ===
         async with engine.begin() as conn:
             result = await conn.execute(
                 sa.text(
