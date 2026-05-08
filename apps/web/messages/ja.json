@@ -483,6 +483,7 @@
   "admin_superusers_break_glass_warning_emergency_only": "警告: 緊急モードは緊急時専用です (FR-111)。日常運用での利用は禁止されており、ウィンドウ中の全操作は監査ログに記録されます。",
   "admin_superusers_break_glass_reason_label": "理由 (監査ログに記録、最大 2000 文字)",
   "admin_superusers_break_glass_confirm_label": "緊急事態であり、24 時間以内に後任スーパーユーザーを追加することを確認します。",
+  "admin_reason_pii_warning": "メールアドレス、電話番号、マイナンバー、クレジットカード番号、API トークン等の個人情報・機密情報は入力しないでください。reason フィールドは監査ログに長期保存され、これらを含むリクエストは HTTP 422 で拒否されます。",
   "admin_superusers_break_glass_reason_required": "理由の入力は必須です。",
   "admin_superusers_break_glass_confirm_required": "緊急性の確認チェックを入れてください。",
   "admin_superusers_break_glass_enter_button": "緊急モードを起動",
