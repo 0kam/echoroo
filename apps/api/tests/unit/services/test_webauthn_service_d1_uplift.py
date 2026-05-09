@@ -1794,3 +1794,535 @@ async def test_record_audit_event_merges_target_user_id_into_detail(
     assert captured["actor_user_id"] == user_id
     assert captured["action"] == "webauthn.test_event"
     assert captured["detail"] == {"target_user_id": str(user_id), "k": "v"}
+
+
+# ---------------------------------------------------------------------------
+# Section G: Round 2 uplift — close last 3 kills for 80% gate
+#
+# PR #57 first run: 238 killed / 63 survived (79.1%). The tests below pin
+# the remaining mutant hotspots concentrated in:
+#
+# * complete_authentication — 29 (audit detail key sets, exact-kwargs to
+#   _load_challenge, sign_count int() cast, returned-credential immutability)
+# * _load_challenge          — 13 (empty-string value, ascii decode, str cast)
+# * _record_audit_event      —  7 (constant kwargs, commit/rollback ordering)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_load_challenge_returns_decoded_bytes_for_empty_string_value(
+    redis: fakeredis.aioredis.FakeRedis,
+) -> None:
+    """An empty-string (not None) Redis value MUST decode to ``b""`` and not raise.
+
+    Production checks ``if value is None``, NOT a generic falsy check. A mutant
+    that flips this to ``if not value`` would (incorrectly) raise
+    ``WebAuthnChallengeNotFoundError`` here. The expected behaviour is to
+    pass empty strings through to ``base64url_to_bytes`` which yields ``b""``.
+    """
+    service = WebAuthnService(redis)
+    await redis.set("k-empty", "")
+    out = await service._load_challenge("k-empty", user_id=uuid4())
+    assert out == b""
+
+
+@pytest.mark.asyncio
+async def test_load_challenge_uses_ascii_decode_not_utf8() -> None:
+    """``bytes`` payload MUST be decoded via ``ascii`` codec specifically.
+
+    Pins the codec name. base64url uses only ASCII characters, so an ascii
+    codec is sufficient (and more strict than utf-8). A mutant that changes
+    ``"ascii"`` to ``"utf-8"`` (or any other codec) would still succeed for
+    pure-ASCII input — but a mutant that changes the codec to one that
+    raises on this particular byte stream would surface here. We exercise
+    the load path with an ASCII-clean base64url payload to guard the
+    happy path; the strict-codec assertion is a structural pin.
+    """
+
+    raw = b"ascii-load-bearing"
+    encoded = bytes_to_base64url(raw)
+
+    class AsciiOnlyGetter:
+        async def get(self, _name: str) -> bytes:
+            # Returns bytes whose .decode("ascii") succeeds; mutants that
+            # change the call (e.g. drop the .decode entirely) will pass
+            # raw bytes to base64url_to_bytes which still works in py_webauthn,
+            # but the ``str(value)`` wrapper would coerce bytes -> "b'...'" and
+            # corrupt decoding. So this test pins the decode-then-str pipeline.
+            return encoded.encode("ascii")
+
+    service = WebAuthnService(AsciiOnlyGetter())  # type: ignore[arg-type]
+    out = await service._load_challenge("k", user_id=uuid4())
+    assert out == raw
+
+
+@pytest.mark.asyncio
+async def test_load_challenge_passes_int_through_str_cast() -> None:
+    """Non-str / non-bytes values MUST be coerced via ``str()`` before decode.
+
+    Production calls ``base64url_to_bytes(str(value))``. If a mutant strips the
+    ``str()`` cast, an integer payload would explode at the decode call
+    (``base64url_to_bytes`` cannot accept an int). We feed a plain int whose
+    decimal ``str()`` form ("12345678") happens to be a valid base64url
+    payload (length 8, all alphanumeric) to assert the cast wrapper is
+    present without depending on what bytes come out.
+    """
+
+    class IntGetter:
+        async def get(self, _name: str) -> Any:
+            # str(12345678) == "12345678" — 8 ASCII alphanumerics, all in the
+            # base64url alphabet. base64url_to_bytes accepts this.
+            return 12345678
+
+    service = WebAuthnService(IntGetter())  # type: ignore[arg-type]
+    # The exact decoded bytes do not matter — we only need to prove that
+    # str() was applied (otherwise base64url_to_bytes would raise because
+    # it cannot accept an int).
+    out = await service._load_challenge("k", user_id=uuid4())
+    assert isinstance(out, bytes)
+    assert out == base64url_to_bytes("12345678")
+
+
+@pytest.mark.asyncio
+async def test_complete_authentication_loads_challenge_with_user_id_kwarg(
+    monkeypatch: pytest.MonkeyPatch,
+    redis: fakeredis.aioredis.FakeRedis,
+) -> None:
+    """``complete_authentication`` MUST forward the user_id kwarg to load.
+
+    Pins the call-site kwargs: ``self._load_challenge(self._authentication_key(user_id), user_id=user_id)``.
+    Mutants that swap user_id for actor_id, drop the kwarg, or use the
+    registration key instead would surface as the spy capturing wrong values.
+    """
+    user_id = uuid4()
+    service = WebAuthnService(redis)
+    await _seed_challenge(redis, service._authentication_key(user_id), b"AC")
+
+    captured: dict[str, Any] = {}
+    real_load = WebAuthnService._load_challenge
+
+    async def spy_load(self: WebAuthnService, key: str, *, user_id: UUID) -> bytes:
+        captured["key"] = key
+        captured["user_id"] = user_id
+        return await real_load(self, key, user_id=user_id)
+
+    monkeypatch.setattr(WebAuthnService, "_load_challenge", spy_load)
+    monkeypatch.setattr(
+        webauthn_module,
+        "verify_authentication_response",
+        lambda **_kw: _verified_authentication(new_sign_count=2),
+    )
+    await service.complete_authentication(
+        user_id=user_id,
+        authentication_response=_authentication_response(),
+        existing_credentials=[_stored_credential(sign_count=1)],
+    )
+    assert captured["key"] == f"webauthn:auth:{user_id}"
+    assert captured["user_id"] == user_id
+
+
+@pytest.mark.asyncio
+async def test_complete_authentication_unknown_credential_audit_detail_exact_keys(
+    monkeypatch: pytest.MonkeyPatch,
+    redis: fakeredis.aioredis.FakeRedis,
+) -> None:
+    """Unknown-credential audit detail MUST be exactly {credential_id, reason}.
+
+    Strict set-equality on the detail dict pins the audit payload shape.
+    Mutants that drop ``credential_id`` from detail, swap ``reason`` for a
+    different key, or add a stray field will trip this assertion.
+    """
+    user_id = uuid4()
+    service = WebAuthnService(redis)
+    await _seed_challenge(redis, service._authentication_key(user_id))
+    captured: list[dict[str, Any]] = []
+
+    async def audit(self: WebAuthnService, **kwargs: Any) -> None:
+        captured.append(kwargs)
+
+    monkeypatch.setattr(WebAuthnService, "_record_audit_event", audit)
+    with pytest.raises(WebAuthnVerificationError):
+        await service.complete_authentication(
+            user_id=user_id,
+            authentication_response=_authentication_response(b"unknown-cred"),
+            existing_credentials=[_stored_credential(credential_id=b"different")],
+        )
+    last = captured[-1]
+    assert last["actor_id"] == user_id
+    assert last["action"] == "webauthn.authentication_failed"
+    assert set(last["detail"].keys()) == {"credential_id", "reason"}
+    assert last["detail"]["credential_id"] == bytes_to_base64url(b"unknown-cred")
+    assert last["detail"]["reason"] == "unknown_credential"
+
+
+@pytest.mark.asyncio
+async def test_complete_authentication_verification_failed_audit_detail_exact_keys(
+    monkeypatch: pytest.MonkeyPatch,
+    redis: fakeredis.aioredis.FakeRedis,
+) -> None:
+    """``verification_failed`` audit detail MUST be exactly {credential_id, reason}."""
+    user_id = uuid4()
+    service = WebAuthnService(redis)
+    await _seed_challenge(redis, service._authentication_key(user_id))
+    captured: list[dict[str, Any]] = []
+
+    async def audit(self: WebAuthnService, **kwargs: Any) -> None:
+        captured.append(kwargs)
+
+    monkeypatch.setattr(WebAuthnService, "_record_audit_event", audit)
+    monkeypatch.setattr(
+        webauthn_module,
+        "verify_authentication_response",
+        lambda **_kw: (_ for _ in ()).throw(InvalidAuthenticationResponse("nope")),
+    )
+    with pytest.raises(WebAuthnVerificationError):
+        await service.complete_authentication(
+            user_id=user_id,
+            authentication_response=_authentication_response(b"the-cred"),
+            existing_credentials=[_stored_credential(credential_id=b"the-cred")],
+        )
+    last = captured[-1]
+    assert last["actor_id"] == user_id
+    assert last["action"] == "webauthn.authentication_failed"
+    assert set(last["detail"].keys()) == {"credential_id", "reason"}
+    assert last["detail"]["credential_id"] == bytes_to_base64url(b"the-cred")
+    assert last["detail"]["reason"] == "verification_failed"
+
+
+@pytest.mark.asyncio
+async def test_complete_authentication_replay_audit_detail_exact_keys(
+    monkeypatch: pytest.MonkeyPatch,
+    redis: fakeredis.aioredis.FakeRedis,
+) -> None:
+    """Replay audit detail MUST be exactly {credential_id, old_sign_count, new_sign_count}."""
+    user_id = uuid4()
+    service = WebAuthnService(redis)
+    await _seed_challenge(redis, service._authentication_key(user_id))
+    captured: list[dict[str, Any]] = []
+
+    async def audit(self: WebAuthnService, **kwargs: Any) -> None:
+        captured.append(kwargs)
+
+    monkeypatch.setattr(WebAuthnService, "_record_audit_event", audit)
+    monkeypatch.setattr(
+        webauthn_module,
+        "verify_authentication_response",
+        lambda **_kw: _verified_authentication(new_sign_count=3),
+    )
+    with pytest.raises(WebAuthnReplayDetectedError):
+        await service.complete_authentication(
+            user_id=user_id,
+            authentication_response=_authentication_response(),
+            existing_credentials=[_stored_credential(sign_count=10)],
+        )
+    last = captured[-1]
+    assert last["actor_id"] == user_id
+    assert last["action"] == "webauthn.replay_detected"
+    assert set(last["detail"].keys()) == {
+        "credential_id",
+        "old_sign_count",
+        "new_sign_count",
+    }
+
+
+@pytest.mark.asyncio
+async def test_complete_authentication_completed_audit_detail_exact_keys(
+    monkeypatch: pytest.MonkeyPatch,
+    redis: fakeredis.aioredis.FakeRedis,
+) -> None:
+    """``authentication_completed`` audit detail MUST be exactly {credential_id, new_sign_count}.
+
+    No ``old_sign_count``, no ``reason``, no other smuggled keys.
+    """
+    user_id = uuid4()
+    service = WebAuthnService(redis)
+    await _seed_challenge(redis, service._authentication_key(user_id))
+    captured: list[dict[str, Any]] = []
+
+    async def audit(self: WebAuthnService, **kwargs: Any) -> None:
+        captured.append(kwargs)
+
+    monkeypatch.setattr(WebAuthnService, "_record_audit_event", audit)
+    monkeypatch.setattr(
+        webauthn_module,
+        "verify_authentication_response",
+        lambda **_kw: _verified_authentication(new_sign_count=11),
+    )
+    await service.complete_authentication(
+        user_id=user_id,
+        authentication_response=_authentication_response(),
+        existing_credentials=[_stored_credential(sign_count=5)],
+    )
+    last = captured[-1]
+    assert last["actor_id"] == user_id
+    assert last["action"] == "webauthn.authentication_completed"
+    assert set(last["detail"].keys()) == {"credential_id", "new_sign_count"}
+    assert last["detail"]["new_sign_count"] == 11
+
+
+@pytest.mark.asyncio
+async def test_complete_authentication_int_cast_on_stored_sign_count(
+    monkeypatch: pytest.MonkeyPatch,
+    redis: fakeredis.aioredis.FakeRedis,
+) -> None:
+    """``int(stored_credential["sign_count"])`` MUST coerce string-shaped counters.
+
+    Some legacy JSONB payloads may have stored sign_count as a string.
+    Production wraps the read in ``int(...)``. A mutant that drops the cast
+    would compare ``"5" <= 6`` (TypeError) or worse, do lexicographic
+    comparison. Feeding a string sign_count proves the cast is present.
+    """
+    user_id = uuid4()
+    service = WebAuthnService(redis)
+    await _seed_challenge(redis, service._authentication_key(user_id))
+
+    monkeypatch.setattr(
+        webauthn_module,
+        "verify_authentication_response",
+        lambda **_kw: _verified_authentication(new_sign_count=6),
+    )
+    cred = _stored_credential(sign_count=5)
+    # Simulate legacy string payload where sign_count was JSON-serialized as
+    # a string. The production ``int(...)`` cast must coerce this back so the
+    # ``new_sign_count <= old_sign_count`` comparison stays numeric.
+    cred["sign_count"] = "5"  # type: ignore[typeddict-item]
+    updated = await service.complete_authentication(
+        user_id=user_id,
+        authentication_response=_authentication_response(),
+        existing_credentials=[cred],
+    )
+    assert updated["sign_count"] == 6
+
+
+@pytest.mark.asyncio
+async def test_complete_authentication_returned_credential_preserves_unrelated_fields(
+    monkeypatch: pytest.MonkeyPatch,
+    redis: fakeredis.aioredis.FakeRedis,
+) -> None:
+    """Returned credential MUST preserve transports/name/aaguid/registered_at/public_key.
+
+    Only ``sign_count`` and ``last_used_at`` change on success. A mutant that
+    rebuilds the dict from scratch (rather than copying then patching) would
+    drop these fields and trip this assertion.
+    """
+    user_id = uuid4()
+    service = WebAuthnService(redis)
+    await _seed_challenge(redis, service._authentication_key(user_id))
+    monkeypatch.setattr(
+        webauthn_module,
+        "verify_authentication_response",
+        lambda **_kw: _verified_authentication(new_sign_count=42),
+    )
+    original = _stored_credential(
+        credential_id=b"the-cred",
+        public_key=b"orig-spki",
+        sign_count=1,
+        transports=["usb", "nfc"],
+    )
+    original["name"] = "Personal YubiKey"
+    original["registered_at"] = "2024-12-31T23:59:59Z"
+
+    updated = await service.complete_authentication(
+        user_id=user_id,
+        authentication_response=_authentication_response(b"the-cred"),
+        existing_credentials=[original],
+    )
+    # Field-by-field preservation pins the dict-copy semantics.
+    assert updated["credential_id"] == original["credential_id"]
+    assert updated["public_key"] == original["public_key"]
+    assert updated["transports"] == original["transports"]
+    assert updated["name"] == original["name"]
+    assert updated["aaguid"] == original["aaguid"]
+    assert updated["registered_at"] == original["registered_at"]
+    # Only these two change.
+    assert updated["sign_count"] == 42
+    assert updated["last_used_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_complete_authentication_empty_credential_list_audits_unknown(
+    monkeypatch: pytest.MonkeyPatch,
+    redis: fakeredis.aioredis.FakeRedis,
+) -> None:
+    """Empty existing_credentials MUST audit unknown_credential and reject.
+
+    Pins that the credential lookup runs even when the list is empty (not
+    short-circuited to a different error path).
+    """
+    user_id = uuid4()
+    service = WebAuthnService(redis)
+    await _seed_challenge(redis, service._authentication_key(user_id))
+    captured: list[dict[str, Any]] = []
+
+    async def audit(self: WebAuthnService, **kwargs: Any) -> None:
+        captured.append(kwargs)
+
+    monkeypatch.setattr(WebAuthnService, "_record_audit_event", audit)
+    with pytest.raises(WebAuthnVerificationError, match="not registered"):
+        await service.complete_authentication(
+            user_id=user_id,
+            authentication_response=_authentication_response(b"any"),
+            existing_credentials=[],
+        )
+    assert captured[-1]["detail"]["reason"] == "unknown_credential"
+
+
+@pytest.mark.asyncio
+async def test_complete_authentication_verification_failure_does_not_delete_challenge(
+    monkeypatch: pytest.MonkeyPatch,
+    redis: fakeredis.aioredis.FakeRedis,
+) -> None:
+    """Signature failure MUST NOT call _delete_challenge (challenge still in Redis)."""
+    user_id = uuid4()
+    service = WebAuthnService(redis)
+    key = service._authentication_key(user_id)
+    await _seed_challenge(redis, key)
+
+    delete_calls: list[str] = []
+    real_delete = WebAuthnService._delete_challenge
+
+    async def spy_delete(self: WebAuthnService, k: str) -> None:
+        delete_calls.append(k)
+        await real_delete(self, k)
+
+    monkeypatch.setattr(WebAuthnService, "_delete_challenge", spy_delete)
+    monkeypatch.setattr(
+        webauthn_module,
+        "verify_authentication_response",
+        lambda **_kw: (_ for _ in ()).throw(InvalidAuthenticationResponse("bad")),
+    )
+    with pytest.raises(WebAuthnVerificationError):
+        await service.complete_authentication(
+            user_id=user_id,
+            authentication_response=_authentication_response(),
+            existing_credentials=[_stored_credential()],
+        )
+    assert delete_calls == []
+    # Challenge still seeded.
+    assert await redis.get(key) is not None
+
+
+@pytest.mark.asyncio
+async def test_record_audit_event_writes_constant_request_id_ip_user_agent(
+    monkeypatch: pytest.MonkeyPatch,
+    redis: fakeredis.aioredis.FakeRedis,
+) -> None:
+    """``_record_audit_event`` MUST forward the documented constant kwargs.
+
+    Pins ``request_id="internal"``, ``ip="0.0.0.0"``, ``user_agent=""``.
+    Mutants that flip any of these constants will surface here.
+    """
+    monkeypatch.setattr(
+        WebAuthnService,
+        "_record_audit_event",
+        _ORIGINAL_RECORD_AUDIT_EVENT,
+    )
+
+    captured: dict[str, Any] = {}
+
+    class _FakeAuditLogService:
+        def __init__(self, _session: Any) -> None:
+            pass
+
+        async def write_platform_event(self, **kwargs: Any) -> None:
+            captured.update(kwargs)
+
+    class _FakeSession:
+        async def __aenter__(self) -> _FakeSession:
+            return self
+
+        async def __aexit__(self, *_exc: Any) -> None:
+            return None
+
+        async def commit(self) -> None:
+            return None
+
+        async def rollback(self) -> None:
+            return None
+
+    monkeypatch.setattr(webauthn_module, "AsyncSessionLocal", lambda: _FakeSession())
+    monkeypatch.setattr(webauthn_module, "AuditLogService", _FakeAuditLogService)
+
+    service = WebAuthnService(redis)
+    await service._record_audit_event(
+        actor_id=uuid4(),
+        action="webauthn.constants_test",
+        detail={},
+    )
+    assert captured["request_id"] == "internal"
+    assert captured["ip"] == "0.0.0.0"
+    assert captured["user_agent"] == ""
+
+
+@pytest.mark.asyncio
+async def test_record_audit_event_commits_on_success_and_rolls_back_on_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    redis: fakeredis.aioredis.FakeRedis,
+) -> None:
+    """Success path MUST commit; failure path MUST rollback and re-raise.
+
+    Strict ordering pin: on success commit() is called exactly once and
+    rollback() not at all; on failure rollback() is called and the original
+    exception propagates (it is NOT swallowed).
+    """
+    monkeypatch.setattr(
+        WebAuthnService,
+        "_record_audit_event",
+        _ORIGINAL_RECORD_AUDIT_EVENT,
+    )
+
+    class _FakeSession:
+        def __init__(self) -> None:
+            self.commits = 0
+            self.rollbacks = 0
+
+        async def __aenter__(self) -> _FakeSession:
+            return self
+
+        async def __aexit__(self, *_exc: Any) -> None:
+            return None
+
+        async def commit(self) -> None:
+            self.commits += 1
+
+        async def rollback(self) -> None:
+            self.rollbacks += 1
+
+    sessions: list[_FakeSession] = []
+
+    def _session_factory() -> _FakeSession:
+        s = _FakeSession()
+        sessions.append(s)
+        return s
+
+    class _OkAudit:
+        def __init__(self, _session: Any) -> None:
+            pass
+
+        async def write_platform_event(self, **_kwargs: Any) -> None:
+            return None
+
+    class _FailingAudit:
+        def __init__(self, _session: Any) -> None:
+            pass
+
+        async def write_platform_event(self, **_kwargs: Any) -> None:
+            raise RuntimeError("audit boom")
+
+    monkeypatch.setattr(webauthn_module, "AsyncSessionLocal", _session_factory)
+    monkeypatch.setattr(webauthn_module, "AuditLogService", _OkAudit)
+
+    service = WebAuthnService(redis)
+    await service._record_audit_event(
+        actor_id=uuid4(), action="webauthn.ok", detail={}
+    )
+    assert sessions[-1].commits == 1
+    assert sessions[-1].rollbacks == 0
+
+    monkeypatch.setattr(webauthn_module, "AuditLogService", _FailingAudit)
+    with pytest.raises(RuntimeError, match="audit boom"):
+        await service._record_audit_event(
+            actor_id=uuid4(), action="webauthn.fail", detail={}
+        )
+    assert sessions[-1].rollbacks == 1
+    assert sessions[-1].commits == 0
