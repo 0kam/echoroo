@@ -573,72 +573,100 @@ gate is **not** a launch blocker.
         module. Reads via `mutmut results --all` so killed mutants are
         included in the denominator.
 
-**Per-module baseline (CI run 25565962708, PR #51 HEAD `311159bd`)**:
+**Final per-module status (2026-05-09, after PR #53-#57 ramp series)**:
 
-> NOTE (PR #52, codex round 1): the table below is **NOT a mutation-score
-> baseline**. It is a **surviving / excluded mutant inventory** snapshot,
-> because that CI run executed `mutmut results` without `--all` and therefore
-> never aggregated killed mutants into the denominator. The genuine per-module
-> score baseline will be captured on the first D-1 ramp PR after this branch
-> lands (the artifact-collection step now passes `--all` on every run, so the
-> next mutation-testing job will populate killed counts and produce a real
-> baseline table to ratchet from).
+5/5 ramp PRs landed (PR #53, #54, #55, #56, #57). Scores are aggregated
+from the `mutation-testing` CI job using `mutmut results --all` (killed
+mutants now in the denominator). The ramp ordered modules smallest-first
+to land quick wins early and concentrate effort on the long tail.
 
-mutmut runs end-to-end and produces real per-mutant verification. The
-inventory below is aggregated from the 1406 non-killed mutant lines in the CI
-log. Numbers below show "scorable mutants" (survived + suspicious) and
-"excluded" counts (timeout / no tests / not checked) per module:
+| Module | Baseline (PR #53 run) | Final (after uplift) | Gate ≥80% | Ramp PR |
+|---|---|---|---|---|
+| `echoroo.core.audit` | inventory only | **97.2%** | ✅ | PR #53 |
+| `echoroo.core.permissions` | already ≥80% | (already passing) | ✅ | — |
+| `echoroo.core.response_filter` | already ≥80% | (already passing, 100%) | ✅ | — |
+| `echoroo.middleware.auth` | already ≥80% | (already passing, 100%) | ✅ | — |
+| `echoroo.middleware.auth_router` | already ≥80% | (already passing, 95.8%) | ✅ | — |
+| `echoroo.services.api_key_verification` | already ≥80% | (already passing, 88.2%) | ✅ | — |
+| `echoroo.services.superuser_service` | 79.2% | **85.1%** | ✅ | PR #54 |
+| `echoroo.core.kms` | 76.2% | **92.0%** | ✅ | PR #55 |
+| `echoroo.workers.dormancy_check` | 40.2% | **74.6%** | ⚠️ | PR #56 |
+| `echoroo.services.webauthn_service` | 43.0% | **86.0%** | ✅ | PR #57 |
 
-| Module | Scorable (S+Susp) | Excluded |
-|---|---|---|
-| `echoroo.core.audit` | 2 | timeout=1, no tests=1 |
-| `echoroo.core.kms` | 63 | timeout=2 |
-| `echoroo.core.permissions` | 40 | timeout=154, no tests=15 |
-| `echoroo.core.response_filter` | 4 | - |
-| `echoroo.middleware.auth` | 0 | timeout=5, no tests=18 |
-| `echoroo.middleware.auth_router` | 10 | timeout=17, no tests=14 |
-| `echoroo.services.api_key_verification` | 20 | - |
-| `echoroo.services.superuser_service` | 119 | no tests=520 |
-| `echoroo.services.webauthn_service` | 162 | no tests=40 |
-| `echoroo.workers.dormancy_check` | 101 | no tests=98 |
-| `echoroo.core.actions` | (unknown — no surviving mutants in this run) | - |
+**Result**: **9/10 modules ≥80%** of the gate. `echoroo.workers.dormancy_check`
+remains the sole hold-out at **74.6%** — a **+34.4pp** uplift from the
+40.2% baseline (PR #56) but **5.4pp short** of the 80% gate. The residual
+43 surviving mutants concentrate in `_enqueue_stage` (22) and
+`_emit_followup_stages` (16), with small leftovers elsewhere. Closing
+that last-mile gap requires production refactor (e.g. `_enqueue_stage`
+responsibility split into directly testable helpers) — out of scope for
+the test-only ramp PR series. Tracked as **§D-1-bis** below.
 
-**Open work — D-1 PR series (post-launch backlog)**:
+**Release condition (UPDATED 2026-05-09, post PR #53-#57 ramp closure)**:
 
-  - [ ] **Re-run mutation-testing with the score table parsed**: Confirm
-        `check_mutation_score.py --warn-only` prints the full per-module
-        score table (with real killed counts after the `--all` flag lands)
-        on the next CI run.
-  - [ ] **Per-module test additions**: For each module below 80%, either
-        add tests that kill the surviving mutants or document each
-        survivor as equivalent. Likely PR ordering by module size:
-        1. `echoroo.core.audit` (smallest, 2 scorable)
-        2. `echoroo.core.response_filter` (4 scorable)
-        3. `echoroo.middleware.auth` (0 scorable but 23 excluded — the
-           "no tests" entries indicate fixture coverage gaps that may
-           need to be addressed before mutmut even runs the mutants)
-        4. `echoroo.middleware.auth_router` (10 scorable)
-        5. `echoroo.services.api_key_verification` (20 scorable)
-        6. `echoroo.core.permissions` (40 scorable, 154 timeouts to
-           investigate first — timeouts may indicate infinite-loop
-           mutants that need a `# pragma: no mutate` or similar)
-        7. `echoroo.core.kms` (63 scorable)
-        8. `echoroo.services.superuser_service` (119 scorable)
-        9. `echoroo.workers.dormancy_check` (101 scorable, 98 "no tests")
-        10. `echoroo.services.webauthn_service` (162 scorable, largest)
+  - [x] 9/10 modules cleared the 80% gate via PR #53-#57 ramp series
+        (smallest-first ordering: audit → superuser_service → kms →
+        dormancy_check → webauthn_service).
+  - [x] `scripts/check_mutation_score.py --threshold 80` reads
+        `mutmut results --all` aggregated output (killed counts
+        included in denominator).
+  - [ ] `echoroo.workers.dormancy_check` last-mile (74.6% → 80%) —
+        **deferred to follow-up backlog item §D-1-bis** below.
   - [ ] **Drop `continue-on-error: true`** from the `mutation-testing`
-        job in `.github/workflows/ci.yml` once
-        `scripts/check_mutation_score.py --threshold 80` (without
-        `--warn-only`) exits 0 across all 11 modules.
-  - [ ] Each surviving mutant analysed; new test added or mutant proven
-        equivalent.
-  - [ ] `scripts/check_mutation_score.py --threshold 80` exits 0 against
-        the full module list without `--warn-only`.
+        job in `.github/workflows/ci.yml` — **blocked on §D-1-bis
+        closing the dormancy_check gap**. Once the last module clears
+        80%, `scripts/check_mutation_score.py --threshold 80` (without
+        `--warn-only`) will exit 0 across all 10 modules and the
+        transitional `continue-on-error` can be removed.
+
+### D-1-bis. dormancy_check residual mutation gap (2026-05-09 carve-out)
+
+- **Module**: `echoroo.workers.dormancy_check`
+- **Current score**: **74.6%** (post PR #56, +34.4pp uplift from 40.2%
+  baseline). Test-only uplift has plateaued; the remaining 5.4pp gap is
+  structural rather than coverage-based.
+- **Threat**: 43 surviving mutants remain — concentrated in
+  `_enqueue_stage` (22 surviving) + `_emit_followup_stages` (16
+  surviving), plus a small leftover scattered across the module. These
+  helpers internally compose Celery payloads + outbox event records that
+  are only observable via end-to-end orchestration tests; unit-level
+  assertions cannot pin most operator mutations because the helpers are
+  invoked through a single public entry point that hides the
+  intermediate values.
+- **Resolution path (production refactor required)**:
+    1. Extract `_enqueue_stage` payload-construction logic into a
+       dedicated helper module (e.g. `echoroo/workers/dormancy_payloads.py`)
+       so each builder is independently importable and unit-testable.
+    2. Apply the same split to `_emit_followup_stages`.
+    3. Add unit tests that drive each extracted helper directly,
+       targeting the surviving mutant operators (boolean inversion,
+       constant replacement, comparison flips).
+    4. Re-run `mutation-testing` and confirm
+       `echoroo.workers.dormancy_check ≥ 80%`.
+- **Release condition**:
+  - [ ] `_enqueue_stage` + `_emit_followup_stages` payload-construction
+        helpers extracted into a dedicated module.
+  - [ ] Dedicated unit tests added for each extracted helper.
+  - [ ] Per-module mutation score for `echoroo.workers.dormancy_check`
+        ≥ 80% in CI.
+  - [ ] `continue-on-error: true` removed from the `mutation-testing`
+        job in `.github/workflows/ci.yml` (cross-references §D-1
+        release condition above).
+- **Owner / size**: medium — one production-refactor PR followed by one
+  (possibly two) test-addition PRs. Estimated 1-2 dedicated PRs.
 
 ### D-2. Job-level every-push promotion
 
+- **Status note (2026-05-09)**: D-2 promotion remains **blocked on
+  §D-1-bis** closing the dormancy_check residual gap and the resulting
+  removal of the `mutation-testing` job's transitional
+  `continue-on-error: true`. Until that lands, promoting the job to
+  every-push would either re-introduce a hard-fail signal that the gate
+  cannot satisfy, or leave the gate cosmetic. Sequence: §D-1-bis →
+  drop `continue-on-error` → D-2 every-push promotion.
 - **Release condition**:
-  - [ ] D-1 resolved (real green score on main).
+  - [ ] D-1 resolved (real green score on main, all 10 modules ≥80%) —
+        blocked on §D-1-bis.
   - [ ] `if:` guard on the `mutation-testing` job loosened to fire on
         every push (delete the conditional). Operators continue to
         retain `workflow_dispatch` for manual runs.
