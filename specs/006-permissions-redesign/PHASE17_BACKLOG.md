@@ -295,13 +295,19 @@ Gate: `check_coverage_threshold.py` shows PASS at 100% for all three.
 ## D. Mutation-testing transitional `continue-on-error` gate + `mutation-testing` job
        trigger gate (Batch 6h-1 origin; original `--warn-only` allowlist now superseded by `--threshold 80`)
 
-The `mutation-testing` CI job currently runs with
-`continue-on-error: true` (warn-ratchet) per the §D-0/D-1 transitional
-posture. The job's `if:` guard limits when it runs (main branch push,
-`run-mutation-testing` PR label, or manual `workflow_dispatch`) — that
-part is unchanged. `continue-on-error: true` will be removed once
-§D-1-bis closes the dormancy_check residual gap (see §D-1 Release
-condition and §D-2 sequencing note).
+**Status (UPDATED 2026-05-09, this PR — §D-1-bis closure)**:
+§D-0 fully resolved (PR #51 — subprocess monkey-patch + meta_path finder
++ per-mutant import fallback + `pytest_load_initial_conftests(tryfirst=True)`
+finder install). §D-1 ramp complete (PRs #53-#57 — 9/10 scorable modules
+cleared 80%). §D-1-bis closed via helper extraction (PR #59 —
+`echoroo.workers.dormancy_check` 74.6% → **81.9%** by extracting
+`_dormancy_events` + `_dormancy_stage_schedule` + `_dormancy_payload_sanitiser`
+into pure helper modules). The transitional `continue-on-error: true`
+warn-ratchet has been removed (this PR — PR #60), making
+`mutation-testing` a hard gate again. The job's `if:` guard still limits
+when the job RUNS (main branch push, `run-mutation-testing` PR label, or
+manual `workflow_dispatch`); §D-2 (every-push promotion) is now
+technically unblocked but deferred to a separate PR — see §D-2.
 
 ### D-0. mutmut 3.5 in-process pytest.main() blocker — **FULLY CLOSED (PR #51, 2026-05-08)**
 
@@ -514,7 +520,7 @@ finder install collectively let `mutmut run` and `mutmut results --all`
 operate end-to-end against this codebase.  The remaining D-1 work
 (per-module ≥80%) is application-test work, not infrastructure.
 
-**Status note (UPDATED 2026-05-09)**: §D-0 fully resolved (mutmut subprocess + meta_path finder + test isolation, PRs #49/#51). §D-1 5-PR ramp series (PRs #53-57) landed; 9/10 scorable modules cleared the 80% gate. The `continue-on-error: true` removal and §D-2 every-push promotion are now blocked solely on §D-1-bis (dormancy_check 5.4pp residual gap closure via production refactor).
+**Status note (UPDATED 2026-05-09, this PR)**: §D-0 fully resolved (mutmut subprocess + meta_path finder + test isolation, PRs #49/#51). §D-1 5-PR ramp series (PRs #53-57) landed; 9/10 scorable modules cleared the 80% gate. §D-1-bis closed via PR #59 (helper extraction in `echoroo.workers.dormancy_check`: 74.6% → **81.9%**). All 10 scorable modules now ≥ 80%. The transitional `continue-on-error: true` on the `mutation-testing` job has been **removed in this PR (PR #60)**, restoring the hard gate. §D-2 (every-push promotion) is now technically unblocked but deferred to a separate PR (judgment call on 60-90 min runtime impact on default PR latency).
 
 **Fallback escalation ladder (if Option B itself fails in CI)**:
 
@@ -542,7 +548,7 @@ These fallbacks remain post-launch backlog; the current launch decision
 (per `project_006_phase17_residuals_2026-05-07.md`) is that the mutation
 gate is **not** a launch blocker.
 
-### D-1. Per-module score ≥80% — **OPEN (blocked on §D-1-bis dormancy_check residual gap)**
+### D-1. Per-module score ≥80% — **CLOSED (2026-05-09, all 10 scorable modules ≥ 80% via PRs #53-#57 + #59; warn-ratchet removed in PR #60)**
 
 - **Task**: T995
 - **File**: `apps/api/pyproject.toml` `[tool.mutmut]` (`paths_to_mutate`
@@ -593,7 +599,7 @@ to land quick wins early and concentrate effort on the long tail.
 | `echoroo.services.api_key_verification` | already ≥80% | (already passing, 88.2%) | ✅ | — |
 | `echoroo.services.superuser_service` | 79.2% | **85.1%** | ✅ | PR #54 |
 | `echoroo.core.kms` | 76.2% | **92.0%** | ✅ | PR #55 |
-| `echoroo.workers.dormancy_check` | 40.2% | **74.6%** | ⚠️ | PR #56 |
+| `echoroo.workers.dormancy_check` | 40.2% | **81.9%** | ✅ | PR #56 + PR #59 (helper extraction) |
 | `echoroo.services.webauthn_service` | 43.0% | **86.0%** | ✅ | PR #57 |
 | `echoroo.core.actions` [†] | n/a | **N/A (no scorable mutants generated)** | ✅ (vacuous) | — |
 
@@ -607,18 +613,19 @@ operator set does not transform into scorable mutants. Effectively it
 meets the gate by virtue of nothing-to-test (vacuous pass) and is
 excluded from the 10 scorable modules below.
 
-**Result**: **9/10 scorable modules ≥80%** of the gate (excluding
-`echoroo.core.actions` which is N/A — see the table footnote).
-`echoroo.workers.dormancy_check`
-remains the sole hold-out at **74.6%** — a **+34.4pp** uplift from the
-40.2% baseline (PR #56) but **5.4pp short** of the 80% gate. The residual
-43 surviving mutants concentrate in `_enqueue_stage` (22) and
-`_emit_followup_stages` (16), with small leftovers elsewhere. Closing
-that last-mile gap requires production refactor (e.g. `_enqueue_stage`
-responsibility split into directly testable helpers) — out of scope for
-the test-only ramp PR series. Tracked as **§D-1-bis** below.
+**Result (UPDATED 2026-05-09 after PR #59 + PR #60)**: **10/10 scorable
+modules ≥80%** of the gate (excluding `echoroo.core.actions` which is
+N/A — see the table footnote). The last hold-out
+`echoroo.workers.dormancy_check` was closed by PR #59 (helper
+extraction: `_dormancy_events` + `_dormancy_stage_schedule` +
+`_dormancy_payload_sanitiser` split into pure modules); final score
+**81.9%** (+41.7pp from the 40.2% baseline, +7.3pp from the PR #56
+plateau at 74.6%). The transitional `continue-on-error: true` was
+removed from the `mutation-testing` job in PR #60 (this PR), restoring
+the hard-gate behavior. §D-1-bis is CLOSED — see the now-historical
+section below for record.
 
-**Release condition (UPDATED 2026-05-09, post PR #53-#57 ramp closure)**:
+**Release condition (UPDATED 2026-05-09, all checked — §D-1 CLOSED)**:
 
   - [x] 9/10 scorable modules cleared the 80% gate via PR #53-#57 ramp
         series (smallest-first ordering: audit → superuser_service →
@@ -628,70 +635,67 @@ the test-only ramp PR series. Tracked as **§D-1-bis** below.
   - [x] `scripts/check_mutation_score.py --threshold 80` reads
         `mutmut results --all` aggregated output (killed counts
         included in denominator).
-  - [ ] `echoroo.workers.dormancy_check` last-mile (74.6% → 80%) —
-        **deferred to follow-up backlog item §D-1-bis** below.
-  - [ ] **Drop `continue-on-error: true`** from the `mutation-testing`
-        job in `.github/workflows/ci.yml` — **blocked on §D-1-bis
-        closing the dormancy_check gap**. Once the last scorable module
-        clears 80%, `scripts/check_mutation_score.py --threshold 80`
-        will exit 0 across all 10 scorable modules (`core.actions` N/A)
-        and the transitional `continue-on-error: true` can be removed.
+  - [x] `echoroo.workers.dormancy_check` last-mile (74.6% → 81.9%)
+        closed via PR #59 (helper extraction —
+        `_dormancy_events` + `_dormancy_stage_schedule` +
+        `_dormancy_payload_sanitiser` pure-module split). §D-1-bis
+        CLOSED — see historical section below.
+  - [x] **Drop `continue-on-error: true`** from the `mutation-testing`
+        job in `.github/workflows/ci.yml` — **DONE in PR #60 (this PR)**.
+        With all 10 scorable modules ≥ 80%
+        (`scripts/check_mutation_score.py --threshold 80` exit 0),
+        the warn-ratchet is no longer needed and the job is once again
+        a hard gate.
 
-### D-1-bis. dormancy_check residual mutation gap (2026-05-09 carve-out)
+### D-1-bis. dormancy_check residual mutation gap — **CLOSED (2026-05-09, PR #59)**
 
 - **Module**: `echoroo.workers.dormancy_check`
-- **Current score**: **74.6%** (post PR #56, +34.4pp uplift from 40.2%
-  baseline). Test-only uplift has plateaued; the remaining 5.4pp gap is
-  structural rather than coverage-based.
-- **Threat**: 43 surviving mutants remain — concentrated in
-  `_enqueue_stage` (22 surviving) + `_emit_followup_stages` (16
-  surviving), plus a small leftover scattered across the module. These
-  helpers internally compose Celery payloads + outbox event records that
-  are only observable via end-to-end orchestration tests; unit-level
-  assertions cannot pin most operator mutations because the helpers are
-  invoked through a single public entry point that hides the
-  intermediate values.
-- **Resolution path (production refactor required)**:
-    1. Extract `_enqueue_stage` payload-construction logic into a
-       dedicated helper module (e.g. `echoroo/workers/dormancy_payloads.py`)
-       so each builder is independently importable and unit-testable.
-    2. Apply the same split to `_emit_followup_stages`.
-    3. Add unit tests that drive each extracted helper directly,
-       targeting the surviving mutant operators (boolean inversion,
-       constant replacement, comparison flips).
-    4. Re-run `mutation-testing` and confirm
-       `echoroo.workers.dormancy_check ≥ 80%`.
-- **Release condition**:
-  - [ ] `_enqueue_stage` + `_emit_followup_stages` payload-construction
-        helpers extracted into a dedicated module.
-  - [ ] Dedicated unit tests added for each extracted helper.
-  - [ ] Per-module mutation score for `echoroo.workers.dormancy_check`
-        ≥ 80% in CI.
-  - [ ] `continue-on-error: true` removed from the `mutation-testing`
-        job in `.github/workflows/ci.yml` (cross-references §D-1
-        release condition above).
-- **Owner / size**: medium — one production-refactor PR followed by one
-  (possibly two) test-addition PRs. Estimated 1-2 dedicated PRs.
+- **Outcome**: closed in a single production-refactor PR (PR #59).
+  Helper extraction approach succeeded: `_dormancy_events` +
+  `_dormancy_stage_schedule` + `_dormancy_payload_sanitiser` were split
+  into pure helper modules, making each builder independently
+  importable and unit-testable. Final per-module mutation score
+  **81.9%** (CI run 25600683403) — clears the 80% gate by 1.9pp,
+  +7.3pp uplift from the PR #56 plateau at 74.6% and +41.7pp from the
+  40.2% baseline.
+- **Release condition (all checked)**:
+  - [x] `_enqueue_stage` + `_emit_followup_stages` payload-construction
+        helpers extracted into a dedicated module (PR #59 —
+        `_dormancy_events` + `_dormancy_stage_schedule` +
+        `_dormancy_payload_sanitiser`).
+  - [x] Dedicated unit tests added for each extracted helper (PR #59).
+  - [x] Per-module mutation score for `echoroo.workers.dormancy_check`
+        ≥ 80% in CI — **81.9%** (CI run 25600683403).
+  - [x] `continue-on-error: true` removed from the `mutation-testing`
+        job in `.github/workflows/ci.yml` — **DONE in PR #60 (this PR)**.
+- **Final size**: 1 production-refactor PR (PR #59) — under the
+  estimated 1-2 PR budget.
 
-### D-2. Job-level every-push promotion
+### D-2. Job-level every-push promotion — **OPEN (technically unblocked, deferred to a separate PR)**
 
-- **Status note (2026-05-09)**: D-2 promotion remains **blocked on
-  §D-1-bis** closing the dormancy_check residual gap and the resulting
-  removal of the `mutation-testing` job's transitional
-  `continue-on-error: true`. Until that lands, promoting the job to
-  every-push would either re-introduce a hard-fail signal that the gate
-  cannot satisfy, or leave the gate cosmetic. Sequence: §D-1-bis →
-  drop `continue-on-error` → D-2 every-push promotion.
+- **Status note (2026-05-09, post PR #60)**: D-2 is **technically
+  unblocked** — §D-1-bis closed via PR #59 (all 10 scorable modules ≥
+  80%) and the `continue-on-error: true` warn-ratchet was removed in
+  PR #60 (this PR), so the job is once again a true hard gate when it
+  runs. Promotion to every-push is now a **judgment call on PR
+  latency**: the full 10-module mutmut sweep currently takes 60-90 min
+  in CI, which would dominate default-branch PR turnaround. Sequence
+  from here: profile / time-budget the mutmut runtime → either loosen
+  the `if:` guard to every push, or split into "fast" (≤ 2 modules per
+  PR, e.g. modulo file-path heuristics) + "full" (post-merge nightly)
+  jobs.
 - **Release condition**:
-  - [ ] D-1 resolved (real green score on main, all 10 scorable
-        modules ≥80%; `core.actions` remains N/A) — blocked on
-        §D-1-bis.
+  - [x] D-1 resolved (real green score on main, all 10 scorable
+        modules ≥ 80%; `core.actions` remains N/A) — **closed via
+        §D-1-bis (PR #59)**.
+  - [x] `mutation-testing` `continue-on-error: true` removed — **done
+        in PR #60 (this PR)**.
+  - [ ] Mutmut runtime profiled and confirmed acceptable for default
+        PR latency; otherwise split into "fast" (≤ 2 modules per PR) +
+        "full" (post-merge nightly) jobs.
   - [ ] `if:` guard on the `mutation-testing` job loosened to fire on
         every push (delete the conditional). Operators continue to
         retain `workflow_dispatch` for manual runs.
-  - [ ] Mutmut runtime profiled and confirmed acceptable for default PR
-        latency; otherwise split into "fast" (≤2 modules per PR) +
-        "full" (post-merge nightly) jobs.
 
 ---
 
