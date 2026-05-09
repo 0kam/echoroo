@@ -48,6 +48,19 @@ from moto import mock_aws
 
 AWS_REGION = "us-east-1"
 
+# ---------------------------------------------------------------------------
+# Reload registry — every (_client, _resolve_key_id) pair produced by
+# ``_reload_kms()`` is appended here so that ``kms_env`` teardown can purge
+# the lru_cache on ALL post-reload wrappers regardless of monkeypatch LIFO
+# ordering. See ``_reload_kms`` and ``kms_env`` for the rationale: a test
+# that calls ``_reload_kms()`` then ``monkeypatch.setattr(kms, "_client",
+# stub)`` ends up with monkeypatch restoring the *post-reload* wrapper at
+# its own teardown — a wrapper neither equal to the fixture-stashed
+# original nor visible at fixture teardown time. Tracking every wrapper
+# in this module-level registry sidesteps the ordering problem entirely.
+_RELOAD_REGISTRY: list[tuple[Any, Any]] = []
+
+
 TOTP_DEK_ALIAS = "alias/echoroo-d1uplift-totp-dek"
 PII_V1_ALIAS = "alias/echoroo-d1uplift-pii-v1"
 PII_V2_ALIAS = "alias/echoroo-d1uplift-pii-v2"
@@ -118,22 +131,10 @@ def kms_env(monkeypatch: pytest.MonkeyPatch) -> Iterator[dict[str, str]]:
         monkeypatch.delenv("AWS_KMS_CMK_PII_HASH_ALIAS_V2", raising=False)
         monkeypatch.delenv("ECHOROO_PII_HASH_ROTATION_COMPLETE", raising=False)
 
-        import echoroo.core.kms as kms_module
-
-        importlib.reload(kms_module)
-
-        # Stash the original lru_cache wrappers BEFORE any test-local
-        # monkeypatch can swap them out. Pytest tears fixtures down LIFO,
-        # so this ``finally`` block runs BEFORE monkeypatch reverts any
-        # ``setattr(kms_module, "_client", stub)``. If a test stubbed the
-        # attributes, ``getattr(kms_module, ...)`` below would only see
-        # the stub (no ``cache_clear``); the production wrapper that
-        # monkeypatch later restores would still hold its stale moto
-        # KeyId / boto client cache. Keeping a direct reference to the
-        # originals lets us purge that cache regardless of teardown
-        # ordering.
-        _original_client = kms_module._client
-        _original_resolve_key_id = kms_module._resolve_key_id
+        # Initial reload goes through ``_reload_kms`` so the wrapper pair
+        # produced here is registered alongside any test-local reloads.
+        # See ``_RELOAD_REGISTRY`` docstring for the ordering rationale.
+        _reload_kms()
 
         try:
             yield {
@@ -151,31 +152,57 @@ def kms_env(monkeypatch: pytest.MonkeyPatch) -> Iterator[dict[str, str]]:
             # constructed inside this fixture does not leak to subsequent
             # tests that run outside the mock_aws() context.
             #
-            # Stash + dual-clear so the production wrapper cache is purged
-            # regardless of monkeypatch LIFO order. We clear both the
-            # CURRENT module attribute (covers tests that did not stub it)
-            # and the ORIGINAL wrapper captured right after reload (covers
-            # tests that ``monkeypatch.setattr(kms_module, "_client",
-            # stub)`` — in that case the current attribute is the stub
-            # without ``cache_clear``, but the original wrapper that
-            # monkeypatch will restore on its own teardown still holds
-            # the stale moto cache and must be cleared here). Calling
-            # ``cache_clear`` twice on the same wrapper is a harmless
-            # no-op, so deduplication is unnecessary.
-            for attr in (
-                getattr(kms_module, "_client", None),
-                getattr(kms_module, "_resolve_key_id", None),
-                _original_client,
-                _original_resolve_key_id,
-            ):
-                if attr is not None and hasattr(attr, "cache_clear"):
-                    attr.cache_clear()
+            # Two-tier purge so all reload-produced wrappers are cleared
+            # regardless of monkeypatch LIFO ordering:
+            #
+            # 1. CURRENT module attributes — covers tests that did NOT stub
+            #    ``_client`` / ``_resolve_key_id`` (production wrapper still
+            #    bound). For tests that stubbed via monkeypatch, the current
+            #    attribute is the stub (no ``cache_clear``) and is skipped.
+            # 2. _RELOAD_REGISTRY — every reload-produced wrapper pair,
+            #    INCLUDING those that monkeypatch will restore at its own
+            #    teardown after this fixture finishes. Without this, a
+            #    ``monkeypatch.setattr(kms, "_client", stub)`` in a test
+            #    leaves a stale boto3 cache on the post-reload wrapper that
+            #    monkeypatch restores AFTER this finally block runs.
+            #
+            # Calling ``cache_clear`` more than once on the same wrapper is
+            # a harmless no-op so deduplication is unnecessary.
+            try:
+                import echoroo.core.kms as _kms_for_teardown
+            except Exception:
+                _kms_for_teardown = None  # type: ignore[assignment]
+
+            if _kms_for_teardown is not None:
+                for attr_name in ("_client", "_resolve_key_id"):
+                    attr = getattr(_kms_for_teardown, attr_name, None)
+                    if attr is not None and hasattr(attr, "cache_clear"):
+                        attr.cache_clear()
+
+            for client_wrapper, resolve_wrapper in _RELOAD_REGISTRY:
+                if hasattr(client_wrapper, "cache_clear"):
+                    client_wrapper.cache_clear()
+                if hasattr(resolve_wrapper, "cache_clear"):
+                    resolve_wrapper.cache_clear()
+            _RELOAD_REGISTRY.clear()
 
 
 def _reload_kms() -> Any:
+    """Reload ``echoroo.core.kms`` and register the new lru_cache wrappers.
+
+    Each call to ``importlib.reload`` produces fresh ``_client`` and
+    ``_resolve_key_id`` ``functools.lru_cache`` wrappers. Tests then often
+    ``monkeypatch.setattr`` over those attributes; on teardown monkeypatch
+    restores the post-reload wrapper, NOT the pre-reload one stashed inside
+    the ``kms_env`` fixture. Append the new wrapper pair to the module-level
+    ``_RELOAD_REGISTRY`` so ``kms_env`` teardown can call ``cache_clear`` on
+    every wrapper that may end up bound to the module attribute, regardless
+    of monkeypatch LIFO ordering.
+    """
     import echoroo.core.kms as kms_module
 
     importlib.reload(kms_module)
+    _RELOAD_REGISTRY.append((kms_module._client, kms_module._resolve_key_id))
     return kms_module
 
 
