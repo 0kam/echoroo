@@ -23,9 +23,10 @@ name: CI (006-permissions-redesign)
 #      removing the workflow_dispatch / label restriction. The job MUST
 #      remain `continue-on-error: false` so a green run is a real
 #      green-light to start Phase 3+ work (tasks.md §2.9 checkpoint).
-#   4. Mutation testing via `mutmut` against the 4 permission-critical
-#      modules. Phase 2 runs this in warn-only mode; T995 promotes it
-#      to a hard gate that requires >= 80% mutation score.
+#   4. Mutation testing via `mutmut` against 10 scorable permission-critical
+#      modules (T995). Phase 17 §D-1-bis closure (PR #60) removed the
+#      transitional warn-ratchet: this is now a hard gate requiring >= 80%
+#      mutation score per module.
 #   5. Dedicated security pytest job (-m security marker), always
 #      blocking.
 #
@@ -438,37 +439,41 @@ jobs:
   # ---------------------------------------------------------------------------
   # T995 (Phase 16 Batch 6h-1, R2 patch 2026-05-02): Mutation testing.
   #
-  # **Phase 16 status: warn-ratchet, NOT a per-PR hard gate.**
-  #   - The job itself is `continue-on-error: false`, so when it runs, a
-  #     surviving-mutant ratio < 80% in any of the 11 modules turns the run red.
-  #   - However the job only RUNS when one of three conditions holds, so a
-  #     default PR build does not exercise it:
-  #       a) main branch push (post-merge gate),
-  #       b) the `run-mutation-testing` PR label is attached, OR
-  #       c) the workflow is dispatched manually from the Actions UI
-  #          (`workflow_dispatch`).
-  #     Mutation runs are long (minutes to hours for 11 modules); keeping the
-  #     label / dispatch gate prevents default PR latency from blowing up.
+  # **Phase 17 §D-1-bis closure (2026-05-09): now a hard gate.**
+  #   The transitional `continue-on-error: true` warn-ratchet has been removed
+  #   (PR #60). When this job runs, a surviving-mutant ratio < 80% in any of
+  #   the 10 scorable modules turns the run red and blocks merge. The 11th
+  #   target (`core/actions.py`) remains N/A — declarative catalog with no
+  #   mutmut-generated mutants — and is intentionally excluded from the gate.
   #
-  # **Phase 17 promotion plan**: broaden the `if:` guard to every push so the
-  # gate fires on every PR. Modules unable to reach 80% are tracked in
-  # `PHASE17_BACKLOG.md` §D; once each is closed (or proven equivalent), the
-  # `if:` guard is removed and this becomes a true per-PR hard gate.
+  # **Trigger gating (unchanged in §D-1-bis closure)**: the job only RUNS when
+  # one of three conditions holds, so a default PR build does not exercise it:
+  #     a) main branch push (post-merge gate),
+  #     b) the `run-mutation-testing` PR label is attached, OR
+  #     c) the workflow is dispatched manually from the Actions UI
+  #        (`workflow_dispatch`).
+  #   Mutation runs are long (60-90 min for 10 modules); keeping the label /
+  #   dispatch gate prevents default PR latency from blowing up.
+  #
+  # **§D-2 (every-push promotion)**: technically unblocked once §D-1-bis
+  # closed, but deferred to a separate PR so we can weigh the 60-90 min
+  # runtime impact on default PR latency separately from the warn-ratchet
+  # removal. Tracked in `PHASE17_BACKLOG.md` §D-2.
   #
   # **Operator note**: BEFORE merging to `main`, manually trigger this job
   # via the `workflow_dispatch` UI (or attach `run-mutation-testing` to the
   # PR) so the post-merge gate is not the first time it runs against the
   # candidate.
   #
-  # Scope (11 modules):
-  #   Required:  core/permissions.py, core/actions.py,
+  # Scope (11 modules, of which 10 are scorable):
+  #   Required:  core/permissions.py, core/actions.py (N/A — declarative),
   #              services/superuser_service.py, services/api_key_verification.py
   #   Additional: middleware/auth.py, middleware/auth_router.py,
   #               services/webauthn_service.py, workers/dormancy_check.py
   #   Existing:  core/response_filter.py, core/audit.py, core/kms.py
   # ---------------------------------------------------------------------------
   mutation-testing:
-    name: Mutation testing (warn-ratchet in Phase 16, T995, >= 80%)
+    name: Mutation testing (T995, hard gate >= 80% per module)
     # Phase 16 R2: include `workflow_dispatch` so operators can trigger the
     # job manually from the Actions UI ahead of a main merge. Phase 17 will
     # remove this gating entirely and run on every push.
@@ -477,25 +482,26 @@ jobs:
       github.ref == 'refs/heads/main' ||
       contains(github.event.pull_request.labels.*.name, 'run-mutation-testing')
     runs-on: ubuntu-latest
-    # Phase 17 §D-0/D-1 transitional state (2026-05-08, post PR #51):
-    # - D-0 fully resolved: subprocess monkey-patch + meta_path finder + per-mutant
-    #   import fallback. mutmut now runs end-to-end in CI and produces real per-mutant
-    #   results (survived / killed / not checked).
-    # - D-1 NOT yet resolved: real per-module scores are below 80% (surviving mutants
-    #   indicate test gaps that need to be closed by adding tests or proving mutant
-    #   equivalence). This is a multi-PR effort tracked in PHASE17_BACKLOG.md §D-1.
-    # Restore `continue-on-error: false` after D-1 PR series achieves >=80% per
-    # module and `check_mutation_score.py` parses the score table successfully.
+    # Phase 17 §D-1-bis closure (2026-05-09, PR #60 — this PR):
+    #   All 10 scorable modules have reached >= 80% per-module mutation score
+    #   (final ramp via PR #59 dormancy_check helper extraction: 74.6% -> 81.9%).
+    #   The transitional `continue-on-error: true` warn-ratchet has been removed
+    #   and `mutation-testing` is once again a hard gate: any module dropping
+    #   below 80% (via `scripts/check_mutation_score.py --threshold 80`) or any
+    #   non-zero exit from `scripts/run_mutmut.py run` will hard-fail the job.
     #
-    # Single transitional knob (PR #52, codex round 1):
-    #   `continue-on-error: true` (this line) is now the SOLE warn-mode
-    #   suppression mechanism for this job. Step-level `|| true` after
-    #   `run_mutmut.py run` and `--warn-only` on the score check have been
-    #   removed so that any non-zero exit from mutmut or the score gate
-    #   surfaces as a job-level warning (not a silent pass) while D-1 ramps.
-    #   To restore the hard gate after D-1 lands per-module >=80%, delete
-    #   ONLY this `continue-on-error: true` line -- no other edits required.
-    continue-on-error: true
+    # Final per-module scores (PR #59 run 25600683403):
+    #   core.audit 97.3% / core.kms 91.7% / core.permissions 97.2% /
+    #   core.response_filter 100% / middleware.auth 100% /
+    #   middleware.auth_router 94.9% / services.api_key_verification 87.4% /
+    #   services.superuser_service 84.1% / services.webauthn_service 86.0% /
+    #   workers.dormancy_check 81.9%
+    #   (core.actions: N/A — declarative catalog, mutmut produces no mutants.)
+    #
+    # §D-2 (every-push promotion) is now technically unblocked but deferred to
+    # a separate PR — it requires judgment on the 60-90 min runtime impact on
+    # default PR latency. The `if:` guard above still gates the run to main
+    # pushes / `run-mutation-testing` PR label / `workflow_dispatch`.
     env:
       # mutmut reads configuration from pyproject.toml [tool.mutmut] only
       # (mutmut 3.x; apps/api/mutmut.toml was dead config and has been removed).
@@ -658,11 +664,11 @@ jobs:
       # exist (expected when coverage is < 100%). The score check step
       # below is the authoritative gate.
       #
-      # No `|| true` here (PR #52, codex round 1): the job-level
-      # `continue-on-error: true` above is the single transitional warn
-      # knob. A non-zero exit from mutmut (survivors / infra error) now
-      # surfaces as a job-level warning instead of being silently swallowed.
-      - name: Run mutmut (11 modules, hard gate)
+      # No `|| true` here: the warn-ratchet was removed in PR #60 (§D-1-bis
+      # closure). Any non-zero exit from mutmut (survivors / infra error) now
+      # hard-fails the job, and the score-gate step below provides the
+      # authoritative >= 80% per-module assertion on top of that.
+      - name: Run mutmut (10 scorable modules, hard gate)
         working-directory: apps/api
         run: uv run python scripts/run_mutmut.py run
 
