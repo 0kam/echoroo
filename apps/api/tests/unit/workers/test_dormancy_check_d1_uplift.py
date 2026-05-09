@@ -1127,3 +1127,647 @@ class TestEmitFollowupStages:
         unix = str(int(dormant.timestamp()))
         for c in calls:
             assert unix in c["idempotency_key"]
+
+
+# ===========================================================================
+# Section E — Round 2 strict-equality uplift (PR #56 mutation feedback)
+# ===========================================================================
+#
+# PR #56 first mutation run: 74.6 % (126 killed / 43 survived). The
+# remaining survivors concentrate in ``_enqueue_stage`` (22) and
+# ``_emit_followup_stages`` (16). The Round-2 cases below pin the
+# production behaviour with **exact equality** (full dict, full call
+# tuple, exact idempotency-key segments) and add boundary parametrize
+# sweeps around every numeric offset constant in :data:`STAGE_OFFSETS`.
+#
+# The tests are intentionally regression-style: they freeze the current
+# spec-compliant behaviour so any literal/operator/identifier mutation
+# in the underlying functions immediately breaks at least one assertion.
+
+
+class TestEnqueueStageStrictEquality:
+    """Round-2 strict-equality assertions for ``_enqueue_stage``."""
+
+    @pytest.fixture
+    def now(self) -> datetime:
+        return datetime(2025, 6, 1, 12, 0, 0, tzinfo=UTC)
+
+    @pytest.fixture
+    def dormant_since(self, now: datetime) -> datetime:
+        return now - timedelta(days=10)
+
+    async def test_full_payload_exact_equality(
+        self, now: datetime, dormant_since: datetime
+    ) -> None:
+        """Every payload key + value pinned to its exact spec value.
+
+        Kills mutations that swap a single key, drop a key, swap a value
+        from project.id → owner.id, or otherwise tamper with the dict
+        literal in ``_enqueue_stage``.
+        """
+        project_id = UUID("12345678-1234-5678-1234-567812345678")
+        owner_id = UUID("87654321-4321-8765-4321-876543218765")
+        project = _Project(
+            id=project_id,
+            name="My Test Project",
+            dormant_since=dormant_since,
+        )
+        owner = _User(id=owner_id, email="alice@example.com")
+        calls, fake = _capture_enqueue()
+        with patch("echoroo.workers.dormancy_check.enqueue", new=fake):
+            await _enqueue_stage(
+                _NoopSession(),
+                project=project,
+                owner=owner,
+                stage="stage_30d",
+                now=now,
+            )
+        assert calls[0]["payload"] == {
+            "stage": "stage_30d",
+            "project_id": str(project_id),
+            "project_name": "My Test Project",
+            "owner_user_id": str(owner_id),
+            "owner_email": "alice@example.com",
+            "dormant_since": dormant_since.isoformat(),
+            "evaluated_at": now.isoformat(),
+        }
+
+    async def test_full_enqueue_call_kwargs_exact(
+        self, now: datetime, dormant_since: datetime
+    ) -> None:
+        """The captured call carries exactly the spec-mandated kwarg keys.
+
+        Kills mutations that rename one of ``event_type`` /
+        ``payload`` / ``idempotency_key`` to something else and mutations
+        that supply a positional payload or extra unrecognised kwargs.
+        """
+        project = _Project(dormant_since=dormant_since)
+        owner = _User()
+        calls, fake = _capture_enqueue()
+        with patch("echoroo.workers.dormancy_check.enqueue", new=fake):
+            await _enqueue_stage(
+                _NoopSession(),
+                project=project,
+                owner=owner,
+                stage="stage_initial",
+                now=now,
+            )
+        # Captured call shape: keys are the four expected names exactly.
+        assert set(calls[0].keys()) == {
+            "session",
+            "event_type",
+            "payload",
+            "idempotency_key",
+        }
+
+    async def test_only_one_enqueue_call(
+        self, now: datetime, dormant_since: datetime
+    ) -> None:
+        """Exactly one ``enqueue`` invocation per ``_enqueue_stage`` call.
+
+        Kills mutations that double-emit (e.g. an extra `await enqueue(`
+        slipped in by a duplicated-statement mutator).
+        """
+        project = _Project(dormant_since=dormant_since)
+        owner = _User()
+        calls, fake = _capture_enqueue()
+        with patch("echoroo.workers.dormancy_check.enqueue", new=fake):
+            await _enqueue_stage(
+                _NoopSession(),
+                project=project,
+                owner=owner,
+                stage="stage_initial",
+                now=now,
+            )
+        assert len(calls) == 1
+
+    async def test_payload_values_are_all_strings(
+        self, now: datetime, dormant_since: datetime
+    ) -> None:
+        """Every payload value is a ``str`` (kills sanitiser-bypass mutations).
+
+        ``_sanitise_field`` returns ``str``; any mutation that bypasses
+        the sanitiser (e.g. uses ``project.id`` directly as a UUID
+        object) breaks this invariant.
+        """
+        project = _Project(dormant_since=dormant_since)
+        owner = _User()
+        calls, fake = _capture_enqueue()
+        with patch("echoroo.workers.dormancy_check.enqueue", new=fake):
+            await _enqueue_stage(
+                _NoopSession(),
+                project=project,
+                owner=owner,
+                stage="stage_initial",
+                now=now,
+            )
+        for key, value in calls[0]["payload"].items():
+            assert isinstance(value, str), f"{key} must be str, got {type(value)}"
+
+    async def test_idempotency_key_has_exactly_three_colons(
+        self, now: datetime, dormant_since: datetime
+    ) -> None:
+        """Key shape ``dormancy:{pid}:{unix}:{stage}`` has exactly three ``:``.
+
+        Kills separator-mutation (``;`` / ``-`` / ``_``) or extra-segment
+        mutations.
+        """
+        project = _Project(dormant_since=dormant_since)
+        owner = _User()
+        calls, fake = _capture_enqueue()
+        with patch("echoroo.workers.dormancy_check.enqueue", new=fake):
+            await _enqueue_stage(
+                _NoopSession(),
+                project=project,
+                owner=owner,
+                stage="stage_initial",
+                now=now,
+            )
+        assert calls[0]["idempotency_key"].count(":") == 3
+
+    async def test_idempotency_key_segments_exact(
+        self, now: datetime, dormant_since: datetime
+    ) -> None:
+        """Each ``:``-separated segment is the exact spec value."""
+        project_id = UUID("00000000-0000-0000-0000-000000000001")
+        project = _Project(id=project_id, dormant_since=dormant_since)
+        owner = _User()
+        calls, fake = _capture_enqueue()
+        with patch("echoroo.workers.dormancy_check.enqueue", new=fake):
+            await _enqueue_stage(
+                _NoopSession(),
+                project=project,
+                owner=owner,
+                stage="stage_final",
+                now=now,
+            )
+        segments = calls[0]["idempotency_key"].split(":")
+        assert segments[0] == "dormancy"
+        assert segments[1] == str(project_id)
+        assert segments[2] == str(int(dormant_since.timestamp()))
+        assert segments[3] == "stage_final"
+
+    async def test_idempotency_key_segment_count_is_four(
+        self, now: datetime, dormant_since: datetime
+    ) -> None:
+        """``str.split(':')`` yields exactly four segments."""
+        project = _Project(dormant_since=dormant_since)
+        owner = _User()
+        calls, fake = _capture_enqueue()
+        with patch("echoroo.workers.dormancy_check.enqueue", new=fake):
+            await _enqueue_stage(
+                _NoopSession(),
+                project=project,
+                owner=owner,
+                stage="stage_initial",
+                now=now,
+            )
+        segments = calls[0]["idempotency_key"].split(":")
+        assert len(segments) == 4
+
+    async def test_event_type_is_not_other_outbox_discriminators(
+        self, now: datetime, dormant_since: datetime
+    ) -> None:
+        """``event_type`` is dormancy-specific (kills swap to siblings)."""
+        project = _Project(dormant_since=dormant_since)
+        owner = _User()
+        calls, fake = _capture_enqueue()
+        with patch("echoroo.workers.dormancy_check.enqueue", new=fake):
+            await _enqueue_stage(
+                _NoopSession(),
+                project=project,
+                owner=owner,
+                stage="stage_initial",
+                now=now,
+            )
+        et = calls[0]["event_type"]
+        # Must be the dormancy discriminator and NOT any neighbour from
+        # the outbox event family.
+        assert et == "project.dormancy_notification"
+        assert et != "project.archived"
+        assert et != "project.dormancy"
+        assert et != "dormancy.notification"
+        assert "dormancy" in et
+        assert et.startswith("project.")
+
+    async def test_project_name_round_trips_through_payload(
+        self, now: datetime, dormant_since: datetime
+    ) -> None:
+        """``project_name`` is taken from ``project.name`` (kills swap to email/id)."""
+        project = _Project(name="UniqueProjName_ABC123", dormant_since=dormant_since)
+        owner = _User(email="someone@example.org")
+        calls, fake = _capture_enqueue()
+        with patch("echoroo.workers.dormancy_check.enqueue", new=fake):
+            await _enqueue_stage(
+                _NoopSession(),
+                project=project,
+                owner=owner,
+                stage="stage_initial",
+                now=now,
+            )
+        assert calls[0]["payload"]["project_name"] == "UniqueProjName_ABC123"
+        assert calls[0]["payload"]["project_name"] != owner.email
+        assert calls[0]["payload"]["project_name"] != str(project.id)
+
+    async def test_stage_field_round_trips_unchanged(
+        self, now: datetime, dormant_since: datetime
+    ) -> None:
+        """payload['stage'] equals the input stage exactly (no normalisation drift)."""
+        project = _Project(dormant_since=dormant_since)
+        owner = _User()
+        calls, fake = _capture_enqueue()
+        with patch("echoroo.workers.dormancy_check.enqueue", new=fake):
+            await _enqueue_stage(
+                _NoopSession(),
+                project=project,
+                owner=owner,
+                stage="stage_grace_expired",
+                now=now,
+            )
+        assert calls[0]["payload"]["stage"] == "stage_grace_expired"
+
+    async def test_evaluated_at_not_equal_to_dormant_since(
+        self, dormant_since: datetime
+    ) -> None:
+        """``evaluated_at`` and ``dormant_since`` payload fields are distinct.
+
+        Kills mutations that read ``project.dormant_since`` for the
+        ``evaluated_at`` field (or vice versa).
+        """
+        # Pick a now that differs from dormant_since by hours/minutes/sec
+        # — not a whole-day boundary — so accidental swaps surface.
+        now = datetime(2025, 7, 4, 9, 15, 33, tzinfo=UTC)
+        project = _Project(dormant_since=dormant_since)
+        owner = _User()
+        calls, fake = _capture_enqueue()
+        with patch("echoroo.workers.dormancy_check.enqueue", new=fake):
+            await _enqueue_stage(
+                _NoopSession(),
+                project=project,
+                owner=owner,
+                stage="stage_initial",
+                now=now,
+            )
+        payload = calls[0]["payload"]
+        assert payload["evaluated_at"] == now.isoformat()
+        assert payload["dormant_since"] == dormant_since.isoformat()
+        assert payload["evaluated_at"] != payload["dormant_since"]
+
+    async def test_empty_project_name_payload_is_empty_string(
+        self, now: datetime, dormant_since: datetime
+    ) -> None:
+        """An empty project.name yields empty ``project_name`` (kills 'None' fallback)."""
+        project = _Project(name="", dormant_since=dormant_since)
+        owner = _User()
+        calls, fake = _capture_enqueue()
+        with patch("echoroo.workers.dormancy_check.enqueue", new=fake):
+            await _enqueue_stage(
+                _NoopSession(),
+                project=project,
+                owner=owner,
+                stage="stage_initial",
+                now=now,
+            )
+        assert calls[0]["payload"]["project_name"] == ""
+
+    async def test_idempotency_key_unix_segment_is_int_string(
+        self, now: datetime, dormant_since: datetime
+    ) -> None:
+        """The unix segment is an integer-looking string (kills float coercion)."""
+        # Choose a dormant_since with non-zero microseconds to exercise
+        # the int() truncation. The unix segment must NOT carry a
+        # fractional dot.
+        dormant = dormant_since + timedelta(microseconds=123_456)
+        project = _Project(dormant_since=dormant)
+        owner = _User()
+        calls, fake = _capture_enqueue()
+        with patch("echoroo.workers.dormancy_check.enqueue", new=fake):
+            await _enqueue_stage(
+                _NoopSession(),
+                project=project,
+                owner=owner,
+                stage="stage_initial",
+                now=now,
+            )
+        unix_segment = calls[0]["idempotency_key"].split(":")[2]
+        assert unix_segment.isdigit()
+        assert "." not in unix_segment
+        assert unix_segment == str(int(dormant.timestamp()))
+
+
+class TestEmitFollowupStagesBoundaries:
+    """Round-2 boundary parametrize for ``_emit_followup_stages`` offsets."""
+
+    @pytest.mark.parametrize(
+        ("days_elapsed", "expected_stages"),
+        [
+            # stage_3d boundary (offset = 3d).
+            (2, []),
+            (3, ["stage_3d"]),
+            (4, ["stage_3d"]),
+            # stage_30d boundary (offset = 30d).
+            (29, ["stage_3d"]),
+            (30, ["stage_3d", "stage_30d"]),
+            (31, ["stage_3d", "stage_30d"]),
+            # stage_final boundary (offset = 37d).
+            (36, ["stage_3d", "stage_30d"]),
+            (37, ["stage_3d", "stage_30d", "stage_final"]),
+            (38, ["stage_3d", "stage_30d", "stage_final"]),
+            # stage_grace_expired boundary (offset = 366d == 31_622_400s).
+            (365, ["stage_3d", "stage_30d", "stage_final"]),
+            (
+                366,
+                ["stage_3d", "stage_30d", "stage_final", "stage_grace_expired"],
+            ),
+            (
+                367,
+                ["stage_3d", "stage_30d", "stage_final", "stage_grace_expired"],
+            ),
+        ],
+    )
+    async def test_offset_boundaries_exact(
+        self, days_elapsed: int, expected_stages: list[str]
+    ) -> None:
+        """Each offset boundary fires exactly the expected stage set.
+
+        Kills mutations on every numeric offset constant (3, 30, 37,
+        DORMANT_THRESHOLD_SECONDS) and the ``elapsed >= offset`` /
+        ``elapsed < offset`` operator.
+        """
+        now = datetime(2025, 6, 1, 0, 0, 0, tzinfo=UTC)
+        project = _Project(
+            status=ProjectStatus.DORMANT,
+            dormant_since=now - timedelta(days=days_elapsed),
+        )
+        owner = _User()
+        cap = _CapturedExecute(rows=[(project, owner)])
+        calls, fake = _capture_enqueue()
+        with patch("echoroo.workers.dormancy_check.enqueue", new=fake):
+            count = await _emit_followup_stages(
+                cap,  # type: ignore[arg-type]
+                now=now,
+            )
+        actual_stages = sorted(c["payload"]["stage"] for c in calls)
+        assert actual_stages == sorted(expected_stages)
+        assert count == len(expected_stages)
+
+    async def test_off_by_one_microsecond_below_offset_skipped(self) -> None:
+        """``elapsed = offset - 1us`` MUST skip (kills ``<`` → ``<=`` mutation)."""
+        now = datetime(2025, 6, 1, 0, 0, 0, tzinfo=UTC)
+        # Exactly 30d - 1us → stage_30d NOT due, but stage_3d IS due.
+        project = _Project(
+            status=ProjectStatus.DORMANT,
+            dormant_since=now - timedelta(days=30) + timedelta(microseconds=1),
+        )
+        owner = _User()
+        cap = _CapturedExecute(rows=[(project, owner)])
+        calls, fake = _capture_enqueue()
+        with patch("echoroo.workers.dormancy_check.enqueue", new=fake):
+            count = await _emit_followup_stages(
+                cap,  # type: ignore[arg-type]
+                now=now,
+            )
+        stages = sorted(c["payload"]["stage"] for c in calls)
+        assert stages == ["stage_3d"]
+        assert count == 1
+
+    async def test_off_by_one_microsecond_at_offset_fires(self) -> None:
+        """``elapsed = offset + 1us`` fires (kills ``<`` → ``<`` lift mutations).
+
+        At exactly 30d+1us, both stage_3d and stage_30d are due, but
+        stage_final (37d) and stage_grace_expired (366d) are not.
+        """
+        now = datetime(2025, 6, 1, 0, 0, 0, tzinfo=UTC)
+        project = _Project(
+            status=ProjectStatus.DORMANT,
+            dormant_since=now - timedelta(days=30) - timedelta(microseconds=1),
+        )
+        owner = _User()
+        cap = _CapturedExecute(rows=[(project, owner)])
+        calls, fake = _capture_enqueue()
+        with patch("echoroo.workers.dormancy_check.enqueue", new=fake):
+            count = await _emit_followup_stages(
+                cap,  # type: ignore[arg-type]
+                now=now,
+            )
+        stages = sorted(c["payload"]["stage"] for c in calls)
+        assert stages == ["stage_30d", "stage_3d"]
+        assert count == 2
+
+    async def test_zero_days_dormant_yields_zero_followups(self) -> None:
+        """0 days elapsed → no follow-ups (stage_initial excluded, others not due)."""
+        now = datetime(2025, 6, 1, 0, 0, 0, tzinfo=UTC)
+        project = _Project(
+            status=ProjectStatus.DORMANT,
+            dormant_since=now,  # 0d elapsed
+        )
+        owner = _User()
+        cap = _CapturedExecute(rows=[(project, owner)])
+        calls, fake = _capture_enqueue()
+        with patch("echoroo.workers.dormancy_check.enqueue", new=fake):
+            count = await _emit_followup_stages(
+                cap,  # type: ignore[arg-type]
+                now=now,
+            )
+        assert count == 0
+        assert calls == []
+
+    async def test_count_increments_by_one_per_enqueue(self) -> None:
+        """The ``enqueued`` counter increments by exactly 1 per dispatch.
+
+        Kills mutations that change ``enqueued += 1`` to ``+= 2`` or
+        ``-= 1`` or that move the increment outside the loop body.
+        """
+        now = datetime(2025, 6, 1, 0, 0, 0, tzinfo=UTC)
+        # Exactly 37d elapsed → stage_3d, stage_30d, stage_final fire (3).
+        project = _Project(
+            status=ProjectStatus.DORMANT,
+            dormant_since=now - timedelta(days=37),
+        )
+        owner = _User()
+        cap = _CapturedExecute(rows=[(project, owner)])
+        calls, fake = _capture_enqueue()
+        with patch("echoroo.workers.dormancy_check.enqueue", new=fake):
+            count = await _emit_followup_stages(
+                cap,  # type: ignore[arg-type]
+                now=now,
+            )
+        assert count == 3
+        assert len(calls) == 3
+        assert count == len(calls)
+
+    async def test_each_stage_payload_carries_correct_stage_field(self) -> None:
+        """payload['stage'] matches the stage label for each dispatched call."""
+        now = datetime(2025, 6, 1, 0, 0, 0, tzinfo=UTC)
+        project = _Project(
+            status=ProjectStatus.DORMANT,
+            dormant_since=now - timedelta(days=400),
+        )
+        owner = _User()
+        cap = _CapturedExecute(rows=[(project, owner)])
+        calls, fake = _capture_enqueue()
+        with patch("echoroo.workers.dormancy_check.enqueue", new=fake):
+            await _emit_followup_stages(
+                cap,  # type: ignore[arg-type]
+                now=now,
+            )
+        # Each call's payload['stage'] is one of the four follow-up stages.
+        stages_in_payload = {c["payload"]["stage"] for c in calls}
+        expected = {"stage_3d", "stage_30d", "stage_final", "stage_grace_expired"}
+        assert stages_in_payload == expected
+        # And NEVER includes stage_initial.
+        assert "stage_initial" not in stages_in_payload
+
+    async def test_each_stage_idempotency_key_carries_correct_stage(self) -> None:
+        """Idempotency key suffix matches the stage label for each call."""
+        now = datetime(2025, 6, 1, 0, 0, 0, tzinfo=UTC)
+        project = _Project(
+            status=ProjectStatus.DORMANT,
+            dormant_since=now - timedelta(days=400),
+        )
+        owner = _User()
+        cap = _CapturedExecute(rows=[(project, owner)])
+        calls, fake = _capture_enqueue()
+        with patch("echoroo.workers.dormancy_check.enqueue", new=fake):
+            await _emit_followup_stages(
+                cap,  # type: ignore[arg-type]
+                now=now,
+            )
+        for c in calls:
+            stage_label = c["payload"]["stage"]
+            assert c["idempotency_key"].endswith(f":{stage_label}")
+
+    async def test_distinct_owners_routed_correctly(self) -> None:
+        """Two DORMANT projects with distinct owners produce distinct owner_email payloads.
+
+        Kills mutations that pin the owner reference outside the loop
+        (e.g. always reads owner from the first row).
+        """
+        now = datetime(2025, 6, 1, 0, 0, 0, tzinfo=UTC)
+        project_a = _Project(
+            status=ProjectStatus.DORMANT,
+            dormant_since=now - timedelta(days=400),
+        )
+        project_b = _Project(
+            status=ProjectStatus.DORMANT,
+            dormant_since=now - timedelta(days=400),
+        )
+        owner_a = _User(email="alice@example.com")
+        owner_b = _User(email="bob@example.com")
+        cap = _CapturedExecute(rows=[(project_a, owner_a), (project_b, owner_b)])
+        calls, fake = _capture_enqueue()
+        with patch("echoroo.workers.dormancy_check.enqueue", new=fake):
+            await _emit_followup_stages(
+                cap,  # type: ignore[arg-type]
+                now=now,
+            )
+        emails_for_a = {
+            c["payload"]["owner_email"]
+            for c in calls
+            if c["payload"]["project_id"] == str(project_a.id)
+        }
+        emails_for_b = {
+            c["payload"]["owner_email"]
+            for c in calls
+            if c["payload"]["project_id"] == str(project_b.id)
+        }
+        assert emails_for_a == {"alice@example.com"}
+        assert emails_for_b == {"bob@example.com"}
+
+    async def test_stage_initial_offset_is_zero(self) -> None:
+        """``STAGE_OFFSETS['stage_initial']`` is exactly 0 days.
+
+        Pins the constant: kills mutations that change the stage_initial
+        offset away from 0 (which would change which follow-up stage
+        gets accidentally re-fired by the followup path).
+        """
+        assert STAGE_OFFSETS["stage_initial"] == timedelta(days=0)
+        assert STAGE_OFFSETS["stage_initial"].total_seconds() == 0
+
+    async def test_stage_offset_constants_exact(self) -> None:
+        """All STAGE_OFFSETS values pinned to spec literals.
+
+        Kills any constant mutation in the dict literal: 3 → 4, 30 →
+        31, 37 → 36, etc.
+        """
+        assert STAGE_OFFSETS["stage_3d"] == timedelta(days=3)
+        assert STAGE_OFFSETS["stage_30d"] == timedelta(days=30)
+        assert STAGE_OFFSETS["stage_final"] == timedelta(days=37)
+        # stage_grace_expired uses DORMANT_THRESHOLD_SECONDS (366d).
+        assert (
+            STAGE_OFFSETS["stage_grace_expired"].total_seconds() == 31_622_400
+        )
+
+    async def test_stage_offsets_keys_exact(self) -> None:
+        """STAGE_OFFSETS contains exactly five keys in the spec set.
+
+        Kills mutations that drop a stage key from the dict (which would
+        also silence its dispatch in the followup loop).
+        """
+        assert set(STAGE_OFFSETS.keys()) == {
+            "stage_initial",
+            "stage_3d",
+            "stage_30d",
+            "stage_final",
+            "stage_grace_expired",
+        }
+        assert len(STAGE_OFFSETS) == 5
+
+    async def test_followup_does_not_emit_stage_initial_for_old_dormancy(
+        self,
+    ) -> None:
+        """Even for very-old projects, ``stage_initial`` is never re-emitted.
+
+        Kills mutations that drop the ``if stage == 'stage_initial':
+        continue`` guard (which would re-emit stage_initial for every
+        DORMANT project on every beat tick).
+        """
+        now = datetime(2025, 6, 1, 0, 0, 0, tzinfo=UTC)
+        project = _Project(
+            status=ProjectStatus.DORMANT,
+            # Very old — every offset is satisfied.
+            dormant_since=now - timedelta(days=10_000),
+        )
+        owner = _User()
+        cap = _CapturedExecute(rows=[(project, owner)])
+        calls, fake = _capture_enqueue()
+        with patch("echoroo.workers.dormancy_check.enqueue", new=fake):
+            count = await _emit_followup_stages(
+                cap,  # type: ignore[arg-type]
+                now=now,
+            )
+        stages = [c["payload"]["stage"] for c in calls]
+        # Initial stage is NOT among the dispatched follow-ups even
+        # though its offset (0d) is technically satisfied.
+        assert "stage_initial" not in stages
+        # All four follow-up stages fire.
+        assert count == 4
+        assert sorted(stages) == sorted(
+            ["stage_3d", "stage_30d", "stage_final", "stage_grace_expired"]
+        )
+
+    async def test_dormant_since_none_skips_silently_without_raising(
+        self,
+    ) -> None:
+        """A NULL dormant_since is skipped without surfacing an exception.
+
+        Kills mutations that change ``continue`` to ``raise`` or that
+        drop the ``project.dormant_since is None`` guard entirely (which
+        would crash on ``now - None``).
+        """
+        now = datetime(2025, 6, 1, 0, 0, 0, tzinfo=UTC)
+        project = _Project(
+            status=ProjectStatus.DORMANT,
+            dormant_since=None,
+        )
+        owner = _User()
+        cap = _CapturedExecute(rows=[(project, owner)])
+        calls, fake = _capture_enqueue()
+        # The function MUST return cleanly (no exception).
+        with patch("echoroo.workers.dormancy_check.enqueue", new=fake):
+            count = await _emit_followup_stages(
+                cap,  # type: ignore[arg-type]
+                now=now,
+            )
+        assert count == 0
+        assert calls == []
