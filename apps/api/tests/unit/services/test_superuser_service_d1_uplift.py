@@ -188,52 +188,63 @@ async def test_enter_break_glass_audit_action_label_is_break_glass_entered(
 
 
 @pytest.mark.asyncio
-async def test_enter_break_glass_idempotent_keeps_original_started_at(
+async def test_enter_break_glass_idempotent_real_db(
     db_session: AsyncSession,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Kills branch-elision on ``if existing_started is not None``.
+    """Kills branch-elision on ``if existing_started is not None`` (real DB path).
 
-    Spec: a subsequent call inside the active window must NOT overwrite
-    ``started_at`` — the 72 h clock keeps ticking from the original
-    incident, not the latest event. The mutation that swaps the guard
-    (``is not None`` -> ``is None``) would clobber the timestamp; we
-    assert detail.already_active=True + started_at preserved.
+    Round 1 codex review: the previous incarnation seeded ``SystemSetting``
+    by hand and only invoked ``enter_break_glass_mode`` once on the
+    already-active path. That left the *first-call → persisted-row →
+    second-call* idempotency contract un-covered: a mutant that swapped
+    the ``is not None`` guard would still pass because the seed row had
+    no link to the production write.
+
+    This rewrite drives the real path end-to-end: two sequential
+    ``enter_break_glass_mode`` calls through the actual
+    ``_system_setting_upsert``. Between calls we assert:
+
+    * call 1 returns the fresh-window outcome (no ``already_active``),
+    * call 1 persists ``break_glass_started_at`` + ``break_glass_reason``
+      via the real upsert,
+    * call 2 returns ``already_active=True`` with the *first call's*
+      started_at echoed back (not the later wall-clock),
+    * the persisted ``break_glass_started_at`` JSONB row is unchanged
+      between call 1 and call 2 — the 72 h clock did not reset,
+    * ``break_glass_reason`` row is also unchanged (the second call's
+      reason did not overwrite the first).
     """
     await _wipe_break_glass_settings(db_session)
-    actor = await _create_user(db_session, email="d1_idem@example.com")
+    actor = await _create_user(db_session, email="d1_idem_real@example.com")
     actor_su = await _create_superuser(db_session, user=actor)
 
-    upsert_calls: list[dict[str, Any]] = []
-
-    async def _capture_upsert(
-        session: AsyncSession,
-        *,
-        key: str,
-        value: Any,
-        updated_by_id: Any,
-        now: datetime,
-    ) -> None:
-        upsert_calls.append({"key": key, "value": value})
-
-    monkeypatch.setattr(
-        superuser_service, "_system_setting_upsert", _capture_upsert
-    )
-
     first_now = datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC)
-    # Persist the started_at marker directly so the next
-    # ``enter_break_glass_mode`` call observes the active window. We do
-    # NOT call ``enter_break_glass_mode`` first because that would
-    # require unpatching the stubbed upsert.
-    db_session.add(
-        SystemSetting(
-            key="break_glass_started_at",
-            value=first_now.isoformat(),
-            updated_at=first_now,
-            updated_by_id=actor_su.id,
-        )
+    first = await enter_break_glass_mode(
+        db_session,
+        reason="initial-incident",
+        actor_user_id=actor.id,
+        now=first_now,
     )
-    await db_session.flush()
+    assert "already_active" not in first.detail
+    assert first.detail["started_at"] == first_now.isoformat()
+
+    # Snapshot what landed in system_settings via the real upsert.
+    persisted_started_after_call_1 = (
+        await db_session.execute(
+            sa.select(SystemSetting.value).where(
+                SystemSetting.key == "break_glass_started_at"
+            )
+        )
+    ).scalar_one()
+    persisted_reason_after_call_1 = (
+        await db_session.execute(
+            sa.select(SystemSetting.value).where(
+                SystemSetting.key == "break_glass_reason"
+            )
+        )
+    ).scalar_one()
+    assert persisted_started_after_call_1 == first_now.isoformat()
+    assert persisted_reason_after_call_1 == "initial-incident"
 
     later_now = first_now + timedelta(hours=5)
     second = await enter_break_glass_mode(
@@ -245,8 +256,95 @@ async def test_enter_break_glass_idempotent_keeps_original_started_at(
     assert second.detail["already_active"] is True
     # The original timestamp must surface in detail (not the later one).
     assert first_now.isoformat() in str(second.detail["started_at"])
-    # And NO upsert may fire on the idempotent path.
-    assert upsert_calls == []
+
+    # Persisted rows MUST be unchanged: neither started_at nor reason
+    # were overwritten on the idempotent path.
+    persisted_started_after_call_2 = (
+        await db_session.execute(
+            sa.select(SystemSetting.value).where(
+                SystemSetting.key == "break_glass_started_at"
+            )
+        )
+    ).scalar_one()
+    persisted_reason_after_call_2 = (
+        await db_session.execute(
+            sa.select(SystemSetting.value).where(
+                SystemSetting.key == "break_glass_reason"
+            )
+        )
+    ).scalar_one()
+    assert persisted_started_after_call_2 == persisted_started_after_call_1
+    assert persisted_reason_after_call_2 == persisted_reason_after_call_1
+    assert persisted_reason_after_call_2 == "initial-incident"
+    # Defence-in-depth: the actor stamp on the row is the resolved
+    # superuser id (not the human user id), and remains the call-1 actor.
+    persisted_updater_after_call_2 = (
+        await db_session.execute(
+            sa.select(SystemSetting.updated_by_id).where(
+                SystemSetting.key == "break_glass_started_at"
+            )
+        )
+    ).scalar_one()
+    assert persisted_updater_after_call_2 == actor_su.id
+
+
+@pytest.mark.asyncio
+async def test_enter_break_glass_persists_real_db_row(
+    db_session: AsyncSession,
+) -> None:
+    """End-to-end persistence assertion through the real ``_system_setting_upsert``.
+
+    Round 1 codex review: the broader test corpus stubs the upsert helper
+    so the on-disk shape of the ``system_settings`` rows was never
+    asserted. This test exercises the production write path once, then
+    queries the row directly to confirm:
+
+    * ``break_glass_started_at.value`` is the JSONB-encoded ``now``
+      argument, ISO-formatted with the UTC tzinfo marker,
+    * ``break_glass_reason.value`` is the verbatim caller reason,
+    * ``updated_by_id`` is the resolved ``superusers.id`` (not the
+      human ``users.id``) — guards the FK-resolution mutation
+      ``actor_user_id`` -> pass-through,
+    * ``updated_at`` is the supplied ``now`` (not wall clock).
+    """
+    await _wipe_break_glass_settings(db_session)
+    actor = await _create_user(db_session, email="d1_persist@example.com")
+    actor_su = await _create_superuser(db_session, user=actor)
+
+    fixed = datetime(2026, 8, 8, 8, 8, 8, tzinfo=UTC)
+    await enter_break_glass_mode(
+        db_session,
+        reason="real-db persistence probe",
+        actor_user_id=actor.id,
+        now=fixed,
+    )
+
+    started_row = (
+        await db_session.execute(
+            sa.select(SystemSetting).where(
+                SystemSetting.key == "break_glass_started_at"
+            )
+        )
+    ).scalar_one()
+    assert started_row.value == fixed.isoformat()
+    # Round-trip through fromisoformat to confirm UTC tzinfo is on the
+    # stored ISO string (not a naive timestamp).
+    parsed = datetime.fromisoformat(str(started_row.value))
+    assert parsed.tzinfo is not None
+    assert parsed == fixed
+    assert started_row.updated_by_id == actor_su.id
+    assert started_row.updated_at == fixed
+
+    reason_row = (
+        await db_session.execute(
+            sa.select(SystemSetting).where(
+                SystemSetting.key == "break_glass_reason"
+            )
+        )
+    ).scalar_one()
+    assert reason_row.value == "real-db persistence probe"
+    assert reason_row.updated_by_id == actor_su.id
+    assert reason_row.updated_at == fixed
 
 
 @pytest.mark.asyncio
@@ -651,6 +749,15 @@ async def test_approve_request_non_pending_status_raises_state_error(
     A mutation that swaps ``!=`` -> ``==`` (or compares to a different
     literal) would let ``applied`` / ``rejected`` tickets accept fresh
     approvals. Both terminal statuses must raise.
+
+    Status vocabulary note (Round 1 codex review): per
+    ``apps/api/echoroo/models/superuser_approval_request.py`` line 31-35
+    and spec data-model.md §3.3, the canonical
+    ``superuser_approval_requests.status`` set is exactly
+    ``{'pending', 'applied', 'rejected'}``. There is **no** ``expired``
+    status in the vocabulary (no scheduled-cleanup engine exists for
+    these tickets in Phase 17), so the parametrise covers the full
+    terminal surface.
     """
     requester = await _create_user(
         db_session, email=f"d1_state_{status}_req@example.com"
