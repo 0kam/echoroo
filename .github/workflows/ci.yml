@@ -670,10 +670,13 @@ jobs:
       # mutants (the default ``mutmut results`` omits them), which makes the
       # artifact the authoritative per-mutant log and matches what
       # ``check_mutation_score.py`` reads internally.
+      # NOTE: mutmut 3.5 declares ``--all`` as ``@click.option('--all',
+      # default=False)`` WITHOUT ``is_flag=True``, so the option requires a
+      # value — pass ``--all=true`` rather than the bare ``--all`` flag.
       - name: Collect mutmut results
         if: always()
         working-directory: apps/api
-        run: uv run mutmut results --all 2>&1 | tee /tmp/mutmut_results.txt || true
+        run: uv run mutmut results --all=true 2>&1 | tee /tmp/mutmut_results.txt || true
 
       # Enforce >= 80% threshold per module.
       # scripts/check_mutation_score.py parses `mutmut results` output and

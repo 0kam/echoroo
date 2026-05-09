@@ -85,14 +85,17 @@ def _strip_ansi(text: str) -> str:
 
 
 def _run_mutmut_results() -> list[str]:
-    """Run ``mutmut results --all`` and return stdout/stderr lines.
+    """Run ``mutmut results --all=true`` and return stdout/stderr lines.
 
     ``--all`` is required because the default ``mutmut results`` only prints
     non-killed mutants, which would prevent us from computing a kill rate.
+    mutmut 3.5: ``--all`` expects a value (Click ``default=False``, no
+    ``is_flag=True``), so the bare ``--all`` flag fails with
+    ``Error: Option '--all' requires an argument.``; pass ``--all=true``.
     Working directory must be ``apps/api`` (caller's responsibility).
     """
     result = subprocess.run(
-        [sys.executable, "-m", "mutmut", "results", "--all"],
+        [sys.executable, "-m", "mutmut", "results", "--all=true"],
         capture_output=True,
         text=True,
         check=False,
