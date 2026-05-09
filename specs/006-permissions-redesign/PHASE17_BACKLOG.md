@@ -677,31 +677,57 @@ section below for record.
 - **Final size**: 1 production-refactor PR (PR #59) — under the
   estimated 1-2 PR budget.
 
-### D-2. Job-level every-push promotion — **OPEN (technically unblocked, deferred to a separate PR)**
+### D-2. Job-level every-push promotion — DEFERRED (decision 2026-05-09)
 
-- **Status note (2026-05-09, post PR #60)**: D-2 is **technically
-  unblocked** — §D-1-bis closed via PR #59 (all 10 scorable modules ≥
-  80%) and the `continue-on-error: true` warn-ratchet was removed in
-  PR #60 (this PR), so the job is once again a true hard gate when it
-  runs. Promotion to every-push is now a **judgment call on PR
-  latency**: the full 10-module mutmut sweep currently takes 60-90 min
-  in CI, which would dominate default-branch PR turnaround. Sequence
-  from here: profile / time-budget the mutmut runtime → either loosen
-  the `if:` guard to every push, or split into "fast" (≤ 2 modules per
-  PR, e.g. modulo file-path heuristics) + "full" (post-merge nightly)
-  jobs.
-- **Release condition**:
-  - [x] D-1 resolved (real green score on main, all 10 scorable
-        modules ≥ 80%; `core.actions` remains N/A) — **closed via
-        §D-1-bis (PR #59)**.
-  - [x] `mutation-testing` `continue-on-error: true` removed — **done
-        in PR #60 (this PR)**.
-  - [ ] Mutmut runtime profiled and confirmed acceptable for default
-        PR latency; otherwise split into "fast" (≤ 2 modules per PR) +
-        "full" (post-merge nightly) jobs.
-  - [ ] `if:` guard on the `mutation-testing` job loosened to fire on
-        every push (delete the conditional). Operators continue to
-        retain `workflow_dispatch` for manual runs.
+**Status**: DEFERRED INDEFINITELY by intentional decision (2026-05-09).
+The mutation-testing job retains the existing label-triggered model
+(`workflow_dispatch` + `run-mutation-testing` PR label + main-branch
+push). Promotion to every-push is **not pursued** until a concrete
+score-regression scenario justifies the latency cost. Note that the
+underlying §D-1 hard-gate prerequisites are already satisfied — all 10
+scorable modules ≥ 80% (PRs #53-#57 + #59) and the `continue-on-error:
+true` warn-ratchet was removed in PR #60 — so this is a deferral on
+**trigger frequency**, not on hard-gate semantics.
+
+**Cost/benefit rationale**:
+- mutmut 1 run = 60-90 min (measured across PRs #53-60).
+- Promoting to every-push would add ~90min of CI wait to every PR
+  (incl. trivial docs/CI changes), and pressure GitHub Actions runner
+  concurrency.
+- Current label-triggered model already enforces the per-module 80%
+  gate on demand: any contributor whose change touches the 11 mutated
+  modules can attach the `run-mutation-testing` label, and the
+  hard-gate (PR #60) ensures regressions fail the job.
+- Main-branch push trigger continues to provide a post-merge sanity
+  check, so silently merged regressions are still caught (asynchronously)
+  before downstream PRs rely on them.
+
+**Future trigger to revisit**:
+- If a permission-critical regression slips past the label-triggered
+  gate (i.e., a PR merges that lowers a per-module score below 80%
+  without the label being attached), revisit the trade-off.
+- Likely first design at that point: split into a **fast** subset
+  (~10-20min, per-PR push, only the modules whose source files were
+  touched) + a **full** post-merge nightly (~90min, all 11 modules).
+  Do not flip to a single per-PR every-push job — the latency cost
+  would be unacceptable for the marginal benefit.
+
+**Release condition** (history preserved + every-push promotion
+deferred):
+- [x] D-1 resolved (real green score on main, all 10 scorable
+      modules ≥ 80%; `core.actions` remains N/A) — **closed via
+      §D-1-bis (PR #59)**.
+- [x] `mutation-testing` `continue-on-error: true` removed — **done
+      in PR #60**.
+- [N/A while deferred] Mutmut runtime profiled and confirmed
+      acceptable for default PR latency; otherwise split into "fast"
+      (≤ 2 modules per PR) + "full" (post-merge nightly) jobs.
+- [N/A while deferred] `if:` guard on the `mutation-testing` job
+      loosened to fire on every push (delete the conditional).
+      Operators continue to retain `workflow_dispatch` for manual runs.
+- [N/A while deferred] If revisited: implement the fast/full split,
+      profile both jobs against PR latency, and only then loosen the
+      `if:` guard on the appropriate variant.
 
 ---
 
