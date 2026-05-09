@@ -39,7 +39,6 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
-import unicodedata
 from datetime import UTC, datetime, timedelta
 from typing import Any, Final
 
@@ -48,11 +47,35 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import lazyload
 
 from echoroo.core.database import AsyncSessionLocal
-from echoroo.core.text import has_control_chars
 from echoroo.models.enums import ProjectStatus
 from echoroo.models.project import Project
 from echoroo.models.user import User
 from echoroo.services.outbox_service import enqueue
+from echoroo.workers._dormancy_events import (
+    build_notification_payload,
+    compute_idempotency_key,
+)
+
+# Backward-compat re-exports: ``DormancyPayloadError`` was previously
+# defined inline here; ``_sanitise_field`` was a module-private helper
+# that some unit tests reach into. Phase 17 §D-1-bis lifted both into
+# :mod:`echoroo.workers._dormancy_payload_sanitiser` (the helper module
+# the new ``_dormancy_events`` builder consumes). Re-import them here
+# so ``from echoroo.workers.dormancy_check import DormancyPayloadError``
+# keeps working for callers and tests.
+from echoroo.workers._dormancy_payload_sanitiser import (
+    DormancyPayloadError as DormancyPayloadError,  # noqa: PLC0414 - public re-export
+)
+from echoroo.workers._dormancy_payload_sanitiser import (
+    sanitise_field as _sanitise_field,  # noqa: F401 - public re-export
+)
+from echoroo.workers._dormancy_stage_schedule import (
+    DORMANT_THRESHOLD_SECONDS as DORMANT_THRESHOLD_SECONDS,  # noqa: PLC0414
+)
+from echoroo.workers._dormancy_stage_schedule import (
+    STAGE_OFFSETS as STAGE_OFFSETS,  # noqa: PLC0414
+)
+from echoroo.workers._dormancy_stage_schedule import compute_ready_stages
 from echoroo.workers.celery_app import app
 
 logger = logging.getLogger(__name__)
@@ -61,23 +84,11 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Tunables (mirrored from data-model.md §3.19 SystemSettings defaults)
 # ---------------------------------------------------------------------------
-
-#: FR-060: 366 days (1 year + 1 day grace) before a project is flagged
-#: dormant. Lifted as a constant so test fixtures can override the value
-#: without seeding the system_settings table.
-DORMANT_THRESHOLD_SECONDS: Final[int] = 31_622_400
-
-#: Notification stage offsets relative to ``Project.dormant_since``.
-#: Spec FR-060: 3 + 30 + 7 = 40-day grace window before the final
-#: superuser-review handoff. The "stage_initial" event fires on the
-#: same day the project transitions; the rest fire on later beat ticks.
-STAGE_OFFSETS: Final[dict[str, timedelta]] = {
-    "stage_initial": timedelta(days=0),
-    "stage_3d": timedelta(days=3),
-    "stage_30d": timedelta(days=30),
-    "stage_final": timedelta(days=37),  # 30 + 7
-    "stage_grace_expired": timedelta(seconds=DORMANT_THRESHOLD_SECONDS),
-}
+#
+# ``DORMANT_THRESHOLD_SECONDS`` and ``STAGE_OFFSETS`` are owned by
+# :mod:`echoroo.workers._dormancy_stage_schedule` (Phase 17 §D-1-bis
+# helper extraction) — re-exported here so existing callers do not have
+# to update their import paths.
 
 #: Outbox event_type discriminator. A single discriminator with a
 #: ``stage`` payload field keeps the dispatcher table small (Phase 13+
@@ -91,36 +102,6 @@ _DORMANCY_CHECK_LOCK_KEY: Final[int] = (
     int.from_bytes(hashlib.sha256(b"dormancy_check").digest()[:8], "big")
     & 0x7FFFFFFFFFFFFFFF
 )
-
-#: Hard cap for outbox payload string fields. Mirrors the convention in
-#: :mod:`echoroo.workers.trusted_expiry_dispatcher` so the dispatcher
-#: side does not have to special-case long values.
-_MAX_FIELD_LEN: Final[int] = 500
-
-
-# ---------------------------------------------------------------------------
-# Payload sanitisation (FR-101b parity with trusted_expiry_dispatcher)
-# ---------------------------------------------------------------------------
-
-
-class DormancyPayloadError(ValueError):
-    """Raised when a sanitised payload field carries invalid bytes."""
-
-
-def _sanitise_field(value: object, *, field_name: str) -> str:
-    """NFKC-normalise, reject control chars, truncate to the hard cap."""
-    if value is None:
-        return ""
-    raw = str(value)
-    normalised = unicodedata.normalize("NFKC", raw).strip()
-    if has_control_chars(normalised):
-        raise DormancyPayloadError(
-            f"dormancy notification payload field {field_name!r} contains control characters",
-        )
-    if len(normalised) > _MAX_FIELD_LEN:
-        normalised = normalised[:_MAX_FIELD_LEN]
-    return normalised
-
 
 # ---------------------------------------------------------------------------
 # Public API — async pipeline
@@ -222,19 +203,6 @@ async def _enqueue_stage(
     if stage not in STAGE_OFFSETS:
         raise ValueError(f"unknown dormancy stage {stage!r}")
 
-    payload: dict[str, Any] = {
-        "stage": _sanitise_field(stage, field_name="stage"),
-        "project_id": _sanitise_field(project.id, field_name="project_id"),
-        "project_name": _sanitise_field(project.name, field_name="project_name"),
-        "owner_user_id": _sanitise_field(owner.id, field_name="owner_user_id"),
-        "owner_email": _sanitise_field(owner.email, field_name="owner_email"),
-        "dormant_since": _sanitise_field(
-            project.dormant_since.isoformat() if project.dormant_since else "",
-            field_name="dormant_since",
-        ),
-        "evaluated_at": _sanitise_field(now.isoformat(), field_name="evaluated_at"),
-    }
-
     # FR-076a idempotency (Phase 12 R2 Major fix): per (project,
     # dormant_since, stage) — not just per (project, stage). The R1
     # design used a fixed key per project+stage so each stage fired at
@@ -253,8 +221,18 @@ async def _enqueue_stage(
             f"_enqueue_stage requires dormant_since to be set "
             f"(project_id={project.id})"
         )
-    dormant_since_unix = int(project.dormant_since.timestamp())
-    idempotency_key = f"dormancy:{project.id}:{dormant_since_unix}:{stage}"
+
+    payload = build_notification_payload(
+        stage=stage,
+        project=project,
+        owner=owner,
+        now=now,
+    )
+    idempotency_key = compute_idempotency_key(
+        project_id=project.id,
+        dormant_since=project.dormant_since,
+        stage=stage,
+    )
     await enqueue(
         session,
         event_type=OUTBOX_EVENT_DORMANCY,
@@ -300,17 +278,13 @@ async def _emit_followup_stages(
                 project.id,
             )
             continue
-        for stage, offset in STAGE_OFFSETS.items():
-            if stage == "stage_initial":
-                continue
-            elapsed = now - project.dormant_since
-            if elapsed < offset:
-                continue
-            # The per-episode idempotency key (set by ``_enqueue_stage``,
-            # scoped to project + dormant_since UNIX-second + stage)
-            # makes this an UPSERT — every subsequent beat tick during
-            # the same dormancy episode is a no-op, while a restored
-            # project re-entering DORMANT lands in a fresh key namespace.
+        # ``compute_ready_stages`` owns the elapsed-time comparison +
+        # ``stage_initial`` skip; the per-episode idempotency key
+        # produced by :func:`_enqueue_stage` makes this an UPSERT — every
+        # subsequent beat tick during the same dormancy episode is a
+        # no-op, while a restored project re-entering DORMANT lands in
+        # a fresh key namespace.
+        for stage in compute_ready_stages(now=now, dormant_since=project.dormant_since):
             await _enqueue_stage(
                 session,
                 project=project,
