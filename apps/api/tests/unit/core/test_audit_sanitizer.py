@@ -558,9 +558,9 @@ def test_audit_log_sanitizer_optional_non_dict_raises() -> None:
         # (e.g. ``< 9``) is caught by the difference between len-7 (None)
         # and len-8 (decoded).
         pytest.param("aGVsbG8h", "hello!", id="len_8_at_threshold_returns_text"),
-        # length 9 (just above) → also decoded. Confirms threshold is
-        # not over-tightened in either direction.
-        pytest.param("aGVsbG8hMQ==", "hello!1", id="len_9_above_threshold"),
+        # length 12 (just above, including padding) → also decoded.
+        # Confirms threshold is not over-tightened in either direction.
+        pytest.param("aGVsbG8hMQ==", "hello!1", id="len_12_above_threshold"),
     ],
 )
 def test_try_base64_decode_length_boundary(raw: str, expected_decoded: str | None) -> None:
@@ -598,9 +598,10 @@ def test_try_base64_decode_returns_none_when_both_alphabets_yield_binary() -> No
     """
     from echoroo.core.audit import _try_base64_decode
 
-    # Pure binary that round-trips identically through std + urlsafe
-    # (no '+' / '/' / '-' / '_' chars in the encoding, so both alphabets
-    # accept it) but fails UTF-8 decoding on both candidate buffers.
+    # Both std + urlsafe decoders return non-UTF-8 binary regardless of
+    # alphabet: the encoded form may contain '+' / '/' (std) which
+    # urlsafe still tolerates as input under validate=False, and either
+    # candidate buffer fails UTF-8 decoding so the function returns None.
     binary = b"\xff\xfe\xff\xfe\xff\xfe\xff\xfe"
     encoded = base64.b64encode(binary).decode()
     assert _try_base64_decode(encoded) is None
@@ -683,6 +684,78 @@ def test_uuid_only_anchor_rejects_uuid_with_extra_chars(label: str, value: str) 
     assert _UUID_ONLY_RE.match(value) is None, (
         f"_UUID_ONLY_RE must reject {label!r} ({value!r}) because the "
         "string is not solely a canonical UUID"
+    )
+
+
+def test_try_base64_decode_invokes_both_alphabets(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Both std and urlsafe decoders must be tried before returning ``None``.
+
+    Targets §D-1 Timeout 1 strengthening: the bare-``None`` assertion in
+    :func:`test_try_base64_decode_returns_none_when_both_alphabets_yield_binary`
+    cannot distinguish a mutant that exits the candidates loop early
+    (e.g. ``break`` after the first ``UnicodeDecodeError``) from the
+    correct double-attempt path. Here we wrap both ``base64.b64decode``
+    and ``base64.urlsafe_b64decode`` with call-counting spies and assert
+    each is invoked at least once on the same binary-yielding input.
+    """
+    import base64 as _b64
+
+    from echoroo.core import audit as _audit_mod
+    from echoroo.core.audit import _try_base64_decode
+
+    calls: dict[str, int] = {"std": 0, "urlsafe": 0}
+    real_std = _b64.b64decode
+    real_urlsafe = _b64.urlsafe_b64decode
+
+    def spy_std(s: Any, **kw: Any) -> bytes:
+        calls["std"] += 1
+        return real_std(s, **kw)
+
+    def spy_urlsafe(s: Any, **kw: Any) -> bytes:
+        calls["urlsafe"] += 1
+        return real_urlsafe(s, **kw)
+
+    monkeypatch.setattr(_audit_mod.base64, "b64decode", spy_std)
+    monkeypatch.setattr(_audit_mod.base64, "urlsafe_b64decode", spy_urlsafe)
+
+    # Input long enough to pass the length filter; both decoders yield
+    # non-UTF-8 binary so the function falls through every candidate and
+    # returns None only after exhausting the loop.
+    binary_b64 = _b64.b64encode(b"\xff\xfe\xfd\xfc\xfb\xfa\xff\xfe").decode("ascii")
+
+    assert _try_base64_decode(binary_b64) is None
+    assert calls["std"] >= 1 and calls["urlsafe"] >= 1, (
+        f"both decoders should be tried; got {calls}"
+    )
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "550e8400-e29b-41d4-a716-446655440000 alice@example.com",
+        "alice@example.com 550e8400-e29b-41d4-a716-446655440000",
+        "see 550e8400-e29b-41d4-a716-446655440000 contact alice@example.com",
+    ],
+    ids=["uuid_then_email", "email_then_uuid", "uuid_embedded_with_email"],
+)
+def test_uuid_anchor_does_not_exempt_pii_in_mixed_string(value: str) -> None:
+    """A UUID concatenated with PII must still be detected/redacted.
+
+    Behavioural counterpart to
+    :func:`test_uuid_only_anchor_rejects_uuid_with_extra_chars`: instead
+    of probing the regex constant directly, we drive ``contains_pii`` /
+    ``sanitize_value`` end-to-end. Kills anchor mutants where ``\\Z``
+    removal would let a UUID prefix allowlist a string that still
+    contains an email address.
+    """
+    from echoroo.core.audit import contains_pii, sanitize_value
+
+    assert contains_pii(value) is True
+    redacted = sanitize_value(value)
+    assert "alice@example.com" not in str(redacted), (
+        f"sanitize_value should redact the email portion, got {redacted!r}"
     )
 
 
