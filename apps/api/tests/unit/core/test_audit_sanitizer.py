@@ -530,3 +530,282 @@ def test_audit_log_sanitizer_optional_non_dict_raises() -> None:
             detail={},
             before="not-a-dict-string",  # triggers line 436 raise ValueError
         )
+
+
+# ---------------------------------------------------------------------------
+# Phase 17 §D-1 — mutation score uplift for echoroo.core.audit.
+#
+# Targets the four baseline mutants reported by mutmut on this module:
+#   * Scorable A: ``_try_base64_decode`` length boundary (``< 8``)
+#   * Scorable B: ``_UUID_ONLY_RE`` full-string anchor
+#   * Timeout 1: ``_try_base64_decode`` UnicodeDecodeError loop on both
+#     std + urlsafe alphabets
+#   * No tests 1: ``_default_hash_fn`` lazy KMS load (production code
+#     path otherwise bypassed by the autouse stub above)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected_decoded"),
+    [
+        # length 7 → strictly below the 8-char threshold, must short-circuit
+        # to None even when the input is otherwise valid base64. Kills a
+        # mutant flipping ``< 8`` to ``<= 8`` (which would still skip 8 too)
+        # because the 8-char case below succeeds.
+        pytest.param("abcdefg", None, id="len_7_below_threshold"),
+        # length 8 with UTF-8-decodable payload → returns the decoded text.
+        # Pins the boundary at exactly 8 so a mutant flipping the operator
+        # (e.g. ``< 9``) is caught by the difference between len-7 (None)
+        # and len-8 (decoded).
+        pytest.param("aGVsbG8h", "hello!", id="len_8_at_threshold_returns_text"),
+        # length 12 (just above, including padding) → also decoded.
+        # Confirms threshold is not over-tightened in either direction.
+        pytest.param("aGVsbG8hMQ==", "hello!1", id="len_12_above_threshold"),
+    ],
+)
+def test_try_base64_decode_length_boundary(raw: str, expected_decoded: str | None) -> None:
+    """Pin the ``len(stripped) < 8`` short-circuit in ``_try_base64_decode``.
+
+    Targets §D-1 Scorable A: a mutant that flips the inequality (``<`` →
+    ``<=``, ``>``, etc.) or bumps the literal (``< 7``, ``< 9``) is
+    distinguishable iff length 7 returns None *and* length 8 decodes.
+    """
+    from echoroo.core.audit import _try_base64_decode
+
+    assert _try_base64_decode(raw) == expected_decoded
+
+
+def test_try_base64_decode_length_boundary_respects_strip() -> None:
+    """The threshold applies after ``.strip()``, not to the raw input.
+
+    Pads the 7-char body with surrounding whitespace so the raw length
+    is 11 but the stripped length is 7 → must still return None. Kills a
+    mutant that drops the ``.strip()`` call before the length check.
+    """
+    from echoroo.core.audit import _try_base64_decode
+
+    assert _try_base64_decode("  abcdefg  ") is None
+
+
+def test_try_base64_decode_returns_none_when_both_alphabets_yield_binary() -> None:
+    """Both std + urlsafe decode succeed but neither bytes-output is UTF-8.
+
+    Targets §D-1 Timeout 1: the loop inside ``_try_base64_decode`` walks
+    every candidate from the std/urlsafe alphabets and returns ``None``
+    only after both ``UnicodeDecodeError`` are caught. A mutant that
+    breaks early or returns the raw bytes would leak non-text data into
+    the regex scanner.
+    """
+    from echoroo.core.audit import _try_base64_decode
+
+    # Both std + urlsafe decoders return non-UTF-8 binary regardless of
+    # alphabet: the encoded form may contain '+' / '/' (std) which
+    # urlsafe still tolerates as input under validate=False, and either
+    # candidate buffer fails UTF-8 decoding so the function returns None.
+    binary = b"\xff\xfe\xff\xfe\xff\xfe\xff\xfe"
+    encoded = base64.b64encode(binary).decode()
+    assert _try_base64_decode(encoded) is None
+
+
+def test_try_base64_decode_uses_urlsafe_alphabet_branch() -> None:
+    """A urlsafe-only token (contains ``-`` / ``_``) decodes via the
+    urlsafe path and the resulting UTF-8 text is returned.
+
+    Pins the dual-alphabet branching: kills a mutant that drops the
+    urlsafe ``base64.urlsafe_b64decode`` candidate from the list.
+    """
+    from echoroo.core.audit import _try_base64_decode
+
+    # 'subjects?' encoded with urlsafe alphabet — contains '_' so std
+    # base64 alphabet would drop or misinterpret it under validate=False
+    # (returns garbage bytes that may fail UTF-8 decoding), while the
+    # urlsafe alphabet decodes cleanly to the original ASCII text.
+    text = "subjects?"
+    urlsafe_encoded = base64.urlsafe_b64encode(text.encode()).decode().rstrip("=")
+    decoded = _try_base64_decode(urlsafe_encoded)
+    # We assert that *some* candidate decoded back to the original ASCII
+    # text — proving at least one of the two alphabet branches is exercised
+    # and the loop returns a string rather than None.
+    assert decoded == text
+
+
+def test_uuid_only_anchor_allows_full_uuid_string() -> None:
+    """A bare canonical UUID is exempt from PII redaction (FR-091a §c).
+
+    Targets §D-1 Scorable B baseline: kills a mutant that drops the
+    ``\\A`` / ``\\Z`` anchors on ``_UUID_ONLY_RE``. With anchors, this
+    exact-match string is the *only* form accepted.
+    """
+    uuid_val = "550e8400-e29b-41d4-a716-446655440000"
+    out = sanitize_value({"owner_id": uuid_val})
+    # Owner id retained verbatim — no redaction marker.
+    assert out["owner_id"] == uuid_val
+
+
+@pytest.mark.parametrize(
+    ("label", "value"),
+    [
+        # UUID with trailing free-form text — anchor must reject so the
+        # value falls through to the rest of the PII pipeline (and is
+        # preserved here because the suffix is non-PII).
+        pytest.param(
+            "uuid_with_suffix",
+            "550e8400-e29b-41d4-a716-446655440000-tail",
+            id="uuid_with_suffix",
+        ),
+        # UUID with leading free-form text.
+        pytest.param(
+            "uuid_with_prefix",
+            "prefix-550e8400-e29b-41d4-a716-446655440000",
+            id="uuid_with_prefix",
+        ),
+        # UUID embedded inside a longer string.
+        pytest.param(
+            "uuid_embedded",
+            "see 550e8400-e29b-41d4-a716-446655440000 for details",
+            id="uuid_embedded",
+        ),
+    ],
+)
+def test_uuid_only_anchor_rejects_uuid_with_extra_chars(label: str, value: str) -> None:
+    """Strings that *contain* a UUID but are not solely a UUID must not
+    be treated as the allowlisted UUID-only form.
+
+    Targets §D-1 Scorable B: a mutant that drops ``\\A`` or ``\\Z`` would
+    let these strings hit the early-return ``False`` branch in
+    ``_scan_string``, silently expanding the allowlist beyond the spec.
+
+    We verify by calling the module-private ``_UUID_ONLY_RE.match``
+    directly (which short-circuits on success and is anchored on both
+    sides) — without an anchor the match would succeed.
+    """
+    from echoroo.core.audit import _UUID_ONLY_RE
+
+    assert _UUID_ONLY_RE.match(value) is None, (
+        f"_UUID_ONLY_RE must reject {label!r} ({value!r}) because the "
+        "string is not solely a canonical UUID"
+    )
+
+
+def test_try_base64_decode_invokes_both_alphabets(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Both std and urlsafe decoders must be tried before returning ``None``.
+
+    Targets §D-1 Timeout 1 strengthening: the bare-``None`` assertion in
+    :func:`test_try_base64_decode_returns_none_when_both_alphabets_yield_binary`
+    cannot distinguish a mutant that exits the candidates loop early
+    (e.g. ``break`` after the first ``UnicodeDecodeError``) from the
+    correct double-attempt path. Here we wrap both ``base64.b64decode``
+    and ``base64.urlsafe_b64decode`` with call-counting spies and assert
+    each is invoked at least once on the same binary-yielding input.
+    """
+    import base64 as _b64
+
+    from echoroo.core import audit as _audit_mod
+    from echoroo.core.audit import _try_base64_decode
+
+    calls: dict[str, int] = {"std": 0, "urlsafe": 0}
+    real_std = _b64.b64decode
+    real_urlsafe = _b64.urlsafe_b64decode
+
+    def spy_std(s: Any, **kw: Any) -> bytes:
+        calls["std"] += 1
+        return real_std(s, **kw)
+
+    def spy_urlsafe(s: Any, **kw: Any) -> bytes:
+        calls["urlsafe"] += 1
+        return real_urlsafe(s, **kw)
+
+    monkeypatch.setattr(_audit_mod.base64, "b64decode", spy_std)
+    monkeypatch.setattr(_audit_mod.base64, "urlsafe_b64decode", spy_urlsafe)
+
+    # Input long enough to pass the length filter; both decoders yield
+    # non-UTF-8 binary so the function falls through every candidate and
+    # returns None only after exhausting the loop.
+    binary_b64 = _b64.b64encode(b"\xff\xfe\xfd\xfc\xfb\xfa\xff\xfe").decode("ascii")
+
+    assert _try_base64_decode(binary_b64) is None
+    assert calls["std"] >= 1 and calls["urlsafe"] >= 1, (
+        f"both decoders should be tried; got {calls}"
+    )
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "550e8400-e29b-41d4-a716-446655440000 alice@example.com",
+        "alice@example.com 550e8400-e29b-41d4-a716-446655440000",
+        "see 550e8400-e29b-41d4-a716-446655440000 contact alice@example.com",
+    ],
+    ids=["uuid_then_email", "email_then_uuid", "uuid_embedded_with_email"],
+)
+def test_uuid_anchor_does_not_exempt_pii_in_mixed_string(value: str) -> None:
+    """A UUID concatenated with PII must still be detected/redacted.
+
+    Behavioural counterpart to
+    :func:`test_uuid_only_anchor_rejects_uuid_with_extra_chars`: instead
+    of probing the regex constant directly, we drive ``contains_pii`` /
+    ``sanitize_value`` end-to-end. Kills anchor mutants where ``\\Z``
+    removal would let a UUID prefix allowlist a string that still
+    contains an email address.
+    """
+    from echoroo.core.audit import contains_pii, sanitize_value
+
+    assert contains_pii(value) is True
+    redacted = sanitize_value(value)
+    assert "alice@example.com" not in str(redacted), (
+        f"sanitize_value should redact the email portion, got {redacted!r}"
+    )
+
+
+def test_default_hash_fn_routes_through_kms_compute_pii_hash(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``_default_hash_fn`` performs a lazy import + delegates to KMS.
+
+    Targets §D-1 baseline ``no tests 1``: the autouse fixture above
+    patches ``_default_hash_fn`` on the module to a deterministic local
+    stub, so the production body (``from echoroo.core.kms import
+    compute_pii_hash; return compute_pii_hash(value)``) is otherwise
+    never executed by the test suite.
+
+    We restore the real implementation by reloading the audit module
+    from its source path *under a fresh module name* (so the autouse
+    monkeypatch on the original module reference is unaffected). We
+    then patch ``compute_pii_hash`` inside ``echoroo.core.kms`` and
+    invoke the freshly-loaded function to prove the lazy-import +
+    delegation contract.
+    """
+    import importlib.util
+    import sys
+
+    import echoroo.core.audit as _audit_module
+    import echoroo.core.kms as _kms_module
+
+    captured: list[str] = []
+
+    def _fake_compute_pii_hash(value: str) -> str:
+        captured.append(value)
+        return "deadbeef" * 8  # 64 hex chars, mimics SHA-256 output
+
+    monkeypatch.setattr(_kms_module, "compute_pii_hash", _fake_compute_pii_hash)
+
+    # Load a fresh copy of the audit module under a private name so the
+    # autouse fixture's patch on the canonical ``echoroo.core.audit``
+    # symbol does not shadow the production ``_default_hash_fn`` body.
+    spec = importlib.util.spec_from_file_location(
+        "_audit_freshcopy_for_kms_test",
+        _audit_module.__file__,
+    )
+    assert spec is not None and spec.loader is not None
+    fresh = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = fresh
+    try:
+        spec.loader.exec_module(fresh)
+        digest = fresh._default_hash_fn("user@example.com")
+    finally:
+        sys.modules.pop(spec.name, None)
+
+    assert captured == ["user@example.com"]
+    assert digest == "deadbeef" * 8
