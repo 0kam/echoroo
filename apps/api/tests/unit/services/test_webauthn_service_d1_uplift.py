@@ -299,19 +299,31 @@ async def test_store_challenge_writes_base64url_value_under_key(
 @pytest.mark.asyncio
 async def test_store_challenge_sets_ttl_from_settings(
     redis: fakeredis.aioredis.FakeRedis,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """``_store_challenge`` TTL MUST be the configured value (300s).
 
-    Asserted to within the smallest tolerance that survives fakeredis clock
-    granularity (an off-by-one TTL mutant changes 300 -> 299/301 outside the
-    accepted set, while clock skew during a sub-second test stays inside it).
+    Spy on ``redis.set`` to capture the actual ``ex`` kwarg passed by the
+    production code. fakeredis quantizes TTL on read (``redis.ttl`` may
+    return 299 even when ``ex=300`` was set) so reading TTL back is not a
+    strict-equality kill for off-by-one mutants (e.g. ``ex=299``). Asserting
+    the captured kwarg directly is exact and kills those mutants.
     """
+    captured: dict[str, Any] = {}
+    real_set = redis.set
+
+    async def spy_set(*args: Any, **kwargs: Any) -> Any:
+        captured.update(kwargs)
+        return await real_set(*args, **kwargs)
+
+    monkeypatch.setattr(redis, "set", spy_set)
+
     service = WebAuthnService(redis)
     await service._store_challenge("webauthn:reg:T", b"x")
-    ttl = await redis.ttl("webauthn:reg:T")
+
     # Production sets ex=settings.webauthn_challenge_ttl_seconds (=300).
-    # fakeredis may report 300 or 299 depending on its quantization.
-    assert ttl in {299, 300}
+    # Strict equality kills any off-by-one TTL mutant (e.g. ex=299, ex=301).
+    assert captured.get("ex") == 300
 
 
 @pytest.mark.asyncio
