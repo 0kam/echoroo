@@ -122,15 +122,41 @@ def kms_env(monkeypatch: pytest.MonkeyPatch) -> Iterator[dict[str, str]]:
 
         importlib.reload(kms_module)
 
-        yield {
-            "totp_id": totp_id,
-            "pii_v1_id": pii_v1_id,
-            "pii_v2_id": pii_v2_id,
-            "audit_id": audit_id,
-            "inv_new_id": inv_new_id,
-            "inv_old_id": inv_old_id,
-            "inv_legacy_id": inv_legacy_id,
-        }
+        try:
+            yield {
+                "totp_id": totp_id,
+                "pii_v1_id": pii_v1_id,
+                "pii_v2_id": pii_v2_id,
+                "audit_id": audit_id,
+                "inv_new_id": inv_new_id,
+                "inv_old_id": inv_old_id,
+                "inv_legacy_id": inv_legacy_id,
+            }
+        finally:
+            # Mirror tests/_kms_moto.py teardown: reset the lru_cache-backed
+            # boto3 client + alias-resolution cache so the moto KeyId/client
+            # constructed inside this fixture does not leak to subsequent
+            # tests that run outside the mock_aws() context.
+            #
+            # Some tests in this file ``monkeypatch.setattr(kms_module,
+            # "_client", lambda: StubClient())`` to swap in a stub. In that
+            # case ``_client`` is no longer the ``functools.lru_cache``
+            # wrapper, so ``cache_clear`` is unavailable. Pytest tears
+            # fixtures down LIFO, so this finally runs BEFORE
+            # ``monkeypatch`` reverts; guard accordingly. The subsequent
+            # monkeypatch revert restores the real ``_client``, and when
+            # the next test re-enters this fixture the leading
+            # ``mock_aws()`` + ``importlib.reload`` already resets caches
+            # — so missing the reset here is benign for stubbed tests.
+            # Clear each lru_cache individually so a test that patched
+            # only ONE of (_client, _resolve_key_id) still benefits from
+            # resetting the other. ``_reset_client_cache`` calls both
+            # ``cache_clear`` methods unguarded and would raise if either
+            # was monkeypatched away.
+            for attr_name in ("_client", "_resolve_key_id"):
+                attr = getattr(kms_module, attr_name, None)
+                if attr is not None and hasattr(attr, "cache_clear"):
+                    attr.cache_clear()
 
 
 def _reload_kms() -> Any:
@@ -414,12 +440,15 @@ def test_verify_pii_hash_v2_empty_candidate_does_not_match_empty_stored(
 
     When candidate_v2 is empty (KMS failed), the guard ``if candidate_v2 and
     compare_digest(...)`` must short-circuit BEFORE compare_digest. A
-    mutant removing the truthiness guard would cause empty-vs-empty to
-    falsely match.
+    mutant removing the truthiness guard would still produce the same
+    boolean outcome (``compare_digest("", "1"*64)`` returns False either
+    way), so the mutant is invisible at the return-value level.
 
-    Stored hash here is 64 chars but does not equal an empty string;
-    however the input validator already rejects len != 64, so we use a
-    valid 64-char stored hash that is wrong on v1 too.
+    The observable signal is that compare_digest must NOT be invoked on
+    the v2 leg when candidate_v2 is empty. We spy on hmac.compare_digest
+    and assert it is called EXACTLY ONCE — for the v1 leg only. A mutant
+    removing the truthiness guard would push the v2 call through and
+    surface 2 calls (v2 first, v1 second).
     """
     monkeypatch.setenv("AWS_KMS_CMK_PII_HASH_ALIAS_V2", PII_V2_ALIAS)
     kms = _reload_kms()
@@ -433,12 +462,31 @@ def test_verify_pii_hash_v2_empty_candidate_does_not_match_empty_stored(
 
     monkeypatch.setattr(kms, "_compute_pii_hash_with_alias", selective_raise)
 
-    # 64-char hex that is the wrong v1 hash. Empty string compare-digest
-    # would NOT match this anyway, but the mutant catch is the SHORT-
-    # CIRCUIT — without the truthiness guard, compare_digest is called
-    # with mismatched lengths and raises (or returns False), which would
-    # subtly differ from the guarded path. We assert False outcome.
-    assert kms.verify_pii_hash("v", "1" * 64) is False
+    real_compare = _hmac.compare_digest
+    compare_calls: list[tuple[object, object]] = []
+
+    def spy_compare(a: object, b: object) -> bool:
+        compare_calls.append((a, b))
+        return real_compare(a, b)  # type: ignore[arg-type]
+
+    # Patch the symbol bound inside echoroo.core.kms (the function imports
+    # ``hmac as _hmac`` at call time; patching the module attribute keeps
+    # the spy in scope for both the v2 and v1 legs).
+    with patch.object(_hmac, "compare_digest", side_effect=spy_compare):
+        assert kms.verify_pii_hash("v", "1" * 64) is False
+
+    # Without the ``if candidate_v2`` guard, the v2 leg would also call
+    # compare_digest("", "1"*64) → 2 invocations. With the guard, only
+    # the v1 leg fires → exactly 1 invocation.
+    assert len(compare_calls) == 1, (
+        f"expected exactly 1 compare_digest call (v1 leg only), got "
+        f"{len(compare_calls)}: {compare_calls!r}"
+    )
+    # And that one call must be on the v1 leg — never with empty first arg.
+    assert compare_calls[0][0] != "", (
+        "compare_digest must never be invoked with an empty candidate; "
+        "the truthiness guard short-circuits before this point."
+    )
 
 
 def test_verify_pii_hash_v1_kms_failure_returns_false_when_v2_also_mismatches(
@@ -610,9 +658,13 @@ def test_verify_pii_hash_dual_key_unconditional_v1_call_after_v2_match(
     monkeypatch.setattr(kms, "_compute_pii_hash_with_alias", spy)
 
     assert kms.verify_pii_hash(value, dual["v2"]) is True
-    # Both aliases must appear (timing-flat contract).
-    assert PII_V1_ALIAS in calls
-    assert PII_V2_ALIAS in calls
+    # Both aliases must appear AND in the canonical v2-then-v1 order
+    # (FR-091b timing-flat contract). Strict equality kills order-swap
+    # mutants that would otherwise be invisible to a membership check.
+    assert calls == [PII_V2_ALIAS, PII_V1_ALIAS], (
+        f"expected canonical v2→v1 order to flatten timing side-channel, "
+        f"got {calls!r}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -901,25 +953,45 @@ def test_verify_invitation_hmac_continue_on_kms_exception(
     """Kill mutants that change ``except: continue`` to ``except: return False``.
 
     When NEW raises (e.g. InvalidCiphertextException), the loop must
-    CONTINUE to OLD — not bail out. Sign with OLD then verify; NEW
-    will raise (sig under OLD does not validate against NEW), then OLD
-    must succeed.
+    CONTINUE to OLD — not bail out.
+
+    Implementation note: the original revision relied on moto returning
+    a mismatch / raising for a signature signed under OLD when verified
+    against NEW. moto's behaviour here is implementation-dependent (some
+    versions return ``MacValid=False`` rather than raising), which would
+    make the ``except: continue`` → ``except: return False`` mutant
+    indistinguishable from the unmutated code. We therefore stub
+    ``_client().verify_mac`` directly: 1st call raises (NEW leg), 2nd
+    call returns ``MacValid=True`` (OLD leg). Under the unmutated
+    function this yields True; under the mutant it yields False.
     """
     kms = _reload_kms()
+    real_client = kms._client()
 
-    payload = b"old-only-token"
-    # Sign with OLD directly via boto3. moto's GenerateMac requires the
-    # raw KeyId UUID (not an alias), so we use the fixture-resolved id.
-    direct_client = boto3.client("kms", region_name=AWS_REGION)
-    resp = direct_client.generate_mac(
-        Message=payload,
-        KeyId=kms_env["inv_old_id"],
-        MacAlgorithm="HMAC_SHA_256",
+    call_log: list[str] = []
+
+    class StubClient:
+        def verify_mac(self, **kwargs: Any) -> dict[str, bool]:
+            call_log.append("verify_mac")
+            if len(call_log) == 1:
+                raise RuntimeError("simulated NEW-leg KMS error")
+            return {"MacValid": True}
+
+        def __getattr__(self, name: str) -> Any:
+            return getattr(real_client, name)
+
+    monkeypatch.setattr(kms, "_client", lambda: StubClient())
+
+    # Any 64-char hex sig works — the stub controls the verification outcome.
+    sig = "ab" * 32
+    assert kms.verify_invitation_hmac(b"payload", sig) is True
+    # Both legs of the loop must have been entered (NEW raised → continue
+    # → OLD invoked). Exactly two calls proves the function neither
+    # bailed out (mutant) nor invoked extras.
+    assert len(call_log) == 2, (
+        f"expected NEW + OLD verify_mac calls (continue-after-exception), "
+        f"got {call_log!r}"
     )
-    sig_old = resp["Mac"].hex()
-
-    # Verify must continue past NEW (which raises) and succeed on OLD.
-    assert kms.verify_invitation_hmac(payload, sig_old) is True
 
 
 # ===========================================================================
