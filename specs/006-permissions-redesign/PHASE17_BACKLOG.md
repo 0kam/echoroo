@@ -512,13 +512,7 @@ finder install collectively let `mutmut run` and `mutmut results --all`
 operate end-to-end against this codebase.  The remaining D-1 work
 (per-module ≥80%) is application-test work, not infrastructure.
 
-**Status note (2026-05-08)**: D-1 (per-module ≥80%) and D-2 (every-push
-hard gate) both **block on the test isolation cleanup above**, not on
-mutmut itself.  Recommended sequencing post-launch: (1) test isolation
-follow-up PR fixes the polluter(s), (2) re-run `mutation-testing` and
-record the real baseline score, (3) decide D-1 threshold against the
-empirical baseline, (4) promote D-2 to every-push only after D-1 has
-been stable for several cycles.
+**Status note (UPDATED 2026-05-09)**: §D-0 fully resolved (mutmut subprocess + meta_path finder + test isolation, PRs #49/#51). §D-1 5-PR ramp series (PRs #53-57) landed; 9/10 scorable modules cleared the 80% gate. The `continue-on-error: true` removal and §D-2 every-push promotion are now blocked solely on §D-1-bis (dormancy_check 5.4pp residual gap closure via production refactor).
 
 **Fallback escalation ladder (if Option B itself fails in CI)**:
 
