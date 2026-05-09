@@ -486,6 +486,15 @@ jobs:
     #   equivalence). This is a multi-PR effort tracked in PHASE17_BACKLOG.md §D-1.
     # Restore `continue-on-error: false` after D-1 PR series achieves >=80% per
     # module and `check_mutation_score.py` parses the score table successfully.
+    #
+    # Single transitional knob (PR #52, codex round 1):
+    #   `continue-on-error: true` (this line) is now the SOLE warn-mode
+    #   suppression mechanism for this job. Step-level `|| true` after
+    #   `run_mutmut.py run` and `--warn-only` on the score check have been
+    #   removed so that any non-zero exit from mutmut or the score gate
+    #   surfaces as a job-level warning (not a silent pass) while D-1 ramps.
+    #   To restore the hard gate after D-1 lands per-module >=80%, delete
+    #   ONLY this `continue-on-error: true` line -- no other edits required.
     continue-on-error: true
     env:
       # mutmut reads configuration from pyproject.toml [tool.mutmut] only
@@ -648,9 +657,14 @@ jobs:
       # Exit code 0 = all mutants killed or no mutants; 1 = survivors
       # exist (expected when coverage is < 100%). The score check step
       # below is the authoritative gate.
+      #
+      # No `|| true` here (PR #52, codex round 1): the job-level
+      # `continue-on-error: true` above is the single transitional warn
+      # knob. A non-zero exit from mutmut (survivors / infra error) now
+      # surfaces as a job-level warning instead of being silently swallowed.
       - name: Run mutmut (11 modules, hard gate)
         working-directory: apps/api
-        run: uv run python scripts/run_mutmut.py run || true
+        run: uv run python scripts/run_mutmut.py run
 
       # Collect results for CI artifact upload.  ``--all`` includes killed
       # mutants (the default ``mutmut results`` omits them), which makes the

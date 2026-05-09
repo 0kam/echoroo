@@ -598,6 +598,13 @@ def _install_in_process_redirect_finder(mutants_root: str) -> None:
 
     Idempotent: subsequent calls are no-ops.
     """
+    # Precondition: this function MUST be called before any `echoroo.*` module
+    # is imported into the parent process. The finder evicts mutated modules
+    # from sys.modules but cannot reach already-imported production class
+    # references held by callers (class-identity split, see PR #51 round 2).
+    # Future maintainers: do NOT add `from echoroo.* import ...` at the top
+    # of this script. If absolutely needed, evict the entire `echoroo` subtree
+    # from sys.modules immediately before calling this finder.
     import importlib
     import importlib.machinery
     import importlib.util
