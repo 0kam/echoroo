@@ -122,6 +122,19 @@ def kms_env(monkeypatch: pytest.MonkeyPatch) -> Iterator[dict[str, str]]:
 
         importlib.reload(kms_module)
 
+        # Stash the original lru_cache wrappers BEFORE any test-local
+        # monkeypatch can swap them out. Pytest tears fixtures down LIFO,
+        # so this ``finally`` block runs BEFORE monkeypatch reverts any
+        # ``setattr(kms_module, "_client", stub)``. If a test stubbed the
+        # attributes, ``getattr(kms_module, ...)`` below would only see
+        # the stub (no ``cache_clear``); the production wrapper that
+        # monkeypatch later restores would still hold its stale moto
+        # KeyId / boto client cache. Keeping a direct reference to the
+        # originals lets us purge that cache regardless of teardown
+        # ordering.
+        _original_client = kms_module._client
+        _original_resolve_key_id = kms_module._resolve_key_id
+
         try:
             yield {
                 "totp_id": totp_id,
@@ -138,23 +151,23 @@ def kms_env(monkeypatch: pytest.MonkeyPatch) -> Iterator[dict[str, str]]:
             # constructed inside this fixture does not leak to subsequent
             # tests that run outside the mock_aws() context.
             #
-            # Some tests in this file ``monkeypatch.setattr(kms_module,
-            # "_client", lambda: StubClient())`` to swap in a stub. In that
-            # case ``_client`` is no longer the ``functools.lru_cache``
-            # wrapper, so ``cache_clear`` is unavailable. Pytest tears
-            # fixtures down LIFO, so this finally runs BEFORE
-            # ``monkeypatch`` reverts; guard accordingly. The subsequent
-            # monkeypatch revert restores the real ``_client``, and when
-            # the next test re-enters this fixture the leading
-            # ``mock_aws()`` + ``importlib.reload`` already resets caches
-            # — so missing the reset here is benign for stubbed tests.
-            # Clear each lru_cache individually so a test that patched
-            # only ONE of (_client, _resolve_key_id) still benefits from
-            # resetting the other. ``_reset_client_cache`` calls both
-            # ``cache_clear`` methods unguarded and would raise if either
-            # was monkeypatched away.
-            for attr_name in ("_client", "_resolve_key_id"):
-                attr = getattr(kms_module, attr_name, None)
+            # Stash + dual-clear so the production wrapper cache is purged
+            # regardless of monkeypatch LIFO order. We clear both the
+            # CURRENT module attribute (covers tests that did not stub it)
+            # and the ORIGINAL wrapper captured right after reload (covers
+            # tests that ``monkeypatch.setattr(kms_module, "_client",
+            # stub)`` — in that case the current attribute is the stub
+            # without ``cache_clear``, but the original wrapper that
+            # monkeypatch will restore on its own teardown still holds
+            # the stale moto cache and must be cleared here). Calling
+            # ``cache_clear`` twice on the same wrapper is a harmless
+            # no-op, so deduplication is unnecessary.
+            for attr in (
+                getattr(kms_module, "_client", None),
+                getattr(kms_module, "_resolve_key_id", None),
+                _original_client,
+                _original_resolve_key_id,
+            ):
                 if attr is not None and hasattr(attr, "cache_clear"):
                     attr.cache_clear()
 
