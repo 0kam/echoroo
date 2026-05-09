@@ -502,11 +502,13 @@ Local verification (unit tests only — DB/Redis unavailable locally):
       previously-mentioned ~30 polluted-test failures were resolved in
       PR #51 (`pytest_load_initial_conftests(tryfirst=True)` finder
       install — see the test isolation bullet above; 1211/1211 pass
-      from `mutants/` dir). **Removal trigger** (still active):
-      `continue-on-error: true` MUST be deleted from the
-      `mutation-testing` job in `.github/workflows/ci.yml` once
-      §D-1-bis closes the dormancy_check residual gap — see §D-1 /
-      §D-1-bis / §D-2 release conditions for the canonical sequence.
+      from `mutants/` dir). **Removal**: the transitional
+      `continue-on-error: true` was **removed in PR #60 (2026-05-09)**
+      from the `mutation-testing` job in `.github/workflows/ci.yml`,
+      restoring the hard-gate behavior once §D-1-bis closed the
+      dormancy_check residual gap — see §D-1 / §D-1-bis release
+      conditions for the historical sequence; §D-2 (every-push
+      promotion) is tracked separately.
 - [x] After test isolation cleanup lands, re-attempt CI `mutation-testing`
       baseline — confirmed mutmut produces real per-mutant verification
       (CI run 25565962708, PR #51 HEAD `311159bd`, ~60 min wall-clock).
@@ -562,7 +564,11 @@ gate is **not** a launch blocker.
 - **Expected behavior**: Each scorable module reaches **≥80% mutation
   score** (10/11 listed modules — `echoroo.core.actions` is N/A because
   mutmut produces no scorable mutants for it; see Final per-module
-  status table below), and the `mutation-testing` job runs on every push.
+  status table below), and **when the `mutation-testing` job runs**
+  (main-branch push, `run-mutation-testing` PR label, or manual
+  `workflow_dispatch`) it **hard-fails if any scorable module drops
+  below 80%**. (Promotion to running on every push is out of scope for
+  §D-1 and tracked separately in §D-2.)
 
 **Foundation history (PR #51, branch `phase17/d1-test-pollution-fix-v2`) — COMPLETE**:
 
