@@ -31,6 +31,7 @@ failure.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from typing import Any
 from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
@@ -62,14 +63,23 @@ from echoroo.services.webauthn_service import (
     WebAuthnVerificationError,
 )
 
+# Capture the original ``_record_audit_event`` BEFORE the autouse fixture
+# replaces it so the audit-merge contract test below can restore the real
+# method and exercise the production merge body.
+_ORIGINAL_RECORD_AUDIT_EVENT = WebAuthnService._record_audit_event
+
 # ---------------------------------------------------------------------------
 # Shared fixtures (mirror tests/unit/services/test_webauthn_service.py)
 # ---------------------------------------------------------------------------
 
 
 @pytest.fixture(autouse=True)
-def _settings_and_audit(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Pin RP id / name / origins / TTL and stub audit writer."""
+def _settings_and_audit(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Pin RP id / name / origins / TTL and stub audit writer.
+
+    The fixture clears ``get_settings`` cache on both setup and teardown so a
+    monkeypatched env from one test cannot leak into the next via lru_cache.
+    """
     get_settings.cache_clear()
     monkeypatch.setenv("ECHOROO_WEBAUTHN_RP_ID", "example.com")
     monkeypatch.setenv("ECHOROO_WEBAUTHN_RP_NAME", "Echoroo Test")
@@ -83,6 +93,10 @@ def _settings_and_audit(monkeypatch: pytest.MonkeyPatch) -> None:
         return None
 
     monkeypatch.setattr(WebAuthnService, "_record_audit_event", no_audit)
+    yield
+    # Drop the test-scoped settings cache after monkeypatch restores the env so
+    # the next test re-reads the real environment, not our test values.
+    get_settings.cache_clear()
 
 
 @pytest.fixture
@@ -286,11 +300,18 @@ async def test_store_challenge_writes_base64url_value_under_key(
 async def test_store_challenge_sets_ttl_from_settings(
     redis: fakeredis.aioredis.FakeRedis,
 ) -> None:
-    """``_store_challenge`` TTL MUST equal webauthn_challenge_ttl_seconds."""
+    """``_store_challenge`` TTL MUST be the configured value (300s).
+
+    Asserted to within the smallest tolerance that survives fakeredis clock
+    granularity (an off-by-one TTL mutant changes 300 -> 299/301 outside the
+    accepted set, while clock skew during a sub-second test stays inside it).
+    """
     service = WebAuthnService(redis)
     await service._store_challenge("webauthn:reg:T", b"x")
     ttl = await redis.ttl("webauthn:reg:T")
-    assert 0 < ttl <= 300
+    # Production sets ex=settings.webauthn_challenge_ttl_seconds (=300).
+    # fakeredis may report 300 or 299 depending on its quantization.
+    assert ttl in {299, 300}
 
 
 @pytest.mark.asyncio
@@ -578,6 +599,14 @@ async def test_complete_registration_forwards_challenge_to_verify(
         registration_response=_registration_response(),
         existing_credentials=[],
     )
+    # Strict set equality on the kwargs surface so that any mutant which adds
+    # / drops an argument (or smuggles in an extra kwarg) trips this test.
+    assert set(captured.keys()) == {
+        "credential",
+        "expected_challenge",
+        "expected_rp_id",
+        "expected_origin",
+    }
     assert captured["expected_challenge"] == b"my-challenge"
     assert captured["expected_rp_id"] == "example.com"
     assert captured["expected_origin"] == [
@@ -928,7 +957,12 @@ async def test_complete_authentication_forwards_challenge_origin_rpid_kwargs(
     monkeypatch: pytest.MonkeyPatch,
     redis: fakeredis.aioredis.FakeRedis,
 ) -> None:
-    """Verify call MUST receive exact challenge / origin / rp_id values."""
+    """Verify call MUST receive exact challenge / origin / rp_id values.
+
+    Asserts the *complete* kwargs surface (set equality + value identity) so
+    both extra-arg and missing-arg mutations on
+    ``verify_authentication_response`` flip this test.
+    """
     user_id = uuid4()
     service = WebAuthnService(redis)
     await _seed_challenge(redis, service._authentication_key(user_id), b"AUTH-C")
@@ -942,14 +976,30 @@ async def test_complete_authentication_forwards_challenge_origin_rpid_kwargs(
     await service.complete_authentication(
         user_id=user_id,
         authentication_response=_authentication_response(),
-        existing_credentials=[_stored_credential(sign_count=1)],
+        existing_credentials=[
+            _stored_credential(sign_count=1, cose_public_key=b"COSEbytes"),
+        ],
     )
+    # Set equality pins the exact kwargs surface — a mutant adding/removing
+    # any kwarg (e.g. injecting require_user_verification) trips this.
+    assert set(captured.keys()) == {
+        "credential",
+        "expected_challenge",
+        "expected_rp_id",
+        "expected_origin",
+        "credential_public_key",
+        "credential_current_sign_count",
+    }
     assert captured["expected_challenge"] == b"AUTH-C"
     assert captured["expected_rp_id"] == "example.com"
     assert captured["expected_origin"] == [
         "https://admin.example.com",
         "http://localhost:3000",
     ]
+    assert captured["credential_public_key"] == b"COSEbytes"
+    # The "zero trick" — the service intentionally forwards 0 so it can run
+    # its own counter regression check after py_webauthn signature verify.
+    assert captured["credential_current_sign_count"] == 0
 
 
 @pytest.mark.asyncio
@@ -1183,26 +1233,61 @@ async def test_complete_authentication_accepts_strictly_greater_counter(
     assert updated["sign_count"] == new_sc
 
 
+@pytest.mark.parametrize(
+    ("old_sign_count", "new_sign_count", "expected_replay"),
+    [
+        # Pure zero-counter authenticator (Yubico-style): both 0 -> accept.
+        (0, 0, False),
+        # Counter previously advanced but now reports 0: per WebAuthn spec the
+        # service treats new == 0 as "no usable counter" -> accept (NOT replay).
+        # This case is the load-bearing one that kills mutants flipping the
+        # ``and new_sign_count != 0`` guard to ``or`` / dropping the clause.
+        (5, 0, False),
+        # Counter unchanged but non-zero: replay.
+        (5, 5, True),
+        # Counter increased by 1: accept.
+        (5, 6, False),
+        # Counter regressed but non-zero: replay.
+        (5, 4, True),
+    ],
+)
 @pytest.mark.asyncio
-async def test_complete_authentication_zero_counter_authenticator_is_not_replay(
+async def test_complete_authentication_zero_counter_and_boundary_cases(
     monkeypatch: pytest.MonkeyPatch,
     redis: fakeredis.aioredis.FakeRedis,
+    old_sign_count: int,
+    new_sign_count: int,
+    expected_replay: bool,
 ) -> None:
-    """new_sign_count == 0 MUST NOT trigger replay (Yubico-style behavior)."""
+    """Boundary table for the ``new <= old AND new != 0`` replay guard.
+
+    Concentrates the comparison-direction / equality / zero-trick mutants in
+    a single parametrized table so each branch flip is killed by at least
+    one row.
+    """
     user_id = uuid4()
     service = WebAuthnService(redis)
     await _seed_challenge(redis, service._authentication_key(user_id))
     monkeypatch.setattr(
         webauthn_module,
         "verify_authentication_response",
-        lambda **_kw: _verified_authentication(new_sign_count=0),
+        lambda **_kw: _verified_authentication(new_sign_count=new_sign_count),
     )
-    updated = await service.complete_authentication(
-        user_id=user_id,
-        authentication_response=_authentication_response(),
-        existing_credentials=[_stored_credential(sign_count=0)],
-    )
-    assert updated["sign_count"] == 0
+
+    if expected_replay:
+        with pytest.raises(WebAuthnReplayDetectedError):
+            await service.complete_authentication(
+                user_id=user_id,
+                authentication_response=_authentication_response(),
+                existing_credentials=[_stored_credential(sign_count=old_sign_count)],
+            )
+    else:
+        updated = await service.complete_authentication(
+            user_id=user_id,
+            authentication_response=_authentication_response(),
+            existing_credentials=[_stored_credential(sign_count=old_sign_count)],
+        )
+        assert updated["sign_count"] == new_sign_count
 
 
 @pytest.mark.asyncio
@@ -1605,11 +1690,17 @@ async def test_complete_authentication_audit_runs_after_verify(
 
 
 @pytest.mark.asyncio
-async def test_record_audit_event_receives_target_user_id_in_detail(
+async def test_begin_registration_audit_call_uses_raw_detail_payload(
     monkeypatch: pytest.MonkeyPatch,
     redis: fakeredis.aioredis.FakeRedis,
 ) -> None:
-    """``_record_audit_event`` callers pass detail merged with target_user_id."""
+    """Caller (``begin_registration``) passes the raw detail dict to audit.
+
+    This pins the *caller-side* contract: the dict handed to
+    ``_record_audit_event`` is ``{"excluded_credentials": N}`` only — the
+    ``target_user_id`` merge is the responsibility of ``_record_audit_event``
+    itself and is verified by the dedicated audit-merge test below.
+    """
     user_id = uuid4()
     service = WebAuthnService(redis)
     captured = AsyncMock()
@@ -1624,4 +1715,70 @@ async def test_record_audit_event_receives_target_user_id_in_detail(
     call_kwargs = captured.await_args_list[0].kwargs
     assert call_kwargs["actor_id"] == user_id
     assert call_kwargs["action"] == "webauthn.registration_started"
+    # Detail is the raw payload from the caller — no target_user_id yet.
     assert call_kwargs["detail"] == {"excluded_credentials": 0}
+    assert "target_user_id" not in call_kwargs["detail"]
+
+
+@pytest.mark.asyncio
+async def test_record_audit_event_merges_target_user_id_into_detail(
+    monkeypatch: pytest.MonkeyPatch,
+    redis: fakeredis.aioredis.FakeRedis,
+) -> None:
+    """``_record_audit_event`` MUST merge ``target_user_id`` into ``detail``.
+
+    Exercises the real ``_record_audit_event`` body (we explicitly do NOT
+    monkeypatch it here) by stubbing ``AsyncSessionLocal`` and capturing
+    ``AuditLogService.write_platform_event`` so the merge contract surfaces
+    as a test failure.
+    """
+    # The autouse fixture replaced ``_record_audit_event`` with a no-op via
+    # ``monkeypatch.setattr``; restore the captured original here so this
+    # test exercises the real merge body. ``monkeypatch.setattr`` undoes
+    # this restore at teardown automatically.
+    monkeypatch.setattr(
+        WebAuthnService,
+        "_record_audit_event",
+        _ORIGINAL_RECORD_AUDIT_EVENT,
+    )
+
+    captured: dict[str, Any] = {}
+
+    class _FakeAuditLogService:
+        def __init__(self, _session: Any) -> None:
+            pass
+
+        async def write_platform_event(self, **kwargs: Any) -> None:
+            captured.update(kwargs)
+
+    class _FakeSession:
+        async def __aenter__(self) -> _FakeSession:
+            return self
+
+        async def __aexit__(self, *_exc: Any) -> None:
+            return None
+
+        async def commit(self) -> None:
+            return None
+
+        async def rollback(self) -> None:
+            return None
+
+    def _fake_session_local() -> _FakeSession:
+        return _FakeSession()
+
+    monkeypatch.setattr(webauthn_module, "AsyncSessionLocal", _fake_session_local)
+    monkeypatch.setattr(webauthn_module, "AuditLogService", _FakeAuditLogService)
+
+    user_id = uuid4()
+    service = WebAuthnService(redis)
+    await service._record_audit_event(
+        actor_id=user_id,
+        action="webauthn.test_event",
+        detail={"k": "v"},
+    )
+    # The merge contract: the inner call sees detail merged with
+    # target_user_id (string form of actor_id), preserving original keys.
+    assert captured["actor_user_id"] == user_id
+    assert captured["action"] == "webauthn.test_event"
+    assert captured["detail"] == {"target_user_id": str(user_id), "k": "v"}
