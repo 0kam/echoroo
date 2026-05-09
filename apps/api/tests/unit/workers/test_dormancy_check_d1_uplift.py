@@ -29,6 +29,7 @@ characters).
 
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import patch
@@ -36,6 +37,7 @@ from uuid import UUID, uuid4
 
 import pytest
 import sqlalchemy as sa
+from sqlalchemy.dialects import postgresql
 
 from echoroo.models.enums import ProjectStatus
 from echoroo.workers.dormancy_check import (
@@ -47,6 +49,23 @@ from echoroo.workers.dormancy_check import (
     _sanitise_field,
     _scan_active_projects,
 )
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _normalize_sql(stmt: Any) -> str:
+    """Compile a SQLAlchemy statement against the postgresql dialect with
+    literal-bound parameters, then collapse whitespace and lowercase so
+    structural assertions can match without whitespace noise.
+    """
+    compiled = stmt.compile(
+        dialect=postgresql.dialect(),
+        compile_kwargs={"literal_binds": True},
+    )
+    return re.sub(r"\s+", " ", str(compiled)).strip().lower()
+
 
 pytestmark = pytest.mark.asyncio
 
@@ -630,6 +649,36 @@ class TestEnqueueStage:
             )
         assert calls[0]["session"] is sess
 
+    async def test_dormant_since_none_raises_value_error_directly(
+        self, now: datetime
+    ) -> None:
+        """Direct guard test: ``_enqueue_stage(dormant_since=None)`` MUST raise
+        ``ValueError`` and MUST NOT reach the ``enqueue`` helper.
+
+        The follow-up-stage path filters NULL dormant_since rows BEFORE
+        invoking ``_enqueue_stage`` — but the function carries its own
+        defensive guard (idempotency-key construction divides by
+        ``project.dormant_since.timestamp()``). This test exercises that
+        guard directly so a mutant that drops or weakens the guard is
+        caught even when the upstream filter would normally hide it.
+        """
+        project = _Project(dormant_since=None)
+        owner = _User()
+        calls, fake = _capture_enqueue()
+        with (
+            patch("echoroo.workers.dormancy_check.enqueue", new=fake),
+            pytest.raises(ValueError, match="dormant_since"),
+        ):
+            await _enqueue_stage(
+                _NoopSession(),
+                project=project,
+                owner=owner,
+                stage="stage_30d",
+                now=now,
+            )
+        # The guard fires BEFORE any enqueue call.
+        assert calls == []
+
 
 # ===========================================================================
 # Section C — _scan_active_projects (27 mutants)
@@ -778,6 +827,45 @@ class TestScanActiveProjects:
         )
         assert str(cutoff_dt.year) in compiled
 
+    async def test_sql_predicate_shape_is_exact(self) -> None:
+        """Strict structural assertions on the compiled SQL — kills wrong-predicate /
+        wrong-join-side / wrong-cutoff mutants that survive the substring-only checks.
+
+        Compiles against the real ``postgresql`` dialect with ``literal_binds=True``
+        so bound parameters are inlined, then collapses whitespace + lowercases
+        so the matchers don't drift on cosmetic SQL formatting.
+        """
+        cutoff_dt = datetime(2025, 6, 15, 12, 34, 56, tzinfo=UTC)
+        cap = _CapturedExecute(rows=[])
+        await _scan_active_projects(
+            cap,  # type: ignore[arg-type]
+            cutoff=cutoff_dt,
+        )
+        sql = _normalize_sql(cap.statements[0])
+
+        # Status filter is exact: ``projects.status = 'active'``. Kills mutants
+        # that swap the column or the literal value (e.g. dormant/archived).
+        assert "projects.status = 'active'" in sql
+
+        # Inner JOIN predicate is ``users.id = projects.owner_id`` in that
+        # order. Kills join-column-swap mutants (e.g. users.id = projects.id).
+        assert "join users on users.id = projects.owner_id" in sql
+
+        # Cutoff metric is ``GREATEST(COALESCE(last_login_at, created_at),
+        # COALESCE(last_first_party_activity_at, created_at))`` exactly.
+        # Kills LEAST swap, COALESCE-drop, and column-swap mutants.
+        assert (
+            "greatest(coalesce(users.last_login_at, users.created_at), "
+            "coalesce(users.last_first_party_activity_at, users.created_at))"
+        ) in sql
+
+        # Cutoff is rendered as a full ISO-8601 timestamp (year + month + day
+        # + at least the time portion start). Kills mutants that drop the
+        # cutoff into a year-only constant or strip the time component.
+        assert re.search(r"< '20\d\d-\d\d-\d\d", sql) is not None
+        # And specifically the supplied cutoff appears verbatim.
+        assert "< '2025-06-15 12:34:56" in sql
+
 
 # ===========================================================================
 # Section D — _emit_followup_stages (26 mutants)
@@ -857,7 +945,14 @@ class TestEmitFollowupStages:
         assert calls == []
 
     async def test_elapsed_equal_to_offset_dispatches(self) -> None:
-        """``elapsed == offset`` IS due (kills strict-greater swap)."""
+        """``elapsed == offset`` IS due (kills strict-greater swap).
+
+        At exactly 3d elapsed, only ``stage_3d`` fires — ``stage_initial`` is
+        skipped by code, and ``stage_30d`` / ``stage_final`` /
+        ``stage_grace_expired`` are not yet due. Strict equality assertions
+        kill mutants that fire extra stages or fail to fire at the exact
+        boundary.
+        """
         now = datetime(2025, 6, 1, 0, 0, 0, tzinfo=UTC)
         project = _Project(
             status=ProjectStatus.DORMANT,
@@ -871,10 +966,11 @@ class TestEmitFollowupStages:
                 cap,  # type: ignore[arg-type]
                 now=now,
             )
-        # Exactly 3d elapsed → stage_3d fires (>=).
         stages = [c["payload"]["stage"] for c in calls]
-        assert "stage_3d" in stages
-        assert count >= 1
+        # Exactly 3d elapsed → only stage_3d fires.
+        assert stages == ["stage_3d"]
+        assert count == 1
+        assert len(calls) == 1
 
     async def test_multiple_stages_fire_for_old_dormancy(self) -> None:
         """A project dormant 400d fires every follow-up stage (3/30/37/366)."""
