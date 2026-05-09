@@ -63,7 +63,7 @@ _THRESHOLD_DEFAULT = 80
 #   "    echoroo.core.permissions.x_resolve_role__mutmut_69: timeout"
 #
 # Some mutants use the class-method form ``xǁClassǁmethod__mutmut_N`` (the
-# ``ǁ`` separator is U+0142, used by mutmut to mangle class-qualified names).
+# ``ǁ`` separator is U+01C1, used by mutmut to mangle class-qualified names).
 # ANSI colour escapes may appear when run from an interactive terminal; we
 # strip them before matching.
 _ANSI_ESC = re.compile(r"\x1b\[[0-9;]*m")
@@ -73,11 +73,11 @@ _MUTANT_LINE = re.compile(
     r":\s+(?P<status>.+)$"
 )
 
-# Statuses that count toward the kill-rate denominator.  Everything else
+# Statuses that count toward the kill-rate denominator are inlined in
+# ``_compute_score`` (killed / survived / suspicious).  Everything else
 # (timeout / no tests / not checked / skipped / caught by type check /
 # segfault / check was interrupted by user) is excluded so the score reflects
 # only mutants the suite actually had a chance to detect.
-_DENOMINATOR_STATUSES = frozenset({"killed", "survived", "suspicious"})
 
 
 def _strip_ansi(text: str) -> str:

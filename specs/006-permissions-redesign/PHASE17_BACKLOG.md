@@ -575,12 +575,19 @@ gate is **not** a launch blocker.
 
 **Per-module baseline (CI run 25565962708, PR #51 HEAD `311159bd`)**:
 
+> NOTE (PR #52, codex round 1): the table below is **NOT a mutation-score
+> baseline**. It is a **surviving / excluded mutant inventory** snapshot,
+> because that CI run executed `mutmut results` without `--all` and therefore
+> never aggregated killed mutants into the denominator. The genuine per-module
+> score baseline will be captured on the first D-1 ramp PR after this branch
+> lands (the artifact-collection step now passes `--all` on every run, so the
+> next mutation-testing job will populate killed counts and produce a real
+> baseline table to ratchet from).
+
 mutmut runs end-to-end and produces real per-mutant verification. The
-baseline below is aggregated from the 1406 non-killed mutant lines in the CI
-log (CI's `mutmut results` step did not yet pass `--all`, so killed counts
-are missing; once the next run uses `--all` the table will include kills).
-Numbers below show "scorable mutants" (survived + suspicious) and "excluded"
-counts (timeout / no tests / not checked) per module:
+inventory below is aggregated from the 1406 non-killed mutant lines in the CI
+log. Numbers below show "scorable mutants" (survived + suspicious) and
+"excluded" counts (timeout / no tests / not checked) per module:
 
 | Module | Scorable (S+Susp) | Excluded |
 |---|---|---|
@@ -641,11 +648,14 @@ counts (timeout / no tests / not checked) per module:
 
 ---
 
-## E. Runbook `requires_runbook` marker (Batch 6h-3 origin) — CLOSED (Option B)
+## E. Runbook `requires_runbook` marker (Batch 6h-3 origin) — CLOSED (2026-05-08)
 
 - **Task**: T998
 - **File**: `apps/api/tests/runbook/test_quickstart_phase3_smoke.py` (the
-  single `requires_runbook` test inside)
+  single `requires_runbook` test inside:
+  `test_check_wipe_guard_runs_against_live_stack`). The marker itself is
+  registered in `apps/api/pyproject.toml` (`[tool.pytest.ini_options]`
+  markers list).
 - **Threat**: Quickstart §3 bootstrap (`wipe_database` / `init_superuser` /
   `initial_iucn_sync` / `seed_moe_rdb`) end-to-end flow is not exercised in CI;
   silent regression risk (FR-113, FR-114).
@@ -659,18 +669,34 @@ counts (timeout / no tests / not checked) per module:
         before pytest runs.
   - [x] `requires_runbook` marker promoted to dedicated CI job that runs
         `pytest -m requires_runbook tests/runbook/` on schedule + dispatch.
-        (NOTE: NOT a hard gate on every-push — Option B deliberate decision.)
+        (NOTE: NOT a hard gate on every-push -- Option B deliberate decision.)
 
-- **CLOSED** (2026-05-08): Phase 17 §C-E closed via **Option B** (manual
-  dispatch + quarterly cron). Hard-gate every-push promotion deferred until
-  launch-readiness review or first observed failure. The dedicated
-  `runbook-live-infra-e2e` CI job auto-creates a GitHub issue on failure.
-  Test assertion was corrected in the same change to
-  `returncode in (0, 10, 11, 12)` (the actual `check_wipe_guard` exit-code
-  contract — the prior `(0, 1)` pin was a pre-existing copy/paste defect
-  carried over from Batch 6h-3). rc=20 (infra unreachable) deliberately
+**Resolution (2026-05-08)** -- PR #48 (`8843a0e4 ci(runbook): live-infra E2E
+job (Option B)`) added a dedicated `runbook-live-infra-e2e` job to
+`.github/workflows/ci.yml`. The job satisfies both release conditions:
+
+- **Trigger**: `workflow_dispatch` (manual operator-initiated) plus a quarterly
+  cron schedule (`0 6 1 1,4,7,10 *` -- 1st of January / April / July /
+  October at 06:00 UTC). Every-push gating is deliberately **not** wired up
+  under this Option B closure.
+- **Mode**: `continue-on-error: false` -- when the job runs, it is a hard
+  gate. A failure auto-creates a GitHub issue so a regression is not silently
+  swallowed between quarterly runs.
+- **Live-infra provisioning**: pgvector/pgvector:pg16 + redis:7 + localstack
+  (S3 only, `SERVICES: s3`); the S3 audit bucket is created via `aws s3 mb`
+  before pytest runs. The test invocation is
+  `pytest -m requires_runbook tests/runbook/`, which selects the single
+  `test_check_wipe_guard_runs_against_live_stack` test.
+- **Test assertion fix**: the same PR also corrected the smoke test's exit-code
+  pin from the pre-existing `(0, 1)` (copy/paste defect carried over from
+  Batch 6h-3) to `returncode in (0, 10, 11, 12)`, matching the real
+  `check_wipe_guard` exit-code contract. rc=20 (infra unreachable) deliberately
   remains a hard failure so the live-infra wiring of the gate stays a
   load-bearing assertion.
+
+Option B (scheduled + dispatch only, no every-push gating) is an explicit
+launch-readiness deferral: promotion to every-push will be revisited at the
+launch readiness review or sooner if a quarterly run surfaces a regression.
 
 ---
 
