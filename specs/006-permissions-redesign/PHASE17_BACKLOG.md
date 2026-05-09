@@ -597,14 +597,14 @@ to land quick wins early and concentrate effort on the long tail.
 
 | Module | Baseline (PR #53 run) | Final (after uplift) | Gate ≥80% | Ramp PR |
 |---|---|---|---|---|
-| `echoroo.core.audit` | inventory only | **97.2%** | ✅ | PR #53 |
+| `echoroo.core.audit` | inventory only | **97.3%** | ✅ | PR #53 |
 | `echoroo.core.permissions` | already ≥80% | (already passing) | ✅ | — |
 | `echoroo.core.response_filter` | already ≥80% | (already passing, 100%) | ✅ | — |
 | `echoroo.middleware.auth` | already ≥80% | (already passing, 100%) | ✅ | — |
-| `echoroo.middleware.auth_router` | already ≥80% | (already passing, 95.8%) | ✅ | — |
-| `echoroo.services.api_key_verification` | already ≥80% | (already passing, 88.2%) | ✅ | — |
-| `echoroo.services.superuser_service` | 79.2% | **85.1%** | ✅ | PR #54 |
-| `echoroo.core.kms` | 76.2% | **92.0%** | ✅ | PR #55 |
+| `echoroo.middleware.auth_router` | already ≥80% | (already passing, 94.9%) | ✅ | — |
+| `echoroo.services.api_key_verification` | already ≥80% | (already passing, 87.4%) | ✅ | — |
+| `echoroo.services.superuser_service` | 79.2% | **84.1%** | ✅ | PR #54 |
+| `echoroo.core.kms` | 76.2% | **91.7%** | ✅ | PR #55 |
 | `echoroo.workers.dormancy_check` | 40.2% | **81.9%** | ✅ | PR #56 + PR #59 (helper extraction) |
 | `echoroo.services.webauthn_service` | 43.0% | **86.0%** | ✅ | PR #57 |
 | `echoroo.core.actions` [†] | n/a | **N/A (no scorable mutants generated)** | ✅ (vacuous) | — |
