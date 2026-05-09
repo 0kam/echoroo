@@ -292,8 +292,8 @@ Gate: `check_coverage_threshold.py` shows PASS at 100% for all three.
 
 ---
 
-## D. Mutation-testing `--warn-only` allowlist + `mutation-testing` job
-       trigger gate (Batch 6h-1 origin)
+## D. Mutation-testing transitional `continue-on-error` gate + `mutation-testing` job
+       trigger gate (Batch 6h-1 origin; original `--warn-only` allowlist now superseded by `--threshold 80`)
 
 The `mutation-testing` CI job currently runs with
 `continue-on-error: true` (warn-ratchet) per the §D-0/D-1 transitional
@@ -490,15 +490,17 @@ Local verification (unit tests only — DB/Redis unavailable locally):
       with `MUTANT_UNDER_TEST=stats` → **1211 passed, 0 failed** (was 36 failed).
 - [x] **Transitional `continue-on-error: true`** added to the
       `mutation-testing` job (PR #49, 2026-05-08) so that the test
-      isolation surface area surfaced above does not block PR merges
-      while D-1 cleanup is in flight. The stats baseline now runs
+      isolation surface area surfaced above did not block PR merges
+      while D-1 cleanup was in flight. The stats baseline now runs
       end-to-end (no more `BadTestExecutionCommandsException`); the
-      remaining ~30 polluted-test failures are documented and tracked
-      under D-1. **Removal trigger**: `continue-on-error: true` MUST be
-      deleted from the `mutation-testing` job in `.github/workflows/ci.yml`
-      pinned to §D-1-bis closure (dormancy_check residual gap) — see
-      §D-1 / §D-1-bis / §D-2 release conditions for the canonical
-      sequence.
+      previously-mentioned ~30 polluted-test failures were resolved in
+      PR #51 (`pytest_load_initial_conftests(tryfirst=True)` finder
+      install — see the test isolation bullet above; 1211/1211 pass
+      from `mutants/` dir). **Removal trigger** (still active):
+      `continue-on-error: true` MUST be deleted from the
+      `mutation-testing` job in `.github/workflows/ci.yml` once
+      §D-1-bis closes the dormancy_check residual gap — see §D-1 /
+      §D-1-bis / §D-2 release conditions for the canonical sequence.
 - [x] After test isolation cleanup lands, re-attempt CI `mutation-testing`
       baseline — confirmed mutmut produces real per-mutant verification
       (CI run 25565962708, PR #51 HEAD `311159bd`, ~60 min wall-clock).
@@ -540,7 +542,7 @@ These fallbacks remain post-launch backlog; the current launch decision
 (per `project_006_phase17_residuals_2026-05-07.md`) is that the mutation
 gate is **not** a launch blocker.
 
-### D-1. Per-module score ≥80% — **OPEN (foundation in place, multi-PR ramp pending)**
+### D-1. Per-module score ≥80% — **OPEN (blocked on §D-1-bis dormancy_check residual gap)**
 
 - **Task**: T995
 - **File**: `apps/api/pyproject.toml` `[tool.mutmut]` (`paths_to_mutate`
@@ -556,18 +558,23 @@ gate is **not** a launch blocker.
   mutmut produces no scorable mutants for it; see Final per-module
   status table below), and the `mutation-testing` job runs on every push.
 
-**Foundation status (PR #51, branch `phase17/d1-test-pollution-fix-v2`)**:
+**Foundation history (PR #51, branch `phase17/d1-test-pollution-fix-v2`) — COMPLETE**:
 
   - [x] D-0 fully resolved (in-process pytest.main() blocker).
-  - [x] **Test isolation cleanup**: class-identity split in `_PLUGIN_SOURCE`
-        fixed by moving `_MutantsRedirectFinder` installation to
-        `pytest_load_initial_conftests(tryfirst=True)` — all 36 pollution
-        failures resolved, 1211/1211 tests pass from `mutants/` dir.
+  - [x] **Test isolation cleanup** (PR #51, 2026-05-09): class-identity split
+        in `_PLUGIN_SOURCE` resolved by moving `_MutantsRedirectFinder`
+        installation to `pytest_load_initial_conftests(tryfirst=True)` — all
+        36 pollution failures fixed, 1211/1211 tests pass from `mutants/`
+        dir. (Historical reference; no future blocker dependency on this.)
   - [x] **`scripts/check_mutation_score.py` updated** (PR #51) to parse the
         actual mutmut 3.5 per-mutant output format
         (`module.x_func__mutmut_N: <status>`) and aggregate by top-level
         module. Reads via `mutmut results --all` so killed mutants are
         included in the denominator.
+  - [x] **Multi-PR ramp series COMPLETE** (PRs #53-#57, 2026-05-09):
+        smallest-first ordering audit → superuser_service → kms →
+        dormancy_check → webauthn_service. 9/10 scorable modules cleared
+        the 80% gate (see Final per-module status table below).
 
 **Final per-module status (2026-05-09, after PR #53-#57 ramp series)**:
 
@@ -627,9 +634,8 @@ the test-only ramp PR series. Tracked as **§D-1-bis** below.
         job in `.github/workflows/ci.yml` — **blocked on §D-1-bis
         closing the dormancy_check gap**. Once the last scorable module
         clears 80%, `scripts/check_mutation_score.py --threshold 80`
-        (without `--warn-only`) will exit 0 across all 10 scorable
-        modules (`core.actions` N/A) and the transitional
-        `continue-on-error` can be removed.
+        will exit 0 across all 10 scorable modules (`core.actions` N/A)
+        and the transitional `continue-on-error: true` can be removed.
 
 ### D-1-bis. dormancy_check residual mutation gap (2026-05-09 carve-out)
 
