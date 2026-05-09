@@ -496,8 +496,9 @@ Local verification (unit tests only — DB/Redis unavailable locally):
       remaining ~30 polluted-test failures are documented and tracked
       under D-1. **Removal trigger**: `continue-on-error: true` MUST be
       deleted from the `mutation-testing` job in `.github/workflows/ci.yml`
-      as part of the D-1 isolation cleanup PR (see D-1 release
-      conditions).
+      pinned to §D-1-bis closure (dormancy_check residual gap) — see
+      §D-1 / §D-1-bis / §D-2 release conditions for the canonical
+      sequence.
 - [x] After test isolation cleanup lands, re-attempt CI `mutation-testing`
       baseline — confirmed mutmut produces real per-mutant verification
       (CI run 25565962708, PR #51 HEAD `311159bd`, ~60 min wall-clock).
@@ -597,11 +598,13 @@ to land quick wins early and concentrate effort on the long tail.
 
 [†] `echoroo.core.actions` is listed in
 `apps/api/pyproject.toml [tool.mutmut].paths_to_mutate` (so the config
-covers all 11 modules), but mutmut produces no mutants for this module —
-likely because it is empty / contains only constants / has no
-operator-mutable expressions. Effectively it meets the gate by virtue of
-nothing-to-test (vacuous pass) and is excluded from the 10 scorable
-modules below.
+covers all 11 modules), but **mutmut generated no scorable mutants for
+the declarative Action catalog (no currently mutated expressions in
+this module)** — the file consists of module-level
+`register_action(Action(...))` registry entries which mutmut's current
+operator set does not transform into scorable mutants. Effectively it
+meets the gate by virtue of nothing-to-test (vacuous pass) and is
+excluded from the 10 scorable modules below.
 
 **Result**: **9/10 scorable modules ≥80%** of the gate (excluding
 `echoroo.core.actions` which is N/A — see the table footnote).
