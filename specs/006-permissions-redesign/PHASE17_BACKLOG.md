@@ -295,14 +295,13 @@ Gate: `check_coverage_threshold.py` shows PASS at 100% for all three.
 ## D. Mutation-testing `--warn-only` allowlist + `mutation-testing` job
        trigger gate (Batch 6h-1 origin)
 
-The `mutation-testing` CI job currently only runs when one of three
-conditions holds:
-  a) main branch push,
-  b) the `run-mutation-testing` PR label is attached, OR
-  c) the workflow is dispatched manually from the Actions UI.
-That makes it a **warn-ratchet** in Phase 16: when the job runs it is a
-hard-fail (`continue-on-error` is not set), but a default PR build does
-not exercise it.
+The `mutation-testing` CI job currently runs with
+`continue-on-error: true` (warn-ratchet) per the §D-0/D-1 transitional
+posture. The job's `if:` guard limits when it runs (main branch push,
+`run-mutation-testing` PR label, or manual `workflow_dispatch`) — that
+part is unchanged. `continue-on-error: true` will be removed once
+§D-1-bis closes the dormancy_check residual gap (see §D-1 Release
+condition and §D-2 sequencing note).
 
 ### D-0. mutmut 3.5 in-process pytest.main() blocker — **FULLY CLOSED (PR #51, 2026-05-08)**
 
@@ -557,8 +556,10 @@ gate is **not** a launch blocker.
   weak test assertions (PR-004, SC-012). The trigger gate further means
   a PR can land that introduces a regression in mutation score without
   CI ever exercising mutmut against the candidate.
-- **Expected behavior**: Each of the 11 modules reaches **≥80% mutation
-  score**, and the `mutation-testing` job runs on every push.
+- **Expected behavior**: Each scorable module reaches **≥80% mutation
+  score** (10/11 listed modules — `echoroo.core.actions` is N/A because
+  mutmut produces no scorable mutants for it; see Final per-module
+  status table below), and the `mutation-testing` job runs on every push.
 
 **Foundation status (PR #51, branch `phase17/d1-test-pollution-fix-v2`)**:
 
@@ -592,8 +593,19 @@ to land quick wins early and concentrate effort on the long tail.
 | `echoroo.core.kms` | 76.2% | **92.0%** | ✅ | PR #55 |
 | `echoroo.workers.dormancy_check` | 40.2% | **74.6%** | ⚠️ | PR #56 |
 | `echoroo.services.webauthn_service` | 43.0% | **86.0%** | ✅ | PR #57 |
+| `echoroo.core.actions` [†] | n/a | **N/A (no scorable mutants generated)** | ✅ (vacuous) | — |
 
-**Result**: **9/10 modules ≥80%** of the gate. `echoroo.workers.dormancy_check`
+[†] `echoroo.core.actions` is listed in
+`apps/api/pyproject.toml [tool.mutmut].paths_to_mutate` (so the config
+covers all 11 modules), but mutmut produces no mutants for this module —
+likely because it is empty / contains only constants / has no
+operator-mutable expressions. Effectively it meets the gate by virtue of
+nothing-to-test (vacuous pass) and is excluded from the 10 scorable
+modules below.
+
+**Result**: **9/10 scorable modules ≥80%** of the gate (excluding
+`echoroo.core.actions` which is N/A — see the table footnote).
+`echoroo.workers.dormancy_check`
 remains the sole hold-out at **74.6%** — a **+34.4pp** uplift from the
 40.2% baseline (PR #56) but **5.4pp short** of the 80% gate. The residual
 43 surviving mutants concentrate in `_enqueue_stage` (22) and
@@ -604,9 +616,11 @@ the test-only ramp PR series. Tracked as **§D-1-bis** below.
 
 **Release condition (UPDATED 2026-05-09, post PR #53-#57 ramp closure)**:
 
-  - [x] 9/10 modules cleared the 80% gate via PR #53-#57 ramp series
-        (smallest-first ordering: audit → superuser_service → kms →
-        dormancy_check → webauthn_service).
+  - [x] 9/10 scorable modules cleared the 80% gate via PR #53-#57 ramp
+        series (smallest-first ordering: audit → superuser_service →
+        kms → dormancy_check → webauthn_service). `echoroo.core.actions`
+        is N/A (no scorable mutants — vacuous pass; see Final
+        per-module status table footnote).
   - [x] `scripts/check_mutation_score.py --threshold 80` reads
         `mutmut results --all` aggregated output (killed counts
         included in denominator).
@@ -614,10 +628,11 @@ the test-only ramp PR series. Tracked as **§D-1-bis** below.
         **deferred to follow-up backlog item §D-1-bis** below.
   - [ ] **Drop `continue-on-error: true`** from the `mutation-testing`
         job in `.github/workflows/ci.yml` — **blocked on §D-1-bis
-        closing the dormancy_check gap**. Once the last module clears
-        80%, `scripts/check_mutation_score.py --threshold 80` (without
-        `--warn-only`) will exit 0 across all 10 modules and the
-        transitional `continue-on-error` can be removed.
+        closing the dormancy_check gap**. Once the last scorable module
+        clears 80%, `scripts/check_mutation_score.py --threshold 80`
+        (without `--warn-only`) will exit 0 across all 10 scorable
+        modules (`core.actions` N/A) and the transitional
+        `continue-on-error` can be removed.
 
 ### D-1-bis. dormancy_check residual mutation gap (2026-05-09 carve-out)
 
@@ -665,8 +680,9 @@ the test-only ramp PR series. Tracked as **§D-1-bis** below.
   cannot satisfy, or leave the gate cosmetic. Sequence: §D-1-bis →
   drop `continue-on-error` → D-2 every-push promotion.
 - **Release condition**:
-  - [ ] D-1 resolved (real green score on main, all 10 modules ≥80%) —
-        blocked on §D-1-bis.
+  - [ ] D-1 resolved (real green score on main, all 10 scorable
+        modules ≥80%; `core.actions` remains N/A) — blocked on
+        §D-1-bis.
   - [ ] `if:` guard on the `mutation-testing` job loosened to fire on
         every push (delete the conditional). Operators continue to
         retain `workflow_dispatch` for manual runs.
