@@ -12,6 +12,8 @@ clears the 85% threshold without touching production code.
 
 from __future__ import annotations
 
+from collections.abc import Generator
+
 import pytest
 
 from echoroo.ml.registry import ModelNotFoundError, ModelRegistry
@@ -26,7 +28,7 @@ class _FakeEngine:
 
 
 @pytest.fixture(autouse=True)
-def _isolate_registry() -> None:
+def _isolate_registry() -> Generator[None, None, None]:
     """Reset the global registry before each test so cases stay isolated."""
     ModelRegistry.clear()
     yield
@@ -45,7 +47,7 @@ def test_register_then_get_loader_and_engine_class() -> None:
     assert ModelRegistry.get_engine_class("fake") is _FakeEngine
 
 
-def test_register_idempotent_update_existing(caplog: pytest.LogCaptureFixture) -> None:
+def test_register_idempotent_update_existing() -> None:
     """Registering the same name twice updates the entry (line 141)."""
     ModelRegistry.register("fake", _FakeLoader, _FakeEngine, "v1")
     ModelRegistry.register("fake", _FakeLoader, _FakeEngine, "v2")
@@ -96,7 +98,7 @@ def test_available_models_and_list_models_snapshot() -> None:
     assert ModelRegistry.is_registered("missing") is False
 
 
-def test_clear_empties_registry(caplog: pytest.LogCaptureFixture) -> None:
+def test_clear_empties_registry() -> None:
     """clear() removes all entries (lines 301-302)."""
     ModelRegistry.register("a", _FakeLoader, _FakeEngine)
     ModelRegistry.clear()
