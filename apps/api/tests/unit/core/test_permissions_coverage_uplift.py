@@ -13,7 +13,7 @@ from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from fastapi import HTTPException
@@ -358,22 +358,94 @@ async def test_decide_action_permission_returns_project_missing_for_refresh_path
 # ---------------------------------------------------------------------------
 
 
-def test_api_key_scope_translation_drops_unknown_permission_names() -> None:
+@pytest.mark.asyncio
+async def test_api_key_scope_translation_drops_unknown_permission_names(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Unknown scope names are silently dropped during translation (lines 1215-1216).
 
-    Exercised here as a pure unit test on the translation snippet via a
-    helper-style assertion: invalid Permission(...) raises ValueError, which
-    is caught inside the function.
+    Exercises the production ``decide_action_permission`` HTTP-time path
+    (``refresh_api_key_scopes=False``) with an API-key principal whose
+    ``_api_key_scopes`` mixes a known and an unknown scope. The unknown
+    scope MUST be silently dropped (the ``ValueError`` branch at lines
+    1215-1216 of ``permissions.py``) and only the known one MUST survive
+    into the ``is_allowed`` call as ``api_key_granted_permissions``.
     """
-    raw_scopes = ["view_detection", "totally_unknown_scope"]
-    translated: set[Permission] = set()
-    for scope in raw_scopes:
-        try:
-            translated.add(Permission(scope))
-        except ValueError:
-            continue
-    assert Permission.VIEW_DETECTION in translated
-    assert len(translated) == 1
+    project_owner_id = uuid4()
+    project = _project(owner_id=project_owner_id)
+
+    # Patch the project loader so we never hit the database.
+    async def _fake_load_project_or_404(_db: Any, _pid: UUID) -> Any:
+        return project
+
+    monkeypatch.setattr(mod, "load_project_or_404", _fake_load_project_or_404)
+
+    # Patch the membership lookup so the principal is treated as a
+    # non-member, non-owner Authenticated caller (the only path that
+    # reaches the API-key scope translation block).
+    async def _fake_resolve_role(*_a: Any, **_kw: Any) -> Any:
+        return None
+
+    monkeypatch.setattr(mod, "_resolve_project_member_role", _fake_resolve_role)
+
+    # Patch the trusted overlay so we don't hit a DB-backed import.
+    async def _fake_get_trusted(*_a: Any, **_kw: Any) -> frozenset[Permission]:
+        return frozenset()
+
+    import echoroo.services.trusted_service as trusted_service
+
+    monkeypatch.setattr(
+        trusted_service,
+        "get_active_trusted_capabilities",
+        _fake_get_trusted,
+    )
+
+    # Capture the kwargs handed to ``is_allowed`` so we can assert that
+    # the unknown scope was dropped and only ``VIEW_DETECTION`` survived.
+    captured: dict[str, Any] = {}
+
+    def _fake_is_allowed(
+        *,
+        action: Action,
+        user: Any,
+        project: Any,
+        request: Any,
+        trusted_capabilities: frozenset[Permission] = frozenset(),
+        api_key_granted_permissions: frozenset[Permission] | None = None,
+    ) -> tuple[bool, frozenset[Permission]]:
+        captured["api_key_granted_permissions"] = api_key_granted_permissions
+        return True, frozenset()
+
+    monkeypatch.setattr(mod, "is_allowed", _fake_is_allowed)
+
+    # Authenticated, non-owner, non-superuser caller carrying API-key
+    # scopes (one valid, one unknown) — exactly the shape stamped by
+    # the auth router for an ``/api/v1`` Bearer caller.
+    user = _user(is_superuser=False)
+    user._api_key_scopes = ["view_detection", "totally_unknown_scope"]
+
+    action = _action(
+        required_permission=Permission.VIEW_DETECTION,
+        is_mutating=False,
+    )
+    request = MagicMock()
+    request.state = SimpleNamespace()
+
+    decision = await mod.decide_action_permission(
+        db=MagicMock(),
+        action=action,
+        project_id=project.id,
+        current_user=user,
+        request=request,
+        refresh_api_key_scopes=False,
+    )
+
+    assert decision.allowed is True
+    # The unknown scope name MUST have been silently dropped — only
+    # ``VIEW_DETECTION`` reached ``is_allowed``.
+    assert captured["api_key_granted_permissions"] == frozenset(
+        {Permission.VIEW_DETECTION}
+    )
 
 
 # ---------------------------------------------------------------------------

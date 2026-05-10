@@ -237,3 +237,75 @@ def test_session_rejects_user_mismatch() -> None:
     )
     assert resp.status_code == 401
     assert resp.json()["error_code"] == "auth_mismatch"
+
+
+# ---------------------------------------------------------------------------
+# Nested-allowlist break branch (line 439)
+# ---------------------------------------------------------------------------
+
+
+def test_nested_allowlist_breaks_when_session_cookie_present() -> None:
+    """When a request matches ``public_path_nested_allowlist`` AND the path
+    starts with ``session_prefix`` AND a session cookie is present, the
+    middleware MUST take the ``break`` branch at line 439 instead of
+    returning ``principal=None``. The request then falls through to the
+    session authenticator.
+
+    We assert this by: (a) routing the request to a nested path that
+    matches the allowlist, (b) supplying a ``session_id`` cookie WITHOUT
+    an ``access_token`` so that the session authenticator returns
+    ``auth_required`` (not ``auth_unavailable`` / 200). A 200 here would
+    mean the ``break`` was NOT taken — the middleware would have set
+    ``principal=None`` and the request would have reached the echo
+    handler.
+    """
+    # Add a nested route so the request can reach a handler if the
+    # middleware mistakenly bypasses the session authenticator.
+    app = Starlette(
+        routes=[
+            Route("/web-api/v1/projects/{pid}/recordings", _echo_handler),
+        ]
+    )
+    config = AuthRouterConfig(
+        session_verifier=_StubSessionVerifier({"sid": (uuid4(), "stamp")}),
+        public_path_nested_allowlist=(
+            ("/web-api/v1/projects", "/recordings", frozenset({"GET"})),
+        ),
+    )
+    app.add_middleware(AuthRouterMiddleware, config=config)
+    client = TestClient(app)
+
+    # session_id cookie present, access_token MISSING — the nested-
+    # allowlist matcher MUST take the ``break`` branch (line 439) and
+    # let ``_authenticate_session`` reject with ``auth_required``.
+    resp = client.get(
+        f"/web-api/v1/projects/{uuid4()}/recordings",
+        cookies={"session_id": "sid"},
+    )
+    assert resp.status_code == 401
+    assert resp.json()["error_code"] == "auth_required"
+
+
+def test_nested_allowlist_passes_through_when_no_session_cookie() -> None:
+    """Without a session cookie the nested-allowlist match returns
+    ``principal=None`` and the request reaches the handler (control
+    branch for the test above — proves the cookie is what triggers the
+    ``break``).
+    """
+    app = Starlette(
+        routes=[
+            Route("/web-api/v1/projects/{pid}/recordings", _echo_handler),
+        ]
+    )
+    config = AuthRouterConfig(
+        session_verifier=_StubSessionVerifier({"sid": (uuid4(), "stamp")}),
+        public_path_nested_allowlist=(
+            ("/web-api/v1/projects", "/recordings", frozenset({"GET"})),
+        ),
+    )
+    app.add_middleware(AuthRouterMiddleware, config=config)
+    client = TestClient(app)
+
+    resp = client.get(f"/web-api/v1/projects/{uuid4()}/recordings")
+    assert resp.status_code == 200
+    assert resp.json() == {"auth_kind": None, "user_id": None}
