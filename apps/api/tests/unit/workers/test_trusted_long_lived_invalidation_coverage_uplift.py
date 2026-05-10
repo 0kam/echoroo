@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Generator
 from typing import Any
 
 import pytest
@@ -33,7 +33,7 @@ pytestmark = pytest.mark.asyncio
 
 
 @pytest.fixture(autouse=True)
-def _reset_registry() -> None:
+def _reset_registry() -> Generator[None, None, None]:
     hub._clear_callbacks_for_test()
     yield
     hub._clear_callbacks_for_test()

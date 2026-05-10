@@ -30,7 +30,6 @@ Pure unit tests; the AsyncSession is replaced by an in-process stub.
 
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import patch
@@ -226,7 +225,7 @@ def test_email_matches_invitation_falls_back_to_legacy_when_kms_raises(
     monkeypatch.setattr("echoroo.core.kms.verify_pii_hash", _boom)
 
     assert _email_matches_invitation(
-        email, _Invitation(), hmac_secret=HMAC_SECRET
+        email, _Invitation(), hmac_secret=HMAC_SECRET  # type: ignore[arg-type]
     ) is True
 
 
@@ -240,7 +239,7 @@ def test_email_matches_invitation_returns_false_when_neither_matches(
         email_hash = "0" * 64  # nothing matches
 
     assert _email_matches_invitation(
-        "alice@example.com", _Invitation(), hmac_secret=HMAC_SECRET
+        "alice@example.com", _Invitation(), hmac_secret=HMAC_SECRET  # type: ignore[arg-type]
     ) is False
 
 
@@ -586,16 +585,35 @@ async def test_decline_raises_token_invalid_for_project_id_mismatch() -> None:
 # ---------------------------------------------------------------------------
 
 
+class _FailingSessionFactory:
+    """Stand-in for ``AsyncSessionLocal`` whose context entry raises.
+
+    Production code does ``async with AsyncSessionLocal() as session:``;
+    the factory call returns an async context manager whose ``__aenter__``
+    raises here, exercising the outer ``except Exception`` soft-alert
+    branch in ``_write_invitation_audit`` / ``_enqueue_invitation_email``.
+    """
+
+    def __init__(self, error: Exception) -> None:
+        self._error = error
+
+    def __call__(self) -> _FailingSessionFactory:
+        return self
+
+    async def __aenter__(self) -> Any:
+        raise self._error
+
+    async def __aexit__(self, *_a: Any) -> None:
+        return None
+
+
 @pytest.mark.asyncio
 async def test_write_invitation_audit_swallows_open_failure(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    @asynccontextmanager
-    async def _failing_factory() -> Any:
-        raise RuntimeError("audit DB unreachable")
-        yield None  # pragma: no cover
+    failing_factory = _FailingSessionFactory(RuntimeError("audit DB unreachable"))
 
-    with patch.object(svc, "AsyncSessionLocal", _failing_factory), caplog.at_level("WARNING"):
+    with patch.object(svc, "AsyncSessionLocal", failing_factory), caplog.at_level("WARNING"):
         await _write_invitation_audit(
             action="project.invitation.create",
             actor_user_id=uuid4(),
@@ -630,10 +648,18 @@ async def test_write_invitation_audit_swallows_inner_failure_via_rollback() -> N
         async def __aexit__(self, *_a: Any) -> None:
             return None
 
-    @asynccontextmanager
-    async def _factory() -> Any:
-        async with _BoomSession() as s:
-            yield s
+    class _BoomFactory:
+        """Stand-in for ``AsyncSessionLocal`` that yields a ``_BoomSession``.
+
+        Mirrors the production ``async with AsyncSessionLocal() as s:``
+        contract: the factory call returns an async context manager
+        (the session itself) and ``__aenter__`` returns the session.
+        """
+
+        def __call__(self) -> _BoomSession:
+            return _BoomSession()
+
+    _factory = _BoomFactory()
 
     class _BoomService:
         def __init__(self, session: Any) -> None:
@@ -692,12 +718,9 @@ async def test_enqueue_invitation_email_swallows_outbox_failure(
         is_new=True,
     )
 
-    @asynccontextmanager
-    async def _failing_factory() -> Any:
-        raise RuntimeError("outbox DB unreachable")
-        yield None  # pragma: no cover
+    failing_factory = _FailingSessionFactory(RuntimeError("outbox DB unreachable"))
 
-    with patch.object(svc, "AsyncSessionLocal", _failing_factory), caplog.at_level("WARNING"):
+    with patch.object(svc, "AsyncSessionLocal", failing_factory), caplog.at_level("WARNING"):
         await _enqueue_invitation_email(outcome)
 
     assert any(

@@ -126,25 +126,6 @@ class _StubProject:
         self.restricted_config = restricted_config or {}
 
 
-class _StubProjectRepository:
-    """Drop-in for :class:`ProjectRepository` with a single canned project."""
-
-    def __init__(self, project: _StubProject | None) -> None:
-        self._project = project
-        self.calls: int = 0
-
-    def __init_db__(self, db: Any) -> None:
-        # Mirror the constructor's stored db reference but unused.
-        del db
-
-    async def get_by_id(self, project_id: UUID) -> _StubProject | None:
-        # The default resolver caches per (principal, project_id), so a
-        # repeat lookup MUST NOT hit this stub a second time.
-        self.calls += 1
-        del project_id
-        return self._project
-
-
 @pytest.fixture(autouse=True)
 def _patch_project_repository(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     """Replace ``ProjectRepository`` for tests that exercise the resolver.
