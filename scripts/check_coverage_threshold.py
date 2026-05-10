@@ -68,14 +68,33 @@ PHASE17_PENDING: frozenset[str] = frozenset(
         # Remove each entry once the module reaches its threshold.
         # ---------------------------------------------------------------------------
         #
+        # 2026-05-09: removed 17 modules brought to threshold via PR-B test
+        # additions (CI run 25604138207 baseline). Removed entries:
+        #   * echoroo/api/v1/annotation_tasks.py
+        #   * echoroo/api/v1/annotations.py
+        #   * echoroo/api/v1/projects.py
+        #   * echoroo/api/v1/recorders.py
+        #   * echoroo/api/v1/setup.py
+        #   * echoroo/api/v1/tags.py
+        #   * echoroo/core/auth.py
+        #   * echoroo/core/exceptions.py
+        #   * echoroo/core/pagination.py
+        #   * echoroo/core/permissions.py            (perm 95%)
+        #   * echoroo/middleware/auth_router.py      (perm 95%)
+        #   * echoroo/repositories/search_session.py
+        #   * echoroo/repositories/user.py
+        #   * echoroo/services/confirmed_region.py
+        #   * echoroo/services/ownership_service.py
+        #   * echoroo/services/two_factor_confirmation_token.py
+        #   * echoroo/workers/trusted_expiry_notifier.py
+        # PENDING count: 185 → 168.
+        #
         # API route handlers — require integration tests with real DB / auth flow.
         "echoroo/_alembic_phase13_supporting_ddl.py",
         "echoroo/api/v1/admin.py",
         "echoroo/api/v1/annotation_comments.py",
         "echoroo/api/v1/annotation_sets.py",
-        "echoroo/api/v1/annotation_tasks.py",
         "echoroo/api/v1/annotation_votes.py",
-        "echoroo/api/v1/annotations.py",
         "echoroo/api/v1/auth.py",
         "echoroo/api/v1/clips.py",
         "echoroo/api/v1/custom_models.py",
@@ -84,8 +103,6 @@ PHASE17_PENDING: frozenset[str] = frozenset(
         "echoroo/api/v1/detections.py",
         "echoroo/api/v1/evaluation.py",
         "echoroo/api/v1/h3.py",
-        "echoroo/api/v1/projects.py",
-        "echoroo/api/v1/recorders.py",
         "echoroo/api/v1/recordings.py",
         "echoroo/api/v1/search/annotations.py",
         "echoroo/api/v1/search/batch.py",
@@ -94,9 +111,7 @@ PHASE17_PENDING: frozenset[str] = frozenset(
         "echoroo/api/v1/search/utils.py",
         "echoroo/api/v1/segments.py",
         "echoroo/api/v1/settings.py",
-        "echoroo/api/v1/setup.py",
         "echoroo/api/v1/sites.py",
-        "echoroo/api/v1/tags.py",
         "echoroo/api/v1/taxa.py",
         "echoroo/api/v1/time_range_annotations.py",
         "echoroo/api/v1/uploads.py",
@@ -113,28 +128,29 @@ PHASE17_PENDING: frozenset[str] = frozenset(
         "echoroo/api/web_v1/projects/_restricted_config.py",
         "echoroo/api/web_v1/trusted.py",
         # Core utilities — partial coverage; gaps require integration test contexts.
-        "echoroo/core/auth.py",
         "echoroo/core/database.py",
-        "echoroo/core/exceptions.py",
         "echoroo/core/jwt.py",
-        "echoroo/core/pagination.py",
         "echoroo/core/redis.py",
         "echoroo/core/s3.py",
         # Permission-critical modules — gap tracked for Phase 17 targeted coverage push.
         # NOTE: echoroo/core/audit.py removed from PHASE17_PENDING (target: 95%, gap was
         # 0.2pp, now covered by T996 supplemental tests in test_audit_sanitizer.py).
-        # NOTE 2026-05-09: removed 21 modules already at-or-above threshold per CI run
-        # 25604138207 (post-PR #60 main). Permission-tier removals: step_up.py (100%),
-        # webauthn_service.py (96.6%), kms.py (96.7%). Standard-tier removals: 18 modules
-        # across schemas/, api/v1/{annotation_projects,confirmed_regions,search/deps},
-        # services/{restricted_config,license}, middleware/{security,two_factor_enforcement},
-        # repositories/{base,superuser_credentials}, workers/{dormancy_check,ml_tasks},
-        # and ml/{birdnet/constants,perch/constants,perch/exceptions}, plus schemas/
+        # NOTE 2026-05-09 (PR #62): removed 21 modules already at-or-above threshold
+        # per CI run 25604138207 (post-PR #60 main). Permission-tier removals:
+        # step_up.py (100%), webauthn_service.py (96.6%), kms.py (96.7%).
+        # Standard-tier removals: 18 modules across schemas/,
+        # api/v1/{annotation_projects,confirmed_regions,search/deps},
+        # services/{restricted_config,license},
+        # middleware/{security,two_factor_enforcement},
+        # repositories/{base,superuser_credentials},
+        # workers/{dormancy_check,ml_tasks}, and
+        # ml/{birdnet/constants,perch/constants,perch/exceptions}, plus schemas/
         # {annotation,annotation_comment,clip,upload}.
-        "echoroo/core/permissions.py",
+        # NOTE 2026-05-09 (PR-B easy-win batch 1): additionally removed 17 modules
+        # brought to threshold via test additions; details listed in the leading
+        # NOTE block at the top of this PHASE17_PENDING set.
         "echoroo/core/response_filter.py",
         "echoroo/middleware/auth.py",
-        "echoroo/middleware/auth_router.py",
         "echoroo/services/superuser_service.py",
         "echoroo/services/step_up_token_service.py",
         # Other middleware
@@ -173,7 +189,6 @@ PHASE17_PENDING: frozenset[str] = frozenset(
         "echoroo/repositories/site.py",
         "echoroo/repositories/tag.py",
         "echoroo/repositories/taxon.py",
-        "echoroo/repositories/user.py",
         # Service layer — require database/external-service fixtures.
         "echoroo/services/annotation.py",
         "echoroo/services/auth.py",
@@ -189,7 +204,6 @@ PHASE17_PENDING: frozenset[str] = frozenset(
         "echoroo/services/evaluation.py",
         "echoroo/services/gbif.py",
         "echoroo/services/invitation.py",
-        "echoroo/services/ownership_service.py",
         "echoroo/services/project.py",
         "echoroo/services/recorder.py",
         "echoroo/services/recording.py",
@@ -211,7 +225,6 @@ PHASE17_PENDING: frozenset[str] = frozenset(
         "echoroo/services/user.py",
         "echoroo/services/user_deletion_service.py",
         "echoroo/services/vernacular.py",
-        "echoroo/services/two_factor_confirmation_token.py",
         "echoroo/services/two_factor_reset_service.py",
         # Workers — require Celery/Redis/DB fixtures.
         "echoroo/workers/api_key_age_check.py",
@@ -233,7 +246,6 @@ PHASE17_PENDING: frozenset[str] = frozenset(
         "echoroo/workers/trusted_auto_expire.py",
         "echoroo/workers/trusted_email_null.py",
         "echoroo/workers/trusted_expiry_dispatcher.py",
-        "echoroo/workers/trusted_expiry_notifier.py",
         "echoroo/workers/trusted_long_lived_invalidation.py",
         "echoroo/workers/upload_tasks.py",
         "echoroo/workers/pii_hash_backfill.py",
@@ -244,7 +256,6 @@ PHASE17_PENDING: frozenset[str] = frozenset(
         "echoroo/repositories/license.py",
         "echoroo/repositories/note.py",
         "echoroo/repositories/sampling_round.py",
-        "echoroo/repositories/search_session.py",
         "echoroo/repositories/sound_event_annotation.py",
         "echoroo/repositories/system.py",
         "echoroo/repositories/upload.py",
@@ -269,7 +280,6 @@ PHASE17_PENDING: frozenset[str] = frozenset(
         "echoroo/services/audio/_window.py",
         "echoroo/services/audio/service.py",
         "echoroo/services/captcha.py",
-        "echoroo/services/confirmed_region.py",
         "echoroo/services/detection_export.py",
         "echoroo/services/export.py",
         "echoroo/services/h3_utils.py",
