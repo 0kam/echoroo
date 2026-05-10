@@ -89,6 +89,15 @@ PHASE17_PENDING: frozenset[str] = frozenset(
         #   * echoroo/workers/trusted_expiry_notifier.py
         # PENDING count: 185 → 168.
         #
+        # 2026-05-09 (PR-D medium-large batch): removed 5 medium-large gap
+        # modules brought to threshold via PR-D test additions. Removed:
+        #   * echoroo/services/superuser_approval_service.py (~93%)
+        #   * echoroo/services/search_gate.py               (~100%)
+        #   * echoroo/services/two_factor_reset_service.py  (~88%)
+        #   * echoroo/services/invitation_service.py        (~90%)
+        #   * echoroo/workers/trusted_long_lived_invalidation.py (~94%)
+        # PENDING count: 149 → 144.
+        #
         # 2026-05-09 (PR-C medium-gap batch): removed 19 medium-gap modules
         # (5-15pp) brought to threshold via PR-C test additions. Removed:
         # Permission-critical (≥95%):
@@ -222,11 +231,9 @@ PHASE17_PENDING: frozenset[str] = frozenset(
         "echoroo/services/recorder.py",
         "echoroo/services/recording.py",
         "echoroo/services/search.py",
-        "echoroo/services/search_gate.py",
         "echoroo/services/search_session.py",
         "echoroo/services/session_verification.py",
         "echoroo/services/site.py",
-        "echoroo/services/superuser_approval_service.py",
         "echoroo/services/tag.py",
         "echoroo/services/taxon.py",
         "echoroo/services/taxon_seeder.py",
@@ -238,7 +245,6 @@ PHASE17_PENDING: frozenset[str] = frozenset(
         "echoroo/services/user.py",
         "echoroo/services/user_deletion_service.py",
         "echoroo/services/vernacular.py",
-        "echoroo/services/two_factor_reset_service.py",
         # Workers — require Celery/Redis/DB fixtures.
         "echoroo/workers/api_key_age_check.py",
         "echoroo/workers/celery_app.py",
@@ -258,7 +264,6 @@ PHASE17_PENDING: frozenset[str] = frozenset(
         "echoroo/workers/trusted_auto_expire.py",
         "echoroo/workers/trusted_email_null.py",
         "echoroo/workers/trusted_expiry_dispatcher.py",
-        "echoroo/workers/trusted_long_lived_invalidation.py",
         "echoroo/workers/upload_tasks.py",
         "echoroo/workers/pii_hash_backfill.py",
         "echoroo/workers/two_factor_tasks.py",
@@ -292,7 +297,6 @@ PHASE17_PENDING: frozenset[str] = frozenset(
         "echoroo/services/detection_export.py",
         "echoroo/services/export.py",
         "echoroo/services/h3_utils.py",
-        "echoroo/services/invitation_service.py",
         "echoroo/services/license.py",
     ]
 )
