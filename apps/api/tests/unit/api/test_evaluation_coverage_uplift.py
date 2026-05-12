@@ -87,10 +87,11 @@ async def test_create_evaluation_run_delegates_to_service() -> None:
     result_mock.first.return_value = (project_id,)
     db.execute = AsyncMock(return_value=result_mock)
 
-    with patch.object(mod, "check_project_access", AsyncMock()):
+    with patch.object(mod, "gate_action", new=AsyncMock(return_value=MagicMock()), create=True):
         result = await mod.create_evaluation_run(
             annotation_set_id=annotation_set_id,
             payload=payload,
+            request=MagicMock(),
             current_user=user,
             service=service,
             db=db,
@@ -114,9 +115,10 @@ async def test_list_evaluation_runs_for_set_delegates_to_service() -> None:
     result_mock.first.return_value = (project_id,)
     db.execute = AsyncMock(return_value=result_mock)
 
-    with patch.object(mod, "check_project_access", AsyncMock()):
+    with patch.object(mod, "gate_action", new=AsyncMock(return_value=MagicMock()), create=True):
         result = await mod.list_evaluation_runs_for_set(
             annotation_set_id=annotation_set_id,
+            request=MagicMock(),
             current_user=user,
             service=service,
             db=db,
@@ -142,9 +144,10 @@ async def test_list_evaluation_runs_delegates_to_service() -> None:
     result_mock.first.return_value = (project_id,)
     db.execute = AsyncMock(return_value=result_mock)
 
-    with patch.object(mod, "check_project_access", AsyncMock()):
+    with patch.object(mod, "gate_action", new=AsyncMock(return_value=MagicMock()), create=True):
         result = await mod.list_evaluation_runs(
             current_user=user,
+            request=MagicMock(),
             service=service,
             db=db,
             annotation_set_id=annotation_set_id,
@@ -176,9 +179,10 @@ async def test_get_evaluation_run_returns_summary() -> None:
     result_mock.first.return_value = (project_id,)
     db.execute = AsyncMock(return_value=result_mock)
 
-    with patch.object(mod, "check_project_access", AsyncMock()):
+    with patch.object(mod, "gate_action", new=AsyncMock(return_value=MagicMock()), create=True):
         result = await mod.get_evaluation_run(
             run_id=run_id,
+            request=MagicMock(),
             current_user=user,
             service=service,
             db=db,
@@ -205,9 +209,10 @@ async def test_delete_evaluation_run_calls_service_delete() -> None:
     result_mock.first.return_value = (project_id,)
     db.execute = AsyncMock(return_value=result_mock)
 
-    with patch.object(mod, "check_project_access", AsyncMock()):
+    with patch.object(mod, "gate_action", new=AsyncMock(return_value=MagicMock()), create=True):
         await mod.delete_evaluation_run(
             run_id=run_id,
+            request=MagicMock(),
             current_user=user,
             service=service,
             db=db,

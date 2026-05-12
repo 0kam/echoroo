@@ -58,12 +58,13 @@ async def test_create_search_annotation_raises_422_on_invalid_source() -> None:
     request = _make_annotation_create(source="invalid_source_xyz")
 
     with (
-        patch.object(mod, "check_project_access", AsyncMock()),
+        patch.object(mod, "gate_action", new=AsyncMock(return_value=MagicMock()), create=True),
         pytest.raises(HTTPException) as exc_info,
     ):
         await mod.create_search_annotation(
             project_id=uuid4(),
             request=request,
+            http_request=MagicMock(),
             current_user=user,
             db=db,
         )
@@ -81,12 +82,13 @@ async def test_create_search_annotation_raises_422_on_invalid_review_status() ->
     request = _make_annotation_create(source="similarity_search", review_status="invalid_status_xyz")
 
     with (
-        patch.object(mod, "check_project_access", AsyncMock()),
+        patch.object(mod, "gate_action", new=AsyncMock(return_value=MagicMock()), create=True),
         pytest.raises(HTTPException) as exc_info,
     ):
         await mod.create_search_annotation(
             project_id=uuid4(),
             request=request,
+            http_request=MagicMock(),
             current_user=user,
             db=db,
         )
@@ -110,7 +112,7 @@ async def test_create_search_annotation_returns_existing_when_duplicate() -> Non
     sentinel = MagicMock()
 
     with (
-        patch.object(mod, "check_project_access", AsyncMock()),
+        patch.object(mod, "gate_action", new=AsyncMock(return_value=MagicMock()), create=True),
         patch.object(mod, "_annotation_to_detection_response", return_value=sentinel),
     ):
         result = await mod.create_search_annotation(
@@ -145,7 +147,7 @@ async def test_create_search_annotation_creates_new_annotation() -> None:
     sentinel = MagicMock()
 
     with (
-        patch.object(mod, "check_project_access", AsyncMock()),
+        patch.object(mod, "gate_action", new=AsyncMock(return_value=MagicMock()), create=True),
         patch.object(mod, "_annotation_to_detection_response", return_value=sentinel),
     ):
         result = await mod.create_search_annotation(

@@ -34,9 +34,10 @@ async def test_list_detection_runs_delegates_to_service() -> None:
     user.id = uuid4()
 
     project_id = uuid4()
-    with patch.object(mod, "check_project_access", new=AsyncMock(return_value=None)):
+    with patch.object(mod, "gate_action", new=AsyncMock(return_value=MagicMock()), create=True):
         result = await mod.list_detection_runs(
             project_id=project_id,
+            request=MagicMock(),
             current_user=user,
             service=service,
             db=db,
@@ -60,10 +61,11 @@ async def test_get_detection_run_delegates_to_service() -> None:
 
     project_id = uuid4()
     run_id = uuid4()
-    with patch.object(mod, "check_project_access", new=AsyncMock(return_value=None)):
+    with patch.object(mod, "gate_action", new=AsyncMock(return_value=MagicMock()), create=True):
         result = await mod.get_detection_run(
             project_id=project_id,
             run_id=run_id,
+            request=MagicMock(),
             current_user=user,
             service=service,
             db=db,
@@ -83,10 +85,11 @@ async def test_create_detection_run_delegates_to_service() -> None:
     project_id = uuid4()
     request = MagicMock()
 
-    with patch.object(mod, "check_project_access", new=AsyncMock(return_value=None)):
+    with patch.object(mod, "gate_action", new=AsyncMock(return_value=MagicMock()), create=True):
         result = await mod.create_detection_run(
             project_id=project_id,
             request=request,
+            http_request=MagicMock(),
             current_user=user,
             service=service,
             db=db,
@@ -106,11 +109,12 @@ async def test_update_detection_run_commits_after_service() -> None:
     user = MagicMock()
     user.id = uuid4()
 
-    with patch.object(mod, "check_project_access", new=AsyncMock(return_value=None)):
+    with patch.object(mod, "gate_action", new=AsyncMock(return_value=MagicMock()), create=True):
         result = await mod.update_detection_run(
             project_id=uuid4(),
             run_id=uuid4(),
             request=MagicMock(),
+            http_request=MagicMock(),
             current_user=user,
             service=service,
             db=db,
@@ -130,10 +134,11 @@ async def test_retry_detection_run_commits_after_service() -> None:
     user = MagicMock()
     user.id = uuid4()
 
-    with patch.object(mod, "check_project_access", new=AsyncMock(return_value=None)):
+    with patch.object(mod, "gate_action", new=AsyncMock(return_value=MagicMock()), create=True):
         result = await mod.retry_detection_run(
             project_id=uuid4(),
             run_id=uuid4(),
+            request=MagicMock(),
             current_user=user,
             service=service,
             db=db,
@@ -153,10 +158,11 @@ async def test_cancel_detection_run_commits_after_service() -> None:
     user = MagicMock()
     user.id = uuid4()
 
-    with patch.object(mod, "check_project_access", new=AsyncMock(return_value=None)):
+    with patch.object(mod, "gate_action", new=AsyncMock(return_value=MagicMock()), create=True):
         result = await mod.cancel_detection_run(
             project_id=uuid4(),
             run_id=uuid4(),
+            request=MagicMock(),
             current_user=user,
             service=service,
             db=db,
