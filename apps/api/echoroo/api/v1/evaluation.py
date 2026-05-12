@@ -17,11 +17,18 @@ from __future__ import annotations
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import select
 
+from echoroo.core.actions import (
+    EVALUATION_CREATE_ACTION,
+    EVALUATION_RUN_DELETE_ACTION,
+    EVALUATION_RUN_GET_ACTION,
+    EVALUATION_RUN_LIST_ACTION,
+    EVALUATION_RUNS_BY_SET_ACTION,
+)
 from echoroo.core.database import DbSession
-from echoroo.core.permissions import check_project_access
+from echoroo.core.permissions import gate_action
 from echoroo.middleware.auth import CurrentUser
 from echoroo.models.annotation_set import AnnotationSet
 from echoroo.repositories.evaluation import (
@@ -104,13 +111,20 @@ async def _annotation_set_project_id(
 async def create_evaluation_run(
     annotation_set_id: UUID,
     payload: EvaluationRunCreate,
+    request: Request,
     current_user: CurrentUser,
     service: EvaluationServiceDep,
     db: DbSession,
 ) -> EvaluationRunResponse:
     """Create a pending evaluation run and dispatch the worker task."""
     project_id = await _annotation_set_project_id(db, annotation_set_id)
-    await check_project_access(project_id, current_user.id, db)
+    await gate_action(
+        action=EVALUATION_CREATE_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
 
     refs = [ref.model_dump() for ref in payload.model_refs]
     return await service.evaluate_annotation_set(
@@ -127,6 +141,7 @@ async def create_evaluation_run(
 )
 async def list_evaluation_runs_for_set(
     annotation_set_id: UUID,
+    request: Request,
     current_user: CurrentUser,
     service: EvaluationServiceDep,
     db: DbSession,
@@ -135,7 +150,13 @@ async def list_evaluation_runs_for_set(
 ) -> EvaluationRunListResponse:
     """List evaluation runs for an annotation set (newest first)."""
     project_id = await _annotation_set_project_id(db, annotation_set_id)
-    await check_project_access(project_id, current_user.id, db)
+    await gate_action(
+        action=EVALUATION_RUNS_BY_SET_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
 
     items, total = await service.list_by_annotation_set(
         annotation_set_id, limit=limit, offset=offset,
@@ -152,6 +173,7 @@ async def list_evaluation_runs_for_set(
     summary="List evaluation runs (filter by annotation_set_id)",
 )
 async def list_evaluation_runs(
+    request: Request,
     current_user: CurrentUser,
     service: EvaluationServiceDep,
     db: DbSession,
@@ -163,7 +185,13 @@ async def list_evaluation_runs(
 ) -> EvaluationRunListResponse:
     """List evaluation runs for a given annotation set."""
     project_id = await _annotation_set_project_id(db, annotation_set_id)
-    await check_project_access(project_id, current_user.id, db)
+    await gate_action(
+        action=EVALUATION_RUN_LIST_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
 
     items, total = await service.list_by_annotation_set(
         annotation_set_id, limit=limit, offset=offset,
@@ -181,6 +209,7 @@ async def list_evaluation_runs(
 )
 async def get_evaluation_run(
     run_id: UUID,
+    request: Request,
     current_user: CurrentUser,
     service: EvaluationServiceDep,
     db: DbSession,
@@ -190,7 +219,13 @@ async def get_evaluation_run(
     project_id = await _annotation_set_project_id(
         db, run.annotation_set_id,
     )
-    await check_project_access(project_id, current_user.id, db)
+    await gate_action(
+        action=EVALUATION_RUN_GET_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
     return await service.get_summary(run_id)
 
 
@@ -201,6 +236,7 @@ async def get_evaluation_run(
 )
 async def delete_evaluation_run(
     run_id: UUID,
+    request: Request,
     current_user: CurrentUser,
     service: EvaluationServiceDep,
     db: DbSession,
@@ -210,7 +246,13 @@ async def delete_evaluation_run(
     project_id = await _annotation_set_project_id(
         db, run.annotation_set_id,
     )
-    await check_project_access(project_id, current_user.id, db)
+    await gate_action(
+        action=EVALUATION_RUN_DELETE_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
     await service.delete_run(run_id)
 
 

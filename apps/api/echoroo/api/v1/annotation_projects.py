@@ -3,10 +3,20 @@
 from typing import Annotated, Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Query, Request, status
 from fastapi.responses import Response as FastAPIResponse
 
+from echoroo.core.actions import (
+    ANNOTATION_PROJECT_CREATE_ACTION,
+    ANNOTATION_PROJECT_DELETE_ACTION,
+    ANNOTATION_PROJECT_EXPORT_ACTION,
+    ANNOTATION_PROJECT_GENERATE_TASKS_ACTION,
+    ANNOTATION_PROJECT_GET_ACTION,
+    ANNOTATION_PROJECT_LIST_ACTION,
+    ANNOTATION_PROJECT_UPDATE_ACTION,
+)
 from echoroo.core.database import DbSession
+from echoroo.core.permissions import gate_action
 from echoroo.middleware.auth import CurrentUser
 from echoroo.repositories.annotation_project import AnnotationProjectRepository
 from echoroo.repositories.annotation_task import AnnotationTaskRepository
@@ -54,8 +64,10 @@ AnnotationProjectServiceDep = Annotated[
 )
 async def list_annotation_projects(
     project_id: UUID,
+    request: Request,
     current_user: CurrentUser,
     service: AnnotationProjectServiceDep,
+    db: DbSession,
     page: int = 1,
     page_size: int = 20,
 ) -> AnnotationProjectListResponse:
@@ -74,6 +86,13 @@ async def list_annotation_projects(
     Raises:
         401: Not authenticated
     """
+    await gate_action(
+        action=ANNOTATION_PROJECT_LIST_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
     return await service.list_projects(project_id, page, page_size)
 
 
@@ -87,8 +106,10 @@ async def list_annotation_projects(
 async def create_annotation_project(
     project_id: UUID,
     request: AnnotationProjectCreate,
+    http_request: Request,
     current_user: CurrentUser,
     service: AnnotationProjectServiceDep,
+    db: DbSession,
 ) -> AnnotationProjectDetailResponse:
     """Create a new annotation project.
 
@@ -104,6 +125,13 @@ async def create_annotation_project(
     Raises:
         401: Not authenticated
     """
+    await gate_action(
+        action=ANNOTATION_PROJECT_CREATE_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=http_request,
+        db=db,
+    )
     return await service.create(project_id, current_user.id, request)
 
 
@@ -116,8 +144,10 @@ async def create_annotation_project(
 async def get_annotation_project(
     project_id: UUID,
     annotation_project_id: UUID,
+    request: Request,
     current_user: CurrentUser,
     service: AnnotationProjectServiceDep,
+    db: DbSession,
 ) -> AnnotationProjectDetailResponse:
     """Get annotation project detail.
 
@@ -134,6 +164,13 @@ async def get_annotation_project(
         401: Not authenticated
         404: Annotation project not found
     """
+    await gate_action(
+        action=ANNOTATION_PROJECT_GET_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
     return await service.get_detail(annotation_project_id)
 
 
@@ -147,8 +184,10 @@ async def update_annotation_project(
     project_id: UUID,
     annotation_project_id: UUID,
     request: AnnotationProjectUpdate,
+    http_request: Request,
     current_user: CurrentUser,
     service: AnnotationProjectServiceDep,
+    db: DbSession,
 ) -> AnnotationProjectDetailResponse:
     """Update an annotation project.
 
@@ -166,6 +205,13 @@ async def update_annotation_project(
         401: Not authenticated
         404: Annotation project not found
     """
+    await gate_action(
+        action=ANNOTATION_PROJECT_UPDATE_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=http_request,
+        db=db,
+    )
     return await service.update(annotation_project_id, request)
 
 
@@ -178,8 +224,10 @@ async def update_annotation_project(
 async def delete_annotation_project(
     project_id: UUID,
     annotation_project_id: UUID,
+    request: Request,
     current_user: CurrentUser,
     service: AnnotationProjectServiceDep,
+    db: DbSession,
 ) -> None:
     """Delete an annotation project.
 
@@ -193,6 +241,13 @@ async def delete_annotation_project(
         401: Not authenticated
         404: Annotation project not found
     """
+    await gate_action(
+        action=ANNOTATION_PROJECT_DELETE_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
     await service.delete(annotation_project_id)
 
 
@@ -204,6 +259,7 @@ async def delete_annotation_project(
 async def export_annotations(
     project_id: UUID,
     annotation_project_id: UUID,
+    request: Request,
     current_user: CurrentUser,
     db: DbSession,
     format: str = Query("json", description="Export format: json, csv, or aoef"),
@@ -230,6 +286,13 @@ async def export_annotations(
         404: Annotation project not found
         422: Unsupported export format
     """
+    await gate_action(
+        action=ANNOTATION_PROJECT_EXPORT_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
     export_service = AnnotationExportService(db)
     result = await export_service.export_annotations(annotation_project_id, format)
 
@@ -257,8 +320,10 @@ async def export_annotations(
 async def generate_tasks(
     project_id: UUID,
     annotation_project_id: UUID,
+    request: Request,
     current_user: CurrentUser,
     service: AnnotationProjectServiceDep,
+    db: DbSession,
 ) -> TaskGenerationResponse:
     """Generate annotation tasks from clips in associated datasets.
 
@@ -279,4 +344,11 @@ async def generate_tasks(
         401: Not authenticated
         404: Annotation project not found
     """
+    await gate_action(
+        action=ANNOTATION_PROJECT_GENERATE_TASKS_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
     return await service.generate_tasks(annotation_project_id)
