@@ -143,7 +143,11 @@ function createAuthStore() {
         }
 
         // Access token is now available; fetch the current user.
-        const user = await apiClient.get<User>('/api/v1/users/me');
+        // Post-spec/006 BFF flow: hydrate via the cookie + CSRF mirror
+        // at ``/web-api/v1/users/me``. The legacy Bearer-only path
+        // 401-ed for cookie-authenticated visitors and forced an
+        // auto-logout right after a successful 2FA verify.
+        const user = await apiClient.get<User>('/web-api/v1/users/me');
         state.user = user;
         state.isAuthenticated = true;
       } catch (error) {

@@ -94,8 +94,10 @@
       apiClient.setAccessToken(result.access_token);
       // Best-effort fetch of the current user — failures are non-fatal here
       // because the dashboard guard will retry via authStore.initialize().
+      // Targets the BFF mirror (``/web-api/v1/users/me``) so the
+      // freshly-issued session cookie alone authenticates the call.
       try {
-        const user = await apiClient.get<User>('/api/v1/users/me');
+        const user = await apiClient.get<User>('/web-api/v1/users/me');
         authStore.setUser(user);
       } catch {
         // ignore

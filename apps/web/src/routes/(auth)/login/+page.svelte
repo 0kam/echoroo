@@ -173,9 +173,13 @@
 
       apiClient.setAccessToken(result.access_token);
 
-      // Fetch the current user (cookie + access token already set by server)
+      // Fetch the current user (cookie + access token already set by server).
+      // Use the BFF mirror at ``/web-api/v1/users/me`` so the session
+      // cookie alone authenticates the request — the legacy Bearer
+      // path 401-ed here and bounced the user back to /login right
+      // after a successful 2FA verify.
       try {
-        const user = await apiClient.get<User>('/api/v1/users/me');
+        const user = await apiClient.get<User>('/web-api/v1/users/me');
         authStore.setUser(user);
       } catch {
         // The new web-auth backend may expose user data via a different
