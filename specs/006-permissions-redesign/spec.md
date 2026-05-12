@@ -5,6 +5,8 @@
 **ステータス**: ドラフト（Rev.3.2、3者 GO 済み、plan 着手可）
 **入力**: Discord 議論（2026-04-23〜04-24）での合意事項 + codex / architect-reviewer / security-auditor による 4 回の 3者レビュー
 
+> *Amended by:* `spec/008-permissions-vocabulary-refinement` (2026-05-12) — introduces `MANAGE_DATASET_ADMIN` vocabulary refinement, behavior-preserving.
+
 ## 概要
 
 Echoroo の権限モデルを、プレローンチ段階で全面的に再設計する。現行実装の問題点:
