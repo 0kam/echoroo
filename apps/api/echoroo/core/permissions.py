@@ -397,13 +397,22 @@ ENDPOINT_BACKED_PERMISSIONS: frozenset[Permission] = frozenset(
         Permission.MANAGE_LICENSE,
         Permission.DELETE_PROJECT,
         Permission.TRANSFER_OWNERSHIP,
-        Permission.OVERRIDE_TAXON_SENSITIVITY,  # Rev.5: moved from COMPUTED_ONLY
+        # OVERRIDE_TAXON_SENSITIVITY — temporarily moved BACK to COMPUTED_ONLY
+        # per spec/007 plan Rev.5.1 § Phase 2A.5 fallback. Backend audit
+        # 2026-05-12: taxa.py exposes only /taxa/{search,gbif-search,{id}};
+        # no submit/revoke override endpoint exists yet. Action registration
+        # deferred to spec/008 follow-up. When the endpoints land,
+        # TAXON_SENSITIVITY_OVERRIDE_{SUBMIT,REVOKE}_ACTION should be
+        # registered and this permission moved back here.
     }
 )
 
 COMPUTED_ONLY_PERMISSIONS: frozenset[Permission] = frozenset(
     {
         Permission.VIEW_PRECISE_LOCATION,
+        # OVERRIDE_TAXON_SENSITIVITY — temporarily here until taxa override
+        # endpoints land (see ENDPOINT_BACKED_PERMISSIONS comment above).
+        Permission.OVERRIDE_TAXON_SENSITIVITY,
     }
 )
 

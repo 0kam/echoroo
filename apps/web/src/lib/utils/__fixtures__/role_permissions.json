@@ -1,5 +1,5 @@
 {
-  "generated_at_utc": "2026-05-12T01:39:35+00:00",
+  "generated_at_utc": "2026-05-12T01:49:33+00:00",
   "generated_from_commit": null,
   "permissions": [
     "annotate",
@@ -46,7 +46,6 @@
       "manage_license",
       "manage_members",
       "manage_trusted",
-      "override_taxon_sensitivity",
       "run_inference",
       "search_cross_project",
       "search_within_project",
@@ -61,6 +60,7 @@
       "vote"
     ],
     "computed_only": [
+      "override_taxon_sensitivity",
       "view_precise_location"
     ],
     "user_scope": [
