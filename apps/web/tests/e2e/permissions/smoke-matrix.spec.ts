@@ -615,29 +615,18 @@ test.describe('Screen 5: dataset list (/projects/{id}/datasets)', () => {
   });
 
   test('role=member: no "+ New Dataset" button', async ({ page }) => {
-    // NOTE: the datasets list page currently lacks a permission gate for
-    // the "New Dataset" button (identified in plan.md § 2 Background).
-    // This test documents the EXPECTED behavior per § 4A; the button
-    // should NOT be visible for member.
-    //
-    // If this test fails, it means the datasets/+page.svelte has not yet
-    // been updated to gate on can('manage_dataset_admin', ctx). That
-    // gating is deferred to a separate PR per the plan — mark as xfail
-    // until the frontend gate is wired.
-    test.skip(
-      true,
-      'TODO: datasets/+page.svelte lacks manage_dataset_admin gate — ' +
-        'New Dataset button visible for all authenticated members (spec/007 Phase 2B follow-up)',
-    );
+    // XFL-3 resolved 2026-05-12: datasets/+page.svelte now gates the
+    // "+ New Dataset" button on can('manage_dataset_admin', ctx).
+    await installMockRoutes(page, 'member', 'public');
+    await page.goto(`/projects/${MOCK_PROJECT_ID}/datasets`);
+    await expect(page.getByRole('button', { name: /new dataset/i })).toHaveCount(0);
   });
 
   test('role=viewer: no "+ New Dataset" button', async ({ page }) => {
-    // Same skip as above — pending frontend gate.
-    test.skip(
-      true,
-      'TODO: datasets/+page.svelte lacks manage_dataset_admin gate — ' +
-        'New Dataset button visible for all authenticated members (spec/007 Phase 2B follow-up)',
-    );
+    // XFL-3 resolved 2026-05-12.
+    await installMockRoutes(page, 'viewer', 'restricted');
+    await page.goto(`/projects/${MOCK_PROJECT_ID}/datasets`);
+    await expect(page.getByRole('button', { name: /new dataset/i })).toHaveCount(0);
   });
 });
 

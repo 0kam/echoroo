@@ -20,13 +20,15 @@ Per plan Rev.5.1 Prereq-3 and Phase 4.2: every `@pytest.mark.xfail(strict=True)`
 - **Tracking issue**: To be opened when the pending_invitation UI surface is planned. Suggested title: `spec/007 follow-up: pending_invitation authState CTA on project detail`. Labels: `kind/feature`, `area/permissions`, `area/frontend`.
 - **Why skip (not xfail strict=True)**: This is a missing UI feature (not a test that can currently run and produce a meaningful failure). Using `test.skip()` rather than `test.xfail()` because Playwright's `test.skip()` is the idiomatic mechanism for a test whose subject doesn't exist yet. Backend permission logic for `pending_invitation` is correct; only the frontend CTA rendering is unimplemented.
 
-### XFL-3: datasets/+page.svelte permission gate for "+ New Dataset" (Screen 5, member/viewer)
+### XFL-3: datasets/+page.svelte permission gate — RESOLVED 2026-05-12
 
-- **Location**: `apps/web/tests/e2e/permissions/smoke-matrix.spec.ts` — Screen 5 tests for role=member and role=viewer (marked `test.skip(...)`)
-- **Scenario**: Member and viewer should NOT see the "+ New Dataset" button on the dataset list page. The button is gated by `manage_dataset_admin` (§ 4A rule 2). Currently `datasets/+page.svelte` has no permission gate — the button is visible to all authenticated users.
-- **Reason text**: `"TODO: datasets/+page.svelte lacks manage_dataset_admin gate — New Dataset button visible for all authenticated members (spec/007 Phase 2B follow-up)"`
-- **Tracking issue**: To be opened as a follow-up to spec/007 Phase 2B. Suggested title: `spec/007 follow-up: gate New Dataset button on manage_dataset_admin in datasets/+page.svelte`. Labels: `kind/bug`, `area/permissions`, `area/frontend`.
-- **Why skip (not xfail strict=True)**: The frontend gate is not yet implemented. The test is skipped until `datasets/+page.svelte` is updated to gate the button on `can('manage_dataset_admin', ctx)`.
+- **Status**: ✅ Resolved inline during spec/007 Phase 4. The "+ New Dataset"
+  button now wraps in `{#if canCreateDataset}` where `canCreateDataset =
+  can('manage_dataset_admin', $projectCtx)`. Member and viewer no longer
+  see the button (frontend gate aligned with backend DATASET_CREATE_ACTION).
+- **Skip annotations removed**: the 2 Screen 5 tests for role=member and
+  role=viewer in `apps/web/tests/e2e/permissions/smoke-matrix.spec.ts`
+  were un-skipped in the same commit.
 
 ## Out of scope (NOT in this PR's xfails)
 

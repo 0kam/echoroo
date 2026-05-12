@@ -3,16 +3,39 @@
   import { goto } from '$app/navigation';
   import { createQuery, createMutation, useQueryClient } from '@tanstack/svelte-query';
   import { fetchDatasets, createDataset, deleteDataset, fetchDataset } from '$lib/api/datasets';
+  import { projectsApi } from '$lib/api/projects';
   import { localizeHref } from '$lib/paraglide/runtime';
   import * as m from '$lib/paraglide/messages';
   import type { Dataset, DatasetCreate, DatasetUpdate, DatasetStatus, DatasetVisibility } from '$lib/types/data';
   import DatasetList from '$lib/components/data/DatasetList.svelte';
   import DatasetForm from '$lib/components/data/DatasetForm.svelte';
   import ConfirmDialog from '$lib/components/ui/ConfirmDialog.svelte';
+  import { can } from '$lib/utils/permissions';
+  import { usePermissionContext } from '$lib/stores/permissionContext';
 
   const queryClient = useQueryClient();
 
   const projectId = $derived($page.params.id as string);
+
+  // spec/007 XFL-3 fix: gate "+ New Dataset" + delete on manage_dataset_admin
+  // (§ 4A vocabulary glossary rule 2 — dataset RESOURCE management is
+  // admin/owner-only). Backend already enforces this via DATASET_CREATE_ACTION
+  // / DATASET_DELETE_ACTION (Phase 2A.6 wiring); this gate suppresses the
+  // button so members/viewers don't see a control whose backend will 403.
+  const projectQuery = $derived(
+    createQuery({
+      queryKey: ['project', projectId],
+      queryFn: () => projectsApi.get(projectId),
+      meta: { projectId },
+    })
+  );
+  const projectCtx = $derived(
+    usePermissionContext({
+      projectQuery,
+      routeParams: { invitationToken: null },
+    })
+  );
+  const canCreateDataset = $derived(can('manage_dataset_admin', $projectCtx));
 
   let showCreateForm = $state(false);
   let datasetToDelete = $state<Dataset | null>(null);
@@ -139,7 +162,7 @@
       <h1 class="text-2xl font-bold text-stone-900">{m.dataset_list_heading()}</h1>
       <p class="mt-1 text-sm text-stone-500">{m.dataset_list_description()}</p>
     </div>
-    {#if !showCreateForm}
+    {#if !showCreateForm && canCreateDataset}
       <button
         onclick={() => (showCreateForm = true)}
         class="flex items-center gap-2 rounded-md bg-primary-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-700 dark:bg-primary-500 dark:text-stone-50 dark:hover:bg-primary-400"
