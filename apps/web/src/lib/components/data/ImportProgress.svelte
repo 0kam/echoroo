@@ -22,6 +22,8 @@
       queryFn: () => fetchImportStatus(projectId, datasetId),
       refetchInterval: isProcessing ? 2000 : false,
       enabled: isProcessing,
+      // spec/007 Phase 1.5 / AD-3
+      meta: { projectId },
     })
   );
 
@@ -29,6 +31,7 @@
 
   const startImportMutation = createMutation({
     mutationFn: () => startImport(projectId, datasetId),
+    meta: { projectId },
     onSuccess: () => {
       mutationError = null;
       queryClient.invalidateQueries({ queryKey: ['dataset', projectId, datasetId] });
@@ -41,6 +44,7 @@
 
   const rescanMutation = createMutation({
     mutationFn: () => rescanDataset(projectId, datasetId),
+    meta: { projectId },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['dataset', projectId, datasetId] });
       queryClient.invalidateQueries({ queryKey: ['import-status', projectId, datasetId] });

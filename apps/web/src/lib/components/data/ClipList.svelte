@@ -27,11 +27,16 @@
     createQuery({
       queryKey: ['clips', projectId, recordingId, page, sortBy, sortOrder],
       queryFn: () => listClips({ projectId, recordingId, page, pageSize, sortBy, sortOrder }),
+      // spec/007 Phase 1.5 / AD-3: tag with projectId so the global
+      // QueryCache.onError hook can invalidate the project detail
+      // cache on a 403 demotion.
+      meta: { projectId },
     })
   );
 
   const deleteMut = createMutation({
     mutationFn: (clipId: string) => deleteClip(projectId, recordingId, clipId),
+    meta: { projectId },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['clips', projectId, recordingId] });
       queryClient.invalidateQueries({ queryKey: ['recording', projectId, recordingId] });
