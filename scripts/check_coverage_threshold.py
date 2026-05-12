@@ -146,25 +146,38 @@ PHASE17_PENDING: frozenset[str] = frozenset(
         #   * echoroo/workers/trusted_auto_expire.py
         # PENDING count: 144 → 128.
         #
+        # 2026-05-10 (PR-F 25-35pp batch): removed 16 modules (Batch 6+7)
+        # brought to threshold via uplift test additions. Removed:
+        #   * echoroo/api/v1/annotation_comments.py      (100%)
+        #   * echoroo/api/v1/annotation_votes.py         (98%)
+        #   * echoroo/api/v1/evaluation.py               (98%)
+        #   * echoroo/api/v1/h3.py                       (100%)
+        #   * echoroo/api/v1/search/annotations.py       (91%)
+        #   * echoroo/api/v1/search/similarity.py        (100%)
+        #   * echoroo/api/v1/users.py                    (85%)
+        #   * echoroo/api/web_v1/projects/_ownership.py  (100%)
+        #   * echoroo/core/database.py                   (100%)
+        #   * echoroo/repositories/annotation_comment.py (100%)
+        #   * echoroo/repositories/embedding.py          (100%)
+        #   * echoroo/services/email.py                  (85%)
+        #   * echoroo/services/taxon.py                  (100%)
+        #   * echoroo/services/token.py                  (100%)
+        #   * echoroo/services/user_deletion_service.py  (100%)
+        #   * echoroo/workers/db_utils.py                (100%)
+        # PENDING count: 128 → 112.
+        #
         # API route handlers — require integration tests with real DB / auth flow.
-        "echoroo/api/v1/annotation_comments.py",
-        "echoroo/api/v1/annotation_votes.py",
         "echoroo/api/v1/auth.py",
         "echoroo/api/v1/clips.py",
         "echoroo/api/v1/custom_models.py",
         "echoroo/api/v1/datasets.py",
         "echoroo/api/v1/detections.py",
-        "echoroo/api/v1/evaluation.py",
-        "echoroo/api/v1/h3.py",
         "echoroo/api/v1/recordings.py",
-        "echoroo/api/v1/search/annotations.py",
         "echoroo/api/v1/search/batch.py",
         "echoroo/api/v1/search/sessions.py",
-        "echoroo/api/v1/search/similarity.py",
         "echoroo/api/v1/search/utils.py",
         "echoroo/api/v1/settings.py",
         "echoroo/api/v1/uploads.py",
-        "echoroo/api/v1/users.py",
         "echoroo/api/v1/xeno_canto.py",
         "echoroo/api/web_v1/account/dsr.py",
         "echoroo/api/web_v1/admin.py",
@@ -172,10 +185,7 @@ PHASE17_PENDING: frozenset[str] = frozenset(
         "echoroo/api/web_v1/auth.py",
         "echoroo/api/web_v1/projects/_core.py",
         "echoroo/api/web_v1/projects/_members.py",
-        "echoroo/api/web_v1/projects/_ownership.py",
         "echoroo/api/web_v1/trusted.py",
-        # Core utilities — partial coverage; gaps require integration test contexts.
-        "echoroo/core/database.py",
         # Permission-critical modules — gap tracked for Phase 17 targeted coverage push.
         # NOTE: echoroo/core/audit.py removed from PHASE17_PENDING (target: 95%, gap was
         # 0.2pp, now covered by T996 supplemental tests in test_audit_sanitizer.py).
@@ -212,7 +222,6 @@ PHASE17_PENDING: frozenset[str] = frozenset(
         "echoroo/ml/sampling.py",
         # Repository layer — require database fixtures.
         "echoroo/repositories/annotation.py",
-        "echoroo/repositories/annotation_comment.py",
         "echoroo/repositories/annotation_set.py",
         "echoroo/repositories/annotation_task.py",
         "echoroo/repositories/annotation_vote.py",
@@ -236,7 +245,6 @@ PHASE17_PENDING: frozenset[str] = frozenset(
         "echoroo/services/detection.py",
         "echoroo/services/detection_run.py",
         "echoroo/services/dsr.py",
-        "echoroo/services/email.py",
         "echoroo/services/evaluation.py",
         "echoroo/services/gbif.py",
         "echoroo/services/invitation.py",
@@ -247,22 +255,18 @@ PHASE17_PENDING: frozenset[str] = frozenset(
         "echoroo/services/session_verification.py",
         "echoroo/services/site.py",
         "echoroo/services/tag.py",
-        "echoroo/services/taxon.py",
         "echoroo/services/taxon_seeder.py",
         "echoroo/services/taxon_sensitivity_service.py",
         "echoroo/services/time_range_annotation.py",
-        "echoroo/services/token.py",
         "echoroo/services/trusted_service.py",
         "echoroo/services/upload.py",
         "echoroo/services/user.py",
-        "echoroo/services/user_deletion_service.py",
         "echoroo/services/vernacular.py",
         # Workers — require Celery/Redis/DB fixtures.
         "echoroo/workers/api_key_age_check.py",
         "echoroo/workers/annotation_sampling_tasks.py",
         "echoroo/workers/audit_log_export.py",
         "echoroo/workers/classifier_tasks.py",
-        "echoroo/workers/db_utils.py",
         "echoroo/workers/evaluation_tasks.py",
         "echoroo/workers/invitation_email_null.py",
         "echoroo/workers/iucn_sync.py",
@@ -278,7 +282,6 @@ PHASE17_PENDING: frozenset[str] = frozenset(
         "echoroo/workers/pii_hash_backfill.py",
         "echoroo/workers/two_factor_tasks.py",
         # Additional repository layer modules not in initial list.
-        "echoroo/repositories/embedding.py",
         "echoroo/repositories/evaluation.py",
         "echoroo/repositories/license.py",
         "echoroo/repositories/sampling_round.py",
