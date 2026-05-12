@@ -21,28 +21,15 @@ import pytest
 from fastapi import FastAPI
 from fastapi.routing import APIRoute
 
+from echoroo.core.endpoint_allowlist import ALLOWLIST, is_allowlisted
 from echoroo.core.permissions import ACTIONS
 
-# Routes that do NOT need an Action entry (research §18-A allowlist):
-#   - Unauthenticated endpoints that run before the identity is established.
-#   - FastAPI/OpenAPI built-ins (docs, schemas, openapi.json).
-ALLOWLIST_PATHS: frozenset[str] = frozenset(
-    {
-        "/",
-        "/health",
-        "/docs",
-        "/docs/oauth2-redirect",
-        "/redoc",
-        "/openapi.json",
-        "/web-api/v1/auth/login",
-        "/web-api/v1/auth/register",
-        "/web-api/v1/auth/logout",
-        "/web-api/v1/auth/password-reset",
-        "/web-api/v1/auth/password-reset/confirm",
-        "/web-api/v1/auth/2fa/challenge",
-        "/web-api/v1/auth/refresh",
-    }
-)
+# spec/007 AD-5 (Phase 2A.1): the legacy ``ALLOWLIST_PATHS: frozenset[str]``
+# was replaced by the structured :data:`ALLOWLIST` records living in
+# ``echoroo.core.endpoint_allowlist``. Each entry now carries category,
+# reason, owner, spec_ref, last_reviewed_at metadata so CI can audit drift.
+# Re-exported here as a backwards-compatible alias used by older fixtures.
+ALLOWLIST_PATHS: frozenset[str] = frozenset(entry.path_pattern for entry in ALLOWLIST)
 
 
 def _collect_actionable_routes(app: FastAPI) -> Iterable[tuple[str, str]]:
@@ -50,10 +37,10 @@ def _collect_actionable_routes(app: FastAPI) -> Iterable[tuple[str, str]]:
     for route in app.routes:
         if not isinstance(route, APIRoute):
             continue
-        if route.path in ALLOWLIST_PATHS:
-            continue
         for method in sorted(route.methods or set()):
             if method in {"HEAD", "OPTIONS"}:
+                continue
+            if is_allowlisted(route.path, method):
                 continue
             yield route.path, method
 
