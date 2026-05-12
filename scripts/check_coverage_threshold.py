@@ -166,6 +166,14 @@ PHASE17_PENDING: frozenset[str] = frozenset(
         #   * echoroo/workers/db_utils.py                (100%)
         # PENDING count: 128 → 112.
         #
+        # 2026-05-10 (PR-H Batch 8 dedicated): removed echoroo/api/web_v1/auth.py
+        # via dedicated Batch 8 PR — was 191 missing lines (75.5% baseline with
+        # existing contract tests), pushed to ≥85% via 120 new unit tests covering
+        # helper functions, JWT token paths, endpoint branches (login, register,
+        # logout, refresh, password_reset, setup_totp, 2fa_challenge) and async
+        # helpers (_consume_interim_token_for_user, _issue_real_session, etc.).
+        # PENDING count: 112 → 111.
+        #
         # API route handlers — require integration tests with real DB / auth flow.
         "echoroo/api/v1/auth.py",
         "echoroo/api/v1/clips.py",
@@ -182,7 +190,7 @@ PHASE17_PENDING: frozenset[str] = frozenset(
         "echoroo/api/web_v1/account/dsr.py",
         "echoroo/api/web_v1/admin.py",
         "echoroo/api/web_v1/audit.py",
-        "echoroo/api/web_v1/auth.py",
+        # echoroo/api/web_v1/auth.py — removed 2026-05-10 (PR-H Batch 8)
         "echoroo/api/web_v1/projects/_core.py",
         "echoroo/api/web_v1/projects/_members.py",
         "echoroo/api/web_v1/trusted.py",
