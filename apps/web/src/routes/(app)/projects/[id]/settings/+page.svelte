@@ -10,6 +10,8 @@
   import { localizeHref } from '$lib/paraglide/runtime';
   import * as m from '$lib/paraglide/messages';
   import type { Project } from '$lib/types';
+  import { authStore } from '$lib/stores/auth.svelte';
+  import { buildProjectContext, can } from '$lib/utils/permissions';
 
   // Predefined taxa options
   const TARGET_TAXA_OPTIONS = [
@@ -54,15 +56,27 @@
   let error = $state<string | null>(null);
   let successMessage = $state<string | null>(null);
 
-  // Check if current user has admin access (owner or admin role).
-  // Phase 1 (spec/007): role is derived from `project.current_user_role`
-  // as the single source of truth. The previous `members.find(...).role`
-  // pattern is removed; it duplicated server-resolved role state and
-  // could drift after demotion/promotion.
-  const hasAdminAccess = $derived(
-    project?.current_user_role === 'owner' ||
-      project?.current_user_role === 'admin'
+  // Phase 2B.3 (spec/007): permission gating goes through `can()` so
+  // the page no longer encodes the role -> permission mapping
+  // locally. `edit_project` is the canonical permission for the
+  // "edit settings" UI (owner + admin in the canonical matrix).
+  // The context is built directly from `authStore` + the loaded
+  // project; this page does NOT use TanStack Query for the project
+  // load, so we bypass `usePermissionContext` (which wraps a query
+  // store) and call `buildProjectContext` against the plain `project`
+  // state below.
+  const permissionContext = $derived(
+    buildProjectContext({
+      authStore: {
+        isAuthenticated: authStore.isAuthenticated,
+        user: authStore.user,
+      },
+      project: project ?? undefined,
+      projectQueryState: { isLoading, isError: error !== null },
+      pendingInvitationToken: null,
+    })
   );
+  const hasAdminAccess = $derived(can('edit_project', permissionContext));
 
   /**
    * Load project and members

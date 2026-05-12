@@ -4,6 +4,9 @@
   import { createQuery, createMutation, useQueryClient } from '@tanstack/svelte-query';
   import { fetchDataset, updateDataset, deleteDataset } from '$lib/api/datasets';
   import { projectsApi } from '$lib/api/projects';
+  import { projectQueryOptions } from '$lib/api/projectQueryOptions';
+  import { usePermissionContext } from '$lib/stores/permissionContext';
+  import { can } from '$lib/utils/permissions';
   import { localizeHref, getLocale } from '$lib/paraglide/runtime';
   import * as m from '$lib/paraglide/messages';
   import type { DatasetUpdate } from '$lib/types/data';
@@ -32,30 +35,40 @@
   );
 
   // Phase 1 (spec/007): fetch project to resolve `current_user_role`
-  // as the single source of truth for permission gating on this page.
-  // TODO Phase 2B.3: replace the role comparisons below with `can()`
-  //   - `manage_dataset_admin` (admin/owner) for Edit/Delete dataset
-  //   - `manage_dataset` (member/admin/owner) for content actions
-  //     (clip generation, annotation, etc.)
+  // as the single source of truth for permission gating on this
+  // page. Phase 2B.3 wires the result through `usePermissionContext`
+  // and `can()` so the role -> permission mapping stays in
+  // `permissions.ts`. The `meta: { projectId }` stamp (via
+  // `projectQueryOptions`) lets the global 403 handler invalidate
+  // the right cache entry on demotion (AD-3 / Q23).
   const projectQuery = $derived(
-    createQuery({
-      queryKey: ['project', projectId],
-      queryFn: () => projectsApi.get(projectId),
-    })
+    createQuery(
+      projectQueryOptions(projectId, {
+        queryKey: ['project', projectId],
+        queryFn: () => projectsApi.get(projectId),
+      }),
+    ),
   );
 
-  const currentUserRole = $derived($projectQuery.data?.current_user_role ?? null);
+  const permissionContext = $derived(
+    usePermissionContext({
+      projectQuery,
+      routeParams: { invitationToken: null },
+    }),
+  );
 
-  // TODO Phase 2B.3: replace with can('manage_dataset_admin', ctx)
+  // Phase 2B.3: canonical permission gates.
+  //   - `manage_dataset_admin` (admin/owner) for Edit/Delete dataset
+  //   - `manage_dataset` (admin/owner) for content actions
+  //     (file upload, datetime config, export). Note: member-tier
+  //     content mutate access goes through narrower permissions
+  //     (`upload`, `annotate`, `run_inference`); coarse-grained
+  //     "manage dataset" stays admin-tier per the canonical matrix.
   const canManageDatasetAdmin = $derived(
-    currentUserRole === 'owner' || currentUserRole === 'admin'
+    can('manage_dataset_admin', $permissionContext),
   );
-
-  // TODO Phase 2B.3: replace with can('manage_dataset', ctx)
   const canManageDatasetContent = $derived(
-    currentUserRole === 'owner' ||
-      currentUserRole === 'admin' ||
-      currentUserRole === 'member'
+    can('manage_dataset', $permissionContext),
   );
 
   let showEditModal = $state(false);
@@ -141,7 +154,6 @@
           {/if}
         </div>
         <div class="flex flex-shrink-0 gap-2">
-          <!-- TODO Phase 2B.3: replace with can('manage_dataset', ctx) -->
           {#if dataset.status === 'completed' && canManageDatasetContent}
             <button
               onclick={() => (showExportDialog = true)}
@@ -155,7 +167,6 @@
               {m.dataset_detail_export_button()}
             </button>
           {/if}
-          <!-- TODO Phase 2B.3: replace with can('manage_dataset_admin', ctx) -->
           {#if canManageDatasetAdmin}
             <button
               onclick={() => (showEditModal = true)}
@@ -260,7 +271,6 @@
     {/if}
 
     <!-- File Upload (available when dataset is pending or completed) -->
-    <!-- TODO Phase 2B.3: replace with can('manage_dataset', ctx) -->
     {#if (dataset.status === 'pending' || dataset.status === 'completed') && canManageDatasetContent}
       <FileUpload
         {projectId}
@@ -272,7 +282,6 @@
     {/if}
 
     <!-- Datetime parsing configuration (show when recordings exist) -->
-    <!-- TODO Phase 2B.3: replace with can('manage_dataset', ctx) -->
     {#if dataset.recording_count > 0 && canManageDatasetContent}
       <DatetimeConfigCard {projectId} {datasetId} />
     {/if}

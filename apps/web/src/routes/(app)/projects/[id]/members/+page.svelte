@@ -10,6 +10,8 @@
   import type { Project, ProjectMember } from '$lib/types';
   import type { ProjectRole } from '$lib/stores/permissions';
   import { getRoleDescription, getRoleDisplayName } from '$lib/stores/permissions';
+  import { authStore } from '$lib/stores/auth.svelte';
+  import { buildProjectContext, can } from '$lib/utils/permissions';
   import * as m from '$lib/paraglide/messages';
 
   // Get project ID from URL
@@ -42,16 +44,27 @@
   // Tooltip state
   let showRoleTooltip = $state<string | null>(null);
 
-  // Check if current user is admin (owner or admin role).
-  // Phase 1 (spec/007): role is derived from `project.current_user_role`
-  // as the single source of truth. The previous `members.find(...).role`
-  // pattern is removed; it duplicated server-resolved role state and
-  // could drift after demotion/promotion. The `members` array itself
-  // remains because the page still renders the member list UI below.
-  const isAdmin = $derived(
-    project?.current_user_role === 'owner' ||
-      project?.current_user_role === 'admin'
+  // Phase 2B.3 (spec/007): admin gating goes through `can()` against
+  // the canonical `manage_members` permission. `project.current_user_role`
+  // remains the source of truth for the role itself (resolved server
+  // side); we just stop hard-coding the role -> permission mapping
+  // locally. This page does NOT use TanStack Query for its loads, so
+  // we build the context directly via `buildProjectContext` rather
+  // than the `usePermissionContext` store helper. The `members`
+  // array is still rendered as the page's primary UI, but it is no
+  // longer consulted for permission gating.
+  const permissionContext = $derived(
+    buildProjectContext({
+      authStore: {
+        isAuthenticated: authStore.isAuthenticated,
+        user: authStore.user,
+      },
+      project: project ?? undefined,
+      projectQueryState: { isLoading, isError: error !== null },
+      pendingInvitationToken: null,
+    })
   );
+  const isAdmin = $derived(can('manage_members', permissionContext));
 
   /**
    * Load project and members

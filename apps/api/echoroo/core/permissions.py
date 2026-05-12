@@ -294,7 +294,18 @@ _MEMBER_PERMS: frozenset[Permission] = frozenset(
         Permission.CREATE_TAG,
         Permission.ANNOTATE,
         Permission.UPLOAD,
-        Permission.MANAGE_SITE,
+        # spec/007 Phase 2A.6 hotfix (Codex consultation 2026-05-12, Option A):
+        # Member retains MANAGE_DATASET for dataset-CONTENT operations (clip
+        # CRUD, generate, etc.) per spec/007 Rev.5.1 § 4A glossary +
+        # spec/008-permissions-vocabulary-refinement. The current backend
+        # `check_project_access()` allows any member to mutate clips; gating
+        # those endpoints on MANAGE_DATASET without granting it to member
+        # would regress member access (P0). Resource-level dataset CRUD
+        # (create/delete/edit dataset itself, import, datetime apply,
+        # annotation_project CRUD, etc.) remains admin/owner-only via the new
+        # MANAGE_DATASET_ADMIN below.
+        Permission.MANAGE_DATASET,
+        Permission.MANAGE_SITE,  # TODO(spec/008-audit): SUPERUSER_ONLY category vs member-held — flagged for audit in Codex consultation 2026-05-12; out of scope for this hotfix.
         Permission.RUN_INFERENCE,
     }
 )
@@ -302,8 +313,8 @@ _MEMBER_PERMS: frozenset[Permission] = frozenset(
 _ADMIN_PERMS: frozenset[Permission] = _MEMBER_PERMS | frozenset(
     {
         Permission.VIEW_AUDIT_LOG,
-        Permission.MANAGE_DATASET,
-        Permission.MANAGE_DATASET_ADMIN,  # AD-1B Option A: admin-only dataset ops
+        # MANAGE_DATASET now inherited from _MEMBER_PERMS (admin gets it implicitly).
+        Permission.MANAGE_DATASET_ADMIN,  # AD-1B Option A: admin-only dataset-resource ops
         Permission.TRAIN_MODEL,
         Permission.MANAGE_MEMBERS,
         Permission.EDIT_PROJECT,
