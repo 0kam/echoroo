@@ -129,6 +129,7 @@ EXPECTED_ROLE_BASE_PERMS: dict[ComputedRole, set[str]] = {
         "upload",
         "manage_site",
         "manage_dataset",
+        "manage_dataset_admin",  # AD-1B Option A (spec/007 Rev.5.1)
         "run_inference",
         "train_model",
         "manage_members",
@@ -153,6 +154,7 @@ EXPECTED_ROLE_BASE_PERMS: dict[ComputedRole, set[str]] = {
         "upload",
         "manage_site",
         "manage_dataset",
+        "manage_dataset_admin",  # AD-1B Option A (spec/007 Rev.5.1)
         "run_inference",
         "train_model",
         "manage_members",
@@ -223,18 +225,23 @@ def test_trusted_allowed_permissions_is_frozenset() -> None:
 # ---------------------------------------------------------------------------
 
 def test_user_scope_permissions_contents() -> None:
-    """USER_SCOPE_PERMISSIONS must be the 3 Matrix-exempt perms."""
-    expected_values = {"manage_api_key", "manage_2fa", "search_cross_project"}
+    """USER_SCOPE_PERMISSIONS must be the 2 Matrix-exempt user-scope perms.
+
+    AD-8 (spec/007 Rev.5.1): SEARCH_CROSS_PROJECT was re-categorised as
+    ENDPOINT_BACKED because its grant is project-context-dependent
+    (Authenticated on Public gets it; Authenticated on Restricted does not).
+    """
+    expected_values = {"manage_api_key", "manage_2fa"}
     assert {p.value for p in USER_SCOPE_PERMISSIONS} == expected_values
 
 
 # ---------------------------------------------------------------------------
-# 4. Permission enum cardinality (FR-009 = 28)
+# 4. Permission enum cardinality (FR-009 + AD-1B Option A = 29)
 # ---------------------------------------------------------------------------
 
 def test_permission_enum_cardinality() -> None:
-    """FR-009: Permission enum has exactly 28 members (26 project + 2 user)."""
-    assert len(list(Permission)) == 28
+    """FR-009 + AD-1B Option A: Permission enum has exactly 29 members (27 project + 2 user)."""
+    assert len(list(Permission)) == 29
 
 
 # ---------------------------------------------------------------------------

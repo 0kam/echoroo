@@ -789,6 +789,19 @@ COMPUTED_ONLY_PERMISSIONS: frozenset[Permission] = frozenset({
 
 # User-scoped permissions (no project context). Class 2 does NOT require
 # a project-scope Action for these.
+#
+# Rev.5.2 note (Codex consultation 2026-05-12, applied during Phase 2A.0):
+# Pre-AD-8 implementations of permissions.py included SEARCH_CROSS_PROJECT
+# in USER_SCOPE_PERMISSIONS. This was an over-grant: SEARCH_CROSS_PROJECT
+# depends on the visibility of the *searched* projects, not on the actor's
+# own user-scope settings (which is the semantic for MANAGE_API_KEY /
+# MANAGE_2FA). AD-8 intentionally moves SEARCH_CROSS_PROJECT into
+# ENDPOINT_BACKED_PERMISSIONS, allowing matrix path enforcement:
+#   - Authenticated on Public → granted via compute_effective_permissions
+#   - Authenticated on Restricted → denied (matrix doesn't grant it)
+# A targeted regression test asserting the new semantics is added in
+# Phase 3 test_actions_coherence.py (or unit tests) per Codex
+# recommendation.
 USER_SCOPE_PERMISSIONS: frozenset[Permission] = frozenset({
     Permission.MANAGE_API_KEY,
     Permission.MANAGE_2FA,
