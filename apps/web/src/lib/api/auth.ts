@@ -89,10 +89,15 @@ export async function verifyEmail(token: string): Promise<MessageResponse> {
 }
 
 /**
- * Get current authenticated user
+ * Get current authenticated user.
+ *
+ * Uses the BFF cookie + CSRF surface at ``/web-api/v1/users/me`` so
+ * post-2FA browser sessions (which carry only the session cookie and
+ * NOT a Bearer-JWT header) succeed instead of triggering the
+ * auto-logout regression observed after spec/006's auth migration.
  */
 export async function getCurrentUser(): Promise<User> {
-  return apiClient.get<User>('/api/v1/users/me');
+  return apiClient.get<User>('/web-api/v1/users/me');
 }
 
 /**

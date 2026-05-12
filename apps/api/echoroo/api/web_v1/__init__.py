@@ -6,6 +6,7 @@ from echoroo.api.web_v1 import admin as admin_module
 from echoroo.api.web_v1 import audit as audit_module
 from echoroo.api.web_v1 import auth as auth_module
 from echoroo.api.web_v1 import auth_confirm_identity as auth_confirm_identity_module
+from echoroo.api.web_v1 import users as users_module
 from echoroo.api.web_v1.account import router as account_router
 from echoroo.api.web_v1.projects import router as projects_router
 
@@ -33,5 +34,12 @@ web_v1_router.include_router(account_router)
 # /admin/audit-log, /admin/audit-log/chain-verify) drift from the
 # live OpenAPI surface (Codex Round X follow-up #4).
 web_v1_router.include_router(audit_module.router)
+# Auth-regression fix (post-spec/006): cookie + CSRF mirror of
+# ``GET /api/v1/users/me``. The browser hydrate path (auth store +
+# login / 2fa-setup) needs a session-cookie-friendly endpoint so the
+# legacy Bearer-JWT route stops 401-ing the BFF flow and forcing an
+# auto-logout. Scope is intentionally read-only — see
+# :mod:`echoroo.api.web_v1.users`.
+web_v1_router.include_router(users_module.router)
 
 __all__ = ["web_v1_router"]

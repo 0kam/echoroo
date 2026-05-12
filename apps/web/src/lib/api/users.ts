@@ -32,10 +32,18 @@ export interface PasswordChangeResponse {
 }
 
 /**
- * Get current user profile
+ * Get current user profile.
+ *
+ * Reads via the BFF cookie + CSRF surface at ``/web-api/v1/users/me``
+ * so browser sessions established by the post-spec/006 web-auth flow
+ * (cookie-only, no Bearer header) succeed. The legacy
+ * ``/api/v1/users/me`` Bearer-JWT path is still served by
+ * :mod:`echoroo.api.v1.users` for programmatic / API-token callers,
+ * but browser callers must use the BFF mirror to avoid the
+ * auto-logout regression.
  */
 export async function getCurrentUser(): Promise<User> {
-  return apiClient.get<User>('/api/v1/users/me');
+  return apiClient.get<User>('/web-api/v1/users/me');
 }
 
 /**
