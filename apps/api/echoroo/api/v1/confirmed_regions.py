@@ -5,9 +5,15 @@ from __future__ import annotations
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Request, status
 
+from echoroo.core.actions import (
+    CONFIRMED_REGION_CREATE_ACTION,
+    CONFIRMED_REGION_DELETE_ACTION,
+    CONFIRMED_REGION_LIST_ACTION,
+)
 from echoroo.core.database import DbSession
+from echoroo.core.permissions import gate_action
 from echoroo.middleware.auth import CurrentUser
 from echoroo.repositories.confirmed_region import ConfirmedRegionRepository
 from echoroo.schemas.confirmed_region import (
@@ -43,8 +49,10 @@ ConfirmedRegionServiceDep = Annotated[ConfirmedRegionService, Depends(get_confir
 )
 async def list_confirmed_regions(
     project_id: UUID,
+    request: Request,
     current_user: CurrentUser,
     service: ConfirmedRegionServiceDep,
+    db: DbSession,
     recording_id: UUID | None = None,
     page: int = 1,
     page_size: int = 50,
@@ -65,6 +73,13 @@ async def list_confirmed_regions(
     Raises:
         401: Not authenticated
     """
+    await gate_action(
+        action=CONFIRMED_REGION_LIST_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
     if recording_id is None:
         # Return empty response if no recording_id provided
         return ConfirmedRegionListResponse(
@@ -92,6 +107,7 @@ async def list_confirmed_regions(
 async def create_confirmed_region(
     project_id: UUID,
     request: ConfirmedRegionCreate,
+    http_request: Request,
     current_user: CurrentUser,
     service: ConfirmedRegionServiceDep,
     db: DbSession,
@@ -112,6 +128,13 @@ async def create_confirmed_region(
         401: Not authenticated
         422: Validation error
     """
+    await gate_action(
+        action=CONFIRMED_REGION_CREATE_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=http_request,
+        db=db,
+    )
     region = await service.create(request=request, user_id=current_user.id)
     await db.commit()
     return region
@@ -126,6 +149,7 @@ async def create_confirmed_region(
 async def delete_confirmed_region(
     project_id: UUID,
     region_id: UUID,
+    request: Request,
     current_user: CurrentUser,
     service: ConfirmedRegionServiceDep,
     db: DbSession,
@@ -143,5 +167,12 @@ async def delete_confirmed_region(
         401: Not authenticated
         404: Confirmed region not found
     """
+    await gate_action(
+        action=CONFIRMED_REGION_DELETE_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
     await service.delete(region_id=region_id)
     await db.commit()

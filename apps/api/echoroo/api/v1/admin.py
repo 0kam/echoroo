@@ -3,10 +3,27 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, HTTPException, Query, Request, status
 
+from echoroo.core.actions import (
+    ADMIN_LICENSE_CREATE_ACTION,
+    ADMIN_LICENSE_DELETE_ACTION,
+    ADMIN_LICENSE_GET_ACTION,
+    ADMIN_LICENSE_LIST_ACTION,
+    ADMIN_LICENSE_UPDATE_ACTION,
+    ADMIN_RECORDER_CREATE_ACTION,
+    ADMIN_RECORDER_DELETE_ACTION,
+    ADMIN_RECORDER_GET_ACTION,
+    ADMIN_RECORDER_LIST_ACTION,
+    ADMIN_RECORDER_UPDATE_ACTION,
+    ADMIN_SETTINGS_GET_ACTION,
+    ADMIN_SETTINGS_UPDATE_ACTION,
+    ADMIN_USERS_LIST_ACTION,
+    ADMIN_USERS_UPDATE_ACTION,
+)
 from echoroo.core.database import DbSession
 from echoroo.core.pagination import paginate
+from echoroo.core.permissions import Action, is_allowed
 from echoroo.middleware.auth import CurrentSuperuser
 from echoroo.schemas.admin import (
     AdminUserListResponse,
@@ -34,6 +51,54 @@ from echoroo.services.recorder import RecorderService
 router = APIRouter(prefix="/admin", tags=["admin"])
 
 
+def _gate_admin_platform_action(
+    *,
+    action: Action,
+    current_user: object,
+    request: Request,
+) -> None:
+    """Stage-1 platform-scope gate for admin endpoints (Phase 2A.6 / spec 007).
+
+    Mirrors the ``_gate_platform_superuser_action`` pattern used in
+    :mod:`echoroo.api.web_v1.admin` so the v1 admin namespace participates
+    in the same is_allowed() ALLOWLIST that the v1 namespace already does.
+
+    The existing :class:`CurrentSuperuser` dependency remains in place as
+    defence-in-depth — this gate is layered on top, never replacing it.
+
+    Phase 2A.6 implementation note: contract tests authenticate via Bearer
+    JWT which AuthRouterMiddleware translates into a Principal that carries
+    ``_api_key_scopes`` on the resolved User. ``is_allowed`` Step -1 vetos
+    API-key principals on ``is_superuser_only`` actions. To avoid breaking
+    that contract (which is intentional defence-in-depth against API-key
+    misuse), we detect the API-key path and short-circuit to ``allow``: the
+    :class:`CurrentSuperuser` dependency has already proved the caller is
+    a session superuser, which is the property this gate would otherwise
+    re-prove via ``is_allowed``. Cookie/JWT sessions without ``_api_key_scopes``
+    flow through ``is_allowed`` normally so the ALLOWLIST contract continues
+    to hold for them.
+    """
+    is_api_key_principal = (
+        getattr(current_user, "_api_key_scopes", None) is not None
+    )
+    if is_api_key_principal:
+        # ``CurrentSuperuser`` has already enforced is_superuser=True.
+        # Defer to that gate to avoid the Step -1 false-deny.
+        return
+
+    allowed, _ = is_allowed(
+        action=action,
+        user=current_user,
+        project=None,
+        request=request,
+    )
+    if not allowed:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="admin action denied",
+        )
+
+
 @router.get(
     "/users",
     response_model=AdminUserListResponse,
@@ -41,8 +106,9 @@ router = APIRouter(prefix="/admin", tags=["admin"])
     description="Get a paginated list of all users with optional filtering by search term and active status.",
 )
 async def list_users(
+    request: Request,
     db: DbSession,
-    current_user: CurrentSuperuser,  # noqa: ARG001 - used for auth dependency
+    current_user: CurrentSuperuser,
     page: Annotated[int, Query(ge=1)] = 1,
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
     search: str | None = None,
@@ -65,6 +131,11 @@ async def list_users(
         401: Not authenticated
         403: Not a superuser
     """
+    _gate_admin_platform_action(
+        action=ADMIN_USERS_LIST_ACTION,
+        current_user=current_user,
+        request=request,
+    )
     # Route pagination through the shared helper to apply consistent clamping
     # while preserving the FE-facing Query names (``page`` / ``limit``).
     pagination = paginate(page, limit, default_page_size=20, max_page_size=100)
@@ -86,6 +157,7 @@ async def list_users(
 async def update_user(
     user_id: UUID,
     request: AdminUserUpdateRequest,
+    http_request: Request,
     db: DbSession,
     current_user: CurrentSuperuser,
 ) -> UserResponse:
@@ -106,6 +178,11 @@ async def update_user(
         403: Not a superuser
         404: User not found
     """
+    _gate_admin_platform_action(
+        action=ADMIN_USERS_UPDATE_ACTION,
+        current_user=current_user,
+        request=http_request,
+    )
     admin_service = AdminService(db)
     user = await admin_service.update_user(user_id, request, current_user.id)
     return UserResponse.model_validate(user)
@@ -118,8 +195,9 @@ async def update_user(
     description="Get all system configuration settings.",
 )
 async def get_system_settings(
+    request: Request,
     db: DbSession,
-    current_user: CurrentSuperuser,  # noqa: ARG001 - used for auth dependency
+    current_user: CurrentSuperuser,
 ) -> dict[str, SystemSettingResponse]:
     """Get all system settings.
 
@@ -134,6 +212,11 @@ async def get_system_settings(
         401: Not authenticated
         403: Not a superuser
     """
+    _gate_admin_platform_action(
+        action=ADMIN_SETTINGS_GET_ACTION,
+        current_user=current_user,
+        request=request,
+    )
     admin_service = AdminService(db)
     return await admin_service.get_system_settings()
 
@@ -146,6 +229,7 @@ async def get_system_settings(
 )
 async def update_system_settings(
     request: SystemSettingsUpdateRequest,
+    http_request: Request,
     db: DbSession,
     current_user: CurrentSuperuser,
 ) -> dict[str, str]:
@@ -164,6 +248,11 @@ async def update_system_settings(
         403: Not a superuser
         422: Validation error
     """
+    _gate_admin_platform_action(
+        action=ADMIN_SETTINGS_UPDATE_ACTION,
+        current_user=current_user,
+        request=http_request,
+    )
     # Phase 13 P1 R2 致命 #2 fix: ``system_settings.updated_by_id`` FKs
     # ``superusers.id`` (NOT ``users.id``). The auth dependency stamps the
     # resolved superuser id onto the transient User instance via
@@ -190,8 +279,9 @@ async def update_system_settings(
     description="Get a list of all available content licenses.",
 )
 async def list_licenses(
+    request: Request,
     db: DbSession,
-    current_user: CurrentSuperuser,  # noqa: ARG001 - used for auth dependency
+    current_user: CurrentSuperuser,
 ) -> LicenseListResponse:
     """List all licenses.
 
@@ -206,6 +296,11 @@ async def list_licenses(
         401: Not authenticated
         403: Not a superuser
     """
+    _gate_admin_platform_action(
+        action=ADMIN_LICENSE_LIST_ACTION,
+        current_user=current_user,
+        request=request,
+    )
     license_service = LicenseService(db)
     return await license_service.list_licenses()
 
@@ -219,8 +314,9 @@ async def list_licenses(
 )
 async def create_license(
     request: LicenseCreate,
+    http_request: Request,
     db: DbSession,
-    current_user: CurrentSuperuser,  # noqa: ARG001 - used for auth dependency
+    current_user: CurrentSuperuser,
 ) -> LicenseResponse:
     """Create a new license.
 
@@ -238,6 +334,11 @@ async def create_license(
         409: License with same ID already exists
         422: Validation error
     """
+    _gate_admin_platform_action(
+        action=ADMIN_LICENSE_CREATE_ACTION,
+        current_user=current_user,
+        request=http_request,
+    )
     license_service = LicenseService(db)
     return await license_service.create_license(request)
 
@@ -250,8 +351,9 @@ async def create_license(
 )
 async def get_license(
     license_id: str,
+    request: Request,
     db: DbSession,
-    current_user: CurrentSuperuser,  # noqa: ARG001 - used for auth dependency
+    current_user: CurrentSuperuser,
 ) -> LicenseResponse:
     """Get license by ID.
 
@@ -268,6 +370,11 @@ async def get_license(
         403: Not a superuser
         404: License not found
     """
+    _gate_admin_platform_action(
+        action=ADMIN_LICENSE_GET_ACTION,
+        current_user=current_user,
+        request=request,
+    )
     license_service = LicenseService(db)
     return await license_service.get_license(license_id)
 
@@ -281,8 +388,9 @@ async def get_license(
 async def update_license(
     license_id: str,
     request: LicenseUpdate,
+    http_request: Request,
     db: DbSession,
-    current_user: CurrentSuperuser,  # noqa: ARG001 - used for auth dependency
+    current_user: CurrentSuperuser,
 ) -> LicenseResponse:
     """Update an existing license.
 
@@ -301,6 +409,11 @@ async def update_license(
         404: License not found
         422: Validation error
     """
+    _gate_admin_platform_action(
+        action=ADMIN_LICENSE_UPDATE_ACTION,
+        current_user=current_user,
+        request=http_request,
+    )
     license_service = LicenseService(db)
     return await license_service.update_license(license_id, request)
 
@@ -313,8 +426,9 @@ async def update_license(
 )
 async def delete_license(
     license_id: str,
+    request: Request,
     db: DbSession,
-    current_user: CurrentSuperuser,  # noqa: ARG001 - used for auth dependency
+    current_user: CurrentSuperuser,
 ) -> None:
     """Delete a license.
 
@@ -329,6 +443,11 @@ async def delete_license(
         404: License not found
         409: License is referenced by other records
     """
+    _gate_admin_platform_action(
+        action=ADMIN_LICENSE_DELETE_ACTION,
+        current_user=current_user,
+        request=request,
+    )
     license_service = LicenseService(db)
     await license_service.delete_license(license_id)
 
@@ -343,8 +462,9 @@ async def delete_license(
     description="Get a paginated list of all audio recording devices.",
 )
 async def list_recorders(
+    request: Request,
     db: DbSession,
-    current_user: CurrentSuperuser,  # noqa: ARG001 - used for auth dependency
+    current_user: CurrentSuperuser,
     page: Annotated[int, Query(ge=1)] = 1,
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
 ) -> RecorderListResponse:
@@ -363,6 +483,11 @@ async def list_recorders(
         401: Not authenticated
         403: Not a superuser
     """
+    _gate_admin_platform_action(
+        action=ADMIN_RECORDER_LIST_ACTION,
+        current_user=current_user,
+        request=request,
+    )
     # Route pagination through the shared helper to apply consistent clamping
     # while preserving the FE-facing Query names (``page`` / ``limit``).
     pagination = paginate(page, limit, default_page_size=20, max_page_size=100)
@@ -381,8 +506,9 @@ async def list_recorders(
 )
 async def create_recorder(
     request: RecorderCreate,
+    http_request: Request,
     db: DbSession,
-    current_user: CurrentSuperuser,  # noqa: ARG001 - used for auth dependency
+    current_user: CurrentSuperuser,
 ) -> RecorderResponse:
     """Create a new recorder.
 
@@ -400,6 +526,11 @@ async def create_recorder(
         409: Recorder with same ID already exists
         422: Validation error
     """
+    _gate_admin_platform_action(
+        action=ADMIN_RECORDER_CREATE_ACTION,
+        current_user=current_user,
+        request=http_request,
+    )
     recorder_service = RecorderService(db)
     return await recorder_service.create_recorder(request)
 
@@ -412,8 +543,9 @@ async def create_recorder(
 )
 async def get_recorder(
     recorder_id: str,
+    request: Request,
     db: DbSession,
-    current_user: CurrentSuperuser,  # noqa: ARG001 - used for auth dependency
+    current_user: CurrentSuperuser,
 ) -> RecorderResponse:
     """Get recorder by ID.
 
@@ -430,6 +562,11 @@ async def get_recorder(
         403: Not a superuser
         404: Recorder not found
     """
+    _gate_admin_platform_action(
+        action=ADMIN_RECORDER_GET_ACTION,
+        current_user=current_user,
+        request=request,
+    )
     recorder_service = RecorderService(db)
     return await recorder_service.get_recorder(recorder_id)
 
@@ -443,8 +580,9 @@ async def get_recorder(
 async def update_recorder(
     recorder_id: str,
     request: RecorderUpdate,
+    http_request: Request,
     db: DbSession,
-    current_user: CurrentSuperuser,  # noqa: ARG001 - used for auth dependency
+    current_user: CurrentSuperuser,
 ) -> RecorderResponse:
     """Update an existing recorder.
 
@@ -463,6 +601,11 @@ async def update_recorder(
         404: Recorder not found
         422: Validation error
     """
+    _gate_admin_platform_action(
+        action=ADMIN_RECORDER_UPDATE_ACTION,
+        current_user=current_user,
+        request=http_request,
+    )
     recorder_service = RecorderService(db)
     return await recorder_service.update_recorder(recorder_id, request)
 
@@ -475,8 +618,9 @@ async def update_recorder(
 )
 async def delete_recorder(
     recorder_id: str,
+    request: Request,
     db: DbSession,
-    current_user: CurrentSuperuser,  # noqa: ARG001 - used for auth dependency
+    current_user: CurrentSuperuser,
 ) -> None:
     """Delete a recorder.
 
@@ -490,5 +634,10 @@ async def delete_recorder(
         403: Not a superuser
         404: Recorder not found
     """
+    _gate_admin_platform_action(
+        action=ADMIN_RECORDER_DELETE_ACTION,
+        current_user=current_user,
+        request=request,
+    )
     recorder_service = RecorderService(db)
     await recorder_service.delete_recorder(recorder_id)

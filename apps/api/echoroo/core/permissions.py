@@ -53,7 +53,18 @@ from echoroo.models.project import Project
 # =============================================================================
 
 class Permission(StrEnum):
-    """Canonical permission set (spec FR-009: Project 26 + User 2 = 28)."""
+    """Canonical permission set (spec FR-009 + AD-1B Option A: Project 27 + User 2 = 29).
+
+    AD-1B Option A (2026-05-12, behavior-preserving): MANAGE_DATASET_ADMIN
+    was introduced to make explicit the split between admin-only dataset
+    operations and the existing MANAGE_DATASET. Only Admin/Owner hold
+    MANAGE_DATASET_ADMIN. The pre-AD-1B Canonical Matrix already restricts
+    MANAGE_DATASET to Admin/Owner (Member does not hold it), so this enum
+    addition is purely additive at the matrix level. Action-level
+    required_permission rewiring (so currently-MANAGE_DATASET endpoints
+    targeting admin-only operations migrate to MANAGE_DATASET_ADMIN) is
+    intentionally deferred to spec/007 task #6.
+    """
 
     # -- Project viewing (6) --
     VIEW_PROJECT_METADATA = "view_project_metadata"
@@ -77,6 +88,7 @@ class Permission(StrEnum):
     UPLOAD = "upload"
     MANAGE_SITE = "manage_site"
     MANAGE_DATASET = "manage_dataset"
+    MANAGE_DATASET_ADMIN = "manage_dataset_admin"
     RUN_INFERENCE = "run_inference"
     TRAIN_MODEL = "train_model"
 
@@ -149,14 +161,10 @@ VALID_H3_RESOLUTIONS: frozenset[int] = frozenset({H3_RES_2, H3_RES_5, H3_RES_7, 
 
 # --- Permission classification (spec data-model §1) ---------------------------
 
-USER_SCOPE_PERMISSIONS: frozenset[Permission] = frozenset(
-    {
-        Permission.MANAGE_API_KEY,
-        Permission.MANAGE_2FA,
-        Permission.SEARCH_CROSS_PROJECT,
-    }
-)
-"""FR-009: Permissions NOT in the Canonical Matrix — judged on user-scope only."""
+# USER_SCOPE_PERMISSIONS is defined in the AD-8 Permission Category
+# Classification block below (after ROLE_PERMISSIONS). The pre-AD-8 definition
+# additionally listed SEARCH_CROSS_PROJECT; spec/007 §AD-8 re-categorises that
+# permission as ENDPOINT_BACKED because its grant is project-context-dependent.
 
 TRUSTED_ALLOWED_PERMISSIONS: frozenset[Permission] = frozenset(
     {
@@ -286,7 +294,18 @@ _MEMBER_PERMS: frozenset[Permission] = frozenset(
         Permission.CREATE_TAG,
         Permission.ANNOTATE,
         Permission.UPLOAD,
-        Permission.MANAGE_SITE,
+        # spec/007 Phase 2A.6 hotfix (Codex consultation 2026-05-12, Option A):
+        # Member retains MANAGE_DATASET for dataset-CONTENT operations (clip
+        # CRUD, generate, etc.) per spec/007 Rev.5.1 § 4A glossary +
+        # spec/008-permissions-vocabulary-refinement. The current backend
+        # `check_project_access()` allows any member to mutate clips; gating
+        # those endpoints on MANAGE_DATASET without granting it to member
+        # would regress member access (P0). Resource-level dataset CRUD
+        # (create/delete/edit dataset itself, import, datetime apply,
+        # annotation_project CRUD, etc.) remains admin/owner-only via the new
+        # MANAGE_DATASET_ADMIN below.
+        Permission.MANAGE_DATASET,
+        Permission.MANAGE_SITE,  # TODO(spec/008-audit): SUPERUSER_ONLY category vs member-held — flagged for audit in Codex consultation 2026-05-12; out of scope for this hotfix.
         Permission.RUN_INFERENCE,
     }
 )
@@ -294,7 +313,8 @@ _MEMBER_PERMS: frozenset[Permission] = frozenset(
 _ADMIN_PERMS: frozenset[Permission] = _MEMBER_PERMS | frozenset(
     {
         Permission.VIEW_AUDIT_LOG,
-        Permission.MANAGE_DATASET,
+        # MANAGE_DATASET now inherited from _MEMBER_PERMS (admin gets it implicitly).
+        Permission.MANAGE_DATASET_ADMIN,  # AD-1B Option A: admin-only dataset-resource ops
         Permission.TRAIN_MODEL,
         Permission.MANAGE_MEMBERS,
         Permission.EDIT_PROJECT,
@@ -328,6 +348,161 @@ runtime mutation that would bypass CI matrix tests."""
 # project-scope allowlist (FR-008b). Stored separately since ComputedRole is
 # strictly persisted values.
 _SUPERUSER_PERMS: frozenset[Permission] = _OWNER_PERMS
+
+
+# =============================================================================
+# AD-8. Permission Category Classification (spec/007 Rev.5.1 + spec/008)
+# =============================================================================
+#
+# Partitions the Permission enum into four disjoint categories so that:
+#   * test scaffolding can iterate "all permissions an endpoint should back"
+#     without re-listing the enum,
+#   * the frontend permissions binding (FRONTEND_PROJECT_PERMISSIONS) has a
+#     single source of truth, and
+#   * structural assertions fail at import time if a new permission is added
+#     without classifying it.
+#
+# Category semantics:
+#   ENDPOINT_BACKED_PERMISSIONS — granted/denied per Action; an endpoint
+#     advertises the permission via Action.required_permission.
+#   COMPUTED_ONLY_PERMISSIONS — never appears on an endpoint as a required
+#     permission; consumed solely by the response filter / stage-2 resolution
+#     (e.g. VIEW_PRECISE_LOCATION).
+#   USER_SCOPE_PERMISSIONS — judged on the user (not the project); does NOT
+#     participate in the Canonical Matrix. NOTE (AD-8): this differs from the
+#     pre-AD-8 USER_SCOPE_PERMISSIONS definition above which also contained
+#     SEARCH_CROSS_PROJECT — spec/007 §AD-8 re-categorises SEARCH_CROSS_PROJECT
+#     as ENDPOINT_BACKED because its grant is project-context-dependent
+#     (Authenticated on Public gets it; Authenticated on Restricted does not).
+#     The rebind below intentionally overwrites the earlier definition.
+#   SUPERUSER_ONLY_PERMISSIONS — never granted to any project role; reachable
+#     only via the superuser path.
+#
+# FRONTEND_PROJECT_PERMISSIONS — the subset the SvelteKit client binds for
+# UI gating. Excludes SEARCH_CROSS_PROJECT (cross-project, not project-scoped)
+# and the user-scope + superuser-only categories.
+
+ENDPOINT_BACKED_PERMISSIONS: frozenset[Permission] = frozenset(
+    {
+        Permission.VIEW_PROJECT_METADATA,
+        Permission.VIEW_DATASET_LIST,
+        Permission.VIEW_MEDIA,
+        Permission.VIEW_DETECTION,
+        Permission.VIEW_AUDIT_LOG,
+        Permission.SEARCH_WITHIN_PROJECT,
+        Permission.SEARCH_CROSS_PROJECT,
+        Permission.DOWNLOAD,
+        Permission.EXPORT,
+        Permission.VOTE,
+        Permission.COMMENT,
+        Permission.CREATE_TAG,
+        Permission.ANNOTATE,
+        Permission.UPLOAD,
+        Permission.MANAGE_DATASET,
+        Permission.MANAGE_DATASET_ADMIN,
+        Permission.RUN_INFERENCE,
+        Permission.TRAIN_MODEL,
+        Permission.MANAGE_MEMBERS,
+        Permission.MANAGE_TRUSTED,
+        Permission.EDIT_PROJECT,
+        Permission.MANAGE_LICENSE,
+        Permission.DELETE_PROJECT,
+        Permission.TRANSFER_OWNERSHIP,
+        # OVERRIDE_TAXON_SENSITIVITY — temporarily moved BACK to COMPUTED_ONLY
+        # per spec/007 plan Rev.5.1 § Phase 2A.5 fallback. Backend audit
+        # 2026-05-12: taxa.py exposes only /taxa/{search,gbif-search,{id}};
+        # no submit/revoke override endpoint exists yet. Action registration
+        # deferred to spec/008 follow-up. When the endpoints land,
+        # TAXON_SENSITIVITY_OVERRIDE_{SUBMIT,REVOKE}_ACTION should be
+        # registered and this permission moved back here.
+    }
+)
+
+COMPUTED_ONLY_PERMISSIONS: frozenset[Permission] = frozenset(
+    {
+        Permission.VIEW_PRECISE_LOCATION,
+        # OVERRIDE_TAXON_SENSITIVITY — temporarily here until taxa override
+        # endpoints land (see ENDPOINT_BACKED_PERMISSIONS comment above).
+        Permission.OVERRIDE_TAXON_SENSITIVITY,
+    }
+)
+
+# AD-8 rebind: USER_SCOPE_PERMISSIONS no longer includes SEARCH_CROSS_PROJECT
+# (that permission is endpoint-backed and project-context-dependent). The
+# earlier definition near the top of this module is intentionally shadowed.
+USER_SCOPE_PERMISSIONS: frozenset[Permission] = frozenset(
+    {
+        Permission.MANAGE_API_KEY,
+        Permission.MANAGE_2FA,
+    }
+)
+
+SUPERUSER_ONLY_PERMISSIONS: frozenset[Permission] = frozenset(
+    {
+        Permission.MANAGE_SITE,
+    }
+)
+
+FRONTEND_PROJECT_PERMISSIONS: frozenset[Permission] = frozenset(
+    {
+        Permission.VIEW_PROJECT_METADATA,
+        Permission.VIEW_DATASET_LIST,
+        Permission.VIEW_MEDIA,
+        Permission.VIEW_DETECTION,
+        Permission.VIEW_AUDIT_LOG,
+        Permission.SEARCH_WITHIN_PROJECT,
+        Permission.VIEW_PRECISE_LOCATION,
+        Permission.DOWNLOAD,
+        Permission.EXPORT,
+        Permission.VOTE,
+        Permission.COMMENT,
+        Permission.CREATE_TAG,
+        Permission.ANNOTATE,
+        Permission.UPLOAD,
+        Permission.MANAGE_DATASET,
+        Permission.MANAGE_DATASET_ADMIN,
+        Permission.RUN_INFERENCE,
+        Permission.TRAIN_MODEL,
+        Permission.MANAGE_MEMBERS,
+        Permission.MANAGE_TRUSTED,
+        Permission.EDIT_PROJECT,
+        Permission.MANAGE_LICENSE,
+        Permission.DELETE_PROJECT,
+        Permission.TRANSFER_OWNERSHIP,
+        Permission.OVERRIDE_TAXON_SENSITIVITY,
+    }
+)
+
+# --- Structural safety nets (run at import time) ----------------------------
+# These fail loud if a new Permission member is added without classifying it,
+# or if the partition invariant is broken.
+assert FRONTEND_PROJECT_PERMISSIONS.issubset(
+    ENDPOINT_BACKED_PERMISSIONS | COMPUTED_ONLY_PERMISSIONS
+), "FRONTEND_PROJECT_PERMISSIONS contains a permission outside endpoint+computed"
+assert Permission.SEARCH_CROSS_PROJECT not in FRONTEND_PROJECT_PERMISSIONS, (
+    "SEARCH_CROSS_PROJECT is cross-project — must not appear in the per-project "
+    "frontend binding"
+)
+assert set(Permission) == (
+    ENDPOINT_BACKED_PERMISSIONS
+    | COMPUTED_ONLY_PERMISSIONS
+    | USER_SCOPE_PERMISSIONS
+    | SUPERUSER_ONLY_PERMISSIONS
+), (
+    "Permission categories do not cover the full Permission enum — "
+    "a new permission was added without classifying it"
+)
+# Pairwise disjoint check.
+_categories: list[frozenset[Permission]] = [
+    ENDPOINT_BACKED_PERMISSIONS,
+    COMPUTED_ONLY_PERMISSIONS,
+    USER_SCOPE_PERMISSIONS,
+    SUPERUSER_ONLY_PERMISSIONS,
+]
+for _i, _a in enumerate(_categories):
+    for _b in _categories[_i + 1:]:
+        assert _a.isdisjoint(_b), "Permission categories must be pairwise disjoint"
+del _categories, _i, _a, _b
 
 
 # =============================================================================
@@ -1329,7 +1504,10 @@ __all__ = [
     # enums / constants
     "ACTIONS",
     "Action",
+    "COMPUTED_ONLY_PERMISSIONS",
     "ComputedRole",
+    "ENDPOINT_BACKED_PERMISSIONS",
+    "FRONTEND_PROJECT_PERMISSIONS",
     "H3_RES_15",
     "H3_RES_2",
     "H3_RES_5",
@@ -1339,6 +1517,7 @@ __all__ = [
     "PermissionDecision",
     "ProjectVisibility",
     "ROLE_PERMISSIONS",
+    "SUPERUSER_ONLY_PERMISSIONS",
     "SUPERUSER_PROJECT_SCOPE_ALLOWLIST",
     "TRUSTED_ALLOWED_PERMISSIONS",
     "TaxonOverrideApprovalStatus",

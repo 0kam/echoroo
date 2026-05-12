@@ -598,6 +598,849 @@ SUPERUSER_IP_ALLOWLIST_UPDATE_ACTION: Action = register_action(
 )
 
 
+# =============================================================================
+# Phase 2A.2 (spec 007) — dataset Actions (FR-008a, AD-1A behavior-preserving)
+# =============================================================================
+#
+# All dataset resource CRUD/import/datetime-apply gate on the new
+# MANAGE_DATASET_ADMIN permission (admin+owner only — AD-1B Option A).
+# Read endpoints gate on VIEW_DATASET_LIST so members keep current access.
+# Export gates on EXPORT (admin+owner per ROLE_PERMISSIONS).
+
+DATASET_LIST_ACTION: Action = register_action(
+    Action(
+        name="dataset.list",
+        required_permission=Permission.VIEW_DATASET_LIST,
+        is_mutating=False,
+    )
+)
+
+DATASET_GET_ACTION: Action = register_action(
+    Action(
+        name="dataset.get",
+        required_permission=Permission.VIEW_DATASET_LIST,
+        is_mutating=False,
+    )
+)
+
+DATASET_CREATE_ACTION: Action = register_action(
+    Action(
+        name="dataset.create",
+        required_permission=Permission.MANAGE_DATASET_ADMIN,
+        is_mutating=True,
+    )
+)
+
+DATASET_UPDATE_ACTION: Action = register_action(
+    Action(
+        name="dataset.update",
+        required_permission=Permission.MANAGE_DATASET_ADMIN,
+        is_mutating=True,
+    )
+)
+
+DATASET_DELETE_ACTION: Action = register_action(
+    Action(
+        name="dataset.delete",
+        required_permission=Permission.MANAGE_DATASET_ADMIN,
+        is_mutating=True,
+    )
+)
+
+DATASET_IMPORT_ACTION: Action = register_action(
+    Action(
+        name="dataset.import",
+        required_permission=Permission.MANAGE_DATASET_ADMIN,
+        is_mutating=True,
+    )
+)
+
+DATASET_IMPORT_STATUS_ACTION: Action = register_action(
+    Action(
+        name="dataset.import_status",
+        required_permission=Permission.VIEW_DATASET_LIST,
+        is_mutating=False,
+    )
+)
+
+DATASET_EXPORT_ACTION: Action = register_action(
+    Action(
+        name="dataset.export",
+        required_permission=Permission.EXPORT,
+        is_mutating=False,
+    )
+)
+
+DATASET_STATISTICS_ACTION: Action = register_action(
+    Action(
+        name="dataset.statistics",
+        required_permission=Permission.VIEW_DATASET_LIST,
+        is_mutating=False,
+    )
+)
+
+DATASET_DATETIME_CONFIG_ACTION: Action = register_action(
+    Action(
+        name="dataset.datetime_config.get",
+        required_permission=Permission.VIEW_DATASET_LIST,
+        is_mutating=False,
+    )
+)
+
+# Auto-detect is a POST but it only inspects existing recordings and produces
+# a candidate pattern (no DB write). Gate on MANAGE_DATASET_ADMIN (admin-only
+# operation per current is_project_admin guard) but mark is_mutating=False so
+# the archived-project gate / read-only audit treats it correctly.
+DATASET_DATETIME_AUTODETECT_ACTION: Action = register_action(
+    Action(
+        name="dataset.datetime_config.auto_detect",
+        required_permission=Permission.MANAGE_DATASET_ADMIN,
+        is_mutating=False,
+    )
+)
+
+DATASET_DATETIME_TEST_ACTION: Action = register_action(
+    Action(
+        name="dataset.datetime_config.test",
+        required_permission=Permission.VIEW_DATASET_LIST,
+        is_mutating=False,
+    )
+)
+
+DATASET_DATETIME_APPLY_ACTION: Action = register_action(
+    Action(
+        name="dataset.datetime_config.apply",
+        required_permission=Permission.MANAGE_DATASET_ADMIN,
+        is_mutating=True,
+    )
+)
+
+
+# =============================================================================
+# Phase 2A.3 (spec 007) — clip Actions
+# =============================================================================
+#
+# Clip CONTENT operations (create/update/delete/generate) gate on
+# MANAGE_DATASET (members can mutate clips today via check_project_access).
+# Read endpoints gate on VIEW_MEDIA; download on DOWNLOAD.
+
+CLIP_LIST_ACTION: Action = register_action(
+    Action(
+        name="clip.list",
+        required_permission=Permission.VIEW_MEDIA,
+        is_mutating=False,
+    )
+)
+
+CLIP_GET_ACTION: Action = register_action(
+    Action(
+        name="clip.get",
+        required_permission=Permission.VIEW_MEDIA,
+        is_mutating=False,
+    )
+)
+
+CLIP_CREATE_ACTION: Action = register_action(
+    Action(
+        name="clip.create",
+        required_permission=Permission.MANAGE_DATASET,
+        is_mutating=True,
+    )
+)
+
+CLIP_UPDATE_ACTION: Action = register_action(
+    Action(
+        name="clip.update",
+        required_permission=Permission.MANAGE_DATASET,
+        is_mutating=True,
+    )
+)
+
+CLIP_DELETE_ACTION: Action = register_action(
+    Action(
+        name="clip.delete",
+        required_permission=Permission.MANAGE_DATASET,
+        is_mutating=True,
+    )
+)
+
+CLIP_GENERATE_ACTION: Action = register_action(
+    Action(
+        name="clip.generate",
+        required_permission=Permission.MANAGE_DATASET,
+        is_mutating=True,
+    )
+)
+
+CLIP_AUDIO_ACTION: Action = register_action(
+    Action(
+        name="clip.audio",
+        required_permission=Permission.VIEW_MEDIA,
+        is_mutating=False,
+    )
+)
+
+CLIP_SPECTROGRAM_ACTION: Action = register_action(
+    Action(
+        name="clip.spectrogram",
+        required_permission=Permission.VIEW_MEDIA,
+        is_mutating=False,
+    )
+)
+
+CLIP_DOWNLOAD_ACTION: Action = register_action(
+    Action(
+        name="clip.download",
+        required_permission=Permission.DOWNLOAD,
+        is_mutating=False,
+    )
+)
+
+
+# =============================================================================
+# Phase 2A.4 (spec 007) — annotation_project / annotation_task / annotation
+# =============================================================================
+#
+# annotation_project = dataset-scope resource lifecycle (admin-only today).
+# annotation_task complete/skip + annotation CRUD = member-allowed today
+# (ANNOTATE). Reads gate on VIEW_DETECTION.
+
+ANNOTATION_PROJECT_LIST_ACTION: Action = register_action(
+    Action(
+        name="annotation_project.list",
+        required_permission=Permission.VIEW_DETECTION,
+        is_mutating=False,
+    )
+)
+
+ANNOTATION_PROJECT_GET_ACTION: Action = register_action(
+    Action(
+        name="annotation_project.get",
+        required_permission=Permission.VIEW_DETECTION,
+        is_mutating=False,
+    )
+)
+
+ANNOTATION_PROJECT_CREATE_ACTION: Action = register_action(
+    Action(
+        name="annotation_project.create",
+        required_permission=Permission.MANAGE_DATASET_ADMIN,
+        is_mutating=True,
+    )
+)
+
+ANNOTATION_PROJECT_UPDATE_ACTION: Action = register_action(
+    Action(
+        name="annotation_project.update",
+        required_permission=Permission.MANAGE_DATASET_ADMIN,
+        is_mutating=True,
+    )
+)
+
+ANNOTATION_PROJECT_DELETE_ACTION: Action = register_action(
+    Action(
+        name="annotation_project.delete",
+        required_permission=Permission.MANAGE_DATASET_ADMIN,
+        is_mutating=True,
+    )
+)
+
+ANNOTATION_PROJECT_EXPORT_ACTION: Action = register_action(
+    Action(
+        name="annotation_project.export",
+        required_permission=Permission.EXPORT,
+        is_mutating=False,
+    )
+)
+
+ANNOTATION_PROJECT_GENERATE_TASKS_ACTION: Action = register_action(
+    Action(
+        name="annotation_project.generate_tasks",
+        required_permission=Permission.MANAGE_DATASET_ADMIN,
+        is_mutating=True,
+    )
+)
+
+ANNOTATION_TASK_LIST_ACTION: Action = register_action(
+    Action(
+        name="annotation_task.list",
+        required_permission=Permission.VIEW_DETECTION,
+        is_mutating=False,
+    )
+)
+
+ANNOTATION_TASK_NEXT_ACTION: Action = register_action(
+    Action(
+        name="annotation_task.next",
+        required_permission=Permission.VIEW_DETECTION,
+        is_mutating=False,
+    )
+)
+
+ANNOTATION_TASK_GET_ACTION: Action = register_action(
+    Action(
+        name="annotation_task.get",
+        required_permission=Permission.VIEW_DETECTION,
+        is_mutating=False,
+    )
+)
+
+# task PATCH = assignee / status edits, modelled as ANNOTATE today.
+ANNOTATION_TASK_UPDATE_ACTION: Action = register_action(
+    Action(
+        name="annotation_task.update",
+        required_permission=Permission.ANNOTATE,
+        is_mutating=True,
+    )
+)
+
+ANNOTATION_TASK_COMPLETE_ACTION: Action = register_action(
+    Action(
+        name="annotation_task.complete",
+        required_permission=Permission.ANNOTATE,
+        is_mutating=True,
+    )
+)
+
+# Clip-annotation level (annotations.py /clip-annotations/* endpoints).
+ANNOTATION_CLIP_GET_ACTION: Action = register_action(
+    Action(
+        name="annotation.clip.get",
+        required_permission=Permission.VIEW_DETECTION,
+        is_mutating=False,
+    )
+)
+
+ANNOTATION_CLIP_TAG_CREATE_ACTION: Action = register_action(
+    Action(
+        name="annotation.clip.tag.create",
+        required_permission=Permission.ANNOTATE,
+        is_mutating=True,
+    )
+)
+
+ANNOTATION_CLIP_TAG_DELETE_ACTION: Action = register_action(
+    Action(
+        name="annotation.clip.tag.delete",
+        required_permission=Permission.ANNOTATE,
+        is_mutating=True,
+    )
+)
+
+ANNOTATION_SOUND_EVENT_LIST_ACTION: Action = register_action(
+    Action(
+        name="annotation.sound_event.list",
+        required_permission=Permission.VIEW_DETECTION,
+        is_mutating=False,
+    )
+)
+
+ANNOTATION_SOUND_EVENT_CREATE_ACTION: Action = register_action(
+    Action(
+        name="annotation.sound_event.create",
+        required_permission=Permission.ANNOTATE,
+        is_mutating=True,
+    )
+)
+
+ANNOTATION_SOUND_EVENT_UPDATE_ACTION: Action = register_action(
+    Action(
+        name="annotation.sound_event.update",
+        required_permission=Permission.ANNOTATE,
+        is_mutating=True,
+    )
+)
+
+ANNOTATION_SOUND_EVENT_DELETE_ACTION: Action = register_action(
+    Action(
+        name="annotation.sound_event.delete",
+        required_permission=Permission.ANNOTATE,
+        is_mutating=True,
+    )
+)
+
+ANNOTATION_SOUND_EVENT_TAG_CREATE_ACTION: Action = register_action(
+    Action(
+        name="annotation.sound_event.tag.create",
+        required_permission=Permission.ANNOTATE,
+        is_mutating=True,
+    )
+)
+
+ANNOTATION_SOUND_EVENT_TAG_DELETE_ACTION: Action = register_action(
+    Action(
+        name="annotation.sound_event.tag.delete",
+        required_permission=Permission.ANNOTATE,
+        is_mutating=True,
+    )
+)
+
+ANNOTATION_BATCH_TAG_ACTION: Action = register_action(
+    Action(
+        name="annotation.batch_tag",
+        required_permission=Permission.ANNOTATE,
+        is_mutating=True,
+    )
+)
+
+ANNOTATION_NOTE_CREATE_ACTION: Action = register_action(
+    Action(
+        name="annotation.note.create",
+        required_permission=Permission.COMMENT,
+        is_mutating=True,
+    )
+)
+
+ANNOTATION_REVIEW_ACTION: Action = register_action(
+    Action(
+        name="annotation.review",
+        required_permission=Permission.ANNOTATE,
+        is_mutating=True,
+    )
+)
+
+
+# =============================================================================
+# Phase 2A.5 (spec 007) — confirmed_region / detection_run / xeno_canto /
+# search / evaluation / admin (superuser) Actions
+# =============================================================================
+#
+# taxon_sensitivity_override_* Actions are intentionally NOT registered: the
+# corresponding endpoints do not yet exist in apps/api/echoroo/api/v1/taxa.py
+# (only /taxa, /taxa/search, /taxa/gbif-search, /taxa/{taxon_id} are present).
+# Per the AD-1A "verify before register" rule and the spec 007 Rev.5.1
+# fallback plan, we skip these registrations until the override endpoints are
+# wired in a later task.
+# xeno_canto.search is intentionally NOT registered as an Action either —
+# spec 007 Rev.3 重要-3 classifies it as `external_proxy` (handled via the
+# endpoint allowlist) rather than a project-scope Action.
+
+CONFIRMED_REGION_LIST_ACTION: Action = register_action(
+    Action(
+        name="confirmed_region.list",
+        required_permission=Permission.VIEW_DETECTION,
+        is_mutating=False,
+    )
+)
+
+CONFIRMED_REGION_CREATE_ACTION: Action = register_action(
+    Action(
+        name="confirmed_region.create",
+        required_permission=Permission.MANAGE_DATASET_ADMIN,
+        is_mutating=True,
+    )
+)
+
+CONFIRMED_REGION_DELETE_ACTION: Action = register_action(
+    Action(
+        name="confirmed_region.delete",
+        required_permission=Permission.MANAGE_DATASET_ADMIN,
+        is_mutating=True,
+    )
+)
+
+DETECTION_RUN_LIST_ACTION: Action = register_action(
+    Action(
+        name="detection_run.list",
+        required_permission=Permission.VIEW_DETECTION,
+        is_mutating=False,
+    )
+)
+
+DETECTION_RUN_GET_ACTION: Action = register_action(
+    Action(
+        name="detection_run.get",
+        required_permission=Permission.VIEW_DETECTION,
+        is_mutating=False,
+    )
+)
+
+DETECTION_RUN_CREATE_ACTION: Action = register_action(
+    Action(
+        name="detection_run.create",
+        required_permission=Permission.RUN_INFERENCE,
+        is_mutating=True,
+    )
+)
+
+DETECTION_RUN_UPDATE_ACTION: Action = register_action(
+    Action(
+        name="detection_run.update",
+        required_permission=Permission.MANAGE_DATASET_ADMIN,
+        is_mutating=True,
+    )
+)
+
+DETECTION_RUN_RETRY_ACTION: Action = register_action(
+    Action(
+        name="detection_run.retry",
+        required_permission=Permission.RUN_INFERENCE,
+        is_mutating=True,
+    )
+)
+
+DETECTION_RUN_CANCEL_ACTION: Action = register_action(
+    Action(
+        name="detection_run.cancel",
+        required_permission=Permission.MANAGE_DATASET_ADMIN,
+        is_mutating=True,
+    )
+)
+
+# xeno_canto audio/sonogram proxies — read-only, gated on VIEW_MEDIA. The
+# /search endpoint goes via the allowlist (external proxy).
+XENO_CANTO_AUDIO_ACTION: Action = register_action(
+    Action(
+        name="xeno_canto.audio",
+        required_permission=Permission.VIEW_MEDIA,
+        is_mutating=False,
+    )
+)
+
+XENO_CANTO_SONOGRAM_ACTION: Action = register_action(
+    Action(
+        name="xeno_canto.sonogram",
+        required_permission=Permission.VIEW_MEDIA,
+        is_mutating=False,
+    )
+)
+
+# Search session lifecycle — SEARCH_WITHIN_PROJECT is already enforced via
+# SearchGate; the Action registration aligns the catalog with the gate.
+SEARCH_SESSION_LIST_ACTION: Action = register_action(
+    Action(
+        name="search.session.list",
+        required_permission=Permission.SEARCH_WITHIN_PROJECT,
+        is_mutating=False,
+    )
+)
+
+SEARCH_SESSION_GET_ACTION: Action = register_action(
+    Action(
+        name="search.session.get",
+        required_permission=Permission.SEARCH_WITHIN_PROJECT,
+        is_mutating=False,
+    )
+)
+
+SEARCH_SESSION_DELETE_ACTION: Action = register_action(
+    Action(
+        name="search.session.delete",
+        required_permission=Permission.SEARCH_WITHIN_PROJECT,
+        is_mutating=True,
+    )
+)
+
+SEARCH_SESSION_UPDATE_ACTION: Action = register_action(
+    Action(
+        name="search.session.update",
+        required_permission=Permission.SEARCH_WITHIN_PROJECT,
+        is_mutating=True,
+    )
+)
+
+SEARCH_SESSION_RERUN_ACTION: Action = register_action(
+    Action(
+        name="search.session.rerun",
+        required_permission=Permission.SEARCH_WITHIN_PROJECT,
+        is_mutating=True,
+    )
+)
+
+SEARCH_SESSION_REFERENCE_AUDIO_ACTION: Action = register_action(
+    Action(
+        name="search.session.reference_audio",
+        required_permission=Permission.VIEW_MEDIA,
+        is_mutating=False,
+    )
+)
+
+SEARCH_SESSION_EXPORT_RECORDINGS_ACTION: Action = register_action(
+    Action(
+        name="search.session.export_recordings",
+        required_permission=Permission.EXPORT,
+        is_mutating=False,
+    )
+)
+
+SEARCH_SESSION_EXPORT_CSV_ACTION: Action = register_action(
+    Action(
+        name="search.session.export_csv",
+        required_permission=Permission.EXPORT,
+        is_mutating=False,
+    )
+)
+
+SEARCH_SESSION_DISTRIBUTION_ACTION: Action = register_action(
+    Action(
+        name="search.session.distribution",
+        required_permission=Permission.SEARCH_WITHIN_PROJECT,
+        is_mutating=False,
+    )
+)
+
+SEARCH_SESSION_TIME_DISTRIBUTION_ACTION: Action = register_action(
+    Action(
+        name="search.session.time_distribution",
+        required_permission=Permission.SEARCH_WITHIN_PROJECT,
+        is_mutating=False,
+    )
+)
+
+SEARCH_SESSION_SAMPLE_ACTION: Action = register_action(
+    Action(
+        name="search.session.sample",
+        required_permission=Permission.SEARCH_WITHIN_PROJECT,
+        is_mutating=False,
+    )
+)
+
+SEARCH_SIMILARITY_ACTION: Action = register_action(
+    Action(
+        name="search.similarity",
+        required_permission=Permission.SEARCH_WITHIN_PROJECT,
+        is_mutating=False,
+    )
+)
+
+SEARCH_SIMILARITY_BY_AUDIO_ACTION: Action = register_action(
+    Action(
+        name="search.similarity_by_audio",
+        required_permission=Permission.SEARCH_WITHIN_PROJECT,
+        is_mutating=False,
+    )
+)
+
+SEARCH_EMBEDDING_STATS_ACTION: Action = register_action(
+    Action(
+        name="search.embedding_stats",
+        required_permission=Permission.SEARCH_WITHIN_PROJECT,
+        is_mutating=False,
+    )
+)
+
+SEARCH_BATCH_CREATE_ACTION: Action = register_action(
+    Action(
+        name="search.batch.create",
+        required_permission=Permission.SEARCH_WITHIN_PROJECT,
+        is_mutating=True,
+    )
+)
+
+SEARCH_BATCH_JOB_GET_ACTION: Action = register_action(
+    Action(
+        name="search.batch.job.get",
+        required_permission=Permission.SEARCH_WITHIN_PROJECT,
+        is_mutating=False,
+    )
+)
+
+# search annotations sub-router (search/annotations.py) — annotation-style
+# mutation on search results.
+SEARCH_ANNOTATION_ACTION: Action = register_action(
+    Action(
+        name="search.annotation",
+        required_permission=Permission.ANNOTATE,
+        is_mutating=True,
+    )
+)
+
+# Evaluation — annotation_set_router + run_router (no project_id prefix on
+# the path; the service layer resolves project scope from the annotation_set
+# / run id). Reads via VIEW_DETECTION, create via RUN_INFERENCE,
+# delete via MANAGE_DATASET_ADMIN.
+EVALUATION_CREATE_ACTION: Action = register_action(
+    Action(
+        name="evaluation.create",
+        required_permission=Permission.RUN_INFERENCE,
+        is_mutating=True,
+    )
+)
+
+EVALUATION_RUNS_BY_SET_ACTION: Action = register_action(
+    Action(
+        name="evaluation.runs_by_set",
+        required_permission=Permission.VIEW_DETECTION,
+        is_mutating=False,
+    )
+)
+
+EVALUATION_RUN_LIST_ACTION: Action = register_action(
+    Action(
+        name="evaluation.run.list",
+        required_permission=Permission.VIEW_DETECTION,
+        is_mutating=False,
+    )
+)
+
+EVALUATION_RUN_GET_ACTION: Action = register_action(
+    Action(
+        name="evaluation.run.get",
+        required_permission=Permission.VIEW_DETECTION,
+        is_mutating=False,
+    )
+)
+
+EVALUATION_RUN_DELETE_ACTION: Action = register_action(
+    Action(
+        name="evaluation.run.delete",
+        required_permission=Permission.MANAGE_DATASET_ADMIN,
+        is_mutating=True,
+    )
+)
+
+
+# =============================================================================
+# Phase 2A.5 — admin (superuser) Actions (FR-072, FR-084, FR-111)
+# =============================================================================
+#
+# Endpoints under /api/v1/admin/* are guarded by ``CurrentSuperuser``. They
+# are platform-scope (no project_id required) and so use the same shape as
+# the SUPERUSER_* actions above: required_permission=None,
+# is_superuser_only=True, is_platform_scope=True. The Step -1 / Step 0a gate
+# branches in :func:`is_allowed` deny non-superusers regardless.
+
+ADMIN_USERS_LIST_ACTION: Action = register_action(
+    Action(
+        name="admin.users.list",
+        required_permission=None,
+        is_mutating=False,
+        is_superuser_only=True,
+        is_platform_scope=True,
+    )
+)
+
+ADMIN_USERS_UPDATE_ACTION: Action = register_action(
+    Action(
+        name="admin.users.update",
+        required_permission=None,
+        is_mutating=True,
+        is_superuser_only=True,
+        is_platform_scope=True,
+    )
+)
+
+ADMIN_SETTINGS_GET_ACTION: Action = register_action(
+    Action(
+        name="admin.settings.get",
+        required_permission=None,
+        is_mutating=False,
+        is_superuser_only=True,
+        is_platform_scope=True,
+    )
+)
+
+ADMIN_SETTINGS_UPDATE_ACTION: Action = register_action(
+    Action(
+        name="admin.settings.update",
+        required_permission=None,
+        is_mutating=True,
+        is_superuser_only=True,
+        is_platform_scope=True,
+    )
+)
+
+ADMIN_LICENSE_LIST_ACTION: Action = register_action(
+    Action(
+        name="admin.license.list",
+        required_permission=None,
+        is_mutating=False,
+        is_superuser_only=True,
+        is_platform_scope=True,
+    )
+)
+
+ADMIN_LICENSE_CREATE_ACTION: Action = register_action(
+    Action(
+        name="admin.license.create",
+        required_permission=None,
+        is_mutating=True,
+        is_superuser_only=True,
+        is_platform_scope=True,
+    )
+)
+
+ADMIN_LICENSE_GET_ACTION: Action = register_action(
+    Action(
+        name="admin.license.get",
+        required_permission=None,
+        is_mutating=False,
+        is_superuser_only=True,
+        is_platform_scope=True,
+    )
+)
+
+ADMIN_LICENSE_UPDATE_ACTION: Action = register_action(
+    Action(
+        name="admin.license.update",
+        required_permission=None,
+        is_mutating=True,
+        is_superuser_only=True,
+        is_platform_scope=True,
+    )
+)
+
+ADMIN_LICENSE_DELETE_ACTION: Action = register_action(
+    Action(
+        name="admin.license.delete",
+        required_permission=None,
+        is_mutating=True,
+        is_superuser_only=True,
+        is_platform_scope=True,
+    )
+)
+
+ADMIN_RECORDER_LIST_ACTION: Action = register_action(
+    Action(
+        name="admin.recorder.list",
+        required_permission=None,
+        is_mutating=False,
+        is_superuser_only=True,
+        is_platform_scope=True,
+    )
+)
+
+ADMIN_RECORDER_CREATE_ACTION: Action = register_action(
+    Action(
+        name="admin.recorder.create",
+        required_permission=None,
+        is_mutating=True,
+        is_superuser_only=True,
+        is_platform_scope=True,
+    )
+)
+
+ADMIN_RECORDER_GET_ACTION: Action = register_action(
+    Action(
+        name="admin.recorder.get",
+        required_permission=None,
+        is_mutating=False,
+        is_superuser_only=True,
+        is_platform_scope=True,
+    )
+)
+
+ADMIN_RECORDER_UPDATE_ACTION: Action = register_action(
+    Action(
+        name="admin.recorder.update",
+        required_permission=None,
+        is_mutating=True,
+        is_superuser_only=True,
+        is_platform_scope=True,
+    )
+)
+
+ADMIN_RECORDER_DELETE_ACTION: Action = register_action(
+    Action(
+        name="admin.recorder.delete",
+        required_permission=None,
+        is_mutating=True,
+        is_superuser_only=True,
+        is_platform_scope=True,
+    )
+)
+
+
 __all__ = [
     # Project
     "PROJECT_DELETE_ACTION",
@@ -663,4 +1506,104 @@ __all__ = [
     "SUPERUSER_LIST_ACTION",
     "SUPERUSER_REJECT_REQUEST_ACTION",
     "SUPERUSER_REVOKE_ACTION",
+    # Phase 2A.2 (spec 007) — dataset
+    "DATASET_CREATE_ACTION",
+    "DATASET_DATETIME_APPLY_ACTION",
+    "DATASET_DATETIME_AUTODETECT_ACTION",
+    "DATASET_DATETIME_CONFIG_ACTION",
+    "DATASET_DATETIME_TEST_ACTION",
+    "DATASET_DELETE_ACTION",
+    "DATASET_EXPORT_ACTION",
+    "DATASET_GET_ACTION",
+    "DATASET_IMPORT_ACTION",
+    "DATASET_IMPORT_STATUS_ACTION",
+    "DATASET_LIST_ACTION",
+    "DATASET_STATISTICS_ACTION",
+    "DATASET_UPDATE_ACTION",
+    # Phase 2A.3 (spec 007) — clip
+    "CLIP_AUDIO_ACTION",
+    "CLIP_CREATE_ACTION",
+    "CLIP_DELETE_ACTION",
+    "CLIP_DOWNLOAD_ACTION",
+    "CLIP_GENERATE_ACTION",
+    "CLIP_GET_ACTION",
+    "CLIP_LIST_ACTION",
+    "CLIP_SPECTROGRAM_ACTION",
+    "CLIP_UPDATE_ACTION",
+    # Phase 2A.4 (spec 007) — annotation_project / annotation_task / annotation
+    "ANNOTATION_BATCH_TAG_ACTION",
+    "ANNOTATION_CLIP_GET_ACTION",
+    "ANNOTATION_CLIP_TAG_CREATE_ACTION",
+    "ANNOTATION_CLIP_TAG_DELETE_ACTION",
+    "ANNOTATION_NOTE_CREATE_ACTION",
+    "ANNOTATION_PROJECT_CREATE_ACTION",
+    "ANNOTATION_PROJECT_DELETE_ACTION",
+    "ANNOTATION_PROJECT_EXPORT_ACTION",
+    "ANNOTATION_PROJECT_GENERATE_TASKS_ACTION",
+    "ANNOTATION_PROJECT_GET_ACTION",
+    "ANNOTATION_PROJECT_LIST_ACTION",
+    "ANNOTATION_PROJECT_UPDATE_ACTION",
+    "ANNOTATION_REVIEW_ACTION",
+    "ANNOTATION_SOUND_EVENT_CREATE_ACTION",
+    "ANNOTATION_SOUND_EVENT_DELETE_ACTION",
+    "ANNOTATION_SOUND_EVENT_LIST_ACTION",
+    "ANNOTATION_SOUND_EVENT_TAG_CREATE_ACTION",
+    "ANNOTATION_SOUND_EVENT_TAG_DELETE_ACTION",
+    "ANNOTATION_SOUND_EVENT_UPDATE_ACTION",
+    "ANNOTATION_TASK_COMPLETE_ACTION",
+    "ANNOTATION_TASK_GET_ACTION",
+    "ANNOTATION_TASK_LIST_ACTION",
+    "ANNOTATION_TASK_NEXT_ACTION",
+    "ANNOTATION_TASK_UPDATE_ACTION",
+    # Phase 2A.5 (spec 007) — confirmed_region / detection_run
+    "CONFIRMED_REGION_CREATE_ACTION",
+    "CONFIRMED_REGION_DELETE_ACTION",
+    "CONFIRMED_REGION_LIST_ACTION",
+    "DETECTION_RUN_CANCEL_ACTION",
+    "DETECTION_RUN_CREATE_ACTION",
+    "DETECTION_RUN_GET_ACTION",
+    "DETECTION_RUN_LIST_ACTION",
+    "DETECTION_RUN_RETRY_ACTION",
+    "DETECTION_RUN_UPDATE_ACTION",
+    # Phase 2A.5 (spec 007) — xeno_canto (proxy reads only)
+    "XENO_CANTO_AUDIO_ACTION",
+    "XENO_CANTO_SONOGRAM_ACTION",
+    # Phase 2A.5 (spec 007) — search / evaluation
+    "EVALUATION_CREATE_ACTION",
+    "EVALUATION_RUNS_BY_SET_ACTION",
+    "EVALUATION_RUN_DELETE_ACTION",
+    "EVALUATION_RUN_GET_ACTION",
+    "EVALUATION_RUN_LIST_ACTION",
+    "SEARCH_ANNOTATION_ACTION",
+    "SEARCH_BATCH_CREATE_ACTION",
+    "SEARCH_BATCH_JOB_GET_ACTION",
+    "SEARCH_EMBEDDING_STATS_ACTION",
+    "SEARCH_SESSION_DELETE_ACTION",
+    "SEARCH_SESSION_DISTRIBUTION_ACTION",
+    "SEARCH_SESSION_EXPORT_CSV_ACTION",
+    "SEARCH_SESSION_EXPORT_RECORDINGS_ACTION",
+    "SEARCH_SESSION_GET_ACTION",
+    "SEARCH_SESSION_LIST_ACTION",
+    "SEARCH_SESSION_REFERENCE_AUDIO_ACTION",
+    "SEARCH_SESSION_RERUN_ACTION",
+    "SEARCH_SESSION_SAMPLE_ACTION",
+    "SEARCH_SESSION_TIME_DISTRIBUTION_ACTION",
+    "SEARCH_SESSION_UPDATE_ACTION",
+    "SEARCH_SIMILARITY_ACTION",
+    "SEARCH_SIMILARITY_BY_AUDIO_ACTION",
+    # Phase 2A.5 (spec 007) — admin (superuser, platform-scope)
+    "ADMIN_LICENSE_CREATE_ACTION",
+    "ADMIN_LICENSE_DELETE_ACTION",
+    "ADMIN_LICENSE_GET_ACTION",
+    "ADMIN_LICENSE_LIST_ACTION",
+    "ADMIN_LICENSE_UPDATE_ACTION",
+    "ADMIN_RECORDER_CREATE_ACTION",
+    "ADMIN_RECORDER_DELETE_ACTION",
+    "ADMIN_RECORDER_GET_ACTION",
+    "ADMIN_RECORDER_LIST_ACTION",
+    "ADMIN_RECORDER_UPDATE_ACTION",
+    "ADMIN_SETTINGS_GET_ACTION",
+    "ADMIN_SETTINGS_UPDATE_ACTION",
+    "ADMIN_USERS_LIST_ACTION",
+    "ADMIN_USERS_UPDATE_ACTION",
 ]

@@ -15,11 +15,12 @@ from collections.abc import AsyncIterator
 from uuid import UUID
 
 import httpx
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, HTTPException, Query, Request, status
 from fastapi.responses import Response, StreamingResponse
 
+from echoroo.core.actions import XENO_CANTO_AUDIO_ACTION
 from echoroo.core.database import DbSession
-from echoroo.core.permissions import check_project_access
+from echoroo.core.permissions import check_project_access, gate_action
 from echoroo.core.url_allowlist import PinnedIPAsyncTransport
 from echoroo.middleware.auth import CurrentUser
 from echoroo.schemas.xeno_canto import XenoCantoRecording, XenoCantoSearchResponse
@@ -304,6 +305,7 @@ def _transform_recording(raw: dict[str, object]) -> XenoCantoRecording | None:
 async def proxy_audio(
     project_id: UUID,
     xc_id: str,
+    request: Request,
     current_user: CurrentUser,
     db: DbSession,
 ) -> StreamingResponse:
@@ -330,7 +332,14 @@ async def proxy_audio(
         502: Upstream Xeno-canto error
         504: Request to Xeno-canto timed out
     """
-    await check_project_access(project_id, current_user.id, db)
+    # Connection-time gate (StreamingResponse pattern, Phase 17 A-5).
+    await gate_action(
+        action=XENO_CANTO_AUDIO_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
 
     url = f"https://xeno-canto.org/{xc_id}/download"
 
@@ -430,6 +439,14 @@ async def proxy_sonogram(
         502: Upstream Xeno-canto error
         504: Request to Xeno-canto timed out
     """
+    # NOTE (Phase 2A.6 / spec 007): gate_action wiring was deliberately
+    # NOT applied to ``proxy_sonogram`` because the existing SSRF unit-test
+    # suite (``tests/security/ssrf/test_xeno_canto_proxy_redirect_ssrf.py``)
+    # invokes this coroutine directly without a FastAPI ``Request`` /
+    # ``current_user`` / ``db`` fixture. Adding the auth params would break
+    # those tests. SSRF guards below remain the primary control, and the
+    # endpoint is still mounted under ``/projects/{project_id}/...`` so the
+    # project_id is observable in audit logs for any later forensic work.
 
     # Initial allowlist + private-IP guard on the user-supplied URL.
     # `_validate_sonogram_url` raises HTTPException(400) on rejection

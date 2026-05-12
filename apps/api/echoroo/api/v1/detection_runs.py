@@ -5,10 +5,18 @@ from __future__ import annotations
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Request, status
 
+from echoroo.core.actions import (
+    DETECTION_RUN_CANCEL_ACTION,
+    DETECTION_RUN_CREATE_ACTION,
+    DETECTION_RUN_GET_ACTION,
+    DETECTION_RUN_LIST_ACTION,
+    DETECTION_RUN_RETRY_ACTION,
+    DETECTION_RUN_UPDATE_ACTION,
+)
 from echoroo.core.database import DbSession
-from echoroo.core.permissions import check_project_access
+from echoroo.core.permissions import gate_action
 from echoroo.middleware.auth import CurrentUser
 from echoroo.repositories.annotation import AnnotationRepository
 from echoroo.repositories.detection_run import DetectionRunRepository
@@ -54,6 +62,7 @@ DetectionRunServiceDep = Annotated[DetectionRunService, Depends(get_detection_ru
 )
 async def list_detection_runs(
     project_id: UUID,
+    request: Request,
     current_user: CurrentUser,
     service: DetectionRunServiceDep,
     db: DbSession,
@@ -79,7 +88,13 @@ async def list_detection_runs(
         401: Not authenticated
         403: Access denied
     """
-    await check_project_access(project_id, current_user.id, db)
+    await gate_action(
+        action=DETECTION_RUN_LIST_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
     return await service.list_by_project(
         project_id=project_id,
         page=page,
@@ -97,6 +112,7 @@ async def list_detection_runs(
 async def get_detection_run(
     project_id: UUID,
     run_id: UUID,
+    request: Request,
     current_user: CurrentUser,
     service: DetectionRunServiceDep,
     db: DbSession,
@@ -118,7 +134,13 @@ async def get_detection_run(
         403: Access denied
         404: Detection run not found
     """
-    await check_project_access(project_id, current_user.id, db)
+    await gate_action(
+        action=DETECTION_RUN_GET_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
     return await service.get(run_id=run_id, project_id=project_id)
 
 
@@ -132,6 +154,7 @@ async def get_detection_run(
 async def create_detection_run(
     project_id: UUID,
     request: DetectionRunCreate,
+    http_request: Request,
     current_user: CurrentUser,
     service: DetectionRunServiceDep,
     db: DbSession,
@@ -153,7 +176,13 @@ async def create_detection_run(
         403: Access denied
         422: Validation error
     """
-    await check_project_access(project_id, current_user.id, db)
+    await gate_action(
+        action=DETECTION_RUN_CREATE_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=http_request,
+        db=db,
+    )
     # Note: service.create() already commits before dispatching the Celery task
     # to avoid a race condition. Do NOT commit again here.
     run = await service.create(project_id=project_id, request=request)
@@ -170,6 +199,7 @@ async def update_detection_run(
     project_id: UUID,
     run_id: UUID,
     request: DetectionRunUpdate,
+    http_request: Request,
     current_user: CurrentUser,
     service: DetectionRunServiceDep,
     db: DbSession,
@@ -192,7 +222,13 @@ async def update_detection_run(
         403: Access denied
         404: Detection run not found
     """
-    await check_project_access(project_id, current_user.id, db)
+    await gate_action(
+        action=DETECTION_RUN_UPDATE_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=http_request,
+        db=db,
+    )
     run = await service.update(run_id=run_id, request=request, project_id=project_id)
     await db.commit()
     return run
@@ -207,6 +243,7 @@ async def update_detection_run(
 async def retry_detection_run(
     project_id: UUID,
     run_id: UUID,
+    request: Request,
     current_user: CurrentUser,
     service: DetectionRunServiceDep,
     db: DbSession,
@@ -231,7 +268,13 @@ async def retry_detection_run(
         404: Detection run not found
         409: Detection run status does not allow retry (not COMPLETED or FAILED)
     """
-    await check_project_access(project_id, current_user.id, db)
+    await gate_action(
+        action=DETECTION_RUN_RETRY_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
     run = await service.retry(project_id=project_id, run_id=run_id)
     await db.commit()
     return run
@@ -246,6 +289,7 @@ async def retry_detection_run(
 async def cancel_detection_run(
     project_id: UUID,
     run_id: UUID,
+    request: Request,
     current_user: CurrentUser,
     service: DetectionRunServiceDep,
     db: DbSession,
@@ -270,7 +314,13 @@ async def cancel_detection_run(
         404: Detection run not found
         409: Detection run status does not allow cancellation (not PENDING or RUNNING)
     """
-    await check_project_access(project_id, current_user.id, db)
+    await gate_action(
+        action=DETECTION_RUN_CANCEL_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
     run = await service.cancel(project_id=project_id, run_id=run_id)
     await db.commit()
     return run

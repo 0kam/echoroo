@@ -8,13 +8,14 @@ from __future__ import annotations
 import logging
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from echoroo.api.v1.search.utils import _annotation_to_detection_response
+from echoroo.core.actions import SEARCH_ANNOTATION_ACTION
 from echoroo.core.database import DbSession
-from echoroo.core.permissions import check_project_access
+from echoroo.core.permissions import gate_action
 from echoroo.middleware.auth import CurrentUser
 from echoroo.models.enums import DetectionSource, DetectionStatus
 from echoroo.models.recording_annotation import (
@@ -43,6 +44,7 @@ annotations_router = APIRouter(prefix="/projects/{project_id}/annotations", tags
 async def create_search_annotation(
     project_id: UUID,
     request: SearchAnnotationCreate,
+    http_request: Request,
     current_user: CurrentUser,
     db: DbSession,
 ) -> DetectionResponse:
@@ -65,7 +67,13 @@ async def create_search_annotation(
         403: Access denied to project
         422: Invalid source or status value
     """
-    await check_project_access(project_id, current_user.id, db)
+    await gate_action(
+        action=SEARCH_ANNOTATION_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=http_request,
+        db=db,
+    )
 
     # Validate source enum
     try:

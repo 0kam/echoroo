@@ -70,6 +70,7 @@ API_KEY_WRITE_PERMISSIONS: Final[frozenset[str]] = frozenset(
         Permission.UPLOAD.value,
         Permission.MANAGE_SITE.value,
         Permission.MANAGE_DATASET.value,
+        Permission.MANAGE_DATASET_ADMIN.value,
         Permission.RUN_INFERENCE.value,
         Permission.TRAIN_MODEL.value,
         Permission.MANAGE_MEMBERS.value,

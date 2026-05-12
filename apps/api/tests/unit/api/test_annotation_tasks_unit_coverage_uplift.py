@@ -4,17 +4,24 @@ Phase 17 §C easy-win batch 1: covers the ``get_next_task`` 204 branch
 (lines 127-130) and the dependency factory (lines 36-39) using mocked
 service objects so the module clears the 85% threshold without touching
 production code.
+
+Updated in spec/007 Phase 2A.6: ``get_next_task`` now accepts
+``request: Request`` and ``db: DbSession`` for the ``gate_action`` guard;
+tests pass ``MagicMock()`` for both and patch ``gate_action`` to a no-op
+``AsyncMock``.
 """
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
 from fastapi import status
 
 from echoroo.api.v1 import annotation_tasks as mod
+
+_GATE_ACTION_PATH = "echoroo.api.v1.annotation_tasks.gate_action"
 
 
 @pytest.mark.asyncio
@@ -28,14 +35,18 @@ async def test_get_next_task_returns_204_when_no_task_available() -> None:
     response.status_code = 200
     current_user = MagicMock()
     current_user.id = uuid4()
+    db = MagicMock()
 
-    result = await mod.get_next_task(
-        project_id=uuid4(),
-        annotation_project_id=uuid4(),
-        current_user=current_user,
-        service=service,
-        response=response,
-    )
+    with patch(_GATE_ACTION_PATH, new=AsyncMock(return_value=MagicMock()), create=True):
+        result = await mod.get_next_task(
+            project_id=uuid4(),
+            annotation_project_id=uuid4(),
+            request=MagicMock(),
+            current_user=current_user,
+            service=service,
+            response=response,
+            db=db,
+        )
 
     assert result is None
     assert response.status_code == status.HTTP_204_NO_CONTENT
@@ -51,14 +62,18 @@ async def test_get_next_task_returns_task_when_available() -> None:
     response.status_code = 200
     current_user = MagicMock()
     current_user.id = uuid4()
+    db = MagicMock()
 
-    result = await mod.get_next_task(
-        project_id=uuid4(),
-        annotation_project_id=uuid4(),
-        current_user=current_user,
-        service=service,
-        response=response,
-    )
+    with patch(_GATE_ACTION_PATH, new=AsyncMock(return_value=MagicMock()), create=True):
+        result = await mod.get_next_task(
+            project_id=uuid4(),
+            annotation_project_id=uuid4(),
+            request=MagicMock(),
+            current_user=current_user,
+            service=service,
+            response=response,
+            db=db,
+        )
 
     assert result is task_obj
     # No 204 modification when a task was returned.

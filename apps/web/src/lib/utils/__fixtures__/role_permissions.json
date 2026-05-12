@@ -1,0 +1,249 @@
+{
+  "generated_at_utc": "2026-05-12T02:02:27+00:00",
+  "generated_from_commit": null,
+  "permissions": [
+    "annotate",
+    "comment",
+    "create_tag",
+    "delete_project",
+    "download",
+    "edit_project",
+    "export",
+    "manage_2fa",
+    "manage_api_key",
+    "manage_dataset",
+    "manage_dataset_admin",
+    "manage_license",
+    "manage_members",
+    "manage_site",
+    "manage_trusted",
+    "override_taxon_sensitivity",
+    "run_inference",
+    "search_cross_project",
+    "search_within_project",
+    "train_model",
+    "transfer_ownership",
+    "upload",
+    "view_audit_log",
+    "view_dataset_list",
+    "view_detection",
+    "view_media",
+    "view_precise_location",
+    "view_project_metadata",
+    "vote"
+  ],
+  "categories": {
+    "endpoint_backed": [
+      "annotate",
+      "comment",
+      "create_tag",
+      "delete_project",
+      "download",
+      "edit_project",
+      "export",
+      "manage_dataset",
+      "manage_dataset_admin",
+      "manage_license",
+      "manage_members",
+      "manage_trusted",
+      "run_inference",
+      "search_cross_project",
+      "search_within_project",
+      "train_model",
+      "transfer_ownership",
+      "upload",
+      "view_audit_log",
+      "view_dataset_list",
+      "view_detection",
+      "view_media",
+      "view_project_metadata",
+      "vote"
+    ],
+    "computed_only": [
+      "override_taxon_sensitivity",
+      "view_precise_location"
+    ],
+    "user_scope": [
+      "manage_2fa",
+      "manage_api_key"
+    ],
+    "superuser_only": [
+      "manage_site"
+    ],
+    "frontend_project": [
+      "annotate",
+      "comment",
+      "create_tag",
+      "delete_project",
+      "download",
+      "edit_project",
+      "export",
+      "manage_dataset",
+      "manage_dataset_admin",
+      "manage_license",
+      "manage_members",
+      "manage_trusted",
+      "override_taxon_sensitivity",
+      "run_inference",
+      "search_within_project",
+      "train_model",
+      "transfer_ownership",
+      "upload",
+      "view_audit_log",
+      "view_dataset_list",
+      "view_detection",
+      "view_media",
+      "view_precise_location",
+      "view_project_metadata",
+      "vote"
+    ]
+  },
+  "role_permissions": {
+    "viewer": [
+      "search_within_project",
+      "view_dataset_list",
+      "view_detection",
+      "view_media",
+      "view_project_metadata"
+    ],
+    "member": [
+      "annotate",
+      "comment",
+      "create_tag",
+      "download",
+      "export",
+      "manage_dataset",
+      "manage_site",
+      "run_inference",
+      "search_cross_project",
+      "search_within_project",
+      "upload",
+      "view_dataset_list",
+      "view_detection",
+      "view_media",
+      "view_precise_location",
+      "view_project_metadata",
+      "vote"
+    ],
+    "admin": [
+      "annotate",
+      "comment",
+      "create_tag",
+      "download",
+      "edit_project",
+      "export",
+      "manage_dataset",
+      "manage_dataset_admin",
+      "manage_license",
+      "manage_members",
+      "manage_site",
+      "run_inference",
+      "search_cross_project",
+      "search_within_project",
+      "train_model",
+      "upload",
+      "view_audit_log",
+      "view_dataset_list",
+      "view_detection",
+      "view_media",
+      "view_precise_location",
+      "view_project_metadata",
+      "vote"
+    ],
+    "owner": [
+      "annotate",
+      "comment",
+      "create_tag",
+      "delete_project",
+      "download",
+      "edit_project",
+      "export",
+      "manage_dataset",
+      "manage_dataset_admin",
+      "manage_license",
+      "manage_members",
+      "manage_site",
+      "manage_trusted",
+      "override_taxon_sensitivity",
+      "run_inference",
+      "search_cross_project",
+      "search_within_project",
+      "train_model",
+      "transfer_ownership",
+      "upload",
+      "view_audit_log",
+      "view_dataset_list",
+      "view_detection",
+      "view_media",
+      "view_precise_location",
+      "view_project_metadata",
+      "vote"
+    ]
+  },
+  "frontend_project_permissions": [
+    "annotate",
+    "comment",
+    "create_tag",
+    "delete_project",
+    "download",
+    "edit_project",
+    "export",
+    "manage_dataset",
+    "manage_dataset_admin",
+    "manage_license",
+    "manage_members",
+    "manage_trusted",
+    "override_taxon_sensitivity",
+    "run_inference",
+    "search_within_project",
+    "train_model",
+    "transfer_ownership",
+    "upload",
+    "view_audit_log",
+    "view_dataset_list",
+    "view_detection",
+    "view_media",
+    "view_precise_location",
+    "view_project_metadata",
+    "vote"
+  ],
+  "visibility_overlays": {
+    "public": {
+      "guest": [
+        "view_detection",
+        "view_media"
+      ],
+      "authenticated_non_member": [
+        "comment",
+        "download",
+        "export",
+        "search_cross_project",
+        "search_within_project",
+        "view_detection",
+        "view_media",
+        "vote"
+      ]
+    },
+    "restricted_toggles": {
+      "allow_media_playback": [
+        "view_media"
+      ],
+      "allow_detection_view": [
+        "view_detection"
+      ],
+      "allow_download": [
+        "download"
+      ],
+      "allow_export": [
+        "export"
+      ],
+      "allow_voting_and_comments": [
+        "comment",
+        "vote"
+      ],
+      "allow_precise_location_to_viewer": [
+        "view_precise_location"
+      ]
+    }
+  }
+}

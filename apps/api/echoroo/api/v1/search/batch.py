@@ -28,8 +28,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from echoroo.api.v1.search.utils import _clamp_similarity_in_raw, _enrich_search_results_with_locale
+from echoroo.core.actions import (
+    SEARCH_BATCH_CREATE_ACTION,
+    SEARCH_BATCH_JOB_GET_ACTION,
+)
 from echoroo.core.database import DbSession
-from echoroo.core.permissions import check_project_access
+from echoroo.core.permissions import gate_action
 from echoroo.middleware.auth import CurrentUser
 from echoroo.schemas.search import (
     BatchSearchRequest,
@@ -434,7 +438,13 @@ async def batch_search(
         413: One or more uploaded files exceed 10 MB
         422: Constraint violation (too many species/sources), invalid model, or missing source_url
     """
-    await check_project_access(project_id, current_user.id, db)
+    await gate_action(
+        action=SEARCH_BATCH_CREATE_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
 
     from echoroo.core.s3 import delete_objects_by_prefix
 
@@ -507,6 +517,7 @@ async def batch_search(
 async def get_search_job(
     project_id: UUID,
     job_id: str,
+    request: Request,
     current_user: CurrentUser,
     db: DbSession,
     locale: str = "en",
@@ -537,7 +548,13 @@ async def get_search_job(
     Raises:
         403: Access denied to project
     """
-    await check_project_access(project_id, current_user.id, db)
+    await gate_action(
+        action=SEARCH_BATCH_JOB_GET_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
 
     from celery.result import AsyncResult
 

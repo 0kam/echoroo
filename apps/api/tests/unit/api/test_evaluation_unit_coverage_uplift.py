@@ -76,13 +76,15 @@ async def test_create_evaluation_run_delegates_to_service() -> None:
             new=AsyncMock(return_value=project_id),
         ),
         patch(
-            "echoroo.api.v1.evaluation.check_project_access",
-            new=AsyncMock(),
+            "echoroo.api.v1.evaluation.gate_action",
+            new=AsyncMock(return_value=MagicMock()),
+            create=True,
         ),
     ):
         result = await create_evaluation_run(
             annotation_set_id=annotation_set_id,
             payload=payload,
+            request=MagicMock(),
             current_user=current_user,
             service=service,
             db=db,
@@ -113,8 +115,9 @@ async def test_list_evaluation_runs_for_set_delegates_to_service() -> None:
             new=AsyncMock(return_value=project_id),
         ),
         patch(
-            "echoroo.api.v1.evaluation.check_project_access",
-            new=AsyncMock(),
+            "echoroo.api.v1.evaluation.gate_action",
+            new=AsyncMock(return_value=MagicMock()),
+            create=True,
         ),
         patch(
             "echoroo.api.v1.evaluation.EvaluationRunResponse",
@@ -127,6 +130,7 @@ async def test_list_evaluation_runs_for_set_delegates_to_service() -> None:
     ):
         result = await list_evaluation_runs_for_set(
             annotation_set_id=annotation_set_id,
+            request=MagicMock(),
             current_user=current_user,
             service=service,
             db=db,
@@ -159,8 +163,9 @@ async def test_list_evaluation_runs_delegates_to_service() -> None:
             new=AsyncMock(return_value=project_id),
         ),
         patch(
-            "echoroo.api.v1.evaluation.check_project_access",
-            new=AsyncMock(),
+            "echoroo.api.v1.evaluation.gate_action",
+            new=AsyncMock(return_value=MagicMock()),
+            create=True,
         ),
         patch(
             "echoroo.api.v1.evaluation.EvaluationRunResponse",
@@ -173,6 +178,7 @@ async def test_list_evaluation_runs_delegates_to_service() -> None:
     ):
         result = await list_evaluation_runs(
             current_user=current_user,
+            request=MagicMock(),
             service=service,
             db=db,
             annotation_set_id=annotation_set_id,
@@ -206,12 +212,14 @@ async def test_get_evaluation_run_returns_summary() -> None:
             new=AsyncMock(return_value=project_id),
         ),
         patch(
-            "echoroo.api.v1.evaluation.check_project_access",
-            new=AsyncMock(),
+            "echoroo.api.v1.evaluation.gate_action",
+            new=AsyncMock(return_value=MagicMock()),
+            create=True,
         ),
     ):
         result = await get_evaluation_run(
             run_id=run_id,
+            request=MagicMock(),
             current_user=current_user,
             service=service,
             db=db,
@@ -242,12 +250,14 @@ async def test_delete_evaluation_run_calls_service() -> None:
             new=AsyncMock(return_value=project_id),
         ),
         patch(
-            "echoroo.api.v1.evaluation.check_project_access",
-            new=AsyncMock(),
+            "echoroo.api.v1.evaluation.gate_action",
+            new=AsyncMock(return_value=MagicMock()),
+            create=True,
         ),
     ):
         result = await delete_evaluation_run(
             run_id=run_id,
+            request=MagicMock(),
             current_user=current_user,
             service=service,
             db=db,

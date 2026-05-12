@@ -3,9 +3,24 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Request, status
 
+from echoroo.core.actions import (
+    ANNOTATION_BATCH_TAG_ACTION,
+    ANNOTATION_CLIP_GET_ACTION,
+    ANNOTATION_CLIP_TAG_CREATE_ACTION,
+    ANNOTATION_CLIP_TAG_DELETE_ACTION,
+    ANNOTATION_NOTE_CREATE_ACTION,
+    ANNOTATION_REVIEW_ACTION,
+    ANNOTATION_SOUND_EVENT_CREATE_ACTION,
+    ANNOTATION_SOUND_EVENT_DELETE_ACTION,
+    ANNOTATION_SOUND_EVENT_LIST_ACTION,
+    ANNOTATION_SOUND_EVENT_TAG_CREATE_ACTION,
+    ANNOTATION_SOUND_EVENT_TAG_DELETE_ACTION,
+    ANNOTATION_SOUND_EVENT_UPDATE_ACTION,
+)
 from echoroo.core.database import DbSession
+from echoroo.core.permissions import gate_action
 from echoroo.middleware.auth import CurrentUser
 from echoroo.repositories.clip_annotation import ClipAnnotationRepository
 from echoroo.repositories.note import NoteRepository
@@ -54,8 +69,10 @@ AnnotationServiceDep = Annotated[AnnotationService, Depends(get_annotation_servi
 async def get_or_create_clip_annotation(
     project_id: UUID,
     task_id: UUID,
+    request: Request,
     current_user: CurrentUser,
     service: AnnotationServiceDep,
+    db: DbSession,
 ) -> ClipAnnotationDetailResponse:
     """Get or create a clip annotation for an annotation task.
 
@@ -72,6 +89,13 @@ async def get_or_create_clip_annotation(
         401: Not authenticated
         404: Annotation task not found
     """
+    await gate_action(
+        action=ANNOTATION_CLIP_GET_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
     return await service.get_or_create_clip_annotation(task_id, current_user.id)
 
 
@@ -85,8 +109,10 @@ async def add_clip_tag(
     project_id: UUID,
     clip_annotation_id: UUID,
     request: AddTagRequest,
+    http_request: Request,
     current_user: CurrentUser,
     service: AnnotationServiceDep,
+    db: DbSession,
 ) -> ClipAnnotationDetailResponse:
     """Add a tag to a clip annotation.
 
@@ -104,6 +130,13 @@ async def add_clip_tag(
         401: Not authenticated
         404: Clip annotation not found
     """
+    await gate_action(
+        action=ANNOTATION_CLIP_TAG_CREATE_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=http_request,
+        db=db,
+    )
     return await service.add_clip_tag(clip_annotation_id, request.tag_id)
 
 
@@ -117,8 +150,10 @@ async def remove_clip_tag(
     project_id: UUID,
     clip_annotation_id: UUID,
     tag_id: UUID,
+    request: Request,
     current_user: CurrentUser,
     service: AnnotationServiceDep,
+    db: DbSession,
 ) -> ClipAnnotationDetailResponse:
     """Remove a tag from a clip annotation.
 
@@ -136,6 +171,13 @@ async def remove_clip_tag(
         401: Not authenticated
         404: Clip annotation not found
     """
+    await gate_action(
+        action=ANNOTATION_CLIP_TAG_DELETE_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
     await service.remove_clip_tag(clip_annotation_id, tag_id)
     # Return updated clip annotation
     updated = await service.clip_annotation_repo.get_by_id(clip_annotation_id)
@@ -158,8 +200,10 @@ async def remove_clip_tag(
 async def list_sound_events(
     project_id: UUID,
     clip_annotation_id: UUID,
+    request: Request,
     current_user: CurrentUser,
     service: AnnotationServiceDep,
+    db: DbSession,
 ) -> list[SoundEventAnnotationResponse]:
     """List sound event annotations for a clip annotation.
 
@@ -175,6 +219,13 @@ async def list_sound_events(
     Raises:
         401: Not authenticated
     """
+    await gate_action(
+        action=ANNOTATION_SOUND_EVENT_LIST_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
     sound_events = await service.sound_event_repo.list_by_clip_annotation(clip_annotation_id)
     return [SoundEventAnnotationResponse.model_validate(se) for se in sound_events]
 
@@ -190,8 +241,10 @@ async def create_sound_event(
     project_id: UUID,
     clip_annotation_id: UUID,
     request: SoundEventAnnotationCreate,
+    http_request: Request,
     current_user: CurrentUser,
     service: AnnotationServiceDep,
+    db: DbSession,
 ) -> SoundEventAnnotationResponse:
     """Create a new sound event annotation.
 
@@ -209,6 +262,13 @@ async def create_sound_event(
         401: Not authenticated
         404: Clip annotation not found
     """
+    await gate_action(
+        action=ANNOTATION_SOUND_EVENT_CREATE_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=http_request,
+        db=db,
+    )
     return await service.create_sound_event(clip_annotation_id, current_user.id, request)
 
 
@@ -222,8 +282,10 @@ async def update_sound_event(
     project_id: UUID,
     sound_event_id: UUID,
     request: SoundEventAnnotationUpdate,
+    http_request: Request,
     current_user: CurrentUser,
     service: AnnotationServiceDep,
+    db: DbSession,
 ) -> SoundEventAnnotationResponse:
     """Update a sound event annotation.
 
@@ -241,6 +303,13 @@ async def update_sound_event(
         401: Not authenticated
         404: Sound event annotation not found
     """
+    await gate_action(
+        action=ANNOTATION_SOUND_EVENT_UPDATE_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=http_request,
+        db=db,
+    )
     return await service.update_sound_event(sound_event_id, request)
 
 
@@ -253,8 +322,10 @@ async def update_sound_event(
 async def delete_sound_event(
     project_id: UUID,
     sound_event_id: UUID,
+    request: Request,
     current_user: CurrentUser,
     service: AnnotationServiceDep,
+    db: DbSession,
 ) -> None:
     """Delete a sound event annotation.
 
@@ -268,6 +339,13 @@ async def delete_sound_event(
         401: Not authenticated
         404: Sound event annotation not found
     """
+    await gate_action(
+        action=ANNOTATION_SOUND_EVENT_DELETE_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
     await service.delete_sound_event(sound_event_id)
 
 
@@ -281,8 +359,10 @@ async def add_sound_event_tag(
     project_id: UUID,
     sound_event_id: UUID,
     request: AddTagRequest,
+    http_request: Request,
     current_user: CurrentUser,
     service: AnnotationServiceDep,
+    db: DbSession,
 ) -> dict[str, object]:
     """Add a tag to a sound event annotation.
 
@@ -300,6 +380,13 @@ async def add_sound_event_tag(
         401: Not authenticated
         404: Sound event annotation not found
     """
+    await gate_action(
+        action=ANNOTATION_SOUND_EVENT_TAG_CREATE_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=http_request,
+        db=db,
+    )
     await service.add_sound_event_tag(sound_event_id, request.tag_id)
     return {}
 
@@ -314,8 +401,10 @@ async def remove_sound_event_tag(
     project_id: UUID,
     sound_event_id: UUID,
     tag_id: UUID,
+    request: Request,
     current_user: CurrentUser,
     service: AnnotationServiceDep,
+    db: DbSession,
 ) -> dict[str, object]:
     """Remove a tag from a sound event annotation.
 
@@ -333,6 +422,13 @@ async def remove_sound_event_tag(
         401: Not authenticated
         404: Sound event annotation not found
     """
+    await gate_action(
+        action=ANNOTATION_SOUND_EVENT_TAG_DELETE_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
     await service.remove_sound_event_tag(sound_event_id, tag_id)
     return {}
 
@@ -346,8 +442,10 @@ async def remove_sound_event_tag(
 async def batch_tag_clips(
     project_id: UUID,
     request: BatchTagRequest,
+    http_request: Request,
     current_user: CurrentUser,
     service: AnnotationServiceDep,
+    db: DbSession,
 ) -> BatchTagResponse:
     """Batch-tag multiple clips by task IDs.
 
@@ -365,6 +463,13 @@ async def batch_tag_clips(
         404: Any referenced annotation task not found
         422: task_ids is empty
     """
+    await gate_action(
+        action=ANNOTATION_BATCH_TAG_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=http_request,
+        db=db,
+    )
     return await service.batch_tag_clips(request.task_ids, request.tag_id, current_user.id)
 
 
@@ -379,8 +484,10 @@ async def add_note(
     project_id: UUID,
     clip_annotation_id: UUID,
     request: NoteCreate,
+    http_request: Request,
     current_user: CurrentUser,
     service: AnnotationServiceDep,
+    db: DbSession,
 ) -> NoteResponse:
     """Add a note to a clip annotation.
 
@@ -398,6 +505,13 @@ async def add_note(
         401: Not authenticated
         404: Clip annotation not found
     """
+    await gate_action(
+        action=ANNOTATION_NOTE_CREATE_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=http_request,
+        db=db,
+    )
     return await service.add_note(clip_annotation_id, current_user.id, request)
 
 
@@ -411,8 +525,10 @@ async def review_clip_annotation(
     project_id: UUID,
     clip_annotation_id: UUID,
     request: ReviewRequest,
+    http_request: Request,
     current_user: CurrentUser,
     service: AnnotationServiceDep,
+    db: DbSession,
 ) -> ClipAnnotationDetailResponse:
     """Review a clip annotation (approve or reject).
 
@@ -431,6 +547,13 @@ async def review_clip_annotation(
         404: Clip annotation not found
         422: Invalid review status
     """
+    await gate_action(
+        action=ANNOTATION_REVIEW_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=http_request,
+        db=db,
+    )
     return await service.review_clip_annotation(
         clip_annotation_id, current_user.id, request.status, request.comment
     )

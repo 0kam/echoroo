@@ -5,6 +5,11 @@ Phase 17 §C heavy-gap batch: covers the route handler bodies (lines
 368-370, 403-404, 433-434, 466-467, 493-494) by calling the handlers
 directly with mocked services so the module clears the 85% threshold
 without touching production code.
+
+Updated in spec/007 Phase 2A.6: handlers now accept ``request: Request``
+(or ``http_request: Request``) and call ``gate_action``; tests pass a
+``MagicMock()`` for those params and patch ``gate_action`` to a no-op
+``AsyncMock`` so the permission gate is bypassed.
 """
 
 from __future__ import annotations
@@ -23,6 +28,8 @@ from echoroo.schemas.admin import (
 from echoroo.schemas.license import LicenseCreate, LicenseUpdate
 from echoroo.schemas.recorder import RecorderCreate, RecorderUpdate
 
+_GATE_ACTION_PATH = "echoroo.api.v1.admin.gate_action"
+
 
 def _superuser_stub() -> MagicMock:
     user = MagicMock()
@@ -36,6 +43,11 @@ def _superuser_stub() -> MagicMock:
     return user
 
 
+def _mock_request() -> MagicMock:
+    """Return a lightweight stand-in for ``fastapi.Request``."""
+    return MagicMock()
+
+
 @pytest.mark.asyncio
 async def test_list_users_calls_admin_service_with_pagination() -> None:
     """list_users handler delegates to AdminService.list_users (lines 70-72)."""
@@ -44,8 +56,10 @@ async def test_list_users_calls_admin_service_with_pagination() -> None:
     service_instance.list_users = AsyncMock(return_value=sentinel)
     db = MagicMock()
     user = _superuser_stub()
-    with patch.object(mod, "AdminService", return_value=service_instance):
+    with patch.object(mod, "AdminService", return_value=service_instance), \
+            patch(_GATE_ACTION_PATH, new=AsyncMock(return_value=MagicMock()), create=True):
         out = await mod.list_users(
+            request=_mock_request(),
             db=db, current_user=user, page=2, limit=10,
             search=None, is_active=True,
         )
@@ -64,9 +78,11 @@ async def test_update_user_validates_response_model() -> None:
     request = AdminUserUpdateRequest(is_active=False)
 
     with patch.object(mod, "AdminService", return_value=service_instance), \
-            patch.object(mod.UserResponse, "model_validate", return_value="OK"):
+            patch.object(mod.UserResponse, "model_validate", return_value="OK"), \
+            patch(_GATE_ACTION_PATH, new=AsyncMock(return_value=MagicMock()), create=True):
         out = await mod.update_user(
-            user_id=uuid4(), request=request, db=db, current_user=user,
+            user_id=uuid4(), request=request, http_request=_mock_request(),
+            db=db, current_user=user,
         )
     assert out == "OK"
     service_instance.update_user.assert_awaited_once()
@@ -80,8 +96,11 @@ async def test_get_system_settings_passes_through() -> None:
     service_instance.get_system_settings = AsyncMock(return_value=sentinel)
     db = MagicMock()
     user = _superuser_stub()
-    with patch.object(mod, "AdminService", return_value=service_instance):
-        out = await mod.get_system_settings(db=db, current_user=user)
+    with patch.object(mod, "AdminService", return_value=service_instance), \
+            patch(_GATE_ACTION_PATH, new=AsyncMock(return_value=MagicMock()), create=True):
+        out = await mod.get_system_settings(
+            request=_mock_request(), db=db, current_user=user,
+        )
     assert out is sentinel
 
 
@@ -93,9 +112,10 @@ async def test_update_system_settings_uses_superuser_id() -> None:
     db = MagicMock()
     user = _superuser_stub()
     request = SystemSettingsUpdateRequest(allow_registration=True)
-    with patch.object(mod, "AdminService", return_value=service_instance):
+    with patch.object(mod, "AdminService", return_value=service_instance), \
+            patch(_GATE_ACTION_PATH, new=AsyncMock(return_value=MagicMock()), create=True):
         out = await mod.update_system_settings(
-            request=request, db=db, current_user=user,
+            request=request, http_request=_mock_request(), db=db, current_user=user,
         )
     assert out == {"message": "Settings updated successfully"}
     service_instance.update_system_settings.assert_awaited_once_with(
@@ -113,9 +133,10 @@ async def test_update_system_settings_rejects_when_superuser_id_missing() -> Non
     user._superuser_id = None
     request = SystemSettingsUpdateRequest(allow_registration=True)
     with patch.object(mod, "AdminService", return_value=service_instance), \
+            patch(_GATE_ACTION_PATH, new=AsyncMock(return_value=MagicMock()), create=True), \
             pytest.raises(HTTPException) as exc_info:
         await mod.update_system_settings(
-            request=request, db=db, current_user=user,
+            request=request, http_request=_mock_request(), db=db, current_user=user,
         )
     assert exc_info.value.status_code == 403
 
@@ -128,8 +149,11 @@ async def test_list_licenses_passes_through() -> None:
     service_instance.list_licenses = AsyncMock(return_value=sentinel)
     db = MagicMock()
     user = _superuser_stub()
-    with patch.object(mod, "LicenseService", return_value=service_instance):
-        out = await mod.list_licenses(db=db, current_user=user)
+    with patch.object(mod, "LicenseService", return_value=service_instance), \
+            patch(_GATE_ACTION_PATH, new=AsyncMock(return_value=MagicMock()), create=True):
+        out = await mod.list_licenses(
+            request=_mock_request(), db=db, current_user=user,
+        )
     assert out is sentinel
 
 
@@ -142,8 +166,11 @@ async def test_create_license_passes_through() -> None:
     db = MagicMock()
     user = _superuser_stub()
     request = LicenseCreate(id="cc-by-4.0", name="CC BY 4.0", short_name="CC-BY")
-    with patch.object(mod, "LicenseService", return_value=service_instance):
-        out = await mod.create_license(request=request, db=db, current_user=user)
+    with patch.object(mod, "LicenseService", return_value=service_instance), \
+            patch(_GATE_ACTION_PATH, new=AsyncMock(return_value=MagicMock()), create=True):
+        out = await mod.create_license(
+            request=request, http_request=_mock_request(), db=db, current_user=user,
+        )
     assert out is sentinel
 
 
@@ -155,8 +182,11 @@ async def test_get_license_passes_through() -> None:
     service_instance.get_license = AsyncMock(return_value=sentinel)
     db = MagicMock()
     user = _superuser_stub()
-    with patch.object(mod, "LicenseService", return_value=service_instance):
-        out = await mod.get_license(license_id="cc-by", db=db, current_user=user)
+    with patch.object(mod, "LicenseService", return_value=service_instance), \
+            patch(_GATE_ACTION_PATH, new=AsyncMock(return_value=MagicMock()), create=True):
+        out = await mod.get_license(
+            license_id="cc-by", request=_mock_request(), db=db, current_user=user,
+        )
     assert out is sentinel
 
 
@@ -169,9 +199,11 @@ async def test_update_license_passes_through() -> None:
     db = MagicMock()
     user = _superuser_stub()
     request = LicenseUpdate(name="renamed")
-    with patch.object(mod, "LicenseService", return_value=service_instance):
+    with patch.object(mod, "LicenseService", return_value=service_instance), \
+            patch(_GATE_ACTION_PATH, new=AsyncMock(return_value=MagicMock()), create=True):
         out = await mod.update_license(
-            license_id="cc-by", request=request, db=db, current_user=user,
+            license_id="cc-by", request=request, http_request=_mock_request(),
+            db=db, current_user=user,
         )
     assert out is sentinel
 
@@ -183,8 +215,11 @@ async def test_delete_license_passes_through() -> None:
     service_instance.delete_license = AsyncMock(return_value=None)
     db = MagicMock()
     user = _superuser_stub()
-    with patch.object(mod, "LicenseService", return_value=service_instance):
-        await mod.delete_license(license_id="cc-by", db=db, current_user=user)
+    with patch.object(mod, "LicenseService", return_value=service_instance), \
+            patch(_GATE_ACTION_PATH, new=AsyncMock(return_value=MagicMock()), create=True):
+        await mod.delete_license(
+            license_id="cc-by", request=_mock_request(), db=db, current_user=user,
+        )
     service_instance.delete_license.assert_awaited_once_with("cc-by")
 
 
@@ -196,8 +231,11 @@ async def test_list_recorders_passes_through() -> None:
     service_instance.list_recorders = AsyncMock(return_value=sentinel)
     db = MagicMock()
     user = _superuser_stub()
-    with patch.object(mod, "RecorderService", return_value=service_instance):
-        out = await mod.list_recorders(db=db, current_user=user, page=1, limit=20)
+    with patch.object(mod, "RecorderService", return_value=service_instance), \
+            patch(_GATE_ACTION_PATH, new=AsyncMock(return_value=MagicMock()), create=True):
+        out = await mod.list_recorders(
+            request=_mock_request(), db=db, current_user=user, page=1, limit=20,
+        )
     assert out is sentinel
 
 
@@ -214,8 +252,11 @@ async def test_create_recorder_passes_through() -> None:
         manufacturer="OpenAcoustic",
         recorder_name="AudioMoth",
     )
-    with patch.object(mod, "RecorderService", return_value=service_instance):
-        out = await mod.create_recorder(request=request, db=db, current_user=user)
+    with patch.object(mod, "RecorderService", return_value=service_instance), \
+            patch(_GATE_ACTION_PATH, new=AsyncMock(return_value=MagicMock()), create=True):
+        out = await mod.create_recorder(
+            request=request, http_request=_mock_request(), db=db, current_user=user,
+        )
     assert out is sentinel
 
 
@@ -227,8 +268,11 @@ async def test_get_recorder_passes_through() -> None:
     service_instance.get_recorder = AsyncMock(return_value=sentinel)
     db = MagicMock()
     user = _superuser_stub()
-    with patch.object(mod, "RecorderService", return_value=service_instance):
-        out = await mod.get_recorder(recorder_id="x", db=db, current_user=user)
+    with patch.object(mod, "RecorderService", return_value=service_instance), \
+            patch(_GATE_ACTION_PATH, new=AsyncMock(return_value=MagicMock()), create=True):
+        out = await mod.get_recorder(
+            recorder_id="x", request=_mock_request(), db=db, current_user=user,
+        )
     assert out is sentinel
 
 
@@ -241,9 +285,11 @@ async def test_update_recorder_passes_through() -> None:
     db = MagicMock()
     user = _superuser_stub()
     request = RecorderUpdate(recorder_name="rebrand")
-    with patch.object(mod, "RecorderService", return_value=service_instance):
+    with patch.object(mod, "RecorderService", return_value=service_instance), \
+            patch(_GATE_ACTION_PATH, new=AsyncMock(return_value=MagicMock()), create=True):
         out = await mod.update_recorder(
-            recorder_id="x", request=request, db=db, current_user=user,
+            recorder_id="x", request=request, http_request=_mock_request(),
+            db=db, current_user=user,
         )
     assert out is sentinel
 
@@ -255,6 +301,9 @@ async def test_delete_recorder_passes_through() -> None:
     service_instance.delete_recorder = AsyncMock(return_value=None)
     db = MagicMock()
     user = _superuser_stub()
-    with patch.object(mod, "RecorderService", return_value=service_instance):
-        await mod.delete_recorder(recorder_id="x", db=db, current_user=user)
+    with patch.object(mod, "RecorderService", return_value=service_instance), \
+            patch(_GATE_ACTION_PATH, new=AsyncMock(return_value=MagicMock()), create=True):
+        await mod.delete_recorder(
+            recorder_id="x", request=_mock_request(), db=db, current_user=user,
+        )
     service_instance.delete_recorder.assert_awaited_once_with("x")

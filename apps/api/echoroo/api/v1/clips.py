@@ -4,9 +4,21 @@ import asyncio
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 
+from echoroo.core.actions import (
+    CLIP_AUDIO_ACTION,
+    CLIP_CREATE_ACTION,
+    CLIP_DELETE_ACTION,
+    CLIP_DOWNLOAD_ACTION,
+    CLIP_GENERATE_ACTION,
+    CLIP_GET_ACTION,
+    CLIP_LIST_ACTION,
+    CLIP_SPECTROGRAM_ACTION,
+    CLIP_UPDATE_ACTION,
+)
 from echoroo.core.database import DbSession
+from echoroo.core.permissions import gate_action
 from echoroo.core.settings import get_settings
 from echoroo.middleware.auth import CurrentUser
 from echoroo.schemas.clip import (
@@ -65,8 +77,10 @@ ClipServiceDep = Annotated[ClipService, Depends(get_clip_service)]
 async def list_clips(
     project_id: UUID,
     recording_id: UUID,
+    request: Request,
     current_user: CurrentUser,
     service: ClipServiceDep,
+    db: DbSession,
     page: int = 1,
     page_size: int = 50,
     sort_by: str = "start_time",
@@ -90,6 +104,13 @@ async def list_clips(
     Raises:
         401: Not authenticated
     """
+    await gate_action(
+        action=CLIP_LIST_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
     clips, total = await service.list_by_recording(
         recording_id, page, page_size, sort_by, sort_order
     )
@@ -114,8 +135,10 @@ async def create_clip(
     project_id: UUID,
     recording_id: UUID,
     request: ClipCreate,
+    http_request: Request,
     current_user: CurrentUser,
     service: ClipServiceDep,
+    db: DbSession,
 ) -> ClipDetailResponse:
     """Create a new clip.
 
@@ -133,6 +156,13 @@ async def create_clip(
         400: Validation error
         401: Not authenticated
     """
+    await gate_action(
+        action=CLIP_CREATE_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=http_request,
+        db=db,
+    )
     try:
         clip = await service.create(
             recording_id=recording_id,
@@ -159,8 +189,10 @@ async def get_clip(
     project_id: UUID,
     recording_id: UUID,
     clip_id: UUID,
+    request: Request,
     current_user: CurrentUser,
     service: ClipServiceDep,
+    db: DbSession,
 ) -> ClipDetailResponse:
     """Get clip by ID.
 
@@ -178,6 +210,13 @@ async def get_clip(
         401: Not authenticated
         404: Clip not found
     """
+    await gate_action(
+        action=CLIP_GET_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
     clip = await service.get_by_id(clip_id)
     if not clip:
         raise HTTPException(status_code=404, detail="Clip not found")
@@ -210,8 +249,10 @@ async def update_clip(
     recording_id: UUID,
     clip_id: UUID,
     request: ClipUpdate,
+    http_request: Request,
     current_user: CurrentUser,
     service: ClipServiceDep,
+    db: DbSession,
 ) -> ClipDetailResponse:
     """Update clip.
 
@@ -231,6 +272,13 @@ async def update_clip(
         401: Not authenticated
         404: Clip not found
     """
+    await gate_action(
+        action=CLIP_UPDATE_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=http_request,
+        db=db,
+    )
     try:
         clip = await service.update(
             clip_id,
@@ -259,6 +307,7 @@ async def delete_clip(
     project_id: UUID,
     recording_id: UUID,
     clip_id: UUID,
+    request: Request,
     current_user: CurrentUser,
     service: ClipServiceDep,
     db: DbSession,
@@ -277,6 +326,13 @@ async def delete_clip(
         401: Not authenticated
         404: Clip not found
     """
+    await gate_action(
+        action=CLIP_DELETE_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
     if not await service.delete(clip_id):
         raise HTTPException(status_code=404, detail="Clip not found")
     await db.commit()
@@ -293,8 +349,10 @@ async def generate_clips(
     project_id: UUID,
     recording_id: UUID,
     request: ClipGenerateRequest,
+    http_request: Request,
     current_user: CurrentUser,
     service: ClipServiceDep,
+    db: DbSession,
 ) -> ClipGenerateResponse:
     """Auto-generate clips from recording.
 
@@ -312,6 +370,13 @@ async def generate_clips(
         400: Validation error
         401: Not authenticated
     """
+    await gate_action(
+        action=CLIP_GENERATE_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=http_request,
+        db=db,
+    )
     try:
         clips = await service.generate_clips(
             recording_id=recording_id,
@@ -338,9 +403,11 @@ async def get_clip_audio(
     project_id: UUID,
     recording_id: UUID,
     clip_id: UUID,
+    request: Request,
     current_user: CurrentUser,
     service: ClipServiceDep,
     audio_service: AudioServiceDep,
+    db: DbSession,
     speed: float = 1.0,
 ) -> Response:
     """Get clip audio (resampled for browser playback).
@@ -362,6 +429,13 @@ async def get_clip_audio(
         401: Not authenticated
         404: Clip or recording not found
     """
+    await gate_action(
+        action=CLIP_AUDIO_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
     clip = await service.get_by_id(clip_id)
     if not clip:
         raise HTTPException(status_code=404, detail="Clip not found")
@@ -401,9 +475,11 @@ async def get_clip_spectrogram(
     project_id: UUID,
     recording_id: UUID,
     clip_id: UUID,
+    request: Request,
     current_user: CurrentUser,
     service: ClipServiceDep,
     audio_service: AudioServiceDep,
+    db: DbSession,
     n_fft: int = 2048,
     hop_length: int = 512,
     freq_min: int = 0,
@@ -441,6 +517,13 @@ async def get_clip_spectrogram(
         401: Not authenticated
         404: Clip or recording not found
     """
+    await gate_action(
+        action=CLIP_SPECTROGRAM_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
     clip = await service.get_by_id(clip_id)
     if not clip:
         raise HTTPException(status_code=404, detail="Clip not found")
@@ -481,9 +564,11 @@ async def download_clip(
     project_id: UUID,
     recording_id: UUID,
     clip_id: UUID,
+    request: Request,
     current_user: CurrentUser,
     service: ClipServiceDep,
     audio_service: AudioServiceDep,
+    db: DbSession,
 ) -> Response:
     """Download clip as WAV file.
 
@@ -503,6 +588,13 @@ async def download_clip(
         401: Not authenticated
         404: Clip or recording not found
     """
+    await gate_action(
+        action=CLIP_DOWNLOAD_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
     clip = await service.get_by_id(clip_id)
     if not clip:
         raise HTTPException(status_code=404, detail="Clip not found")

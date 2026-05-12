@@ -3,9 +3,17 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Response, status
+from fastapi import APIRouter, Depends, Request, Response, status
 
+from echoroo.core.actions import (
+    ANNOTATION_TASK_COMPLETE_ACTION,
+    ANNOTATION_TASK_GET_ACTION,
+    ANNOTATION_TASK_LIST_ACTION,
+    ANNOTATION_TASK_NEXT_ACTION,
+    ANNOTATION_TASK_UPDATE_ACTION,
+)
 from echoroo.core.database import DbSession
+from echoroo.core.permissions import gate_action
 from echoroo.middleware.auth import CurrentUser
 from echoroo.models.enums import AnnotationTaskStatus
 from echoroo.repositories.annotation_project import AnnotationProjectRepository
@@ -53,8 +61,10 @@ AnnotationTaskServiceDep = Annotated[
 async def list_tasks(
     project_id: UUID,
     annotation_project_id: UUID,
+    request: Request,
     current_user: CurrentUser,
     service: AnnotationTaskServiceDep,
+    db: DbSession,
     task_status: AnnotationTaskStatus | None = None,
     assigned_to_id: UUID | None = None,
     page: int = 1,
@@ -82,6 +92,13 @@ async def list_tasks(
     Raises:
         401: Not authenticated
     """
+    await gate_action(
+        action=ANNOTATION_TASK_LIST_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
     return await service.list_tasks(
         annotation_project_id=annotation_project_id,
         status=task_status,
@@ -101,9 +118,11 @@ async def list_tasks(
 async def get_next_task(
     project_id: UUID,
     annotation_project_id: UUID,
+    request: Request,
     current_user: CurrentUser,
     service: AnnotationTaskServiceDep,
     response: Response,
+    db: DbSession,
 ) -> AnnotationTaskDetailResponse | None:
     """Get the next available annotation task for the current user.
 
@@ -123,6 +142,13 @@ async def get_next_task(
     Raises:
         401: Not authenticated
     """
+    await gate_action(
+        action=ANNOTATION_TASK_NEXT_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
     task = await service.get_next(annotation_project_id, current_user.id)
     if task is None:
         response.status_code = status.HTTP_204_NO_CONTENT
@@ -140,8 +166,10 @@ async def get_task(
     project_id: UUID,
     annotation_project_id: UUID,
     task_id: UUID,
+    request: Request,
     current_user: CurrentUser,
     service: AnnotationTaskServiceDep,
+    db: DbSession,
 ) -> AnnotationTaskDetailResponse:
     """Get annotation task detail.
 
@@ -159,6 +187,13 @@ async def get_task(
         401: Not authenticated
         404: Annotation task not found
     """
+    await gate_action(
+        action=ANNOTATION_TASK_GET_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
     return await service.get_detail(task_id)
 
 
@@ -173,8 +208,10 @@ async def update_task(
     annotation_project_id: UUID,
     task_id: UUID,
     request: AnnotationTaskUpdate,
+    http_request: Request,
     current_user: CurrentUser,
     service: AnnotationTaskServiceDep,
+    db: DbSession,
 ) -> AnnotationTaskDetailResponse:
     """Update an annotation task.
 
@@ -193,6 +230,13 @@ async def update_task(
         401: Not authenticated
         404: Annotation task not found
     """
+    await gate_action(
+        action=ANNOTATION_TASK_UPDATE_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=http_request,
+        db=db,
+    )
     return await service.update(task_id, request)
 
 
@@ -206,8 +250,10 @@ async def complete_task(
     project_id: UUID,
     annotation_project_id: UUID,
     task_id: UUID,
+    request: Request,
     current_user: CurrentUser,
     service: AnnotationTaskServiceDep,
+    db: DbSession,
 ) -> TaskCompletionResponse:
     """Complete an annotation task.
 
@@ -227,4 +273,11 @@ async def complete_task(
         401: Not authenticated
         404: Annotation task not found
     """
+    await gate_action(
+        action=ANNOTATION_TASK_COMPLETE_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
     return await service.complete(task_id, current_user.id)

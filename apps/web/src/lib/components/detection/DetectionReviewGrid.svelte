@@ -84,6 +84,10 @@
           locale,
         }),
       placeholderData: (prev: DetectionListResponse | undefined) => prev,
+      // spec/007 Phase 1.5 / AD-3: tag with projectId so the global
+      // QueryCache.onError hook can invalidate the project detail
+      // cache on a 403 demotion (vote permission lost mid-session, etc.).
+      meta: { projectId },
     })
   );
 
@@ -197,6 +201,7 @@
       vote: VoteValue;
       signalQuality?: SignalQuality;
     }) => castVote(projectId, detectionId, vote, signalQuality),
+    meta: { projectId },
     onMutate: ({ detectionId }) => {
       mutatingId = detectionId;
     },
@@ -214,6 +219,7 @@
   const removeVoteMutation = createMutation({
     mutationFn: ({ detectionId }: { detectionId: string }) =>
       deleteVote(projectId, detectionId),
+    meta: { projectId },
     onMutate: ({ detectionId }) => {
       mutatingId = detectionId;
     },
@@ -230,6 +236,7 @@
   const changeSpeciesMutation = createMutation({
     mutationFn: ({ detectionId, newTagId }: { detectionId: string; newTagId: string }) =>
       changeDetectionSpecies(projectId, detectionId, { new_tag_id: newTagId }),
+    meta: { projectId },
     onMutate: ({ detectionId }) => {
       mutatingId = detectionId;
     },

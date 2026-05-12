@@ -6,11 +6,12 @@
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
   import { projectsApi } from '$lib/api/projects';
-  import { authStore } from '$lib/stores/auth.svelte';
   import { ApiError } from '$lib/api/client';
   import { localizeHref } from '$lib/paraglide/runtime';
   import * as m from '$lib/paraglide/messages';
-  import type { Project, ProjectMember } from '$lib/types';
+  import type { Project } from '$lib/types';
+  import { authStore } from '$lib/stores/auth.svelte';
+  import { buildProjectContext, can } from '$lib/utils/permissions';
 
   // Predefined taxa options
   const TARGET_TAXA_OPTIONS = [
@@ -28,7 +29,6 @@
 
   // State
   let project = $state<Project | null>(null);
-  let members = $state<ProjectMember[]>([]);
   let name = $state('');
   let description = $state('');
   let selectedTaxa = $state<string[]>([]);
@@ -56,24 +56,27 @@
   let error = $state<string | null>(null);
   let successMessage = $state<string | null>(null);
 
-  // Current user
-  const currentUser = $derived(authStore.user);
-
-  // Check if current user is owner
-  const isOwner = $derived(
-    currentUser && project && project.owner.id === currentUser.id
+  // Phase 2B.3 (spec/007): permission gating goes through `can()` so
+  // the page no longer encodes the role -> permission mapping
+  // locally. `edit_project` is the canonical permission for the
+  // "edit settings" UI (owner + admin in the canonical matrix).
+  // The context is built directly from `authStore` + the loaded
+  // project; this page does NOT use TanStack Query for the project
+  // load, so we bypass `usePermissionContext` (which wraps a query
+  // store) and call `buildProjectContext` against the plain `project`
+  // state below.
+  const permissionContext = $derived(
+    buildProjectContext({
+      authStore: {
+        isAuthenticated: authStore.isAuthenticated,
+        user: authStore.user,
+      },
+      project: project ?? undefined,
+      projectQueryState: { isLoading, isError: error !== null },
+      pendingInvitationToken: null,
+    })
   );
-
-  // Check if current user has admin access (owner or admin role)
-  const hasAdminAccess = $derived(
-    (() => {
-      if (!currentUser || !project) return false;
-      if (isOwner) return true;
-
-      const member = members.find((m) => m.user.id === currentUser.id);
-      return member?.role === 'admin';
-    })()
-  );
+  const hasAdminAccess = $derived(can('edit_project', permissionContext));
 
   /**
    * Load project and members
@@ -83,13 +86,13 @@
     error = null;
 
     try {
-      const [projectData, membersData] = await Promise.all([
-        projectsApi.get(projectId),
-        projectsApi.listMembers(projectId),
-      ]);
+      // Phase 1 (spec/007): only fetch the project; `current_user_role`
+      // is returned as part of the project payload, so the separate
+      // `listMembers` call previously used solely for role derivation
+      // is no longer needed on this page.
+      const projectData = await projectsApi.get(projectId);
 
       project = projectData;
-      members = membersData;
 
       // Initialize form fields
       name = projectData.name;

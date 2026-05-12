@@ -5,12 +5,13 @@
 
   import { page } from '$app/stores';
   import { projectsApi } from '$lib/api/projects';
-  import { authStore } from '$lib/stores/auth.svelte';
   import { ApiError } from '$lib/api/client';
   import { localizeHref } from '$lib/paraglide/runtime';
   import type { Project, ProjectMember } from '$lib/types';
   import type { ProjectRole } from '$lib/stores/permissions';
   import { getRoleDescription, getRoleDisplayName } from '$lib/stores/permissions';
+  import { authStore } from '$lib/stores/auth.svelte';
+  import { buildProjectContext, can } from '$lib/utils/permissions';
   import * as m from '$lib/paraglide/messages';
 
   // Get project ID from URL
@@ -43,19 +44,27 @@
   // Tooltip state
   let showRoleTooltip = $state<string | null>(null);
 
-  // Current user
-  const currentUser = $derived(authStore.user);
-
-  // Check if current user is admin
-  const isAdmin = $derived(
-    (() => {
-      if (!currentUser || !project) return false;
-      if (project.owner.id === currentUser.id) return true;
-
-      const member = members.find((m) => m.user.id === currentUser.id);
-      return member?.role === 'admin';
-    })()
+  // Phase 2B.3 (spec/007): admin gating goes through `can()` against
+  // the canonical `manage_members` permission. `project.current_user_role`
+  // remains the source of truth for the role itself (resolved server
+  // side); we just stop hard-coding the role -> permission mapping
+  // locally. This page does NOT use TanStack Query for its loads, so
+  // we build the context directly via `buildProjectContext` rather
+  // than the `usePermissionContext` store helper. The `members`
+  // array is still rendered as the page's primary UI, but it is no
+  // longer consulted for permission gating.
+  const permissionContext = $derived(
+    buildProjectContext({
+      authStore: {
+        isAuthenticated: authStore.isAuthenticated,
+        user: authStore.user,
+      },
+      project: project ?? undefined,
+      projectQueryState: { isLoading, isError: error !== null },
+      pendingInvitationToken: null,
+    })
   );
+  const isAdmin = $derived(can('manage_members', permissionContext));
 
   /**
    * Load project and members

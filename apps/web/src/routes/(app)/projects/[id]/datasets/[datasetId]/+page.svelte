@@ -3,6 +3,10 @@
   import { goto } from '$app/navigation';
   import { createQuery, createMutation, useQueryClient } from '@tanstack/svelte-query';
   import { fetchDataset, updateDataset, deleteDataset } from '$lib/api/datasets';
+  import { projectsApi } from '$lib/api/projects';
+  import { projectQueryOptions } from '$lib/api/projectQueryOptions';
+  import { usePermissionContext } from '$lib/stores/permissionContext';
+  import { can } from '$lib/utils/permissions';
   import { localizeHref, getLocale } from '$lib/paraglide/runtime';
   import * as m from '$lib/paraglide/messages';
   import type { DatasetUpdate } from '$lib/types/data';
@@ -28,6 +32,43 @@
       queryKey: ['dataset', projectId, datasetId],
       queryFn: () => fetchDataset(projectId, datasetId),
     })
+  );
+
+  // Phase 1 (spec/007): fetch project to resolve `current_user_role`
+  // as the single source of truth for permission gating on this
+  // page. Phase 2B.3 wires the result through `usePermissionContext`
+  // and `can()` so the role -> permission mapping stays in
+  // `permissions.ts`. The `meta: { projectId }` stamp (via
+  // `projectQueryOptions`) lets the global 403 handler invalidate
+  // the right cache entry on demotion (AD-3 / Q23).
+  const projectQuery = $derived(
+    createQuery(
+      projectQueryOptions(projectId, {
+        queryKey: ['project', projectId],
+        queryFn: () => projectsApi.get(projectId),
+      }),
+    ),
+  );
+
+  const permissionContext = $derived(
+    usePermissionContext({
+      projectQuery,
+      routeParams: { invitationToken: null },
+    }),
+  );
+
+  // Phase 2B.3: canonical permission gates.
+  //   - `manage_dataset_admin` (admin/owner) for Edit/Delete dataset
+  //   - `manage_dataset` (admin/owner) for content actions
+  //     (file upload, datetime config, export). Note: member-tier
+  //     content mutate access goes through narrower permissions
+  //     (`upload`, `annotate`, `run_inference`); coarse-grained
+  //     "manage dataset" stays admin-tier per the canonical matrix.
+  const canManageDatasetAdmin = $derived(
+    can('manage_dataset_admin', $permissionContext),
+  );
+  const canManageDatasetContent = $derived(
+    can('manage_dataset', $permissionContext),
   );
 
   let showEditModal = $state(false);
@@ -113,7 +154,7 @@
           {/if}
         </div>
         <div class="flex flex-shrink-0 gap-2">
-          {#if dataset.status === 'completed'}
+          {#if dataset.status === 'completed' && canManageDatasetContent}
             <button
               onclick={() => (showExportDialog = true)}
               class="flex items-center gap-2 rounded-md bg-success px-3 py-2 text-sm font-medium text-white transition-colors hover:opacity-90"
@@ -126,18 +167,20 @@
               {m.dataset_detail_export_button()}
             </button>
           {/if}
-          <button
-            onclick={() => (showEditModal = true)}
-            class="rounded-md border border-stone-300 bg-surface-card px-3 py-2 text-sm font-medium text-stone-700 transition-colors hover:bg-stone-50"
-          >
-            {m.dataset_detail_edit_button()}
-          </button>
-          <button
-            onclick={() => (showDeleteConfirm = true)}
-            class="rounded-md border border-danger/20 bg-surface-card px-3 py-2 text-sm font-medium text-danger transition-colors hover:bg-danger-light"
-          >
-            {m.dataset_detail_delete_button()}
-          </button>
+          {#if canManageDatasetAdmin}
+            <button
+              onclick={() => (showEditModal = true)}
+              class="rounded-md border border-stone-300 bg-surface-card px-3 py-2 text-sm font-medium text-stone-700 transition-colors hover:bg-stone-50"
+            >
+              {m.dataset_detail_edit_button()}
+            </button>
+            <button
+              onclick={() => (showDeleteConfirm = true)}
+              class="rounded-md border border-danger/20 bg-surface-card px-3 py-2 text-sm font-medium text-danger transition-colors hover:bg-danger-light"
+            >
+              {m.dataset_detail_delete_button()}
+            </button>
+          {/if}
         </div>
       </div>
     </div>
@@ -228,7 +271,7 @@
     {/if}
 
     <!-- File Upload (available when dataset is pending or completed) -->
-    {#if dataset.status === 'pending' || dataset.status === 'completed'}
+    {#if (dataset.status === 'pending' || dataset.status === 'completed') && canManageDatasetContent}
       <FileUpload
         {projectId}
         {datasetId}
@@ -239,7 +282,7 @@
     {/if}
 
     <!-- Datetime parsing configuration (show when recordings exist) -->
-    {#if dataset.recording_count > 0}
+    {#if dataset.recording_count > 0 && canManageDatasetContent}
       <DatetimeConfigCard {projectId} {datasetId} />
     {/if}
 

@@ -5,6 +5,11 @@ branches (lines 142-149), ``list_sound_events`` (lines 178-179), and the
 ``add_sound_event_tag`` / ``remove_sound_event_tag`` empty-dict returns
 (lines 304, 337) using mocked services so the module clears the 85%
 threshold without touching production code.
+
+Updated in spec/007 Phase 2A.6: ``remove_clip_tag`` and
+``list_sound_events`` now accept ``request: Request`` and ``db: DbSession``
+for the ``gate_action`` guard; tests pass ``MagicMock()`` for both and
+patch ``gate_action`` to a no-op ``AsyncMock``.
 """
 
 from __future__ import annotations
@@ -17,6 +22,8 @@ from fastapi import HTTPException
 
 from echoroo.api.v1 import annotations as mod
 from echoroo.schemas.annotation import AddTagRequest
+
+_GATE_ACTION_PATH = "echoroo.api.v1.annotations.gate_action"
 
 
 def _build_service_with_clip_annotation(updated: object | None) -> MagicMock:
@@ -34,14 +41,18 @@ async def test_remove_clip_tag_returns_404_when_missing() -> None:
     """
     service = _build_service_with_clip_annotation(None)
     current_user = MagicMock()
+    db = MagicMock()
 
-    with pytest.raises(HTTPException) as excinfo:
+    with patch(_GATE_ACTION_PATH, new=AsyncMock(return_value=MagicMock()), create=True), \
+            pytest.raises(HTTPException) as excinfo:
         await mod.remove_clip_tag(
             project_id=uuid4(),
             clip_annotation_id=uuid4(),
             tag_id=uuid4(),
+            request=MagicMock(),
             current_user=current_user,
             service=service,
+            db=db,
         )
     assert excinfo.value.status_code == 404
 
@@ -52,16 +63,20 @@ async def test_remove_clip_tag_returns_validated_response_when_present() -> None
     fake_annotation = MagicMock()
     service = _build_service_with_clip_annotation(fake_annotation)
     current_user = MagicMock()
+    db = MagicMock()
 
-    with patch.object(
-        mod.ClipAnnotationDetailResponse, "model_validate", return_value="VALIDATED"
-    ):
+    with patch(_GATE_ACTION_PATH, new=AsyncMock(return_value=MagicMock()), create=True), \
+            patch.object(
+                mod.ClipAnnotationDetailResponse, "model_validate", return_value="VALIDATED"
+            ):
         result = await mod.remove_clip_tag(
             project_id=uuid4(),
             clip_annotation_id=uuid4(),
             tag_id=uuid4(),
+            request=MagicMock(),
             current_user=current_user,
             service=service,
+            db=db,
         )
     assert result == "VALIDATED"
 
@@ -78,15 +93,19 @@ async def test_list_sound_events_returns_validated_responses() -> None:
         return_value=[fake_se, fake_se]
     )
     current_user = MagicMock()
+    db = MagicMock()
 
-    with patch.object(
-        mod.SoundEventAnnotationResponse, "model_validate", return_value="SE"
-    ):
+    with patch(_GATE_ACTION_PATH, new=AsyncMock(return_value=MagicMock()), create=True), \
+            patch.object(
+                mod.SoundEventAnnotationResponse, "model_validate", return_value="SE"
+            ):
         result = await mod.list_sound_events(
             project_id=uuid4(),
             clip_annotation_id=uuid4(),
+            request=MagicMock(),
             current_user=current_user,
             service=service,
+            db=db,
         )
     assert result == ["SE", "SE"]
 
@@ -98,14 +117,18 @@ async def test_add_sound_event_tag_returns_empty_dict() -> None:
     service.add_sound_event_tag = AsyncMock()
     current_user = MagicMock()
     request = AddTagRequest(tag_id=uuid4())
+    db = MagicMock()
 
-    result = await mod.add_sound_event_tag(
-        project_id=uuid4(),
-        sound_event_id=uuid4(),
-        request=request,
-        current_user=current_user,
-        service=service,
-    )
+    with patch(_GATE_ACTION_PATH, new=AsyncMock(return_value=MagicMock()), create=True):
+        result = await mod.add_sound_event_tag(
+            project_id=uuid4(),
+            sound_event_id=uuid4(),
+            request=request,
+            http_request=MagicMock(),
+            current_user=current_user,
+            service=service,
+            db=db,
+        )
     assert result == {}
     service.add_sound_event_tag.assert_awaited_once()
 
@@ -118,13 +141,17 @@ async def test_remove_sound_event_tag_returns_empty_dict() -> None:
     service = MagicMock()
     service.remove_sound_event_tag = AsyncMock()
     current_user = MagicMock()
+    db = MagicMock()
 
-    result = await mod.remove_sound_event_tag(
-        project_id=uuid4(),
-        sound_event_id=uuid4(),
-        tag_id=uuid4(),
-        current_user=current_user,
-        service=service,
-    )
+    with patch(_GATE_ACTION_PATH, new=AsyncMock(return_value=MagicMock()), create=True):
+        result = await mod.remove_sound_event_tag(
+            project_id=uuid4(),
+            sound_event_id=uuid4(),
+            tag_id=uuid4(),
+            request=MagicMock(),
+            current_user=current_user,
+            service=service,
+            db=db,
+        )
     assert result == {}
     service.remove_sound_event_tag.assert_awaited_once()

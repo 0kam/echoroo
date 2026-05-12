@@ -46,6 +46,7 @@ EXPECTED_CANONICAL_WRITE: frozenset[str] = frozenset(
         Permission.UPLOAD.value,
         Permission.MANAGE_SITE.value,
         Permission.MANAGE_DATASET.value,
+        Permission.MANAGE_DATASET_ADMIN.value,
         Permission.RUN_INFERENCE.value,
         Permission.TRAIN_MODEL.value,
         Permission.MANAGE_MEMBERS.value,
