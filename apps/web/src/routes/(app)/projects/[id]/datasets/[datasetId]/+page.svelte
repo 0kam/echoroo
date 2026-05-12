@@ -3,6 +3,7 @@
   import { goto } from '$app/navigation';
   import { createQuery, createMutation, useQueryClient } from '@tanstack/svelte-query';
   import { fetchDataset, updateDataset, deleteDataset } from '$lib/api/datasets';
+  import { projectsApi } from '$lib/api/projects';
   import { localizeHref, getLocale } from '$lib/paraglide/runtime';
   import * as m from '$lib/paraglide/messages';
   import type { DatasetUpdate } from '$lib/types/data';
@@ -28,6 +29,33 @@
       queryKey: ['dataset', projectId, datasetId],
       queryFn: () => fetchDataset(projectId, datasetId),
     })
+  );
+
+  // Phase 1 (spec/007): fetch project to resolve `current_user_role`
+  // as the single source of truth for permission gating on this page.
+  // TODO Phase 2B.3: replace the role comparisons below with `can()`
+  //   - `manage_dataset_admin` (admin/owner) for Edit/Delete dataset
+  //   - `manage_dataset` (member/admin/owner) for content actions
+  //     (clip generation, annotation, etc.)
+  const projectQuery = $derived(
+    createQuery({
+      queryKey: ['project', projectId],
+      queryFn: () => projectsApi.get(projectId),
+    })
+  );
+
+  const currentUserRole = $derived($projectQuery.data?.current_user_role ?? null);
+
+  // TODO Phase 2B.3: replace with can('manage_dataset_admin', ctx)
+  const canManageDatasetAdmin = $derived(
+    currentUserRole === 'owner' || currentUserRole === 'admin'
+  );
+
+  // TODO Phase 2B.3: replace with can('manage_dataset', ctx)
+  const canManageDatasetContent = $derived(
+    currentUserRole === 'owner' ||
+      currentUserRole === 'admin' ||
+      currentUserRole === 'member'
   );
 
   let showEditModal = $state(false);
@@ -113,7 +141,8 @@
           {/if}
         </div>
         <div class="flex flex-shrink-0 gap-2">
-          {#if dataset.status === 'completed'}
+          <!-- TODO Phase 2B.3: replace with can('manage_dataset', ctx) -->
+          {#if dataset.status === 'completed' && canManageDatasetContent}
             <button
               onclick={() => (showExportDialog = true)}
               class="flex items-center gap-2 rounded-md bg-success px-3 py-2 text-sm font-medium text-white transition-colors hover:opacity-90"
@@ -126,18 +155,21 @@
               {m.dataset_detail_export_button()}
             </button>
           {/if}
-          <button
-            onclick={() => (showEditModal = true)}
-            class="rounded-md border border-stone-300 bg-surface-card px-3 py-2 text-sm font-medium text-stone-700 transition-colors hover:bg-stone-50"
-          >
-            {m.dataset_detail_edit_button()}
-          </button>
-          <button
-            onclick={() => (showDeleteConfirm = true)}
-            class="rounded-md border border-danger/20 bg-surface-card px-3 py-2 text-sm font-medium text-danger transition-colors hover:bg-danger-light"
-          >
-            {m.dataset_detail_delete_button()}
-          </button>
+          <!-- TODO Phase 2B.3: replace with can('manage_dataset_admin', ctx) -->
+          {#if canManageDatasetAdmin}
+            <button
+              onclick={() => (showEditModal = true)}
+              class="rounded-md border border-stone-300 bg-surface-card px-3 py-2 text-sm font-medium text-stone-700 transition-colors hover:bg-stone-50"
+            >
+              {m.dataset_detail_edit_button()}
+            </button>
+            <button
+              onclick={() => (showDeleteConfirm = true)}
+              class="rounded-md border border-danger/20 bg-surface-card px-3 py-2 text-sm font-medium text-danger transition-colors hover:bg-danger-light"
+            >
+              {m.dataset_detail_delete_button()}
+            </button>
+          {/if}
         </div>
       </div>
     </div>
@@ -228,7 +260,8 @@
     {/if}
 
     <!-- File Upload (available when dataset is pending or completed) -->
-    {#if dataset.status === 'pending' || dataset.status === 'completed'}
+    <!-- TODO Phase 2B.3: replace with can('manage_dataset', ctx) -->
+    {#if (dataset.status === 'pending' || dataset.status === 'completed') && canManageDatasetContent}
       <FileUpload
         {projectId}
         {datasetId}
@@ -239,7 +272,8 @@
     {/if}
 
     <!-- Datetime parsing configuration (show when recordings exist) -->
-    {#if dataset.recording_count > 0}
+    <!-- TODO Phase 2B.3: replace with can('manage_dataset', ctx) -->
+    {#if dataset.recording_count > 0 && canManageDatasetContent}
       <DatetimeConfigCard {projectId} {datasetId} />
     {/if}
 

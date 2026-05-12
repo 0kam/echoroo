@@ -6,11 +6,10 @@
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
   import { projectsApi } from '$lib/api/projects';
-  import { authStore } from '$lib/stores/auth.svelte';
   import { ApiError } from '$lib/api/client';
   import { localizeHref } from '$lib/paraglide/runtime';
   import * as m from '$lib/paraglide/messages';
-  import type { Project, ProjectMember } from '$lib/types';
+  import type { Project } from '$lib/types';
 
   // Predefined taxa options
   const TARGET_TAXA_OPTIONS = [
@@ -28,7 +27,6 @@
 
   // State
   let project = $state<Project | null>(null);
-  let members = $state<ProjectMember[]>([]);
   let name = $state('');
   let description = $state('');
   let selectedTaxa = $state<string[]>([]);
@@ -56,23 +54,14 @@
   let error = $state<string | null>(null);
   let successMessage = $state<string | null>(null);
 
-  // Current user
-  const currentUser = $derived(authStore.user);
-
-  // Check if current user is owner
-  const isOwner = $derived(
-    currentUser && project && project.owner.id === currentUser.id
-  );
-
-  // Check if current user has admin access (owner or admin role)
+  // Check if current user has admin access (owner or admin role).
+  // Phase 1 (spec/007): role is derived from `project.current_user_role`
+  // as the single source of truth. The previous `members.find(...).role`
+  // pattern is removed; it duplicated server-resolved role state and
+  // could drift after demotion/promotion.
   const hasAdminAccess = $derived(
-    (() => {
-      if (!currentUser || !project) return false;
-      if (isOwner) return true;
-
-      const member = members.find((m) => m.user.id === currentUser.id);
-      return member?.role === 'admin';
-    })()
+    project?.current_user_role === 'owner' ||
+      project?.current_user_role === 'admin'
   );
 
   /**
@@ -83,13 +72,13 @@
     error = null;
 
     try {
-      const [projectData, membersData] = await Promise.all([
-        projectsApi.get(projectId),
-        projectsApi.listMembers(projectId),
-      ]);
+      // Phase 1 (spec/007): only fetch the project; `current_user_role`
+      // is returned as part of the project payload, so the separate
+      // `listMembers` call previously used solely for role derivation
+      // is no longer needed on this page.
+      const projectData = await projectsApi.get(projectId);
 
       project = projectData;
-      members = membersData;
 
       // Initialize form fields
       name = projectData.name;

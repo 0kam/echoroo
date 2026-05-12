@@ -5,7 +5,6 @@
 
   import { page } from '$app/stores';
   import { projectsApi } from '$lib/api/projects';
-  import { authStore } from '$lib/stores/auth.svelte';
   import { ApiError } from '$lib/api/client';
   import { localizeHref } from '$lib/paraglide/runtime';
   import type { Project, ProjectMember } from '$lib/types';
@@ -43,18 +42,15 @@
   // Tooltip state
   let showRoleTooltip = $state<string | null>(null);
 
-  // Current user
-  const currentUser = $derived(authStore.user);
-
-  // Check if current user is admin
+  // Check if current user is admin (owner or admin role).
+  // Phase 1 (spec/007): role is derived from `project.current_user_role`
+  // as the single source of truth. The previous `members.find(...).role`
+  // pattern is removed; it duplicated server-resolved role state and
+  // could drift after demotion/promotion. The `members` array itself
+  // remains because the page still renders the member list UI below.
   const isAdmin = $derived(
-    (() => {
-      if (!currentUser || !project) return false;
-      if (project.owner.id === currentUser.id) return true;
-
-      const member = members.find((m) => m.user.id === currentUser.id);
-      return member?.role === 'admin';
-    })()
+    project?.current_user_role === 'owner' ||
+      project?.current_user_role === 'admin'
   );
 
   /**
