@@ -1,0 +1,62 @@
+name: permissions-fixture-drift
+
+# spec/007 Phase 2B.0 + §AD-8 — CI drift gate for the backend → frontend
+# permission matrix export. The fixture
+# ``apps/web/src/lib/utils/__fixtures__/role_permissions.json`` is regenerated
+# by ``scripts/export_role_permissions_to_json.py`` from the backend's
+# Canonical Matrix (``apps/api/echoroo/core/permissions.py``). When any of
+# those three files change, this workflow re-runs the export in ``--check``
+# mode and fails if the committed fixture does not match.
+#
+# Why a dedicated workflow (not a step in ``ci.yml``):
+#   * Targeted ``paths:`` triggers keep CI minutes low — most PRs do not
+#     touch the matrix.
+#   * Failure messages stay close to the offending file so the reviewer
+#     immediately sees that the frontend binding needs regeneration.
+#
+# Local invocation (matches the CI command bit-for-bit):
+#
+#   cd apps/api && uv run python ../../scripts/export_role_permissions_to_json.py --check
+
+on:
+  pull_request:
+    paths:
+      - 'apps/api/echoroo/core/permissions.py'
+      - 'apps/web/src/lib/utils/__fixtures__/role_permissions.json'
+      - 'scripts/export_role_permissions_to_json.py'
+      - '.github/workflows/permissions-fixture-drift.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'apps/api/echoroo/core/permissions.py'
+      - 'apps/web/src/lib/utils/__fixtures__/role_permissions.json'
+      - 'scripts/export_role_permissions_to_json.py'
+      - '.github/workflows/permissions-fixture-drift.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  check-fixture:
+    name: Permissions fixture drift check (spec/007 Phase 2B.0)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv + Python 3.11
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.11"
+          enable-cache: true
+          cache-dependency-glob: "apps/api/uv.lock"
+          pyproject-file: "apps/api/pyproject.toml"
+
+      - name: Install backend dependencies
+        working-directory: apps/api
+        run: uv sync --all-extras --dev
+
+      - name: Check role_permissions.json fixture drift
+        working-directory: apps/api
+        run: uv run python ../../scripts/export_role_permissions_to_json.py --check
