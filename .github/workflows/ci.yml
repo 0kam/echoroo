@@ -267,6 +267,11 @@ jobs:
         # which actually blocks merge on hash tampering. The flag has been
         # removed here to avoid suggesting it provides a guarantee it does
         # not.
+        # 2026-05-12: ``continue-on-error: true`` restores the documented
+        # "advisory-only" semantics — the uv hash chain above is the
+        # blocking gate; pip-audit annotates but does not fail the job.
+        # The 2-step hybrid gate (Phase 17 A-9 design) requires this flag.
+        continue-on-error: true
         run: |
           uvx pip-audit==2.10.0 \
             --disable-pip \
