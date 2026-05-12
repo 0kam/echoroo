@@ -39,7 +39,7 @@ def _resolve_script_path() -> Path:
     if override:
         return Path(override)
     candidates = [
-        Path(__file__).resolve().parents[4] / "scripts" / "export_role_permissions_to_json.py",
+        Path(__file__).resolve().parents[5] / "scripts" / "export_role_permissions_to_json.py",
         # Common dev-container location after ``docker cp``.
         Path("/tmp/export_role_permissions_to_json.py"),
     ]

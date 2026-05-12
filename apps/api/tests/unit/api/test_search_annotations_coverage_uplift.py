@@ -118,6 +118,7 @@ async def test_create_search_annotation_returns_existing_when_duplicate() -> Non
         result = await mod.create_search_annotation(
             project_id=uuid4(),
             request=request,
+            http_request=MagicMock(),
             current_user=user,
             db=db,
         )
@@ -153,6 +154,7 @@ async def test_create_search_annotation_creates_new_annotation() -> None:
         result = await mod.create_search_annotation(
             project_id=uuid4(),
             request=request,
+            http_request=MagicMock(),
             current_user=user,
             db=db,
         )
