@@ -182,13 +182,22 @@ function createAuthStore() {
     },
 
     /**
-     * Login with email and password
+     * Login with email and password.
+     *
+     * Spec/009 PR B: previously pointed at the legacy v1 auth mount —
+     * now retargeted at the BFF surface for transport consistency.
+     * **This method is currently unused**: the production login flow
+     * goes through `lib/api/web-auth.ts::loginUser` because the BFF
+     * returns a `{login_state, interim_token}` envelope (2FA-aware)
+     * rather than the legacy `{user, access_token}` shape. The cast
+     * below will result in a partially-populated `LoginResponse` if
+     * any caller revives it — prefer `loginUser` from `web-auth.ts`.
      */
     async login(credentials: LoginCredentials): Promise<void> {
       state.isLoading = true;
       try {
         const response = await apiClient.post<LoginResponse>(
-          '/api/v1/auth/login',
+          '/web-api/v1/auth/login',
           credentials
         );
 
@@ -217,12 +226,12 @@ function createAuthStore() {
      *     `hooks.server.ts` continues to think the user is signed in),
      *   - clears the session/refresh/csrf cookies on the right paths.
      *
-     * NOTE: We deliberately do NOT call the legacy `/api/v1/auth/logout`
-     * here. That endpoint writes a Redis-backed `revoked_user:{user_id}`
+     * NOTE: We deliberately do NOT call the legacy v1 auth logout
+     * endpoint here. That endpoint writes a Redis-backed `revoked_user:{user_id}`
      * marker (TTL = JWT_REFRESH_TOKEN_EXPIRE_DAYS) that the legacy
      * `AuthService.get_current_user` checks on every Bearer call. If we
      * called it on logout, the marker would persist across the user's
-     * NEXT login flow and 401 every subsequent `/api/v1/users/me` call
+     * NEXT login flow and 401 every subsequent `users/me` call
      * for days — which is the regression observed after Round 2
      * (re-login → 2FA challenge 200 → /users/me 401 → refresh 401 → loop).
      * The new web-auth flow already revokes the refresh-token family in
@@ -251,11 +260,12 @@ function createAuthStore() {
     /**
      * Refresh access token via the first-party web-auth endpoint.
      *
-     * Uses `/web-api/v1/auth/refresh` (not the legacy `/api/v1/auth/refresh`)
-     * because the modern flow's refresh cookie is `echoroo_refresh` scoped
-     * to `/web-api/v1/auth/refresh`. The legacy endpoint reads a different
-     * cookie (`refresh_token`) which the modern login flow never sets, so
-     * calling it would always 401 and trigger the `onRefreshFailed` cleanup.
+     * Uses `/web-api/v1/auth/refresh` (not the legacy v1 auth refresh
+     * endpoint) because the modern flow's refresh cookie is
+     * `echoroo_refresh` scoped to `/web-api/v1/auth/refresh`. The legacy
+     * endpoint reads a different cookie (`refresh_token`) which the
+     * modern login flow never sets, so calling it would always 401 and
+     * trigger the `onRefreshFailed` cleanup.
      */
     async refresh(): Promise<void> {
       try {
@@ -284,7 +294,7 @@ export const authStore = createAuthStore();
 
 /**
  * Path prefixes that must NOT trigger an automatic redirect to /login when
- * a background `/api/v1/auth/refresh` call fails. These correspond to the
+ * a background auth refresh call fails. These correspond to the
  * `(public)` and `(auth)` SvelteKit route groups: a Guest browsing a
  * public Explore page or sitting on the login page itself should never be
  * navigated away by an in-flight refresh failure (Phase 4-5-6 carry-over

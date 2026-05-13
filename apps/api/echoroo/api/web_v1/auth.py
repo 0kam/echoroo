@@ -43,6 +43,8 @@ from echoroo.models.password_reset_token import PasswordResetToken
 from echoroo.models.user import User
 from echoroo.repositories.superuser_credentials import get_default_store
 from echoroo.repositories.user import UserRepository
+from echoroo.schemas.auth import EmailVerifyRequest as LegacyEmailVerifyRequest
+from echoroo.schemas.auth import UserResponse as LegacyUserResponse
 from echoroo.schemas.web_v1.auth import (
     LoginRequest,
     LoginResponse,
@@ -66,6 +68,7 @@ from echoroo.schemas.web_v1.auth import (
 )
 from echoroo.services import outbox_service
 from echoroo.services.audit_service import AuditLogService
+from echoroo.services.auth import AuthService as LegacyAuthService
 from echoroo.services.auth_service import (
     AccountLockedError,
     HibpChecker,
@@ -1110,6 +1113,60 @@ async def confirm_password_reset(
         status_code=status.HTTP_204_NO_CONTENT,
         headers={"Cache-Control": "no-store, max-age=0"},
     )
+
+
+# ---------------------------------------------------------------------------
+# /verify-email — spec/009 PR B follow-up
+# ---------------------------------------------------------------------------
+#
+# Mirrors the legacy ``POST /api/v1/auth/verify-email`` handler so the
+# frontend (apps/web/src/lib/api/auth.ts ``verifyEmail()``) — which was
+# rewired to the BFF path in PR B for forward consistency — can land its
+# call in production. research.md §D-3 understated this gap: the BFF
+# surface did not previously expose ``/verify-email``, so post-PR-B the
+# email-verification link 404'd.
+#
+# Auth posture: PUBLIC (no session yet, no auth dependency). The user is
+# verifying the email address attached to their account *before* their
+# first successful login can complete; presenting a session cookie is
+# impossible by construction. The path is registered in
+# ``echoroo.core.auth_paths.PUBLIC_AUTH_PATHS`` so both
+# :class:`echoroo.middleware.auth_router.AuthRouterMiddleware` and
+# :class:`echoroo.middleware.csrf.CsrfMiddleware` bypass the request —
+# identical posture to the sibling ``/password-reset/confirm`` handler
+# above (same "POST from email link, no session, no CSRF token
+# possible" shape).
+#
+# Service call: reuses ``echoroo.services.auth.AuthService.verify_email``,
+# the exact entry point the legacy v1 handler invokes, so behaviour is
+# byte-identical (today: 501 Phase-4 stub; whatever the real Phase-4
+# implementation lands as, both surfaces inherit it).
+#
+# NOTE (spec/009 PR B follow-up): the frontend exposes a "resend
+# verification email" button that calls /verify-email/resend. Neither
+# the legacy v1 nor BFF surface implements this endpoint; the button
+# has been broken since before spec/009. Adding a working resend is
+# tracked separately and out of PR B scope.
+@router.post(
+    "/verify-email",
+    response_model=LegacyUserResponse,
+    summary="Verify email address",
+    description=(
+        "Verify a user's email address using a one-time token issued in the "
+        "registration email. Pre-session endpoint: no auth, no CSRF — the "
+        "token itself is the proof. Mirrors the legacy "
+        "``POST /api/v1/auth/verify-email`` surface (spec/009 PR B inventory "
+        "gap follow-up)."
+    ),
+)
+async def verify_email(
+    payload: LegacyEmailVerifyRequest,
+    db: DbSession,
+) -> LegacyUserResponse:
+    """Verify user email with token (BFF mirror of legacy /api/v1/auth/verify-email)."""
+    auth_service = LegacyAuthService(db)
+    user = await auth_service.verify_email(payload.token)
+    return LegacyUserResponse.model_validate(user)
 
 
 @router.post("/login", response_model=LoginResponse)

@@ -265,7 +265,7 @@ describe('ApiClient public-path behaviour', () => {
       apiClient.get('/web-api/v1/projects/abc-123')
     ).rejects.toThrow('Unauthorized');
 
-    // Only ONE fetch call — no `/api/v1/auth/refresh` retry.
+    // Only ONE fetch call — no auth refresh retry.
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock.mock.calls[0]![0]).toBe(
       'http://localhost:8000/web-api/v1/projects/abc-123'

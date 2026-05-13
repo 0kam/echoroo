@@ -60,15 +60,17 @@ description: "Task list for spec/009 — Complete Browser API → BFF Migration"
 
 ### PR B — residual auth follow-up (frontend-only rewire)
 
-- [ ] T012 Rewire `lib/api/auth.ts` `register()` to call `/web-api/v1/auth/register` via `callWebApi()` (CSRF token attached); preserve existing request/response types
-- [ ] T013 Rewire `lib/api/auth.ts` `requestEmailVerification()` and `resendEmailVerification()` to BFF (`/web-api/v1/auth/verify-email[/resend]`)
-- [ ] T014 Rewire `lib/api/auth.ts` `requestPasswordReset()` and `confirmPasswordReset()` to BFF
-- [ ] T015 Audit `apps/web/src/hooks.server.ts` for any direct `/api/v1/auth/*` references; rewire as needed using cookie forwarding to BFF
-- [ ] T016 Audit `apps/web/src/lib/api/web-auth.ts` for residual legacy calls; rewire
-- [ ] T017 Run `bash scripts/audit_browser_api_v1.sh auth` and confirm zero hits
-- [ ] T018 Append `/web-api/v1/auth/register`, `/web-api/v1/auth/verify-email`, `/web-api/v1/auth/verify-email/resend`, `/web-api/v1/auth/password-reset/request`, `/web-api/v1/auth/password-reset/confirm` to `apps/api/tests/contract/_bff_path_parity_allowlist.py`
-- [ ] T019 Gate 1/2 for PR B: `(cd apps/api && uv run ruff check . && uv run mypy . && uv run pytest tests/integration/api/web_v1/test_auth.py -q)` and `(cd apps/web && npm run check && npm run test -- --run lib/api/auth)`
-- [ ] T020 Gate 3 browser smoke for PR B per quickstart.md PR B row: register a fresh throwaway account, resend verification, request password reset — confirm zero 401s, zero `/api/v1/auth/*` network hits
+- [X] T012 Rewire `lib/api/auth.ts` `register()` to call `/web-api/v1/auth/register` via `callWebApi()` (CSRF token attached); preserve existing request/response types
+- [X] T013 Rewire `lib/api/auth.ts` `requestEmailVerification()` and `resendEmailVerification()` to BFF (`/web-api/v1/auth/verify-email[/resend]`)
+- [X] T014 Rewire `lib/api/auth.ts` `requestPasswordReset()` and `confirmPasswordReset()` to BFF
+- [X] T015 Audit `apps/web/src/hooks.server.ts` for any direct `/api/v1/auth/*` references; rewire as needed using cookie forwarding to BFF
+- [X] T016 Audit `apps/web/src/lib/api/web-auth.ts` for residual legacy calls; rewire
+- [X] T017 Run `bash scripts/audit_browser_api_v1.sh auth` and confirm zero hits
+- [X] T018 Append `/web-api/v1/auth/register`, `/web-api/v1/auth/verify-email`, `/web-api/v1/auth/verify-email/resend`, `/web-api/v1/auth/password-reset/request`, `/web-api/v1/auth/password-reset/confirm` to `apps/api/tests/contract/_bff_path_parity_allowlist.py`
+- [X] T019 Gate 1/2 for PR B: `(cd apps/api && uv run ruff check . && uv run mypy . && uv run pytest tests/integration/api/web_v1/test_auth.py -q)` and `(cd apps/web && npm run check && npm run test -- --run lib/api/auth)`
+- [X] T020 Gate 3 browser smoke for PR B per quickstart.md PR B row: register a fresh throwaway account, resend verification, request password reset — confirm zero 401s, zero `/api/v1/auth/*` network hits. **Verified 2026-05-13** via Playwright MCP: `spec009-prb-test+20260513@echoroo.app` registered (`POST /web-api/v1/auth/register` → 201), password-reset requested (`POST /web-api/v1/auth/password-reset/request` → 204, "Check your email" UI rendered). Network log filtered on `/api/v1/auth/` returned **zero hits**. Only console error is the expected `POST /web-api/v1/auth/refresh → 401` on initial pre-session load. verify-email + resend not exercised — `auth_service.verify_email` is a Phase-4 501 stub on both surfaces (pre-existing, not a PR B regression)
+
+> **Footnote — PR B in-scope backend fix (2026-05-13)**: research.md §D-3 understated the auth-router inventory. The BFF surface lacked a `/verify-email` mirror, so the frontend rewire in T013 would have 404'd in production (the registration email link is the only entry point and a fresh user cannot complete first-login without it). PR B therefore in-scope adds `POST /web-api/v1/auth/verify-email` to `apps/api/echoroo/api/web_v1/auth.py` — a byte-for-byte mirror of the legacy `apps/api/echoroo/api/v1/auth.py` handler: same `EmailVerifyRequest` schema, same shared `echoroo.services.auth.AuthService.verify_email` entry point (currently a 501 Phase-4 stub; both surfaces flip together when Phase 4 lands), same `UserResponse`, PUBLIC auth posture via `core.auth_paths.PUBLIC_AUTH_PATHS` (sibling pattern to `/password-reset/confirm`). The audit script (`scripts/audit_browser_api_v1.sh`) was also fixed for a silent-failure bug (`rg` missing → `|| true` masked it as zero-hits); rg/grep fallback added with explicit exit-code discrimination. A new TDD test at `apps/api/tests/integration/api/web_v1/test_auth_verify_email.py` pins route existence + service-wiring + FR-006 for the new route. The `/verify-email/resend` endpoint is intentionally still NOT added — it has been broken at runtime since before spec/009 (the legacy v1 never implemented it either) and is tracked separately.
 
 **Checkpoint**: Foundational phase complete. User story work can proceed in parallel where dependencies allow.
 

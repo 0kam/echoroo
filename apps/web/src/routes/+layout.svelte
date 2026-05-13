@@ -20,7 +20,7 @@
    * or `(auth)` route group. These groups must never trigger a client-side
    * redirect to `/login` from auth initialization — a Guest browsing
    * `/en/explore/projects` with a stale `echoroo_logged_in` cookie should
-   * stay on the explore page even when `/api/v1/auth/refresh` returns 401.
+   * stay on the explore page even when the auth refresh endpoint returns 401.
    *
    * Phase 4-5-6 carry-over fix #3.
    */

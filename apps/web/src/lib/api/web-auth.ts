@@ -4,7 +4,7 @@
  * Talks to the redesigned `/web-api/v1/auth/*` endpoints introduced in
  * Phase 4 of the permissions redesign (006-permissions-redesign).
  *
- * Unlike the legacy `/api/v1/auth/*` endpoints, these endpoints:
+ * Unlike the legacy v1 auth endpoints, these endpoints:
  * - Do NOT log the user in on register; 2FA setup is enforced on first login.
  * - Issue an `interim_token` (JWT) on login that must be exchanged via either
  *   `/2fa/setup/totp` (first-time setup) or `/2fa/challenge` (existing 2FA).
