@@ -37,17 +37,24 @@ from __future__ import annotations
 
 from datetime import datetime
 from types import SimpleNamespace
+from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import ColumnElement, func, or_, select
 from sqlalchemy.orm import selectinload
 
-from echoroo.core.actions import PROJECT_GET_ACTION, RECORDING_LIST_ACTION
+from echoroo.core.actions import (
+    PROJECT_DELETE_ACTION,
+    PROJECT_GET_ACTION,
+    PROJECT_UPDATE_ACTION,
+    RECORDING_LIST_ACTION,
+)
 from echoroo.core.database import DbSession
 from echoroo.core.permissions import (
     H3_RES_15,
     Permission,
+    gate_action,
     is_allowed,
     load_project_or_404,
 )
@@ -58,15 +65,21 @@ from echoroo.models.enums import ProjectStatus, ProjectVisibility
 from echoroo.models.project import Project, ProjectMember
 from echoroo.models.recording import Recording
 from echoroo.models.site import Site
+from echoroo.models.user import User
+from echoroo.repositories.project import ProjectRepository
+from echoroo.repositories.user import UserRepository
 from echoroo.schemas.project import (
+    ProjectCreateRequest,
     ProjectResponse,
     ProjectSummaryListResponse,
+    ProjectUpdateRequest,
 )
 from echoroo.schemas.recording import (
     PublicRecordingItem,
     PublicRecordingListResponse,
 )
 from echoroo.services.project import (
+    ProjectService,
     build_project_summaries,
     resolve_current_user_role,
     scrub_owner_email_for_visibility,
@@ -124,6 +137,24 @@ def _public_recording_filter_resource(
 
 
 router = APIRouter()
+
+
+def get_project_service(db: DbSession) -> ProjectService:
+    """Build the shared project service used by legacy and BFF routers."""
+    return ProjectService(ProjectRepository(db), UserRepository(db))
+
+
+ProjectServiceDep = Annotated[ProjectService, Depends(get_project_service)]
+
+
+def _require_authenticated(current_user: User | None) -> User:
+    """Return the authenticated caller or raise the existing 401 response."""
+    if current_user is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+        )
+    return current_user
 
 
 # =============================================================================
@@ -294,6 +325,31 @@ async def list_projects(
     )
 
 
+@router.post(
+    "/",
+    response_model=ProjectResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create project (Web UI)",
+    description=(
+        "Cookie + CSRF Web UI surface mirroring the programmatic project "
+        "create route. Any authenticated session may create a project; "
+        "the creator becomes the owner."
+    ),
+)
+async def create_project(
+    payload: ProjectCreateRequest,
+    current_user: OptionalCurrentUser,
+    service: ProjectServiceDep,
+    db: DbSession,
+) -> ProjectResponse:
+    """Create a project through the first-party BFF surface."""
+    user = _require_authenticated(current_user)
+
+    project = await service.create_project(user.id, payload)
+    await db.commit()
+    return project
+
+
 # =============================================================================
 # T200 — GET /{project_id}  (detail, Guest-aware)
 # =============================================================================
@@ -402,6 +458,76 @@ async def get_project(
         override_map={},
     )
     return response
+
+
+@router.patch(
+    "/{project_id}",
+    response_model=ProjectResponse,
+    summary="Update project (Web UI)",
+    description=(
+        "Cookie + CSRF Web UI surface mirroring the programmatic PATCH "
+        "route. Owner / Admin only via the canonical EDIT_PROJECT gate."
+    ),
+)
+async def update_project(
+    project_id: UUID,
+    payload: ProjectUpdateRequest,
+    request: Request,
+    current_user: OptionalCurrentUser,
+    service: ProjectServiceDep,
+    db: DbSession,
+) -> ProjectResponse:
+    """Update a project through the first-party BFF surface."""
+    if current_user is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+        )
+
+    await gate_action(
+        action=PROJECT_UPDATE_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
+    project = await service.update_project(current_user.id, project_id, payload)
+    await db.commit()
+    return project
+
+
+@router.delete(
+    "/{project_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete project (Web UI)",
+    description=(
+        "Cookie + CSRF Web UI surface mirroring the programmatic DELETE "
+        "route. Owner only via the canonical DELETE_PROJECT gate."
+    ),
+)
+async def delete_project(
+    project_id: UUID,
+    request: Request,
+    current_user: OptionalCurrentUser,
+    service: ProjectServiceDep,
+    db: DbSession,
+) -> None:
+    """Delete a project through the first-party BFF surface."""
+    if current_user is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+        )
+
+    await gate_action(
+        action=PROJECT_DELETE_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
+    await service.delete_project(current_user.id, project_id)
+    await db.commit()
 
 
 # =============================================================================

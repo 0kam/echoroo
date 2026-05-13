@@ -170,3 +170,4 @@ apps/api/echoroo/api/v1/users.py:revoke_api_token:missing-permission-guard  # le
 apps/api/echoroo/api/v1/users.py:update_current_user:missing-permission-guard  # legacy: Phase 3 US11 T1xx
 apps/api/echoroo/api/v1/xeno_canto.py:proxy_sonogram:missing-permission-guard  # legacy: Phase 3 US11 T1xx
 apps/api/echoroo/api/web_v1/users.py:get_current_user_me:missing-permission-guard  # PR #71: BFF cookie-friendly mirror of /api/v1/users/me — auth-only, no project scope
+apps/api/echoroo/api/web_v1/auth.py:verify_email:missing-permission-guard  # public pre-session auth route; project/user permission guard not applicable

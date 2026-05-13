@@ -195,35 +195,35 @@ export const projectsApi = {
    * Create a new project
    */
   create: async (data: ProjectCreateRequest): Promise<Project> => {
-    return apiClient.post<Project>('/api/v1/projects', data);
+    return callWebApi<Project>('POST', '/projects', data);
   },
 
   /**
    * Update a project (admin only)
    */
   update: async (projectId: string, data: ProjectUpdateRequest): Promise<Project> => {
-    return apiClient.patch<Project>(`/api/v1/projects/${projectId}`, data);
+    return callWebApi<Project>('PATCH', `/projects/${projectId}`, data);
   },
 
   /**
    * Delete a project (owner only)
    */
   delete: async (projectId: string): Promise<void> => {
-    return apiClient.delete<void>(`/api/v1/projects/${projectId}`);
+    await callWebApi<void>('DELETE', `/projects/${projectId}`);
   },
 
   /**
    * List project members
    */
   listMembers: async (projectId: string): Promise<ProjectMember[]> => {
-    return apiClient.get<ProjectMember[]>(`/api/v1/projects/${projectId}/members`);
+    return callWebApi<ProjectMember[]>('GET', `/projects/${projectId}/members`);
   },
 
   /**
    * Add a member to the project (admin only)
    */
   addMember: async (projectId: string, data: ProjectMemberAddRequest): Promise<ProjectMember> => {
-    return apiClient.post<ProjectMember>(`/api/v1/projects/${projectId}/members`, data);
+    return callWebApi<ProjectMember>('POST', `/projects/${projectId}/members`, data);
   },
 
   /**
@@ -234,21 +234,25 @@ export const projectsApi = {
     userId: string,
     data: ProjectMemberUpdateRequest
   ): Promise<ProjectMember> => {
-    return apiClient.patch<ProjectMember>(`/api/v1/projects/${projectId}/members/${userId}`, data);
+    return callWebApi<ProjectMember>(
+      'PATCH',
+      `/projects/${projectId}/members/${userId}`,
+      data
+    );
   },
 
   /**
    * Remove a member from the project (admin only)
    */
   removeMember: async (projectId: string, userId: string): Promise<void> => {
-    return apiClient.delete<void>(`/api/v1/projects/${projectId}/members/${userId}`);
+    await callWebApi<void>('DELETE', `/projects/${projectId}/members/${userId}`);
   },
 
   /**
    * Get project overview (sites, recording calendar, stats)
    */
   getOverview: async (projectId: string): Promise<ProjectOverviewResponse> => {
-    return apiClient.get<ProjectOverviewResponse>(`/api/v1/projects/${projectId}/overview`);
+    return callWebApi<ProjectOverviewResponse>('GET', `/projects/${projectId}/overview`);
   },
 
   /**

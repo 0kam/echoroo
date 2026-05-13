@@ -54,11 +54,24 @@ from uuid import UUID
 
 from fastapi import APIRouter, Header, HTTPException, Request, status
 
+from echoroo.api.web_v1.projects._core import ProjectServiceDep
+from echoroo.core.actions import (
+    PROJECT_MEMBER_INVITE_ACTION,
+    PROJECT_MEMBER_LIST_ACTION,
+    PROJECT_MEMBER_REMOVE_ACTION,
+    PROJECT_MEMBER_UPDATE_ROLE_ACTION,
+)
 from echoroo.core.database import DbSession
+from echoroo.core.permissions import gate_action
 from echoroo.core.redis import get_redis_connection
 from echoroo.core.settings import get_settings
 from echoroo.middleware.auth import OptionalCurrentUser
 from echoroo.models.enums import ProjectInvitationKind
+from echoroo.schemas.project import (
+    ProjectMemberAddRequest,
+    ProjectMemberResponse,
+    ProjectMemberUpdateRequest,
+)
 from echoroo.services import invitation_service
 from echoroo.services.invitation_service import (
     InvitationConflictError,
@@ -93,6 +106,161 @@ def _user_agent(request: Request) -> str:
 
 def _request_id(request: Request) -> str:
     return request.headers.get("x-request-id") or ""
+
+
+# ---------------------------------------------------------------------------
+# T037 / T043 / T044 — /{project_id}/members
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/{project_id}/members",
+    response_model=list[ProjectMemberResponse],
+    summary="List project members (Web UI)",
+    description=(
+        "Cookie-session Web UI surface mirroring the programmatic member "
+        "list route. Owner / Admin only via the canonical MANAGE_MEMBERS gate."
+    ),
+)
+async def list_project_members(
+    project_id: UUID,
+    request: Request,
+    current_user: OptionalCurrentUser,
+    service: ProjectServiceDep,
+    db: DbSession,
+) -> list[ProjectMemberResponse]:
+    """List members through the first-party BFF surface."""
+    if current_user is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+        )
+
+    await gate_action(
+        action=PROJECT_MEMBER_LIST_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
+    return await service.list_members(current_user.id, project_id)
+
+
+@router.post(
+    "/{project_id}/members",
+    response_model=ProjectMemberResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Add project member (Web UI)",
+    description=(
+        "Cookie + CSRF Web UI surface mirroring the programmatic member "
+        "add route. Owner / Admin only via the canonical MANAGE_MEMBERS gate."
+    ),
+    responses={
+        202: {"description": "Invitation email queued (FR-055 async path)"},
+    },
+)
+async def add_project_member(
+    project_id: UUID,
+    payload: ProjectMemberAddRequest,
+    request: Request,
+    current_user: OptionalCurrentUser,
+    service: ProjectServiceDep,
+    db: DbSession,
+) -> ProjectMemberResponse:
+    """Add a member through the first-party BFF surface."""
+    if current_user is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+        )
+
+    await gate_action(
+        action=PROJECT_MEMBER_INVITE_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
+    member = await service.add_member(current_user.id, project_id, payload)
+    await db.commit()
+    return member
+
+
+@router.patch(
+    "/{project_id}/members/{user_id}",
+    response_model=ProjectMemberResponse,
+    summary="Update member role (Web UI)",
+    description=(
+        "Cookie + CSRF Web UI surface mirroring the programmatic member "
+        "role update route. Owner / Admin only via MANAGE_MEMBERS."
+    ),
+)
+async def update_project_member_role(
+    project_id: UUID,
+    user_id: UUID,
+    payload: ProjectMemberUpdateRequest,
+    request: Request,
+    current_user: OptionalCurrentUser,
+    service: ProjectServiceDep,
+    db: DbSession,
+) -> ProjectMemberResponse:
+    """Update a member role through the first-party BFF surface."""
+    if current_user is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+        )
+
+    await gate_action(
+        action=PROJECT_MEMBER_UPDATE_ROLE_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
+    member = await service.update_member_role(
+        current_user.id,
+        project_id,
+        user_id,
+        payload,
+    )
+    await db.commit()
+    return member
+
+
+@router.delete(
+    "/{project_id}/members/{user_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Remove project member (Web UI)",
+    description=(
+        "Cookie + CSRF Web UI surface mirroring the programmatic member "
+        "remove route. Owner / Admin only via MANAGE_MEMBERS."
+    ),
+)
+async def remove_project_member(
+    project_id: UUID,
+    user_id: UUID,
+    request: Request,
+    current_user: OptionalCurrentUser,
+    service: ProjectServiceDep,
+    db: DbSession,
+) -> None:
+    """Remove a member through the first-party BFF surface."""
+    if current_user is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+        )
+
+    await gate_action(
+        action=PROJECT_MEMBER_REMOVE_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
+    await service.remove_member(current_user.id, project_id, user_id)
+    await db.commit()
 
 
 # ---------------------------------------------------------------------------

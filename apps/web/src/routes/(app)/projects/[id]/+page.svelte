@@ -167,9 +167,9 @@
       members = [];
       membersAvailable = false;
       // Only surface non-403 unexpected errors via console — never
-      // break the page. 401 / 403 are silent because they are the
-      // documented responses for non-admin callers.
-      if (err instanceof ApiError && err.status !== 401 && err.status !== 403) {
+      // break the page. 403 is the documented response for non-admin
+      // callers on the BFF member list endpoint.
+      if (err instanceof ApiError && err.status !== 403) {
         console.warn('Failed to load project members', err);
       }
     } finally {

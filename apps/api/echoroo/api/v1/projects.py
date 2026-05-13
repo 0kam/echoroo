@@ -564,6 +564,10 @@ async def update_project_restricted_config(
     response_model=ProjectOverviewResponse,
     summary="Get project overview",
     description="Get aggregated statistics for a project: sites, recording calendar, and totals",
+    responses={
+        403: {"description": "Permission denied"},
+        404: {"description": "Project not found"},
+    },
 )
 async def get_project_overview(
     project_id: UUID,
