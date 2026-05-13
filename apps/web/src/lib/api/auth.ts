@@ -10,15 +10,20 @@
  * module. Mutating calls attach `X-CSRF-Token` from the `echoroo_csrf`
  * cookie via the same helper pattern used by `lib/api/projects.ts`.
  *
- * NOTE on `verifyEmail` / `resendVerificationEmail`: the BFF auth router
- * does NOT yet expose `/verify-email[/resend]` mirrors (spec/009
- * research.md D-3 listed them as mirrored, but the actual
- * `apps/api/echoroo/api/web_v1/auth.py` registers neither). PR B rewires
- * the frontend to the BFF path for forward consistency; the backend
- * mirror is a documented follow-up. Until then these two calls will 404
- * at runtime. The legacy v1 surface never exposed a verify-email resend
- * endpoint either, so the resend call has always been broken — the
- * migration does not make matters worse.
+ * NOTE on `verifyEmail` / `resendVerificationEmail`:
+ *   - `/web-api/v1/auth/verify-email` IS now mirrored on the BFF surface
+ *     (added as an in-scope follow-up in this same PR B; see the new
+ *     handler in `apps/api/echoroo/api/web_v1/auth.py` and the test at
+ *     `apps/api/tests/integration/api/web_v1/test_auth_verify_email.py`).
+ *     It shares the `AuthService.verify_email` service entry point with
+ *     the legacy `/api/v1/auth/verify-email` route, which is currently
+ *     a Phase-4 stub returning 501 on both surfaces. Both will flip
+ *     together when Phase 4 lands the real implementation.
+ *   - `/web-api/v1/auth/verify-email/resend` is intentionally NOT
+ *     mirrored. The legacy v1 surface never exposed `/verify-email/
+ *     resend` either, so this call has been broken at runtime since
+ *     before spec/009 (the migration does not make matters worse).
+ *     Tracked as a separate follow-up outside PR B scope.
  */
 import type {
   User,

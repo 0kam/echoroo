@@ -142,13 +142,24 @@ BffJwtFactory = Callable[..., str]
 
 @pytest_asyncio.fixture
 async def bff_jwt_factory() -> BffJwtFactory:
-    """Return a callable that mints BFF-style access tokens.
+    """Return a callable that mints a Bearer JWT shaped like a BFF token.
 
-    Wire shape matches the access token the BFF login flow issues:
-    a plain JWT signed by :func:`echoroo.core.jwt.create_access_token`
-    with the user UUID under ``sub``. Callers may pass additional
-    claims via keyword arguments (e.g. ``security_stamp=...``) to
-    exercise stamp-mismatch / scope variations in their per-PR tests.
+    The factory signs a JWT via :func:`echoroo.core.jwt.create_access_token`
+    with the user UUID under ``sub``. This produces a JWT that is structurally
+    a Bearer-JWT — **sufficient for FR-006 verification** (legacy
+    ``/api/v1/*`` rejects anything that is not an ``echoroo_<prefix>_<secret>``
+    API-key shape, regardless of JWT internals).
+
+    **Not byte-identical** to a production BFF access token: the production
+    login / refresh path uses :func:`echoroo.core.auth.issue_access_token`,
+    which attaches additional claims such as ``security_stamp``. For tests
+    that need a production-shaped token (e.g. exercising stamp-mismatch
+    behavior), invoke ``issue_access_token`` directly rather than this
+    factory. The intended use case here is the surface-isolation contract
+    (T009a / FR-006), not BFF-internal authentication semantics.
+
+    Callers may pass additional claims via keyword arguments to layer
+    further variations.
 
     Usage::
 
