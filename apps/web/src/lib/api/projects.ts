@@ -179,7 +179,7 @@ export const projectsApi = {
     if (params?.limit) queryParams.set('limit', params.limit.toString());
 
     const query = queryParams.toString();
-    const endpoint = `/web-api/v1/projects${query ? `?${query}` : ''}`;
+    const endpoint = `/web-api/v1/projects/${query ? `?${query}` : ''}`;
 
     return apiClient.get<ProjectSummaryListResponse>(endpoint);
   },

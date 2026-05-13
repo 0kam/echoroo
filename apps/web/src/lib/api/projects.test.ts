@@ -25,7 +25,7 @@ describe('projectsApi BFF public-read behaviour', () => {
     await projectsApi.list({ page: 1, limit: 20 });
 
     expect(fetchMock).toHaveBeenCalledWith(
-      '/web-api/v1/projects?page=1&limit=20',
+      '/web-api/v1/projects/?page=1&limit=20',
       expect.objectContaining({
         method: 'GET',
         credentials: 'omit',
