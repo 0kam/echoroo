@@ -192,6 +192,27 @@ async def setup_test_database(engine: AsyncEngine) -> None:
         )
         project_trigger_exists = bool(project_trigger_exists_result.scalar())
 
+        project_exists_trigger_exists_result = await conn.execute(
+            sa.text(
+                "SELECT EXISTS (SELECT 1 FROM pg_trigger"
+                " WHERE tgname = 'project_audit_log_project_exists')"
+            )
+        )
+        project_exists_trigger_exists = bool(
+            project_exists_trigger_exists_result.scalar()
+        )
+
+        project_audit_log_fk_exists_result = await conn.execute(
+            sa.text(
+                "SELECT EXISTS (SELECT 1 FROM pg_constraint"
+                " WHERE conrelid = to_regclass('project_audit_log')"
+                " AND conname = 'project_audit_log_project_id_fkey')"
+            )
+        )
+        project_audit_log_fk_exists = bool(
+            project_audit_log_fk_exists_result.scalar()
+        )
+
         # Phase 17 A-11: ``two_factor_reset_requests`` and companions are
         # created by Alembic 0014 and via ORM Base.metadata. Probe them
         # so an existing test DB that pre-dates A-11 gets the CREATE TABLE
@@ -252,11 +273,19 @@ async def setup_test_database(engine: AsyncEngine) -> None:
         )
         audit_v2_col_exists = bool(audit_v2_col_exists_result.scalar())
 
-        # The check constraint may be permanently dropped by ``cleanup_test_data``
-        # (project_id null-out path) — we only require it on a *fresh* DB.
-        # If the table exists but the trigger is missing, we fall through
-        # to the full setup; the constraint absence alone does not force a
-        # re-attach.
+        # Existing test DBs may still carry the pre-0017 project_id FK. We
+        # drop it below before any early return so hard-deleted projects do
+        # not require rewriting append-only audit rows during cleanup.
+
+    if project_audit_log_exists and project_audit_log_fk_exists:
+        async with engine.begin() as conn:
+            await conn.execute(
+                sa.text(
+                    "ALTER TABLE project_audit_log "
+                    "DROP CONSTRAINT IF EXISTS project_audit_log_project_id_fkey"
+                )
+            )
+        project_audit_log_fk_exists = False
 
     if (
         core_exists
@@ -269,6 +298,8 @@ async def setup_test_database(engine: AsyncEngine) -> None:
         and project_audit_log_exists
         and platform_trigger_exists
         and project_trigger_exists
+        and project_exists_trigger_exists
+        and not project_audit_log_fk_exists
         and two_factor_reset_exists
         and two_factor_reset_dispatching_col_exists
         and invitation_v2_col_exists
@@ -615,7 +646,7 @@ async def setup_test_database(engine: AsyncEngine) -> None:
                     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
                     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
                     actor_user_id_hash VARCHAR(64) NOT NULL,
-                    project_id UUID REFERENCES projects(id) ON DELETE SET NULL,
+                    project_id UUID,
                     action VARCHAR(100) NOT NULL,
                     detail JSONB NOT NULL DEFAULT '{}'::jsonb,
                     request_id VARCHAR(64) NOT NULL,
@@ -629,6 +660,12 @@ async def setup_test_database(engine: AsyncEngine) -> None:
                         CHECK (action = 'genesis' OR project_id IS NOT NULL)
                 )
                 """
+            )
+        )
+        await conn.execute(
+            sa.text(
+                "ALTER TABLE project_audit_log "
+                "DROP CONSTRAINT IF EXISTS project_audit_log_project_id_fkey"
             )
         )
         await conn.execute(
@@ -691,6 +728,45 @@ async def setup_test_database(engine: AsyncEngine) -> None:
                             RAISE EXCEPTION 'audit log rows are immutable';
                         END;
                         $fn$ LANGUAGE plpgsql;
+                    END IF;
+                END $$
+                """
+            )
+        )
+        await conn.execute(
+            sa.text(
+                """
+                CREATE OR REPLACE FUNCTION validate_project_audit_log_project_exists()
+                RETURNS trigger AS $fn$
+                BEGIN
+                    IF NEW.action <> 'genesis'
+                       AND NOT EXISTS (
+                           SELECT 1
+                           FROM projects p
+                           WHERE p.id = NEW.project_id
+                       )
+                    THEN
+                        RAISE EXCEPTION
+                            'project_audit_log.project_id must reference an existing project';
+                    END IF;
+                    RETURN NEW;
+                END;
+                $fn$ LANGUAGE plpgsql;
+                """
+            )
+        )
+        await conn.execute(
+            sa.text(
+                """
+                DO $$ BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1 FROM pg_trigger
+                        WHERE tgname = 'project_audit_log_project_exists'
+                    ) THEN
+                        CREATE TRIGGER project_audit_log_project_exists
+                        BEFORE INSERT ON project_audit_log
+                        FOR EACH ROW
+                        EXECUTE FUNCTION validate_project_audit_log_project_exists();
                     END IF;
                 END $$
                 """
@@ -799,50 +875,8 @@ async def cleanup_test_data(session: AsyncSession) -> None:
     # Phase 15 T155b: api_keys FKs projects.id (project_id) and users.id
     # (user_id). Must be deleted before projects and users.
     await session.execute(sa.text(_safe_delete("api_keys")))
-    # Phase 16 Batch 6f-1: project_audit_log is append-only (an immutable
-    # trigger blocks DELETE and UPDATE) and has a NOT NULL check constraint on
-    # project_id for non-genesis rows. To clear the FK reference before
-    # deleting test projects we temporarily suspend both constraints, null out
-    # project_id, then restore them. Each step uses a separate DDL statement
-    # so the transaction-visibility is consistent. This is safe only in a
-    # test-cleanup path — the audit log has no security-critical value between
-    # test runs.
-    _audit_table_exists = sa.text(
-        "SELECT 1 FROM pg_class WHERE relname = 'project_audit_log'"
-    )
-    _audit_exists_row = (await session.execute(_audit_table_exists)).first()
-    if _audit_exists_row is not None:
-        await session.execute(
-            sa.text(
-                "ALTER TABLE project_audit_log "
-                "DISABLE TRIGGER project_audit_log_immutable"
-            )
-        )
-        await session.execute(
-            sa.text(
-                "ALTER TABLE project_audit_log "
-                "DROP CONSTRAINT IF EXISTS ck_project_audit_log_project_id_required"
-            )
-        )
-        await session.execute(
-            sa.text(
-                "UPDATE project_audit_log SET project_id = NULL "
-                "WHERE project_id IS NOT NULL"
-            )
-        )
-        await session.execute(
-            sa.text(
-                "ALTER TABLE project_audit_log "
-                "ENABLE TRIGGER project_audit_log_immutable"
-            )
-        )
-        # NOTE: We do NOT re-add ck_project_audit_log_project_id_required
-        # here. After nulling out project_id the constraint would be violated
-        # by the rows we just modified, so we permanently drop it for the
-        # lifetime of the test process. The append-only trigger is re-enabled
-        # above; the NOT-NULL guarantee is only meaningful in production where
-        # projects are never deleted. In the test DB between test runs the
-        # dangling NULLs are harmless.
+    # project_audit_log is append-only and no longer has a project_id FK, so
+    # cleanup must not rewrite audit rows before deleting test projects.
     await session.execute(sa.text(_safe_delete("projects")))
     # Phase 11 taxon auto-obscure tables (006-permissions-redesign)
     await session.execute(sa.text(_safe_delete("project_taxon_sensitivity_overrides")))

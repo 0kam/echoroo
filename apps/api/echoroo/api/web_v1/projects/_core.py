@@ -36,14 +36,19 @@ Permission engine integration:
 from __future__ import annotations
 
 from datetime import datetime
+from enum import Enum
 from types import SimpleNamespace
-from typing import Annotated
+from typing import Annotated, cast
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import ColumnElement, func, or_, select
 from sqlalchemy.orm import selectinload
 
+from echoroo.api.web_v1.projects._audit import (
+    write_platform_bff_audit_soft,
+    write_project_bff_audit_soft,
+)
 from echoroo.core.actions import (
     PROJECT_DELETE_ACTION,
     PROJECT_GET_ACTION,
@@ -155,6 +160,28 @@ def _require_authenticated(current_user: User | None) -> User:
             detail="Not authenticated",
         )
     return current_user
+
+
+def _enum_value(value: object) -> object:
+    """Return a JSON-safe enum value while preserving None and plain objects."""
+    if isinstance(value, Enum):
+        return cast(object, value.value)
+    return value
+
+
+def _project_audit_snapshot(project: Project | ProjectResponse) -> dict[str, object]:
+    """Return JSON-safe project fields used by BFF audit rows."""
+    visibility = getattr(project, "visibility", None)
+    status_value = getattr(project, "status", None)
+    license_value = getattr(project, "license", None)
+    return {
+        "id": str(project.id),
+        "name": project.name,
+        "description": project.description,
+        "visibility": _enum_value(visibility),
+        "status": _enum_value(status_value),
+        "license": _enum_value(license_value),
+    }
 
 
 # =============================================================================
@@ -338,6 +365,7 @@ async def list_projects(
 )
 async def create_project(
     payload: ProjectCreateRequest,
+    request: Request,
     current_user: OptionalCurrentUser,
     service: ProjectServiceDep,
     db: DbSession,
@@ -347,6 +375,15 @@ async def create_project(
 
     project = await service.create_project(user.id, payload)
     await db.commit()
+    await write_project_bff_audit_soft(
+        actor_user_id=user.id,
+        project_id=project.id,
+        action="project.create",
+        request=request,
+        detail={"project_id": str(project.id)},
+        before=None,
+        after=_project_audit_snapshot(project),
+    )
     return project
 
 
@@ -484,15 +521,28 @@ async def update_project(
             detail="Not authenticated",
         )
 
-    await gate_action(
+    project_before = await gate_action(
         action=PROJECT_UPDATE_ACTION,
         project_id=project_id,
         current_user=current_user,
         request=request,
         db=db,
     )
+    before = _project_audit_snapshot(project_before)
     project = await service.update_project(current_user.id, project_id, payload)
     await db.commit()
+    await write_project_bff_audit_soft(
+        actor_user_id=current_user.id,
+        project_id=project_id,
+        action=PROJECT_UPDATE_ACTION.name,
+        request=request,
+        detail={
+            "project_id": str(project_id),
+            "updated_fields": list(payload.model_dump(exclude_unset=True).keys()),
+        },
+        before=before,
+        after=_project_audit_snapshot(project),
+    )
     return project
 
 
@@ -519,15 +569,31 @@ async def delete_project(
             detail="Not authenticated",
         )
 
-    await gate_action(
+    project = await gate_action(
         action=PROJECT_DELETE_ACTION,
         project_id=project_id,
         current_user=current_user,
         request=request,
         db=db,
     )
+    before = _project_audit_snapshot(project)
     await service.delete_project(current_user.id, project_id)
     await db.commit()
+    # ``project_audit_log.project_id`` references ``projects.id``. A durable
+    # project-scoped row would keep the hard-deleted project alive via FK, so
+    # the delete event is recorded at platform scope with the project id in
+    # detail while the business semantics remain a hard delete.
+    await write_platform_bff_audit_soft(
+        actor_user_id=current_user.id,
+        action=PROJECT_DELETE_ACTION.name,
+        request=request,
+        detail={
+            "project_id": str(project_id),
+            "delete_mode": "hard_delete",
+        },
+        before=before,
+        after=None,
+    )
 
 
 # =============================================================================

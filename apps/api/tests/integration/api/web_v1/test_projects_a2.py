@@ -15,6 +15,7 @@ from echoroo.models.project import Project
 from echoroo.models.user import User
 from tests.integration.api.web_v1._helpers import (
     assert_api_key_cross_rejected,
+    assert_audit_actor_kind_session,
     assert_csrf_required,
     assert_legacy_v1_rejects_bff_token,
     assert_permission_denial_returns_403,
@@ -160,7 +161,13 @@ async def test_project_create_update_delete_bff_contract(
     )
     assert create.status_code == 201, create.text
     created_project_id = create.json()["id"]
+    created_project_uuid = uuid.UUID(created_project_id)
     assert_rate_limit_bucket_web(create)
+    create_audit = await assert_audit_actor_kind_session(
+        db_session,
+        {"action": "project.create", "project_id": created_project_uuid},
+    )
+    assert create_audit["after"]["name"] == create_body["name"]
 
     member_headers = await _bff_session_headers(client, db_session, member_user)
     await assert_permission_denial_returns_403(
@@ -179,6 +186,13 @@ async def test_project_create_update_delete_bff_contract(
     )
     assert update.status_code == 200, update.text
     assert update.json()["name"] == "A2 Renamed Project"
+    update_audit = await assert_audit_actor_kind_session(
+        db_session,
+        {"action": "project.update", "project_id": created_project_uuid},
+    )
+    assert update_audit["detail"]["updated_fields"] == ["name"]
+    assert update_audit["before"]["name"] == create_body["name"]
+    assert update_audit["after"]["name"] == "A2 Renamed Project"
 
     await assert_csrf_required(
         client,
@@ -191,6 +205,18 @@ async def test_project_create_update_delete_bff_contract(
         headers=owner_headers,
     )
     assert delete.status_code == 204, delete.text
+    db_session.expire_all()
+    deleted_project = await db_session.get(Project, created_project_uuid)
+    assert deleted_project is None
+    delete_audit = await assert_audit_actor_kind_session(
+        db_session,
+        {"action": "project.delete"},
+        table="platform_audit_log",
+    )
+    assert delete_audit["detail"]["project_id"] == created_project_id
+    assert delete_audit["detail"]["delete_mode"] == "hard_delete"
+    assert delete_audit["before"]["name"] == "A2 Renamed Project"
+    assert delete_audit["after"] is None
 
     await assert_api_key_cross_rejected(
         client,
@@ -229,6 +255,12 @@ async def test_project_member_mutations_bff_contract(
     )
     assert add.status_code == 201, add.text
     assert add.json()["user"]["id"] == str(target_user.id)
+    add_audit = await assert_audit_actor_kind_session(
+        db_session,
+        {"action": "project.member.invite", "project_id": test_project.id},
+    )
+    assert add_audit["detail"]["user_id"] == str(target_user.id)
+    assert add_audit["after"]["role"] == "viewer"
 
     member_headers = await _bff_session_headers(client, db_session, member_user)
     await assert_permission_denial_returns_403(
@@ -247,9 +279,26 @@ async def test_project_member_mutations_bff_contract(
     )
     assert update.status_code == 200, update.text
     assert update.json()["role"] == "member"
+    role_audit = await assert_audit_actor_kind_session(
+        db_session,
+        {
+            "action": "project.member.update_role",
+            "project_id": test_project.id,
+        },
+    )
+    assert role_audit["detail"]["user_id"] == str(target_user.id)
+    assert role_audit["detail"]["old_role"] == "viewer"
+    assert role_audit["detail"]["new_role"] == "member"
 
     delete = await client.delete(
         f"/web-api/v1/projects/{test_project.id}/members/{target_user.id}",
         headers=owner_headers,
     )
     assert delete.status_code == 204, delete.text
+    remove_audit = await assert_audit_actor_kind_session(
+        db_session,
+        {"action": "project.member.remove", "project_id": test_project.id},
+    )
+    assert remove_audit["detail"]["user_id"] == str(target_user.id)
+    assert remove_audit["before"]["role"] == "member"
+    assert remove_audit["after"] is None

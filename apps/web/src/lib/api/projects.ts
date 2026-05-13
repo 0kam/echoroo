@@ -62,18 +62,30 @@ function resolveBaseUrl(): string {
   return import.meta.env.PUBLIC_API_URL || 'http://localhost:8002';
 }
 
+async function getAccessTokenForWebApi(): Promise<string | null> {
+  const existingToken = apiClient.getAccessToken();
+  if (existingToken) return existingToken;
+
+  try {
+    await apiClient.refreshToken();
+  } catch {
+    // Let the protected Web API request below surface the canonical
+    // backend auth error when refresh cookies are absent or expired.
+  }
+
+  return apiClient.getAccessToken();
+}
+
 /**
- * Issue a request to a `/web-api/v1/...` endpoint with cookie-based
- * session + CSRF (mutating verbs only — GET still works, but the CSRF
- * token is harmless on safe verbs).
+ * Issue a request to a private `/web-api/v1/...` endpoint with the
+ * first-party session cookie, Bearer access token, and CSRF token.
  *
  * The shared `apiClient` is Bearer-token-oriented and was built for the
- * legacy `/api/v1/*` surface; the Web UI endpoints under
- * `/web-api/v1/*` require the `X-CSRF-Token` header sourced from the
- * `echoroo_csrf` cookie for any non-safe verb. Promoted to a shared
- * helper in Phase 10 (T520 / T521) so the Trusted overlay management
- * + invitation accept flow can reuse the same envelope-aware error
- * extraction logic.
+ * general request surface; these project Web UI endpoints additionally
+ * require the `X-CSRF-Token` header sourced from the `echoroo_csrf`
+ * cookie for any non-safe verb. Promoted to a shared helper in Phase 10
+ * (T520 / T521) so the Trusted overlay management + invitation accept
+ * flow can reuse the same envelope-aware error extraction logic.
  *
  * @param method Standard HTTP verb. The body is omitted automatically
  *               for safe verbs (GET / HEAD / DELETE).
@@ -97,6 +109,8 @@ async function callWebApi<T>(
   if (body !== undefined) {
     headers['Content-Type'] = 'application/json';
   }
+  const accessToken = await getAccessTokenForWebApi();
+  if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
   const csrfToken = getCsrfToken();
   if (csrfToken) headers['X-CSRF-Token'] = csrfToken;
   if (extraHeaders) {
@@ -195,7 +209,7 @@ export const projectsApi = {
    * Create a new project
    */
   create: async (data: ProjectCreateRequest): Promise<Project> => {
-    return callWebApi<Project>('POST', '/projects', data);
+    return callWebApi<Project>('POST', '/projects/', data);
   },
 
   /**
