@@ -470,9 +470,10 @@ components:
         allow_voting_and_comments: { type: boolean, default: false }
         public_location_precision_h3_res:
           type: integer
-          enum: [2, 5, 7, 9, 15]
-          default: 2
-          description: "spec FR-027 の離散値。2=HIDDEN, 5=~30km, 7=~5km, 9=~175m, 15=member 精密"
+          minimum: 3
+          maximum: 15
+          default: 3
+          description: "API accepts any integer H3 resolution from 3 through 15 for non-member location precision."
         allow_precise_location_to_viewer: { type: boolean, default: false }
 
     MemberInviteRequest:

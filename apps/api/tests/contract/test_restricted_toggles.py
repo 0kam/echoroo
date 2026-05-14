@@ -5,15 +5,14 @@ unknown keys with 422 (``Extra.forbid``) and that the eight required keys
 all be present. FR-024 mandates that every PATCH bump
 ``Project.restricted_config_version`` and append a
 ``project.restricted_config.update`` row to ``project_audit_log``. FR-020/021/022
-fix the semantics of each toggle and the discrete H3 resolution set
-(``Literal[2, 5, 7, 9, 15]``).
+fix the semantics of each toggle and the public H3 resolution range (3-15).
 
 Tests cover:
 
 1. ``Extra.forbid`` — unknown payload field → 422.
 2. Missing required key → 422.
-3. ``public_location_precision_h3_res`` enum constraint — 2/5/7/9/15 accepted,
-   anything else (4, 10, -1, "two") → 422.
+3. ``public_location_precision_h3_res`` range constraint — 3-15 accepted,
+   anything else (2, 16, -1, "two") → 422.
 4. Each of the six boolean toggles flipped ON / OFF in isolation → 200, the
    DB column reflects the change, ``restricted_config_version`` increments
    monotonically.
@@ -92,7 +91,7 @@ def _full_payload(**overrides: object) -> dict[str, object]:
         "allow_download": False,
         "allow_export": False,
         "allow_voting_and_comments": False,
-        "public_location_precision_h3_res": 2,
+        "public_location_precision_h3_res": 3,
         "allow_precise_location_to_viewer": False,
     }
     base.update(overrides)
@@ -409,9 +408,9 @@ class TestRestrictedConfigExtraForbidAndRequiredKeys:
 
 @pytest.mark.asyncio
 class TestRestrictedConfigEnumConstraints:
-    """FR-021: ``public_location_precision_h3_res`` ∈ {2, 5, 7, 9, 15}."""
+    """FR-021: ``public_location_precision_h3_res`` accepts integers 3-15."""
 
-    @pytest.mark.parametrize("valid_res", [2, 5, 7, 9, 15])
+    @pytest.mark.parametrize("valid_res", list(range(3, 16)))
     async def test_valid_h3_resolution_succeeds(
         self,
         client: AsyncClient,
@@ -420,7 +419,7 @@ class TestRestrictedConfigEnumConstraints:
         t400_restricted_project: Project,
         valid_res: int,
     ) -> None:
-        """Each discrete H3 resolution value is accepted with 200."""
+        """Every integer H3 resolution value from 3 through 15 is accepted."""
         payload = _full_payload(public_location_precision_h3_res=valid_res)
         response = await client.patch(
             _restricted_config_endpoint(t400_restricted_project.id),
@@ -440,7 +439,7 @@ class TestRestrictedConfigEnumConstraints:
             == valid_res
         )
 
-    @pytest.mark.parametrize("invalid_res", [4, 10, -1, 0, "two"])
+    @pytest.mark.parametrize("invalid_res", [2, 16, -1, 0, "two"])
     async def test_invalid_h3_resolution_returns_422(
         self,
         client: AsyncClient,
@@ -448,7 +447,7 @@ class TestRestrictedConfigEnumConstraints:
         t400_restricted_project: Project,
         invalid_res: object,
     ) -> None:
-        """Anything outside the discrete enum is rejected with 422."""
+        """Anything outside the 3-15 integer range is rejected with 422."""
         payload = _full_payload(public_location_precision_h3_res=invalid_res)
         response = await client.patch(
             _restricted_config_endpoint(t400_restricted_project.id),

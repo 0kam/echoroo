@@ -24,6 +24,7 @@
   // handler mutates this later as the user picks new cells.
   let selectedH3 = $state<string | null>(untrack(() => h3Index || null));
   let hoverH3 = $state<string | null>(null);
+  let lastH3IndexProp = $state<string>(untrack(() => h3Index));
 
   const defaultCenter: [number, number] = [139.6917, 35.6895];
   const defaultZoom = 10;
@@ -56,6 +57,14 @@
     const source = map.getSource('h3-selected') as maplibregl.GeoJSONSource | undefined;
     if (source) {
       source.setData(h3ToGeoJSON(h3Cell));
+    }
+  }
+
+  function clearSelectedHex() {
+    if (!map || !mapLoaded) return;
+    const source = map.getSource('h3-selected') as maplibregl.GeoJSONSource | undefined;
+    if (source) {
+      source.setData(emptyGeoJSON);
     }
   }
 
@@ -148,6 +157,25 @@
       map.remove();
       map = null;
       mapLoaded = false;
+    }
+  });
+
+  $effect(() => {
+    const incoming = h3Index;
+    if (incoming === lastH3IndexProp) return;
+
+    lastH3IndexProp = incoming;
+    selectedH3 = incoming || null;
+
+    if (!incoming || !isValidCell(incoming)) {
+      clearSelectedHex();
+      return;
+    }
+
+    updateSelectedHex(incoming);
+    if (map && mapLoaded) {
+      const [lat, lng] = cellToLatLng(incoming);
+      map.setCenter([lng, lat]);
     }
   });
 

@@ -36,10 +36,10 @@
    * - Each switch has a `<label for="..."> + <input type=checkbox>`
    *   pair plus a sibling description with `aria-describedby` so
    *   screen readers announce the description on focus.
-   * - The H3 dropdown is a native `<select>` with a `<label for>` and
-   *   a description. Native widgets ship with the right roles by
-   *   default — we deliberately avoid recreating the wheel with
-   *   `role="switch"`.
+   * - The H3 precision control is a native `<input type="range">` with
+   *   a `<label for>` and a description. Native widgets ship with the
+   *   right roles by default — we deliberately avoid recreating the
+   *   wheel with `role="switch"`.
    *
    * Theme: Rosé Pine (Light=Dawn, Dark=Main). Colour tokens come from
    * the existing `tailwind.config` palette (`primary`, `surface-card`,
@@ -92,7 +92,7 @@
     allow_download: false,
     allow_export: false,
     allow_voting_and_comments: false,
-    public_location_precision_h3_res: 2,
+    public_location_precision_h3_res: 3,
     allow_precise_location_to_viewer: false,
   };
 
@@ -149,22 +149,8 @@
    * Allowed H3 resolutions in descending privacy order. Lower number
    * = coarser hex = more protective.
    */
-  const H3_OPTIONS: ReadonlyArray<RestrictedH3Resolution> = [2, 5, 7, 9, 15];
-
-  function h3Label(value: RestrictedH3Resolution): string {
-    switch (value) {
-      case 2:
-        return m.restricted_toggles_h3_res_2();
-      case 5:
-        return m.restricted_toggles_h3_res_5();
-      case 7:
-        return m.restricted_toggles_h3_res_7();
-      case 9:
-        return m.restricted_toggles_h3_res_9();
-      case 15:
-        return m.restricted_toggles_h3_res_15();
-    }
-  }
+  const H3_MIN: RestrictedH3Resolution = 3;
+  const H3_MAX: RestrictedH3Resolution = 15;
 
   /**
    * Dirty flag — true when the draft differs from the server snapshot.
@@ -483,18 +469,33 @@
           <p id="restricted-h3_res-desc" class="mt-0.5 text-xs text-stone-500">
             {m.restricted_toggles_h3_res_description()}
           </p>
-          <select
-            id="restricted-h3_res"
-            data-testid="toggle-public_location_precision_h3_res"
-            bind:value={draft.public_location_precision_h3_res}
-            disabled={inputsDisabled}
-            aria-describedby="restricted-h3_res-desc"
-            class="mt-2 block w-full max-w-xs rounded-md border border-stone-300 bg-surface-card px-3 py-2 text-sm text-stone-900 focus:border-primary-500 focus:outline-none focus:ring-primary-500 disabled:cursor-not-allowed disabled:bg-stone-100 disabled:opacity-60"
+          <div class="mt-2 flex w-full max-w-sm items-center gap-3">
+            <input
+              id="restricted-h3_res"
+              type="range"
+              data-testid="toggle-public_location_precision_h3_res"
+              bind:value={draft.public_location_precision_h3_res}
+              disabled={inputsDisabled}
+              min={H3_MIN}
+              max={H3_MAX}
+              step="1"
+              aria-describedby="restricted-h3_res-desc"
+              aria-valuetext={`H3 resolution ${draft.public_location_precision_h3_res}`}
+              class="h-2 min-w-0 flex-1 cursor-pointer accent-primary-600 disabled:cursor-not-allowed disabled:opacity-60"
+            />
+            <output
+              for="restricted-h3_res"
+              class="min-w-12 rounded-md border border-stone-200 bg-surface-card px-2 py-1 text-center text-sm font-semibold tabular-nums text-stone-900"
+            >
+              {draft.public_location_precision_h3_res}
+            </output>
+          </div>
+          <div
+            class="mt-1 flex w-full max-w-sm justify-between text-[11px] font-medium text-stone-500"
           >
-            {#each H3_OPTIONS as option (option)}
-              <option value={option}>{h3Label(option)}</option>
-            {/each}
-          </select>
+            <span>{H3_MIN}</span>
+            <span>{H3_MAX}</span>
+          </div>
         </div>
       </li>
 

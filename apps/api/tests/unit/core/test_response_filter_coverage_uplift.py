@@ -212,9 +212,8 @@ def test_withheld_reason_hidden_priority() -> None:
 
 
 def test_withheld_reason_public_non_member() -> None:
-    """Public + Guest with global > effective → public_non_member (lines 226-229)."""
+    """Public + Guest without taxon sensitivity → public_non_member."""
     project = _project(visibility=ProjectVisibility.PUBLIC)
-    # Use non-mapping taxon_sensitivity_map so global_res falls back to H3_RES_9
     out = mod._compute_withheld_reason(
         effective_resolution=5,
         member_resolution=15,
@@ -223,9 +222,7 @@ def test_withheld_reason_public_non_member() -> None:
         taxon_sensitivity_map=None,
         resource=SimpleNamespace(taxon_id=None),
     )
-    # global_res = H3_RES_9 (9), member_resolution = 15, so 9 < 15 triggers
-    # the global-sensitivity path first.
-    assert out == "taxon_sensitivity:h3_res_9"
+    assert out == "public_non_member"
 
 
 def test_withheld_reason_public_non_member_when_global_eq_member() -> None:

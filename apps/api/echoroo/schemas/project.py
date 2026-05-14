@@ -1,10 +1,18 @@
 """Project request and response schemas."""
 
 from datetime import datetime
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, StrictBool, model_serializer
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    EmailStr,
+    Field,
+    StrictBool,
+    StrictInt,
+    model_serializer,
+)
 
 from echoroo.models.enums import (
     ProjectLicense,
@@ -342,10 +350,10 @@ class RestrictedConfigUpdateRequest(BaseModel):
       ``mask_species_in_detection`` / ``allow_download`` / ``allow_export`` /
       ``allow_voting_and_comments`` map directly onto the matching
       :class:`echoroo.models.project.Project.restricted_config` JSONB keys.
-    * ``public_location_precision_h3_res`` is constrained to the discrete
-      H3 resolutions in spec FR-021 (``Literal[2, 5, 7, 9, 15]``); any other
-      integer is rejected at validation time so the service layer never
-      receives a free-form value.
+    * ``public_location_precision_h3_res`` is constrained to continuous
+      integer H3 resolutions 3 through 15; values outside that range are
+      rejected at validation time so the service layer never receives a
+      free-form value.
     * ``allow_precise_location_to_viewer`` is the FR-022 capability toggle
       that lifts ``VIEW_PRECISE_LOCATION`` for project Viewers when ``True``.
     """
@@ -389,14 +397,17 @@ class RestrictedConfigUpdateRequest(BaseModel):
             "annotations (FR-020)."
         ),
     )
-    public_location_precision_h3_res: Literal[2, 5, 7, 9, 15] = Field(
-        ...,
-        description=(
-            "Discrete H3 resolution exposed to non-members for site / "
-            "detection cells (FR-021). 2=HIDDEN, 5≈30km, 7≈5km, 9≈175m, "
-            "15=member-precise."
+    public_location_precision_h3_res: Annotated[
+        StrictInt,
+        Field(
+            ge=3,
+            le=15,
+            description=(
+                "H3 resolution exposed to non-members for site / detection cells "
+                "(FR-021). Accepts any integer from 3 through 15."
+            ),
         ),
-    )
+    ]
     allow_precise_location_to_viewer: StrictBool = Field(
         ...,
         description=(

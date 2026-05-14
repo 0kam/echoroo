@@ -336,12 +336,24 @@ export interface APITokenCreateResponse extends APIToken {
 export type ProjectVisibility = 'private' | 'public' | 'restricted';
 
 /**
- * Discrete H3 resolution buckets allowed for the
+ * H3 resolutions allowed for the
  * `public_location_precision_h3_res` Restricted-mode toggle (FR-021 /
- * FR-027). Lower numbers are coarser; `2` means HIDDEN (no public
- * location surfaced).
+ * FR-027). Lower numbers are coarser; values are continuous from 3 to 15.
  */
-export type RestrictedH3Resolution = 2 | 5 | 7 | 9 | 15;
+export type RestrictedH3Resolution =
+  | 3
+  | 4
+  | 5
+  | 6
+  | 7
+  | 8
+  | 9
+  | 10
+  | 11
+  | 12
+  | 13
+  | 14
+  | 15;
 
 /**
  * Restricted-mode capability toggles persisted on
