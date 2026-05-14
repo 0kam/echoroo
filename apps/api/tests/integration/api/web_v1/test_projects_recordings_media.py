@@ -32,6 +32,10 @@ async def _fake_db() -> AsyncIterator[object]:
     yield object()
 
 
+async def _noop_gate_action(**kwargs: object) -> object:
+    return object()
+
+
 def _build_app(user: object, service: object) -> FastAPI:
     app = FastAPI()
     app.include_router(_media.router, prefix="/web-api/v1/projects")
@@ -61,6 +65,7 @@ async def test_recording_audio_bff_delegates_range_to_legacy(
         )
 
     monkeypatch.setattr(legacy_recordings, "stream_audio", fake_stream_audio)
+    monkeypatch.setattr(_media, "gate_action", _noop_gate_action)
 
     async with AsyncClient(
         transport=ASGITransport(app=_build_app(user, service)),
@@ -108,6 +113,7 @@ async def test_recording_media_bff_routes_delegate_to_legacy(
         return Response(b"ok", media_type=expected_media_type)
 
     monkeypatch.setattr(legacy_recordings, legacy_name, fake_legacy)
+    monkeypatch.setattr(_media, "gate_action", _noop_gate_action)
 
     async with AsyncClient(
         transport=ASGITransport(app=_build_app(SimpleNamespace(id=uuid4()), object())),

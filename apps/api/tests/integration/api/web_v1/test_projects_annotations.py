@@ -35,6 +35,10 @@ async def _fake_db() -> AsyncIterator[object]:
     yield object()
 
 
+async def _noop_gate_action(**kwargs: object) -> object:
+    return object()
+
+
 def _build_app(user: object, service: object) -> FastAPI:
     app = FastAPI()
     app.include_router(_annotations.router, prefix="/web-api/v1/projects")
@@ -127,6 +131,7 @@ async def test_batch_tag_bff_delegates_to_legacy_and_preserves_response_shape(
         "batch_tag_clips",
         fake_batch_tag_clips,
     )
+    monkeypatch.setattr(_annotations, "gate_action", _noop_gate_action)
 
     async with AsyncClient(
         transport=ASGITransport(app=_build_app(user, service)),

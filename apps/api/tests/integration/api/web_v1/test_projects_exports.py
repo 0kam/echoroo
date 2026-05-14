@@ -31,6 +31,10 @@ async def _fake_db() -> AsyncIterator[object]:
     yield object()
 
 
+async def _noop_gate_action(**kwargs: object) -> object:
+    return object()
+
+
 def _build_app(user: object, audio_service: object) -> FastAPI:
     app = FastAPI()
     app.include_router(_media.router, prefix="/web-api/v1/projects")
@@ -57,6 +61,7 @@ async def test_annotation_project_export_bff_delegates_response_shape(
         "export_annotations",
         fake_export_annotations,
     )
+    monkeypatch.setattr(_media, "gate_action", _noop_gate_action)
 
     async with AsyncClient(
         transport=ASGITransport(app=_build_app(SimpleNamespace(id=uuid4()), object())),
@@ -94,6 +99,7 @@ async def test_annotation_project_export_bff_preserves_csv_response(
         "export_annotations",
         fake_export_annotations,
     )
+    monkeypatch.setattr(_media, "gate_action", _noop_gate_action)
 
     async with AsyncClient(
         transport=ASGITransport(app=_build_app(SimpleNamespace(id=uuid4()), object())),
@@ -129,6 +135,7 @@ async def test_dataset_export_bff_delegates_streaming_zip_shape(
         )
 
     monkeypatch.setattr(legacy_datasets, "export_dataset", fake_export_dataset)
+    monkeypatch.setattr(_media, "gate_action", _noop_gate_action)
 
     async with AsyncClient(
         transport=ASGITransport(
