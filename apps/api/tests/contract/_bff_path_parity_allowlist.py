@@ -51,4 +51,13 @@ BFF_PATHS_DECLARED_BY_SPEC_009: list[str] = [
     "/web-api/v1/projects GET",
     "/web-api/v1/projects/{project_id} GET",
     "/web-api/v1/projects/{project_id}/recordings GET",
+    # PR A2 — projects mutations + missing read adapters
+    "/web-api/v1/projects POST",
+    "/web-api/v1/projects/{project_id} PATCH",
+    "/web-api/v1/projects/{project_id} DELETE",
+    "/web-api/v1/projects/{project_id}/members GET",
+    "/web-api/v1/projects/{project_id}/members POST",
+    "/web-api/v1/projects/{project_id}/members/{user_id} PATCH",
+    "/web-api/v1/projects/{project_id}/members/{user_id} DELETE",
+    "/web-api/v1/projects/{project_id}/overview GET",
 ]

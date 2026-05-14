@@ -13,8 +13,11 @@ function jsonResponse(body: unknown, status = 200) {
 
 describe('projectsApi BFF public-read behaviour', () => {
   beforeEach(() => {
+    vi.restoreAllMocks();
     apiClient.setAccessToken(null);
     global.fetch = vi.fn();
+    document.cookie = 'echoroo_session=; Max-Age=0; path=/';
+    document.cookie = 'echoroo_csrf=; Max-Age=0; path=/';
     document.cookie = 'echoroo_session=stale-session; path=/';
   });
 
@@ -76,8 +79,8 @@ describe('projectsApi BFF public-read behaviour', () => {
     expect(retryCall.headers.Authorization).toBeUndefined();
   });
 
-  it('keeps trusted-users BFF reads on cookie credentials without Authorization', async () => {
-    apiClient.setAccessToken('stale-jwt');
+  it('keeps trusted-users BFF reads on cookie credentials with Authorization', async () => {
+    apiClient.setAccessToken('valid-jwt');
     const fetchMock = global.fetch as ReturnType<typeof vi.fn>;
     fetchMock.mockResolvedValueOnce(jsonResponse({ items: [], total: 0 }));
 
@@ -94,6 +97,172 @@ describe('projectsApi BFF public-read behaviour', () => {
     const call = fetchMock.mock.calls[0]![1] as RequestInit & {
       headers: Record<string, string>;
     };
+    expect(call.headers.Authorization).toBe('Bearer valid-jwt');
+  });
+
+  it('refreshes a missing access token before private BFF requests', async () => {
+    const refreshSpy = vi.spyOn(apiClient, 'refreshToken').mockImplementation(async () => {
+      apiClient.setAccessToken('refreshed-jwt');
+    });
+    const fetchMock = global.fetch as ReturnType<typeof vi.fn>;
+    document.cookie = 'echoroo_csrf=test-csrf; path=/';
+    fetchMock.mockResolvedValueOnce(jsonResponse({ id: 'project-1', name: 'Project' }));
+
+    await projectsApi.create({
+      name: 'Project',
+      visibility: 'public',
+      license: 'CC-BY',
+    });
+
+    expect(refreshSpy).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/web-api/v1/projects/',
+      expect.objectContaining({ method: 'POST', credentials: 'include' })
+    );
+    const call = fetchMock.mock.calls[0]![1] as RequestInit & {
+      headers: Record<string, string>;
+    };
+    expect(call.headers.Authorization).toBe('Bearer refreshed-jwt');
+    expect(call.headers['X-CSRF-Token']).toBe('test-csrf');
+  });
+
+  it('lets the BFF surface auth errors when refresh cannot restore a token', async () => {
+    const refreshSpy = vi
+      .spyOn(apiClient, 'refreshToken')
+      .mockRejectedValue(new ApiError('Token refresh failed', 401));
+    const fetchMock = global.fetch as ReturnType<typeof vi.fn>;
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(
+        {
+          error_code: 'auth_required',
+          message: 'Session cookie + access token required',
+        },
+        401
+      )
+    );
+
+    await expect(
+      projectsApi.create({
+        name: 'Project',
+        visibility: 'public',
+        license: 'CC-BY',
+      })
+    ).rejects.toMatchObject({
+      status: 401,
+      message: 'Session cookie + access token required',
+    });
+
+    expect(refreshSpy).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0]![0]).toBe('/web-api/v1/projects/');
+    expect(
+      fetchMock.mock.calls.some(([url]) => String(url).includes('/api/v1/'))
+    ).toBe(false);
+    const call = fetchMock.mock.calls[0]![1] as RequestInit & {
+      headers: Record<string, string>;
+    };
     expect(call.headers.Authorization).toBeUndefined();
+  });
+
+  it('routes project members and overview through the BFF cookie surface', async () => {
+    apiClient.setAccessToken('valid-jwt');
+    const fetchMock = global.fetch as ReturnType<typeof vi.fn>;
+    fetchMock.mockResolvedValueOnce(jsonResponse([]));
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({
+        sites: [],
+        recording_calendar: [],
+        total_recordings: 0,
+        total_sites: 0,
+        total_duration: 0,
+      })
+    );
+
+    await projectsApi.listMembers('project-1');
+    await projectsApi.getOverview('project-1');
+
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      '/web-api/v1/projects/project-1/members',
+      expect.objectContaining({ method: 'GET', credentials: 'include' })
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      '/web-api/v1/projects/project-1/overview',
+      expect.objectContaining({ method: 'GET', credentials: 'include' })
+    );
+    for (const call of fetchMock.mock.calls) {
+      const init = call[1] as RequestInit & { headers: Record<string, string> };
+      expect(init.headers.Authorization).toBe('Bearer valid-jwt');
+    }
+  });
+
+  it('routes project mutations through BFF with CSRF', async () => {
+    apiClient.setAccessToken('valid-jwt');
+    const fetchMock = global.fetch as ReturnType<typeof vi.fn>;
+    document.cookie = 'echoroo_csrf=test-csrf; path=/';
+    fetchMock.mockResolvedValue(jsonResponse({ id: 'project-1', name: 'Project' }));
+
+    await projectsApi.create({
+      name: 'Project',
+      visibility: 'public',
+      license: 'CC-BY',
+    });
+    await projectsApi.update('project-1', { name: 'Renamed' });
+    await projectsApi.delete('project-1');
+
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      '/web-api/v1/projects/',
+      expect.objectContaining({ method: 'POST', credentials: 'include' })
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      '/web-api/v1/projects/project-1',
+      expect.objectContaining({ method: 'PATCH', credentials: 'include' })
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      3,
+      '/web-api/v1/projects/project-1',
+      expect.objectContaining({ method: 'DELETE', credentials: 'include' })
+    );
+    for (const call of fetchMock.mock.calls) {
+      const init = call[1] as RequestInit & { headers: Record<string, string> };
+      expect(init.headers.Authorization).toBe('Bearer valid-jwt');
+      expect(init.headers['X-CSRF-Token']).toBe('test-csrf');
+    }
+  });
+
+  it('routes member mutations through BFF with CSRF', async () => {
+    apiClient.setAccessToken('valid-jwt');
+    const fetchMock = global.fetch as ReturnType<typeof vi.fn>;
+    document.cookie = 'echoroo_csrf=test-csrf; path=/';
+    fetchMock.mockResolvedValue(jsonResponse({ id: 'member-1', role: 'member' }));
+
+    await projectsApi.addMember('project-1', { email: 'member@example.com', role: 'viewer' });
+    await projectsApi.updateMemberRole('project-1', 'user-1', { role: 'member' });
+    await projectsApi.removeMember('project-1', 'user-1');
+
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      '/web-api/v1/projects/project-1/members',
+      expect.objectContaining({ method: 'POST', credentials: 'include' })
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      '/web-api/v1/projects/project-1/members/user-1',
+      expect.objectContaining({ method: 'PATCH', credentials: 'include' })
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      3,
+      '/web-api/v1/projects/project-1/members/user-1',
+      expect.objectContaining({ method: 'DELETE', credentials: 'include' })
+    );
+    for (const call of fetchMock.mock.calls) {
+      const init = call[1] as RequestInit & { headers: Record<string, string> };
+      expect(init.headers.Authorization).toBe('Bearer valid-jwt');
+      expect(init.headers['X-CSRF-Token']).toBe('test-csrf');
+    }
   });
 });
