@@ -12,7 +12,7 @@ Path operations owned by this module:
   ``allow_voting_and_comments``, ``public_location_precision_h3_res``,
   ``allow_precise_location_to_viewer``) are required; unknown keys are
   rejected with 422 (``Extra.forbid``); ``public_location_precision_h3_res``
-  is constrained to ``Literal[2, 5, 7, 9, 15]`` per FR-021.
+  accepts any integer from 3 through 15 per FR-021.
 
 The endpoint mirrors the Bearer ``/api/v1`` surface declared in
 :mod:`echoroo.api.v1.projects` so the same business logic
@@ -100,7 +100,8 @@ def _request_id(request: Request) -> str:
         "project returns 422. Each successful PATCH bumps "
         "``restricted_config_version`` and appends a "
         "``project.restricted_config.update`` row to ``project_audit_log`` "
-        "(FR-024 / FR-088). The ``allow_detection_view`` ON->OFF transition "
+        "(FR-024 / FR-088). ``public_location_precision_h3_res`` accepts "
+        "any integer from 3 through 15. The ``allow_detection_view`` ON->OFF transition "
         "additionally enqueues an asynchronous search-index rebuild "
         "(FR-025a)."
     ),

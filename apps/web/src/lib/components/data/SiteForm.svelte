@@ -15,10 +15,16 @@
   let h3Index = $state('');
   let resolution = $state(9);
 
-  // Initialize form fields from site prop once on mount
+  function siteResolution(site: Site | null): number {
+    const value = site?.h3_index_member_resolution;
+    return typeof value === 'number' && value >= 5 && value <= 15 ? value : 9;
+  }
+
+  // Initialize form fields from the latest site prop.
   $effect(() => {
     name = site?.name ?? '';
     h3Index = site?.h3_index_member ?? '';
+    resolution = siteResolution(site);
   });
   let isSubmitting = $state(false);
   let error = $state('');
@@ -67,7 +73,7 @@
   <div class="flex flex-col gap-2">
     <span class="text-sm font-medium text-stone-700">{m.form_site_location_label()} *</span>
     <p class="m-0 text-xs text-stone-500">{m.form_site_location_hint()}</p>
-    <H3MapPicker {h3Index} {resolution} onSelect={handleMapSelect} />
+    <H3MapPicker {h3Index} bind:resolution onSelect={handleMapSelect} />
   </div>
 
   {#if h3Index}

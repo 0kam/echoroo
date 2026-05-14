@@ -32,9 +32,9 @@ class Site(UUIDMixin, TimestampMixin, Base):
         project_id: Foreign key to parent project
         name: Human-readable site name (max 200 chars)
         h3_index_member: Uber H3 cell identifier at member precision
-            (FR-028 / NFR-003; resolution 9 or 15 only). VARCHAR(32).
+            (FR-028 / NFR-003; resolution 5-15). VARCHAR(32).
         h3_index_member_resolution: H3 resolution of ``h3_index_member``;
-            CHECK constraint forces ``IN (9, 15)``. Default 15.
+            CHECK constraint forces ``BETWEEN 5 AND 15``. Default 15.
         created_at: Creation timestamp
         updated_at: Last update timestamp
         project: Relationship to Project
@@ -64,7 +64,7 @@ class Site(UUIDMixin, TimestampMixin, Base):
         nullable=False,
         default=15,
         server_default="15",
-        doc="H3 resolution of h3_index_member; member precision: 9 or 15 (NFR-003)",
+        doc="H3 resolution of h3_index_member; member precision: 5-15 (NFR-003)",
     )
 
     # Relationships
@@ -82,7 +82,7 @@ class Site(UUIDMixin, TimestampMixin, Base):
         UniqueConstraint("project_id", "name", name="ux_sites_project_name"),
         UniqueConstraint("project_id", "h3_index_member", name="ux_sites_project_h3"),
         CheckConstraint(
-            "h3_index_member_resolution IN (9, 15)",
+            "h3_index_member_resolution BETWEEN 5 AND 15",
             name="ck_sites_h3_member_resolution",
         ),
         Index("ix_sites_project_id", "project_id"),

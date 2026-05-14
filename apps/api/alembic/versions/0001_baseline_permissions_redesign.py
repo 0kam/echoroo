@@ -724,9 +724,9 @@ def upgrade() -> None:  # noqa: PLR0915 — baseline migration, long by nature
         ),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("now()")),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("now()")),
-        # NFR-003: only precise resolutions allowed for member-side storage
+        # NFR-003: member-side storage accepts H3 resolutions 5 through 15.
         sa.CheckConstraint(
-            "h3_index_member_resolution IN (9, 15)",
+            "h3_index_member_resolution BETWEEN 5 AND 15",
             name="ck_sites_h3_member_resolution",
         ),
         sa.UniqueConstraint("project_id", "name", name="ux_sites_project_name"),

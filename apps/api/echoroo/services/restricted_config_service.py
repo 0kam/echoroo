@@ -175,7 +175,7 @@ async def update_restricted_config(
         project_id: Target project UUID.
         new_config: Validated request body. Must be the
             :class:`RestrictedConfigUpdateRequest` (already enforces
-            ``Extra.forbid`` + Literal H3 resolutions).
+            ``Extra.forbid`` + the 3-15 H3 resolution range).
         actor_user_id: User who initiated the PATCH; recorded as the audit
             ``actor_user_id`` (hashed at the audit layer per FR-091).
         request_id: Optional request id for the audit chain.

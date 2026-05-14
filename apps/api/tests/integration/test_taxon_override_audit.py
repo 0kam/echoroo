@@ -199,7 +199,7 @@ async def _create_project(session: AsyncSession, *, owner_id: uuid.UUID) -> uuid
         ' "allow_download": false,'
         ' "allow_export": false,'
         ' "allow_voting_and_comments": false,'
-        ' "public_location_precision_h3_res": 2,'
+        ' "public_location_precision_h3_res": 3,'
         ' "allow_precise_location_to_viewer": false}'
     )
     await session.execute(

@@ -329,26 +329,31 @@ async function ensureToggleAtValue(
 }
 
 /**
- * Ensure the H3-resolution dropdown is set to ``value`` on the server.
+ * Ensure the H3-resolution range input is set to ``value`` on the server.
  *
  * Mirrors :func:`ensureToggleAtValue` for the only non-boolean control
- * in the toggle section: when the dropdown already shows ``value`` we
- * skip the Save (the form is non-dirty), otherwise we select ``value``
- * and Save once.
+ * in the toggle section: when the range already shows ``value`` we
+ * skip the Save (the form is non-dirty), otherwise we set ``value`` and
+ * Save once.
  */
-async function ensureDropdownAtValue(
+async function ensureRangeAtValue(
   page: Page,
   testid: string,
   value: string,
 ): Promise<void> {
-  const dropdown = page.locator(`[data-testid="${testid}"]`);
-  await expect(dropdown).toBeVisible();
-  const current = await dropdown.inputValue();
+  const range = page.locator(`[data-testid="${testid}"]`);
+  await expect(range).toBeVisible();
+  const current = await range.inputValue();
   if (current === value) {
     return;
   }
-  await dropdown.selectOption(value);
-  await expect(dropdown).toHaveValue(value);
+  await range.evaluate((input, nextValue) => {
+    if (!(input instanceof HTMLInputElement)) return;
+    input.value = nextValue;
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+  }, value);
+  await expect(range).toHaveValue(value);
   await clickSave(page);
 }
 
@@ -356,7 +361,7 @@ async function ensureDropdownAtValue(
  * Click the Save button and wait for the success banner. The button
  * is expected to be enabled (i.e. the caller has just made the form
  * dirty). Callers that may end up with a non-dirty form should use
- * :func:`ensureToggleAtValue` / :func:`ensureDropdownAtValue` instead,
+ * :func:`ensureToggleAtValue` / :func:`ensureRangeAtValue` instead,
  * which skip the Save when nothing changed.
  */
 async function clickSave(page: Page): Promise<void> {
@@ -516,15 +521,11 @@ test.describe('Phase 8 US3 — Restricted owner toggles (T404, FR-014/020-022)',
     ).toBeVisible({ timeout: 10000 });
 
     // Persist resolution 5 on the server. The helper skips the Save
-    // when the dropdown already shows '5' (form non-dirty), and Saves
+    // when the range already shows '5' (form non-dirty), and Saves
     // once otherwise.
-    await ensureDropdownAtValue(
-      page,
-      'toggle-public_location_precision_h3_res',
-      '5',
-    );
+    await ensureRangeAtValue(page, 'toggle-public_location_precision_h3_res', '5');
 
-    // After ensureDropdownAtValue() the persisted value must be 5 (the
+    // After ensureRangeAtValue() the persisted value must be 5 (the
     // form re-mounts from the GET /projects/{id} response).
     await expect(
       page.locator('[data-testid="toggle-public_location_precision_h3_res"]'),

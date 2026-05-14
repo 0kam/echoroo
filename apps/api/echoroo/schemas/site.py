@@ -18,7 +18,7 @@ class SiteCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=200, description="Human-readable site name")
     h3_index_member: str = Field(
         ...,
-        description="Valid H3 cell index at member precision (resolution 9 or 15; FR-028 / NFR-003)",
+        description="Valid H3 cell index at member precision (resolution 5-15; FR-028 / NFR-003)",
     )
 
 
@@ -28,7 +28,7 @@ class SiteUpdate(BaseModel):
     name: str | None = Field(None, min_length=1, max_length=200, description="Human-readable site name")
     h3_index_member: str | None = Field(
         None,
-        description="Valid H3 cell index at member precision (resolution 9 or 15)",
+        description="Valid H3 cell index at member precision (resolution 5-15)",
     )
 
 
