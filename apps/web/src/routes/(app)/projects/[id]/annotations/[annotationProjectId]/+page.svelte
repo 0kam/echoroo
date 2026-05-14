@@ -189,7 +189,7 @@
 
     try {
       await apiClient.post(
-        `/api/v1/projects/${projectId}/clip-annotations/batch-tag`,
+        `/web-api/v1/projects/${projectId}/clip-annotations/batch-tag`,
         { task_ids: selectedTaskIds, tag_id: batchTagId }
       );
 

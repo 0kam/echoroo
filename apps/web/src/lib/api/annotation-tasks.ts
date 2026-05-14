@@ -11,7 +11,7 @@ import type {
 import { apiClient } from './client';
 import { ApiError } from './client';
 
-const API_BASE = '/api/v1';
+const API_BASE = '/web-api/v1';
 
 /**
  * Fetch a paginated list of annotation tasks for an annotation project.

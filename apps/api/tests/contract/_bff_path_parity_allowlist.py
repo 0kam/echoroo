@@ -51,6 +51,34 @@ BFF_PATHS_DECLARED_BY_SPEC_009: list[str] = [
     "/web-api/v1/projects GET",
     "/web-api/v1/projects/{project_id} GET",
     "/web-api/v1/projects/{project_id}/recordings GET",
+    # PR D0 — media streams + exports
+    "/web-api/v1/projects/{project_id}/recordings/{recording_id} GET",
+    "/web-api/v1/projects/{project_id}/recordings/{recording_id}/audio GET",
+    "/web-api/v1/projects/{project_id}/recordings/{recording_id}/playback GET",
+    "/web-api/v1/projects/{project_id}/recordings/{recording_id}/spectrogram GET",
+    "/web-api/v1/projects/{project_id}/annotation-projects/{annotation_project_id}/export GET",
+    "/web-api/v1/projects/{project_id}/datasets/{dataset_id}/export GET",
+    # PR D — annotation mutations
+    "/web-api/v1/projects/{project_id}/datasets GET",
+    "/web-api/v1/projects/{project_id}/datasets/{dataset_id} GET",
+    "/web-api/v1/projects/{project_id}/datasets/{dataset_id}/statistics GET",
+    "/web-api/v1/projects/{project_id}/datasets/{dataset_id}/datetime-config GET",
+    "/web-api/v1/projects/{project_id}/detection-runs GET",
+    "/web-api/v1/projects/{project_id}/detections GET",
+    "/web-api/v1/projects/{project_id}/detections/species-summary GET",
+    "/web-api/v1/projects/{project_id}/detections/temporal-data GET",
+    "/web-api/v1/projects/{project_id}/annotation-projects GET",
+    "/web-api/v1/projects/{project_id}/annotation-projects POST",
+    "/web-api/v1/projects/{project_id}/annotation-projects/{annotation_project_id} GET",
+    "/web-api/v1/projects/{project_id}/annotation-projects/{annotation_project_id} PATCH",
+    "/web-api/v1/projects/{project_id}/annotation-projects/{annotation_project_id} DELETE",
+    "/web-api/v1/projects/{project_id}/annotation-projects/{annotation_project_id}/generate-tasks POST",
+    "/web-api/v1/projects/{project_id}/annotation-projects/{annotation_project_id}/tasks GET",
+    "/web-api/v1/projects/{project_id}/annotation-projects/{annotation_project_id}/tasks/next GET",
+    "/web-api/v1/projects/{project_id}/annotation-projects/{annotation_project_id}/tasks/{task_id} GET",
+    "/web-api/v1/projects/{project_id}/annotation-projects/{annotation_project_id}/tasks/{task_id} PATCH",
+    "/web-api/v1/projects/{project_id}/annotation-projects/{annotation_project_id}/tasks/{task_id}/complete POST",
+    "/web-api/v1/projects/{project_id}/clip-annotations/batch-tag POST",
     # PR A2 — projects mutations + missing read adapters
     "/web-api/v1/projects POST",
     "/web-api/v1/projects/{project_id} PATCH",
@@ -63,4 +91,6 @@ BFF_PATHS_DECLARED_BY_SPEC_009: list[str] = [
     # PR C — taxa search + GBIF lookup
     "/web-api/v1/taxa/search GET",
     "/web-api/v1/taxa/gbif-search GET",
+    # PR D — detection model discovery used by dataset export/status pages
+    "/web-api/v1/detection-runs/available-models GET",
 ]

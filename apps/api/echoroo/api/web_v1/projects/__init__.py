@@ -34,7 +34,21 @@ from fastapi import APIRouter
 
 from echoroo.api.web_v1 import trusted as trusted_module
 
-from . import _core, _license, _members, _overview, _ownership, _restricted_config
+from . import (
+    _annotation_projects,
+    _annotation_tasks,
+    _annotations,
+    _core,
+    _datasets,
+    _detection_runs,
+    _detections,
+    _license,
+    _media,
+    _members,
+    _overview,
+    _ownership,
+    _restricted_config,
+)
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
@@ -56,6 +70,28 @@ router.include_router(_overview.router)
 
 # Ownership transfer (Phase 12 / T700) — ``/{project_id}/transfer-ownership``.
 router.include_router(_ownership.router)
+
+# Media streams + exports (spec/009 PR D0) — legacy behavior adapters for
+# ``/{project_id}/recordings/{recording_id}/...`` and export downloads.
+router.include_router(_media.router)
+
+# Dataset reads used by the PR D data export screen.
+router.include_router(_datasets.router)
+
+# Detection-run reads used by dataset status panels rendered on the export page.
+router.include_router(_detection_runs.router)
+
+# Detection reads used by the project detections page.
+router.include_router(_detections.router)
+
+# Annotation project/task reads and mutations needed by the PR D annotation
+# screen before export and batch-tag interactions can run.
+router.include_router(_annotation_projects.router)
+router.include_router(_annotation_tasks.router)
+
+# Annotation mutations (spec/009 PR D) — legacy behavior adapter for
+# ``/{project_id}/clip-annotations/batch-tag``.
+router.include_router(_annotations.router)
 
 # Trusted overlay management (Phase 10 / T510) — Owner/Admin enumeration
 # under the same ``/projects`` prefix as the rest of the project surface.

@@ -556,7 +556,7 @@ class AuthRouterMiddleware(BaseHTTPMiddleware):
         session_id = request.cookies.get(self.config.session_cookie_name)
         access_token = request.cookies.get(self.config.access_cookie_name) or self._extract_bearer(
             request
-        )
+        ) or self._extract_media_query_token(request)
         if not session_id or not access_token:
             return _auth_failure(401, "auth_required", "Session cookie + access token required")
 
@@ -590,6 +590,22 @@ class AuthRouterMiddleware(BaseHTTPMiddleware):
         if auth_header.lower().startswith("bearer "):
             return auth_header.split(" ", 1)[1].strip() or None
         return None
+
+    @staticmethod
+    def _extract_media_query_token(request: Request) -> str | None:
+        """Allow native media/image elements to authenticate BFF media GETs."""
+        if request.method != "GET":
+            return None
+        if (
+            re.fullmatch(
+                r"/web-api/v1/projects/[^/]+/recordings/[^/]+/(audio|playback|spectrogram)",
+                request.url.path,
+            )
+            is None
+        ):
+            return None
+        token = request.query_params.get("token")
+        return token.strip() if token else None
 
 
 def _resolve_client_ip(

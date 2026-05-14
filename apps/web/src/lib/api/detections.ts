@@ -14,6 +14,7 @@ import type {
 import { apiClient } from './client';
 
 const API_BASE = '/api/v1';
+const WEB_API_BASE = '/web-api/v1';
 
 // ============================================
 // Query param helpers
@@ -61,7 +62,7 @@ export async function fetchSpeciesSummary(
   if (params?.detection_run_id) query.set('detection_run_id', params.detection_run_id);
   const qs = query.toString() ? `?${query.toString()}` : '';
   return apiClient.get<SpeciesSummaryResponse>(
-    `${API_BASE}/projects/${projectId}/detections/species-summary${qs}`
+    `${WEB_API_BASE}/projects/${projectId}/detections/species-summary${qs}`
   );
 }
 
@@ -86,7 +87,7 @@ export async function fetchDetections(
 ): Promise<DetectionListResponse> {
   const qs = buildDetectionParams(params);
   return apiClient.get<DetectionListResponse>(
-    `${API_BASE}/projects/${projectId}/detections${qs}`
+    `${WEB_API_BASE}/projects/${projectId}/detections${qs}`
   );
 }
 
@@ -141,7 +142,6 @@ export async function fetchTemporalData(
   if (detectionRunId) params.set('detection_run_id', detectionRunId);
   const qs = params.toString() ? `?${params.toString()}` : '';
   return apiClient.get<DetectionTemporalDataResponse>(
-    `${API_BASE}/projects/${projectId}/detections/temporal-data${qs}`
+    `${WEB_API_BASE}/projects/${projectId}/detections/temporal-data${qs}`
   );
 }
-
