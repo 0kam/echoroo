@@ -19,15 +19,11 @@ cp .env.example .env
 #   - POSTGRES_PASSWORD (required)
 #   - ECHOROO_AUDIO_DIR (required - path to your audio files)
 
-# Build base image (one-time, contains ML dependencies)
-cd back && docker build -f Dockerfile.base -t echoroo-base:latest .
-cd ..
-
 # Start Echoroo (development mode)
 ./scripts/docker.sh dev
 ```
 
-Then open http://localhost:3000 in your browser.
+Then open http://localhost:5173 in your browser.
 
 See [DOCKER.md](DOCKER.md) for detailed Docker instructions.
 
@@ -36,22 +32,19 @@ See [DOCKER.md](DOCKER.md) for detailed Docker instructions.
 For development without Docker:
 
 ```bash
-# Run setup script
-./scripts/setup.sh
-
 # Start PostgreSQL (required)
-# See QUICK_START.md for database setup options
+# See CONFIGURATION.md for database setup options
 
 # Start backend (Terminal 1)
-cd back && uv run python -m echoroo
+cd apps/api && uv run uvicorn echoroo.main:app --reload
 
 # Start frontend (Terminal 2)
-cd front && npm run dev
+cd apps/web && npm run dev
 ```
 
-**Requirements:** Python 3.11+, [uv](https://docs.astral.sh/uv/), Node.js 18+, PostgreSQL (or SQLite)
+**Requirements:** Python 3.11+, [uv](https://docs.astral.sh/uv/), Node.js 20+, PostgreSQL (or SQLite)
 
-For detailed instructions, refer to the [Quick Start Guide](QUICK_START.md) or [Configuration Guide](CONFIGURATION.md).
+For detailed instructions, refer to the [Configuration Guide](CONFIGURATION.md).
 
 ## Usage
 
@@ -65,11 +58,10 @@ For detailed instructions, refer to the [Quick Start Guide](QUICK_START.md) or [
 ./scripts/docker.sh dev db           # Connect to database
 ```
 
-**Production:**
+**Rebuild images:**
 ```bash
-./scripts/docker.sh prod             # Start
-./scripts/docker.sh prod logs        # View logs
-./scripts/docker.sh prod stop        # Stop
+ECHOROO_BUILD=1 ./scripts/docker.sh dev
+./scripts/docker.sh dev build
 ```
 
 ### Documentation
