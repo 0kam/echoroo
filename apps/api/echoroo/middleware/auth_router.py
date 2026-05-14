@@ -40,7 +40,7 @@ import hmac
 import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Final, Protocol
+from typing import Final, Protocol, cast
 from uuid import UUID
 
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -51,8 +51,11 @@ from starlette.types import ASGIApp
 from echoroo.core.auth import (
     AccessTokenClaims,
     InvalidTokenError,
+    MediaTokenClaims,
+    MediaTokenScope,
     StaleTokenError,
     verify_access_token,
+    verify_media_token,
 )
 from echoroo.core.auth_paths import PUBLIC_AUTH_PATHS
 
@@ -554,16 +557,47 @@ class AuthRouterMiddleware(BaseHTTPMiddleware):
             return _auth_failure(401, "auth_unavailable", "Session verifier not configured")
 
         session_id = request.cookies.get(self.config.session_cookie_name)
-        access_token = request.cookies.get(self.config.access_cookie_name) or self._extract_bearer(
-            request
-        ) or self._extract_media_query_token(request)
-        if not session_id or not access_token:
-            return _auth_failure(401, "auth_required", "Session cookie + access token required")
+        if not session_id:
+            return _auth_failure(401, "auth_required", "Session cookie required")
 
         live = await verifier.verify(session_id)
         if live is None:
             return _auth_failure(401, "auth_invalid", "Session unknown or expired")
         live_user_id, live_stamp = live
+
+        media_request = self._extract_media_query_token(request)
+        if media_request is not None:
+            media_token, project_id, recording_id, scope = media_request
+            try:
+                media_claims: MediaTokenClaims = verify_media_token(
+                    media_token,
+                    current_security_stamp=live_stamp,
+                    project_id=project_id,
+                    recording_id=recording_id,
+                    scope=scope,
+                )
+            except StaleTokenError:
+                return _auth_failure(
+                    STATUS_SESSION_STALE,
+                    "session_revoked",
+                    "Session has been revoked; please log in again",
+                )
+            except InvalidTokenError:
+                return _auth_failure(401, "auth_invalid", "Media token invalid")
+
+            if media_claims.user_id != live_user_id:
+                return _auth_failure(401, "auth_mismatch", "Session and token user mismatch")
+
+            return Principal.for_session(
+                user_id=media_claims.user_id,
+                security_stamp=media_claims.security_stamp,
+            )
+
+        access_token = request.cookies.get(self.config.access_cookie_name) or self._extract_bearer(
+            request
+        )
+        if not access_token:
+            return _auth_failure(401, "auth_required", "Access token required")
 
         try:
             claims: AccessTokenClaims = verify_access_token(
@@ -592,20 +626,30 @@ class AuthRouterMiddleware(BaseHTTPMiddleware):
         return None
 
     @staticmethod
-    def _extract_media_query_token(request: Request) -> str | None:
+    def _extract_media_query_token(
+        request: Request,
+    ) -> tuple[str, UUID, UUID, MediaTokenScope] | None:
         """Allow native media/image elements to authenticate BFF media GETs."""
         if request.method != "GET":
             return None
-        if (
-            re.fullmatch(
-                r"/web-api/v1/projects/[^/]+/recordings/[^/]+/(audio|playback|spectrogram)",
-                request.url.path,
-            )
-            is None
-        ):
+        match = re.fullmatch(
+            r"/web-api/v1/projects/([^/]+)/recordings/([^/]+)/(audio|playback|spectrogram)",
+            request.url.path,
+        )
+        if match is None:
             return None
-        token = request.query_params.get("token")
-        return token.strip() if token else None
+        token = request.query_params.get("media_token")
+        if not token:
+            return None
+        try:
+            project_id = UUID(match.group(1))
+            recording_id = UUID(match.group(2))
+        except (TypeError, ValueError):
+            return None
+        scope = cast(MediaTokenScope, match.group(3))
+        if scope not in ("audio", "playback", "spectrogram"):
+            return None
+        return token.strip(), project_id, recording_id, scope
 
 
 def _resolve_client_ip(

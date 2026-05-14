@@ -14,6 +14,8 @@ from starlette.responses import Response
 
 from echoroo.api.v1 import recordings as legacy_recordings
 from echoroo.api.web_v1.projects import _media
+from echoroo.core.actions import RECORDING_MEDIA_ACTION
+from echoroo.core.auth import verify_media_token
 from echoroo.core.database import get_db
 from echoroo.core.settings import get_settings
 from echoroo.middleware.auth import get_current_user
@@ -124,6 +126,53 @@ async def test_recording_media_bff_routes_delegate_to_legacy(
         assert captured["range"] == "bytes=10-"
 
 
+@pytest.mark.asyncio
+async def test_recording_media_token_bff_gates_and_issues_scoped_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_id = uuid4()
+    recording_id = uuid4()
+    user = SimpleNamespace(id=uuid4(), security_stamp="media-bff-stamp")
+
+    class _Service:
+        async def get_by_id_in_project(self, rid: object, pid: object) -> object:
+            return SimpleNamespace(id=rid, project_id=pid)
+
+    service = _Service()
+    captured: dict[str, object] = {}
+
+    async def fake_gate_action(**kwargs: object) -> object:
+        captured.update(kwargs)
+        return object()
+
+    monkeypatch.setattr(_media, "gate_action", fake_gate_action)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=_build_app(user, service)),
+        base_url="http://testserver",
+    ) as client:
+        response = await client.post(
+            f"/web-api/v1/projects/{project_id}/recordings/{recording_id}/media-token",
+            json={"scope": "spectrogram"},
+        )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["expires_in"] > 0
+    assert captured["action"] == RECORDING_MEDIA_ACTION
+    assert captured["project_id"] == project_id
+    assert captured["current_user"] is user
+
+    claims = verify_media_token(
+        body["token"],
+        current_security_stamp=user.security_stamp,
+        project_id=project_id,
+        recording_id=recording_id,
+        scope="spectrogram",
+    )
+    assert claims.user_id == user.id
+
+
 def test_recording_media_bff_paths_are_declared() -> None:
     app = _build_app(SimpleNamespace(id=uuid4()), object())
     paths = app.openapi()["paths"]
@@ -137,6 +186,10 @@ def test_recording_media_bff_paths_are_declared() -> None:
     )
     assert (
         "/web-api/v1/projects/{project_id}/recordings/{recording_id}/spectrogram"
+        in paths
+    )
+    assert (
+        "/web-api/v1/projects/{project_id}/recordings/{recording_id}/media-token"
         in paths
     )
 

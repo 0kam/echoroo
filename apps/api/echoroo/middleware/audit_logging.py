@@ -21,8 +21,8 @@ output:
 * ``X-API-Key``
 * ``X-CSRF-Token``
 
-Query-string keys named ``token``, ``api_key``, ``access_token``,
-``refresh_token``, ``password``, ``secret`` are replaced with
+Query-string keys named ``token``, ``media_token``, ``api_key``,
+``access_token``, ``refresh_token``, ``password``, ``secret`` are replaced with
 ``[REDACTED]`` even before the sanitiser is invoked, so a leaked
 plaintext credential never appears in logs even if it does not match
 any PII regex.
@@ -67,6 +67,7 @@ ALWAYS_REDACT_HEADERS: Final[frozenset[str]] = frozenset(
 ALWAYS_REDACT_QUERY_KEYS: Final[frozenset[str]] = frozenset(
     {
         "token",
+        "media_token",
         "api_key",
         "access_token",
         "refresh_token",

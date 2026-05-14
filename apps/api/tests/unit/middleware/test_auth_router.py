@@ -11,7 +11,7 @@ from starlette.responses import JSONResponse
 from starlette.routing import Route
 from starlette.testclient import TestClient
 
-from echoroo.core.auth import issue_access_token
+from echoroo.core.auth import issue_access_token, issue_media_token
 from echoroo.middleware.auth_router import (
     ApiKeyRecord,
     AuthRouterConfig,
@@ -62,6 +62,10 @@ def _build_app(config: AuthRouterConfig) -> TestClient:
         routes=[
             Route("/api/v1/ping", echo),
             Route("/web-api/v1/ping", echo),
+            Route(
+                "/web-api/v1/projects/{project_id}/recordings/{recording_id}/playback",
+                echo,
+            ),
             Route("/health", echo),
         ]
     )
@@ -180,6 +184,91 @@ def test_web_api_v1_rejects_stale_security_stamp() -> None:
     )
     assert resp.status_code == 419
     assert resp.json()["error_code"] == "session_revoked"
+
+
+def test_web_api_media_get_accepts_scoped_media_token() -> None:
+    """Native media GETs may authenticate with session cookie + media_token."""
+    user_id = uuid4()
+    stamp = "c" * 64
+    session_id = "sess-media"
+    project_id = uuid4()
+    recording_id = uuid4()
+    config = AuthRouterConfig(
+        session_verifier=_StubSessionVerifier({session_id: (user_id, stamp)})
+    )
+    token = issue_media_token(
+        user_id=user_id,
+        security_stamp=stamp,
+        project_id=project_id,
+        recording_id=recording_id,
+        scope="playback",
+        now=datetime.now(UTC),
+    )
+
+    client = _build_app(config)
+    resp = client.get(
+        f"/web-api/v1/projects/{project_id}/recordings/{recording_id}/playback",
+        params={"media_token": token},
+        cookies={"session_id": session_id},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["auth_kind"] == "session"
+    assert resp.json()["user_id"] == str(user_id)
+
+
+def test_web_api_media_get_rejects_old_token_query_fallback() -> None:
+    """The old ?token=<access JWT> media fallback is not accepted anymore."""
+    user_id = uuid4()
+    stamp = "d" * 64
+    session_id = "sess-old-query"
+    project_id = uuid4()
+    recording_id = uuid4()
+    config = AuthRouterConfig(
+        session_verifier=_StubSessionVerifier({session_id: (user_id, stamp)})
+    )
+    access_token = issue_access_token(
+        user_id=user_id,
+        security_stamp=stamp,
+        now=datetime.now(UTC),
+    )
+
+    client = _build_app(config)
+    resp = client.get(
+        f"/web-api/v1/projects/{project_id}/recordings/{recording_id}/playback",
+        params={"token": access_token},
+        cookies={"session_id": session_id},
+    )
+    assert resp.status_code == 401
+    assert resp.json()["error_code"] == "auth_required"
+
+
+def test_web_api_media_get_rejects_wrong_media_scope() -> None:
+    """Media tokens are bound to the concrete audio/playback/spectrogram path."""
+    user_id = uuid4()
+    stamp = "e" * 64
+    session_id = "sess-wrong-scope"
+    project_id = uuid4()
+    recording_id = uuid4()
+    config = AuthRouterConfig(
+        session_verifier=_StubSessionVerifier({session_id: (user_id, stamp)})
+    )
+    token = issue_media_token(
+        user_id=user_id,
+        security_stamp=stamp,
+        project_id=project_id,
+        recording_id=recording_id,
+        scope="audio",
+        now=datetime.now(UTC),
+    )
+
+    client = _build_app(config)
+    resp = client.get(
+        f"/web-api/v1/projects/{project_id}/recordings/{recording_id}/playback",
+        params={"media_token": token},
+        cookies={"session_id": session_id},
+    )
+    assert resp.status_code == 401
+    assert resp.json()["error_code"] == "auth_invalid"
 
 
 def test_public_path_allowlist_skips_auth() -> None:

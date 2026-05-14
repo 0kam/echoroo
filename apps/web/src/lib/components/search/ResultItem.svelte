@@ -9,7 +9,7 @@
   import { onDestroy } from 'svelte';
   import * as m from '$lib/paraglide/messages.js';
   import { localizeHref } from '$lib/paraglide/runtime';
-  import { getPlaybackUrl } from '$lib/api/recordings';
+  import { getAuthenticatedRecordingMediaUrl, getPlaybackUrl } from '$lib/api/recordings';
   import type { SimilarityResult } from '$lib/types/search';
 
   interface Props {
@@ -21,6 +21,8 @@
 
   let isPlaying = $state(false);
   let audioEl: HTMLAudioElement | null = null;
+  let disposed = false;
+  let playbackRequestId = 0;
 
   function formatTime(seconds: number): string {
     const mins = Math.floor(seconds / 60);
@@ -35,32 +37,55 @@
     return 'bg-stone-100 text-stone-600';
   }
 
-  function togglePlay() {
+  async function togglePlay() {
     if (isPlaying) {
+      playbackRequestId += 1;
       audioEl?.pause();
       audioEl = null;
       isPlaying = false;
     } else {
       if (audioEl) {
+        playbackRequestId += 1;
         audioEl.pause();
         audioEl = null;
       }
-      const url = getPlaybackUrl(projectId, match.recording_id, {
+      const requestId = ++playbackRequestId;
+      const playbackUrl = getPlaybackUrl(projectId, match.recording_id, {
         start: match.start_time,
         end: match.end_time,
       });
+      let url: string;
+      try {
+        url = await getAuthenticatedRecordingMediaUrl(
+          projectId,
+          match.recording_id,
+          'playback',
+          playbackUrl
+        );
+      } catch {
+        if (requestId === playbackRequestId) {
+          isPlaying = false;
+        }
+        return;
+      }
+      if (disposed || requestId !== playbackRequestId) {
+        return;
+      }
       const audio = new Audio(url);
       audio.addEventListener('ended', () => {
+        if (audioEl !== audio) return;
         isPlaying = false;
         audioEl = null;
       });
       audio.addEventListener('error', () => {
+        if (audioEl !== audio) return;
         isPlaying = false;
         audioEl = null;
       });
       audioEl = audio;
       isPlaying = true;
       audio.play().catch(() => {
+        if (audioEl !== audio) return;
         isPlaying = false;
         audioEl = null;
       });
@@ -68,6 +93,8 @@
   }
 
   onDestroy(() => {
+    disposed = true;
+    playbackRequestId += 1;
     audioEl?.pause();
     audioEl = null;
   });
