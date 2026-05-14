@@ -37,7 +37,9 @@ class SiteSummaryForRecording(BaseModel):
 class RecordingUpdate(BaseModel):
     """Recording update request schema."""
 
-    time_expansion: float | None = Field(None, ge=0.1, le=100.0, description="Time expansion factor")
+    time_expansion: float | None = Field(
+        None, ge=0.1, le=100.0, description="Time expansion factor"
+    )
     note: str | None = Field(None, description="User notes")
 
 
@@ -101,8 +103,8 @@ class PublicRecordingItem(BaseModel):
 
     The shape covers exactly what the public detail page needs: an opaque ID
     (for the audio stream URL), a display name (filename), the playback
-    duration when available, and the H3 cell index of the linked site (FR-030;
-    raw lat/lng MUST never reach the wire).
+    duration when available, non-sensitive audio metadata, and the H3 cell
+    index of the linked site (FR-030; raw lat/lng MUST never reach the wire).
 
     Adding any further field MUST go through a privacy review — the matrix
     in ``specs/006-permissions-redesign/data-model.md`` is the source of
@@ -110,12 +112,19 @@ class PublicRecordingItem(BaseModel):
     """
 
     id: UUID = Field(..., description="Recording UUID, used for audio stream URL")
-    project_id: UUID = Field(..., description="Owning project UUID (denormalised for the URL builder)")
+    project_id: UUID = Field(
+        ..., description="Owning project UUID (denormalised for the URL builder)"
+    )
+    dataset_id: UUID = Field(..., description="Owning dataset UUID, for dataset-scoped filtering")
     name: str = Field(..., description="Display name (Recording.filename)")
     duration_seconds: float | None = Field(
         None,
         description="Playback duration in seconds with time_expansion applied; None if unknown",
     )
+    samplerate: int = Field(..., ge=0, description="Sample rate in Hz")
+    channels: int = Field(..., ge=0, description="Number of audio channels")
+    datetime: DatetimeType | None = Field(None, description="Parsed recording datetime")
+    datetime_parse_status: DatetimeParseStatus = Field(..., description="Datetime parse status")
     site_h3_index: str | None = Field(
         None,
         description=(

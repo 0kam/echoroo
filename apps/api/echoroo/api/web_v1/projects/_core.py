@@ -35,6 +35,7 @@ Permission engine integration:
 
 from __future__ import annotations
 
+from datetime import datetime
 from types import SimpleNamespace
 from uuid import UUID
 
@@ -121,6 +122,7 @@ def _public_recording_filter_resource(
         taxon_id=None,
     )
 
+
 router = APIRouter()
 
 
@@ -186,9 +188,7 @@ async def list_projects(
     # Dormant / Archived stay hidden to outsiders (only the membership
     # clause for Authenticated callers can lift them).
     public_or_restricted_active = (
-        Project.visibility.in_(
-            [ProjectVisibility.PUBLIC, ProjectVisibility.RESTRICTED]
-        )
+        Project.visibility.in_([ProjectVisibility.PUBLIC, ProjectVisibility.RESTRICTED])
     ) & (Project.status == ProjectStatus.ACTIVE)
 
     visibility_clause: ColumnElement[bool]
@@ -214,12 +214,9 @@ async def list_projects(
         # removed members no longer surface their old projects under the
         # membership clause (mirrors ``models/project.py:215``
         # ``ux_project_members_active`` partial-unique semantics).
-        member_subquery = (
-            select(ProjectMember.project_id)
-            .where(
-                ProjectMember.user_id == current_user.id,
-                ProjectMember.removed_at.is_(None),
-            )
+        member_subquery = select(ProjectMember.project_id).where(
+            ProjectMember.user_id == current_user.id,
+            ProjectMember.removed_at.is_(None),
         )
         visibility_clause = or_(
             public_or_restricted_active,
@@ -233,9 +230,7 @@ async def list_projects(
             .options(selectinload(Project.owner))
             .order_by(Project.created_at.desc())
         )
-        count_query = select(func.count(func.distinct(Project.id))).where(
-            visibility_clause
-        )
+        count_query = select(func.count(func.distinct(Project.id))).where(visibility_clause)
 
     total_result = await db.execute(count_query)
     total: int = total_result.scalar_one()
@@ -348,8 +343,7 @@ async def get_project(
     # ``Public + Active`` looks like 404 to a signed-out caller — never
     # 403, which would leak existence.
     if current_user is None and (
-        project.visibility != ProjectVisibility.PUBLIC
-        or project.status != ProjectStatus.ACTIVE
+        project.visibility != ProjectVisibility.PUBLIC or project.status != ProjectStatus.ACTIVE
     ):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -371,9 +365,7 @@ async def get_project(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="project not found",
             )
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, detail="action denied"
-        )
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="action denied")
 
     # Defence-in-depth: ProjectResponse does not expose raw coords, but apply
     # the filter so the contract holds for downstream Detection/Recording
@@ -383,9 +375,7 @@ async def get_project(
     # to ``None`` on every path that is not "Authenticated caller +
     # Restricted project". The Authenticated + Restricted branch keeps
     # the value populated so the US4 AC2 mailto: hook works.
-    scrub_owner_email_for_visibility(
-        response, project=project, current_user=current_user
-    )
+    scrub_owner_email_for_visibility(response, project=project, current_user=current_user)
     # Phase 9 polish round 2 Major 2 (2026-04-27): resolve the caller's
     # effective project role so the Web UI can gate the Restricted
     # "Request access" callout without probing the admin-only
@@ -401,9 +391,7 @@ async def get_project(
     if Permission.VIEW_PROJECT_METADATA not in effective:
         # Should not happen — is_allowed already returned True for this perm.
         # Belt-and-braces in case a future Action change widens scope.
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, detail="action denied"
-        )
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="action denied")
     apply_response_filter(
         obj=response,
         effective_permissions=effective,
@@ -444,6 +432,22 @@ async def list_public_recordings(
     db: DbSession,
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     limit: int = Query(20, ge=1, le=100, description="Items per page (max 100)"),
+    dataset_id: UUID | None = Query(None, description="Filter by dataset UUID"),
+    site_id: UUID | None = Query(None, description="Filter by site UUID"),
+    search: str | None = Query(None, description="Case-insensitive filename search"),
+    datetime_from: datetime | None = Query(None, description="Filter from datetime"),
+    datetime_to: datetime | None = Query(None, description="Filter to datetime"),
+    samplerate: int | None = Query(None, ge=1, description="Filter by sample rate"),
+    sort_by: str = Query(
+        "datetime",
+        pattern="^(filename|datetime|duration|samplerate|channels)$",
+        description="Sort column",
+    ),
+    sort_order: str = Query(
+        "desc",
+        pattern="^(asc|desc)$",
+        description="Sort order",
+    ),
 ) -> PublicRecordingListResponse:
     """Paginated recordings for ``project_id`` with Guest enumeration safety.
 
@@ -469,8 +473,7 @@ async def list_public_recordings(
 
     # FR-018: same enumeration safety as ``GET /{project_id}``.
     if current_user is None and (
-        project.visibility != ProjectVisibility.PUBLIC
-        or project.status != ProjectStatus.ACTIVE
+        project.visibility != ProjectVisibility.PUBLIC or project.status != ProjectStatus.ACTIVE
     ):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -492,9 +495,7 @@ async def list_public_recordings(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="project not found",
             )
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, detail="action denied"
-        )
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="action denied")
 
     # Belt-and-braces: the matrix should already gate this for Guests on
     # non-Public projects, but if a future change widens scope without
@@ -505,9 +506,7 @@ async def list_public_recordings(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="project not found",
             )
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, detail="action denied"
-        )
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="action denied")
 
     offset = (page - 1) * limit
 
@@ -526,13 +525,41 @@ async def list_public_recordings(
         .join(Dataset, Dataset.id == Recording.dataset_id)
         .outerjoin(Site, Site.id == Dataset.site_id)
         .where(Dataset.project_id == project_id)
-        .order_by(Recording.created_at.desc())
     )
     count_query = (
         select(func.count(Recording.id))
         .join(Dataset, Dataset.id == Recording.dataset_id)
         .where(Dataset.project_id == project_id)
     )
+    filters: list[ColumnElement[bool]] = []
+    if dataset_id is not None:
+        filters.append(Recording.dataset_id == dataset_id)
+    if site_id is not None:
+        filters.append(Dataset.site_id == site_id)
+    if search:
+        filters.append(Recording.filename.ilike(f"%{search}%"))
+    if datetime_from is not None:
+        filters.append(Recording.datetime >= datetime_from)
+    if datetime_to is not None:
+        filters.append(Recording.datetime <= datetime_to)
+    if samplerate is not None:
+        filters.append(Recording.samplerate == samplerate)
+    if filters:
+        base_query = base_query.where(*filters)
+        count_query = count_query.where(*filters)
+
+    sort_columns = {
+        "filename": Recording.filename,
+        "datetime": Recording.datetime,
+        "duration": Recording.duration,
+        "samplerate": Recording.samplerate,
+        "channels": Recording.channels,
+    }
+    sort_column = sort_columns.get(sort_by, Recording.datetime)
+    if sort_order == "asc":
+        base_query = base_query.order_by(sort_column.asc().nulls_last())
+    else:
+        base_query = base_query.order_by(sort_column.desc().nulls_last())
 
     total_result = await db.execute(count_query)
     total: int = total_result.scalar_one()
@@ -552,9 +579,7 @@ async def list_public_recordings(
         # time, not the on-disk number. Same convention as Recording.effective_duration.
         duration_seconds: float | None
         try:
-            duration_seconds = float(recording.duration) * float(
-                recording.time_expansion or 1.0
-            )
+            duration_seconds = float(recording.duration) * float(recording.time_expansion or 1.0)
         except (TypeError, ValueError):  # pragma: no cover - defensive
             duration_seconds = None
 
@@ -580,8 +605,13 @@ async def list_public_recordings(
         item = PublicRecordingItem(
             id=recording.id,
             project_id=project_id,
+            dataset_id=recording.dataset_id,
             name=recording.filename,
             duration_seconds=duration_seconds,
+            samplerate=recording.samplerate,
+            channels=recording.channels,
+            datetime=recording.datetime,
+            datetime_parse_status=recording.datetime_parse_status,
             site_h3_index=generalised_h3,
         )
         # Defence-in-depth: re-route the assembled item through the filter so

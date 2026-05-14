@@ -47,4 +47,8 @@ BFF_PATHS_DECLARED_BY_SPEC_009: list[str] = [
     "/web-api/v1/auth/password-reset/request POST",
     "/web-api/v1/auth/password-reset/confirm POST",
     "/web-api/v1/auth/verify-email POST",
+    # PR A — projects read subset (frontend-only rewire, 2026-05-13)
+    "/web-api/v1/projects GET",
+    "/web-api/v1/projects/{project_id} GET",
+    "/web-api/v1/projects/{project_id}/recordings GET",
 ]
