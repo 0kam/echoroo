@@ -7,7 +7,15 @@ from uuid import UUID
 from fastapi import APIRouter, Query, Request, Response
 
 from echoroo.api.v1 import annotation_tasks as legacy_annotation_tasks
+from echoroo.core.actions import (
+    ANNOTATION_TASK_COMPLETE_ACTION,
+    ANNOTATION_TASK_GET_ACTION,
+    ANNOTATION_TASK_LIST_ACTION,
+    ANNOTATION_TASK_NEXT_ACTION,
+    ANNOTATION_TASK_UPDATE_ACTION,
+)
 from echoroo.core.database import DbSession
+from echoroo.core.permissions import gate_action
 from echoroo.middleware.auth import CurrentUser
 from echoroo.models.enums import AnnotationTaskStatus
 
@@ -35,6 +43,13 @@ async def list_tasks(
     sort_order: str = "asc",
 ) -> legacy_annotation_tasks.AnnotationTaskListResponse:
     """Delegate annotation-task listing to the legacy handler."""
+    await gate_action(
+        action=ANNOTATION_TASK_LIST_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
     return await legacy_annotation_tasks.list_tasks(
         project_id=project_id,
         annotation_project_id=annotation_project_id,
@@ -66,6 +81,13 @@ async def get_next_task(
     db: DbSession,
 ) -> legacy_annotation_tasks.AnnotationTaskDetailResponse | None:
     """Delegate next-task selection to the legacy handler."""
+    await gate_action(
+        action=ANNOTATION_TASK_NEXT_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
     return await legacy_annotation_tasks.get_next_task(
         project_id=project_id,
         annotation_project_id=annotation_project_id,
@@ -93,6 +115,13 @@ async def get_task(
     db: DbSession,
 ) -> legacy_annotation_tasks.AnnotationTaskDetailResponse:
     """Delegate annotation-task detail reads to the legacy handler."""
+    await gate_action(
+        action=ANNOTATION_TASK_GET_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
     return await legacy_annotation_tasks.get_task(
         project_id=project_id,
         annotation_project_id=annotation_project_id,
@@ -121,6 +150,13 @@ async def update_task(
     db: DbSession,
 ) -> legacy_annotation_tasks.AnnotationTaskDetailResponse:
     """Delegate annotation-task updates to the legacy handler."""
+    await gate_action(
+        action=ANNOTATION_TASK_UPDATE_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=http_request,
+        db=db,
+    )
     return await legacy_annotation_tasks.update_task(
         project_id=project_id,
         annotation_project_id=annotation_project_id,
@@ -149,6 +185,13 @@ async def complete_task(
     db: DbSession,
 ) -> legacy_annotation_tasks.TaskCompletionResponse:
     """Delegate annotation-task completion to the legacy handler."""
+    await gate_action(
+        action=ANNOTATION_TASK_COMPLETE_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
     return await legacy_annotation_tasks.complete_task(
         project_id=project_id,
         annotation_project_id=annotation_project_id,

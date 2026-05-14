@@ -13,7 +13,16 @@ from uuid import UUID
 from fastapi import APIRouter, Request, status
 
 from echoroo.api.v1 import annotation_projects as legacy_annotation_projects
+from echoroo.core.actions import (
+    ANNOTATION_PROJECT_CREATE_ACTION,
+    ANNOTATION_PROJECT_DELETE_ACTION,
+    ANNOTATION_PROJECT_GENERATE_TASKS_ACTION,
+    ANNOTATION_PROJECT_GET_ACTION,
+    ANNOTATION_PROJECT_LIST_ACTION,
+    ANNOTATION_PROJECT_UPDATE_ACTION,
+)
 from echoroo.core.database import DbSession
+from echoroo.core.permissions import gate_action
 from echoroo.middleware.auth import CurrentUser
 
 router = APIRouter()
@@ -35,6 +44,13 @@ async def list_annotation_projects(
     page_size: int = 20,
 ) -> legacy_annotation_projects.AnnotationProjectListResponse:
     """Delegate annotation-project listing to the legacy handler."""
+    await gate_action(
+        action=ANNOTATION_PROJECT_LIST_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
     return await legacy_annotation_projects.list_annotation_projects(
         project_id=project_id,
         request=request,
@@ -62,6 +78,13 @@ async def create_annotation_project(
     db: DbSession,
 ) -> legacy_annotation_projects.AnnotationProjectDetailResponse:
     """Delegate annotation-project creation to the legacy handler."""
+    await gate_action(
+        action=ANNOTATION_PROJECT_CREATE_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=http_request,
+        db=db,
+    )
     return await legacy_annotation_projects.create_annotation_project(
         project_id=project_id,
         request=request,
@@ -87,6 +110,13 @@ async def get_annotation_project(
     db: DbSession,
 ) -> legacy_annotation_projects.AnnotationProjectDetailResponse:
     """Delegate annotation-project detail reads to the legacy handler."""
+    await gate_action(
+        action=ANNOTATION_PROJECT_GET_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
     return await legacy_annotation_projects.get_annotation_project(
         project_id=project_id,
         annotation_project_id=annotation_project_id,
@@ -113,6 +143,13 @@ async def update_annotation_project(
     db: DbSession,
 ) -> legacy_annotation_projects.AnnotationProjectDetailResponse:
     """Delegate annotation-project updates to the legacy handler."""
+    await gate_action(
+        action=ANNOTATION_PROJECT_UPDATE_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=http_request,
+        db=db,
+    )
     return await legacy_annotation_projects.update_annotation_project(
         project_id=project_id,
         annotation_project_id=annotation_project_id,
@@ -139,6 +176,13 @@ async def delete_annotation_project(
     db: DbSession,
 ) -> None:
     """Delegate annotation-project deletion to the legacy handler."""
+    await gate_action(
+        action=ANNOTATION_PROJECT_DELETE_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
     await legacy_annotation_projects.delete_annotation_project(
         project_id=project_id,
         annotation_project_id=annotation_project_id,
@@ -165,6 +209,13 @@ async def generate_tasks(
     db: DbSession,
 ) -> legacy_annotation_projects.TaskGenerationResponse:
     """Delegate task generation to the legacy handler."""
+    await gate_action(
+        action=ANNOTATION_PROJECT_GENERATE_TASKS_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
     return await legacy_annotation_projects.generate_tasks(
         project_id=project_id,
         annotation_project_id=annotation_project_id,

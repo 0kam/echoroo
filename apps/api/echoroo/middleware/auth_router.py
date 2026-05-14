@@ -422,7 +422,12 @@ class AuthRouterMiddleware(BaseHTTPMiddleware):
                     self.config.session_cookie_name
                 ):
                     break
-                if path.startswith(self.config.session_prefix):
+                # Bearer JWT callers on Guest-readable BFF paths still need
+                # the downstream OptionalCurrentUser fallback so they resolve
+                # as Authenticated instead of being flattened to Guest.
+                if path.startswith(self.config.session_prefix) and self._extract_bearer(
+                    request
+                ) is None:
                     request.state.skip_bearer_fallback = True
                 request.state.principal = None
                 return await call_next(request)
@@ -445,7 +450,12 @@ class AuthRouterMiddleware(BaseHTTPMiddleware):
                     self.config.session_cookie_name
                 ):
                     break
-                if path.startswith(self.config.session_prefix):
+                # Bearer JWT callers on Guest-readable BFF paths still need
+                # the downstream OptionalCurrentUser fallback so they resolve
+                # as Authenticated instead of being flattened to Guest.
+                if path.startswith(self.config.session_prefix) and self._extract_bearer(
+                    request
+                ) is None:
                     request.state.skip_bearer_fallback = True
                 request.state.principal = None
                 return await call_next(request)

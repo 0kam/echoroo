@@ -232,6 +232,16 @@ ALLOWLIST: list[AllowlistEntry] = [
         last_reviewed_at=_TODAY_REVIEWED,
     ),
     AllowlistEntry(
+        path_pattern="/web-api/v1/auth/verify-email",
+        methods=frozenset({"POST"}),
+        category=AllowlistCategory.AUTH_CALLBACK,
+        reason="Token-authenticated email verification; runs pre-session",
+        owner=_DEFAULT_OWNER,
+        spec_ref=f"{_SPEC_006}#auth",
+        expiry=None,
+        last_reviewed_at=_TODAY_REVIEWED,
+    ),
+    AllowlistEntry(
         path_pattern="/web-api/v1/auth/2fa/setup/totp",
         methods=frozenset({"POST"}),
         category=AllowlistCategory.AUTH_CALLBACK,

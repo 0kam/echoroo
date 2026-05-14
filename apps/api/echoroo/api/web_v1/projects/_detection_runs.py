@@ -7,7 +7,9 @@ from uuid import UUID
 from fastapi import APIRouter, Request
 
 from echoroo.api.v1 import detection_runs as legacy_detection_runs
+from echoroo.core.actions import DETECTION_RUN_LIST_ACTION
 from echoroo.core.database import DbSession
+from echoroo.core.permissions import gate_action
 from echoroo.middleware.auth import CurrentUser
 
 router = APIRouter()
@@ -30,6 +32,13 @@ async def list_detection_runs(
     dataset_id: UUID | None = None,
 ) -> legacy_detection_runs.DetectionRunListResponse:
     """Delegate detection-run listing to the legacy handler."""
+    await gate_action(
+        action=DETECTION_RUN_LIST_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
     return await legacy_detection_runs.list_detection_runs(
         project_id=project_id,
         request=request,

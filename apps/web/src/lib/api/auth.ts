@@ -15,10 +15,10 @@
  *     (added as an in-scope follow-up in this same PR B; see the new
  *     handler in `apps/api/echoroo/api/web_v1/auth.py` and the test at
  *     `apps/api/tests/integration/api/web_v1/test_auth_verify_email.py`).
- *     It shares the `AuthService.verify_email` service entry point with
- *     the legacy `/api/v1/auth/verify-email` route, which is currently
- *     a Phase-4 stub returning 501 on both surfaces. Both will flip
- *     together when Phase 4 lands the real implementation.
+ *     It shares the same `AuthService.verify_email` service entry point
+ *     as the programmatic auth surface, which is currently a Phase-4
+ *     stub returning 501. Both surfaces will flip together when Phase 4
+ *     lands the real implementation.
  *   - `/web-api/v1/auth/verify-email/resend` is intentionally NOT
  *     mirrored. The legacy v1 surface never exposed `/verify-email/
  *     resend` either, so this call has been broken at runtime since

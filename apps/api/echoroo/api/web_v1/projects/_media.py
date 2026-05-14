@@ -18,7 +18,12 @@ from pydantic import BaseModel
 from echoroo.api.v1 import annotation_projects as legacy_annotation_projects
 from echoroo.api.v1 import datasets as legacy_datasets
 from echoroo.api.v1 import recordings as legacy_recordings
-from echoroo.core.actions import RECORDING_MEDIA_ACTION
+from echoroo.core.actions import (
+    ANNOTATION_PROJECT_EXPORT_ACTION,
+    DATASET_EXPORT_ACTION,
+    RECORDING_LIST_ACTION,
+    RECORDING_MEDIA_ACTION,
+)
 from echoroo.core.auth import DEFAULT_MEDIA_TTL, MediaTokenScope, issue_media_token
 from echoroo.core.database import DbSession
 from echoroo.core.permissions import gate_action
@@ -100,6 +105,13 @@ async def get_recording(
     db: DbSession,
 ) -> legacy_recordings.RecordingDetailResponse:
     """Delegate recording detail reads to the legacy handler."""
+    await gate_action(
+        action=RECORDING_LIST_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
     return await legacy_recordings.get_recording(
         project_id=project_id,
         recording_id=recording_id,
@@ -130,6 +142,13 @@ async def stream_audio(
     range: Annotated[str | None, Header()] = None,
 ) -> Response:
     """Delegate audio streaming to the legacy handler without changing Range behavior."""
+    await gate_action(
+        action=RECORDING_MEDIA_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
     return await legacy_recordings.stream_audio(
         project_id=project_id,
         recording_id=recording_id,
@@ -164,6 +183,13 @@ async def get_playback_audio(
     range: Annotated[str | None, Header()] = None,
 ) -> Response:
     """Delegate playback streaming to the legacy handler."""
+    await gate_action(
+        action=RECORDING_MEDIA_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
     return await legacy_recordings.get_playback_audio(
         project_id=project_id,
         recording_id=recording_id,
@@ -203,6 +229,13 @@ async def get_spectrogram(
     height: int = 400,
 ) -> Response:
     """Delegate spectrogram generation to the legacy handler."""
+    await gate_action(
+        action=RECORDING_MEDIA_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
     return await legacy_recordings.get_spectrogram(
         project_id=project_id,
         recording_id=recording_id,
@@ -238,6 +271,13 @@ async def export_annotations(
     format: str = Query("json", description="Export format: json, csv, or aoef"),
 ) -> Any:
     """Delegate annotation export to the legacy handler."""
+    await gate_action(
+        action=ANNOTATION_PROJECT_EXPORT_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
     return await legacy_annotation_projects.export_annotations(
         project_id=project_id,
         annotation_project_id=annotation_project_id,
@@ -269,6 +309,13 @@ async def export_dataset(
     include_audio: bool = False,
 ) -> StreamingResponse:
     """Delegate dataset export to the legacy handler."""
+    await gate_action(
+        action=DATASET_EXPORT_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
     return await legacy_datasets.export_dataset(
         project_id=project_id,
         dataset_id=dataset_id,

@@ -13,7 +13,9 @@ from uuid import UUID
 from fastapi import APIRouter, Request
 
 from echoroo.api.v1 import annotations as legacy_annotations
+from echoroo.core.actions import ANNOTATION_BATCH_TAG_ACTION
 from echoroo.core.database import DbSession
+from echoroo.core.permissions import gate_action
 from echoroo.middleware.auth import CurrentUser
 
 router = APIRouter()
@@ -34,6 +36,13 @@ async def batch_tag_clips(
     db: DbSession,
 ) -> legacy_annotations.BatchTagResponse:
     """Delegate batch clip tagging to the legacy handler."""
+    await gate_action(
+        action=ANNOTATION_BATCH_TAG_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=http_request,
+        db=db,
+    )
     return await legacy_annotations.batch_tag_clips(
         project_id=project_id,
         request=request,

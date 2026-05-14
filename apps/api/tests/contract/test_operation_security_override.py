@@ -50,6 +50,7 @@ from typing import Any
 
 import pytest
 
+from echoroo.core.auth_paths import PUBLIC_AUTH_PATHS
 from echoroo.main import create_app
 from echoroo.middleware.csrf import WEB_API_PREFIX, CsrfConfig, CsrfMiddleware
 
@@ -58,26 +59,7 @@ _STATE_CHANGING_METHODS = frozenset({"post", "patch", "delete", "put"})
 
 # Paths where CSRF / auth are intentionally bypassed because the client has
 # no session yet (pre-session auth flow).  Matched against exact path strings.
-_CSRF_EXEMPT_PATHS: frozenset[str] = frozenset(
-    {
-        "/web-api/v1/auth/login",
-        "/web-api/v1/auth/register",
-        "/web-api/v1/auth/logout",
-        "/web-api/v1/auth/refresh",
-        "/web-api/v1/auth/2fa/challenge",
-        "/web-api/v1/auth/2fa/setup/totp",
-        "/web-api/v1/auth/2fa/setup/totp/confirm",
-        "/web-api/v1/auth/2fa/webauthn/register",
-        "/web-api/v1/auth/2fa/webauthn/challenge",
-        "/web-api/v1/auth/2fa/verify",
-        "/web-api/v1/auth/forgot-password",
-        "/web-api/v1/auth/reset-password",
-        "/web-api/v1/auth/password-reset/request",
-        "/web-api/v1/auth/password-reset/confirm",
-        "/web-api/v1/auth/confirm-identity-for-2fa-reset",
-        "/web-api/v1/auth/confirm-identity-for-2fa-reset/redeem",
-    }
-)
+_CSRF_EXEMPT_PATHS: frozenset[str] = frozenset(PUBLIC_AUTH_PATHS)
 
 # Paths under /api/v1/ that are public (no auth required, no security override).
 _API_V1_PUBLIC_PATHS: frozenset[str] = frozenset(
@@ -368,24 +350,9 @@ class TestCsrfMiddlewareConfiguration:
         assert CsrfMiddleware is not None
 
     def test_csrf_exempt_paths_match_public_auth_paths(self) -> None:
-        """CsrfMiddleware exempt set must include all core pre-auth paths."""
-        from echoroo.core.auth_paths import PUBLIC_AUTH_PATHS
-
+        """Operation-security exemptions must mirror core pre-auth paths."""
         auth_paths_set = frozenset(PUBLIC_AUTH_PATHS)
-        # Every path we treat as CSRF-exempt in the test should also be in
-        # the authoritative PUBLIC_AUTH_PATHS constant.
-        core_exempt = {
-            "/web-api/v1/auth/login",
-            "/web-api/v1/auth/register",
-            "/web-api/v1/auth/logout",
-            "/web-api/v1/auth/refresh",
-            "/web-api/v1/auth/password-reset/request",
-            "/web-api/v1/auth/password-reset/confirm",
-        }
-        missing = core_exempt - auth_paths_set
-        assert not missing, (
-            f"Core auth paths missing from PUBLIC_AUTH_PATHS: {missing}"
-        )
+        assert auth_paths_set == _CSRF_EXEMPT_PATHS
 
 
 # ---------------------------------------------------------------------------

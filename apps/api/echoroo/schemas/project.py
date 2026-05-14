@@ -100,17 +100,14 @@ class ProjectOverviewSite(BaseModel):
 
     Phase 13 P4 / T807: ``h3_index_member`` matches ORM
     ``Site.h3_index_member`` and the spec data-model §3.10 canonical
-    name (full rename, no facade). ``latitude``/``longitude`` are
-    legacy convenience fields derived from the H3 cell centre and
-    nullable to preserve backwards compatibility on overview rendering;
-    consumers should prefer deriving the centre via ``h3-js``.
+    name (full rename, no facade). Raw latitude/longitude coordinates
+    are intentionally absent from this public-facing overview shape; H3
+    is the only site location signal exposed here.
     """
 
     id: UUID
     name: str
     h3_index_member: str
-    latitude: float | None
-    longitude: float | None
     recording_count: int
     dataset_count: int
 

@@ -7,7 +7,9 @@ from uuid import UUID
 from fastapi import APIRouter, Query, Request
 
 from echoroo.api.v1 import detections as legacy_detections
+from echoroo.core.actions import DETECTION_LIST_ACTION
 from echoroo.core.database import DbSession
+from echoroo.core.permissions import gate_action
 from echoroo.middleware.auth import CurrentUser
 from echoroo.models.enums import DetectionStatus
 
@@ -38,6 +40,13 @@ async def list_detections(
     locale: str = Query("en", pattern="^(en|ja)$"),
 ) -> legacy_detections.DetectionListResponse:
     """Delegate detection listing to the legacy handler."""
+    await gate_action(
+        action=DETECTION_LIST_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
     return await legacy_detections.list_detections(
         project_id=project_id,
         request=request,
@@ -74,6 +83,13 @@ async def get_species_summary(
     locale: str = Query("en", pattern="^(en|ja)$"),
 ) -> legacy_detections.SpeciesSummaryResponse:
     """Delegate species-summary reads to the legacy handler."""
+    await gate_action(
+        action=DETECTION_LIST_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
     return await legacy_detections.get_species_summary(
         project_id=project_id,
         request=request,
@@ -103,6 +119,13 @@ async def get_temporal_data(
     locale: str = Query("en", pattern="^(en|ja)$"),
 ) -> legacy_detections.DetectionTemporalDataResponse:
     """Delegate temporal detection reads to the legacy handler."""
+    await gate_action(
+        action=DETECTION_LIST_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
     return await legacy_detections.get_temporal_data(
         project_id=project_id,
         request=request,

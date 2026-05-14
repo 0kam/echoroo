@@ -7,7 +7,14 @@ from uuid import UUID
 from fastapi import APIRouter, Query, Request
 
 from echoroo.api.v1 import datasets as legacy_datasets
+from echoroo.core.actions import (
+    DATASET_DATETIME_CONFIG_ACTION,
+    DATASET_GET_ACTION,
+    DATASET_LIST_ACTION,
+    DATASET_STATISTICS_ACTION,
+)
 from echoroo.core.database import DbSession
+from echoroo.core.permissions import gate_action
 from echoroo.middleware.auth import CurrentUser
 from echoroo.models.enums import DatasetStatus, DatasetVisibility
 
@@ -34,6 +41,13 @@ async def list_datasets(
     search: str | None = None,
 ) -> legacy_datasets.DatasetListResponse:
     """Delegate dataset listing to the legacy handler."""
+    await gate_action(
+        action=DATASET_LIST_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
     return await legacy_datasets.list_datasets(
         project_id=project_id,
         request=request,
@@ -64,6 +78,13 @@ async def get_dataset(
     db: DbSession,
 ) -> legacy_datasets.DatasetDetailResponse:
     """Delegate dataset detail reads to the legacy handler."""
+    await gate_action(
+        action=DATASET_GET_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
     return await legacy_datasets.get_dataset(
         project_id=project_id,
         dataset_id=dataset_id,
@@ -89,6 +110,13 @@ async def get_dataset_statistics(
     db: DbSession,
 ) -> legacy_datasets.DatasetStatisticsResponse:
     """Delegate dataset statistics reads to the legacy handler."""
+    await gate_action(
+        action=DATASET_STATISTICS_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
     return await legacy_datasets.get_dataset_statistics(
         project_id=project_id,
         dataset_id=dataset_id,
@@ -114,6 +142,13 @@ async def get_datetime_config(
     db: DbSession,
 ) -> legacy_datasets.DatetimeConfigResponse:
     """Delegate dataset datetime-config reads to the legacy handler."""
+    await gate_action(
+        action=DATASET_DATETIME_CONFIG_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
     return await legacy_datasets.get_datetime_config(
         project_id=project_id,
         dataset_id=dataset_id,

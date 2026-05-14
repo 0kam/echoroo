@@ -42,7 +42,7 @@ _RESTRICTED_CONFIG: dict[str, Any] = {
 async def _create_user(
     db: AsyncSession,
     *,
-    email: str = "test@echoroo.app",
+    email: str | None = None,
     password: str = "correct horse battery staple",
 ) -> Any:
     from echoroo.core.security import hash_password
@@ -50,7 +50,7 @@ async def _create_user(
 
     user = User(
         id=uuid.uuid4(),
-        email=email,
+        email=email or f"test-{uuid.uuid4()}@echoroo.app",
         password_hash=hash_password(password),
         display_name="Test User",
         security_stamp="s" * 64,
@@ -217,6 +217,23 @@ async def test_projects_read_smoke_accepts_session_and_rejects_api_key(
     assert detail.status_code == 200, detail.text
     assert detail.json()["id"] == str(restricted_project.id)
 
+    overview = await client.get(
+        f"/web-api/v1/projects/{public_project.id}/overview",
+        headers={"Authorization": f"Bearer {access_token}"},
+    )
+    assert overview.status_code == 200, overview.text
+    overview_body = overview.json()
+    assert overview_body["sites"], "overview fixture should include the seeded site"
+    assert {
+        "id",
+        "name",
+        "h3_index_member",
+        "recording_count",
+        "dataset_count",
+    } <= set(overview_body["sites"][0])
+    assert "latitude" not in overview_body["sites"][0]
+    assert "longitude" not in overview_body["sites"][0]
+
     recordings = await client.get(
         f"/web-api/v1/projects/{public_project.id}/recordings",
         params={
@@ -234,13 +251,8 @@ async def test_projects_read_smoke_accepts_session_and_rejects_api_key(
     assert recordings_body["items"][0] == {
         "id": str(recording.id),
         "project_id": str(public_project.id),
-        "dataset_id": str(dataset.id),
         "name": "t021-recording.wav",
         "duration_seconds": 12.5,
-        "samplerate": 48000,
-        "channels": 2,
-        "datetime": "2026-05-13T09:30:00Z",
-        "datetime_parse_status": "success",
         "site_h3_index": "8928308280fffff",
     }
 
@@ -249,7 +261,8 @@ async def test_projects_read_smoke_accepts_session_and_rejects_api_key(
         f"/web-api/v1/projects/{restricted_project.id}",
         headers={"Authorization": f"Bearer {access_token}"},
     )
-    assert bearer_only_restricted_detail.status_code == 404
+    assert bearer_only_restricted_detail.status_code == 200, bearer_only_restricted_detail.text
+    assert bearer_only_restricted_detail.json()["id"] == str(restricted_project.id)
 
     guest_recordings = await client.get(
         f"/web-api/v1/projects/{public_project.id}/recordings",

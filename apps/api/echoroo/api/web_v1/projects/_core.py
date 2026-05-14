@@ -657,9 +657,10 @@ async def list_public_recordings(
         wire the audio stream URL and a single-line label. The model
         explicitly does NOT include ``Recording.path`` (the S3 object key),
         ``Recording.hash``, ``Recording.note``, ``time_expansion`` raw
-        value, or owner/dataset metadata that could leak attribution. Raw
-        site coordinates are absent by construction; the H3 cell index is
-        the coarsest spatial reference exposed (FR-030).
+        value, audio metadata, parsed timestamps, or owner/dataset metadata
+        that could leak attribution. Raw site coordinates are absent by
+        construction; the H3 cell index is the coarsest spatial reference
+        exposed (FR-030).
     """
     project = await load_project_or_404(db, project_id)
 
@@ -797,13 +798,8 @@ async def list_public_recordings(
         item = PublicRecordingItem(
             id=recording.id,
             project_id=project_id,
-            dataset_id=recording.dataset_id,
             name=recording.filename,
             duration_seconds=duration_seconds,
-            samplerate=recording.samplerate,
-            channels=recording.channels,
-            datetime=recording.datetime,
-            datetime_parse_status=recording.datetime_parse_status,
             site_h3_index=generalised_h3,
         )
         # Defence-in-depth: re-route the assembled item through the filter so

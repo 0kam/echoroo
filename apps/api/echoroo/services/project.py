@@ -28,7 +28,6 @@ from echoroo.schemas.project import (
     ProjectUpdateRequest,
     RecordingCalendarEntry,
 )
-from echoroo.services.h3_utils import h3_to_center
 from echoroo.services.license_service import record_initial_license
 
 ProjectRoleLiteral = Literal["owner", "admin", "member", "viewer"]
@@ -695,17 +694,11 @@ class ProjectService:
         for row in site_rows:
             m = row._mapping
             h3_index_member: str = m["h3_index_member"]
-            try:
-                lat, lng = h3_to_center(h3_index_member)
-            except Exception:
-                lat, lng = None, None
             sites.append(
                 ProjectOverviewSite(
                     id=m["id"],
                     name=m["name"],
                     h3_index_member=h3_index_member,
-                    latitude=lat,
-                    longitude=lng,
                     dataset_count=int(m["dataset_count"]),
                     recording_count=int(m["recording_count"]),
                 )
