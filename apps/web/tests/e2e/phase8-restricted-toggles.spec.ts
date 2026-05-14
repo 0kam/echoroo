@@ -166,6 +166,34 @@ const VIEWER: TestCreds = {
 // Helpers
 // ---------------------------------------------------------------------------
 
+function isOffLoginPath(pathname: string): boolean {
+  return !pathname.replace(/^\/[a-z]{2}(?=\/)/, '').startsWith('/login');
+}
+
+async function waitForLoginDecision(page: Page): Promise<'off-login' | 'two-factor' | 'error'> {
+  await page.waitForFunction(() => {
+    const normalizedPath = window.location.pathname.replace(/^\/[a-z]{2}(?=\/)/, '');
+    return (
+      !normalizedPath.startsWith('/login') ||
+      document.querySelector('[data-testid="two-factor-form"]') !== null ||
+      document.querySelector('[role="alert"]') !== null
+    );
+  }, null, { timeout: 15000 });
+
+  if (isOffLoginPath(new URL(page.url()).pathname)) {
+    return 'off-login';
+  }
+  if (await page.locator('[data-testid="two-factor-form"]').isVisible().catch(() => false)) {
+    return 'two-factor';
+  }
+  return 'error';
+}
+
+async function loginErrorText(page: Page): Promise<string> {
+  const text = await page.locator('[role="alert"]').first().textContent().catch(() => null);
+  return text?.trim() ?? '<no visible error text>';
+}
+
 /**
  * Sign in via the UI, transparently completing the 2FA TOTP challenge
  * if the backend asks for one.
@@ -190,43 +218,32 @@ async function login(page: Page, creds: TestCreds): Promise<void> {
   await page.fill('input[name="password"]', creds.password);
   await page.click('button[type="submit"]');
 
-  // Either:
-  //   (a) The dashboard URL is reached (no 2FA — should not happen post-Phase 4),
-  //   (b) the TOTP challenge form is rendered, or
-  //   (c) an error banner appears.
-  const twoFactorForm = page.locator('[data-testid="two-factor-form"]');
-  const off2faRedirect = page.waitForURL(
-    (url) => !url.pathname.replace(/^\/[a-z]{2}(?=\/)/, '').startsWith('/login'),
-    { timeout: 15000 },
-  );
-  // Race: whichever resolves first wins. We treat the race result as
-  // diagnostic only — the actual decision is made from the visible DOM
-  // afterwards.
-  await Promise.race([
-    twoFactorForm.waitFor({ state: 'visible', timeout: 15000 }),
-    off2faRedirect.catch(() => undefined),
-  ]);
+  const firstDecision = await waitForLoginDecision(page);
+  if (firstDecision === 'off-login') {
+    return;
+  }
+  if (firstDecision === 'error') {
+    throw new Error(`Login failed for ${creds.email}: ${await loginErrorText(page)}`);
+  }
 
-  if (await twoFactorForm.isVisible().catch(() => false)) {
-    if (!creds.totpSecret) {
-      test.skip(
-        true,
-        `2FA challenge appeared for ${creds.email} but no TOTP secret was provided ` +
-          `(set PHASE8_*_TOTP_SECRET or PHASE8_TOTP_SECRET). 2FA automation for E2E ` +
-          `is tracked as a follow-up; Phase 4 enforces 2FA for all accounts.`,
-      );
-      return;
-    }
-    await waitForFreshTotpWindow();
-    const code = generateTotpCode(creds.totpSecret);
-    await page.fill('[data-testid="two-factor-code-input"]', code);
-    await Promise.all([
-      page.waitForURL(
-        (url) => !url.pathname.replace(/^\/[a-z]{2}(?=\/)/, '').startsWith('/login'),
-        { timeout: 15000 },
-      ),
-      page.click('[data-testid="two-factor-submit"]'),
-    ]);
+  if (!creds.totpSecret) {
+    test.skip(
+      true,
+      `2FA challenge appeared for ${creds.email} but no TOTP secret was provided ` +
+        `(set PHASE8_*_TOTP_SECRET or PHASE8_TOTP_SECRET). 2FA automation for E2E ` +
+        `is tracked as a follow-up; Phase 4 enforces 2FA for all accounts.`,
+    );
+    return;
+  }
+
+  await waitForFreshTotpWindow();
+  const code = generateTotpCode(creds.totpSecret);
+  await page.fill('[data-testid="two-factor-code-input"]', code);
+  await page.click('[data-testid="two-factor-submit"]');
+
+  const secondDecision = await waitForLoginDecision(page);
+  if (secondDecision !== 'off-login') {
+    throw new Error(`2FA login failed for ${creds.email}: ${await loginErrorText(page)}`);
   }
 }
 
