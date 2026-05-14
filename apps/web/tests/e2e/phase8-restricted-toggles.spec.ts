@@ -166,6 +166,34 @@ const VIEWER: TestCreds = {
 // Helpers
 // ---------------------------------------------------------------------------
 
+function isOffLoginPath(pathname: string): boolean {
+  return !pathname.replace(/^\/[a-z]{2}(?=\/)/, '').startsWith('/login');
+}
+
+async function waitForLoginDecision(page: Page): Promise<'off-login' | 'two-factor' | 'error'> {
+  await page.waitForFunction(() => {
+    const normalizedPath = window.location.pathname.replace(/^\/[a-z]{2}(?=\/)/, '');
+    return (
+      !normalizedPath.startsWith('/login') ||
+      document.querySelector('[data-testid="two-factor-form"]') !== null ||
+      document.querySelector('[role="alert"]') !== null
+    );
+  }, null, { timeout: 15000 });
+
+  if (isOffLoginPath(new URL(page.url()).pathname)) {
+    return 'off-login';
+  }
+  if (await page.locator('[data-testid="two-factor-form"]').isVisible().catch(() => false)) {
+    return 'two-factor';
+  }
+  return 'error';
+}
+
+async function loginErrorText(page: Page): Promise<string> {
+  const text = await page.locator('[role="alert"]').first().textContent().catch(() => null);
+  return text?.trim() ?? '<no visible error text>';
+}
+
 /**
  * Sign in via the UI, transparently completing the 2FA TOTP challenge
  * if the backend asks for one.
@@ -190,43 +218,32 @@ async function login(page: Page, creds: TestCreds): Promise<void> {
   await page.fill('input[name="password"]', creds.password);
   await page.click('button[type="submit"]');
 
-  // Either:
-  //   (a) The dashboard URL is reached (no 2FA — should not happen post-Phase 4),
-  //   (b) the TOTP challenge form is rendered, or
-  //   (c) an error banner appears.
-  const twoFactorForm = page.locator('[data-testid="two-factor-form"]');
-  const off2faRedirect = page.waitForURL(
-    (url) => !url.pathname.replace(/^\/[a-z]{2}(?=\/)/, '').startsWith('/login'),
-    { timeout: 15000 },
-  );
-  // Race: whichever resolves first wins. We treat the race result as
-  // diagnostic only — the actual decision is made from the visible DOM
-  // afterwards.
-  await Promise.race([
-    twoFactorForm.waitFor({ state: 'visible', timeout: 15000 }),
-    off2faRedirect.catch(() => undefined),
-  ]);
+  const firstDecision = await waitForLoginDecision(page);
+  if (firstDecision === 'off-login') {
+    return;
+  }
+  if (firstDecision === 'error') {
+    throw new Error(`Login failed for ${creds.email}: ${await loginErrorText(page)}`);
+  }
 
-  if (await twoFactorForm.isVisible().catch(() => false)) {
-    if (!creds.totpSecret) {
-      test.skip(
-        true,
-        `2FA challenge appeared for ${creds.email} but no TOTP secret was provided ` +
-          `(set PHASE8_*_TOTP_SECRET or PHASE8_TOTP_SECRET). 2FA automation for E2E ` +
-          `is tracked as a follow-up; Phase 4 enforces 2FA for all accounts.`,
-      );
-      return;
-    }
-    await waitForFreshTotpWindow();
-    const code = generateTotpCode(creds.totpSecret);
-    await page.fill('[data-testid="two-factor-code-input"]', code);
-    await Promise.all([
-      page.waitForURL(
-        (url) => !url.pathname.replace(/^\/[a-z]{2}(?=\/)/, '').startsWith('/login'),
-        { timeout: 15000 },
-      ),
-      page.click('[data-testid="two-factor-submit"]'),
-    ]);
+  if (!creds.totpSecret) {
+    test.skip(
+      true,
+      `2FA challenge appeared for ${creds.email} but no TOTP secret was provided ` +
+        `(set PHASE8_*_TOTP_SECRET or PHASE8_TOTP_SECRET). 2FA automation for E2E ` +
+        `is tracked as a follow-up; Phase 4 enforces 2FA for all accounts.`,
+    );
+    return;
+  }
+
+  await waitForFreshTotpWindow();
+  const code = generateTotpCode(creds.totpSecret);
+  await page.fill('[data-testid="two-factor-code-input"]', code);
+  await page.click('[data-testid="two-factor-submit"]');
+
+  const secondDecision = await waitForLoginDecision(page);
+  if (secondDecision !== 'off-login') {
+    throw new Error(`2FA login failed for ${creds.email}: ${await loginErrorText(page)}`);
   }
 }
 
@@ -329,26 +346,31 @@ async function ensureToggleAtValue(
 }
 
 /**
- * Ensure the H3-resolution dropdown is set to ``value`` on the server.
+ * Ensure the H3-resolution range input is set to ``value`` on the server.
  *
  * Mirrors :func:`ensureToggleAtValue` for the only non-boolean control
- * in the toggle section: when the dropdown already shows ``value`` we
- * skip the Save (the form is non-dirty), otherwise we select ``value``
- * and Save once.
+ * in the toggle section: when the range already shows ``value`` we
+ * skip the Save (the form is non-dirty), otherwise we set ``value`` and
+ * Save once.
  */
-async function ensureDropdownAtValue(
+async function ensureRangeAtValue(
   page: Page,
   testid: string,
   value: string,
 ): Promise<void> {
-  const dropdown = page.locator(`[data-testid="${testid}"]`);
-  await expect(dropdown).toBeVisible();
-  const current = await dropdown.inputValue();
+  const range = page.locator(`[data-testid="${testid}"]`);
+  await expect(range).toBeVisible();
+  const current = await range.inputValue();
   if (current === value) {
     return;
   }
-  await dropdown.selectOption(value);
-  await expect(dropdown).toHaveValue(value);
+  await range.evaluate((input, nextValue) => {
+    if (!(input instanceof HTMLInputElement)) return;
+    input.value = nextValue;
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+  }, value);
+  await expect(range).toHaveValue(value);
   await clickSave(page);
 }
 
@@ -356,7 +378,7 @@ async function ensureDropdownAtValue(
  * Click the Save button and wait for the success banner. The button
  * is expected to be enabled (i.e. the caller has just made the form
  * dirty). Callers that may end up with a non-dirty form should use
- * :func:`ensureToggleAtValue` / :func:`ensureDropdownAtValue` instead,
+ * :func:`ensureToggleAtValue` / :func:`ensureRangeAtValue` instead,
  * which skip the Save when nothing changed.
  */
 async function clickSave(page: Page): Promise<void> {
@@ -516,15 +538,11 @@ test.describe('Phase 8 US3 — Restricted owner toggles (T404, FR-014/020-022)',
     ).toBeVisible({ timeout: 10000 });
 
     // Persist resolution 5 on the server. The helper skips the Save
-    // when the dropdown already shows '5' (form non-dirty), and Saves
+    // when the range already shows '5' (form non-dirty), and Saves
     // once otherwise.
-    await ensureDropdownAtValue(
-      page,
-      'toggle-public_location_precision_h3_res',
-      '5',
-    );
+    await ensureRangeAtValue(page, 'toggle-public_location_precision_h3_res', '5');
 
-    // After ensureDropdownAtValue() the persisted value must be 5 (the
+    // After ensureRangeAtValue() the persisted value must be 5 (the
     // form re-mounts from the GET /projects/{id} response).
     await expect(
       page.locator('[data-testid="toggle-public_location_precision_h3_res"]'),

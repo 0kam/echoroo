@@ -6,6 +6,8 @@ from echoroo.api.web_v1 import admin as admin_module
 from echoroo.api.web_v1 import audit as audit_module
 from echoroo.api.web_v1 import auth as auth_module
 from echoroo.api.web_v1 import auth_confirm_identity as auth_confirm_identity_module
+from echoroo.api.web_v1 import detection_runs as detection_runs_module
+from echoroo.api.web_v1 import taxa as taxa_module
 from echoroo.api.web_v1 import users as users_module
 from echoroo.api.web_v1.account import router as account_router
 from echoroo.api.web_v1.projects import router as projects_router
@@ -19,6 +21,10 @@ web_v1_router.include_router(auth_confirm_identity_module.router)
 # in :mod:`echoroo.api.v1.projects`; this router currently exposes only the
 # Guest-aware ``GET /projects`` and ``GET /projects/{id}`` paths.
 web_v1_router.include_router(projects_router)
+# Spec/009 PR C — first-party taxa autocomplete mirrors for the Web UI.
+web_v1_router.include_router(taxa_module.router)
+# Spec/009 PR D — first-party detection model discovery for dataset status panels.
+web_v1_router.include_router(detection_runs_module.router)
 # Phase 11 / T630: superuser admin surface (looser-override approval +
 # IUCN force-resync). Authentication is gated by the AuthRouter / CSRF
 # middleware; per-handler ``is_superuser`` checks live in admin.py.

@@ -11,7 +11,7 @@ import type {
 } from '$lib/types/annotation';
 import { apiClient } from './client';
 
-const API_BASE = '/api/v1';
+const API_BASE = '/web-api/v1';
 
 /**
  * Fetch annotation projects for a project.

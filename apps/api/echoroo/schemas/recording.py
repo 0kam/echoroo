@@ -37,7 +37,9 @@ class SiteSummaryForRecording(BaseModel):
 class RecordingUpdate(BaseModel):
     """Recording update request schema."""
 
-    time_expansion: float | None = Field(None, ge=0.1, le=100.0, description="Time expansion factor")
+    time_expansion: float | None = Field(
+        None, ge=0.1, le=100.0, description="Time expansion factor"
+    )
     note: str | None = Field(None, description="User notes")
 
 
@@ -100,9 +102,9 @@ class PublicRecordingItem(BaseModel):
     user notes, or author attribution.
 
     The shape covers exactly what the public detail page needs: an opaque ID
-    (for the audio stream URL), a display name (filename), the playback
-    duration when available, and the H3 cell index of the linked site (FR-030;
-    raw lat/lng MUST never reach the wire).
+    (for the audio stream URL), the owning project ID, a display name
+    (filename), the playback duration when available, and the H3 cell index
+    of the linked site (FR-030; raw lat/lng MUST never reach the wire).
 
     Adding any further field MUST go through a privacy review — the matrix
     in ``specs/006-permissions-redesign/data-model.md`` is the source of
@@ -110,7 +112,9 @@ class PublicRecordingItem(BaseModel):
     """
 
     id: UUID = Field(..., description="Recording UUID, used for audio stream URL")
-    project_id: UUID = Field(..., description="Owning project UUID (denormalised for the URL builder)")
+    project_id: UUID = Field(
+        ..., description="Owning project UUID (denormalised for the URL builder)"
+    )
     name: str = Field(..., description="Display name (Recording.filename)")
     duration_seconds: float | None = Field(
         None,

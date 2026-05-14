@@ -20,8 +20,7 @@ import type {
   ProjectTrustedStatus,
   InvitationAcceptResponse,
 } from '$lib/types';
-import { ApiError } from './client';
-import { apiClient } from './client';
+import { ApiError, apiClient } from './client';
 
 /**
  * CSRF cookie name shared with the backend
@@ -63,18 +62,30 @@ function resolveBaseUrl(): string {
   return import.meta.env.PUBLIC_API_URL || 'http://localhost:8002';
 }
 
+async function getAccessTokenForWebApi(): Promise<string | null> {
+  const existingToken = apiClient.getAccessToken();
+  if (existingToken) return existingToken;
+
+  try {
+    await apiClient.refreshToken();
+  } catch {
+    // Let the protected Web API request below surface the canonical
+    // backend auth error when refresh cookies are absent or expired.
+  }
+
+  return apiClient.getAccessToken();
+}
+
 /**
- * Issue a request to a `/web-api/v1/...` endpoint with cookie-based
- * session + CSRF (mutating verbs only — GET still works, but the CSRF
- * token is harmless on safe verbs).
+ * Issue a request to a private `/web-api/v1/...` endpoint with the
+ * first-party session cookie, Bearer access token, and CSRF token.
  *
  * The shared `apiClient` is Bearer-token-oriented and was built for the
- * legacy `/api/v1/*` surface; the Web UI endpoints under
- * `/web-api/v1/*` require the `X-CSRF-Token` header sourced from the
- * `echoroo_csrf` cookie for any non-safe verb. Promoted to a shared
- * helper in Phase 10 (T520 / T521) so the Trusted overlay management
- * + invitation accept flow can reuse the same envelope-aware error
- * extraction logic.
+ * general request surface; these project Web UI endpoints additionally
+ * require the `X-CSRF-Token` header sourced from the `echoroo_csrf`
+ * cookie for any non-safe verb. Promoted to a shared helper in Phase 10
+ * (T520 / T521) so the Trusted overlay management + invitation accept
+ * flow can reuse the same envelope-aware error extraction logic.
  *
  * @param method Standard HTTP verb. The body is omitted automatically
  *               for safe verbs (GET / HEAD / DELETE).
@@ -91,22 +102,15 @@ async function callWebApi<T>(
   method: 'GET' | 'POST' | 'PATCH' | 'DELETE',
   path: string,
   body?: unknown,
-  extraHeaders?: Record<string, string>,
+  extraHeaders?: Record<string, string>
 ): Promise<T> {
   const url = `${resolveBaseUrl()}/web-api/v1${path}`;
   const headers: Record<string, string> = {};
   if (body !== undefined) {
     headers['Content-Type'] = 'application/json';
   }
-  // Round 3 polish — fix Major #1: do NOT forward an Authorization Bearer
-  // header to `/web-api/v1/*`. The Web UI surface is a strictly
-  // cookie + CSRF authenticated channel (Phase 7 design); mixing in a
-  // Bearer token here would couple the Web UI to the legacy `/api/v1`
-  // credential surface and bypass the per-mutation CSRF defence-in-depth
-  // story. The backend's `OptionalCurrentUser` dependency would happily
-  // accept the Bearer, but doing so would let a stolen access token
-  // perform Web mutations without the matching CSRF cookie — defeating
-  // the point of double-submit. Cookie + CSRF only.
+  const accessToken = await getAccessTokenForWebApi();
+  if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
   const csrfToken = getCsrfToken();
   if (csrfToken) headers['X-CSRF-Token'] = csrfToken;
   if (extraHeaders) {
@@ -183,16 +187,13 @@ export const projectsApi = {
    * page-size selection, but the response itself does not echo it back
    * (contract only declares `items / total / page`).
    */
-  list: async (params?: {
-    page?: number;
-    limit?: number;
-  }): Promise<ProjectSummaryListResponse> => {
+  list: async (params?: { page?: number; limit?: number }): Promise<ProjectSummaryListResponse> => {
     const queryParams = new URLSearchParams();
     if (params?.page) queryParams.set('page', params.page.toString());
     if (params?.limit) queryParams.set('limit', params.limit.toString());
 
     const query = queryParams.toString();
-    const endpoint = `/api/v1/projects${query ? `?${query}` : ''}`;
+    const endpoint = `/web-api/v1/projects/${query ? `?${query}` : ''}`;
 
     return apiClient.get<ProjectSummaryListResponse>(endpoint);
   },
@@ -201,42 +202,42 @@ export const projectsApi = {
    * Get a single project by ID
    */
   get: async (projectId: string): Promise<Project> => {
-    return apiClient.get<Project>(`/api/v1/projects/${projectId}`);
+    return apiClient.get<Project>(`/web-api/v1/projects/${projectId}`);
   },
 
   /**
    * Create a new project
    */
   create: async (data: ProjectCreateRequest): Promise<Project> => {
-    return apiClient.post<Project>('/api/v1/projects', data);
+    return callWebApi<Project>('POST', '/projects/', data);
   },
 
   /**
    * Update a project (admin only)
    */
   update: async (projectId: string, data: ProjectUpdateRequest): Promise<Project> => {
-    return apiClient.patch<Project>(`/api/v1/projects/${projectId}`, data);
+    return callWebApi<Project>('PATCH', `/projects/${projectId}`, data);
   },
 
   /**
    * Delete a project (owner only)
    */
   delete: async (projectId: string): Promise<void> => {
-    return apiClient.delete<void>(`/api/v1/projects/${projectId}`);
+    await callWebApi<void>('DELETE', `/projects/${projectId}`);
   },
 
   /**
    * List project members
    */
   listMembers: async (projectId: string): Promise<ProjectMember[]> => {
-    return apiClient.get<ProjectMember[]>(`/api/v1/projects/${projectId}/members`);
+    return callWebApi<ProjectMember[]>('GET', `/projects/${projectId}/members`);
   },
 
   /**
    * Add a member to the project (admin only)
    */
   addMember: async (projectId: string, data: ProjectMemberAddRequest): Promise<ProjectMember> => {
-    return apiClient.post<ProjectMember>(`/api/v1/projects/${projectId}/members`, data);
+    return callWebApi<ProjectMember>('POST', `/projects/${projectId}/members`, data);
   },
 
   /**
@@ -247,8 +248,9 @@ export const projectsApi = {
     userId: string,
     data: ProjectMemberUpdateRequest
   ): Promise<ProjectMember> => {
-    return apiClient.patch<ProjectMember>(
-      `/api/v1/projects/${projectId}/members/${userId}`,
+    return callWebApi<ProjectMember>(
+      'PATCH',
+      `/projects/${projectId}/members/${userId}`,
       data
     );
   },
@@ -257,14 +259,14 @@ export const projectsApi = {
    * Remove a member from the project (admin only)
    */
   removeMember: async (projectId: string, userId: string): Promise<void> => {
-    return apiClient.delete<void>(`/api/v1/projects/${projectId}/members/${userId}`);
+    await callWebApi<void>('DELETE', `/projects/${projectId}/members/${userId}`);
   },
 
   /**
    * Get project overview (sites, recording calendar, stats)
    */
   getOverview: async (projectId: string): Promise<ProjectOverviewResponse> => {
-    return apiClient.get<ProjectOverviewResponse>(`/api/v1/projects/${projectId}/overview`);
+    return callWebApi<ProjectOverviewResponse>('GET', `/projects/${projectId}/overview`);
   },
 
   /**
@@ -296,12 +298,12 @@ export const projectsApi = {
    */
   listTrustedUsers: async (
     projectId: string,
-    status?: ProjectTrustedStatus,
+    status?: ProjectTrustedStatus
   ): Promise<TrustedUserListResponse> => {
     const query = status ? `?status=${encodeURIComponent(status)}` : '';
     return callWebApi<TrustedUserListResponse>(
       'GET',
-      `/projects/${projectId}/trusted-users${query}`,
+      `/projects/${projectId}/trusted-users${query}`
     );
   },
 
@@ -318,12 +320,12 @@ export const projectsApi = {
    */
   inviteTrustedUser: async (
     projectId: string,
-    body: TrustedUserInviteRequest,
+    body: TrustedUserInviteRequest
   ): Promise<TrustedUserInviteResponse> => {
     return callWebApi<TrustedUserInviteResponse>(
       'POST',
       `/projects/${projectId}/trusted-users`,
-      body,
+      body
     );
   },
 
@@ -338,12 +340,12 @@ export const projectsApi = {
   updateTrustedUser: async (
     projectId: string,
     trustedUserId: string,
-    body: TrustedUserUpdateRequest,
+    body: TrustedUserUpdateRequest
   ): Promise<TrustedUser> => {
     return callWebApi<TrustedUser>(
       'PATCH',
       `/projects/${projectId}/trusted-users/${trustedUserId}`,
-      body,
+      body
     );
   },
 
@@ -353,14 +355,8 @@ export const projectsApi = {
    * Owner-only. Idempotent (revoking an already-revoked overlay still
    * returns 204).
    */
-  revokeTrustedUser: async (
-    projectId: string,
-    trustedUserId: string,
-  ): Promise<void> => {
-    await callWebApi<void>(
-      'DELETE',
-      `/projects/${projectId}/trusted-users/${trustedUserId}`,
-    );
+  revokeTrustedUser: async (projectId: string, trustedUserId: string): Promise<void> => {
+    await callWebApi<void>('DELETE', `/projects/${projectId}/trusted-users/${trustedUserId}`);
   },
 
   /**
@@ -382,13 +378,13 @@ export const projectsApi = {
   acceptInvitation: async (
     projectId: string,
     token: string,
-    idempotencyKey: string,
+    idempotencyKey: string
   ): Promise<InvitationAcceptResponse> => {
     return callWebApi<InvitationAcceptResponse>(
       'POST',
       `/projects/${projectId}/invitations/${encodeURIComponent(token)}/accept`,
       undefined,
-      { 'X-Idempotency-Key': idempotencyKey },
+      { 'X-Idempotency-Key': idempotencyKey }
     );
   },
 
@@ -403,7 +399,7 @@ export const projectsApi = {
   declineInvitation: async (projectId: string, token: string): Promise<void> => {
     await callWebApi<void>(
       'DELETE',
-      `/projects/${projectId}/invitations/${encodeURIComponent(token)}`,
+      `/projects/${projectId}/invitations/${encodeURIComponent(token)}`
     );
   },
 };

@@ -276,6 +276,28 @@ paths:
         "200":
           description: 更新完了、監査ログ記録
 
+  /projects/{id}/overview:
+    get:
+      summary: プロジェクト概要
+      description: サイト、録音カレンダー、集計値を返す（VIEW_PROJECT_METADATA）。
+      operationId: getProjectOverview
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: 概要
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectOverviewResponse'
+        "403":
+          description: 権限なし
+        "404":
+          description: 存在しない
+
   /projects/{id}/invitations/{token}/accept:
     post:
       summary: 招待受諾（email 一致確認、single TX、FR-053 / FR-054）
@@ -448,9 +470,10 @@ components:
         allow_voting_and_comments: { type: boolean, default: false }
         public_location_precision_h3_res:
           type: integer
-          enum: [2, 5, 7, 9, 15]
-          default: 2
-          description: "spec FR-027 の離散値。2=HIDDEN, 5=~30km, 7=~5km, 9=~175m, 15=member 精密"
+          minimum: 3
+          maximum: 15
+          default: 3
+          description: "API accepts any integer H3 resolution from 3 through 15 for non-member location precision."
         allow_precise_location_to_viewer: { type: boolean, default: false }
 
     MemberInviteRequest:
@@ -465,3 +488,32 @@ components:
           format: date-time
           nullable: true
           description: Viewer のみ
+
+    ProjectOverviewResponse:
+      type: object
+      required: [sites, recording_calendar, total_recordings, total_sites, total_duration]
+      properties:
+        sites:
+          type: array
+          items:
+            type: object
+            required: [id, name, h3_index_member, dataset_count, recording_count]
+            properties:
+              id: { type: string, format: uuid }
+              name: { type: string }
+              h3_index_member: { type: string }
+              dataset_count: { type: integer }
+              recording_count: { type: integer }
+        recording_calendar:
+          type: array
+          items:
+            type: object
+            required: [year, month, site_count, recording_count]
+            properties:
+              year: { type: integer }
+              month: { type: integer }
+              site_count: { type: integer }
+              recording_count: { type: integer }
+        total_recordings: { type: integer }
+        total_sites: { type: integer }
+        total_duration: { type: number }

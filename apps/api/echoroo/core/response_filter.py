@@ -219,7 +219,7 @@ def _compute_withheld_reason(
     global_res: int = (
         taxon_sensitivity_map.get(taxon_id, H3_RES_9)
         if taxon_sensitivity_map is not None and taxon_id is not None
-        else H3_RES_9
+        else member_resolution
     )
     if global_res < member_resolution:
         return f"taxon_sensitivity:h3_res_{global_res}"

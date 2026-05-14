@@ -110,6 +110,7 @@ Sensitive data is automatically redacted from logs:
 **Sensitive Query Parameters**:
 - `password`
 - `token`
+- `media_token`
 - `api_key`
 - `secret`
 - `access_token`

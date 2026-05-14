@@ -30,8 +30,8 @@ export interface Site {
    */
   h3_index_member: string;
   /**
-   * H3 resolution of `h3_index_member`. CHECK constraint forces 9 or 15
-   * (NFR-003). Defaults to 15.
+   * H3 resolution of `h3_index_member`. Site creation/editing accepts
+   * member-location cells from resolution 5 through 15.
    */
   h3_index_member_resolution: number;
   created_at: string;

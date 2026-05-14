@@ -4,7 +4,6 @@
 
 import type {
   RecordingDetail,
-  RecordingListResponse,
   RecordingUpdate,
   SpectrogramParams,
   PlaybackParams,
@@ -12,6 +11,36 @@ import type {
 import { apiClient } from './client';
 
 const API_BASE = '/api/v1';
+const WEB_API_BASE = '/web-api/v1';
+const CSRF_COOKIE_NAME = 'echoroo_csrf';
+
+export type RecordingMediaScope = 'audio' | 'playback' | 'spectrogram';
+
+export interface RecordingMediaTokenResponse {
+  token: string;
+  expires_in: number;
+}
+
+export interface ProjectRecordingItem {
+  id: string;
+  project_id: string;
+  dataset_id: string;
+  name: string;
+  duration_seconds: number | null;
+  samplerate: number;
+  channels: number;
+  datetime: string | null;
+  datetime_parse_status: 'pending' | 'success' | 'failed';
+  site_h3_index: string | null;
+}
+
+export interface ProjectRecordingListResponse {
+  items: ProjectRecordingItem[];
+  total: number;
+  page: number;
+  limit: number;
+  pages: number;
+}
 
 export interface ListRecordingsParams {
   projectId: string;
@@ -27,15 +56,33 @@ export interface ListRecordingsParams {
   sortOrder?: string;
 }
 
+function getCsrfToken(): string | null {
+  if (typeof document === 'undefined') return null;
+  const prefix = `${CSRF_COOKIE_NAME}=`;
+  const parts = document.cookie ? document.cookie.split('; ') : [];
+  for (const part of parts) {
+    if (part.startsWith(prefix)) {
+      try {
+        return decodeURIComponent(part.slice(prefix.length));
+      } catch {
+        return part.slice(prefix.length);
+      }
+    }
+  }
+  return null;
+}
+
 /**
  * Fetch recordings for a project.
  */
-export async function listRecordings(params: ListRecordingsParams): Promise<RecordingListResponse> {
+export async function listRecordings(
+  params: ListRecordingsParams
+): Promise<ProjectRecordingListResponse> {
   const searchParams = new URLSearchParams();
   if (params.datasetId) searchParams.append('dataset_id', params.datasetId);
   if (params.siteId) searchParams.append('site_id', params.siteId);
   if (params.page) searchParams.append('page', params.page.toString());
-  if (params.pageSize) searchParams.append('page_size', params.pageSize.toString());
+  if (params.pageSize) searchParams.append('limit', params.pageSize.toString());
   if (params.search) searchParams.append('search', params.search);
   if (params.datetimeFrom) searchParams.append('datetime_from', params.datetimeFrom);
   if (params.datetimeTo) searchParams.append('datetime_to', params.datetimeTo);
@@ -43,16 +90,25 @@ export async function listRecordings(params: ListRecordingsParams): Promise<Reco
   if (params.sortBy) searchParams.append('sort_by', params.sortBy);
   if (params.sortOrder) searchParams.append('sort_order', params.sortOrder);
 
-  const url = `${API_BASE}/projects/${params.projectId}/recordings?${searchParams}`;
-  return apiClient.get<RecordingListResponse>(url);
+  const query = searchParams.toString();
+  const url = `${WEB_API_BASE}/projects/${params.projectId}/recordings${query ? `?${query}` : ''}`;
+  const response = await apiClient.get<Omit<ProjectRecordingListResponse, 'pages'>>(url);
+  const pageSize = response.limit;
+  return {
+    ...response,
+    pages: pageSize > 0 ? Math.max(1, Math.ceil(response.total / pageSize)) : 1,
+  };
 }
 
 /**
  * Fetch a single recording by ID.
  */
-export async function getRecording(projectId: string, recordingId: string): Promise<RecordingDetail> {
+export async function getRecording(
+  projectId: string,
+  recordingId: string
+): Promise<RecordingDetail> {
   return apiClient.get<RecordingDetail>(
-    `${API_BASE}/projects/${projectId}/recordings/${recordingId}`
+    `${WEB_API_BASE}/projects/${projectId}/recordings/${recordingId}`
   );
 }
 
@@ -74,17 +130,59 @@ export async function updateRecording(
  * Delete a recording.
  */
 export async function deleteRecording(projectId: string, recordingId: string): Promise<void> {
-  return apiClient.delete<void>(
-    `${API_BASE}/projects/${projectId}/recordings/${recordingId}`
+  return apiClient.delete<void>(`${API_BASE}/projects/${projectId}/recordings/${recordingId}`);
+}
+
+/**
+ * Issue a scoped token for native browser media/image requests.
+ */
+export async function getRecordingMediaToken(
+  projectId: string,
+  recordingId: string,
+  scope: RecordingMediaScope
+): Promise<RecordingMediaTokenResponse> {
+  const headers: Record<string, string> = {};
+  const csrfToken = getCsrfToken();
+  if (csrfToken) headers['X-CSRF-Token'] = csrfToken;
+  return apiClient.post<RecordingMediaTokenResponse>(
+    `${WEB_API_BASE}/projects/${projectId}/recordings/${recordingId}/media-token`,
+    { scope },
+    { headers }
   );
+}
+
+/**
+ * Append a scoped media token and return a same-origin path for browser elements.
+ */
+export function appendMediaTokenToUrl(url: string, token: string): string {
+  const parsed = new URL(url, window.location.origin);
+  parsed.searchParams.set('media_token', token);
+  return parsed.pathname + parsed.search;
+}
+
+/**
+ * Build a same-origin media URL authenticated with a scoped media token.
+ */
+export async function getAuthenticatedRecordingMediaUrl(
+  projectId: string,
+  recordingId: string,
+  scope: RecordingMediaScope,
+  url: string
+): Promise<string> {
+  const { token } = await getRecordingMediaToken(projectId, recordingId, scope);
+  return appendMediaTokenToUrl(url, token);
 }
 
 /**
  * Get URL for playback with optional speed adjustment.
  */
-export function getPlaybackUrl(projectId: string, recordingId: string, params?: PlaybackParams): string {
+export function getPlaybackUrl(
+  projectId: string,
+  recordingId: string,
+  params?: PlaybackParams
+): string {
   const url = new URL(
-    `${API_BASE}/projects/${projectId}/recordings/${recordingId}/playback`,
+    `${WEB_API_BASE}/projects/${projectId}/recordings/${recordingId}/playback`,
     window.location.origin
   );
   if (params?.speed) url.searchParams.append('speed', params.speed.toString());
@@ -102,15 +200,17 @@ export function getSpectrogramUrl(
   params?: SpectrogramParams
 ): string {
   const url = new URL(
-    `${API_BASE}/projects/${projectId}/recordings/${recordingId}/spectrogram`,
+    `${WEB_API_BASE}/projects/${projectId}/recordings/${recordingId}/spectrogram`,
     window.location.origin
   );
   if (params?.start !== undefined) url.searchParams.append('start', params.start.toString());
   if (params?.end !== undefined) url.searchParams.append('end', params.end.toString());
   if (params?.n_fft) url.searchParams.append('n_fft', params.n_fft.toString());
   if (params?.hop_length) url.searchParams.append('hop_length', params.hop_length.toString());
-  if (params?.freq_min !== undefined) url.searchParams.append('freq_min', params.freq_min.toString());
-  if (params?.freq_max !== undefined) url.searchParams.append('freq_max', params.freq_max.toString());
+  if (params?.freq_min !== undefined)
+    url.searchParams.append('freq_min', params.freq_min.toString());
+  if (params?.freq_max !== undefined)
+    url.searchParams.append('freq_max', params.freq_max.toString());
   if (params?.colormap) url.searchParams.append('colormap', params.colormap);
   if (params?.pcen !== undefined) url.searchParams.append('pcen', params.pcen.toString());
   if (params?.channel !== undefined) url.searchParams.append('channel', params.channel.toString());

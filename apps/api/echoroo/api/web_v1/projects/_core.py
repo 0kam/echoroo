@@ -35,18 +35,31 @@ Permission engine integration:
 
 from __future__ import annotations
 
+from datetime import datetime
+from enum import Enum
 from types import SimpleNamespace
+from typing import Annotated, cast
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import ColumnElement, func, or_, select
 from sqlalchemy.orm import selectinload
 
-from echoroo.core.actions import PROJECT_GET_ACTION, RECORDING_LIST_ACTION
+from echoroo.api.web_v1.projects._audit import (
+    write_platform_bff_audit_soft,
+    write_project_bff_audit_soft,
+)
+from echoroo.core.actions import (
+    PROJECT_DELETE_ACTION,
+    PROJECT_GET_ACTION,
+    PROJECT_UPDATE_ACTION,
+    RECORDING_LIST_ACTION,
+)
 from echoroo.core.database import DbSession
 from echoroo.core.permissions import (
     H3_RES_15,
     Permission,
+    gate_action,
     is_allowed,
     load_project_or_404,
 )
@@ -57,15 +70,21 @@ from echoroo.models.enums import ProjectStatus, ProjectVisibility
 from echoroo.models.project import Project, ProjectMember
 from echoroo.models.recording import Recording
 from echoroo.models.site import Site
+from echoroo.models.user import User
+from echoroo.repositories.project import ProjectRepository
+from echoroo.repositories.user import UserRepository
 from echoroo.schemas.project import (
+    ProjectCreateRequest,
     ProjectResponse,
     ProjectSummaryListResponse,
+    ProjectUpdateRequest,
 )
 from echoroo.schemas.recording import (
     PublicRecordingItem,
     PublicRecordingListResponse,
 )
 from echoroo.services.project import (
+    ProjectService,
     build_project_summaries,
     resolve_current_user_role,
     scrub_owner_email_for_visibility,
@@ -121,7 +140,48 @@ def _public_recording_filter_resource(
         taxon_id=None,
     )
 
+
 router = APIRouter()
+
+
+def get_project_service(db: DbSession) -> ProjectService:
+    """Build the shared project service used by legacy and BFF routers."""
+    return ProjectService(ProjectRepository(db), UserRepository(db))
+
+
+ProjectServiceDep = Annotated[ProjectService, Depends(get_project_service)]
+
+
+def _require_authenticated(current_user: User | None) -> User:
+    """Return the authenticated caller or raise the existing 401 response."""
+    if current_user is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+        )
+    return current_user
+
+
+def _enum_value(value: object) -> object:
+    """Return a JSON-safe enum value while preserving None and plain objects."""
+    if isinstance(value, Enum):
+        return cast(object, value.value)
+    return value
+
+
+def _project_audit_snapshot(project: Project | ProjectResponse) -> dict[str, object]:
+    """Return JSON-safe project fields used by BFF audit rows."""
+    visibility = getattr(project, "visibility", None)
+    status_value = getattr(project, "status", None)
+    license_value = getattr(project, "license", None)
+    return {
+        "id": str(project.id),
+        "name": project.name,
+        "description": project.description,
+        "visibility": _enum_value(visibility),
+        "status": _enum_value(status_value),
+        "license": _enum_value(license_value),
+    }
 
 
 # =============================================================================
@@ -186,9 +246,7 @@ async def list_projects(
     # Dormant / Archived stay hidden to outsiders (only the membership
     # clause for Authenticated callers can lift them).
     public_or_restricted_active = (
-        Project.visibility.in_(
-            [ProjectVisibility.PUBLIC, ProjectVisibility.RESTRICTED]
-        )
+        Project.visibility.in_([ProjectVisibility.PUBLIC, ProjectVisibility.RESTRICTED])
     ) & (Project.status == ProjectStatus.ACTIVE)
 
     visibility_clause: ColumnElement[bool]
@@ -214,12 +272,9 @@ async def list_projects(
         # removed members no longer surface their old projects under the
         # membership clause (mirrors ``models/project.py:215``
         # ``ux_project_members_active`` partial-unique semantics).
-        member_subquery = (
-            select(ProjectMember.project_id)
-            .where(
-                ProjectMember.user_id == current_user.id,
-                ProjectMember.removed_at.is_(None),
-            )
+        member_subquery = select(ProjectMember.project_id).where(
+            ProjectMember.user_id == current_user.id,
+            ProjectMember.removed_at.is_(None),
         )
         visibility_clause = or_(
             public_or_restricted_active,
@@ -233,9 +288,7 @@ async def list_projects(
             .options(selectinload(Project.owner))
             .order_by(Project.created_at.desc())
         )
-        count_query = select(func.count(func.distinct(Project.id))).where(
-            visibility_clause
-        )
+        count_query = select(func.count(func.distinct(Project.id))).where(visibility_clause)
 
     total_result = await db.execute(count_query)
     total: int = total_result.scalar_one()
@@ -299,6 +352,41 @@ async def list_projects(
     )
 
 
+@router.post(
+    "/",
+    response_model=ProjectResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create project (Web UI)",
+    description=(
+        "Cookie + CSRF Web UI surface mirroring the programmatic project "
+        "create route. Any authenticated session may create a project; "
+        "the creator becomes the owner."
+    ),
+)
+async def create_project(
+    payload: ProjectCreateRequest,
+    request: Request,
+    current_user: OptionalCurrentUser,
+    service: ProjectServiceDep,
+    db: DbSession,
+) -> ProjectResponse:
+    """Create a project through the first-party BFF surface."""
+    user = _require_authenticated(current_user)
+
+    project = await service.create_project(user.id, payload)
+    await db.commit()
+    await write_project_bff_audit_soft(
+        actor_user_id=user.id,
+        project_id=project.id,
+        action="project.create",
+        request=request,
+        detail={"project_id": str(project.id)},
+        before=None,
+        after=_project_audit_snapshot(project),
+    )
+    return project
+
+
 # =============================================================================
 # T200 — GET /{project_id}  (detail, Guest-aware)
 # =============================================================================
@@ -348,8 +436,7 @@ async def get_project(
     # ``Public + Active`` looks like 404 to a signed-out caller — never
     # 403, which would leak existence.
     if current_user is None and (
-        project.visibility != ProjectVisibility.PUBLIC
-        or project.status != ProjectStatus.ACTIVE
+        project.visibility != ProjectVisibility.PUBLIC or project.status != ProjectStatus.ACTIVE
     ):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -371,9 +458,7 @@ async def get_project(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="project not found",
             )
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, detail="action denied"
-        )
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="action denied")
 
     # Defence-in-depth: ProjectResponse does not expose raw coords, but apply
     # the filter so the contract holds for downstream Detection/Recording
@@ -383,9 +468,7 @@ async def get_project(
     # to ``None`` on every path that is not "Authenticated caller +
     # Restricted project". The Authenticated + Restricted branch keeps
     # the value populated so the US4 AC2 mailto: hook works.
-    scrub_owner_email_for_visibility(
-        response, project=project, current_user=current_user
-    )
+    scrub_owner_email_for_visibility(response, project=project, current_user=current_user)
     # Phase 9 polish round 2 Major 2 (2026-04-27): resolve the caller's
     # effective project role so the Web UI can gate the Restricted
     # "Request access" callout without probing the admin-only
@@ -401,9 +484,7 @@ async def get_project(
     if Permission.VIEW_PROJECT_METADATA not in effective:
         # Should not happen — is_allowed already returned True for this perm.
         # Belt-and-braces in case a future Action change widens scope.
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, detail="action denied"
-        )
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="action denied")
     apply_response_filter(
         obj=response,
         effective_permissions=effective,
@@ -414,6 +495,105 @@ async def get_project(
         override_map={},
     )
     return response
+
+
+@router.patch(
+    "/{project_id}",
+    response_model=ProjectResponse,
+    summary="Update project (Web UI)",
+    description=(
+        "Cookie + CSRF Web UI surface mirroring the programmatic PATCH "
+        "route. Owner / Admin only via the canonical EDIT_PROJECT gate."
+    ),
+)
+async def update_project(
+    project_id: UUID,
+    payload: ProjectUpdateRequest,
+    request: Request,
+    current_user: OptionalCurrentUser,
+    service: ProjectServiceDep,
+    db: DbSession,
+) -> ProjectResponse:
+    """Update a project through the first-party BFF surface."""
+    if current_user is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+        )
+
+    project_before = await gate_action(
+        action=PROJECT_UPDATE_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
+    before = _project_audit_snapshot(project_before)
+    project = await service.update_project(current_user.id, project_id, payload)
+    await db.commit()
+    await write_project_bff_audit_soft(
+        actor_user_id=current_user.id,
+        project_id=project_id,
+        action=PROJECT_UPDATE_ACTION.name,
+        request=request,
+        detail={
+            "project_id": str(project_id),
+            "updated_fields": list(payload.model_dump(exclude_unset=True).keys()),
+        },
+        before=before,
+        after=_project_audit_snapshot(project),
+    )
+    return project
+
+
+@router.delete(
+    "/{project_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete project (Web UI)",
+    description=(
+        "Cookie + CSRF Web UI surface mirroring the programmatic DELETE "
+        "route. Owner only via the canonical DELETE_PROJECT gate."
+    ),
+)
+async def delete_project(
+    project_id: UUID,
+    request: Request,
+    current_user: OptionalCurrentUser,
+    service: ProjectServiceDep,
+    db: DbSession,
+) -> None:
+    """Delete a project through the first-party BFF surface."""
+    if current_user is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+        )
+
+    project = await gate_action(
+        action=PROJECT_DELETE_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
+    before = _project_audit_snapshot(project)
+    await service.delete_project(current_user.id, project_id)
+    await db.commit()
+    # ``project_audit_log.project_id`` references ``projects.id``. A durable
+    # project-scoped row would keep the hard-deleted project alive via FK, so
+    # the delete event is recorded at platform scope with the project id in
+    # detail while the business semantics remain a hard delete.
+    await write_platform_bff_audit_soft(
+        actor_user_id=current_user.id,
+        action=PROJECT_DELETE_ACTION.name,
+        request=request,
+        detail={
+            "project_id": str(project_id),
+            "delete_mode": "hard_delete",
+        },
+        before=before,
+        after=None,
+    )
 
 
 # =============================================================================
@@ -444,6 +624,22 @@ async def list_public_recordings(
     db: DbSession,
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     limit: int = Query(20, ge=1, le=100, description="Items per page (max 100)"),
+    dataset_id: UUID | None = Query(None, description="Filter by dataset UUID"),
+    site_id: UUID | None = Query(None, description="Filter by site UUID"),
+    search: str | None = Query(None, description="Case-insensitive filename search"),
+    datetime_from: datetime | None = Query(None, description="Filter from datetime"),
+    datetime_to: datetime | None = Query(None, description="Filter to datetime"),
+    samplerate: int | None = Query(None, ge=1, description="Filter by sample rate"),
+    sort_by: str = Query(
+        "datetime",
+        pattern="^(filename|datetime|duration|samplerate|channels)$",
+        description="Sort column",
+    ),
+    sort_order: str = Query(
+        "desc",
+        pattern="^(asc|desc)$",
+        description="Sort order",
+    ),
 ) -> PublicRecordingListResponse:
     """Paginated recordings for ``project_id`` with Guest enumeration safety.
 
@@ -461,16 +657,16 @@ async def list_public_recordings(
         wire the audio stream URL and a single-line label. The model
         explicitly does NOT include ``Recording.path`` (the S3 object key),
         ``Recording.hash``, ``Recording.note``, ``time_expansion`` raw
-        value, or owner/dataset metadata that could leak attribution. Raw
-        site coordinates are absent by construction; the H3 cell index is
-        the coarsest spatial reference exposed (FR-030).
+        value, audio metadata, parsed timestamps, or owner/dataset metadata
+        that could leak attribution. Raw site coordinates are absent by
+        construction; the H3 cell index is the coarsest spatial reference
+        exposed (FR-030).
     """
     project = await load_project_or_404(db, project_id)
 
     # FR-018: same enumeration safety as ``GET /{project_id}``.
     if current_user is None and (
-        project.visibility != ProjectVisibility.PUBLIC
-        or project.status != ProjectStatus.ACTIVE
+        project.visibility != ProjectVisibility.PUBLIC or project.status != ProjectStatus.ACTIVE
     ):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -492,9 +688,7 @@ async def list_public_recordings(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="project not found",
             )
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, detail="action denied"
-        )
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="action denied")
 
     # Belt-and-braces: the matrix should already gate this for Guests on
     # non-Public projects, but if a future change widens scope without
@@ -505,9 +699,7 @@ async def list_public_recordings(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="project not found",
             )
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, detail="action denied"
-        )
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="action denied")
 
     offset = (page - 1) * limit
 
@@ -526,13 +718,41 @@ async def list_public_recordings(
         .join(Dataset, Dataset.id == Recording.dataset_id)
         .outerjoin(Site, Site.id == Dataset.site_id)
         .where(Dataset.project_id == project_id)
-        .order_by(Recording.created_at.desc())
     )
     count_query = (
         select(func.count(Recording.id))
         .join(Dataset, Dataset.id == Recording.dataset_id)
         .where(Dataset.project_id == project_id)
     )
+    filters: list[ColumnElement[bool]] = []
+    if dataset_id is not None:
+        filters.append(Recording.dataset_id == dataset_id)
+    if site_id is not None:
+        filters.append(Dataset.site_id == site_id)
+    if search:
+        filters.append(Recording.filename.ilike(f"%{search}%"))
+    if datetime_from is not None:
+        filters.append(Recording.datetime >= datetime_from)
+    if datetime_to is not None:
+        filters.append(Recording.datetime <= datetime_to)
+    if samplerate is not None:
+        filters.append(Recording.samplerate == samplerate)
+    if filters:
+        base_query = base_query.where(*filters)
+        count_query = count_query.where(*filters)
+
+    sort_columns = {
+        "filename": Recording.filename,
+        "datetime": Recording.datetime,
+        "duration": Recording.duration,
+        "samplerate": Recording.samplerate,
+        "channels": Recording.channels,
+    }
+    sort_column = sort_columns.get(sort_by, Recording.datetime)
+    if sort_order == "asc":
+        base_query = base_query.order_by(sort_column.asc().nulls_last())
+    else:
+        base_query = base_query.order_by(sort_column.desc().nulls_last())
 
     total_result = await db.execute(count_query)
     total: int = total_result.scalar_one()
@@ -552,9 +772,7 @@ async def list_public_recordings(
         # time, not the on-disk number. Same convention as Recording.effective_duration.
         duration_seconds: float | None
         try:
-            duration_seconds = float(recording.duration) * float(
-                recording.time_expansion or 1.0
-            )
+            duration_seconds = float(recording.duration) * float(recording.time_expansion or 1.0)
         except (TypeError, ValueError):  # pragma: no cover - defensive
             duration_seconds = None
 

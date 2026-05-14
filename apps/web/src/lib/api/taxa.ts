@@ -20,7 +20,7 @@ export async function searchTaxa(
   const searchParams = new URLSearchParams({ q });
   if (locale) searchParams.set('locale', locale);
   if (limit !== 20) searchParams.set('limit', String(limit));
-  return apiClient.get<TaxonSearchResult[]>(`/api/v1/taxa/search?${searchParams.toString()}`);
+  return apiClient.get<TaxonSearchResult[]>(`/web-api/v1/taxa/search?${searchParams.toString()}`);
 }
 
 /**
@@ -32,5 +32,7 @@ export async function searchTaxa(
 export async function searchGBIF(q: string, limit: number = 10): Promise<GBIFSpeciesResult[]> {
   const searchParams = new URLSearchParams({ q });
   if (limit !== 10) searchParams.set('limit', String(limit));
-  return apiClient.get<GBIFSpeciesResult[]>(`/api/v1/taxa/gbif-search?${searchParams.toString()}`);
+  return apiClient.get<GBIFSpeciesResult[]>(
+    `/web-api/v1/taxa/gbif-search?${searchParams.toString()}`,
+  );
 }

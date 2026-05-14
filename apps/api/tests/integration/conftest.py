@@ -75,7 +75,7 @@ _DEFAULT_RESTRICTED_CONFIG: dict[str, object] = {
     "allow_download": False,
     "allow_export": False,
     "allow_voting_and_comments": False,
-    "public_location_precision_h3_res": 2,
+    "public_location_precision_h3_res": 3,
     "allow_precise_location_to_viewer": False,
 }
 

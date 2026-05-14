@@ -40,7 +40,7 @@ import hmac
 import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Final, Protocol
+from typing import Final, Protocol, cast
 from uuid import UUID
 
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -51,8 +51,11 @@ from starlette.types import ASGIApp
 from echoroo.core.auth import (
     AccessTokenClaims,
     InvalidTokenError,
+    MediaTokenClaims,
+    MediaTokenScope,
     StaleTokenError,
     verify_access_token,
+    verify_media_token,
 )
 from echoroo.core.auth_paths import PUBLIC_AUTH_PATHS
 
@@ -68,6 +71,9 @@ DEFAULT_ACCESS_COOKIE: Final[str] = "access_token"
 
 STATUS_SESSION_STALE: Final[int] = 419
 """Echoroo convention: 419 means session was revoked (security_stamp rotated)."""
+
+API_KEY_NAMESPACE: Final[str] = "echoroo_"
+"""Wire namespace for Echoroo-issued API keys; mirrors api_key_verification."""
 
 # Phase 15 T155b legacy-fallback sentinel. Returned by
 # ``_authenticate_api_key`` when ``allow_legacy_session_fallback`` is
@@ -295,9 +301,7 @@ class AuthRouterConfig:
     # ``core.auth_paths.PUBLIC_AUTH_PATHS`` constant so the auth router
     # and the CSRF middleware cannot drift apart. Adding a new public
     # auth endpoint must update the constant in one place.
-    public_path_allowlist: tuple[str, ...] = field(
-        default_factory=lambda: PUBLIC_AUTH_PATHS
-    )
+    public_path_allowlist: tuple[str, ...] = field(default_factory=lambda: PUBLIC_AUTH_PATHS)
     # Phase 5 (FR-016 / US1): Guest-readable prefix + method tuples. When the
     # request path starts with any prefix and the method matches, the
     # middleware sets ``principal=None`` and passes through. Used for the
@@ -321,9 +325,9 @@ class AuthRouterConfig:
     # on ``/api/v1/projects/.../audio`` already accepts bearer-less calls for
     # Public + Active projects, so deep audio streams keep working without
     # widening this allowlist.
-    public_path_nested_allowlist: tuple[
-        tuple[str, str, frozenset[str]], ...
-    ] = field(default_factory=tuple)
+    public_path_nested_allowlist: tuple[tuple[str, str, frozenset[str]], ...] = field(
+        default_factory=tuple
+    )
     # Phase 15 T155b: when ``True`` and the request hits the
     # ``programmatic_prefix`` WITHOUT an ``Authorization: Bearer`` header,
     # the middleware leaves ``request.state.principal = None`` and lets
@@ -366,6 +370,14 @@ class AuthRouterMiddleware(BaseHTTPMiddleware):
     ) -> Response:
         path = request.url.path
 
+        # Surface isolation: an API key-shaped Bearer credential must never be
+        # silently downgraded to Guest on the first-party BFF surface, including
+        # public-readable GETs such as /web-api/v1/projects.
+        if path.startswith(self.config.session_prefix):
+            bearer = self._extract_bearer(request)
+            if bearer is not None and bearer.startswith(API_KEY_NAMESPACE):
+                return _auth_failure(401, "auth_invalid", "API key invalid or revoked")
+
         # Public allowlist: skip credential checks altogether.
         # Phase 2.11 P0-b: match exactly (no startswith). The previous
         # prefix match would let an attacker (or a future maintainer who
@@ -400,8 +412,7 @@ class AuthRouterMiddleware(BaseHTTPMiddleware):
             prefix_match = (
                 path == allowed_prefix
                 or path == f"{allowed_prefix}/"
-                or re.fullmatch(rf"{re.escape(allowed_prefix)}/[^/]+/?", path)
-                is not None
+                or re.fullmatch(rf"{re.escape(allowed_prefix)}/[^/]+/?", path) is not None
             )
             if prefix_match and request.method in allowed_methods:
                 # When the caller DID send a session cookie, fall through
@@ -411,6 +422,13 @@ class AuthRouterMiddleware(BaseHTTPMiddleware):
                     self.config.session_cookie_name
                 ):
                     break
+                # Bearer JWT callers on Guest-readable BFF paths still need
+                # the downstream OptionalCurrentUser fallback so they resolve
+                # as Authenticated instead of being flattened to Guest.
+                if path.startswith(self.config.session_prefix) and self._extract_bearer(
+                    request
+                ) is None:
+                    request.state.skip_bearer_fallback = True
                 request.state.principal = None
                 return await call_next(request)
 
@@ -426,17 +444,19 @@ class AuthRouterMiddleware(BaseHTTPMiddleware):
             nested_suffix,
             nested_methods,
         ) in self.config.public_path_nested_allowlist:
-            nested_pattern = (
-                rf"{re.escape(nested_prefix)}/[^/]+{re.escape(nested_suffix)}/?"
-            )
-            if (
-                request.method in nested_methods
-                and re.fullmatch(nested_pattern, path) is not None
-            ):
+            nested_pattern = rf"{re.escape(nested_prefix)}/[^/]+{re.escape(nested_suffix)}/?"
+            if request.method in nested_methods and re.fullmatch(nested_pattern, path) is not None:
                 if path.startswith(self.config.session_prefix) and request.cookies.get(
                     self.config.session_cookie_name
                 ):
                     break
+                # Bearer JWT callers on Guest-readable BFF paths still need
+                # the downstream OptionalCurrentUser fallback so they resolve
+                # as Authenticated instead of being flattened to Guest.
+                if path.startswith(self.config.session_prefix) and self._extract_bearer(
+                    request
+                ) is None:
+                    request.state.skip_bearer_fallback = True
                 request.state.principal = None
                 return await call_next(request)
 
@@ -465,9 +485,7 @@ class AuthRouterMiddleware(BaseHTTPMiddleware):
 
     # -- API key (programmatic) -------------------------------------------
 
-    async def _authenticate_api_key(
-        self, request: Request
-    ) -> Principal | Response | object:
+    async def _authenticate_api_key(self, request: Request) -> Principal | Response | object:
         verifier = self.config.api_key_verifier
         if verifier is None:
             return _auth_failure(401, "auth_unavailable", "API key verifier not configured")
@@ -492,9 +510,7 @@ class AuthRouterMiddleware(BaseHTTPMiddleware):
                 # middlewares that distinguish ``None`` from
                 # "anonymous principal".
                 return _LEGACY_FALLBACK_SENTINEL
-            return _auth_failure(
-                401, "auth_required", "Bearer API key required for /api/v1/*"
-            )
+            return _auth_failure(401, "auth_required", "Bearer API key required for /api/v1/*")
         raw_key = auth_header.split(" ", 1)[1].strip()
         if not raw_key:
             return _auth_failure(401, "auth_required", "Empty bearer credentials")
@@ -518,9 +534,7 @@ class AuthRouterMiddleware(BaseHTTPMiddleware):
                 request, trusted_proxy_cidrs=self.config.trusted_proxy_cidrs
             )
             request_id = (
-                request.headers.get("X-Request-Id")
-                or request.headers.get("X-Correlation-Id")
-                or ""
+                request.headers.get("X-Request-Id") or request.headers.get("X-Correlation-Id") or ""
             )
             user_agent = request.headers.get("User-Agent", "")
             allowed = await enforcer.enforce(
@@ -547,28 +561,53 @@ class AuthRouterMiddleware(BaseHTTPMiddleware):
 
     # -- Session (first-party) --------------------------------------------
 
-    async def _authenticate_session(
-        self, request: Request
-    ) -> Principal | Response:
+    async def _authenticate_session(self, request: Request) -> Principal | Response:
         verifier = self.config.session_verifier
         if verifier is None:
-            return _auth_failure(
-                401, "auth_unavailable", "Session verifier not configured"
-            )
+            return _auth_failure(401, "auth_unavailable", "Session verifier not configured")
 
         session_id = request.cookies.get(self.config.session_cookie_name)
-        access_token = request.cookies.get(
-            self.config.access_cookie_name
-        ) or self._extract_bearer(request)
-        if not session_id or not access_token:
-            return _auth_failure(
-                401, "auth_required", "Session cookie + access token required"
-            )
+        if not session_id:
+            return _auth_failure(401, "auth_required", "Session cookie required")
 
         live = await verifier.verify(session_id)
         if live is None:
             return _auth_failure(401, "auth_invalid", "Session unknown or expired")
         live_user_id, live_stamp = live
+
+        media_request = self._extract_media_query_token(request)
+        if media_request is not None:
+            media_token, project_id, recording_id, scope = media_request
+            try:
+                media_claims: MediaTokenClaims = verify_media_token(
+                    media_token,
+                    current_security_stamp=live_stamp,
+                    project_id=project_id,
+                    recording_id=recording_id,
+                    scope=scope,
+                )
+            except StaleTokenError:
+                return _auth_failure(
+                    STATUS_SESSION_STALE,
+                    "session_revoked",
+                    "Session has been revoked; please log in again",
+                )
+            except InvalidTokenError:
+                return _auth_failure(401, "auth_invalid", "Media token invalid")
+
+            if media_claims.user_id != live_user_id:
+                return _auth_failure(401, "auth_mismatch", "Session and token user mismatch")
+
+            return Principal.for_session(
+                user_id=media_claims.user_id,
+                security_stamp=media_claims.security_stamp,
+            )
+
+        access_token = request.cookies.get(self.config.access_cookie_name) or self._extract_bearer(
+            request
+        )
+        if not access_token:
+            return _auth_failure(401, "auth_required", "Access token required")
 
         try:
             claims: AccessTokenClaims = verify_access_token(
@@ -584,13 +623,9 @@ class AuthRouterMiddleware(BaseHTTPMiddleware):
             return _auth_failure(401, "auth_invalid", "Access token invalid")
 
         if claims.user_id != live_user_id:
-            return _auth_failure(
-                401, "auth_mismatch", "Session and token user mismatch"
-            )
+            return _auth_failure(401, "auth_mismatch", "Session and token user mismatch")
 
-        return Principal.for_session(
-            user_id=claims.user_id, security_stamp=claims.security_stamp
-        )
+        return Principal.for_session(user_id=claims.user_id, security_stamp=claims.security_stamp)
 
     @staticmethod
     def _extract_bearer(request: Request) -> str | None:
@@ -599,6 +634,32 @@ class AuthRouterMiddleware(BaseHTTPMiddleware):
         if auth_header.lower().startswith("bearer "):
             return auth_header.split(" ", 1)[1].strip() or None
         return None
+
+    @staticmethod
+    def _extract_media_query_token(
+        request: Request,
+    ) -> tuple[str, UUID, UUID, MediaTokenScope] | None:
+        """Allow native media/image elements to authenticate BFF media GETs."""
+        if request.method != "GET":
+            return None
+        match = re.fullmatch(
+            r"/web-api/v1/projects/([^/]+)/recordings/([^/]+)/(audio|playback|spectrogram)",
+            request.url.path,
+        )
+        if match is None:
+            return None
+        token = request.query_params.get("media_token")
+        if not token:
+            return None
+        try:
+            project_id = UUID(match.group(1))
+            recording_id = UUID(match.group(2))
+        except (TypeError, ValueError):
+            return None
+        scope = cast(MediaTokenScope, match.group(3))
+        if scope not in ("audio", "playback", "spectrogram"):
+            return None
+        return token.strip(), project_id, recording_id, scope
 
 
 def _resolve_client_ip(

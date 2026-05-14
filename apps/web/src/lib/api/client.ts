@@ -150,7 +150,7 @@ export class ApiClient {
    * Latch that disables automatic refresh after the refresh cookie itself
    * expired. Prevents a tight loop where every public-page background
    * fetch (TanStack Query refetch on focus, etc.) re-attempts
-   * `/api/v1/auth/refresh` and gets 401 in response.
+   * the auth refresh endpoint and gets 401 in response.
    *
    * Cleared by ``setAccessToken`` so a successful re-login (or any path
    * that explicitly stamps a fresh access token) re-arms the auto-refresh
@@ -203,8 +203,8 @@ export class ApiClient {
    * `/web-api/v1/auth/refresh`. The modern login flow sets the
    * `echoroo_refresh` HttpOnly cookie on `Path=/web-api/v1/auth/refresh`
    * (see `_set_session_cookies` in the backend), and only that endpoint
-   * recognises it. The legacy `/api/v1/auth/refresh` route reads a
-   * different cookie name (`refresh_token`) that the modern flow never
+   * recognises it. The legacy v1 auth refresh route reads a different
+   * cookie name (`refresh_token`) that the modern flow never
    * sets, so calling it always returned 401 and produced the
    * re-login → /users/me 401 → refresh 401 → onRefreshFailed → logout
    * loop observed in Phase 11 browser smoke tests.
@@ -351,7 +351,7 @@ export class ApiClient {
     // Public-readable paths short-circuit this branch: a 401 from
     // `/web-api/v1/projects/...` is an authorization decision (e.g.
     // Restricted project), not an expired access token, so refreshing
-    // would only trigger a useless `/api/v1/auth/refresh` round-trip and
+    // would only trigger a useless legacy auth refresh round-trip and
     // potentially a refresh-loop when the refresh cookie itself is also
     // expired.
     if (response.status === 401 && retry && !isPublic) {

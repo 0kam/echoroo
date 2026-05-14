@@ -3,6 +3,7 @@
    * ExportDialog component for exporting datasets in CamtrapDP format.
    */
 
+  import { apiClient } from '$lib/api/client';
   import * as m from '$lib/paraglide/messages';
 
   interface Props {
@@ -22,23 +23,29 @@
     const params = new URLSearchParams();
     if (includeAudio) params.append('include_audio', 'true');
     const queryString = params.toString();
-    return `/api/v1/projects/${projectId}/datasets/${datasetId}/export${queryString ? `?${queryString}` : ''}`;
+    return `/web-api/v1/projects/${projectId}/datasets/${datasetId}/export${queryString ? `?${queryString}` : ''}`;
   }
 
   async function startExport() {
     isExporting = true;
 
-    const link = document.createElement('a');
-    link.href = getExportUrl();
-    link.download = `${datasetName.replace(/\s+/g, '_')}_export.zip`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    try {
+      const response = await apiClient.requestRaw(getExportUrl());
+      if (!response.ok) throw new Error(`Export failed: ${response.status}`);
 
-    setTimeout(() => {
-      isExporting = false;
+      const blob = await response.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = objectUrl;
+      link.download = `${datasetName.replace(/\s+/g, '_')}_export.zip`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
       onClose();
-    }, 1000);
+    } finally {
+      isExporting = false;
+    }
   }
 
   function handleKeydown(event: KeyboardEvent) {

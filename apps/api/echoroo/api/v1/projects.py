@@ -459,8 +459,8 @@ async def get_project_license_history(
         "FR-020-022, FR-023). Owner / Admin (``EDIT_PROJECT``) only — "
         "matches the canonical matrix. All eight RestrictedConfig keys "
         "are required; unknown keys are 422 (``Extra.forbid``). "
-        "``public_location_precision_h3_res`` is constrained to "
-        "``Literal[2, 5, 7, 9, 15]`` per FR-021. The toggles only apply "
+        "``public_location_precision_h3_res`` accepts any integer from "
+        "3 through 15 per FR-021. The toggles only apply "
         "to ``visibility='restricted'`` projects — a PATCH against a "
         "Public project returns 422. Each successful PATCH bumps "
         "``restricted_config_version`` and appends a "
@@ -564,6 +564,10 @@ async def update_project_restricted_config(
     response_model=ProjectOverviewResponse,
     summary="Get project overview",
     description="Get aggregated statistics for a project: sites, recording calendar, and totals",
+    responses={
+        403: {"description": "Permission denied"},
+        404: {"description": "Project not found"},
+    },
 )
 async def get_project_overview(
     project_id: UUID,

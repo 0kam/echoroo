@@ -6,6 +6,7 @@ import type { DetectionRun, DetectionRunListResponse } from '$lib/types/detectio
 import { apiClient } from './client';
 
 const API_BASE = '/api/v1';
+const WEB_API_BASE = '/web-api/v1';
 
 /** Map from model name to its default version string. */
 const MODEL_VERSIONS: Record<string, string> = {
@@ -20,7 +21,7 @@ export async function fetchDetectionRuns(
   projectId: string,
   datasetId?: string
 ): Promise<DetectionRunListResponse> {
-  const url = new URL(`${API_BASE}/projects/${projectId}/detection-runs`, window.location.origin);
+  const url = new URL(`${WEB_API_BASE}/projects/${projectId}/detection-runs`, window.location.origin);
   if (datasetId) {
     url.searchParams.set('dataset_id', datasetId);
   }
@@ -55,7 +56,7 @@ export async function createDetectionRun(
  */
 export async function fetchAvailableModels(): Promise<string[]> {
   const data = await apiClient.get<{ models: string[] }>(
-    `${API_BASE}/detection-runs/available-models`
+    `${WEB_API_BASE}/detection-runs/available-models`
   );
   return data.models;
 }

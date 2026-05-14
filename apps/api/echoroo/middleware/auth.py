@@ -82,10 +82,7 @@ async def _stamp_superuser_status(db: AsyncSession, user: User | None) -> None:
     if user is None:
         return
     probe = await db.execute(
-        text(
-            "SELECT id FROM superusers "
-            "WHERE user_id = :uid AND revoked_at IS NULL LIMIT 1"
-        ),
+        text("SELECT id FROM superusers WHERE user_id = :uid AND revoked_at IS NULL LIMIT 1"),
         {"uid": user.id},
     )
     superuser_id = probe.scalar_one_or_none()
@@ -161,9 +158,7 @@ async def get_current_user(
     if principal is not None:
         principal_user_id = getattr(principal, "user_id", None)
         if isinstance(principal_user_id, UUID):
-            result = await db.execute(
-                select(User).where(User.id == principal_user_id)
-            )
+            result = await db.execute(select(User).where(User.id == principal_user_id))
             user = result.scalar_one_or_none()
             if user is not None:
                 # Stamp the API-key scopes onto the User instance so
@@ -266,6 +261,9 @@ async def get_current_user_optional(
             # contract.
 
     # 2. Bearer header fallback (programmatic surface / direct API callers).
+    if getattr(request.state, "skip_bearer_fallback", False):
+        return None
+
     if credentials is None:
         return None
 

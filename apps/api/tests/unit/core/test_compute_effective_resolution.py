@@ -35,7 +35,7 @@ from echoroo.core.permissions import (
 def _project(
     visibility: ProjectVisibility,
     *,
-    public_location_precision_h3_res: int = H3_RES_2,
+    public_location_precision_h3_res: int = 3,
 ) -> SimpleNamespace:
     return SimpleNamespace(
         id="proj-0001",
@@ -329,12 +329,58 @@ class TestGuestResolution:
         assert res == H3_RES_7
 
     def test_guest_restricted_fallback_default(self) -> None:
-        """Guest on Restricted + no precise override: very coarse clamp."""
+        """Guest on Restricted + no precise override: fallback uses range minimum."""
         res = _call(
             role="Guest",
             visibility=ProjectVisibility.RESTRICTED,
             taxon_global_res=H3_RES_9,
-            public_location_precision_h3_res=H3_RES_2,
+            public_location_precision_h3_res=3,
         )
-        # min(9, 2) = 2 (default config is HIDDEN-equivalent for Restricted)
-        assert res == H3_RES_2
+        # min(9, 3) = 3 (project fallback is not TaxonSensitivity HIDDEN).
+        assert res == 3
+
+    def test_guest_restricted_missing_config_falls_back_to_range_minimum(self) -> None:
+        """Missing Restricted precision falls back to H3 resolution 3, not HIDDEN."""
+        project = SimpleNamespace(
+            id="proj-0001",
+            visibility=ProjectVisibility.RESTRICTED,
+            restricted_config={},
+            status="active",
+        )
+        resource = SimpleNamespace(
+            taxon_id="taxon-001",
+            h3_index_member_resolution=H3_RES_15,
+        )
+
+        res = compute_effective_resolution(
+            resource=resource,
+            role="Guest",
+            project=project,
+            taxon_sensitivity_map={"taxon-001": H3_RES_9},
+        )
+
+        assert res == 3
+
+    def test_guest_restricted_taxonless_site_honors_high_project_precision(self) -> None:
+        """Site-like resources without taxon_id are not capped by taxon default 9."""
+        res = _call(
+            role="Guest",
+            visibility=ProjectVisibility.RESTRICTED,
+            taxon_id=None,
+            member_resolution=H3_RES_15,
+            public_location_precision_h3_res=12,
+        )
+
+        assert res == 12
+
+    def test_guest_restricted_taxonless_site_does_not_exceed_member_resolution(self) -> None:
+        """Taxonless resources still cannot be generalized finer than stored H3."""
+        res = _call(
+            role="Guest",
+            visibility=ProjectVisibility.RESTRICTED,
+            taxon_id=None,
+            member_resolution=10,
+            public_location_precision_h3_res=15,
+        )
+
+        assert res == 10

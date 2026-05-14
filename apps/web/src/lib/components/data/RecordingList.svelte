@@ -1,7 +1,7 @@
 <script lang="ts">
   import { createQuery, createMutation, useQueryClient } from '@tanstack/svelte-query';
   import { listRecordings, deleteRecording } from '$lib/api/recordings';
-  import type { Recording } from '$lib/types/data';
+  import type { ProjectRecordingItem } from '$lib/api/recordings';
   import DeleteConfirmDialog from '$lib/components/ui/DeleteConfirmDialog.svelte';
   import * as m from '$lib/paraglide/messages';
   import { getLocale } from '$lib/paraglide/runtime';
@@ -25,7 +25,7 @@
   let datetimeTo = $state('');
   const pageSize = 20;
 
-  let recordingToDelete = $state<Recording | null>(null);
+  let recordingToDelete = $state<ProjectRecordingItem | null>(null);
   let showDeleteDialog = $state(false);
 
   const recordingsQuery = $derived(
@@ -67,7 +67,8 @@
     },
   });
 
-  function formatDuration(seconds: number): string {
+  function formatDuration(seconds: number | null): string {
+    if (seconds === null) return 'N/A';
     const mins = Math.floor(seconds / 60);
     const secs = Math.floor(seconds % 60);
     return `${mins}:${secs.toString().padStart(2, '0')}`;
@@ -82,11 +83,11 @@
     return new Date(datetime).toLocaleString(getLocale());
   }
 
-  function handleRowClick(recording: Recording) {
+  function handleRowClick(recording: ProjectRecordingItem) {
     onSelect?.(recording.id);
   }
 
-  function handleDeleteClick(recording: Recording) {
+  function handleDeleteClick(recording: ProjectRecordingItem) {
     recordingToDelete = recording;
     showDeleteDialog = true;
   }
@@ -255,10 +256,10 @@
                 onclick={() => onSelect && handleRowClick(recording)}
               >
                 <td class="px-4 py-3">
-                  <span class="font-mono text-sm font-medium text-stone-900">{recording.filename}</span>
+                  <span class="font-mono text-sm font-medium text-stone-900">{recording.name}</span>
                 </td>
                 <td class="px-4 py-3 text-sm text-stone-600">{formatDatetime(recording.datetime)}</td>
-                <td class="px-4 py-3 text-sm text-stone-600">{formatDuration(recording.duration)}</td>
+                <td class="px-4 py-3 text-sm text-stone-600">{formatDuration(recording.duration_seconds)}</td>
                 <td class="px-4 py-3 text-sm text-stone-600">{formatSamplerate(recording.samplerate)}</td>
                 <td class="px-4 py-3 text-sm text-stone-600">{recording.channels}</td>
                 <td class="px-4 py-3">
@@ -316,7 +317,7 @@
 <DeleteConfirmDialog
   isOpen={showDeleteDialog}
   title="Delete Recording"
-  message={recordingToDelete ? `Are you sure you want to delete "${recordingToDelete.filename}"? This will also delete all associated clips.` : ''}
+  message={recordingToDelete ? `Are you sure you want to delete "${recordingToDelete.name}"? This will also delete all associated clips.` : ''}
   warnings={['All associated clips and annotations']}
   confirmText="Delete Recording"
   isDeleting={$deleteMutation.isPending}

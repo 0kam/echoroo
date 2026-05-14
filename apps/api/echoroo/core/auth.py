@@ -43,7 +43,7 @@ import secrets
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol, cast
 from uuid import UUID
 
 import jwt
@@ -59,9 +59,17 @@ settings = get_settings()
 
 ACCESS_TOKEN_TYPE = "access"
 REFRESH_TOKEN_TYPE = "refresh"
+MEDIA_TOKEN_TYPE = "media"
+MEDIA_TOKEN_TYP = "echoroo.media"
+
+MediaTokenScope = Literal["audio", "playback", "spectrogram"]
+MEDIA_TOKEN_SCOPES: frozenset[str] = frozenset({"audio", "playback", "spectrogram"})
 
 DEFAULT_ACCESS_TTL = timedelta(minutes=15)
 """FR-055: access tokens are short-lived (15 minutes)."""
+
+DEFAULT_MEDIA_TTL = DEFAULT_ACCESS_TTL
+"""Scoped media URL tokens match access-token TTL while limiting path scope."""
 
 
 # =============================================================================
@@ -94,6 +102,19 @@ class RefreshTokenClaims:
 
     user_id: UUID
     family_id: str
+    jti: str
+    expires_at: datetime
+
+
+@dataclass(frozen=True)
+class MediaTokenClaims:
+    """Decoded scoped media-token claims."""
+
+    user_id: UUID
+    security_stamp: str
+    project_id: UUID
+    recording_id: UUID
+    scope: MediaTokenScope
     jti: str
     expires_at: datetime
 
@@ -714,6 +735,112 @@ def verify_access_token(
 
 
 # =============================================================================
+# Scoped media token
+# =============================================================================
+
+
+def issue_media_token(
+    *,
+    user_id: UUID,
+    security_stamp: str,
+    project_id: UUID,
+    recording_id: UUID,
+    scope: MediaTokenScope,
+    ttl: timedelta = DEFAULT_MEDIA_TTL,
+    now: datetime | None = None,
+) -> str:
+    """Sign a short-lived JWT scoped to one recording media resource."""
+    if scope not in MEDIA_TOKEN_SCOPES:
+        raise ValueError("invalid media token scope")
+
+    issued_at = now or datetime.now(UTC)
+    expires_at = issued_at + ttl
+    claims: dict[str, Any] = {
+        "sub": str(user_id),
+        "ss": security_stamp,
+        "project_id": str(project_id),
+        "recording_id": str(recording_id),
+        "scope": scope,
+        "jti": str(uuid.uuid4()),
+        "type": MEDIA_TOKEN_TYPE,
+        "typ": MEDIA_TOKEN_TYP,
+        "iat": int(issued_at.timestamp()),
+        "exp": int(expires_at.timestamp()),
+    }
+    return jwt.encode(claims, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
+
+
+def verify_media_token(
+    token: str,
+    *,
+    current_security_stamp: str,
+    project_id: UUID,
+    recording_id: UUID,
+    scope: MediaTokenScope,
+) -> MediaTokenClaims:
+    """Verify a scoped media token against the requested path and scope."""
+    try:
+        payload: dict[str, Any] = jwt.decode(
+            token,
+            settings.JWT_SECRET_KEY,
+            algorithms=[settings.JWT_ALGORITHM],
+        )
+    except jwt.ExpiredSignatureError as exc:
+        raise InvalidTokenError("media token expired") from exc
+    except jwt.InvalidTokenError as exc:
+        raise InvalidTokenError("media token invalid") from exc
+
+    if payload.get("type") != MEDIA_TOKEN_TYPE or payload.get("typ") != MEDIA_TOKEN_TYP:
+        raise InvalidTokenError("token is not a media token")
+
+    sub = payload.get("sub")
+    ss = payload.get("ss")
+    token_project_id = payload.get("project_id")
+    token_recording_id = payload.get("recording_id")
+    token_scope = payload.get("scope")
+    jti = payload.get("jti")
+    exp_ts = payload.get("exp")
+    if (
+        not isinstance(sub, str)
+        or not isinstance(ss, str)
+        or not isinstance(token_project_id, str)
+        or not isinstance(token_recording_id, str)
+        or not isinstance(token_scope, str)
+        or not isinstance(jti, str)
+    ):
+        raise InvalidTokenError("media token missing required claims")
+    if not isinstance(exp_ts, int):
+        raise InvalidTokenError("media token missing exp")
+    if token_scope not in MEDIA_TOKEN_SCOPES:
+        raise InvalidTokenError("media token scope invalid")
+    if token_scope != scope:
+        raise InvalidTokenError("media token scope mismatch")
+
+    try:
+        user_id = UUID(sub)
+        claim_project_id = UUID(token_project_id)
+        claim_recording_id = UUID(token_recording_id)
+    except (TypeError, ValueError) as exc:
+        raise InvalidTokenError("media token UUID claim invalid") from exc
+
+    if claim_project_id != project_id or claim_recording_id != recording_id:
+        raise InvalidTokenError("media token path mismatch")
+
+    if not secrets.compare_digest(ss, current_security_stamp):
+        raise StaleTokenError("security_stamp has been rotated")
+
+    return MediaTokenClaims(
+        user_id=user_id,
+        security_stamp=ss,
+        project_id=claim_project_id,
+        recording_id=claim_recording_id,
+        scope=cast(MediaTokenScope, token_scope),
+        jti=jti,
+        expires_at=datetime.fromtimestamp(exp_ts, tz=UTC),
+    )
+
+
+# =============================================================================
 # T060c: refresh token rotation
 # =============================================================================
 
@@ -924,8 +1051,14 @@ __all__ = [
     "AccessTokenClaims",
     "AuthTokenError",
     "DEFAULT_ACCESS_TTL",
+    "DEFAULT_MEDIA_TTL",
     "InMemoryTokenStore",
     "InvalidTokenError",
+    "MEDIA_TOKEN_SCOPES",
+    "MEDIA_TOKEN_TYPE",
+    "MEDIA_TOKEN_TYP",
+    "MediaTokenClaims",
+    "MediaTokenScope",
     "REFRESH_TOKEN_TYPE",
     "RefreshTokenClaims",
     "RefreshTokenRecord",
@@ -936,9 +1069,11 @@ __all__ = [
     "TokenStore",
     "invalidate_stamp",
     "issue_access_token",
+    "issue_media_token",
     "issue_refresh_token",
     "new_security_stamp",
     "revoke_family",
     "rotate_refresh_token",
     "verify_access_token",
+    "verify_media_token",
 ]

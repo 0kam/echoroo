@@ -91,7 +91,7 @@
   });
 
   /**
-   * Refresh the auth token and retry all chunks currently in the error state.
+   * Refresh the scoped media token and retry chunks currently in the error state.
    * Thin wrapper preserved for external callers that already use this export.
    */
   export function refreshTokenAndRetryErrors() {

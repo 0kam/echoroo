@@ -157,6 +157,7 @@ H3_RES_9 = 9   # open / non-member default
 H3_RES_15 = 15  # member precise (default, NFR-003)
 
 VALID_H3_RESOLUTIONS: frozenset[int] = frozenset({H3_RES_2, H3_RES_5, H3_RES_7, H3_RES_9, H3_RES_15})
+DEFAULT_PUBLIC_LOCATION_PRECISION_H3_RES = 3
 
 
 # --- Permission classification (spec data-model §1) ---------------------------
@@ -771,18 +772,27 @@ def compute_effective_resolution(
         effective_permissions: Output of ``compute_effective_permissions``.
         taxon_sensitivity_map: ``{taxon_id: H3 resolution}`` preloaded via
             ``WHERE taxon_id IN (...)`` (NFR-001a). Missing keys default to
-            H3_RES_9 (OPEN).
+            H3_RES_9 (OPEN). Resources without ``taxon_id`` do not get this
+            taxon cap, so Site-only locations can reflect Restricted project
+            precision values above H3_RES_9.
         override_map: ``{(project.id, taxon_id): ProjectTaxonSensitivityOverride}``
             preloaded bulk.
 
     Returns:
-        H3 resolution (2/5/7/9/15). Always in ``VALID_H3_RESOLUTIONS``.
+        H3 resolution. Taxon sensitivity values remain the discrete
+        ``VALID_H3_RESOLUTIONS`` set; project precision can additionally
+        return continuous Restricted public-location resolutions 3-15.
     """
     sensitivity_map = taxon_sensitivity_map or {}
     overrides = override_map or {}
 
     taxon_id = getattr(resource, "taxon_id", None)
-    global_res = sensitivity_map.get(taxon_id, H3_RES_9) if taxon_id is not None else H3_RES_9
+    member_res = getattr(resource, "h3_index_member_resolution", H3_RES_15)
+    global_res = (
+        sensitivity_map.get(taxon_id, H3_RES_9)
+        if taxon_id is not None
+        else member_res
+    )
 
     # --- Step A: resolve global post-override --------------------------------
     override = overrides.get((getattr(project, "id", None), taxon_id)) if taxon_id else None
@@ -823,11 +833,11 @@ def compute_effective_resolution(
     # the HIDDEN clamp above, which is the only filter that can reduce
     # precision for privileged principals.
     if role in ("Member", "Admin", "Owner", "Superuser"):
-        return getattr(resource, "h3_index_member_resolution", H3_RES_15)
+        return member_res
 
     # --- Step D: Trusted / Viewer-with-boost sees member precision -----------
     if Permission.VIEW_PRECISE_LOCATION in effective_permissions:
-        return getattr(resource, "h3_index_member_resolution", H3_RES_15)
+        return member_res
 
     # --- Step E: Non-member ceiling ------------------------------------------
     visibility = getattr(project, "visibility", None)
@@ -835,9 +845,20 @@ def compute_effective_resolution(
         project_toggle_res = H3_RES_9
     else:
         cfg = getattr(project, "restricted_config", None) or {}
-        project_toggle_res = cfg.get("public_location_precision_h3_res", H3_RES_2)
+        project_toggle_res = _public_location_precision_h3_res(cfg)
 
     return _min_resolution(effective_global, project_toggle_res)
+
+
+def _public_location_precision_h3_res(cfg: Mapping[str, Any]) -> int:
+    """Return the Restricted public-location precision, defaulting to res 3."""
+    value = cfg.get(
+        "public_location_precision_h3_res",
+        DEFAULT_PUBLIC_LOCATION_PRECISION_H3_RES,
+    )
+    if isinstance(value, int) and 3 <= value <= 15:
+        return value
+    return DEFAULT_PUBLIC_LOCATION_PRECISION_H3_RES
 
 
 def _min_resolution(a: int, b: int) -> int:

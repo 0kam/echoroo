@@ -59,7 +59,7 @@
       width: '300',
       height: '120',
     });
-    const url = `/api/v1/projects/${projId}/recordings/${recId}/spectrogram?${params}`;
+    const url = `/web-api/v1/projects/${projId}/recordings/${recId}/spectrogram?${params}`;
 
     const currentFetchId = ++fetchId;
     isLoaded = false;
