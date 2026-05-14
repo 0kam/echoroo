@@ -60,4 +60,7 @@ BFF_PATHS_DECLARED_BY_SPEC_009: list[str] = [
     "/web-api/v1/projects/{project_id}/members/{user_id} PATCH",
     "/web-api/v1/projects/{project_id}/members/{user_id} DELETE",
     "/web-api/v1/projects/{project_id}/overview GET",
+    # PR C — taxa search + GBIF lookup
+    "/web-api/v1/taxa/search GET",
+    "/web-api/v1/taxa/gbif-search GET",
 ]
