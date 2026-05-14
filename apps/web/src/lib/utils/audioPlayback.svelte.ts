@@ -34,7 +34,7 @@ export function createAudioPlayer(projectId: string): AudioPlayer {
       start: startTime.toString(),
       end: endTime.toString(),
     });
-    return `/api/v1/projects/${projectId}/recordings/${recordingId}/playback?${params}`;
+    return `/web-api/v1/projects/${projectId}/recordings/${recordingId}/playback?${params}`;
   }
 
   function stop(): void {

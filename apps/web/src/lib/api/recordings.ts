@@ -84,7 +84,7 @@ export async function getRecording(
   recordingId: string
 ): Promise<RecordingDetail> {
   return apiClient.get<RecordingDetail>(
-    `${API_BASE}/projects/${projectId}/recordings/${recordingId}`
+    `${WEB_API_BASE}/projects/${projectId}/recordings/${recordingId}`
   );
 }
 
@@ -118,7 +118,7 @@ export function getPlaybackUrl(
   params?: PlaybackParams
 ): string {
   const url = new URL(
-    `${API_BASE}/projects/${projectId}/recordings/${recordingId}/playback`,
+    `${WEB_API_BASE}/projects/${projectId}/recordings/${recordingId}/playback`,
     window.location.origin
   );
   if (params?.speed) url.searchParams.append('speed', params.speed.toString());
@@ -136,7 +136,7 @@ export function getSpectrogramUrl(
   params?: SpectrogramParams
 ): string {
   const url = new URL(
-    `${API_BASE}/projects/${projectId}/recordings/${recordingId}/spectrogram`,
+    `${WEB_API_BASE}/projects/${projectId}/recordings/${recordingId}/spectrogram`,
     window.location.origin
   );
   if (params?.start !== undefined) url.searchParams.append('start', params.start.toString());

@@ -77,8 +77,9 @@
     isExporting = true;
 
     try {
-      const url = `/api/v1/projects/${projectId}/annotation-projects/${annotationProjectId}/export?format=${selectedFormat}`;
+      const url = `/web-api/v1/projects/${projectId}/annotation-projects/${annotationProjectId}/export?format=${selectedFormat}`;
       const response = await apiClient.requestRaw(url);
+      if (!response.ok) throw new Error(`Export failed: ${response.status}`);
 
       let blob: Blob;
       let filename: string;
@@ -94,10 +95,11 @@
       }
 
       const link = document.createElement('a');
-      link.href = URL.createObjectURL(blob);
+      const objectUrl = URL.createObjectURL(blob);
+      link.href = objectUrl;
       link.download = filename;
       link.click();
-      URL.revokeObjectURL(link.href);
+      setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
 
       handleClose();
     } catch (error) {

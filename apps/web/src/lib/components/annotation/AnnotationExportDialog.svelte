@@ -2,6 +2,7 @@
   /**
    * Export dialog for annotation project data (annotations, tasks, clip data).
    */
+  import { apiClient } from '$lib/api/client';
   import * as m from '$lib/paraglide/messages';
 
   let {
@@ -28,24 +29,30 @@
     const params = new URLSearchParams();
     params.set('format', selectedFormat);
     if (includeRejected) params.set('include_rejected', 'true');
-    return `/api/v1/projects/${projectId}/annotation-projects/${annotationProjectId}/export?${params}`;
+    return `/web-api/v1/projects/${projectId}/annotation-projects/${annotationProjectId}/export?${params}`;
   }
 
   async function startExport() {
     isExporting = true;
 
-    const link = document.createElement('a');
-    link.href = getExportUrl();
-    const safeName = annotationProjectName.replace(/\s+/g, '_') || 'annotations';
-    link.download = `${safeName}_export.${selectedFormat}`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    try {
+      const response = await apiClient.requestRaw(getExportUrl());
+      if (!response.ok) throw new Error(`Export failed: ${response.status}`);
 
-    setTimeout(() => {
-      isExporting = false;
+      const blob = await response.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = objectUrl;
+      const safeName = annotationProjectName.replace(/\s+/g, '_') || 'annotations';
+      link.download = `${safeName}_export.${selectedFormat}`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
       onClose();
-    }, 1000);
+    } finally {
+      isExporting = false;
+    }
   }
 
   function handleKeydown(event: KeyboardEvent) {

@@ -19,6 +19,7 @@ import type {
 import { apiClient } from './client';
 
 const API_BASE = '/api/v1';
+const WEB_API_BASE = '/web-api/v1';
 
 /**
  * Fetch datasets for a project.
@@ -35,7 +36,7 @@ export async function fetchDatasets(
   if (params.visibility) searchParams.set('visibility', params.visibility);
   if (params.search) searchParams.set('search', params.search);
 
-  const url = `${API_BASE}/projects/${projectId}/datasets?${searchParams}`;
+  const url = `${WEB_API_BASE}/projects/${projectId}/datasets?${searchParams}`;
   return apiClient.get<DatasetListResponse>(url);
 }
 
@@ -47,7 +48,7 @@ export async function fetchDataset(
   datasetId: string
 ): Promise<DatasetDetail> {
   return apiClient.get<DatasetDetail>(
-    `${API_BASE}/projects/${projectId}/datasets/${datasetId}`
+    `${WEB_API_BASE}/projects/${projectId}/datasets/${datasetId}`
   );
 }
 
@@ -128,7 +129,7 @@ export async function fetchDatasetStatistics(
   datasetId: string
 ): Promise<DatasetStatistics> {
   return apiClient.get<DatasetStatistics>(
-    `${API_BASE}/projects/${projectId}/datasets/${datasetId}/statistics`
+    `${WEB_API_BASE}/projects/${projectId}/datasets/${datasetId}/statistics`
   );
 }
 
@@ -140,7 +141,7 @@ export async function fetchDatetimeConfig(
   datasetId: string
 ): Promise<DatetimeConfig> {
   return apiClient.get<DatetimeConfig>(
-    `${API_BASE}/projects/${projectId}/datasets/${datasetId}/datetime-config`
+    `${WEB_API_BASE}/projects/${projectId}/datasets/${datasetId}/datetime-config`
   );
 }
 

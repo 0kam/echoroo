@@ -180,27 +180,38 @@ description: "Task list for spec/009 — Complete Browser API → BFF Migration"
 
 #### Pre-PR-D audit (D-10 checklist)
 
-- [ ] T068 [P] [US2] D-10 #1: confirm `<audio src="/web-api/v1/projects/{id}/recordings/{rid}/audio">` plays with cookie auth in a logged-in browser tab. Record evidence (network log + audible playback) in `specs/009-browser-api-bff-migration/pr-d-audit.md`
-- [ ] T069 [P] [US2] D-10 #2: confirm `Range:` header propagation to storage backend — drag the spectrogram cursor mid-playback and confirm 206 partial-content responses in the network log
-- [ ] T070 [P] [US2] D-10 #3: investigate whether the legacy v1 path returns redirects to presigned S3 URLs; confirm BFF equivalent either redirects similarly or returns the same audio data through the BFF mount. Record findings in `pr-d-audit.md`
-- [ ] T071 [P] [US2] D-10 #4: confirm streaming export response shape on BFF (chunked transfer or background-job poll). If chunked, verify a token refresh during the export does not corrupt the response
-- [ ] T072 [P] [US2] D-10 #5: confirm `vite.config.ts` proxy mappings for `/web-api/v1/projects/{id}/recordings/*` carry audio MIME types correctly in dev
-- [ ] T073 [US2] If any of T068–T072 surface a gap, add a backend prerequisite task (new file under `apps/api/echoroo/api/web_v1/projects/_media.py` or extension to existing handlers) and ship it as a split PR before continuing. Otherwise, mark `pr-d-audit.md` as "no backend changes required"
+- [X] T068 [P] [US2] D-10 #1: confirm `<audio src="/web-api/v1/projects/{id}/recordings/{rid}/audio">` plays with cookie auth in a logged-in browser tab. Record evidence (network log + audible playback) in `specs/009-browser-api-bff-migration/pr-d-audit.md`
+- [X] T069 [P] [US2] D-10 #2: confirm `Range:` header propagation to storage backend — drag the spectrogram cursor mid-playback and confirm 206 partial-content responses in the network log
+- [X] T070 [P] [US2] D-10 #3: investigate whether the legacy v1 path returns redirects to presigned S3 URLs; confirm BFF equivalent either redirects similarly or returns the same audio data through the BFF mount. Record findings in `pr-d-audit.md`
+- [X] T071 [P] [US2] D-10 #4: confirm streaming export response shape on BFF (chunked transfer or background-job poll). If chunked, verify a token refresh during the export does not corrupt the response
+- [X] T072 [P] [US2] D-10 #5: confirm `vite.config.ts` proxy mappings for `/web-api/v1/projects/{id}/recordings/*` carry audio MIME types correctly in dev
+- [X] T073 [US2] If any of T068–T072 surface a gap, add a backend prerequisite task (new file under `apps/api/echoroo/api/web_v1/projects/_media.py` or extension to existing handlers) and ship it as a split PR before continuing. Otherwise, mark `pr-d-audit.md` as "no backend changes required"
+
+#### PR D0 — backend prerequisite surfaced by pre-audit
+
+> `specs/009-browser-api-bff-migration/pr-d-audit.md` (2026-05-14) confirmed the current BFF surface has only `GET /web-api/v1/projects/{id}/recordings`; audio/playback/spectrogram and annotation/data export routes are still legacy-only. PR D frontend rewiring must wait until this split lands.
+
+- [X] T073a [P] [US2] Write integration test `apps/api/tests/integration/api/web_v1/test_projects_recordings_media.py` covering BFF recording audio/playback/spectrogram: cookie-auth success, API-key cross-rejection, 403-not-401 permission denial, `Range: bytes=0-99` -> 206 with `Content-Range`, and no redirect
+- [X] T073b [P] [US2] Write integration test `apps/api/tests/integration/api/web_v1/test_projects_exports.py` covering BFF annotation export and dataset export: cookie-auth success, API-key cross-rejection, 403-not-401 permission denial, annotation JSON/CSV response shape, and dataset ZIP `StreamingResponse` headers
+- [X] T073c [US2] Add `apps/api/echoroo/api/web_v1/projects/_media.py` with thin BFF handlers for `GET /{project_id}/recordings/{recording_id}/audio`, `/playback`, and `/spectrogram`, reusing the legacy recording service/audio implementation without changing `/api/v1` behavior
+- [X] T073d [US2] Add BFF export handlers for `GET /{project_id}/annotation-projects/{annotation_project_id}/export` and `GET /{project_id}/datasets/{dataset_id}/export`, reusing the existing annotation and dataset export services
+- [X] T073e [US2] Wire `_media` in `apps/api/echoroo/api/web_v1/projects/__init__.py` and append the new BFF media/export paths to `apps/api/tests/contract/_bff_path_parity_allowlist.py`
+- [X] T073f [US2] Run backend verification for the split: `uv run pytest tests/integration/api/web_v1/test_projects_recordings_media.py tests/integration/api/web_v1/test_projects_exports.py -q` plus the relevant legacy contract tests to confirm no v1 regression
 
 #### Implementation for PR D (after audit passes)
 
-- [ ] T074 [P] [US2] Write integration test `apps/api/tests/integration/api/web_v1/test_projects_recordings_media.py` covering the audio / Range / streaming paths discovered in T068–T072. Full D-2a assertion set. May skip if audit confirms paths are already declared and tested by spec/006 tests
-- [ ] T075 [US2] Rewire `lib/components/annotation/AnnotationExportDialog.svelte` inline fetches to `/web-api/v1/projects/{id}/...` (replace `apiClient` / `fetch` calls that hit `/api/v1/*`)
-- [ ] T076 [US2] Rewire `lib/components/annotation/ExportDialog.svelte` (annotation export) inline fetches to BFF
-- [ ] T077 [US2] Rewire `lib/components/data/ExportDialog.svelte` (data export) inline fetches to BFF
-- [ ] T078 [US2] Rewire `lib/components/common/MiniSpectrogram.svelte` audio URL construction to BFF (`<audio src="/web-api/v1/projects/{id}/recordings/{rid}/audio">` — cookie-auth aware)
-- [ ] T079 [US2] Rewire `lib/utils/audioPlayback.svelte.ts` URL construction to BFF
-- [ ] T080 [US2] Rewire `routes/(app)/projects/[id]/annotations/[annotationProjectId]/+page.svelte` inline fetches to BFF
-- [ ] T081 [US2] Append the BFF media/export paths exercised by PR D to `apps/api/tests/contract/_bff_path_parity_allowlist.py`
-- [ ] T082 [US2] Run static guard for the touched files: confirm zero `/api/v1/*` strings remain in the six listed frontend files
-- [ ] T083 [US2] Gate 1/2 for PR D
-- [ ] T083a [US2] Verify FR-002 dataset / recording / detection coverage: open a project's datasets list, a recording detail, and a detections list in the browser. Confirm each screen loads via project-scoped BFF paths (`/web-api/v1/projects/{id}/recordings`, `/web-api/v1/projects/{id}/...`) with zero `/api/v1/*` calls in the network log. These views are project-scoped and already served by `web_v1/projects/_core.py:424` (recordings) + sibling routes — this is a confirmation, not a new migration. Record a network sample in the PR D description
-- [ ] T084 [US2] Gate 3 browser smoke for PR D per quickstart.md PR D row: start annotation export, start data export, play a mini-spectrogram, drag cursor mid-playback (verify Range seeking works). Zero 401s, zero unscoped `/api/v1/*` calls
+- [X] T074 [P] [US2] Write integration test `apps/api/tests/integration/api/web_v1/test_projects_recordings_media.py` covering the audio / Range / streaming paths discovered in T068–T072. Full D-2a assertion set. May skip if audit confirms paths are already declared and tested by spec/006 tests
+- [X] T075 [US2] Rewire `lib/components/annotation/AnnotationExportDialog.svelte` inline fetches to `/web-api/v1/projects/{id}/...` (replace `apiClient` / `fetch` calls that hit `/api/v1/*`)
+- [X] T076 [US2] Rewire `lib/components/annotation/ExportDialog.svelte` (annotation export) inline fetches to BFF
+- [X] T077 [US2] Rewire `lib/components/data/ExportDialog.svelte` (data export) inline fetches to BFF
+- [X] T078 [US2] Rewire `lib/components/common/MiniSpectrogram.svelte` audio URL construction to BFF (`<audio src="/web-api/v1/projects/{id}/recordings/{rid}/audio">` — cookie-auth aware)
+- [X] T079 [US2] Rewire `lib/utils/audioPlayback.svelte.ts` URL construction to BFF
+- [X] T080 [US2] Rewire `routes/(app)/projects/[id]/annotations/[annotationProjectId]/+page.svelte` inline fetches to BFF
+- [X] T081 [US2] Append the BFF media/export paths exercised by PR D to `apps/api/tests/contract/_bff_path_parity_allowlist.py`
+- [X] T082 [US2] Run static guard for the touched files: confirm zero `/api/v1/*` strings remain in the six listed frontend files
+- [X] T083 [US2] Gate 1/2 for PR D
+- [X] T083a [US2] Verify FR-002 dataset / recording / detection coverage: open a project's datasets list, a recording detail, and a detections list in the browser. Confirm each screen loads via project-scoped BFF paths (`/web-api/v1/projects/{id}/recordings`, `/web-api/v1/projects/{id}/...`) with zero `/api/v1/*` calls in the network log. These views are project-scoped and already served by `web_v1/projects/_core.py:424` (recordings) + sibling routes — this is a confirmation, not a new migration. Record a network sample in the PR D description
+- [X] T084 [US2] Gate 3 browser smoke for PR D per quickstart.md PR D row: start annotation export, start data export, play a mini-spectrogram, drag cursor mid-playback (verify Range seeking works). Zero 401s, zero unscoped `/api/v1/*` calls
 
 **Checkpoint US2**: Core authenticated loop on BFF.
 
