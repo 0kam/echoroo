@@ -4,10 +4,9 @@ These exercise the fixture builder and the ``--check`` drift gate so the
 CI workflow ``permissions-fixture-drift.yml`` has a stable contract.
 
 The script lives outside the ``apps/api`` package, so the tests import it
-via ``importlib.util`` from a path computed relative to the repo root
-(``__file__`` → tests/unit/scripts/ → up 4 → repo root). This avoids the
-need to install the script as a real module while still letting mypy /
-ruff lint it as standard Python.
+via ``importlib.util`` from a path discovered by walking upward from this
+file. This avoids the need to install the script as a real module while
+still letting mypy / ruff lint it as standard Python.
 """
 from __future__ import annotations
 
@@ -24,22 +23,17 @@ import pytest
 # Path to the script under test
 # ---------------------------------------------------------------------------
 
-# tests/unit/scripts/test_export_role_permissions.py
-#   parents[0] = tests/unit/scripts
-#   parents[1] = tests/unit
-#   parents[2] = tests
-#   parents[3] = apps/api
-#   parents[4] = repo root  (on the host; inside the dev container the tests
-#                            are baked into ``/app/tests`` so parents[4] = "/"
-#                            and the script must be located via the
-#                            ``ECHOROO_EXPORT_SCRIPT_PATH`` env var or by a
-#                            common-location fallback).
+_SCRIPT_RELATIVE_PATH = Path("scripts") / "export_role_permissions_to_json.py"
+
+
 def _resolve_script_path() -> Path:
     override = os.environ.get("ECHOROO_EXPORT_SCRIPT_PATH")
     if override:
         return Path(override)
+
+    this_file = Path(__file__).resolve()
     candidates = [
-        Path(__file__).resolve().parents[5] / "scripts" / "export_role_permissions_to_json.py",
+        *(parent / _SCRIPT_RELATIVE_PATH for parent in this_file.parents),
         # Common dev-container location after ``docker cp``.
         Path("/tmp/export_role_permissions_to_json.py"),
     ]
