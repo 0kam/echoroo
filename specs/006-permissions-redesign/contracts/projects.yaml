@@ -502,8 +502,6 @@ components:
               id: { type: string, format: uuid }
               name: { type: string }
               h3_index_member: { type: string }
-              latitude: { type: number, nullable: true }
-              longitude: { type: number, nullable: true }
               dataset_count: { type: integer }
               recording_count: { type: integer }
         recording_calendar:
