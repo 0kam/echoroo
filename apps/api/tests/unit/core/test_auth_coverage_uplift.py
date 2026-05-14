@@ -19,13 +19,19 @@ import pytest
 from echoroo.core import auth as mod
 from echoroo.core.auth import (
     ACCESS_TOKEN_TYPE,
+    DEFAULT_MEDIA_TTL,
+    MEDIA_TOKEN_TYP,
+    MEDIA_TOKEN_TYPE,
     REFRESH_TOKEN_TYPE,
     InMemoryTokenStore,
     InvalidTokenError,
     SqlTokenStore,
+    StaleTokenError,
     issue_access_token,
+    issue_media_token,
     issue_refresh_token,
     verify_access_token,
+    verify_media_token,
 )
 
 # ---------------------------------------------------------------------------
@@ -235,6 +241,97 @@ def test_verify_access_token_raises_invalid_when_claims_missing() -> None:
     )
     with pytest.raises(InvalidTokenError, match="missing required claims"):
         verify_access_token(token)
+
+
+# ---------------------------------------------------------------------------
+# media-token issue / verify
+# ---------------------------------------------------------------------------
+
+
+def test_issue_and_verify_media_token_round_trip() -> None:
+    """Media tokens bind user, security stamp, path, scope, and expiry."""
+    user_id = uuid4()
+    project_id = uuid4()
+    recording_id = uuid4()
+    token = issue_media_token(
+        user_id=user_id,
+        security_stamp="media-stamp",
+        project_id=project_id,
+        recording_id=recording_id,
+        scope="spectrogram",
+    )
+
+    decoded = jwt.decode(token, options={"verify_signature": False})
+    assert decoded["type"] == MEDIA_TOKEN_TYPE
+    assert decoded["typ"] == MEDIA_TOKEN_TYP
+    assert decoded["project_id"] == str(project_id)
+    assert decoded["recording_id"] == str(recording_id)
+    assert decoded["scope"] == "spectrogram"
+
+    claims = verify_media_token(
+        token,
+        current_security_stamp="media-stamp",
+        project_id=project_id,
+        recording_id=recording_id,
+        scope="spectrogram",
+    )
+    assert claims.user_id == user_id
+    assert claims.project_id == project_id
+    assert claims.recording_id == recording_id
+    assert claims.scope == "spectrogram"
+
+
+def test_verify_media_token_rejects_path_scope_and_stamp_mismatch() -> None:
+    """Media tokens are not reusable across paths, scopes, or stamp rotation."""
+    user_id = uuid4()
+    project_id = uuid4()
+    recording_id = uuid4()
+    token = issue_media_token(
+        user_id=user_id,
+        security_stamp="media-stamp",
+        project_id=project_id,
+        recording_id=recording_id,
+        scope="playback",
+        ttl=DEFAULT_MEDIA_TTL,
+    )
+
+    with pytest.raises(InvalidTokenError, match="scope mismatch"):
+        verify_media_token(
+            token,
+            current_security_stamp="media-stamp",
+            project_id=project_id,
+            recording_id=recording_id,
+            scope="spectrogram",
+        )
+    with pytest.raises(InvalidTokenError, match="path mismatch"):
+        verify_media_token(
+            token,
+            current_security_stamp="media-stamp",
+            project_id=uuid4(),
+            recording_id=recording_id,
+            scope="playback",
+        )
+    with pytest.raises(StaleTokenError):
+        verify_media_token(
+            token,
+            current_security_stamp="rotated",
+            project_id=project_id,
+            recording_id=recording_id,
+            scope="playback",
+        )
+
+
+def test_verify_media_token_rejects_access_token_type() -> None:
+    """Full access JWTs must not verify as media tokens."""
+    token = issue_access_token(user_id=uuid4(), security_stamp="stamp")
+    with pytest.raises(InvalidTokenError, match="not a media token"):
+        verify_media_token(
+            token,
+            current_security_stamp="stamp",
+            project_id=uuid4(),
+            recording_id=uuid4(),
+            scope="audio",
+        )
 
 
 # ---------------------------------------------------------------------------

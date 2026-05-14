@@ -12,6 +12,14 @@ import { apiClient } from './client';
 
 const API_BASE = '/api/v1';
 const WEB_API_BASE = '/web-api/v1';
+const CSRF_COOKIE_NAME = 'echoroo_csrf';
+
+export type RecordingMediaScope = 'audio' | 'playback' | 'spectrogram';
+
+export interface RecordingMediaTokenResponse {
+  token: string;
+  expires_in: number;
+}
 
 export interface ProjectRecordingItem {
   id: string;
@@ -46,6 +54,22 @@ export interface ListRecordingsParams {
   samplerate?: number;
   sortBy?: string;
   sortOrder?: string;
+}
+
+function getCsrfToken(): string | null {
+  if (typeof document === 'undefined') return null;
+  const prefix = `${CSRF_COOKIE_NAME}=`;
+  const parts = document.cookie ? document.cookie.split('; ') : [];
+  for (const part of parts) {
+    if (part.startsWith(prefix)) {
+      try {
+        return decodeURIComponent(part.slice(prefix.length));
+      } catch {
+        return part.slice(prefix.length);
+      }
+    }
+  }
+  return null;
 }
 
 /**
@@ -107,6 +131,46 @@ export async function updateRecording(
  */
 export async function deleteRecording(projectId: string, recordingId: string): Promise<void> {
   return apiClient.delete<void>(`${API_BASE}/projects/${projectId}/recordings/${recordingId}`);
+}
+
+/**
+ * Issue a scoped token for native browser media/image requests.
+ */
+export async function getRecordingMediaToken(
+  projectId: string,
+  recordingId: string,
+  scope: RecordingMediaScope
+): Promise<RecordingMediaTokenResponse> {
+  const headers: Record<string, string> = {};
+  const csrfToken = getCsrfToken();
+  if (csrfToken) headers['X-CSRF-Token'] = csrfToken;
+  return apiClient.post<RecordingMediaTokenResponse>(
+    `${WEB_API_BASE}/projects/${projectId}/recordings/${recordingId}/media-token`,
+    { scope },
+    { headers }
+  );
+}
+
+/**
+ * Append a scoped media token and return a same-origin path for browser elements.
+ */
+export function appendMediaTokenToUrl(url: string, token: string): string {
+  const parsed = new URL(url, window.location.origin);
+  parsed.searchParams.set('media_token', token);
+  return parsed.pathname + parsed.search;
+}
+
+/**
+ * Build a same-origin media URL authenticated with a scoped media token.
+ */
+export async function getAuthenticatedRecordingMediaUrl(
+  projectId: string,
+  recordingId: string,
+  scope: RecordingMediaScope,
+  url: string
+): Promise<string> {
+  const { token } = await getRecordingMediaToken(projectId, recordingId, scope);
+  return appendMediaTokenToUrl(url, token);
 }
 
 /**

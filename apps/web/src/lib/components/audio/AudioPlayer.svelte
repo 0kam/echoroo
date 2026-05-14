@@ -1,7 +1,9 @@
 <script lang="ts">
   import { onDestroy, untrack } from 'svelte';
-  import { getPlaybackUrl } from '$lib/api/recordings';
-  import { apiClient } from '$lib/api/client';
+  import {
+    getAuthenticatedRecordingMediaUrl,
+    getPlaybackUrl,
+  } from '$lib/api/recordings';
   import type { SpeedOption } from '$lib/types/audio';
   import type { SpectrogramWindow } from '$lib/types/audio';
   import {
@@ -52,29 +54,21 @@
 
   let _audioLoadError = $state(false);
 
-  // Track whether we have already attempted a token refresh for the current
-  // audio element error, so we never enter an infinite retry loop.
-  let hasRetriedAfterRefresh = false;
+  // Track whether we have already attempted to re-issue a media token for the
+  // current audio element error, so we never enter an infinite retry loop.
+  let hasRetriedAfterMediaTokenRefresh = false;
+  let audioSrcRequestId = 0;
 
   // Speed dropdown state
   let showSpeedMenu = $state(false);
 
-  // Build the playback URL with the current access token as a query parameter.
-  // This allows the browser's native <audio> element to stream the audio
-  // directly (including HTTP Range requests for seeking) without requiring
-  // a custom fetch wrapper.
-  function buildAudioSrc(pid: string, rid: string): string {
-    const token = apiClient.getAccessToken();
-    // Build the base URL without speed — speed is applied via audioEl.playbackRate
+  // Build the playback URL with a scoped media token. The native <audio>
+  // element still owns Range requests and buffering; the full access JWT never
+  // appears in the URL.
+  async function buildAudioSrc(pid: string, rid: string): Promise<string> {
+    // Build the base URL without speed; speed is applied via audioEl.playbackRate.
     const fullUrl = getPlaybackUrl(pid, rid);
-    const parsed = new URL(fullUrl);
-    // Use only the path + existing query string so it works through the Vite proxy
-    const pathWithQuery = parsed.pathname + parsed.search;
-    if (token) {
-      const sep = pathWithQuery.includes('?') ? '&' : '?';
-      return `${pathWithQuery}${sep}token=${encodeURIComponent(token)}`;
-    }
-    return pathWithQuery;
+    return getAuthenticatedRecordingMediaUrl(pid, rid, 'playback', fullUrl);
   }
 
   // When projectId or recordingId changes, update the audio element source.
@@ -82,8 +76,9 @@
   $effect(() => {
     const _projectId = projectId;
     const _recordingId = recordingId;
+    const _audioEl = audioEl;
 
-    if (!_projectId || !_recordingId || !audioEl) return;
+    if (!_projectId || !_recordingId || !_audioEl) return;
 
     // Keep this effect scoped to source identity only.
     // `currentTime` and `isPlaying` are read untracked so time updates during
@@ -93,15 +88,26 @@
 
     _audioLoadError = false;
     // Reset the retry flag whenever we load a new recording
-    hasRetriedAfterRefresh = false;
+    hasRetriedAfterMediaTokenRefresh = false;
+    const requestId = ++audioSrcRequestId;
 
-    // Set src directly — the browser handles Range requests and buffering
-    audioEl.src = buildAudioSrc(_projectId, _recordingId);
-    audioEl.currentTime = savedTime;
+    void (async () => {
+      try {
+        const src = await buildAudioSrc(_projectId, _recordingId);
+        if (requestId !== audioSrcRequestId || audioEl !== _audioEl) return;
 
-    if (wasPlaying) {
-      audioEl.play().catch(() => {});
-    }
+        // Set src directly; the browser handles Range requests and buffering.
+        _audioEl.src = src;
+        _audioEl.currentTime = savedTime;
+
+        if (wasPlaying) {
+          _audioEl.play().catch(() => {});
+        }
+      } catch {
+        if (requestId !== audioSrcRequestId || audioEl !== _audioEl) return;
+        _audioLoadError = true;
+      }
+    })();
   });
 
   // Sync playbackRate whenever the speed prop changes.
@@ -238,6 +244,8 @@
   }
 
   function onAudioPlay() {
+    hasRetriedAfterMediaTokenRefresh = false;
+    _audioLoadError = false;
     isPlaying = true;
     startTimeTracking();
   }
@@ -247,28 +255,32 @@
     stopTimeTracking();
   }
 
+  function onAudioCanPlay() {
+    hasRetriedAfterMediaTokenRefresh = false;
+    _audioLoadError = false;
+  }
+
   async function onAudioError() {
     // When the audio element fails, the MediaError code is available on
     // audioEl.error.  Code 4 (MEDIA_ERR_SRC_NOT_SUPPORTED) is what browsers
     // surface for HTTP-level errors such as 401 Unauthorized.
     //
-    // Attempt a token refresh exactly once.  If the refresh succeeds we
-    // rebuild the src with the new token and resume from where we left off.
-    // If the refresh fails (or we already retried once), fall through to the
-    // visible error state.
+    // Attempt media-token re-issue exactly once. If it succeeds we rebuild the
+    // src and resume from where we left off. If it fails (or we already retried
+    // once), fall through to the visible error state.
     const mediaErrCode = audioEl?.error?.code ?? 0;
     const likelyAuthError = mediaErrCode === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED ||
                             mediaErrCode === MediaError.MEDIA_ERR_NETWORK;
 
-    if (likelyAuthError && !hasRetriedAfterRefresh) {
-      hasRetriedAfterRefresh = true;
+    if (likelyAuthError && !hasRetriedAfterMediaTokenRefresh) {
+      hasRetriedAfterMediaTokenRefresh = true;
       try {
-        await apiClient.refreshToken();
-        // Rebuild the src with the freshly-obtained token
+        const src = await buildAudioSrc(projectId, recordingId);
+        // Rebuild the src with a freshly issued scoped media token.
         if (audioEl && projectId && recordingId) {
           const savedTime = audioEl.currentTime;
           const wasPlaying = isPlaying;
-          audioEl.src = buildAudioSrc(projectId, recordingId);
+          audioEl.src = src;
           audioEl.currentTime = savedTime;
           if (wasPlaying) {
             audioEl.play().catch(() => {});
@@ -277,7 +289,7 @@
         // Do NOT set audioLoadError — give the retry a chance to succeed
         return;
       } catch {
-        // Refresh failed; fall through to show the error state
+        // Media-token issue failed; fall through to show the error state.
       }
     }
 
@@ -472,6 +484,7 @@
   <audio
     bind:this={audioEl}
     preload="auto"
+    oncanplay={onAudioCanPlay}
     onplay={onAudioPlay}
     onpause={onAudioPause}
     onended={onAudioEnded}

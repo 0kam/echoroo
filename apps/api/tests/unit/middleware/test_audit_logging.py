@@ -80,13 +80,15 @@ def test_audit_logging_redacts_query_credentials(
 ) -> None:
     """Sensitive query string keys must be redacted regardless of value shape."""
     client = _build_app()
-    client.get("/api/v1/echo?token=plain-token-not-pii&page=2")
+    client.get("/api/v1/echo?token=plain-token-not-pii&media_token=media-secret&page=2")
     records = _structured_records(caplog_access)
     last = records[-1]
     query = last["query"]
     assert isinstance(query, str)
     assert "token=" in query
     assert "plain-token-not-pii" not in query
+    assert "media_token=" in query
+    assert "media-secret" not in query
     assert "page=2" in query
 
 

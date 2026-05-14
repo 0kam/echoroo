@@ -11,16 +11,78 @@ from __future__ import annotations
 from typing import Annotated, Any
 from uuid import UUID
 
-from fastapi import APIRouter, Header, Query, Request
+from fastapi import APIRouter, Header, HTTPException, Query, Request, status
 from fastapi.responses import Response, StreamingResponse
+from pydantic import BaseModel
 
 from echoroo.api.v1 import annotation_projects as legacy_annotation_projects
 from echoroo.api.v1 import datasets as legacy_datasets
 from echoroo.api.v1 import recordings as legacy_recordings
+from echoroo.core.actions import RECORDING_MEDIA_ACTION
+from echoroo.core.auth import DEFAULT_MEDIA_TTL, MediaTokenScope, issue_media_token
 from echoroo.core.database import DbSession
+from echoroo.core.permissions import gate_action
 from echoroo.middleware.auth import CurrentUser
 
 router = APIRouter()
+
+
+class MediaTokenRequest(BaseModel):
+    """Request body for issuing a scoped recording media token."""
+
+    scope: MediaTokenScope
+
+
+class MediaTokenResponse(BaseModel):
+    """Scoped media token response for native browser media/image elements."""
+
+    token: str
+    expires_in: int
+
+
+@router.post(
+    "/{project_id}/recordings/{recording_id}/media-token",
+    response_model=MediaTokenResponse,
+    summary="Issue a scoped recording media token",
+    description="Issue a short-lived JWT scoped to one recording media resource.",
+)
+async def issue_recording_media_token(
+    project_id: UUID,
+    recording_id: UUID,
+    payload: MediaTokenRequest,
+    request: Request,
+    current_user: CurrentUser,
+    service: legacy_recordings.RecordingServiceDep,
+    db: DbSession,
+) -> MediaTokenResponse:
+    """Gate VIEW_MEDIA before issuing a scoped token for media GET URLs."""
+    await gate_action(
+        action=RECORDING_MEDIA_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
+
+    recording = await service.get_by_id_in_project(recording_id, project_id)
+    if recording is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Recording not found",
+        )
+
+    token = issue_media_token(
+        user_id=current_user.id,
+        security_stamp=current_user.security_stamp,
+        project_id=project_id,
+        recording_id=recording_id,
+        scope=payload.scope,
+        ttl=DEFAULT_MEDIA_TTL,
+    )
+    return MediaTokenResponse(
+        token=token,
+        expires_in=int(DEFAULT_MEDIA_TTL.total_seconds()),
+    )
 
 
 @router.get(

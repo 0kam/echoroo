@@ -50,6 +50,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         "secret",
         "access_token",
         "refresh_token",
+        "media_token",
     }
 
     async def dispatch(

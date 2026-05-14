@@ -1,6 +1,6 @@
 /**
  * useChunkManager — Svelte 5 runes hook that owns spectrogram chunk state,
- * lazy-loading, and retry/token-refresh logic.
+ * lazy-loading, and retry/media-token refresh logic.
  *
  * Extracted from SpectrogramViewer.svelte as Step 1 of the P2-B refactor
  * (see plan.md §4). The hook deliberately exposes `chunks` as a reactive
@@ -8,8 +8,11 @@
  * `chunkMgr.chunks` inside their own `$effect` and call their scheduler.
  */
 import { onDestroy, untrack } from 'svelte';
-import { getSpectrogramUrl } from '$lib/api/recordings';
-import { apiClient } from '$lib/api/client';
+import {
+  appendMediaTokenToUrl,
+  getRecordingMediaToken,
+  getSpectrogramUrl,
+} from '$lib/api/recordings';
 import type { SpectrogramChunk } from '$lib/types/audio';
 import { SPECTROGRAM_CHUNK_DURATION, SPECTROGRAM_CHUNK_BUFFER } from '$lib/types/audio';
 import { intersectIntervals, scaleInterval, calculateChunkIntervals } from '$lib/utils/viewport';
@@ -29,15 +32,16 @@ export function useChunkManager(input: ChunkManagerInput): ChunkManagerApi {
   let chunkImages: HTMLImageElement[] = [];
   // Tracks setTimeout handles for pending retries, keyed by chunk index.
   const retryTimers: Map<number, ReturnType<typeof setTimeout>> = new Map();
-  // Guards against concurrent token refresh calls (thundering herd prevention).
-  let tokenRefreshPromise: Promise<void> | null = null;
+  let mediaToken: string | null = null;
+  let mediaTokenKey = '';
+  let mediaTokenExpiresAtMs = 0;
+  let mediaTokenPromise: Promise<string> | null = null;
   // Set to true in dispose(); every async continuation checks this before
   // touching state to avoid operating on a torn-down hook.
   let disposed = false;
 
-  // Build a spectrogram URL for a single chunk including the auth token as a
-  // query parameter. This allows the browser to load the image directly without
-  // a custom fetch wrapper, which avoids keeping all chunks in memory as blobs.
+  // Build a spectrogram URL for a single chunk. The scoped media token is added
+  // just before assigning the URL to the image element.
   function buildChunkUrl(chunkBufferInterval: { min: number; max: number }): string {
     const recording = input.recording();
     const spectrogramSettings = input.spectrogramSettings();
@@ -69,11 +73,69 @@ export function useChunkManager(input: ChunkManagerInput): ChunkManagerApi {
     const parsed = new URL(fullUrl);
     const pathWithQuery = parsed.pathname + parsed.search;
 
-    const token = apiClient.getAccessToken();
-    if (token) {
-      return `${pathWithQuery}&token=${encodeURIComponent(token)}`;
-    }
     return pathWithQuery;
+  }
+
+  async function ensureMediaToken(force = false): Promise<string | null> {
+    const now = Date.now();
+    const recording = input.recording();
+    const projectId = input.projectId();
+    const key = `${projectId}:${recording.id}`;
+    if (!force && mediaToken && mediaTokenKey === key && now < mediaTokenExpiresAtMs - 30_000) {
+      return mediaToken;
+    }
+    if (!mediaTokenPromise || mediaTokenKey !== key) {
+      mediaTokenKey = key;
+      mediaTokenPromise = getRecordingMediaToken(projectId, recording.id, 'spectrogram')
+        .then((response) => {
+          if (mediaTokenKey === key) {
+            mediaToken = response.token;
+            mediaTokenExpiresAtMs = Date.now() + response.expires_in * 1000;
+          }
+          return response.token;
+        })
+        .finally(() => {
+          if (mediaTokenKey === key) {
+            mediaTokenPromise = null;
+          }
+        });
+    }
+    try {
+      return await mediaTokenPromise;
+    } catch {
+      return null;
+    }
+  }
+
+  function markChunkLoadFailed(index: number) {
+    chunks = chunks.map((c) => {
+      if (c.index !== index) return c;
+      const newRetryCount = c.retryCount + 1;
+      return { ...c, isError: true, isLoading: false, isReady: false, retryCount: newRetryCount };
+    });
+    scheduleChunkRetry(index);
+  }
+
+  async function loadChunk(index: number, forceToken = false) {
+    if (disposed) return;
+
+    const chunk = chunks.find((c) => c.index === index);
+    if (!chunk || chunk.isReady || chunk.isLoading) return;
+
+    chunks = chunks.map((c) => (c.index === index ? { ...c, isLoading: true, isError: false } : c));
+
+    const img = chunkImages[index];
+    if (!img) {
+      chunks = chunks.map((c) => (c.index === index ? { ...c, isLoading: false } : c));
+      return;
+    }
+    const token = await ensureMediaToken(forceToken);
+    if (disposed || chunkImages[index] !== img) return;
+    if (!token) {
+      markChunkLoadFailed(index);
+      return;
+    }
+    img.src = appendMediaTokenToUrl(buildChunkUrl(chunk.buffer), token);
   }
 
   // Build all chunk metadata but do NOT start loading images yet.
@@ -84,6 +146,10 @@ export function useChunkManager(input: ChunkManagerInput): ChunkManagerApi {
     // Cancel all pending retry timers from the previous set
     retryTimers.forEach((handle) => clearTimeout(handle));
     retryTimers.clear();
+    mediaToken = null;
+    mediaTokenKey = '';
+    mediaTokenExpiresAtMs = 0;
+    mediaTokenPromise = null;
 
     // Cancel all pending image loads from the previous set
     chunkImages.forEach((img) => {
@@ -127,12 +193,7 @@ export function useChunkManager(input: ChunkManagerInput): ChunkManagerApi {
 
       img.onerror = () => {
         if (disposed) return;
-        chunks = chunks.map((c) => {
-          if (c.index !== index) return c;
-          const newRetryCount = c.retryCount + 1;
-          return { ...c, isError: true, isLoading: false, isReady: false, retryCount: newRetryCount };
-        });
-        scheduleChunkRetry(index);
+        markChunkLoadFailed(index);
       };
 
       return img;
@@ -146,8 +207,8 @@ export function useChunkManager(input: ChunkManagerInput): ChunkManagerApi {
    * Schedule a delayed retry for a chunk that failed to load.
    * The retry is skipped if the chunk has exceeded MAX_CHUNK_RETRIES or if it
    * is no longer near the viewport when the timer fires.
-   * A token refresh is attempted before retrying to handle expired JWT tokens.
-   * Concurrent refresh calls are deduplicated via tokenRefreshPromise.
+   * A fresh media token is requested before retrying to handle token expiry.
+   * Concurrent issue calls are deduplicated via mediaTokenPromise.
    */
   function scheduleChunkRetry(index: number) {
     if (disposed) return;
@@ -168,23 +229,8 @@ export function useChunkManager(input: ChunkManagerInput): ChunkManagerApi {
       if (disposed) return;
       retryTimers.delete(index);
 
-      // Refresh the auth token before retrying to handle expired JWT tokens.
-      // Multiple concurrent retries share a single refresh call to avoid
-      // hammering the auth endpoint (thundering herd prevention).
-      if (!tokenRefreshPromise) {
-        tokenRefreshPromise = apiClient.refreshToken().finally(() => {
-          tokenRefreshPromise = null;
-        });
-      }
-      try {
-        await tokenRefreshPromise;
-      } catch {
-        // Refresh failed — proceed with retryChunk which will use whatever
-        // token is currently available (may fail again and exhaust retries).
-      }
-
       if (disposed) return;
-      retryChunk(index);
+      retryChunk(index, true);
     }, CHUNK_RETRY_DELAY_MS);
 
     retryTimers.set(index, handle);
@@ -194,7 +240,7 @@ export function useChunkManager(input: ChunkManagerInput): ChunkManagerApi {
    * Immediately retry loading a single chunk.
    * If the chunk has already recovered or is being loaded, this is a no-op.
    */
-  function retryChunk(index: number) {
+  function retryChunk(index: number, forceToken = false) {
     if (disposed) return;
 
     const chunk = chunks.find((c) => c.index === index);
@@ -205,34 +251,26 @@ export function useChunkManager(input: ChunkManagerInput): ChunkManagerApi {
     const loadZone = scaleInterval(viewport.time, 4);
     if (!intersectIntervals(chunk.interval, loadZone)) return;
 
-    // Mark as loading and reset the image src to trigger a fresh request
-    chunks = chunks.map((c) =>
-      c.index === index ? { ...c, isLoading: true, isError: false } : c
-    );
-
     const img = chunkImages[index];
     if (img) {
       img.src = '';
-      img.src = buildChunkUrl(chunk.buffer);
+      void loadChunk(index, forceToken);
     }
   }
 
   /**
-   * Refresh the auth token and then retry all chunks that are in the error
-   * state and have not yet exceeded the retry limit.  Called when a token
-   * refresh is needed before re-attempting spectrogram image loads.
+   * Refresh the scoped media token and then retry all eligible error chunks.
    */
   async function refreshTokenAndRetryErrors() {
     if (disposed) return;
-    try {
-      await apiClient.refreshToken();
-    } catch {
-      // Refresh failed; leave chunks in their current state
+    const token = await ensureMediaToken(true);
+    if (!token) {
+      // Media-token issue failed; leave chunks in their current state.
       return;
     }
 
     if (disposed) return;
-    // After a successful refresh, immediately retry all eligible error chunks
+    // After a successful media-token issue, immediately retry eligible chunks.
     chunks.forEach((chunk) => {
       if (chunk.isError && chunk.retryCount < MAX_CHUNK_RETRIES) {
         retryChunk(chunk.index);
@@ -266,14 +304,9 @@ export function useChunkManager(input: ChunkManagerInput): ChunkManagerApi {
         return;
       }
 
-      // Mark as loading and set the image src
-      chunks = chunks.map((c) =>
-        c.index === chunk.index ? { ...c, isLoading: true } : c
-      );
-
       const img = chunkImages[chunk.index];
       if (img && !img.src) {
-        img.src = buildChunkUrl(chunk.buffer);
+        void loadChunk(chunk.index);
       }
     });
   }
@@ -294,7 +327,12 @@ export function useChunkManager(input: ChunkManagerInput): ChunkManagerApi {
     const _height = s.height;
 
     // Suppress unused-variable warnings — these are read only to register deps
-    void _recordingId; void _windowSize; void _overlap; void _cmap; void _pcen; void _height;
+    void _recordingId;
+    void _windowSize;
+    void _overlap;
+    void _cmap;
+    void _pcen;
+    void _height;
 
     untrack(() => rebuildChunks());
   });
