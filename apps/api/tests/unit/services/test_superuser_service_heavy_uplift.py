@@ -39,6 +39,7 @@ from echoroo.services.superuser_service import (
     _AUDIT_ACTION_REVOKE_REQUESTED,
     _AUDIT_ACTION_WEBAUTHN_REGISTERED,
     _AUDIT_ACTION_WEBAUTHN_REGISTERED_BELOW_MIN,
+    ACTION_SUPERUSER_ADD,
     ACTION_SUPERUSER_REVOKE,
     AlreadySuperuserError,
     ApprovalRequestNotFoundError,
@@ -113,15 +114,36 @@ async def test_add_superuser_direct_branch_creates_row(
         requester_superuser_id=None,
         webauthn_credentials=[{"credential_id": "k1"}],
         allowed_ip_cidrs=["10.0.0.0/24"],
+        request_id="rid-heavy-add-direct",
+        ip="203.0.113.10",
+        user_agent="heavy/direct",
     )
     assert outcome.action == _AUDIT_ACTION_ADD_DIRECT
+    assert outcome.actor_user_id is None
     assert outcome.status == "direct"
     assert outcome.superuser_id is not None
+    assert outcome.approval_request_id is None
+    assert outcome.request_id == "rid-heavy-add-direct"
+    assert outcome.ip == "203.0.113.10"
+    assert outcome.user_agent == "heavy/direct"
+    assert outcome.before == {"superuser_count": 0}
+    assert outcome.after == {"superuser_count": 1}
+    assert outcome.detail == {
+        "target_user_id": str(target_user.id),
+        "superuser_id": str(outcome.superuser_id),
+        "active_count_before": 0,
+        "active_count_after": 1,
+        "reason": "below_minimum_threshold",
+        "min_superusers": superuser_service.MIN_SUPERUSERS,
+    }
     # The new superuser row must exist + carry the supplied JSONB.
     row = await db_session.get(Superuser, outcome.superuser_id)
     assert row is not None
     assert row.user_id == target_user.id
+    assert row.added_by_id is None
+    assert row.webauthn_credentials == [{"credential_id": "k1"}]
     assert row.allowed_ip_cidrs == ["10.0.0.0/24"]
+    assert row.revoked_at is None
 
 
 @pytest.mark.asyncio
@@ -186,10 +208,43 @@ async def test_add_superuser_ticket_branch_returns_pending_outcome(
         actor_user_id=requester_user.id,
         target_user_id=target_user.id,
         requester_superuser_id=requester.id,
+        webauthn_credentials=[{"credential_id": "ticket-key"}],
+        allowed_ip_cidrs=["192.0.2.0/24"],
+        request_id="rid-heavy-add-ticket",
+        ip="203.0.113.11",
+        user_agent="heavy/ticket",
     )
     assert outcome.action == _AUDIT_ACTION_ADD_REQUESTED
+    assert outcome.actor_user_id == requester_user.id
     assert outcome.status == "pending"
     assert outcome.approval_request_id is not None
+    assert outcome.superuser_id is None
+    assert outcome.request_id == "rid-heavy-add-ticket"
+    assert outcome.ip == "203.0.113.11"
+    assert outcome.user_agent == "heavy/ticket"
+    assert outcome.before is None
+    assert outcome.after is None
+    assert outcome.detail == {
+        "target_user_id": str(target_user.id),
+        "approval_request_id": str(outcome.approval_request_id),
+        "active_count_before": superuser_service.MIN_SUPERUSERS,
+        "min_approvals": superuser_service.MIN_APPROVALS,
+    }
+
+    ticket = await db_session.get(
+        SuperuserApprovalRequest, outcome.approval_request_id
+    )
+    assert ticket is not None
+    assert ticket.action == ACTION_SUPERUSER_ADD
+    assert ticket.detail == {
+        "target_user_id": str(target_user.id),
+        "webauthn_credentials": [{"credential_id": "ticket-key"}],
+        "allowed_ip_cidrs": ["192.0.2.0/24"],
+    }
+    assert ticket.requested_by_id == requester.id
+    assert ticket.approvals == []
+    assert ticket.status == "pending"
+    assert ticket.executed_at is None
 
 
 # ---------------------------------------------------------------------------
@@ -270,9 +325,32 @@ async def test_register_webauthn_credential_first_credential_below_min(
         db_session,
         superuser_id=su.id,
         credential={"credential_id": "key-A", "public_key": "pk", "sign_count": 0},
+        actor_user_id=user.id,
+        request_id="rid-heavy-wa-first",
+        ip="203.0.113.20",
+        user_agent="heavy/webauthn-first",
     )
     assert outcome.action == _AUDIT_ACTION_WEBAUTHN_REGISTERED_BELOW_MIN
-    assert outcome.detail["below_minimum"] is True
+    assert outcome.actor_user_id == user.id
+    assert outcome.status == "applied"
+    assert outcome.superuser_id == su.id
+    assert outcome.approval_request_id is None
+    assert outcome.request_id == "rid-heavy-wa-first"
+    assert outcome.ip == "203.0.113.20"
+    assert outcome.user_agent == "heavy/webauthn-first"
+    assert outcome.before == {"credential_count": 0}
+    assert outcome.after == {"credential_count": 1}
+    assert outcome.detail == {
+        "superuser_id": str(su.id),
+        "credential_id": "key-A",
+        "credential_count": 1,
+        "minimum_required": superuser_service.MIN_WEBAUTHN_CREDENTIALS,
+        "below_minimum": True,
+    }
+    await db_session.refresh(su)
+    assert su.webauthn_credentials == [
+        {"credential_id": "key-A", "public_key": "pk", "sign_count": 0}
+    ]
 
 
 @pytest.mark.asyncio
@@ -290,9 +368,32 @@ async def test_register_webauthn_credential_second_credential_at_min(
         db_session,
         superuser_id=su.id,
         credential={"credential_id": "key-B"},
+        actor_user_id=user.id,
+        request_id="rid-heavy-wa-second",
+        ip="203.0.113.21",
+        user_agent="heavy/webauthn-second",
     )
     assert outcome.action == _AUDIT_ACTION_WEBAUTHN_REGISTERED
-    assert outcome.detail["below_minimum"] is False
+    assert outcome.actor_user_id == user.id
+    assert outcome.status == "applied"
+    assert outcome.superuser_id == su.id
+    assert outcome.request_id == "rid-heavy-wa-second"
+    assert outcome.ip == "203.0.113.21"
+    assert outcome.user_agent == "heavy/webauthn-second"
+    assert outcome.before == {"credential_count": 1}
+    assert outcome.after == {"credential_count": 2}
+    assert outcome.detail == {
+        "superuser_id": str(su.id),
+        "credential_id": "key-B",
+        "credential_count": 2,
+        "minimum_required": superuser_service.MIN_WEBAUTHN_CREDENTIALS,
+        "below_minimum": False,
+    }
+    await db_session.refresh(su)
+    assert su.webauthn_credentials == [
+        {"credential_id": "key-A"},
+        {"credential_id": "key-B"},
+    ]
 
 
 @pytest.mark.asyncio
@@ -467,16 +568,39 @@ async def test_reject_request_flips_status_to_rejected(
         db_session,
         request_id_uuid=ticket.id,
         rejector_superuser_id=rejector.id,
+        actor_user_id=rejector_user.id,
         reason="not justified",
+        request_id="rid-heavy-reject",
+        ip="203.0.113.30",
+        user_agent="heavy/reject",
     )
     assert outcome.action == _AUDIT_ACTION_REJECTED
+    assert outcome.actor_user_id == rejector_user.id
+    assert outcome.status == "rejected"
+    assert outcome.approval_request_id == ticket.id
+    assert outcome.superuser_id is None
+    assert outcome.request_id == "rid-heavy-reject"
+    assert outcome.ip == "203.0.113.30"
+    assert outcome.user_agent == "heavy/reject"
+    assert outcome.before is None
+    assert outcome.after is None
+    assert outcome.extra_audit == ()
+    assert outcome.detail == {
+        "approval_request_id": str(ticket.id),
+        "rejector_superuser_id": str(rejector.id),
+        "action": ACTION_SUPERUSER_REVOKE,
+        "rejected_reason": "not justified",
+    }
     await db_session.refresh(ticket)
     assert ticket.status == "rejected"
     assert ticket.executed_at is not None
-    assert any(
-        a.get("decision") == "rejected" and a.get("rejected_reason") == "not justified"
-        for a in ticket.approvals
-    )
+    assert len(ticket.approvals) == 1
+    rejection = ticket.approvals[0]
+    assert rejection["superuser_id"] == str(rejector.id)
+    assert rejection["decision"] == "rejected"
+    assert rejection["rejected_reason"] == "not justified"
+    decided_at = datetime.fromisoformat(rejection["decided_at"])
+    assert decided_at.tzinfo is not None
 
 
 @pytest.mark.asyncio
@@ -540,15 +664,42 @@ async def test_reject_request_two_factor_reset_path_appends_extra_audit(
         db_session,
         request_id_uuid=ticket.id,
         rejector_superuser_id=rejector.id,
+        actor_user_id=rejector_user.id,
         reason="no good",
+        request_id="rid-heavy-2fa-reject",
+        ip="203.0.113.31",
+        user_agent="heavy/2fa-reject",
     )
     assert outcome.action == _AUDIT_ACTION_REJECTED
+    assert outcome.actor_user_id == rejector_user.id
+    assert outcome.status == "rejected"
+    assert outcome.approval_request_id == ticket.id
+    assert outcome.request_id == "rid-heavy-2fa-reject"
+    assert outcome.ip == "203.0.113.31"
+    assert outcome.user_agent == "heavy/2fa-reject"
+    assert outcome.detail == {
+        "approval_request_id": str(ticket.id),
+        "rejector_superuser_id": str(rejector.id),
+        "action": "two_factor_reset.skip_delay",
+        "rejected_reason": "no good",
+    }
     # The 2FA reset cancellation envelope must be appended to extra_audit.
-    assert len(outcome.extra_audit) >= 1
-    assert any(
-        getattr(env, "action", "") == "two_factor_reset.cancelled"
-        for env in outcome.extra_audit
-    )
+    assert len(outcome.extra_audit) == 1
+    extra = outcome.extra_audit[0]
+    assert extra.action == "two_factor_reset.cancelled"
+    assert extra.actor_user_id == rejector.id
+    assert extra.status == "applied"
+    assert extra.request_id == "rid-heavy-2fa-reject"
+    assert extra.ip == "203.0.113.31"
+    assert extra.user_agent == "heavy/2fa-reject"
+    assert extra.detail == {
+        "request_id": str(fake_payload.request_id),
+        "target_user_id": str(fake_payload.target_user_id),
+        "reason": "approval_rejected",
+        "approval_request_id": str(ticket.id),
+        "rejector_superuser_id": str(rejector.id),
+        "rejected_reason_excerpt": "no good",
+    }
 
 
 @pytest.mark.asyncio
