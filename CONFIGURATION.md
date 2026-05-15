@@ -23,7 +23,7 @@ This guide explains how to configure Echoroo for different deployment scenarios.
    ./scripts/docker.sh dev
    ```
 
-That's it! Access the application at http://localhost:3000.
+That's it! Access the application at http://localhost:5173.
 
 ## Environment Variables
 
@@ -48,16 +48,12 @@ That's it! Access the application at http://localhost:3000.
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `ECHOROO_DOMAIN` | Domain or IP for accessing Echoroo | `localhost` |
-| `ECHOROO_PORT` | Backend API port | `5000` |
-| `ECHOROO_FRONTEND_PORT` | Frontend port (dev only) | `3000` |
+| `ECHOROO_API_PORT` | Backend API port | `8002` |
+| `ECHOROO_FRONTEND_PORT` | Frontend port (dev only) | `5173` |
 
 ### Production Settings
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `DOMAIN` | Domain name (required for production) | - |
-| `PORT` | External port | `80` |
-| `BACKEND_REPLICAS` | Number of backend replicas | `1` |
+A production compose file is not currently present in this repository. `./scripts/docker.sh prod` expects `compose.prod.yaml` and will fail until a production stack is added.
 
 ### Development Settings
 
@@ -102,9 +98,9 @@ ECHOROO_DEV=true
 ```
 
 **Access:**
-- Frontend: http://localhost:3000
-- Backend API: http://localhost:5000
-- API Docs: http://localhost:5000/docs
+- Frontend: http://localhost:5173
+- Backend API: http://localhost:8002
+- API Docs: http://localhost:8002/docs
 - Database: localhost:5432
 
 ### 2. Local Development Without Docker
@@ -114,16 +110,13 @@ For development without Docker containers.
 **Requirements:**
 - Python 3.11+
 - [uv](https://docs.astral.sh/uv/getting-started/installation/)
-- Node.js 18+
+- Node.js 20+
 - npm
 - PostgreSQL with pgvector (optional, can use SQLite)
 
 **Setup:**
 
 ```bash
-# Install dependencies
-./scripts/setup.sh
-
 # Configure environment
 vim .env
 ```
@@ -176,15 +169,15 @@ ECHOROO_DB_DIALECT=sqlite
 
 ```bash
 # Terminal 1: Backend
-cd back && uv run python -m echoroo
+cd apps/api && uv run uvicorn echoroo.main:app --reload
 
 # Terminal 2: Frontend
-cd front && npm run dev
+cd apps/web && npm run dev
 ```
 
 **Access:**
-- Frontend: http://localhost:3000
-- Backend API: http://localhost:5000
+- Frontend: http://localhost:5173
+- Backend API: http://localhost:8000
 
 ### 3. Remote Server (IP Address)
 
@@ -198,26 +191,14 @@ ECHOROO_DOMAIN=192.168.1.100
 ```
 
 **Access:**
-- Frontend: http://192.168.1.100:3000
-- Backend: http://192.168.1.100:5000
+- Frontend: http://192.168.1.100:5173
+- Backend: http://192.168.1.100:8002
 
-**Important:** Make sure firewall allows ports 3000 and 5000.
+**Important:** Make sure firewall allows ports 5173 and 8002.
 
 ### 4. Production with Domain
 
-For production deployment with Traefik reverse proxy.
-
-```bash
-# .env
-POSTGRES_PASSWORD=very_secure_password
-ECHOROO_AUDIO_DIR=/data/audio
-DOMAIN=echoroo.example.com
-BACKEND_REPLICAS=3
-```
-
-**Access:**
-- Application: http://echoroo.example.com
-- Traefik Dashboard: http://localhost:8080
+Production deployment needs a new `compose.prod.yaml` or another deployment target. The current repository only defines the Docker development stack.
 
 ## Architecture
 
@@ -227,8 +208,8 @@ BACKEND_REPLICAS=3
 ┌─────────────────────────────────────────────────────┐
 │                    Host Machine                      │
 ├─────────────────────────────────────────────────────┤
-│  Port 3000 ─────► Frontend (Next.js)                │
-│  Port 5000 ─────► Backend (FastAPI)                 │
+│  Port 5173 ─────► Frontend (SvelteKit)              │
+│  Port 8002 ─────► Backend (FastAPI)                 │
 │  Port 5432 ─────► PostgreSQL + pgvector             │
 └─────────────────────────────────────────────────────┘
 ```
@@ -237,27 +218,9 @@ BACKEND_REPLICAS=3
 - Hot reload enabled for both frontend and backend
 - Database accessible from host for development tools
 
-### Production Mode (`./scripts/docker.sh prod`)
+### Production Mode
 
-```
-┌─────────────────────────────────────────────────────┐
-│                    Host Machine                      │
-├─────────────────────────────────────────────────────┤
-│  Port 80 ─────► Traefik Reverse Proxy               │
-│                      │                               │
-│                      ▼                               │
-│               Backend (FastAPI) x N replicas        │
-│                      │                               │
-│                      ▼                               │
-│               PostgreSQL + pgvector                 │
-│               (internal network only)               │
-└─────────────────────────────────────────────────────┘
-```
-
-- Only port 80 exposed
-- Database not accessible from outside
-- Load balancing across multiple backend replicas
-- Frontend bundled into backend
+Not currently defined in this repository. Add `compose.prod.yaml` before documenting or using `./scripts/docker.sh prod`.
 
 ## Troubleshooting
 
@@ -271,8 +234,8 @@ BACKEND_REPLICAS=3
 
 2. **Check firewall:**
    ```bash
-   sudo ufw allow 3000
-   sudo ufw allow 5000
+   sudo ufw allow 5173
+   sudo ufw allow 8002
    ```
 
 ### Database connection issues
