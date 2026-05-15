@@ -969,8 +969,8 @@ async def test_approve_request_quorum_dispatches_add(
         action=ACTION_SUPERUSER_ADD,
         detail={
             "target_user_id": str(target.id),
-            "webauthn_credentials": [],
-            "allowed_ip_cidrs": [],
+            "webauthn_credentials": [{"credential_id": "apply-key"}],
+            "allowed_ip_cidrs": ["198.51.100.0/24"],
         },
         requested_by_id=requester_su.id,
         approvals=[],
@@ -978,25 +978,111 @@ async def test_approve_request_quorum_dispatches_add(
     )
     db_session.add(ticket)
     await db_session.flush()
+    assert ticket.action == ACTION_SUPERUSER_ADD
+    assert ticket.detail == {
+        "target_user_id": str(target.id),
+        "webauthn_credentials": [{"credential_id": "apply-key"}],
+        "allowed_ip_cidrs": ["198.51.100.0/24"],
+    }
+    assert ticket.requested_by_id == requester_su.id
+    assert ticket.approvals == []
+    assert ticket.status == "pending"
+    assert ticket.executed_at is None
 
-    await approve_request(
+    first = await approve_request(
         db_session,
         request_id_uuid=ticket.id,
         approver_superuser_id=a_su.id,
+        actor_user_id=a.id,
+        request_id="rid-d1-add-first",
+        ip="203.0.113.40",
+        user_agent="d1/add-first",
     )
+    assert first.action == "superuser.approval.approved"
+    assert first.actor_user_id == a.id
+    assert first.status == "pending"
+    assert first.approval_request_id == ticket.id
+    assert first.request_id == "rid-d1-add-first"
+    assert first.ip == "203.0.113.40"
+    assert first.user_agent == "d1/add-first"
+    assert first.detail == {
+        "approval_request_id": str(ticket.id),
+        "approver_superuser_id": str(a_su.id),
+        "approvals_count": 1,
+        "min_approvals": MIN_APPROVALS,
+        "action": ACTION_SUPERUSER_ADD,
+    }
+
     second = await approve_request(
         db_session,
         request_id_uuid=ticket.id,
         approver_superuser_id=b_su.id,
+        actor_user_id=b.id,
+        request_id="rid-d1-add-second",
+        ip="203.0.113.41",
+        user_agent="d1/add-second",
     )
     assert second.status == "applied"
     assert second.action == "superuser.add.applied"
+    assert second.actor_user_id == b.id
     assert second.superuser_id is not None
+    assert second.approval_request_id == ticket.id
+    assert second.request_id == "rid-d1-add-second"
+    assert second.ip == "203.0.113.41"
+    assert second.user_agent == "d1/add-second"
+    assert second.before == {"superuser_count": 4}
+    assert second.after == {"superuser_count": 5}
+    assert second.detail == {
+        "target_user_id": str(target.id),
+        "superuser_id": str(second.superuser_id),
+        "approval_request_id": str(ticket.id),
+    }
+    assert len(second.extra_audit) == 1
+    count_changed = second.extra_audit[0]
+    assert count_changed.action == "superuser.count_changed"
+    assert count_changed.actor_user_id == b.id
+    assert count_changed.status == "applied"
+    assert count_changed.request_id == "rid-d1-add-second"
+    assert count_changed.ip == "203.0.113.41"
+    assert count_changed.user_agent == "d1/add-second"
+    assert count_changed.before == {"superuser_count": 4}
+    assert count_changed.after == {"superuser_count": 5}
+    assert count_changed.detail == {
+        "from": 4,
+        "to": 5,
+        "event": "superuser.add.applied",
+        "min_superusers": superuser_service.MIN_SUPERUSERS,
+    }
+
     # Newly-added row exists, active and references the right user.
     new_row = await db_session.get(Superuser, second.superuser_id)
     assert new_row is not None
     assert new_row.user_id == target.id
+    assert new_row.added_by_id == b.id
+    assert new_row.webauthn_credentials == [{"credential_id": "apply-key"}]
+    assert new_row.allowed_ip_cidrs == ["198.51.100.0/24"]
     assert new_row.revoked_at is None
+
+    refreshed = await db_session.get(SuperuserApprovalRequest, ticket.id)
+    assert refreshed is not None
+    assert refreshed.action == ACTION_SUPERUSER_ADD
+    assert refreshed.detail == {
+        "target_user_id": str(target.id),
+        "webauthn_credentials": [{"credential_id": "apply-key"}],
+        "allowed_ip_cidrs": ["198.51.100.0/24"],
+    }
+    assert refreshed.requested_by_id == requester_su.id
+    assert refreshed.status == "applied"
+    assert refreshed.executed_at is not None
+    assert len(refreshed.approvals) == 2
+    assert [entry["superuser_id"] for entry in refreshed.approvals] == [
+        str(a_su.id),
+        str(b_su.id),
+    ]
+    assert all(
+        datetime.fromisoformat(entry["approved_at"]).tzinfo is not None
+        for entry in refreshed.approvals
+    )
 
 
 @pytest.mark.asyncio

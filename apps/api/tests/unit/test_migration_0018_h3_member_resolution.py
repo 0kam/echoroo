@@ -9,12 +9,21 @@ from typing import Any
 
 import pytest
 
-MIGRATION_PATH = (
-    Path(__file__).resolve().parents[2]
-    / "alembic"
-    / "versions"
-    / "0018_sites_h3_member_resolution_5_15.py"
+_MIGRATION_RELATIVE_PATH = (
+    Path("alembic") / "versions" / "0018_sites_h3_member_resolution_5_15.py"
 )
+
+
+def _resolve_migration_path() -> Path:
+    this_file = Path(__file__).resolve()
+    candidates = [parent / _MIGRATION_RELATIVE_PATH for parent in this_file.parents]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return candidates[0]
+
+
+MIGRATION_PATH = _resolve_migration_path()
 
 
 def _load_migration() -> ModuleType:
