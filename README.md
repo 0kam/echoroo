@@ -19,6 +19,9 @@ cp .env.example .env
 #   - POSTGRES_PASSWORD (required)
 #   - ECHOROO_AUDIO_DIR (required - path to your audio files)
 
+# Generate local Redis TLS certificates
+./scripts/gen-redis-dev-cert.sh
+
 # Start Echoroo (development mode)
 ./scripts/docker.sh dev
 ```

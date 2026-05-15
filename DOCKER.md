@@ -18,6 +18,7 @@ cp .env.example .env
 #   - POSTGRES_PASSWORD
 #   - ECHOROO_AUDIO_DIR
 
+./scripts/gen-redis-dev-cert.sh
 ./scripts/docker.sh dev
 ```
 
