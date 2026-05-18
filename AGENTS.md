@@ -53,3 +53,7 @@
 
 ## Recent Changes
 - 010-email-verification-trusted-devices: Added Python 3.11 (FastAPI backend), TypeScript 5.x (SvelteKit 2 / Svelte 5 frontend) + FastAPI, SQLAlchemy 2.0 async, Alembic, Pydantic v2, Redis, transactional outbox + registered worker email dispatch, pyotp/WebAuthn, SvelteKit, TanStack Query, Playwright
+
+## Speckit Plan Reference
+- Current seeded permission E2E planning artifacts live under `specs/007-permission-test-coverage/`.
+- Before continuing that work, read `specs/007-permission-test-coverage/plan.md` Rev.6 and `specs/007-permission-test-coverage/e2e-roadmap.md`.

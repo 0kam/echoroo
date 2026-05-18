@@ -3,7 +3,7 @@
 **Spec ID**: 007-permission-test-coverage
 **Created**: 2026-05-11
 **Revised**: 2026-05-11 (Rev.5.1)
-**Status**: **GO for implementation** — Codex Rev.5 returned 条件付き GO with 3 minor mechanical conditions, all addressed inline in Rev.5.1
+**Status**: Rev.6 seeded browser E2E US1/US2/US3 plus Trusted Overlay lifecycle, Export/Search API-primary, Dataset ZIP export, Search storage gate guards, Export-recordings success CSV, and Media plus Clip API-primary complete
 **Branch base**: main @ a7386bd3
 
 ---
@@ -18,6 +18,7 @@
 | 5.1 | 2026-05-11 | Codex Rev.5 final review: **conditional GO** with 3 mechanical conditions. All addressed inline: (1) `handle403` extended to guard against refetch-loop when project detail query itself returns 403 — adds `removeQueries` + redirect to `/no-access` path + per-projectId toast dedupe (5s); (2) `TAXON_SENSITIVITY_OVERRIDE_*_ACTION` registrations added to Phase 2A.5 with fallback plan if endpoints are not yet wired; (3) Phase 4.1 `26 permissions` replaced with `\|FRONTEND_PROJECT_PERMISSIONS\|`. Plan is now **GO for implementation**. |
 | 5 | 2026-05-11 | Codex Rev.4 feedback: **重要-新1** `FRONTEND_PROJECT_PERMISSIONS` explicit allow-set added to AD-8 (was subtractive `ENDPOINT_BACKED - SEARCH_CROSS_PROJECT` which dropped COMPUTED_ONLY members like VIEW_PRECISE_LOCATION). AD-2 ProjectPermission union codegen pinned to FRONTEND_PROJECT_PERMISSIONS. **重要-新2** OVERRIDE_TAXON_SENSITIVITY moved from COMPUTED_ONLY → ENDPOINT_BACKED + included in FRONTEND_PROJECT_PERMISSIONS, resolving § 4A vs AD-8 conflict. **重要-新3** AllowlistEntry sample updated to include `last_reviewed_at`; field made required with no default. **重要-新4** test file renamed to `meta-completeness.test.ts` (vitest pattern); scope expanded to include `src/routes/**/*.svelte`; new `projectQueryOptions.ts` typed helper added (Q23). 403 handler home consolidated on `queryClient.ts`; `refetchType: 'active'` added so invalidation also refetches (重要-2 part 2). Test Strategy stale "336 cells" → "len(Permission) × 6 × 2" expression; vitest "26 entries" → emitted from FRONTEND_PROJECT_PERMISSIONS. |
 | 4 | 2026-05-11 | Codex Rev.3 feedback: **P0-1** `AuthState` type missing `authenticated_member` member (TypeScript-uncompilable union); fixed by adding it. **P0-2** §7 Data Flow used `MANAGE_DATASET` for dataset DELETE — fixed to `MANAGE_DATASET_ADMIN` per § 4A rule 3. **重要-1** AD-5 review-date fail condition was reversed (`> today` → `< today`). **重要-2** AD-3 403 handler implementation made concrete with `QueryCache.onError` + `MutationCache.onError` hooks reading `query.meta` / `mutation.options.meta`; URL fallback regex tightened to strict UUID v4 (Q20). **重要-3** xeno_canto search disambiguated: only `external_proxy` allowlist (Action registration removed for `XENO_CANTO_SEARCH_ACTION` since the endpoint is non-project-scoped). **重要-4** `ProjectPermission` union boundary documented: excludes `SEARCH_CROSS_PROJECT`, `MANAGE_API_KEY`, `MANAGE_2FA`, `MANAGE_SITE` with rationale (Q18). **重要-5** Phase 3 / Test Strategy / File Map updated: renamed test class references, expanded file list with `endpoint_allowlist.py`, `permissionContext.ts`, `queryClient.ts`, `client.permissions.test.ts`, `test_meta_completeness.ts`, `test_allowlist_metadata.py`, CI workflow file. **Q17** xfail `raises=NotImplementedError` removed (over-constrains); tracking issues collected into `xfail_tracking.md` per Phase 0. **Q22** spec amendment scoped to new `spec/008-permissions-vocabulary-refinement` rather than spec/006 Rev.4. |
+| 6 | 2026-05-15 | Added the seeded browser E2E extension plan for Data Surfaces, Vote/Comment, and future risky slices. Implementation completed through US1/US2/US3, Trusted Overlay read-only/lifecycle coverage, Export/Search API-primary plus Dataset ZIP plus Search storage gate guard plus Export-recordings success CSV coverage, and Media recording plus Clip API-primary coverage; verified summaries and residual risks now live in `e2e-roadmap.md` and `tasks.md`. |
 
 ---
 
@@ -2002,4 +2003,178 @@ NOT blockers — they can be fixed during implementation.
 
 ---
 
-End of plan Rev.5. Ready for Codex Rev.5 review (final cycle).
+## 14. Rev.6 Seeded Browser E2E Extension Plan
+
+**Date**: 2026-05-15
+**Status**: US1/US2/US3 plus Trusted Overlay lifecycle, Export/Search API-primary plus Dataset ZIP plus Search storage gate guards plus Export-recordings success CSV, and Media plus Clip API-primary complete as of 2026-05-18
+**Input**: `specs/007-permission-test-coverage/e2e-roadmap.md`
+
+### Technical Context
+
+**Language/Version**: Python 3.12 backend scripts; TypeScript/SvelteKit
+frontend E2E tests.
+**Primary Dependencies**: FastAPI, SQLAlchemy, Pydantic, Playwright, ESLint,
+Prettier, ruff.
+**Storage**: Local development PostgreSQL through the Docker backend stack;
+Media uses deterministic WAV fixtures written to LocalStack/S3 with an
+`AUDIO_ROOT` fallback.
+**Testing**: Seed script, Python static checks, Playwright browser tests with
+`--workers=1`, frontend `npm run check`, backend `mypy` for touched Python,
+and existing seeded matrix/feature suites as regression gates.
+**Target Platform**: Local Docker-backed development environment.
+**Project Type**: Web application with `apps/api` and `apps/web`.
+**Performance Goals**: Keep each seeded suite narrow enough to run serially
+without destabilizing local feedback; no launch performance target changes.
+**Constraints**: Do not use web JWT bearer tokens for `/api/v1`; Data Surfaces
+must leave audio/spectrogram playback to the Media suite; do not destroy
+baseline trusted overlay state.
+**Scale/Scope**: Five incremental E2E slices: data surfaces, vote/comment,
+trusted overlay, export/search, and media. Rev.6 delivered items 1 and 2, the
+Trusted Overlay read/list/capability and lifecycle slices, the Export/Search
+API-primary plus Dataset ZIP plus Search storage gate guard plus
+Export-recordings success CSV slice, the Media recording plus Clip API-primary
+slice, and the future-slice roadmap gate checklist.
+
+### Constitution Check
+
+- **Clean Architecture**: PASS. New behavior is test/fixture orchestration and
+  does not bypass service or repository boundaries.
+- **Test-Driven Development**: PASS. Each slice starts with a focused Playwright
+  suite and seed requirements before implementation changes are accepted.
+- **Type Safety**: PASS. TypeScript E2E helpers and Python seeder changes must
+  pass ESLint/Prettier, `npm run check`, ruff/py_compile, and backend `mypy`
+  gates.
+- **ML Pipeline Architecture**: N/A. No ML task behavior changes.
+- **API Versioning**: PASS. API assertions target existing `/api/v1` and
+  `/web-api/v1` contracts without introducing breaking endpoint changes.
+
+### Phase 0 Research Output
+
+See `research.md`. Key decisions:
+
+- Extend the existing seeded fixture strategy in small browser suites.
+- Keep `/api/v1` API-key checks separate from `/web-api/v1` browser-session
+  checks.
+- Exclude media playback and spectrogram assertions from data-surface tests.
+- Make vote/comment API-primary and serial when mutating shared annotation state.
+- Reserve Claude review for trusted lifecycle, export/search, and media/storage
+  risk, including clip media when production endpoint storage behavior changes.
+
+### Phase 1 Design Output
+
+- `spec.md`: continuation feature spec for seeded permission E2E coverage.
+- `data-model.md`: seeded users, projects, content fixtures, vote/comment state,
+  and suite gates.
+- `contracts/seeded-permission-e2e.md`: seed env, API, UI, and verification
+  contracts.
+- `quickstart.md`: seed, env export, static check, and Playwright commands.
+- `e2e-roadmap.md`: remains the persistent compact-resume roadmap and should be
+  updated after each completed slice.
+
+### Data Surfaces Slice
+
+Candidate suite:
+
+- `apps/web/tests/e2e/permissions/seeded-data-surfaces.spec.ts`
+
+Implementation notes:
+
+- Reuse seeded users, UI login helper, project IDs, dataset IDs, and dataset
+  names from the existing green baseline.
+- Add flat env entries for `E2E_PUBLIC_SITE_ID`, `E2E_PUBLIC_RECORDING_ID`,
+  `E2E_PUBLIC_DETECTION_ID`, `E2E_RESTRICTED_SITE_ID`,
+  `E2E_RESTRICTED_RECORDING_ID`, and `E2E_RESTRICTED_DETECTION_ID` before
+  deep-link tests depend on them.
+- Cover dataset list/detail, recording list/detail, detection list/detail where
+  stable, and public explore list/detail.
+- Detection detail routes use tag IDs, not detection UUIDs. Either seed a stable
+  tag ID or derive it from a list response before navigating.
+- Keep owner email and private metadata non-leak checks in public guest flows.
+- Avoid media playback, spectrogram rendering, clip download, or byte-content
+  assertions in this slice.
+
+Completion gate:
+
+- Seed succeeds and latest JSON env is exported.
+- Seeder static and type checks pass.
+- Changed E2E files pass Prettier, ESLint, and `npm run check`.
+- New data-surfaces suite passes with `--workers=1`.
+- Existing seeded feature and matrix suites remain green.
+
+### Vote / Comment Slice
+
+Candidate suite:
+
+- `apps/web/tests/e2e/permissions/seeded-vote-comment.spec.ts`
+
+Implementation notes:
+
+- Use `/api/v1` with seeded raw API keys.
+- Cover:
+  - `GET /api/v1/projects/{projectId}/annotations/{annotationId}/votes`
+  - `POST /api/v1/projects/{projectId}/annotations/{annotationId}/votes`
+  - `DELETE /api/v1/projects/{projectId}/annotations/{annotationId}/votes`
+  - `GET /api/v1/projects/{projectId}/annotations/{annotationId}/comments`
+  - `POST /api/v1/projects/{projectId}/annotations/{annotationId}/comments`
+- Keep unique comment bodies per role, visibility, and run.
+- Use serial execution or explicit cleanup for DELETE vote coverage.
+- Treat comments as append-only and assert created response/body presence instead
+  of exact list counts.
+- Existing restricted project behavior intentionally allows nonmember
+  vote/comment due to `allow_voting_and_comments=true`.
+- Trusted vote/comment assertions cover authorization status only; trusted source
+  badge classification is outside this slice.
+
+Completion gate:
+
+- Seed succeeds and latest JSON env is exported.
+- Seeder static and type checks pass.
+- Changed E2E files pass Prettier, ESLint, and `npm run check`.
+- New vote-comment suite passes with `--workers=1`.
+- Existing seeded feature and matrix suites remain green.
+
+### Rev.6 Implementation Status
+
+The Rev.6 Data Surfaces, Vote / Comment, Trusted Overlay read-only/lifecycle,
+Export/Search API-primary plus Dataset ZIP plus Search storage gate guards plus
+Export-recordings success CSV, and Media recording plus Clip API-primary slices
+are implemented. The future risky-surface roadmap is also refreshed with seed,
+completion, and Claude review gates for storage-backed Export/Search follow-ups
+and clip browser media wiring.
+
+Current handoff sources:
+
+- `tasks.md`: authoritative task completion list for T001-T113.
+- `e2e-roadmap.md`: latest verified command summaries, known review notes, and
+  next-slice prerequisites.
+- `quickstart.md`: seed/export/static-check/Playwright command reference for the
+  completed seeded suites.
+
+Verified final seeded browser result recorded in `e2e-roadmap.md`:
+
+```bash
+# 78 passed, 12 skipped
+```
+
+Remaining Rev.6 follow-up work should keep any future Trusted Overlay
+accept/re-grant activation separate from the immutable baseline overlay because
+the signed invitation token is delivered through email/outbox. Export / Search
+follow-ups and clip browser media wiring remain higher risk when they require
+audio-backed ZIP assertions, successful reference-audio streaming, broader CSV
+payload assertions, or new BFF/media-token contracts.
+
+### Post-Design Constitution Check
+
+PASS. The design adds explicit test artifacts and local fixture contracts without
+changing production architecture, API versioning, or ML behavior. The only
+security-sensitive material is local seed JSON; `quickstart.md` keeps it scoped
+to `/tmp/echoroo-e2e-seed.json` and the seeder already refuses protected
+environments.
+
+End of plan Rev.6. Data Surfaces, Vote / Comment, Trusted Overlay read-only and
+lifecycle, Export/Search API-primary plus Dataset ZIP plus Search storage gate
+guards plus Export-recordings success CSV, Media recording plus Clip API-primary
+coverage, and risky-surface roadmap planning are complete; continue with clip
+browser media wiring, storage-backed Export/Search payload follow-ups, or Trusted Overlay
+accept/re-grant activation only after the required seed/review gates are in
+place.

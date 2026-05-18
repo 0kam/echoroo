@@ -75,6 +75,79 @@ uv run alembic upgrade head
 uv run alembic downgrade -1
 ```
 
+### Browser E2E Fixtures
+
+Seed permission fixtures into a local development database without wiping existing data:
+
+```bash
+uv run python -m echoroo.scripts.seed_e2e_permissions --confirm
+```
+
+The command writes a JSON payload to stdout with user emails, IDs, password, TOTP secrets, project IDs, site IDs, dataset IDs, recording IDs, clip IDs, detection IDs, annotation IDs, search session IDs, trusted overlay IDs, API keys, and an `env` object containing representative `E2E_*` environment variables. It also creates deterministic WAV fixtures for the seeded recording paths in local object storage, falling back to `AUDIO_ROOT` when object storage is unavailable. Treat this output as sensitive test-only material because it includes active TOTP secrets and raw API keys. Re-running it updates only rows using the selected fixture prefix.
+
+The flat `env` payload includes public and restricted fixture object IDs for browser specs:
+
+- `E2E_PUBLIC_SITE_ID`
+- `E2E_PUBLIC_DATASET_ID`
+- `E2E_PUBLIC_RECORDING_ID`
+- `E2E_PUBLIC_CLIP_ID`
+- `E2E_PUBLIC_DETECTION_ID`
+- `E2E_PUBLIC_ANNOTATION_ID`
+- `E2E_PUBLIC_SEARCH_SESSION_ID`
+- `E2E_PUBLIC_EXPORTABLE_SEARCH_SESSION_ID`
+- `E2E_RESTRICTED_SITE_ID`
+- `E2E_RESTRICTED_DATASET_ID`
+- `E2E_RESTRICTED_RECORDING_ID`
+- `E2E_RESTRICTED_CLIP_ID`
+- `E2E_RESTRICTED_DETECTION_ID`
+- `E2E_RESTRICTED_ANNOTATION_ID`
+- `E2E_RESTRICTED_SEARCH_SESSION_ID`
+- `E2E_RESTRICTED_EXPORTABLE_SEARCH_SESSION_ID`
+- `E2E_TRUSTED_LIFECYCLE_USER_ID`
+- `E2E_RESTRICTED_TRUSTED_LIFECYCLE_OVERLAY_ID`
+- `E2E_RESTRICTED_TRUSTED_EXPIRED_OVERLAY_ID`
+
+To run the seeded permissions matrix spec against a local API, export the `env` payload and enable the suite:
+
+```bash
+uv run python -m echoroo.scripts.seed_e2e_permissions --confirm > /tmp/echoroo-e2e-permissions.json
+set -a
+source <(jq -r '.env | to_entries[] | "\(.key)=\(.value|@sh)"' /tmp/echoroo-e2e-permissions.json)
+set +a
+
+cd ../web
+E2E_PERMISSIONS_MATRIX_ENABLED=1 \
+ECHOROO_API_URL=http://localhost:8002 \
+PUBLIC_API_URL=http://localhost:8002 \
+npm run test:e2e -- tests/e2e/permissions/seeded-permissions-matrix.spec.ts
+```
+
+To run the feature-level permission spec, use the same exported `env` payload and enable its suite:
+
+```bash
+E2E_FEATURE_PERMISSIONS_ENABLED=1 \
+ECHOROO_API_URL=http://localhost:8002 \
+PUBLIC_API_URL=http://localhost:8002 \
+npm run test:e2e -- tests/e2e/permissions/seeded-feature-permissions.spec.ts
+```
+
+To run the media permission spec, use the latest exported `env` payload and enable its suite:
+
+```bash
+E2E_MEDIA_ENABLED=1 \
+ECHOROO_API_URL=http://localhost:8002 \
+PUBLIC_API_URL=http://localhost:8002 \
+npm run test:e2e -- tests/e2e/permissions/seeded-media.spec.ts
+```
+
+Use `--prefix` to isolate multiple fixture sets and `--password` to assign a different test password:
+
+```bash
+uv run python -m echoroo.scripts.seed_e2e_permissions --confirm --prefix e2e-local --password 'E2E-Test-Password-123!'
+```
+
+The seeder refuses staging/production environments and non-local database hosts by default. For CI or development containers with a non-local `DATABASE_URL` host, pass `--allow-non-local-database`; this escape hatch does not override the staging/production environment guard.
+
 ## Testing
 
 ```bash

@@ -45,7 +45,11 @@ def get_audio_service() -> AudioService:
     Returns:
         AudioService instance
     """
-    return AudioService(settings.AUDIO_ROOT, settings.AUDIO_CACHE_DIR)
+    return AudioService(
+        settings.AUDIO_ROOT,
+        settings.AUDIO_CACHE_DIR,
+        s3_audio_cache_dir=settings.S3_AUDIO_CACHE_DIR,
+    )
 
 
 def get_clip_service(
@@ -446,6 +450,7 @@ async def get_clip_audio(
 
     try:
         audio_svc = audio_service
+        await asyncio.to_thread(audio_svc.ensure_file_local, recording.path)
         data, samplerate = await asyncio.to_thread(
             lambda: audio_svc.resample_for_playback(
                 recording.path,
@@ -462,6 +467,8 @@ async def get_clip_audio(
             media_type="audio/wav",
             headers={"Content-Disposition": f'inline; filename="clip_{clip_id}.wav"'},
         )
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail="Audio file not found") from e
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Audio processing error: {str(e)}") from e
 
@@ -534,6 +541,7 @@ async def get_clip_spectrogram(
 
     try:
         audio_svc = audio_service
+        await asyncio.to_thread(audio_svc.ensure_file_local, recording.path)
         png_bytes = await asyncio.to_thread(
             lambda: audio_svc.generate_spectrogram(
                 recording.path,
@@ -551,8 +559,12 @@ async def get_clip_spectrogram(
             )
         )
         return Response(content=png_bytes, media_type="image/png")
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail="Audio file not found") from e
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Spectrogram generation error: {str(e)}") from e
+        raise HTTPException(
+            status_code=400, detail=f"Spectrogram generation error: {str(e)}"
+        ) from e
 
 
 @router.get(
@@ -605,6 +617,7 @@ async def download_clip(
 
     try:
         audio_svc = audio_service
+        await asyncio.to_thread(audio_svc.ensure_file_local, recording.path)
         data, samplerate = await asyncio.to_thread(
             lambda: audio_svc.read_audio(
                 recording.path,
@@ -614,12 +627,16 @@ async def download_clip(
         )
 
         wav_bytes = audio_service.audio_to_wav_bytes(data, samplerate)
-        filename = f"{recording.filename.rsplit('.', 1)[0]}_{clip.start_time:.2f}-{clip.end_time:.2f}.wav"
+        filename = (
+            f"{recording.filename.rsplit('.', 1)[0]}_{clip.start_time:.2f}-{clip.end_time:.2f}.wav"
+        )
 
         return Response(
             content=wav_bytes,
             media_type="audio/wav",
             headers={"Content-Disposition": f'attachment; filename="{filename}"'},
         )
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail="Audio file not found") from e
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Audio processing error: {str(e)}") from e
